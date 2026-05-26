@@ -1,0 +1,160 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentProvider
+metadata:
+  name: synthesis-deep-alpha
+spec:
+  binary: /usr/local/bin/agent-runner
+  adapter:
+    type: codex-app-server
+    codex:
+      model: gpt-5.3-codex-spark
+      effort: xhigh
+      sandbox: danger-full-access
+      approval: never
+      cwd: /workspace/lab
+      threadConfig:
+        mcp_servers:
+          synthesis:
+            command: node
+            args:
+              - /root/.codex/synthesis-mcp-proxy.mjs
+        web_search: live
+  argsTemplate: []
+  secretEnv:
+    - name: SYNTHESIS_API_TOKEN
+      secretName: synthesis-env
+      key: SYNTHESIS_API_TOKEN
+  envTemplate:
+    AGENT_RUN_NAME: "{{agentRun.name}}"
+    AGENT_RUN_NAMESPACE: "{{agentRun.namespace}}"
+    CODEX_CONFIG: /root/.codex/config.toml
+    CODEX_LOG_LEVEL: info
+    CODEX_MAX_SESSION_ATTEMPTS: "3"
+    CODEX_MODEL: gpt-5.3-codex-spark
+    CODEX_MODEL_FALLBACKS: gpt-5.5,gpt-5.4,gpt-5.4-mini,gpt-5.2-codex,gpt-5-codex
+    HOME: /root
+    SYNTHESIS_MCP_URL: http://synthesis.synthesis.svc.cluster.local:3000/mcp
+  inputFiles:
+    - path: /root/.codex/config.toml
+      content: |-
+        model = "gpt-5.3-codex-spark"
+        model_reasoning_summary = "none"
+        model_reasoning_effort = "xhigh"
+        model_verbosity = "medium"
+        approval_policy = "never"
+        sandbox_mode = "danger-full-access"
+        web_search = "live"
+        suppress_unstable_features_warning = true
+
+        [features]
+        undo = true
+        enable_request_compression = true
+        apply_patch_freeform = true
+        unified_exec = true
+        shell_snapshot = true
+        steer = true
+        multi_agent = true
+        child_agents_md = true
+        collaboration_modes = true
+        responses_websockets = false
+        goals = true
+
+        [shell_environment_policy]
+        ignore_default_excludes = true
+
+        [projects."/workspace/lab"]
+        trust_level = "trusted"
+
+        [projects."/root"]
+        trust_level = "trusted"
+
+        [mcp_servers.synthesis]
+        command = "node"
+        args = ["/root/.codex/synthesis-mcp-proxy.mjs"]
+    - path: /root/.codex/synthesis-mcp-proxy.mjs
+      content: |-
+        #!/usr/bin/env node
+
+        import readline from 'node:readline'
+
+        const endpoint = process.env.SYNTHESIS_MCP_URL || 'http://synthesis.synthesis.svc.cluster.local:3000/mcp'
+        const token = process.env.SYNTHESIS_API_TOKEN || process.env.SYNTHESIS_MCP_TOKEN || ''
+
+        const buildError = (id, code, message, data) => ({
+          jsonrpc: '2.0',
+          id,
+          error: {
+            code,
+            message,
+            ...(data == null ? {} : { data }),
+          },
+        })
+
+        const getId = (message) => {
+          if (!message || typeof message !== 'object') return null
+          const id = message.id
+          return typeof id === 'string' || typeof id === 'number' || id === null ? id : null
+        }
+
+        const writeJson = (message) => {
+          process.stdout.write(`${JSON.stringify(message)}\n`)
+        }
+
+        const forward = async (line) => {
+          if (!line.trim()) return
+
+          let message
+          try {
+            message = JSON.parse(line)
+          } catch {
+            writeJson(buildError(null, -32700, 'Parse error'))
+            return
+          }
+
+          const id = getId(message)
+          const headers = {
+            accept: 'application/json, text/event-stream',
+            'content-type': 'application/json',
+          }
+          if (token) headers.authorization = `Bearer ${token}`
+
+          try {
+            const response = await fetch(endpoint, {
+              method: 'POST',
+              headers,
+              body: JSON.stringify(message),
+            })
+            const body = await response.text()
+
+            if (!body.trim()) return
+            if (!response.ok) {
+              writeJson(buildError(id, -32000, `Synthesis MCP HTTP ${response.status}`, body.slice(0, 1000)))
+              return
+            }
+
+            for (const event of body.split(/\n\n+/)) {
+              const dataLine = event.split(/\r?\n/).find((eventLine) => eventLine.startsWith('data:'))
+              if (dataLine) {
+                process.stdout.write(`${dataLine.slice(5).trim()}\n`)
+                continue
+              }
+              process.stdout.write(`${body.trim()}\n`)
+              break
+            }
+          } catch (error) {
+            writeJson(buildError(id, -32000, 'Synthesis MCP proxy failed', error instanceof Error ? error.message : error))
+          }
+        }
+
+        const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })
+        input.on('line', (line) => {
+          void forward(line)
+        })
+  outputArtifacts:
+    - name: synthesis-deep-alpha-report
+      path: /workspace/.agentrun/synthesis-deep-alpha/report.md
+      key: synthesis/deep-alpha/{{ agentRun.name }}/report.md
+    - name: runner-log
+      path: /workspace/.agent/runner.log
+    - name: runner-status
+      path: /workspace/.agent/status.json

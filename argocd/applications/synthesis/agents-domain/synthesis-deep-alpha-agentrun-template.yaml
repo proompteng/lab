@@ -1,0 +1,36 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: synthesis-deep-alpha-template
+  annotations:
+    agents.proompteng.ai/template: "true"
+spec:
+  agentRef:
+    name: synthesis-deep-alpha-agent
+  implementationSpecRef:
+    name: synthesis-deep-alpha-options-v1
+  goal:
+    objective: Research and post Synthesis deep-alpha 2-3 week options strategy candidates with technical entry timing.
+  runtime:
+    type: job
+    config:
+      serviceAccountName: agents-sa
+      backoffLimit: 0
+      logRetentionSeconds: 604800
+  ttlSecondsAfterFinished: 21600
+  parameters:
+    cadence: three-hours
+    destination: synthesis
+    holdingPeriod: two-to-three-weeks
+    strategyScope: defined-risk-options
+  secrets:
+    - synthesis-env
+  workload:
+    resources:
+      requests:
+        cpu: "1"
+        memory: 2Gi
+        ephemeral-storage: 4Gi
+      limits:
+        memory: 8Gi
+        ephemeral-storage: 8Gi
