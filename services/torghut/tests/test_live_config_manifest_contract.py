@@ -589,7 +589,7 @@ class TestLiveConfigManifestContract(TestCase):
         )
         self.assertEqual(
             sim_env.get("TRADING_PAPER_ROUTE_TARGET_PLAN_TIMEOUT_SECONDS"),
-            "3",
+            "5",
         )
         self.assertFalse(_manifest_bool(sim_env, "TRADING_SIMULATION_ENABLED"))
         self.assertEqual(sim_env.get("TRADING_UNIVERSE_SOURCE"), "static")
