@@ -3242,6 +3242,9 @@ def _candidate_sleeve_goal_rows(
                         spec, scorecard
                     )
                 )
+                row["queue_position_survival_fill_quality"] = (
+                    _candidate_board_queue_position_survival_summary(spec, scorecard)
+                )
             row["evidence_status"] = "replayed" if evidence is not None else "missing"
             row["evidence_lineage"] = _candidate_board_evidence_lineage_summary(
                 evidence
@@ -3284,6 +3287,11 @@ def _candidate_sleeve_goal_rows(
             if spec is not None
             else {"required": False, "passed": True, "blockers": []}
         )
+        queue_position_survival_summary = (
+            _candidate_board_queue_position_survival_summary(spec, scorecard)
+            if spec is not None
+            else {"required": False, "passed": True, "blockers": []}
+        )
         evidence_lineage = _candidate_board_evidence_lineage_summary(evidence)
         replay_window_coverage = _candidate_board_replay_window_coverage_summary(
             scorecard
@@ -3318,6 +3326,9 @@ def _candidate_sleeve_goal_rows(
                 "evidence_lineage": evidence_lineage,
                 "replay_window_coverage": replay_window_coverage,
                 "order_type_execution_quality": order_type_summary,
+                "queue_position_survival_fill_quality": (
+                    queue_position_survival_summary
+                ),
                 **proof_handoff,
                 "failure_reasons": [
                     _string(item)
@@ -8739,6 +8750,147 @@ def _candidate_board_scorecard_with_order_type_blockers(
     return updated_scorecard, summary
 
 
+def _candidate_spec_requires_queue_position_survival(spec: CandidateSpec) -> bool:
+    overlay_ids = set(
+        _string_list_from_value(spec.parameter_space.get("mechanism_overlay_ids"))
+    )
+    return (
+        "queue_position_survival_fill_curve" in overlay_ids
+        or _boolish(
+            spec.promotion_contract.get("requires_queue_position_survival_fill_curve")
+        )
+        or _boolish(spec.promotion_contract.get("requires_nonfill_opportunity_cost"))
+        or _boolish(spec.promotion_contract.get("requires_time_to_fill_quantiles"))
+        or "required_queue_position_survival_fill_curve" in spec.hard_vetoes
+        or "required_min_queue_position_survival_sample_count" in spec.hard_vetoes
+        or "required_max_queue_position_nonfill_opportunity_cost_bps"
+        in spec.hard_vetoes
+    )
+
+
+def _candidate_board_queue_position_survival_summary(
+    spec: CandidateSpec, scorecard: Mapping[str, Any]
+) -> dict[str, Any]:
+    required = _candidate_spec_requires_queue_position_survival(spec)
+    min_sample_count = _candidate_board_int_field(
+        spec.hard_vetoes, "required_min_queue_position_survival_sample_count"
+    )
+    if min_sample_count <= 0:
+        min_sample_count = 60
+    max_nonfill_opportunity_cost_bps = _decimal(
+        spec.hard_vetoes.get(
+            "required_max_queue_position_nonfill_opportunity_cost_bps"
+        ),
+        default="8",
+    )
+    evidence_present = _boolish(
+        scorecard.get("queue_position_survival_fill_curve_evidence_present")
+        or scorecard.get("queue_position_survival_evidence_present")
+    )
+    sample_count = _candidate_board_first_int_field(
+        scorecard,
+        (
+            "queue_position_survival_sample_count",
+            "queue_position_survival_fill_sample_count",
+        ),
+    )
+    fill_rate = _decimal(scorecard.get("queue_position_survival_fill_rate"))
+    queue_ratio_p95 = _decimal(scorecard.get("queue_position_survival_queue_ratio_p95"))
+    queue_ahead_evidence_present = _boolish(
+        scorecard.get("queue_position_survival_queue_ahead_depletion_evidence_present")
+        or scorecard.get("delay_adjusted_depth_queue_ahead_depletion_evidence_present")
+        or scorecard.get("queue_ahead_depletion_evidence_present")
+    )
+    queue_ahead_sample_count = _candidate_board_first_int_field(
+        scorecard,
+        (
+            "queue_position_survival_queue_ahead_depletion_sample_count",
+            "delay_adjusted_depth_queue_ahead_depletion_sample_count",
+            "queue_ahead_depletion_sample_count",
+        ),
+    )
+    nonfill_opportunity_cost_raw = scorecard.get(
+        "queue_position_survival_nonfill_opportunity_cost_bps"
+    ) or scorecard.get("queue_position_nonfill_opportunity_cost_bps")
+    nonfill_opportunity_cost_present = nonfill_opportunity_cost_raw not in (None, "")
+    nonfill_opportunity_cost_bps = _decimal(
+        nonfill_opportunity_cost_raw,
+        default="999999",
+    )
+    require_time_to_fill_quantiles = _boolish(
+        spec.hard_vetoes.get("required_time_to_fill_quantiles")
+    ) or _boolish(spec.promotion_contract.get("requires_time_to_fill_quantiles"))
+    time_to_fill_quantiles_present = scorecard.get("fill_time_ms_p50") not in (
+        None,
+        "",
+    ) and scorecard.get("fill_time_ms_p95") not in (None, "")
+    blockers: list[str] = []
+    if required:
+        if not evidence_present:
+            blockers.append(
+                "queue_position_survival_fill_curve_evidence_present_failed"
+            )
+        if sample_count < min_sample_count:
+            blockers.append("queue_position_survival_sample_count_failed")
+        if fill_rate <= 0:
+            blockers.append("queue_position_survival_fill_rate_failed")
+        if not queue_ahead_evidence_present:
+            blockers.append("queue_ahead_depletion_evidence_present_failed")
+        if queue_ahead_sample_count <= 0:
+            blockers.append("queue_ahead_depletion_sample_count_failed")
+        if not nonfill_opportunity_cost_present:
+            blockers.append(
+                "queue_position_survival_nonfill_opportunity_cost_present_failed"
+            )
+        elif nonfill_opportunity_cost_bps > max_nonfill_opportunity_cost_bps:
+            blockers.append(
+                "queue_position_survival_nonfill_opportunity_cost_bps_failed"
+            )
+        if require_time_to_fill_quantiles and not time_to_fill_quantiles_present:
+            blockers.append("time_to_fill_quantiles_present_failed")
+    return {
+        "required": required,
+        "passed": not blockers,
+        "blockers": blockers,
+        "evidence_present": evidence_present,
+        "sample_count": sample_count,
+        "min_sample_count": min_sample_count,
+        "fill_rate": str(fill_rate),
+        "queue_ratio_p95": str(queue_ratio_p95),
+        "queue_ahead_depletion_evidence_present": queue_ahead_evidence_present,
+        "queue_ahead_depletion_sample_count": queue_ahead_sample_count,
+        "nonfill_opportunity_cost_present": nonfill_opportunity_cost_present,
+        "nonfill_opportunity_cost_bps": str(nonfill_opportunity_cost_bps),
+        "max_nonfill_opportunity_cost_bps": str(max_nonfill_opportunity_cost_bps),
+        "time_to_fill_quantiles_required": require_time_to_fill_quantiles,
+        "time_to_fill_quantiles_present": time_to_fill_quantiles_present,
+        "source_marker": "queue_position_survival_fill_probability_arxiv_2512_05734_2025",
+    }
+
+
+def _candidate_board_scorecard_with_queue_position_survival_blockers(
+    spec: CandidateSpec, scorecard: Mapping[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    summary = _candidate_board_queue_position_survival_summary(spec, scorecard)
+    updated_scorecard = dict(scorecard)
+    blockers = [
+        _string(blocker)
+        for blocker in cast(Sequence[Any], summary.get("blockers") or ())
+        if _string(blocker)
+    ]
+    if blockers:
+        updated_scorecard["oracle_passed"] = False
+        oracle_payload = dict(_mapping(updated_scorecard.get("profit_target_oracle")))
+        oracle_blockers = [
+            _string(blocker)
+            for blocker in cast(Sequence[Any], oracle_payload.get("blockers") or ())
+            if _string(blocker)
+        ]
+        oracle_payload["blockers"] = list(dict.fromkeys([*oracle_blockers, *blockers]))
+        updated_scorecard["profit_target_oracle"] = oracle_payload
+    return updated_scorecard, summary
+
+
 def _candidate_board_scorecard_with_rejected_signal_blockers(
     spec: CandidateSpec, scorecard: Mapping[str, Any]
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -9898,6 +10050,11 @@ def _candidate_board_payload(
                 else (),
             )
         )
+        scorecard, queue_position_survival_summary = (
+            _candidate_board_scorecard_with_queue_position_survival_blockers(
+                spec, scorecard
+            )
+        )
         scorecard, predictability_decay_summary = (
             _candidate_board_scorecard_with_predictability_decay_blockers(
                 spec, scorecard, target=target
@@ -10041,6 +10198,21 @@ def _candidate_board_payload(
                         "queue_position_survival_queue_ahead_depletion_sample_count",
                     )
                 ),
+                "queue_position_survival_nonfill_opportunity_cost_bps": (
+                    _candidate_board_decimal_field(
+                        scorecard,
+                        "queue_position_survival_nonfill_opportunity_cost_bps",
+                    )
+                    or _candidate_board_decimal_field(
+                        scorecard, "queue_position_nonfill_opportunity_cost_bps"
+                    )
+                ),
+                "fill_time_ms_p50": _candidate_board_decimal_field(
+                    scorecard, "fill_time_ms_p50"
+                ),
+                "fill_time_ms_p95": _candidate_board_decimal_field(
+                    scorecard, "fill_time_ms_p95"
+                ),
                 "delay_adjusted_depth_queue_ahead_depletion_evidence_present": _boolish(
                     scorecard.get(
                         "delay_adjusted_depth_queue_ahead_depletion_evidence_present"
@@ -10166,6 +10338,9 @@ def _candidate_board_payload(
                 "regime_specialist_validation": regime_specialist_validation,
                 "rejected_signal_outcome_learning": rejected_signal_summary,
                 "order_type_execution_quality": order_type_summary,
+                "queue_position_survival_fill_quality": (
+                    queue_position_survival_summary
+                ),
                 "predictability_decay_stress": predictability_decay_summary,
                 "evidence_lineage": evidence_lineage,
                 "replay_window_coverage": replay_window_coverage,

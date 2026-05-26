@@ -6699,6 +6699,137 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertTrue(row["order_type_execution_quality"]["passed"])
         self.assertTrue(row["oracle_passed"])
 
+    def test_candidate_board_rejects_queue_survival_overlay_without_lifecycle_depth(
+        self,
+    ) -> None:
+        spec = replace(
+            self._candidate_spec("spec-queue-survival-proof"),
+            parameter_space={
+                "mechanism_overlay_ids": ["queue_position_survival_fill_curve"]
+            },
+            hard_vetoes={
+                "required_queue_position_survival_fill_curve": True,
+                "required_min_queue_position_survival_sample_count": "60",
+                "required_max_queue_position_nonfill_opportunity_cost_bps": "8",
+                "required_time_to_fill_quantiles": True,
+                "required_order_lifecycle_fill_evidence": True,
+            },
+            promotion_contract={
+                "requires_queue_position_survival_fill_curve": True,
+                "requires_time_to_fill_quantiles": True,
+                "requires_nonfill_opportunity_cost": True,
+                "requires_order_lifecycle_fill_evidence": True,
+            },
+        )
+        evidence = runner.CandidateEvidenceBundle(
+            schema_version="torghut.candidate-evidence-bundle.v1",
+            evidence_bundle_id="ev-queue-survival-proof",
+            candidate_id="cand-queue-survival-proof",
+            candidate_spec_id=spec.candidate_spec_id,
+            dataset_snapshot_id="snapshot-queue-survival-proof",
+            feature_spec_hash="hash-queue-survival-proof",
+            code_commit="commit-test",
+            replay_artifact_refs=("replay.json",),
+            objective_scorecard={
+                "net_pnl_per_day": "640",
+                "target_met": True,
+                "oracle_passed": True,
+                "profit_target_oracle": {"blockers": []},
+                "queue_position_survival_fill_curve_evidence_present": True,
+                "queue_position_survival_sample_count": 12,
+                "queue_position_survival_fill_rate": "0.85",
+                "queue_position_survival_queue_ratio_p95": "0.25",
+                "queue_position_survival_queue_ahead_depletion_evidence_present": True,
+                "queue_position_survival_queue_ahead_depletion_sample_count": 12,
+                "queue_position_survival_nonfill_opportunity_cost_bps": "12",
+            },
+            fold_metrics=(),
+            stress_metrics=(),
+            cost_calibration={"status": "calibrated", "source": "route_tca"},
+            null_comparator={},
+            promotion_readiness={},
+        )
+
+        board = runner._candidate_board_payload(
+            epoch_id="epoch-queue-survival-board",
+            output_dir=Path("/tmp/epoch-queue-survival-board"),
+            target=Decimal("500"),
+            candidate_specs=(spec,),
+            candidate_selection={
+                "rows": [
+                    {
+                        "candidate_spec_id": spec.candidate_spec_id,
+                        "selected_for_replay": True,
+                    }
+                ]
+            },
+            pre_replay_proposal_rows=(
+                {
+                    "candidate_spec_id": spec.candidate_spec_id,
+                    "rank": 1,
+                    "proposal_score": "9.0",
+                },
+            ),
+            proposal_rows=(),
+            evidence_bundles=(evidence,),
+            portfolio=None,
+            promotion_readiness={"promotable": True},
+            runtime_closure={},
+        )
+
+        row = board["rows"][0]
+        queue_summary = row["queue_position_survival_fill_quality"]
+        self.assertFalse(row["oracle_passed"])
+        self.assertFalse(queue_summary["passed"])
+        self.assertIn("queue_position_survival_sample_count_failed", row["blockers"])
+        self.assertIn(
+            "queue_position_survival_nonfill_opportunity_cost_bps_failed",
+            row["blockers"],
+        )
+        self.assertIn("time_to_fill_quantiles_present_failed", row["blockers"])
+        self.assertEqual(queue_summary["min_sample_count"], 60)
+
+    def test_candidate_board_accepts_queue_survival_overlay_with_lifecycle_depth(
+        self,
+    ) -> None:
+        spec = replace(
+            self._candidate_spec("spec-queue-survival-pass"),
+            parameter_space={
+                "mechanism_overlay_ids": ["queue_position_survival_fill_curve"]
+            },
+            hard_vetoes={
+                "required_queue_position_survival_fill_curve": True,
+                "required_min_queue_position_survival_sample_count": "60",
+                "required_max_queue_position_nonfill_opportunity_cost_bps": "8",
+                "required_time_to_fill_quantiles": True,
+            },
+            promotion_contract={
+                "requires_queue_position_survival_fill_curve": True,
+                "requires_time_to_fill_quantiles": True,
+                "requires_nonfill_opportunity_cost": True,
+            },
+        )
+
+        summary = runner._candidate_board_queue_position_survival_summary(
+            spec,
+            {
+                "queue_position_survival_fill_curve_evidence_present": True,
+                "queue_position_survival_sample_count": 60,
+                "queue_position_survival_fill_rate": "0.85",
+                "queue_position_survival_queue_ratio_p95": "0.25",
+                "queue_position_survival_queue_ahead_depletion_evidence_present": True,
+                "queue_position_survival_queue_ahead_depletion_sample_count": 60,
+                "queue_position_survival_nonfill_opportunity_cost_bps": "8",
+                "fill_time_ms_p50": "110",
+                "fill_time_ms_p95": "450",
+            },
+        )
+
+        self.assertTrue(summary["required"])
+        self.assertTrue(summary["passed"])
+        self.assertEqual(summary["blockers"], [])
+        self.assertTrue(summary["time_to_fill_quantiles_present"])
+
     def test_candidate_board_rejects_market_limit_candidate_with_unreachable_artifacts(
         self,
     ) -> None:
