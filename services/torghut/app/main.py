@@ -125,6 +125,10 @@ from .trading.profit_carry_passports import build_profit_carry_passport_ledger
 from .trading.profit_freshness_frontier import build_profit_freshness_frontier
 from .trading.profit_repair_settlement import build_profit_repair_settlement_ledger
 from .trading.profit_signal_quorum import build_profit_signal_quorum
+from .trading.paper_route_target_plan import (
+    mapping_items as _shared_mapping_items,
+    paper_route_target_plan_from_payload as _shared_paper_route_target_plan_from_payload,
+)
 from .trading.paper_route_evidence import build_paper_route_evidence_audit
 from .trading.proof_floor import build_profitability_proof_floor_receipt
 from .trading.quality_adjusted_profit_frontier import (
@@ -4573,13 +4577,7 @@ def trading_paper_route_evidence(
 
 
 def _mapping_items(value: object) -> list[dict[str, Any]]:
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
-        return []
-    return [
-        _to_str_map(cast(object, item))
-        for item in cast(Sequence[object], value)
-        if isinstance(item, Mapping)
-    ]
+    return _shared_mapping_items(value)
 
 
 def _paper_route_target_plan_targets(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -4587,27 +4585,7 @@ def _paper_route_target_plan_targets(plan: Mapping[str, Any]) -> list[dict[str, 
 
 
 def _paper_route_target_plan_from_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
-    live_gate = _to_str_map(payload.get("live_submission_gate"))
-    runtime_window_plan = _to_str_map(payload.get("runtime_window_import_plan"))
-    next_paper_route_plan = _to_str_map(
-        payload.get("next_paper_route_runtime_window_targets")
-    )
-    paper_route_payload = (
-        payload.get("schema_version") == "torghut.paper-route-evidence.v1"
-    )
-    paper_route_plans = [next_paper_route_plan] if paper_route_payload else []
-    candidate_plans = [
-        runtime_window_plan,
-        *paper_route_plans,
-        _to_str_map(live_gate.get("runtime_ledger_paper_probation_import_plan")),
-        _to_str_map(payload.get("runtime_ledger_paper_probation_import_plan")),
-        *([] if paper_route_payload else [next_paper_route_plan]),
-        dict(payload) if _paper_route_target_plan_targets(payload) else {},
-    ]
-    for plan in candidate_plans:
-        if _paper_route_target_plan_targets(plan):
-            return plan
-    return {}
+    return _shared_paper_route_target_plan_from_payload(payload)
 
 
 def _fetch_paper_route_target_plan_url(

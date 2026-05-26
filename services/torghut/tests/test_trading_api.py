@@ -41,6 +41,10 @@ from app.main import (
     _route_claim_symbols,
     app,
 )
+from app.trading.paper_route_target_plan import (
+    fetch_paper_route_target_plan_url as shared_fetch_paper_route_target_plan_url,
+    paper_route_target_plan_probe_symbols,
+)
 from app.trading.forecast_runtime import forecast_registry
 from app.trading.scheduler import TradingScheduler
 from app.trading.feature_quality import FeatureQualityReport
@@ -7347,6 +7351,145 @@ class TestTradingApi(TestCase):
             )
         self.assertEqual(plan["source"], "external_paper_route_target_plan")
         self.assertEqual(plan["targets"][0]["candidate_id"], "c88421d619759b2cfaa6f4d0")
+
+    def test_shared_paper_route_target_plan_helpers_validate_response(self) -> None:
+        class FakeResponse:
+            def __init__(self, status: int, raw: bytes) -> None:
+                self.status = status
+                self._raw = raw
+
+            def read(self, size: int) -> bytes:
+                self.read_size = size
+                return self._raw
+
+        def connection_class(status: int, raw: bytes) -> type[Any]:
+            class FakeConnection:
+                instances: list["FakeConnection"] = []
+
+                def __init__(
+                    self,
+                    hostname: str,
+                    port: int | None,
+                    *,
+                    timeout: float,
+                ) -> None:
+                    self.hostname = hostname
+                    self.port = port
+                    self.timeout = timeout
+                    self.request_path: str | None = None
+                    self.closed = False
+                    self.instances.append(self)
+
+                def request(
+                    self,
+                    method: str,
+                    path: str,
+                    *,
+                    headers: dict[str, str],
+                ) -> None:
+                    self.request_method = method
+                    self.request_path = path
+                    self.request_headers = headers
+
+                def getresponse(self) -> FakeResponse:
+                    return FakeResponse(status, raw)
+
+                def close(self) -> None:
+                    self.closed = True
+
+            return FakeConnection
+
+        self.assertEqual(
+            shared_fetch_paper_route_target_plan_url(
+                "file:///tmp/plan.json",
+                timeout_seconds=1,
+            ),
+            {"load_error": "paper_route_target_plan_invalid_scheme:file"},
+        )
+        self.assertEqual(
+            shared_fetch_paper_route_target_plan_url(
+                "http:///missing-host",
+                timeout_seconds=1,
+            ),
+            {"load_error": "paper_route_target_plan_invalid_host"},
+        )
+
+        http_error_connection = connection_class(503, b"{}")
+        with patch(
+            "app.trading.paper_route_target_plan.HTTPConnection",
+            http_error_connection,
+        ):
+            self.assertEqual(
+                shared_fetch_paper_route_target_plan_url(
+                    "http://torghut.example/plan?mode=paper",
+                    timeout_seconds=0,
+                ),
+                {"load_error": "paper_route_target_plan_http_status:503"},
+            )
+        self.assertEqual(http_error_connection.instances[0].hostname, "torghut.example")
+        self.assertEqual(
+            http_error_connection.instances[0].request_path, "/plan?mode=paper"
+        )
+        self.assertEqual(http_error_connection.instances[0].timeout, 0.1)
+        self.assertTrue(http_error_connection.instances[0].closed)
+
+        for raw, expected in (
+            (b"{", "paper_route_target_plan_invalid_json:"),
+            (b"[]", "paper_route_target_plan_invalid_payload"),
+            (
+                json.dumps({"runtime_window_import_plan": {"targets": []}}).encode(
+                    "utf-8"
+                ),
+                "paper_route_target_plan_missing",
+            ),
+            (b"x" * 5_000_001, "paper_route_target_plan_response_too_large"),
+        ):
+            fake_connection = connection_class(200, raw)
+            with patch(
+                "app.trading.paper_route_target_plan.HTTPConnection",
+                fake_connection,
+            ):
+                result = shared_fetch_paper_route_target_plan_url(
+                    "http://torghut.example",
+                    timeout_seconds=1,
+                )
+            self.assertTrue(str(result["load_error"]).startswith(expected))
+
+        success_connection = connection_class(
+            200,
+            json.dumps(
+                {
+                    "runtime_window_import_plan": {
+                        "targets": [
+                            {
+                                "candidate_id": "c88421d619759b2cfaa6f4d0",
+                                "paper_route_probe_symbols": " aapl, AMZN ",
+                            },
+                            {
+                                "candidate_id": "other",
+                                "paper_route_probe_symbols": [],
+                            },
+                            {
+                                "candidate_id": "missing-symbols",
+                            },
+                        ]
+                    }
+                }
+            ).encode("utf-8"),
+        )
+        with patch(
+            "app.trading.paper_route_target_plan.HTTPConnection",
+            success_connection,
+        ):
+            plan = shared_fetch_paper_route_target_plan_url(
+                "http://torghut.example",
+                timeout_seconds=3,
+            )
+        self.assertEqual(plan["source"], "external_paper_route_target_plan")
+        self.assertEqual(
+            paper_route_target_plan_probe_symbols(plan),
+            {"AAPL", "AMZN"},
+        )
 
     def test_load_external_paper_route_target_plan_uses_configured_url(self) -> None:
         original_target_plan_url = settings.trading_paper_route_target_plan_url

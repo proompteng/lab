@@ -19,6 +19,10 @@ from ..feature_quality import FeatureQualityThresholds, evaluate_feature_batch_q
 from ..firewall import OrderFirewallBlocked
 from ..ingest import SignalBatch
 from ..models import SignalEnvelope, StrategyDecision
+from ..paper_route_target_plan import (
+    fetch_paper_route_target_plan_url,
+    paper_route_target_plan_probe_symbols,
+)
 from ..prices import MarketSnapshot
 from ..proof_floor import build_profitability_proof_floor_receipt
 from ..simple_risk import (
@@ -697,6 +701,23 @@ class SimpleTradingPipeline(TradingPipeline):
                 return True
         return True
 
+    @staticmethod
+    def _external_paper_route_target_probe_symbols() -> tuple[set[str], str | None]:
+        url = str(settings.trading_paper_route_target_plan_url or "").strip()
+        if not url:
+            return set(), None
+        plan = fetch_paper_route_target_plan_url(
+            url,
+            timeout_seconds=settings.trading_paper_route_target_plan_timeout_seconds,
+        )
+        load_error = str(plan.get("load_error") or "").strip()
+        if load_error:
+            return set(), load_error
+        symbols = paper_route_target_plan_probe_symbols(plan)
+        if not symbols:
+            return set(), "paper_route_target_plan_probe_symbols_missing"
+        return symbols, None
+
     def _paper_route_probe_context(
         self,
         *,
@@ -729,6 +750,13 @@ class SimpleTradingPipeline(TradingPipeline):
             if str(item).strip()
         }
         symbol = decision.symbol.strip().upper()
+        target_plan_symbols, target_plan_error = (
+            self._external_paper_route_target_probe_symbols()
+        )
+        if target_plan_error:
+            return None
+        if target_plan_symbols and symbol not in target_plan_symbols:
+            return None
         symbol_route_probe_reasons = self._proof_floor_symbol_route_probe_reasons(
             proof_floor,
             symbol,
@@ -761,6 +789,10 @@ class SimpleTradingPipeline(TradingPipeline):
             "blocking_reasons": sorted(blocking_reasons | symbol_route_probe_reasons),
             "route_repair_symbols": sorted(repair_symbols),
             "paper_route_probe_symbols": sorted(paper_route_probe_symbols),
+            "paper_route_target_plan_symbols": sorted(target_plan_symbols),
+            "paper_route_target_plan_source": "external_target_plan_url"
+            if target_plan_symbols
+            else None,
         }
 
     def _apply_paper_route_probe_cap(
