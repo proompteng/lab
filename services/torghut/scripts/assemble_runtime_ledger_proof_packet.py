@@ -857,6 +857,7 @@ def _required_actions(blockers: Sequence[str], *, verdict: str) -> list[str]:
             "dependency_quorum_not_allow",
             "continuity_not_ok",
             "drift_not_ok",
+            "drift_checks_not_ok",
         } or blocker.startswith("runtime_window_import_health_gate"):
             _extend_unique(actions, ["repair_runtime_window_import_health_gate"])
     if not actions and verdict != "promotion_authority_allowed":
@@ -925,6 +926,9 @@ def build_runtime_ledger_proof_packet(
         targets=paper_targets,
     )
     health_gate_blockers = _text_list(health_gate_summary.get("blockers"))
+    health_gate_promotion_blockers = _text_list(
+        health_gate_summary.get("promotion_blockers")
+    )
     handoff = _mapping(plan.get("runtime_window_import_handoff"))
     session_readiness = _mapping(plan.get("session_readiness"))
     import_ready = _bool(session_readiness.get("import_ready")) or _bool(
@@ -1318,14 +1322,20 @@ def build_runtime_ledger_proof_packet(
 
     failed_checks = [key for key, value in checks.items() if not value["passed"]]
     post_cost_proof_allowed = not failed_checks
-    capital_promotion_allowed = post_cost_proof_allowed and not capital_status_blockers
-    capital_promotion_failed_checks = (
-        ["capital_promotion_gate"] if capital_status_blockers else []
+    promotion_prerequisite_blockers = list(capital_status_blockers)
+    _extend_unique(promotion_prerequisite_blockers, health_gate_promotion_blockers)
+    capital_promotion_allowed = (
+        post_cost_proof_allowed and not promotion_prerequisite_blockers
     )
+    capital_promotion_failed_checks: list[str] = []
+    if capital_status_blockers:
+        capital_promotion_failed_checks.append("capital_promotion_gate")
+    if health_gate_promotion_blockers:
+        capital_promotion_failed_checks.append("paper_route_promotion_health_gate")
     promotion_failed_checks = list(failed_checks)
     _extend_unique(promotion_failed_checks, capital_promotion_failed_checks)
     promotion_blockers = list(blockers)
-    _extend_unique(promotion_blockers, capital_status_blockers)
+    _extend_unique(promotion_blockers, promotion_prerequisite_blockers)
     waiting_blockers = {
         "paper_route_session_window_not_open",
         "paper_route_session_window_not_closed",
@@ -1370,7 +1380,7 @@ def build_runtime_ledger_proof_packet(
         "capital_promotion_authority": {
             "allowed": capital_promotion_allowed,
             "reason": capital_reason,
-            "blocking_reasons": capital_status_blockers,
+            "blocking_reasons": promotion_prerequisite_blockers,
             "proof_prerequisite_blocking_reasons": blockers,
             "failed_checks": capital_promotion_failed_checks
             if post_cost_proof_allowed
@@ -1412,7 +1422,7 @@ def build_runtime_ledger_proof_packet(
                 "mode": status.get("mode"),
                 "running": status.get("running"),
                 "live_status_blockers": live_blockers,
-                "capital_promotion_blockers": capital_status_blockers,
+                "capital_promotion_blockers": promotion_prerequisite_blockers,
                 "raw_live_status_blockers": raw_live_blockers,
             },
             "paper_route_target_plan": {
