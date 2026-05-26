@@ -4677,12 +4677,48 @@ def _merge_external_paper_route_target_plan(
 ) -> dict[str, object]:
     gate = dict(live_submission_gate)
     local_plan = _to_str_map(gate.get("runtime_ledger_paper_probation_import_plan"))
-    if _paper_route_target_plan_targets(local_plan):
+    if (
+        _paper_route_target_plan_targets(local_plan)
+        and not settings.trading_paper_route_target_plan_url
+    ):
         return gate
 
     external_plan = _load_external_paper_route_target_plan()
     if not external_plan:
+        if _paper_route_target_plan_targets(local_plan):
+            return gate
         return gate
+
+    load_error = str(external_plan.get("load_error") or "").strip()
+    if load_error:
+        gate["paper_route_target_plan_error"] = load_error
+        if settings.trading_paper_route_target_plan_url:
+            gate["runtime_ledger_paper_probation_import_plan"] = {
+                "schema_version": local_plan.get("schema_version")
+                or "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                "target_count": 0,
+                "skipped_target_count": len(
+                    _paper_route_target_plan_targets(local_plan)
+                ),
+                "promotion_allowed": False,
+                "final_promotion_allowed": False,
+                "final_promotion_authorized": False,
+                "targets": [],
+                "skipped_targets": [
+                    {
+                        "reason": "external_paper_route_target_plan_unavailable",
+                        "missing_or_blocking_fields": [load_error],
+                    }
+                ],
+            }
+            gate["paper_route_target_plan_source"] = "external_target_plan_url"
+        return gate
+
+    if _paper_route_target_plan_targets(
+        local_plan
+    ) and not _paper_route_target_plan_targets(external_plan):
+        return gate
+
     if _paper_route_target_plan_targets(external_plan):
         merged_plan = dict(external_plan)
         merged_targets: list[dict[str, Any]] = []
@@ -4693,6 +4729,10 @@ def _merge_external_paper_route_target_plan(
                 target["paper_route_probe_scope_authority"] = "external_target_plan"
             merged_targets.append(target)
         merged_plan["targets"] = merged_targets
+        merged_plan["target_count"] = len(merged_targets)
+        merged_plan["skipped_target_count"] = int(
+            merged_plan.get("skipped_target_count") or 0
+        )
         merged_plan["promotion_allowed"] = False
         merged_plan["final_promotion_allowed"] = False
         merged_plan["final_promotion_authorized"] = False
@@ -4700,9 +4740,6 @@ def _merge_external_paper_route_target_plan(
         gate["paper_route_target_plan_source"] = "external_target_plan_url"
         return gate
 
-    load_error = str(external_plan.get("load_error") or "").strip()
-    if load_error:
-        gate["paper_route_target_plan_error"] = load_error
     return gate
 
 

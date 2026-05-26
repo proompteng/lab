@@ -1749,6 +1749,12 @@ def build_paper_route_evidence_audit(
                 "promotion_allowed": False,
                 "final_promotion_allowed": False,
             },
+            "paper_route_target_plan_source": _safe_text(
+                live_submission_gate.get("paper_route_target_plan_source")
+            ),
+            "paper_route_target_plan_error": _safe_text(
+                live_submission_gate.get("paper_route_target_plan_error")
+            ),
         },
         "paper_route_probe": probe,
         "next_paper_route_runtime_window_targets": next_targets,

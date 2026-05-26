@@ -7055,7 +7055,7 @@ class TestTradingApi(TestCase):
             else:
                 app.state.trading_scheduler = original_scheduler
 
-    def test_trading_paper_route_evidence_uses_external_plan_when_local_plan_empty(
+    def test_trading_paper_route_evidence_uses_external_plan_when_url_configured(
         self,
     ) -> None:
         original_scheduler = getattr(app.state, "trading_scheduler", None)
@@ -7087,11 +7087,16 @@ class TestTradingApi(TestCase):
             "promotion_eligible_total": 0,
             "runtime_ledger_paper_probation_import_plan": {
                 "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
-                "target_count": 0,
+                "target_count": 1,
                 "skipped_target_count": 0,
                 "promotion_allowed": False,
                 "final_promotion_allowed": False,
-                "targets": [],
+                "targets": [
+                    {
+                        **target,
+                        "paper_route_probe_symbols": ["AAPL", "AMZN", "INTC"],
+                    }
+                ],
             },
         }
         proof_floor = {
@@ -7102,7 +7107,7 @@ class TestTradingApi(TestCase):
                     "configured_enabled": True,
                     "active": False,
                     "effective_max_notional": "0",
-                    "next_session_max_notional": "25",
+                    "next_session_max_notional": "63180",
                     "eligible_symbol_count": 2,
                     "eligible_symbols": ["AAPL", "AMZN"],
                     "active_symbols": [],
@@ -7145,6 +7150,10 @@ class TestTradingApi(TestCase):
                     "runtime_ledger_paper_probation_import_plan"
                 ]["target_count"],
                 1,
+            )
+            self.assertEqual(
+                payload["live_submission_gate"]["paper_route_target_plan_source"],
+                "external_target_plan_url",
             )
             self.assertEqual(
                 payload["targets"][0]["target"]["candidate_id"],
@@ -7379,6 +7388,38 @@ class TestTradingApi(TestCase):
         with patch("app.main._load_external_paper_route_target_plan", return_value={}):
             self.assertEqual(_merge_external_paper_route_target_plan({}), {})
 
+        original_target_plan_url = settings.trading_paper_route_target_plan_url
+        try:
+            settings.trading_paper_route_target_plan_url = (
+                "http://torghut.example/paper-route-plan"
+            )
+            with patch(
+                "app.main._load_external_paper_route_target_plan",
+                return_value={},
+            ):
+                self.assertEqual(
+                    _merge_external_paper_route_target_plan(local_gate),
+                    local_gate,
+                )
+        finally:
+            settings.trading_paper_route_target_plan_url = original_target_plan_url
+
+        original_target_plan_url = settings.trading_paper_route_target_plan_url
+        try:
+            settings.trading_paper_route_target_plan_url = (
+                "http://torghut.example/paper-route-plan"
+            )
+            with patch(
+                "app.main._load_external_paper_route_target_plan",
+                return_value={"targets": []},
+            ):
+                self.assertEqual(
+                    _merge_external_paper_route_target_plan(local_gate),
+                    local_gate,
+                )
+        finally:
+            settings.trading_paper_route_target_plan_url = original_target_plan_url
+
         with patch(
             "app.main._load_external_paper_route_target_plan",
             return_value={"load_error": "paper_route_target_plan_missing"},
@@ -7388,6 +7429,59 @@ class TestTradingApi(TestCase):
             gate["paper_route_target_plan_error"],
             "paper_route_target_plan_missing",
         )
+
+        original_target_plan_url = settings.trading_paper_route_target_plan_url
+        try:
+            settings.trading_paper_route_target_plan_url = (
+                "http://torghut.example/paper-route-plan"
+            )
+            with patch(
+                "app.main._load_external_paper_route_target_plan",
+                return_value={"load_error": "paper_route_target_plan_missing"},
+            ):
+                gate = _merge_external_paper_route_target_plan(local_gate)
+            plan = gate["runtime_ledger_paper_probation_import_plan"]
+            self.assertEqual(
+                gate["paper_route_target_plan_source"], "external_target_plan_url"
+            )
+            self.assertEqual(
+                gate["paper_route_target_plan_error"],
+                "paper_route_target_plan_missing",
+            )
+            self.assertEqual(plan["target_count"], 0)
+            self.assertEqual(plan["skipped_target_count"], 1)
+            self.assertEqual(plan["targets"], [])
+        finally:
+            settings.trading_paper_route_target_plan_url = original_target_plan_url
+
+        original_target_plan_url = settings.trading_paper_route_target_plan_url
+        try:
+            settings.trading_paper_route_target_plan_url = (
+                "http://torghut.example/paper-route-plan"
+            )
+            with patch(
+                "app.main._load_external_paper_route_target_plan",
+                return_value={
+                    "promotion_allowed": True,
+                    "final_promotion_allowed": True,
+                    "final_promotion_authorized": True,
+                    "targets": [
+                        {
+                            "candidate_id": "external",
+                            "paper_route_probe_symbols": ["AAPL"],
+                        }
+                    ],
+                },
+            ):
+                gate = _merge_external_paper_route_target_plan(local_gate)
+            plan = gate["runtime_ledger_paper_probation_import_plan"]
+            self.assertEqual(
+                gate["paper_route_target_plan_source"], "external_target_plan_url"
+            )
+            self.assertEqual(plan["target_count"], 1)
+            self.assertEqual(plan["targets"][0]["candidate_id"], "external")
+        finally:
+            settings.trading_paper_route_target_plan_url = original_target_plan_url
 
         with patch(
             "app.main._load_external_paper_route_target_plan",
@@ -7468,7 +7562,7 @@ class TestTradingApi(TestCase):
                     "configured_enabled": True,
                     "active": False,
                     "effective_max_notional": "0",
-                    "next_session_max_notional": "25",
+                    "next_session_max_notional": "63180",
                     "eligible_symbol_count": 3,
                     "eligible_symbols": ["AAPL", "AMZN", "INTC"],
                     "active_symbols": [],
