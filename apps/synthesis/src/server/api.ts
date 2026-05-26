@@ -1,7 +1,5 @@
 import {
   ListFeedInputSchema,
-  NextEngagementInputSchema,
-  RecordEngagementResultInputSchema,
   RecordFeedbackInputSchema,
   StartRunInputSchema,
   SubmitBatchInputSchema,
@@ -22,7 +20,7 @@ const parseFeedQuery = (request: Request) => {
     cursor: url.searchParams.get('cursor') ?? undefined,
     tag: url.searchParams.get('tag') ?? undefined,
     minScore: url.searchParams.get('minScore') ?? undefined,
-    engagementStatus: url.searchParams.get('engagementStatus') ?? undefined,
+    query: url.searchParams.get('query') ?? url.searchParams.get('q') ?? undefined,
   })
   return parsed.success ? parsed.data : null
 }
@@ -113,38 +111,6 @@ export const handleRecordFeedback = async (request: Request, id: string) => {
 
   try {
     return jsonResponse({ feedback: await getSynthesisStore().recordFeedback(parsed.data) }, { status: 201 })
-  } catch (error) {
-    return internalError(error)
-  }
-}
-
-export const handleNextEngagement = async (request: Request) => {
-  const unauthorized = requireAuthorized(request)
-  if (unauthorized) return unauthorized
-
-  const url = new URL(request.url)
-  const parsed = NextEngagementInputSchema.safeParse({
-    dryRun: url.searchParams.get('dryRun') === '1' || url.searchParams.get('dryRun') === 'true',
-  })
-  if (!parsed.success) return badRequest('invalid engagement query')
-
-  try {
-    return jsonResponse(await getSynthesisStore().nextEngagement(parsed.data))
-  } catch (error) {
-    return internalError(error)
-  }
-}
-
-export const handleRecordEngagementResult = async (request: Request, id: string) => {
-  const unauthorized = requireAuthorized(request)
-  if (unauthorized) return unauthorized
-
-  const raw = await request.json().catch(() => null)
-  const parsed = RecordEngagementResultInputSchema.safeParse({ id, ...(typeof raw === 'object' && raw ? raw : {}) })
-  if (!parsed.success) return badRequest('invalid request body')
-
-  try {
-    return jsonResponse({ engagementAction: await getSynthesisStore().recordEngagementResult(parsed.data) })
   } catch (error) {
     return internalError(error)
   }

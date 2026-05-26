@@ -2,8 +2,6 @@ import { isAuthorized } from './auth'
 import { jsonResponse } from './http'
 import {
   ListFeedInputSchema,
-  NextEngagementInputSchema,
-  RecordEngagementResultInputSchema,
   RecordFeedbackInputSchema,
   StartRunInputSchema,
   SubmitBatchInputSchema,
@@ -43,8 +41,6 @@ const mutatingTools = new Set([
   'synthesis_submit_item',
   'synthesis_submit_batch',
   'synthesis_record_feedback',
-  'synthesis_next_engagement',
-  'synthesis_record_engagement_result',
 ])
 
 const toolsListResult = {
@@ -87,7 +83,6 @@ const toolsListResult = {
                 postedAt: { type: 'string' },
                 observedAt: { type: 'string' },
                 observedText: { type: 'string' },
-                mediaUrls: { type: 'array', items: { type: 'string' } },
               },
               required: ['originalUrl', 'observedText'],
               additionalProperties: false,
@@ -100,7 +95,7 @@ const toolsListResult = {
               type: 'object',
               properties: {
                 claim: { type: 'string' },
-                status: { type: 'string', enum: ['verified', 'unclear', 'refuted'] },
+                status: { type: 'string', enum: ['verified', 'unclear', 'refuted', 'rumor'] },
                 explanation: { type: 'string' },
                 sources: {
                   type: 'array',
@@ -159,8 +154,6 @@ const toolsListResult = {
           topicTags: { type: 'array', items: { type: 'string' } },
           score: { type: 'number', minimum: 0, maximum: 1 },
           confidence: { type: 'number', minimum: 0, maximum: 1 },
-          engagementRecommendation: { type: 'string', enum: ['none', 'like', 'reply'] },
-          replyText: { type: 'string' },
         },
         required: ['title', 'synthesis', 'takeaways', 'whyValuable', 'sourcePosts', 'dedupeKey', 'score', 'confidence'],
         additionalProperties: false,
@@ -188,10 +181,7 @@ const toolsListResult = {
           limit: { type: 'integer', minimum: 1, maximum: 100 },
           tag: { type: 'string' },
           minScore: { type: 'number', minimum: 0, maximum: 1 },
-          engagementStatus: {
-            type: 'string',
-            enum: ['none', 'queued', 'sent', 'failed', 'skipped', 'suppressed'],
-          },
+          query: { type: 'string', description: 'Semantic search query ranked against stored item embeddings.' },
         },
         additionalProperties: false,
       },
@@ -217,30 +207,6 @@ const toolsListResult = {
           reason: { type: 'string' },
         },
         required: ['id', 'value'],
-        additionalProperties: false,
-      },
-    },
-    {
-      name: 'synthesis_next_engagement',
-      description: 'Fetch the next queued engagement for the local browser actor to perform.',
-      inputSchema: {
-        type: 'object',
-        properties: { dryRun: { type: 'boolean' } },
-        additionalProperties: false,
-      },
-    },
-    {
-      name: 'synthesis_record_engagement_result',
-      description: 'Record the local browser result for a queued X.com like or reply.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          id: { type: 'string' },
-          status: { type: 'string', enum: ['sent', 'failed', 'skipped'] },
-          resultUrl: { type: 'string' },
-          error: { type: 'string' },
-        },
-        required: ['id', 'status'],
         additionalProperties: false,
       },
     },
@@ -313,10 +279,19 @@ const buildConfigResource = (request: Request) => ({
         mutatingTools: [...mutatingTools],
       },
       guardrails: {
-        engagementModeEnv: 'SYNTHESIS_ENGAGEMENT_MODE',
-        autoLikeMaxPerDay: 25,
-        autoReplyMaxPerDay: 5,
-        actor: 'local browser only',
+        embeddings: {
+          createdByServer: true,
+          localModelRequired: true,
+          clientSuppliedEmbeddingsAccepted: false,
+        },
+        search: {
+          queryMode: 'semantic',
+          textSubstringSearch: false,
+        },
+        assets: {
+          sourceMediaMustBeAttachments: true,
+          objectStorageBackedWhenConfigured: true,
+        },
       },
       tools: toolsListResult.tools,
     },
@@ -373,19 +348,6 @@ const handleToolCall = async (
       const parsed = RecordFeedbackInputSchema.safeParse(args)
       if (!parsed.success) return invalidParams(id, 'Invalid synthesis_record_feedback input')
       return asJsonRpcResponse(id, toTextToolResult({ ok: true, feedback: await store.recordFeedback(parsed.data) }))
-    }
-    if (name === 'synthesis_next_engagement') {
-      const parsed = NextEngagementInputSchema.safeParse(args)
-      if (!parsed.success) return invalidParams(id, 'Invalid synthesis_next_engagement input')
-      return asJsonRpcResponse(id, toTextToolResult({ ok: true, ...(await store.nextEngagement(parsed.data)) }))
-    }
-    if (name === 'synthesis_record_engagement_result') {
-      const parsed = RecordEngagementResultInputSchema.safeParse(args)
-      if (!parsed.success) return invalidParams(id, 'Invalid synthesis_record_engagement_result input')
-      return asJsonRpcResponse(
-        id,
-        toTextToolResult({ ok: true, engagementAction: await store.recordEngagementResult(parsed.data) }),
-      )
     }
 
     return asJsonRpcError(id, { code: -32601, message: `Unknown tool: ${name}` })

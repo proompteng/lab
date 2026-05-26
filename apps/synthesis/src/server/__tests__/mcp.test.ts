@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 
+import { setSynthesisEmbeddingProviderForTests } from '../embeddings'
 import { handleMcpRequest } from '../mcp'
 import { createInMemorySynthesisStore, setSynthesisStoreForTests } from '../store'
 
@@ -27,13 +28,26 @@ const parseToolJson = async (response: Response) => {
 describe('synthesis MCP', () => {
   beforeEach(() => {
     process.env.SYNTHESIS_API_TOKEN = token
-    process.env.SYNTHESIS_ENGAGEMENT_MODE = 'queue'
+    process.env.SYNTHESIS_EMBEDDING_DIMENSION = '3'
+    process.env.SYNTHESIS_EMBEDDING_MODEL = 'local-test-embedding'
+    setSynthesisEmbeddingProviderForTests(async ({ text, config }) => {
+      const lowered = text.toLowerCase()
+      if (lowered.includes('browser') || lowered.includes('agent')) {
+        return { embedding: [1, 0, 0], model: config.model, dimension: config.dimension }
+      }
+      if (lowered.includes('packaging') || lowered.includes('semis')) {
+        return { embedding: [0, 1, 0], model: config.model, dimension: config.dimension }
+      }
+      return { embedding: [0, 0, 1], model: config.model, dimension: config.dimension }
+    })
     setSynthesisStoreForTests(createInMemorySynthesisStore())
   })
 
   afterEach(() => {
     delete process.env.SYNTHESIS_API_TOKEN
-    delete process.env.SYNTHESIS_ENGAGEMENT_MODE
+    delete process.env.SYNTHESIS_EMBEDDING_DIMENSION
+    delete process.env.SYNTHESIS_EMBEDDING_MODEL
+    setSynthesisEmbeddingProviderForTests(null)
     setSynthesisStoreForTests(null)
   })
 
@@ -51,7 +65,8 @@ describe('synthesis MCP', () => {
     const submitTool = toolsPayload.result.tools.find((tool: { name: string }) => tool.name === 'synthesis_submit_item')
 
     expect(toolNames).toContain('synthesis_submit_item')
-    expect(toolNames).toContain('synthesis_next_engagement')
+    expect(toolNames).not.toContain('synthesis_next_engagement')
+    expect(toolNames).not.toContain('synthesis_record_engagement_result')
     expect(submitTool.inputSchema.required).toEqual([
       'title',
       'synthesis',
@@ -64,6 +79,9 @@ describe('synthesis MCP', () => {
     ])
     expect(submitTool.inputSchema.properties.summary).toBeUndefined()
     expect(submitTool.inputSchema.properties.originalUrl).toBeUndefined()
+    expect(submitTool.inputSchema.properties.engagementRecommendation).toBeUndefined()
+    expect(submitTool.inputSchema.properties.replyText).toBeUndefined()
+    expect(submitTool.inputSchema.properties.embedding).toBeUndefined()
 
     const resourceResponse = await handleMcpRequest(rpc('resources/read', { uri: 'synthesis://config' }))
     const resourcePayload = await resourceResponse.json()
@@ -96,14 +114,13 @@ describe('synthesis MCP', () => {
               {
                 originalUrl: 'https://twitter.com/example/status/12345?ref=feed',
                 observedText: 'semi stack integration notes with actionable edge ai packaging detail',
-                mediaUrls: ['data:image/png;base64,AAAA'],
               },
             ],
+            attachments: [{ kind: 'source_image', data: 'data:image/png;base64,AAAA' }],
             dedupeKey: 'theme:edge-ai-packaging',
             topicTags: ['semis', 'ai agents'],
             score: 0.91,
             confidence: 0.82,
-            engagementRecommendation: 'like',
           },
           headers,
         ),
@@ -111,8 +128,9 @@ describe('synthesis MCP', () => {
     )
 
     expect(submitPayload.item.originalUrl).toBe('https://x.com/example/status/12345')
-    expect(submitPayload.item.mediaUrls).toEqual(['data:image/png;base64,AAAA'])
-    expect(submitPayload.engagementAction.action).toBe('like')
+    expect(submitPayload.item.attachments).toHaveLength(1)
+    expect(submitPayload.item.embedding).toMatchObject({ model: 'local-test-embedding', dimension: 3 })
+    expect(submitPayload.engagementAction).toBeUndefined()
 
     const feedPayload = await parseToolJson(await handleMcpRequest(callTool('synthesis_list_feed', { limit: 10 })))
     expect(feedPayload.items).toHaveLength(1)
@@ -153,7 +171,7 @@ describe('synthesis MCP', () => {
               'The useful signal is not another browser-agent demo. Multiple posts point to browser sessions becoming the control surface for authenticated SaaS work.',
             takeaways: [
               'logged-in browser context is becoming the product surface',
-              'approval queues matter for risky actions',
+              'source media should be stored as rendered attachments',
             ],
             sourcePosts: [
               {
@@ -164,15 +182,15 @@ describe('synthesis MCP', () => {
               {
                 originalUrl: 'https://x.com/example/status/4102',
                 authorHandle: 'example',
-                observedText: 'second browser agent post about approval queues',
+                observedText: 'second browser agent post about saved screenshots',
               },
             ],
             factChecks: [
               {
-                claim: 'Automated engagement should stay behind approval.',
+                claim: 'Captured source images should be stored as attachments.',
                 status: 'verified',
-                explanation: 'Platform automation rules restrict unsolicited automated engagement.',
-                sources: [{ title: 'X automation rules', url: 'https://help.x.com/articles/76915' }],
+                explanation: 'The Synthesis app renders app-owned asset URLs from submitted attachments.',
+                sources: [{ title: 'Synthesis asset route', url: 'https://synthesis.test/api/assets/example' }],
               },
             ],
             attachments: [{ kind: 'source_image', url: 'https://pbs.twimg.com/media/browser-agent.jpg' }],
@@ -194,5 +212,58 @@ describe('synthesis MCP', () => {
     expect(submitPayload.item.factChecks[0].status).toBe('verified')
     expect(submitPayload.item.attachments).toHaveLength(2)
     expect(submitPayload.item.generatedAttachments).toHaveLength(1)
+    expect(submitPayload.item.embedding.dimension).toBe(3)
+  })
+
+  test('lists feed results through semantic search', async () => {
+    const headers = { authorization: `Bearer ${token}` }
+    const runPayload = await parseToolJson(await handleMcpRequest(callTool('synthesis_start_run', {}, headers)))
+    await parseToolJson(
+      await handleMcpRequest(
+        callTool(
+          'synthesis_submit_item',
+          {
+            runId: runPayload.run.id,
+            title: 'Browser agents are becoming workflow infrastructure',
+            synthesis: 'Browser sessions are turning into the authenticated execution surface for agents.',
+            takeaways: ['browser context matters for agent tooling'],
+            whyValuable: 'It is a concrete product direction.',
+            sourcePosts: [{ originalUrl: 'https://x.com/example/status/5101', observedText: 'browser agent workflow' }],
+            dedupeKey: 'theme:browser-agents',
+            topicTags: ['ai-agents'],
+            score: 0.91,
+            confidence: 0.82,
+          },
+          headers,
+        ),
+      ),
+    )
+    await parseToolJson(
+      await handleMcpRequest(
+        callTool(
+          'synthesis_submit_item',
+          {
+            runId: runPayload.run.id,
+            title: 'Semiconductor packaging is constraining edge AI deployment',
+            synthesis: 'Packaging and board integration are becoming practical limits for edge AI hardware.',
+            takeaways: ['packaging is part of deployment economics'],
+            whyValuable: 'It connects semis constraints to deployment planning.',
+            sourcePosts: [{ originalUrl: 'https://x.com/example/status/5102', observedText: 'semi packaging note' }],
+            dedupeKey: 'theme:semi-packaging',
+            topicTags: ['semis'],
+            score: 0.9,
+            confidence: 0.8,
+          },
+          headers,
+        ),
+      ),
+    )
+
+    const feedPayload = await parseToolJson(
+      await handleMcpRequest(callTool('synthesis_list_feed', { limit: 1, query: 'authenticated browser work' })),
+    )
+
+    expect(feedPayload.items).toHaveLength(1)
+    expect(feedPayload.items[0].dedupeKey).toBe('theme:browser-agents')
   })
 })
