@@ -199,6 +199,11 @@ const mergeAttachments = (left: SynthesisAttachment[], right: SynthesisAttachmen
 
 const digestKey = (value: string) => createHash('sha256').update(value).digest('base64url').slice(0, 24)
 
+const embeddingBackfillLimit = () => {
+  const parsed = Number(process.env.SYNTHESIS_EMBEDDING_BACKFILL_LIMIT ?? 1000)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 1000
+}
+
 const normalizeSubmitItem = async (input: SubmitItemInput): Promise<NormalizedSubmitItem> => {
   const sourcePosts = input.sourcePosts.map(normalizeSourcePost)
   const primarySource = sourcePosts[0]
@@ -882,6 +887,39 @@ class PostgresSynthesisStore implements SynthesisStore {
     )
   }
 
+  private async backfillMissingEmbeddings() {
+    const result = await this.pool.query<ItemRow>(
+      `SELECT ${this.itemSelectSql('i')}
+       FROM ${this.itemRelationSql('i')}
+       WHERE e.item_id IS NULL
+       ORDER BY i.created_at ASC, i.id ASC
+       LIMIT $1`,
+      [embeddingBackfillLimit()],
+    )
+    if (!result.rows.length) return
+
+    const client = await this.pool.connect()
+    try {
+      for (const row of result.rows) {
+        const item = mapItemRow(row)
+        const embeddingRecord = await createSynthesisEmbedding(
+          buildEmbeddingText({
+            title: item.title,
+            synthesis: item.synthesis,
+            takeaways: item.takeaways,
+            whyValuable: item.whyValuable,
+            topicTags: item.topicTags,
+            factChecks: item.factChecks,
+            sourcePosts: item.sourcePosts,
+          }),
+        )
+        await this.upsertEmbedding(client, item.id, embeddingRecord)
+      }
+    } finally {
+      client.release()
+    }
+  }
+
   private ensureSchema() {
     this.schemaPromise ??= this.createSchema()
     return this.schemaPromise
@@ -1020,6 +1058,7 @@ class PostgresSynthesisStore implements SynthesisStore {
       CREATE INDEX IF NOT EXISTS synthesis_attachments_item_idx ON synthesis_attachments (item_id);
       CREATE INDEX IF NOT EXISTS synthesis_item_embeddings_model_idx ON synthesis_item_embeddings (model, dimension);
     `)
+    await this.backfillMissingEmbeddings()
   }
 }
 

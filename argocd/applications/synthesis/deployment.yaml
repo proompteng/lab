@@ -50,6 +50,8 @@ spec:
               value: "qwen3-embedding-saigak:8b"
             - name: SYNTHESIS_EMBEDDING_DIMENSION
               value: "4096"
+            - name: SYNTHESIS_EMBEDDING_BACKFILL_LIMIT
+              value: "1000"
             - name: SYNTHESIS_ASSET_STORAGE_REQUIRED
               value: "true"
             - name: SYNTHESIS_ASSET_ENDPOINT
