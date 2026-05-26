@@ -153,6 +153,7 @@ _RUNTIME_UNCERTAINTY_DEGRADE_QTY_MULTIPLIER = Decimal("0.50")
 _RUNTIME_UNCERTAINTY_DEGRADE_MAX_PARTICIPATION_RATE = Decimal("0.05")
 _RUNTIME_UNCERTAINTY_DEGRADE_MIN_EXECUTION_SECONDS = 120
 _RUNTIME_REGIME_CONFIDENCE_DEFAULT_THRESHOLDS = (Decimal("0.75"), Decimal("0.55"))
+_STRATEGY_POSITION_TAG_TOLERANCE = Decimal("0.0001")
 
 
 def _normalized_symbol(symbol: object) -> str:
@@ -568,7 +569,10 @@ class TradingPipeline:
             "buying_power": str(account_snapshot.buying_power),
         }
         snapshot_positions = _clone_positions(account_snapshot.positions)
-        positions = self._resolve_execution_context_positions(snapshot_positions)
+        positions = self._resolve_execution_context_positions(
+            snapshot_positions,
+            session=session,
+        )
 
         universe_resolution = self.universe_resolver.get_resolution()
         self.state.universe_source_status = universe_resolution.status
@@ -625,6 +629,8 @@ class TradingPipeline:
     def _resolve_execution_context_positions(
         self,
         snapshot_positions: list[dict[str, Any]],
+        *,
+        session: Session | None = None,
     ) -> list[dict[str, Any]]:
         normalized_positions = _clone_positions(snapshot_positions)
         seed_snapshot = getattr(self.execution_adapter, "seed_positions_snapshot", None)
@@ -674,7 +680,172 @@ class TradingPipeline:
                     self.account_label,
                     projected_count,
                 )
+        if session is not None:
+            normalized_positions = self._attach_current_session_strategy_position_tags(
+                session,
+                normalized_positions,
+            )
         return normalized_positions
+
+    def _attach_current_session_strategy_position_tags(
+        self,
+        session: Session,
+        positions: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if not positions:
+            return positions
+        session_open = datetime.combine(
+            trading_now(account_label=self.account_label)
+            .astimezone(timezone.utc)
+            .date(),
+            REGULAR_OPEN_UTC,
+            tzinfo=timezone.utc,
+        )
+        try:
+            rows = session.execute(
+                select(Execution, TradeDecision)
+                .join(TradeDecision, Execution.trade_decision_id == TradeDecision.id)
+                .where(
+                    Execution.alpaca_account_label == self.account_label,
+                    TradeDecision.alpaca_account_label == self.account_label,
+                    Execution.status == "filled",
+                    Execution.filled_qty > Decimal("0"),
+                    Execution.created_at >= session_open,
+                )
+            ).all()
+        except Exception:
+            logger.exception(
+                "Failed to resolve current-session strategy position tags account=%s",
+                self.account_label,
+            )
+            return positions
+
+        exposures: dict[str, dict[str, dict[str, Any]]] = {}
+        for execution, decision_row in rows:
+            symbol = _normalized_symbol(execution.symbol or decision_row.symbol)
+            strategy_id = str(decision_row.strategy_id)
+            if not symbol or not strategy_id:
+                continue
+            filled_qty = _optional_decimal(execution.filled_qty)
+            if filled_qty is None or filled_qty <= 0:
+                continue
+            side = str(execution.side or "").strip().lower()
+            if side not in {"buy", "sell"}:
+                continue
+            signed_qty = filled_qty if side == "buy" else -filled_qty
+            strategy_exposures = exposures.setdefault(symbol, {})
+            exposure = strategy_exposures.setdefault(
+                strategy_id,
+                {
+                    "qty": Decimal("0"),
+                    "buy_qty": Decimal("0"),
+                    "buy_notional": Decimal("0"),
+                    "latest_execution_at": None,
+                },
+            )
+            exposure["qty"] = cast(Decimal, exposure["qty"]) + signed_qty
+            avg_fill_price = _optional_decimal(execution.avg_fill_price)
+            if side == "buy" and avg_fill_price is not None and avg_fill_price > 0:
+                exposure["buy_qty"] = cast(Decimal, exposure["buy_qty"]) + filled_qty
+                exposure["buy_notional"] = cast(
+                    Decimal,
+                    exposure["buy_notional"],
+                ) + (filled_qty * avg_fill_price)
+            latest_execution_at = exposure.get("latest_execution_at")
+            if (
+                latest_execution_at is None
+                or execution.created_at > latest_execution_at
+            ):
+                exposure["latest_execution_at"] = execution.created_at
+
+        if not exposures:
+            return positions
+
+        tagged_positions: list[dict[str, Any]] = []
+        for position in positions:
+            tagged_positions.append(
+                self._attach_strategy_position_tag(
+                    position,
+                    exposures=exposures,
+                    session_open=session_open,
+                )
+            )
+        return tagged_positions
+
+    @staticmethod
+    def _same_side_position_exposure(
+        position_qty: Decimal,
+        exposure_qty: Decimal,
+    ) -> bool:
+        if position_qty == 0 or exposure_qty == 0:
+            return False
+        return (position_qty > 0 and exposure_qty > 0) or (
+            position_qty < 0 and exposure_qty < 0
+        )
+
+    @staticmethod
+    def _attach_strategy_position_tag(
+        position: dict[str, Any],
+        *,
+        exposures: Mapping[str, Mapping[str, Mapping[str, Any]]],
+        session_open: datetime,
+    ) -> dict[str, Any]:
+        if str(position.get("strategy_id") or "").strip():
+            return position
+        symbol = _normalized_symbol(position.get("symbol"))
+        if not symbol:
+            return position
+        symbol_exposures = exposures.get(symbol)
+        if not symbol_exposures:
+            return position
+        raw_qty = (
+            position.get("qty")
+            or position.get("quantity")
+            or position.get("qty_available")
+            or "0"
+        )
+        position_qty = _optional_decimal(raw_qty)
+        if position_qty is None or position_qty <= 0:
+            return position
+        side = str(position.get("side") or "").strip().lower()
+        signed_position_qty = -position_qty if side == "short" else position_qty
+        same_side_exposures = [
+            (strategy_id, exposure)
+            for strategy_id, exposure in symbol_exposures.items()
+            if TradingPipeline._same_side_position_exposure(
+                signed_position_qty,
+                cast(Decimal, exposure.get("qty") or Decimal("0")),
+            )
+        ]
+        if len(same_side_exposures) != 1:
+            return position
+
+        strategy_id, exposure = same_side_exposures[0]
+        exposure_qty = cast(Decimal, exposure.get("qty") or Decimal("0"))
+        if (
+            abs(abs(exposure_qty) - abs(signed_position_qty))
+            > _STRATEGY_POSITION_TAG_TOLERANCE
+        ):
+            return position
+
+        tagged = dict(position)
+        tagged["strategy_id"] = strategy_id
+        tagged["strategy_position_source"] = "current_session_filled_executions"
+        tagged["strategy_position_session_open"] = session_open.isoformat()
+        latest_execution_at = exposure.get("latest_execution_at")
+        if isinstance(latest_execution_at, datetime):
+            tagged["strategy_position_latest_execution_at"] = (
+                latest_execution_at.isoformat()
+            )
+        buy_qty = cast(Decimal, exposure.get("buy_qty") or Decimal("0"))
+        buy_notional = cast(Decimal, exposure.get("buy_notional") or Decimal("0"))
+        if (
+            buy_qty > 0
+            and buy_notional > 0
+            and not _optional_decimal(tagged.get("avg_entry_price"))
+        ):
+            tagged["avg_entry_price"] = str(buy_notional / buy_qty)
+        return tagged
 
     def _resolve_execution_context_open_orders(self) -> list[dict[str, Any]]:
         list_orders = getattr(self.execution_adapter, "list_orders", None)
