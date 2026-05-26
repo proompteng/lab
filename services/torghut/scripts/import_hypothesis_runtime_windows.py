@@ -569,6 +569,29 @@ def _runtime_window_source_kind_is_informational(
     return scope == "evidence_collection_only"
 
 
+_AUTHORITATIVE_RUNTIME_LEDGER_MATERIALIZATION_SOURCE_KINDS = frozenset(
+    {
+        "paper_route_probe_runtime_observed",
+        "paper_runtime_observed",
+        "live_runtime_observed",
+    }
+)
+
+
+def _source_kind_allows_runtime_ledger_materialization(
+    *,
+    source_kind: str,
+    target_metadata: Mapping[str, Any],
+) -> bool:
+    if _runtime_window_source_kind_is_informational(
+        source_kind=source_kind,
+        target_metadata=target_metadata,
+    ):
+        return False
+    normalized = source_kind.strip().lower().replace("-", "_")
+    return normalized in _AUTHORITATIVE_RUNTIME_LEDGER_MATERIALIZATION_SOURCE_KINDS
+
+
 def _runtime_window_import_proof_hygiene_blockers(
     *,
     source_kind: str,
@@ -667,6 +690,8 @@ def _execution_signed_qty(*, side: Any, qty: Any) -> Decimal:
 
 def _build_realized_strategy_pnl_rows(
     execution_rows: list[dict[str, object]],
+    *,
+    allow_authoritative_runtime_ledger_materialization: bool = False,
 ) -> list[dict[str, object]]:
     ledger_rows: list[RuntimeLedgerFill | dict[str, object]] = []
     event_times: list[datetime] = []
@@ -800,26 +825,50 @@ def _build_realized_strategy_pnl_rows(
             bucket=bucket,
             computed_at=unique_times[-1],
         )
-        row["post_cost_expectancy_basis"] = POST_COST_BASIS_EXECUTION_RECONSTRUCTION
-        row["post_cost_promotion_eligible"] = False
-        row["authoritative"] = False
-        row["authority_reason"] = "execution_reconstruction_not_runtime_ledger_proof"
-        row["pnl_derivation"] = "execution_reconstructed_from_execution_rows"
-        row["promotion_blocker"] = "execution_reconstruction_not_runtime_ledger_proof"
-        blockers = list(row.get("runtime_ledger_blockers") or [])
-        if "execution_reconstruction_not_runtime_ledger_proof" not in blockers:
-            blockers.append("execution_reconstruction_not_runtime_ledger_proof")
-        row["runtime_ledger_blockers"] = blockers
         bucket_payload = row.get("runtime_ledger_bucket")
-        if isinstance(bucket_payload, Mapping):
-            bucket_payload = dict(bucket_payload)
-            bucket_payload["blockers"] = blockers
-            bucket_payload["pnl_basis"] = POST_COST_BASIS_EXECUTION_RECONSTRUCTION
-            bucket_payload["authoritative"] = False
-            bucket_payload["authority_reason"] = (
-                "execution_reconstruction_not_runtime_ledger_proof"
+        source_execution_materialized = (
+            allow_authoritative_runtime_ledger_materialization
+            and isinstance(bucket_payload, Mapping)
+            and _runtime_ledger_bucket_profit_proof_present(bucket_payload)
+        )
+        if source_execution_materialized:
+            row["authoritative"] = True
+            row["authority_reason"] = "source_execution_runtime_ledger_materialized"
+            row["pnl_derivation"] = (
+                "source_execution_lifecycle_materialized_runtime_ledger"
             )
-            row["runtime_ledger_bucket"] = bucket_payload
+            if isinstance(bucket_payload, Mapping):
+                row["runtime_ledger_bucket"] = {
+                    **dict(bucket_payload),
+                    "authoritative": True,
+                    "authority_reason": (
+                        "source_execution_runtime_ledger_materialized"
+                    ),
+                    "pnl_derivation": (
+                        "source_execution_lifecycle_materialized_runtime_ledger"
+                    ),
+                    "source_materialization": "source_execution_lifecycle",
+                }
+        else:
+            row["post_cost_expectancy_basis"] = POST_COST_BASIS_EXECUTION_RECONSTRUCTION
+            row["post_cost_promotion_eligible"] = False
+            row["authoritative"] = False
+            row["authority_reason"] = "execution_reconstruction_not_runtime_ledger_proof"
+            row["pnl_derivation"] = "execution_reconstructed_from_execution_rows"
+            row["promotion_blocker"] = "execution_reconstruction_not_runtime_ledger_proof"
+            blockers = list(row.get("runtime_ledger_blockers") or [])
+            if "execution_reconstruction_not_runtime_ledger_proof" not in blockers:
+                blockers.append("execution_reconstruction_not_runtime_ledger_proof")
+            row["runtime_ledger_blockers"] = blockers
+            if isinstance(bucket_payload, Mapping):
+                bucket_payload = dict(bucket_payload)
+                bucket_payload["blockers"] = blockers
+                bucket_payload["pnl_basis"] = POST_COST_BASIS_EXECUTION_RECONSTRUCTION
+                bucket_payload["authoritative"] = False
+                bucket_payload["authority_reason"] = (
+                    "execution_reconstruction_not_runtime_ledger_proof"
+                )
+                row["runtime_ledger_bucket"] = bucket_payload
         realized_rows.append(row)
     return realized_rows
 
@@ -1444,6 +1493,7 @@ def _query_timestamps(
     window_start: datetime,
     window_end: datetime,
     symbols: Sequence[str] | None = None,
+    allow_authoritative_runtime_ledger_materialization: bool = False,
 ) -> tuple[list[datetime], list[datetime], list[dict[str, object]]]:
     if not strategy_names:
         raise RuntimeError("strategy_name_not_configured")
@@ -1591,7 +1641,14 @@ def _query_timestamps(
                 for row in cur.fetchall()
                 if row[0] is not None
             ]
-    tca_rows.extend(_build_realized_strategy_pnl_rows(execution_rows))
+    tca_rows.extend(
+        _build_realized_strategy_pnl_rows(
+            execution_rows,
+            allow_authoritative_runtime_ledger_materialization=(
+                allow_authoritative_runtime_ledger_materialization
+            ),
+        )
+    )
     return decisions, executions, tca_rows
 
 
@@ -1717,6 +1774,12 @@ def main() -> int:
     source_kind = args.source_kind.strip() or (
         "simulation_paper_runtime" if args.observed_stage == "paper" else "live_runtime"
     )
+    allow_authoritative_runtime_ledger_materialization = (
+        _source_kind_allows_runtime_ledger_materialization(
+            source_kind=source_kind,
+            target_metadata=target_metadata,
+        )
+    )
     decisions: list[datetime] = []
     executions: list[datetime] = []
     tca_rows: list[dict[str, object]] = []
@@ -1728,6 +1791,9 @@ def main() -> int:
             window_start=window_start,
             window_end=window_end,
             symbols=source_activity_symbols,
+            allow_authoritative_runtime_ledger_materialization=(
+                allow_authoritative_runtime_ledger_materialization
+            ),
         )
     bucket_ranges: list[tuple[datetime, datetime, int]] = []
     runtime_ledger_artifact_metadata: dict[str, Any] = {
