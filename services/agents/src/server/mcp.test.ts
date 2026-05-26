@@ -182,6 +182,7 @@ describe('Agents MCP handler', () => {
     )
     const createTool = tools.find((tool) => tool.name === 'create_agent_run')
     expect(createTool?.description).toContain('secretBindingRef')
+    expect(createTool?.description).toContain('payload.parameters.repository')
     expect(createTool?.inputSchema?.properties?.secretBindingRef).toBeDefined()
   })
 
@@ -517,6 +518,42 @@ describe('Agents MCP handler', () => {
     expect(create.response.status).toBe(200)
     expect(create.json?.error?.code).toBe(-32602)
     expect(create.json?.error?.message).toContain('payload.policy.secretBindingRef is required')
+    expect(calls.create).toEqual([])
+  })
+
+  it('rejects create_agent_run VCS submissions without a repository parameter', async () => {
+    const { service } = makeService()
+    const { service: agentRunsService, calls } = makeAgentRunsService()
+
+    const create = await post(
+      service,
+      {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'create_agent_run',
+          arguments: {
+            deliveryId: 'delivery-missing-vcs-repository',
+            payload: {
+              agentRef: { name: 'codex-agent' },
+              implementation: { text: 'Implement the requested change.' },
+              runtime: { type: 'job' },
+              policy: { secretBindingRef: 'codex-github-token' },
+              vcsRef: { name: 'github' },
+              vcsPolicy: { required: true, mode: 'read-write' },
+              parameters: { head: 'codex/demo' },
+            },
+          },
+        },
+      },
+      {},
+      agentRunsService,
+    )
+
+    expect(create.response.status).toBe(200)
+    expect(create.json?.error?.code).toBe(-32602)
+    expect(create.json?.error?.message).toContain('payload.parameters.repository is required')
     expect(calls.create).toEqual([])
   })
 

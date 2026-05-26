@@ -143,7 +143,7 @@ const toolsListResult = {
     {
       name: 'create_agent_run',
       description:
-        'Create a real AgentRun through the Agents v1 API. Requires an idempotent deliveryId. When payload.secrets are requested or VCS credentials are required, pass secretBindingRef or payload.policy.secretBindingRef.',
+        'Create a real AgentRun through the Agents v1 API. Requires an idempotent deliveryId. For VCS runs, set payload.parameters.repository plus secretBindingRef or payload.policy.secretBindingRef.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -182,7 +182,7 @@ const toolsListResult = {
               parameters: {
                 type: 'object',
                 description:
-                  'Run parameters such as repository/base/head/stage. parameters.prompt is rejected; use implementation text or ImplementationSpec text.',
+                  'Run parameters such as repository/base/head/stage. VCS runs require repository. parameters.prompt is rejected; use implementation text or ImplementationSpec text.',
                 additionalProperties: true,
               },
               secrets: {
@@ -487,6 +487,11 @@ const payloadSecretBindingRef = (payload: Record<string, unknown>) => {
   return recordString(policy, 'secretBindingRef')
 }
 
+const payloadRepository = (payload: Record<string, unknown>) => {
+  const parameters = isRecord(payload.parameters) ? payload.parameters : null
+  return recordString(parameters, 'repository')
+}
+
 const withSecretBindingRef = (payload: Record<string, unknown>, secretBindingRef: string | null) => {
   const current = payloadSecretBindingRef(payload)
   if (secretBindingRef && current && current !== secretBindingRef) {
@@ -519,6 +524,10 @@ const validateCreateAgentRunPayloadForMcp = (payload: Record<string, unknown>) =
     throw new Error(
       'payload.policy.secretBindingRef is required when payload.secrets are requested or vcsRef/vcsPolicy needs credentials; pass secretBindingRef or payload.policy.secretBindingRef',
     )
+  }
+
+  if (payloadRequestsVcsCredentials(payload) && !payloadRepository(payload)) {
+    throw new Error('payload.parameters.repository is required when vcsRef/vcsPolicy requests version control')
   }
 }
 
