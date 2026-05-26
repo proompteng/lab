@@ -81,8 +81,6 @@ jobs:
     runs-on: arc-arm64
     steps:
       - uses: actions/checkout@v5
-        with:
-          token: ''
 
       - uses: actions/cache@v4
         with:
@@ -133,8 +131,6 @@ jobs:
       CONVEX_SELF_HOSTED_ADMIN_KEY: ${{ secrets.CONVEX_SELF_HOSTED_ADMIN_KEY }}
     steps:
       - uses: actions/checkout@v5
-        with:
-          token: ''
 
       - name: Install build tools
         run: |
@@ -184,8 +180,6 @@ jobs:
       PAYLOAD_SECRET: ci-build-secret
     steps:
       - uses: actions/checkout@v5
-        with:
-          token: ''
 
       - name: Install build tools
         run: |
@@ -233,8 +227,6 @@ jobs:
     runs-on: arc-arm64
     steps:
       - uses: actions/checkout@v5
-        with:
-          token: ''
 
       - name: Install build tools
         run: |
@@ -274,8 +266,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-        with:
-          token: ''
 
       - uses: actions/setup-node@v6
         with:
@@ -304,8 +294,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-        with:
-          token: ''
       # codex CI handled by dedicated workflow (.github/workflows/codex-ci.yml)
 
   discord:
@@ -314,8 +302,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-        with:
-          token: ''
 
       - uses: actions/setup-node@v6
         with:
@@ -352,8 +338,6 @@ jobs:
     runs-on: arc-arm64
     steps:
       - uses: actions/checkout@v5
-        with:
-          token: ''
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -398,8 +382,6 @@ jobs:
     runs-on: arc-arm64
     steps:
       - uses: actions/checkout@v5
-        with:
-          token: ''
 
       - uses: actions/setup-node@v6
         with:

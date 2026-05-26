@@ -129,9 +129,25 @@ jobs:
     if: ${{ needs.changes.outputs.service != 'true' && needs.changes.outputs.manifests == 'true' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
-        with:
-          token: ''
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git init "${GITHUB_WORKSPACE}"
+          cd "${GITHUB_WORKSPACE}"
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            git fetch --no-tags --prune origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+            git fetch --no-tags --prune origin "+refs/pull/${PR_NUMBER}/merge:refs/remotes/origin/pull/${PR_NUMBER}/merge"
+            git checkout --force "refs/remotes/origin/pull/${PR_NUMBER}/merge"
+          else
+            git fetch --no-tags --prune origin "+${GITHUB_REF}:refs/remotes/origin/workflow"
+            git checkout --force "${GITHUB_SHA}" || git checkout --force refs/remotes/origin/workflow
+          fi
+          git config --global --add safe.directory "${GITHUB_WORKSPACE}"
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
@@ -263,10 +279,25 @@ jobs:
     if: ${{ needs.changes.outputs.service == 'true' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
-        with:
-          token: ''
-          fetch-depth: 0
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git init "${GITHUB_WORKSPACE}"
+          cd "${GITHUB_WORKSPACE}"
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            git fetch --no-tags --prune origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+            git fetch --no-tags --prune origin "+refs/pull/${PR_NUMBER}/merge:refs/remotes/origin/pull/${PR_NUMBER}/merge"
+            git checkout --force "refs/remotes/origin/pull/${PR_NUMBER}/merge"
+          else
+            git fetch --no-tags --prune origin "+${GITHUB_REF}:refs/remotes/origin/workflow"
+            git checkout --force "${GITHUB_SHA}" || git checkout --force refs/remotes/origin/workflow
+          fi
+          git config --global --add safe.directory "${GITHUB_WORKSPACE}"
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -312,10 +343,25 @@ jobs:
     if: ${{ needs.changes.outputs.service == 'true' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
-        with:
-          token: ''
-          fetch-depth: 0
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git init "${GITHUB_WORKSPACE}"
+          cd "${GITHUB_WORKSPACE}"
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            git fetch --no-tags --prune origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+            git fetch --no-tags --prune origin "+refs/pull/${PR_NUMBER}/merge:refs/remotes/origin/pull/${PR_NUMBER}/merge"
+            git checkout --force "refs/remotes/origin/pull/${PR_NUMBER}/merge"
+          else
+            git fetch --no-tags --prune origin "+${GITHUB_REF}:refs/remotes/origin/workflow"
+            git checkout --force "${GITHUB_SHA}" || git checkout --force refs/remotes/origin/workflow
+          fi
+          git config --global --add safe.directory "${GITHUB_WORKSPACE}"
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -362,10 +408,25 @@ jobs:
         shard: [0, 1, 2, 3]
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
-        with:
-          token: ''
-          fetch-depth: 0
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git init "${GITHUB_WORKSPACE}"
+          cd "${GITHUB_WORKSPACE}"
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            git fetch --no-tags --prune origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+            git fetch --no-tags --prune origin "+refs/pull/${PR_NUMBER}/merge:refs/remotes/origin/pull/${PR_NUMBER}/merge"
+            git checkout --force "refs/remotes/origin/pull/${PR_NUMBER}/merge"
+          else
+            git fetch --no-tags --prune origin "+${GITHUB_REF}:refs/remotes/origin/workflow"
+            git checkout --force "${GITHUB_SHA}" || git checkout --force refs/remotes/origin/workflow
+          fi
+          git config --global --add safe.directory "${GITHUB_WORKSPACE}"
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -438,10 +499,25 @@ jobs:
         slice: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
-        with:
-          token: ''
-          fetch-depth: 0
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git init "${GITHUB_WORKSPACE}"
+          cd "${GITHUB_WORKSPACE}"
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            git fetch --no-tags --prune origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+            git fetch --no-tags --prune origin "+refs/pull/${PR_NUMBER}/merge:refs/remotes/origin/pull/${PR_NUMBER}/merge"
+            git checkout --force "refs/remotes/origin/pull/${PR_NUMBER}/merge"
+          else
+            git fetch --no-tags --prune origin "+${GITHUB_REF}:refs/remotes/origin/workflow"
+            git checkout --force "${GITHUB_SHA}" || git checkout --force refs/remotes/origin/workflow
+          fi
+          git config --global --add safe.directory "${GITHUB_WORKSPACE}"
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -532,10 +608,25 @@ jobs:
           fi
 
       - name: Checkout
-        uses: actions/checkout@v5
-        with:
-          token: ''
-          fetch-depth: 0
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git init "${GITHUB_WORKSPACE}"
+          cd "${GITHUB_WORKSPACE}"
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            git fetch --no-tags --prune origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+            git fetch --no-tags --prune origin "+refs/pull/${PR_NUMBER}/merge:refs/remotes/origin/pull/${PR_NUMBER}/merge"
+            git checkout --force "refs/remotes/origin/pull/${PR_NUMBER}/merge"
+          else
+            git fetch --no-tags --prune origin "+${GITHUB_REF}:refs/remotes/origin/workflow"
+            git checkout --force "${GITHUB_SHA}" || git checkout --force refs/remotes/origin/workflow
+          fi
+          git config --global --add safe.directory "${GITHUB_WORKSPACE}"
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -593,10 +684,25 @@ jobs:
     if: ${{ needs.changes.outputs.service == 'true' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
-        with:
-          token: ''
-          fetch-depth: 0
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git init "${GITHUB_WORKSPACE}"
+          cd "${GITHUB_WORKSPACE}"
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            git fetch --no-tags --prune origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+            git fetch --no-tags --prune origin "+refs/pull/${PR_NUMBER}/merge:refs/remotes/origin/pull/${PR_NUMBER}/merge"
+            git checkout --force "refs/remotes/origin/pull/${PR_NUMBER}/merge"
+          else
+            git fetch --no-tags --prune origin "+${GITHUB_REF}:refs/remotes/origin/workflow"
+            git checkout --force "${GITHUB_SHA}" || git checkout --force refs/remotes/origin/workflow
+          fi
+          git config --global --add safe.directory "${GITHUB_WORKSPACE}"
 
       - name: Setup Python
         uses: actions/setup-python@v5
