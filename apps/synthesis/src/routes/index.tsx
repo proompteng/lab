@@ -1,20 +1,7 @@
 import { ScrollArea as DesignScrollArea } from '@proompteng/design/ui'
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
-import {
-  ArrowUpRight,
-  CheckCircle2,
-  Clock3,
-  ExternalLink,
-  Filter,
-  ImageIcon,
-  MessageCircle,
-  Newspaper,
-  RefreshCw,
-  Search,
-  ThumbsUp,
-  X,
-} from 'lucide-react'
+import { ArrowUpRight, ExternalLink, ImageIcon, Newspaper, Search } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import type {
   ButtonHTMLAttributes,
@@ -168,47 +155,27 @@ const avatarText = (item: SynthesisItem) => {
   return (parts[0]?.slice(0, 2) || 'X').toUpperCase()
 }
 
-const statusLabel = (status: SynthesisItem['engagementStatus']) => {
-  if (status === 'queued') return 'queued'
-  if (status === 'sent') return 'done'
-  if (status === 'failed') return 'failed'
-  if (status === 'skipped') return 'skipped'
-  if (status === 'suppressed') return 'limited'
-  return 'none'
-}
-
-const statusIcon = (status: SynthesisItem['engagementStatus']) => {
-  if (status === 'queued') return <Clock3 />
-  if (status === 'sent') return <CheckCircle2 />
-  if (status === 'failed') return <X />
-  return <Filter />
-}
-
 const isMediaLikeUrl = (url: string) =>
   url.startsWith('data:image/') ||
   url.startsWith('/api/assets/') ||
-  /pbs\.twimg\.com|twimg\.com|\/photo\/\d+|\.(png|jpe?g|webp|gif|avif)(\?|$)/i.test(url)
+  /pbs\.twimg\.com|twimg\.com|\.(png|jpe?g|webp|gif|avif)(\?|$)/i.test(url)
 
 const isInlineImageUrl = (url: string) =>
   url.startsWith('data:image/') ||
   url.startsWith('/api/assets/') ||
   /pbs\.twimg\.com|twimg\.com|\.(png|jpe?g|webp|gif|avif)(\?|$)/i.test(url)
 
-const mediaUrlsForItem = (item: SynthesisItem) => {
-  const urls = new Set<string>()
-  for (const attachment of item.attachments) {
-    if (isMediaLikeUrl(attachment.assetUrl)) urls.add(attachment.assetUrl)
-  }
-  if (urls.size > 0) return [...urls]
-  for (const url of item.mediaUrls) {
-    if (isMediaLikeUrl(url)) urls.add(url)
-  }
-  return [...urls]
+const mediaAttachmentsForItem = (item: SynthesisItem) => {
+  return item.attachments.filter((attachment) => isMediaLikeUrl(attachment.assetUrl))
 }
 
-async function fetchFeed(tag: string, minScore: number, cursor?: string): Promise<FeedResponse> {
-  const params = new URLSearchParams({ limit: '24', minScore: String(minScore) })
+const feedMinScore = 0.65
+
+async function fetchFeed(tag: string, query: string, cursor?: string): Promise<FeedResponse> {
+  const params = new URLSearchParams({ limit: '24', minScore: String(feedMinScore) })
   if (tag !== 'all') params.set('tag', tag)
+  const semanticQuery = query.trim()
+  if (semanticQuery) params.set('query', semanticQuery)
   if (cursor) params.set('cursor', cursor)
   const response = await fetch(`/api/feed?${params.toString()}`)
   if (!response.ok) throw new Error(`feed request failed: ${response.status}`)
@@ -218,36 +185,18 @@ async function fetchFeed(tag: string, minScore: number, cursor?: string): Promis
 function App() {
   const [tag, setTag] = useState('all')
   const [query, setQuery] = useState('')
-  const [minScore, setMinScore] = useState(0.65)
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
   const feed = useInfiniteQuery({
-    queryKey: ['synthesis-feed', tag, minScore],
-    queryFn: ({ pageParam }) => fetchFeed(tag, minScore, pageParam),
+    queryKey: ['synthesis-feed', tag, query.trim()],
+    queryFn: ({ pageParam }) => fetchFeed(tag, query, pageParam),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
     refetchInterval: 45_000,
   })
 
   const loadedItems = useMemo(() => feed.data?.pages.flatMap((page) => page.items) ?? [], [feed.data?.pages])
-
-  const items = useMemo(() => {
-    const lowered = query.trim().toLowerCase()
-    if (!lowered) return loadedItems
-    return loadedItems.filter((item) =>
-      [
-        item.title,
-        item.synthesis,
-        item.whyValuable,
-        item.takeaways.join(' '),
-        item.factChecks.map((factCheck) => factCheck.claim).join(' '),
-        item.sourcePosts.map((source) => [source.authorHandle, source.authorName].filter(Boolean).join(' ')).join(' '),
-        item.topicTags.join(' '),
-      ]
-        .filter(Boolean)
-        .some((value) => value?.toLowerCase().includes(lowered)),
-    )
-  }, [loadedItems, query])
+  const items = loadedItems
 
   const selectedItem = useMemo(
     () => items.find((item) => item.id === selectedId) ?? items[0] ?? null,
@@ -281,15 +230,11 @@ function App() {
     <main className="grid h-dvh w-full grid-cols-1 overflow-hidden bg-black text-[#e7e9ea] xl:grid-cols-[244px_minmax(0,620px)_minmax(360px,1fr)]">
       <aside className="hidden min-h-0 justify-end border-r border-[#2f3336] bg-black xl:flex">
         <div className="flex w-[244px] flex-col px-2 py-3">
-          <div className="mb-3 flex size-12 items-center justify-center rounded-full text-[#1d9bf0]">
-            <Newspaper className="size-7" />
-          </div>
           <nav className="grid gap-1">
             <RailButton active icon={<Newspaper />}>
               Feed
             </RailButton>
             <RailButton icon={<Search />}>Search</RailButton>
-            <RailButton icon={<Filter />}>Filters</RailButton>
           </nav>
           <Button className="mt-5 h-10 w-full rounded-full text-sm">Curate</Button>
           <div className="mt-auto px-3 py-4 text-sm leading-6 text-[#71767b]">
@@ -301,23 +246,14 @@ function App() {
 
       <section className="flex min-h-0 min-w-0 flex-col border-x border-[#2f3336] bg-black">
         <header className="shrink-0 border-b border-[#2f3336] bg-black/90 px-4 py-3 backdrop-blur">
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
             <div className="min-w-0">
               <h1 className="text-xl font-bold tracking-normal">Synthesis</h1>
               <p className="mt-0.5 text-xs text-[#71767b]">{loadedItems.length} loaded</p>
             </div>
-            <Button
-              size="icon-lg"
-              variant="ghost"
-              onClick={() => feed.refetch()}
-              aria-label="Refresh feed"
-              title="Refresh feed"
-            >
-              <RefreshCw className={cx('text-[#1d9bf0]', feed.isFetching && 'animate-spin')} />
-            </Button>
           </div>
 
-          <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+          <div className="mt-3">
             <div className="relative min-w-0 flex-1">
               <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#71767b]" />
               <Input
@@ -327,20 +263,6 @@ function App() {
                 className="h-9 rounded-md border-[#2f3336] bg-[#080808] pl-9 text-[15px] text-[#e7e9ea] placeholder:text-[#71767b]"
               />
             </div>
-            <label className="flex h-9 shrink-0 items-center gap-2 rounded-md border border-[#2f3336] bg-[#080808] px-3 text-[#71767b] sm:w-44">
-              <Filter className="size-4" />
-              <input
-                aria-label="Minimum score"
-                type="range"
-                min="0"
-                max="1"
-                step="0.05"
-                value={minScore}
-                onChange={(event) => setMinScore(Number(event.target.value))}
-                className="h-1.5 min-w-0 flex-1 accent-[#1d9bf0]"
-              />
-              <span className="w-6 text-right text-xs font-semibold">{formatScore(minScore)}</span>
-            </label>
           </div>
 
           <TopicTabs tag={tag} setTag={setTag} />
@@ -363,7 +285,7 @@ function App() {
           ) : items.length === 0 ? (
             <div className="px-8 py-16 text-center">
               <h2 className="text-2xl font-bold">No signal here yet</h2>
-              <p className="mt-2 text-[15px] leading-6 text-[#71767b]">Try another tag or lower the score floor.</p>
+              <p className="mt-2 text-[15px] leading-6 text-[#71767b]">Try another tag or search.</p>
             </div>
           ) : (
             <>
@@ -436,8 +358,8 @@ function FeedPost({
   selected: boolean
   onSelect: (id: string) => void
 }) {
-  const mediaUrls = mediaUrlsForItem(item)
-  const inlineImage = mediaUrls.find(isInlineImageUrl)
+  const mediaAttachments = mediaAttachmentsForItem(item)
+  const inlineImage = mediaAttachments.find((attachment) => isInlineImageUrl(attachment.assetUrl))
   const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault()
@@ -476,9 +398,14 @@ function FeedPost({
 
           {inlineImage ? (
             <div className="mt-3 overflow-hidden rounded-md border border-[#2f3336] bg-[#080808]">
-              <img src={inlineImage} alt="" className="max-h-64 w-full object-cover" loading="lazy" />
+              <img
+                src={inlineImage.assetUrl}
+                alt={inlineImage.alt ?? inlineImage.label ?? ''}
+                className="max-h-64 w-full object-cover"
+                loading="lazy"
+              />
             </div>
-          ) : mediaUrls.length ? (
+          ) : mediaAttachments.length ? (
             <div className="mt-3 inline-flex items-center gap-2 rounded-md border border-[#2f3336] px-2 py-1 text-xs text-[#71767b]">
               <ImageIcon className="size-3.5" />
               media
@@ -491,10 +418,6 @@ function FeedPost({
             <span>
               {item.sourceCount} source{item.sourceCount === 1 ? '' : 's'}
             </span>
-            <span className="inline-flex items-center gap-1 [&>svg]:size-3.5">
-              {statusIcon(item.engagementStatus)}
-              {statusLabel(item.engagementStatus)}
-            </span>
           </div>
 
           <div className="mt-3 flex flex-wrap gap-2 text-sm text-[#71767b]">
@@ -504,14 +427,6 @@ function FeedPost({
           </div>
 
           <div className="mt-3 flex max-w-md justify-between text-[#71767b]">
-            <span className="inline-flex items-center gap-2 text-sm">
-              <MessageCircle className="size-4" />
-              {item.engagementRecommendation === 'reply' ? 'queued' : 'reply'}
-            </span>
-            <span className="inline-flex items-center gap-2 text-sm">
-              <ThumbsUp className="size-4" />
-              {item.engagementRecommendation === 'like' ? 'queued' : 'like'}
-            </span>
             <a
               href={item.originalUrl}
               target="_blank"
@@ -522,6 +437,10 @@ function FeedPost({
               <ArrowUpRight className="size-4" />
               source
             </a>
+            <span className="inline-flex items-center gap-2 text-sm">
+              <ImageIcon className="size-4" />
+              {item.attachments.length} attachment{item.attachments.length === 1 ? '' : 's'}
+            </span>
           </div>
         </div>
       </div>
@@ -552,7 +471,7 @@ function DetailPanel({ item }: { item: SynthesisItem | null }) {
 }
 
 function DetailContent({ item }: { item: SynthesisItem }) {
-  const mediaUrls = mediaUrlsForItem(item)
+  const mediaAttachments = mediaAttachmentsForItem(item)
 
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-5 px-5 py-5">
@@ -571,8 +490,8 @@ function DetailContent({ item }: { item: SynthesisItem }) {
             <div className="mt-2 flex flex-wrap gap-2">
               <Badge variant="outline">score {formatScore(item.score)}</Badge>
               <Badge variant="outline">conf {formatScore(item.confidence)}</Badge>
-              <Badge variant={item.engagementStatus === 'queued' ? 'secondary' : 'outline'}>
-                {statusLabel(item.engagementStatus)}
+              <Badge variant="outline">
+                {item.sourceCount} source{item.sourceCount === 1 ? '' : 's'}
               </Badge>
             </div>
           </div>
@@ -654,29 +573,36 @@ function DetailContent({ item }: { item: SynthesisItem }) {
         </div>
       </Section>
 
-      {mediaUrls.length ? (
+      {mediaAttachments.length ? (
         <Section title="Attachments">
           <div className="grid gap-3">
-            {mediaUrls.map((url) =>
-              isInlineImageUrl(url) ? (
-                <img
-                  key={url}
-                  src={url}
-                  alt=""
-                  className="max-h-[520px] w-full rounded-md border border-[#2f3336] object-contain"
-                  loading="lazy"
-                />
+            {mediaAttachments.map((attachment) =>
+              isInlineImageUrl(attachment.assetUrl) ? (
+                <figure key={attachment.id} className="overflow-hidden rounded-md border border-[#2f3336] bg-[#080808]">
+                  <img
+                    src={attachment.assetUrl}
+                    alt={attachment.alt ?? attachment.label ?? ''}
+                    className="max-h-[520px] w-full object-contain"
+                    loading="lazy"
+                  />
+                  {attachment.label || attachment.alt ? (
+                    <figcaption className="border-t border-[#2f3336] px-3 py-2 text-sm leading-6 text-[#a6a6a6]">
+                      {attachment.label ? <p className="font-semibold text-[#e7e9ea]">{attachment.label}</p> : null}
+                      {attachment.alt ? <p>{attachment.alt}</p> : null}
+                    </figcaption>
+                  ) : null}
+                </figure>
               ) : (
                 <a
-                  key={url}
-                  href={url}
+                  key={attachment.id}
+                  href={attachment.assetUrl}
                   target="_blank"
                   rel="noreferrer"
                   className="flex items-center justify-between gap-3 rounded-md border border-[#2f3336] bg-[#080808] px-3 py-2 text-sm text-[#e7e9ea] transition-colors hover:border-[#1d9bf0]/60"
                 >
                   <span className="inline-flex min-w-0 items-center gap-2">
                     <ImageIcon className="size-4 shrink-0 text-[#1d9bf0]" />
-                    <span className="truncate">{url}</span>
+                    <span className="truncate">{attachment.label ?? attachment.assetUrl}</span>
                   </span>
                   <ExternalLink className="size-4 shrink-0 text-[#71767b]" />
                 </a>

@@ -16,10 +16,8 @@ import { Route as ApiItemsRouteImport } from './routes/api/items'
 import { Route as ApiFeedRouteImport } from './routes/api/feed'
 import { Route as ApiItemsBatchRouteImport } from './routes/api/items/batch'
 import { Route as ApiItemsIdRouteImport } from './routes/api/items/$id'
-import { Route as ApiEngagementNextRouteImport } from './routes/api/engagement/next'
 import { Route as ApiAssetsIdRouteImport } from './routes/api/assets/$id'
 import { Route as ApiItemsIdFeedbackRouteImport } from './routes/api/items/$id/feedback'
-import { Route as ApiEngagementIdResultRouteImport } from './routes/api/engagement/$id/result'
 
 const McpRoute = McpRouteImport.update({
   id: '/mcp',
@@ -56,11 +54,6 @@ const ApiItemsIdRoute = ApiItemsIdRouteImport.update({
   path: '/$id',
   getParentRoute: () => ApiItemsRoute,
 } as any)
-const ApiEngagementNextRoute = ApiEngagementNextRouteImport.update({
-  id: '/api/engagement/next',
-  path: '/api/engagement/next',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const ApiAssetsIdRoute = ApiAssetsIdRouteImport.update({
   id: '/api/assets/$id',
   path: '/api/assets/$id',
@@ -71,11 +64,6 @@ const ApiItemsIdFeedbackRoute = ApiItemsIdFeedbackRouteImport.update({
   path: '/feedback',
   getParentRoute: () => ApiItemsIdRoute,
 } as any)
-const ApiEngagementIdResultRoute = ApiEngagementIdResultRouteImport.update({
-  id: '/api/engagement/$id/result',
-  path: '/api/engagement/$id/result',
-  getParentRoute: () => rootRouteImport,
-} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -84,10 +72,8 @@ export interface FileRoutesByFullPath {
   '/api/items': typeof ApiItemsRouteWithChildren
   '/api/runs': typeof ApiRunsRoute
   '/api/assets/$id': typeof ApiAssetsIdRoute
-  '/api/engagement/next': typeof ApiEngagementNextRoute
   '/api/items/$id': typeof ApiItemsIdRouteWithChildren
   '/api/items/batch': typeof ApiItemsBatchRoute
-  '/api/engagement/$id/result': typeof ApiEngagementIdResultRoute
   '/api/items/$id/feedback': typeof ApiItemsIdFeedbackRoute
 }
 export interface FileRoutesByTo {
@@ -97,10 +83,8 @@ export interface FileRoutesByTo {
   '/api/items': typeof ApiItemsRouteWithChildren
   '/api/runs': typeof ApiRunsRoute
   '/api/assets/$id': typeof ApiAssetsIdRoute
-  '/api/engagement/next': typeof ApiEngagementNextRoute
   '/api/items/$id': typeof ApiItemsIdRouteWithChildren
   '/api/items/batch': typeof ApiItemsBatchRoute
-  '/api/engagement/$id/result': typeof ApiEngagementIdResultRoute
   '/api/items/$id/feedback': typeof ApiItemsIdFeedbackRoute
 }
 export interface FileRoutesById {
@@ -111,10 +95,8 @@ export interface FileRoutesById {
   '/api/items': typeof ApiItemsRouteWithChildren
   '/api/runs': typeof ApiRunsRoute
   '/api/assets/$id': typeof ApiAssetsIdRoute
-  '/api/engagement/next': typeof ApiEngagementNextRoute
   '/api/items/$id': typeof ApiItemsIdRouteWithChildren
   '/api/items/batch': typeof ApiItemsBatchRoute
-  '/api/engagement/$id/result': typeof ApiEngagementIdResultRoute
   '/api/items/$id/feedback': typeof ApiItemsIdFeedbackRoute
 }
 export interface FileRouteTypes {
@@ -126,10 +108,8 @@ export interface FileRouteTypes {
     | '/api/items'
     | '/api/runs'
     | '/api/assets/$id'
-    | '/api/engagement/next'
     | '/api/items/$id'
     | '/api/items/batch'
-    | '/api/engagement/$id/result'
     | '/api/items/$id/feedback'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -139,10 +119,8 @@ export interface FileRouteTypes {
     | '/api/items'
     | '/api/runs'
     | '/api/assets/$id'
-    | '/api/engagement/next'
     | '/api/items/$id'
     | '/api/items/batch'
-    | '/api/engagement/$id/result'
     | '/api/items/$id/feedback'
   id:
     | '__root__'
@@ -152,10 +130,8 @@ export interface FileRouteTypes {
     | '/api/items'
     | '/api/runs'
     | '/api/assets/$id'
-    | '/api/engagement/next'
     | '/api/items/$id'
     | '/api/items/batch'
-    | '/api/engagement/$id/result'
     | '/api/items/$id/feedback'
   fileRoutesById: FileRoutesById
 }
@@ -166,8 +142,6 @@ export interface RootRouteChildren {
   ApiItemsRoute: typeof ApiItemsRouteWithChildren
   ApiRunsRoute: typeof ApiRunsRoute
   ApiAssetsIdRoute: typeof ApiAssetsIdRoute
-  ApiEngagementNextRoute: typeof ApiEngagementNextRoute
-  ApiEngagementIdResultRoute: typeof ApiEngagementIdResultRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -221,13 +195,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiItemsIdRouteImport
       parentRoute: typeof ApiItemsRoute
     }
-    '/api/engagement/next': {
-      id: '/api/engagement/next'
-      path: '/api/engagement/next'
-      fullPath: '/api/engagement/next'
-      preLoaderRoute: typeof ApiEngagementNextRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/api/assets/$id': {
       id: '/api/assets/$id'
       path: '/api/assets/$id'
@@ -241,13 +208,6 @@ declare module '@tanstack/react-router' {
       fullPath: '/api/items/$id/feedback'
       preLoaderRoute: typeof ApiItemsIdFeedbackRouteImport
       parentRoute: typeof ApiItemsIdRoute
-    }
-    '/api/engagement/$id/result': {
-      id: '/api/engagement/$id/result'
-      path: '/api/engagement/$id/result'
-      fullPath: '/api/engagement/$id/result'
-      preLoaderRoute: typeof ApiEngagementIdResultRouteImport
-      parentRoute: typeof rootRouteImport
     }
   }
 }
@@ -285,8 +245,6 @@ const rootRouteChildren: RootRouteChildren = {
   ApiItemsRoute: ApiItemsRouteWithChildren,
   ApiRunsRoute: ApiRunsRoute,
   ApiAssetsIdRoute: ApiAssetsIdRoute,
-  ApiEngagementNextRoute: ApiEngagementNextRoute,
-  ApiEngagementIdResultRoute: ApiEngagementIdResultRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

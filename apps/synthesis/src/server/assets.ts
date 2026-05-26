@@ -26,11 +26,17 @@ const normalizeNonEmpty = (value: string | undefined | null) => {
 const resolveAssetStorageConfig = (
   env: Record<string, string | undefined> = process.env,
 ): AssetStorageConfig | null => {
+  const required = env.SYNTHESIS_ASSET_STORAGE_REQUIRED === '1' || env.SYNTHESIS_ASSET_STORAGE_REQUIRED === 'true'
   const endpoint = normalizeNonEmpty(env.SYNTHESIS_ASSET_ENDPOINT)
   const bucket = normalizeNonEmpty(env.SYNTHESIS_ASSET_BUCKET)
   const accessKeyId = normalizeNonEmpty(env.SYNTHESIS_ASSET_ACCESS_KEY_ID)
   const secretAccessKey = normalizeNonEmpty(env.SYNTHESIS_ASSET_SECRET_ACCESS_KEY)
-  if (!endpoint && !bucket && !accessKeyId && !secretAccessKey) return null
+  if (!endpoint && !bucket && !accessKeyId && !secretAccessKey) {
+    if (required) {
+      throw new Error('asset storage is required but SYNTHESIS_ASSET_* configuration is missing')
+    }
+    return null
+  }
   if (!endpoint || !bucket || !accessKeyId || !secretAccessKey) {
     throw new Error(
       'asset storage requires SYNTHESIS_ASSET_ENDPOINT, SYNTHESIS_ASSET_BUCKET, SYNTHESIS_ASSET_ACCESS_KEY_ID, and SYNTHESIS_ASSET_SECRET_ACCESS_KEY',
@@ -139,6 +145,16 @@ const assertSupportedMime = (mimeType: string) => {
   }
 }
 
+const isLikelyRenderableImageUrl = (url: string) =>
+  /^https?:\/\/[^/]*pbs\.twimg\.com\/media\//i.test(url) ||
+  /^https?:\/\/[^/]*twimg\.com\//i.test(url) ||
+  /\.(png|jpe?g|webp|gif|avif)(\?|$)/i.test(url)
+
+const assertRenderableRemoteImageUrl = (url: string) => {
+  if (isLikelyRenderableImageUrl(url)) return
+  throw new Error(`asset URL must be a direct image URL or data URL: ${url}`)
+}
+
 const parseDataUrl = (url: string): { body: Buffer; mimeType: string } | null => {
   const match = url.match(/^data:([^;,]+);base64,(.+)$/)
   if (!match) return null
@@ -179,7 +195,10 @@ const materializeBody = async (
       throw new Error(`asset exceeds max size: ${data.body.length} > ${config.maxBytes}`)
     return data
   }
-  if (input.url) return readRemoteAsset(input.url, config.maxBytes, fetchImpl)
+  if (input.url) {
+    assertRenderableRemoteImageUrl(input.url)
+    return readRemoteAsset(input.url, config.maxBytes, fetchImpl)
+  }
   return null
 }
 
@@ -230,6 +249,9 @@ export const materializeAttachments = async (
       if (sizeBytes > (config?.maxBytes ?? defaultMaxBytes)) {
         throw new Error(`asset exceeds max size: ${sizeBytes} > ${config?.maxBytes ?? defaultMaxBytes}`)
       }
+    } else if (input.url) {
+      assertRenderableRemoteImageUrl(input.url)
+      if (mimeType) assertSupportedMime(mimeType)
     } else if (mimeType) {
       assertSupportedMime(mimeType)
     }

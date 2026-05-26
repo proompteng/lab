@@ -2,17 +2,16 @@ import { createHash, randomUUID } from 'node:crypto'
 import { Pool, type PoolClient } from 'pg'
 
 import { materializeAttachments, normalizeAttachmentInputs } from './assets'
+import {
+  buildEmbeddingText,
+  cosineSimilarity,
+  createSynthesisEmbedding,
+  type SynthesisEmbeddingRecord,
+} from './embeddings'
 import type {
-  EngagementAction,
-  EngagementActionKind,
-  EngagementMode,
-  EngagementStatus,
   FeedbackEvent,
   FeedResponse,
   ListFeedInput,
-  NextEngagementInput,
-  NextEngagementResult,
-  RecordEngagementResultInput,
   RecordFeedbackInput,
   SourcePostInput,
   StartRunInput,
@@ -21,15 +20,12 @@ import type {
   SubmitItemInput,
   SubmitItemResult,
   SynthesisAttachment,
+  SynthesisEmbedding,
   SynthesisFactCheck,
   SynthesisItem,
   SynthesisSourcePost,
   SynthesisRun,
 } from './schema'
-
-const likeDailyLimit = 25
-const replyDailyLimit = 5
-const oneDayMs = 24 * 60 * 60 * 1_000
 
 export type SynthesisStore = {
   startRun(input: StartRunInput): Promise<SynthesisRun>
@@ -39,8 +35,6 @@ export type SynthesisStore = {
   getItem(id: string): Promise<SynthesisItem | null>
   getAttachment(id: string): Promise<SynthesisAttachment | null>
   recordFeedback(input: RecordFeedbackInput): Promise<FeedbackEvent>
-  nextEngagement(input: NextEngagementInput): Promise<NextEngagementResult>
-  recordEngagementResult(input: RecordEngagementResultInput): Promise<EngagementAction>
 }
 
 type CanonicalXPost = {
@@ -48,11 +42,6 @@ type CanonicalXPost = {
   xPostId: string | null
   postKey: string
 }
-
-type EngagementDecision =
-  | { status: 'none'; reason: string | null }
-  | { status: 'suppressed'; reason: string }
-  | { status: 'queued'; action: EngagementActionKind; replyText: string | null; reason: string }
 
 export const canonicalizeXPostUrl = (input: string): CanonicalXPost => {
   const normalizedInput = input.match(/^https?:\/\//i) ? input : `https://${input}`
@@ -151,48 +140,11 @@ const parseJsonValue = <T>(value: unknown, fallback: T): T => {
   }
 }
 
-const getEngagementMode = (): EngagementMode => {
-  const raw = process.env.SYNTHESIS_ENGAGEMENT_MODE?.trim().toLowerCase()
-  return raw === 'off' ? 'off' : 'queue'
-}
-
-const normalizeReplyText = (replyText: string | undefined) => {
-  const trimmed = replyText?.replace(/\s+/g, ' ').trim().toLowerCase()
-  if (!trimmed) return null
-  if (trimmed.length > 160) return null
-  if (trimmed.includes('#') || trimmed.includes('http://') || trimmed.includes('https://')) return null
-  return trimmed
-}
-
-const planEngagement = async (
-  input: SubmitItemInput,
-  countRecent: (action: EngagementActionKind) => Promise<number>,
-): Promise<EngagementDecision> => {
-  if (input.engagementRecommendation === 'none') {
-    return { status: 'none', reason: null }
-  }
-
-  if (getEngagementMode() === 'off') {
-    return { status: 'suppressed', reason: 'SYNTHESIS_ENGAGEMENT_MODE=off' }
-  }
-
-  if (input.engagementRecommendation === 'reply') {
-    const replyText = normalizeReplyText(input.replyText)
-    if (!replyText) {
-      return { status: 'suppressed', reason: 'reply text failed guardrails' }
-    }
-    const replyCount = await countRecent('reply')
-    if (replyCount >= replyDailyLimit) {
-      return { status: 'suppressed', reason: `daily reply limit ${replyDailyLimit} reached` }
-    }
-    return { status: 'queued', action: 'reply', replyText, reason: 'reply recommended by synthesis' }
-  }
-
-  const likeCount = await countRecent('like')
-  if (likeCount >= likeDailyLimit) {
-    return { status: 'suppressed', reason: `daily like limit ${likeDailyLimit} reached` }
-  }
-  return { status: 'queued', action: 'like', replyText: null, reason: 'like recommended by synthesis' }
+const parseNumberArray = (value: unknown): number[] => {
+  const parsed = parseJsonValue<unknown>(value, value)
+  if (!Array.isArray(parsed)) return []
+  const vector = parsed.map(Number)
+  return vector.every((entry) => Number.isFinite(entry)) ? vector : []
 }
 
 type NormalizedSubmitItem = {
@@ -212,8 +164,6 @@ type NormalizedSubmitItem = {
   topicTags: string[]
   score: number
   confidence: number
-  engagementRecommendation: SubmitItemInput['engagementRecommendation']
-  replyText: string | undefined
 }
 
 const normalizeSourcePost = (source: SourcePostInput): SynthesisSourcePost => {
@@ -228,7 +178,7 @@ const normalizeSourcePost = (source: SourcePostInput): SynthesisSourcePost => {
     postedAt: toIso(source.postedAt),
     observedAt: toIso(source.observedAt) ?? nowIso(),
     observedText: source.observedText,
-    mediaUrls: source.mediaUrls,
+    mediaUrls: [],
   }
 }
 
@@ -258,7 +208,7 @@ const normalizeSubmitItem = async (input: SubmitItemInput): Promise<NormalizedSu
     .sort()
     .join('|')
   const dedupeKey = input.dedupeKey || `theme:${digestKey(sourceKey)}`
-  const mediaUrls = [...new Set(sourcePosts.flatMap((source) => source.mediaUrls))]
+  const mediaUrls: string[] = []
   const attachments = await materializeAttachments(
     normalizeAttachmentInputs({
       attachments: input.attachments,
@@ -285,17 +235,22 @@ const normalizeSubmitItem = async (input: SubmitItemInput): Promise<NormalizedSu
     topicTags: input.topicTags,
     score: input.score,
     confidence: input.confidence,
-    engagementRecommendation: input.engagementRecommendation,
-    replyText: input.replyText,
   }
 }
+
+const embeddingMetadata = (record: SynthesisEmbeddingRecord): SynthesisEmbedding => ({
+  model: record.model,
+  dimension: record.dimension,
+  inputHash: record.inputHash,
+  createdAt: record.createdAt,
+})
 
 class InMemorySynthesisStore implements SynthesisStore {
   private runs = new Map<string, SynthesisRun>()
   private posts = new Map<string, CanonicalXPost & { observedText: string }>()
   private itemByDedupeKey = new Map<string, string>()
   private items = new Map<string, SynthesisItem>()
-  private engagements = new Map<string, EngagementAction>()
+  private embeddingVectors = new Map<string, number[]>()
   private feedbackEvents = new Map<string, FeedbackEvent>()
   private interestWeights = new Map<string, number>()
 
@@ -333,6 +288,17 @@ class InMemorySynthesisStore implements SynthesisStore {
     const sourcePosts = mergeSourcePosts(existing?.sourcePosts ?? [], normalized.sourcePosts)
     const attachments = mergeAttachments(existing?.attachments ?? [], normalized.attachments)
     const generatedAttachments = attachments.filter((attachment) => attachment.generated)
+    const embeddingRecord = await createSynthesisEmbedding(
+      buildEmbeddingText({
+        title: normalized.title,
+        synthesis: normalized.synthesis,
+        takeaways: normalized.takeaways,
+        whyValuable: normalized.whyValuable,
+        topicTags: normalized.topicTags,
+        factChecks: normalized.factChecks,
+        sourcePosts,
+      }),
+    )
     const item: SynthesisItem = {
       id: existing?.id ?? randomUUID(),
       runId,
@@ -356,43 +322,50 @@ class InMemorySynthesisStore implements SynthesisStore {
       factChecks: normalized.factChecks,
       attachments,
       generatedAttachments,
+      embedding: embeddingMetadata(embeddingRecord),
       topicTags: normalized.topicTags,
       score: normalized.score,
       confidence: normalized.confidence,
-      engagementRecommendation: normalized.engagementRecommendation,
-      engagementStatus: existing?.engagementStatus ?? 'none',
-      replyText: normalized.replyText ? normalizeReplyText(normalized.replyText) : null,
       createdAt: existing?.createdAt ?? timestamp,
       updatedAt: timestamp,
     }
 
     this.itemByDedupeKey.set(normalized.dedupeKey, item.id)
     this.items.set(item.id, item)
+    this.embeddingVectors.set(item.id, embeddingRecord.embedding)
 
-    const engagementAction = await this.maybeQueueEngagement(item, input)
     return {
-      item: this.items.get(item.id) ?? item,
-      engagementAction,
+      item,
     }
   }
 
   async submitBatch(input: SubmitBatchInput): Promise<SubmitBatchResult> {
     const items: SynthesisItem[] = []
-    const engagementActions: EngagementAction[] = []
     for (const item of input.items) {
       const result = await this.submitItem({ ...item, runId: item.runId ?? input.runId })
       items.push(result.item)
-      if (result.engagementAction) engagementActions.push(result.engagementAction)
     }
-    return { items, engagementActions }
+    return { items }
   }
 
   async listFeed(input: ListFeedInput): Promise<FeedResponse> {
     const cursor = decodeFeedCursor(input.cursor)
-    const matching = [...this.items.values()]
+    let matching = [...this.items.values()]
       .filter((item) => (input.tag ? item.topicTags.includes(input.tag.toLowerCase()) : true))
       .filter((item) => (input.minScore == null ? true : item.score >= input.minScore))
-      .filter((item) => (input.engagementStatus ? item.engagementStatus === input.engagementStatus : true))
+    if (input.query) {
+      const queryEmbedding = await createSynthesisEmbedding(input.query)
+      const ranked = matching
+        .map((item) => ({
+          item,
+          similarity: cosineSimilarity(queryEmbedding.embedding, this.embeddingVectors.get(item.id) ?? []),
+        }))
+        .filter((entry) => entry.similarity > -1)
+        .sort((left, right) => right.similarity - left.similarity || right.item.id.localeCompare(left.item.id))
+      const items = ranked.slice(0, input.limit).map((entry) => entry.item)
+      return { items, nextCursor: null, fetchedAt: nowIso() }
+    }
+    matching = matching
       .sort((left, right) => {
         const createdAtDiff = Date.parse(right.createdAt) - Date.parse(left.createdAt)
         return createdAtDiff || right.id.localeCompare(left.id)
@@ -441,85 +414,6 @@ class InMemorySynthesisStore implements SynthesisStore {
 
     return event
   }
-
-  async nextEngagement(_input: NextEngagementInput): Promise<NextEngagementResult> {
-    const mode = getEngagementMode()
-    if (mode === 'off') {
-      return { mode, action: null, item: null, reason: 'SYNTHESIS_ENGAGEMENT_MODE=off' }
-    }
-
-    const action = [...this.engagements.values()]
-      .filter((candidate) => candidate.status === 'queued')
-      .sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt))[0]
-
-    if (!action) return { mode, action: null, item: null, reason: 'no queued engagement action' }
-
-    return {
-      mode,
-      action,
-      item: this.items.get(action.itemId) ?? null,
-      reason: null,
-    }
-  }
-
-  async recordEngagementResult(input: RecordEngagementResultInput): Promise<EngagementAction> {
-    const action = this.engagements.get(input.id)
-    if (!action) throw new Error(`Unknown engagement action: ${input.id}`)
-
-    const updated: EngagementAction = {
-      ...action,
-      status: input.status,
-      resultUrl: input.resultUrl ?? action.resultUrl,
-      error: input.error ?? null,
-      performedAt: nowIso(),
-      updatedAt: nowIso(),
-    }
-    this.engagements.set(action.id, updated)
-
-    const item = this.items.get(action.itemId)
-    if (item) {
-      this.items.set(item.id, { ...item, engagementStatus: input.status, updatedAt: updated.updatedAt })
-    }
-
-    return updated
-  }
-
-  private async maybeQueueEngagement(item: SynthesisItem, input: SubmitItemInput) {
-    const existing = [...this.engagements.values()].find(
-      (action) => action.itemId === item.id && action.status === 'queued',
-    )
-    if (existing) return existing
-
-    const decision = await planEngagement(input, async (action) => {
-      const cutoff = Date.now() - oneDayMs
-      return [...this.engagements.values()].filter(
-        (candidate) => candidate.action === action && Date.parse(candidate.createdAt) >= cutoff,
-      ).length
-    })
-
-    if (decision.status !== 'queued') {
-      this.items.set(item.id, { ...item, engagementStatus: decision.status })
-      return null
-    }
-
-    const timestamp = nowIso()
-    const engagementAction: EngagementAction = {
-      id: randomUUID(),
-      itemId: item.id,
-      action: decision.action,
-      status: 'queued',
-      replyText: decision.replyText,
-      reason: decision.reason,
-      resultUrl: null,
-      error: null,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      performedAt: null,
-    }
-    this.engagements.set(engagementAction.id, engagementAction)
-    this.items.set(item.id, { ...item, engagementStatus: 'queued', replyText: decision.replyText })
-    return engagementAction
-  }
 }
 
 type ItemRow = {
@@ -545,12 +439,13 @@ type ItemRow = {
   fact_checks: unknown
   attachments: unknown
   generated_attachments: unknown
+  embedding_model: string | null
+  embedding_dimension: number | string | null
+  embedding_input_hash: string | null
+  embedding_created_at: Date | string | null
   topic_tags: unknown
   score: number | string
   confidence: number | string
-  engagement_recommendation: 'none' | 'like' | 'reply'
-  engagement_status: EngagementStatus
-  reply_text: string | null
   created_at: Date | string
   updated_at: Date | string
 }
@@ -566,20 +461,6 @@ type AttachmentRow = {
   alt: string | null
   label: string | null
   generated: boolean
-}
-
-type EngagementRow = {
-  id: string
-  item_id: string
-  action: EngagementActionKind
-  status: EngagementStatus
-  reply_text: string | null
-  reason: string | null
-  result_url: string | null
-  error: string | null
-  created_at: Date | string
-  updated_at: Date | string
-  performed_at: Date | string | null
 }
 
 const sourcePostFromRow = (row: ItemRow): SynthesisSourcePost => ({
@@ -626,12 +507,18 @@ const mapItemRow = (row: ItemRow): SynthesisItem => {
       row.generated_attachments,
       attachments.filter((attachment) => attachment.generated),
     ),
+    embedding:
+      row.embedding_model && row.embedding_dimension && row.embedding_input_hash && row.embedding_created_at
+        ? {
+            model: row.embedding_model,
+            dimension: Number(row.embedding_dimension),
+            inputHash: row.embedding_input_hash,
+            createdAt: toIso(row.embedding_created_at) ?? nowIso(),
+          }
+        : null,
     topicTags: parseJsonArray(row.topic_tags),
     score: Number(row.score),
     confidence: Number(row.confidence),
-    engagementRecommendation: row.engagement_recommendation,
-    engagementStatus: row.engagement_status,
-    replyText: row.reply_text,
     createdAt: toIso(row.created_at) ?? nowIso(),
     updatedAt: toIso(row.updated_at) ?? nowIso(),
   }
@@ -648,20 +535,6 @@ const mapAttachmentRow = (row: AttachmentRow): SynthesisAttachment => ({
   alt: row.alt,
   label: row.label,
   generated: row.generated,
-})
-
-const mapEngagementRow = (row: EngagementRow): EngagementAction => ({
-  id: row.id,
-  itemId: row.item_id,
-  action: row.action,
-  status: row.status,
-  replyText: row.reply_text,
-  reason: row.reason,
-  resultUrl: row.result_url,
-  error: row.error,
-  createdAt: toIso(row.created_at) ?? nowIso(),
-  updatedAt: toIso(row.updated_at) ?? nowIso(),
-  performedAt: toIso(row.performed_at),
 })
 
 class PostgresSynthesisStore implements SynthesisStore {
@@ -738,7 +611,7 @@ class PostgresSynthesisStore implements SynthesisStore {
       }
 
       const existingResult = await client.query<ItemRow>(
-        `SELECT ${this.itemSelectSql('i')} FROM synthesis_items i JOIN x_posts p ON p.id = i.x_post_key
+        `SELECT ${this.itemSelectSql('i')} FROM ${this.itemRelationSql('i')}
          WHERE i.dedupe_key = $1 LIMIT 1`,
         [normalized.dedupeKey],
       )
@@ -746,16 +619,26 @@ class PostgresSynthesisStore implements SynthesisStore {
       const sourcePosts = mergeSourcePosts(existing?.sourcePosts ?? [], normalized.sourcePosts)
       const attachments = mergeAttachments(existing?.attachments ?? [], normalized.attachments)
       const generatedAttachments = attachments.filter((attachment) => attachment.generated)
+      const embeddingRecord = await createSynthesisEmbedding(
+        buildEmbeddingText({
+          title: normalized.title,
+          synthesis: normalized.synthesis,
+          takeaways: normalized.takeaways,
+          whyValuable: normalized.whyValuable,
+          topicTags: normalized.topicTags,
+          factChecks: normalized.factChecks,
+          sourcePosts,
+        }),
+      )
 
       const result = await client.query<{ id: string }>(
         `INSERT INTO synthesis_items (
           id, run_id, x_post_key, dedupe_key, title, synthesis, takeaways, source_posts, fact_checks, attachments,
-          generated_attachments, media_urls, summary, why_valuable, evidence, topic_tags, score, confidence,
-          engagement_recommendation, engagement_status, reply_text
+          generated_attachments, media_urls, summary, why_valuable, evidence, topic_tags, score, confidence
         )
         VALUES (
           $1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb, $11::jsonb, $12::jsonb,
-          $13, $14, $15::jsonb, $16::jsonb, $17, $18, $19, 'none', $20
+          $13, $14, $15::jsonb, $16::jsonb, $17, $18
         )
         ON CONFLICT (dedupe_key) DO UPDATE SET
           run_id = EXCLUDED.run_id,
@@ -773,8 +656,6 @@ class PostgresSynthesisStore implements SynthesisStore {
           topic_tags = EXCLUDED.topic_tags,
           score = EXCLUDED.score,
           confidence = EXCLUDED.confidence,
-          engagement_recommendation = EXCLUDED.engagement_recommendation,
-          reply_text = EXCLUDED.reply_text,
           updated_at = now()
         RETURNING id`,
         [
@@ -796,8 +677,6 @@ class PostgresSynthesisStore implements SynthesisStore {
           JSON.stringify(normalized.topicTags),
           normalized.score,
           normalized.confidence,
-          normalized.engagementRecommendation,
-          normalized.replyText ? normalizeReplyText(normalized.replyText) : null,
         ],
       )
 
@@ -834,23 +713,15 @@ class PostgresSynthesisStore implements SynthesisStore {
         )
       }
 
+      await this.upsertEmbedding(client, result.rows[0].id, embeddingRecord)
+
       const itemResult = await client.query<ItemRow>(
-        `SELECT ${this.itemSelectSql('i')} FROM synthesis_items i JOIN x_posts p ON p.id = i.x_post_key WHERE i.id = $1`,
+        `SELECT ${this.itemSelectSql('i')} FROM ${this.itemRelationSql('i')} WHERE i.id = $1`,
         [result.rows[0].id],
       )
-      let item = mapItemRow(itemResult.rows[0])
-      const engagementAction = await this.maybeQueueEngagement(client, item, input)
-      if (engagementAction) {
-        item = { ...item, engagementStatus: 'queued', replyText: engagementAction.replyText }
-      } else {
-        const refreshed = await client.query<ItemRow>(
-          `SELECT ${this.itemSelectSql('i')} FROM synthesis_items i JOIN x_posts p ON p.id = i.x_post_key WHERE i.id = $1`,
-          [item.id],
-        )
-        item = mapItemRow(refreshed.rows[0])
-      }
+      const item = mapItemRow(itemResult.rows[0])
       await client.query('COMMIT')
-      return { item, engagementAction }
+      return { item }
     } catch (error) {
       await client.query('ROLLBACK')
       throw error
@@ -861,13 +732,11 @@ class PostgresSynthesisStore implements SynthesisStore {
 
   async submitBatch(input: SubmitBatchInput): Promise<SubmitBatchResult> {
     const items: SynthesisItem[] = []
-    const engagementActions: EngagementAction[] = []
     for (const item of input.items) {
       const result = await this.submitItem({ ...item, runId: item.runId ?? input.runId })
       items.push(result.item)
-      if (result.engagementAction) engagementActions.push(result.engagementAction)
     }
-    return { items, engagementActions }
+    return { items }
   }
 
   async listFeed(input: ListFeedInput): Promise<FeedResponse> {
@@ -883,9 +752,29 @@ class PostgresSynthesisStore implements SynthesisStore {
       values.push(input.minScore)
       where.push(`i.score >= $${values.length}`)
     }
-    if (input.engagementStatus) {
-      values.push(input.engagementStatus)
-      where.push(`i.engagement_status = $${values.length}`)
+    if (input.query) {
+      const queryEmbedding = await createSynthesisEmbedding(input.query)
+      values.push(Math.max(input.limit * 12, 240))
+      const result = await this.pool.query<ItemRow & { embedding_vector: unknown }>(
+        `SELECT ${this.itemSelectSql('i')}, e.embedding AS embedding_vector
+         FROM ${this.itemRelationSql('i', { requireEmbedding: true })}
+         ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+         ORDER BY i.created_at DESC, i.id DESC
+         LIMIT $${values.length}`,
+        values,
+      )
+      const ranked = result.rows
+        .map((row) => ({
+          item: mapItemRow(row),
+          similarity: cosineSimilarity(queryEmbedding.embedding, parseNumberArray(row.embedding_vector)),
+        }))
+        .filter((entry) => entry.similarity > -1)
+        .sort((left, right) => right.similarity - left.similarity || right.item.id.localeCompare(left.item.id))
+      return {
+        items: ranked.slice(0, input.limit).map((entry) => entry.item),
+        nextCursor: null,
+        fetchedAt: nowIso(),
+      }
     }
     if (cursor) {
       values.push(cursor.createdAt, cursor.id)
@@ -894,8 +783,7 @@ class PostgresSynthesisStore implements SynthesisStore {
     values.push(input.limit + 1)
     const result = await this.pool.query<ItemRow>(
       `SELECT ${this.itemSelectSql('i')}
-       FROM synthesis_items i
-       JOIN x_posts p ON p.id = i.x_post_key
+       FROM ${this.itemRelationSql('i')}
        ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
        ORDER BY i.created_at DESC, i.id DESC
        LIMIT $${values.length}`,
@@ -913,7 +801,7 @@ class PostgresSynthesisStore implements SynthesisStore {
   async getItem(id: string): Promise<SynthesisItem | null> {
     await this.ensureSchema()
     const result = await this.pool.query<ItemRow>(
-      `SELECT ${this.itemSelectSql('i')} FROM synthesis_items i JOIN x_posts p ON p.id = i.x_post_key WHERE i.id = $1`,
+      `SELECT ${this.itemSelectSql('i')} FROM ${this.itemRelationSql('i')} WHERE i.id = $1`,
       [id],
     )
     return result.rows[0] ? mapItemRow(result.rows[0]) : null
@@ -956,92 +844,42 @@ class PostgresSynthesisStore implements SynthesisStore {
     return event
   }
 
-  async nextEngagement(_input: NextEngagementInput): Promise<NextEngagementResult> {
-    await this.ensureSchema()
-    const mode = getEngagementMode()
-    if (mode === 'off') {
-      return { mode, action: null, item: null, reason: 'SYNTHESIS_ENGAGEMENT_MODE=off' }
-    }
-
-    const result = await this.pool.query<EngagementRow>(
-      `SELECT * FROM engagement_actions WHERE status = 'queued' ORDER BY created_at ASC LIMIT 1`,
-    )
-    const row = result.rows[0]
-    if (!row) return { mode, action: null, item: null, reason: 'no queued engagement action' }
-
-    const action = mapEngagementRow(row)
-    return {
-      mode,
-      action,
-      item: await this.getItem(action.itemId),
-      reason: null,
-    }
-  }
-
-  async recordEngagementResult(input: RecordEngagementResultInput): Promise<EngagementAction> {
-    await this.ensureSchema()
-    const result = await this.pool.query<EngagementRow>(
-      `UPDATE engagement_actions
-       SET status = $2, result_url = COALESCE($3, result_url), error = $4, performed_at = now(), updated_at = now()
-       WHERE id = $1
-       RETURNING *`,
-      [input.id, input.status, input.resultUrl ?? null, input.error ?? null],
-    )
-    const row = result.rows[0]
-    if (!row) throw new Error(`Unknown engagement action: ${input.id}`)
-
-    await this.pool.query(`UPDATE synthesis_items SET engagement_status = $2, updated_at = now() WHERE id = $1`, [
-      row.item_id,
-      input.status,
-    ])
-    return mapEngagementRow(row)
-  }
-
-  private async maybeQueueEngagement(client: PoolClient, item: SynthesisItem, input: SubmitItemInput) {
-    const existing = await client.query<EngagementRow>(
-      `SELECT * FROM engagement_actions WHERE item_id = $1 AND status = 'queued' ORDER BY created_at ASC LIMIT 1`,
-      [item.id],
-    )
-    if (existing.rows[0]) return mapEngagementRow(existing.rows[0])
-
-    const decision = await planEngagement(input, async (action) => {
-      const result = await client.query<{ count: string }>(
-        `SELECT count(*)::text AS count
-         FROM engagement_actions
-         WHERE action = $1 AND created_at >= now() - interval '1 day'`,
-        [action],
-      )
-      return Number(result.rows[0]?.count ?? 0)
-    })
-
-    if (decision.status !== 'queued') {
-      await client.query(`UPDATE synthesis_items SET engagement_status = $2, updated_at = now() WHERE id = $1`, [
-        item.id,
-        decision.status,
-      ])
-      return null
-    }
-
-    const result = await client.query<EngagementRow>(
-      `INSERT INTO engagement_actions (id, item_id, action, status, reply_text, reason)
-       VALUES ($1, $2, $3, 'queued', $4, $5)
-       RETURNING *`,
-      [randomUUID(), item.id, decision.action, decision.replyText, decision.reason],
-    )
-    await client.query(
-      `UPDATE synthesis_items SET engagement_status = 'queued', reply_text = $2, updated_at = now() WHERE id = $1`,
-      [item.id, decision.replyText],
-    )
-    return mapEngagementRow(result.rows[0])
-  }
-
   private itemSelectSql(alias: string) {
     return `${alias}.id, ${alias}.run_id, ${alias}.x_post_key, ${alias}.dedupe_key, ${alias}.title, ${alias}.synthesis,
       ${alias}.takeaways, ${alias}.source_posts, ${alias}.fact_checks, ${alias}.attachments,
       ${alias}.generated_attachments, p.canonical_url, p.x_post_id, p.author_handle, p.author_name, p.posted_at,
       p.last_observed_at, p.observed_text, ${alias}.media_urls, ${alias}.summary, ${alias}.why_valuable,
-      ${alias}.evidence, ${alias}.topic_tags, ${alias}.score, ${alias}.confidence, ${alias}.engagement_recommendation,
-      ${alias}.engagement_status, ${alias}.reply_text, ${alias}.created_at, ${alias}.updated_at`
+      ${alias}.evidence, ${alias}.topic_tags, ${alias}.score, ${alias}.confidence, ${alias}.created_at,
+      ${alias}.updated_at, e.model AS embedding_model, e.dimension AS embedding_dimension,
+      e.input_hash AS embedding_input_hash, e.created_at AS embedding_created_at`
+  }
+
+  private itemRelationSql(alias: string, options: { requireEmbedding?: boolean } = {}) {
+    const embeddingJoin = options.requireEmbedding
+      ? `JOIN synthesis_item_embeddings e ON e.item_id = ${alias}.id`
+      : `LEFT JOIN synthesis_item_embeddings e ON e.item_id = ${alias}.id`
+    return `synthesis_items ${alias} JOIN x_posts p ON p.id = ${alias}.x_post_key ${embeddingJoin}`
+  }
+
+  private async upsertEmbedding(client: PoolClient, itemId: string, embeddingRecord: SynthesisEmbeddingRecord) {
+    await client.query(
+      `INSERT INTO synthesis_item_embeddings (item_id, model, dimension, input_hash, embedding, created_at)
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6::timestamptz)
+       ON CONFLICT (item_id) DO UPDATE SET
+         model = EXCLUDED.model,
+         dimension = EXCLUDED.dimension,
+         input_hash = EXCLUDED.input_hash,
+         embedding = EXCLUDED.embedding,
+         created_at = EXCLUDED.created_at`,
+      [
+        itemId,
+        embeddingRecord.model,
+        embeddingRecord.dimension,
+        embeddingRecord.inputHash,
+        JSON.stringify(embeddingRecord.embedding),
+        embeddingRecord.createdAt,
+      ],
+    )
   }
 
   private ensureSchema() {
@@ -1092,11 +930,6 @@ class PostgresSynthesisStore implements SynthesisStore {
         topic_tags jsonb NOT NULL DEFAULT '[]'::jsonb,
         score double precision NOT NULL CHECK (score >= 0 AND score <= 1),
         confidence double precision NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
-        engagement_recommendation text NOT NULL CHECK (engagement_recommendation IN ('none', 'like', 'reply')),
-        engagement_status text NOT NULL CHECK (
-          engagement_status IN ('none', 'queued', 'sent', 'failed', 'skipped', 'suppressed')
-        ),
-        reply_text text,
         created_at timestamptz NOT NULL DEFAULT now(),
         updated_at timestamptz NOT NULL DEFAULT now()
       );
@@ -1110,6 +943,9 @@ class PostgresSynthesisStore implements SynthesisStore {
       ALTER TABLE synthesis_items ADD COLUMN IF NOT EXISTS fact_checks jsonb NOT NULL DEFAULT '[]'::jsonb;
       ALTER TABLE synthesis_items ADD COLUMN IF NOT EXISTS attachments jsonb NOT NULL DEFAULT '[]'::jsonb;
       ALTER TABLE synthesis_items ADD COLUMN IF NOT EXISTS generated_attachments jsonb NOT NULL DEFAULT '[]'::jsonb;
+      ALTER TABLE synthesis_items DROP COLUMN IF EXISTS engagement_recommendation;
+      ALTER TABLE synthesis_items DROP COLUMN IF EXISTS engagement_status;
+      ALTER TABLE synthesis_items DROP COLUMN IF EXISTS reply_text;
       UPDATE synthesis_items
       SET
         dedupe_key = COALESCE(dedupe_key, x_post_key),
@@ -1143,19 +979,16 @@ class PostgresSynthesisStore implements SynthesisStore {
         created_at timestamptz NOT NULL DEFAULT now()
       );
 
-      CREATE TABLE IF NOT EXISTS engagement_actions (
-        id text PRIMARY KEY,
-        item_id text NOT NULL REFERENCES synthesis_items(id) ON DELETE CASCADE,
-        action text NOT NULL CHECK (action IN ('like', 'reply')),
-        status text NOT NULL CHECK (status IN ('queued', 'sent', 'failed', 'skipped', 'suppressed')),
-        reply_text text,
-        reason text,
-        result_url text,
-        error text,
-        created_at timestamptz NOT NULL DEFAULT now(),
-        updated_at timestamptz NOT NULL DEFAULT now(),
-        performed_at timestamptz
+      CREATE TABLE IF NOT EXISTS synthesis_item_embeddings (
+        item_id text PRIMARY KEY REFERENCES synthesis_items(id) ON DELETE CASCADE,
+        model text NOT NULL,
+        dimension integer NOT NULL CHECK (dimension > 0),
+        input_hash text NOT NULL,
+        embedding jsonb NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now()
       );
+
+      DROP TABLE IF EXISTS engagement_actions;
 
       CREATE TABLE IF NOT EXISTS feedback_events (
         id text PRIMARY KEY,
@@ -1185,7 +1018,7 @@ class PostgresSynthesisStore implements SynthesisStore {
       CREATE INDEX IF NOT EXISTS synthesis_items_score_idx ON synthesis_items (score DESC);
       CREATE INDEX IF NOT EXISTS synthesis_item_sources_x_post_idx ON synthesis_item_sources (x_post_key);
       CREATE INDEX IF NOT EXISTS synthesis_attachments_item_idx ON synthesis_attachments (item_id);
-      CREATE INDEX IF NOT EXISTS engagement_actions_status_created_idx ON engagement_actions (status, created_at);
+      CREATE INDEX IF NOT EXISTS synthesis_item_embeddings_model_idx ON synthesis_item_embeddings (model, dimension);
     `)
   }
 }

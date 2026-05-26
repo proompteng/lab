@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 
 import { handleCreateRun, handleGetAsset, handleListFeed, handleSubmitItem } from '../api'
+import { setSynthesisEmbeddingProviderForTests } from '../embeddings'
 import { createInMemorySynthesisStore, setSynthesisStoreForTests } from '../store'
 
 const token = 'test-synthesis-token'
@@ -32,7 +33,15 @@ const submitItemRequest = (runId: string, index: number) =>
         {
           originalUrl: `https://x.com/example/status/${1000 + index}`,
           observedText: `observed post ${index} about semis and devtools`,
-          mediaUrls: [`https://pbs.twimg.com/media/example-${index}.jpg`],
+        },
+      ],
+      attachments: [
+        {
+          kind: 'source_image',
+          url: `https://pbs.twimg.com/media/example-${index}.jpg`,
+          sourceUrl: `https://x.com/example/status/${1000 + index}`,
+          mimeType: 'image/jpeg',
+          alt: `timeline chart ${index} shows the semis/devtools signal captured for synthesis`,
         },
       ],
       dedupeKey: `theme:semis-devtools-${index}`,
@@ -45,11 +54,26 @@ const submitItemRequest = (runId: string, index: number) =>
 describe('synthesis REST auth', () => {
   beforeEach(() => {
     process.env.SYNTHESIS_API_TOKEN = token
+    process.env.SYNTHESIS_EMBEDDING_DIMENSION = '3'
+    process.env.SYNTHESIS_EMBEDDING_MODEL = 'local-test-embedding'
+    setSynthesisEmbeddingProviderForTests(async ({ text, config }) => {
+      const lowered = text.toLowerCase()
+      if (lowered.includes('memory') || lowered.includes('hbm') || lowered.includes('packaging')) {
+        return { embedding: [0, 1, 0], model: config.model, dimension: config.dimension }
+      }
+      if (lowered.includes('browser') || lowered.includes('agent')) {
+        return { embedding: [1, 0, 0], model: config.model, dimension: config.dimension }
+      }
+      return { embedding: [0, 0, 1], model: config.model, dimension: config.dimension }
+    })
     setSynthesisStoreForTests(createInMemorySynthesisStore())
   })
 
   afterEach(() => {
     delete process.env.SYNTHESIS_API_TOKEN
+    delete process.env.SYNTHESIS_EMBEDDING_DIMENSION
+    delete process.env.SYNTHESIS_EMBEDDING_MODEL
+    setSynthesisEmbeddingProviderForTests(null)
     setSynthesisStoreForTests(null)
   })
 
@@ -104,7 +128,7 @@ describe('synthesis REST auth', () => {
     const firstResponse = await handleListFeed(new Request('http://synthesis.test/api/feed?limit=2&minScore=0'))
     const firstPage = await firstResponse.json()
     expect(firstPage.items).toHaveLength(2)
-    expect(firstPage.items[0].mediaUrls[0]).toContain('pbs.twimg.com/media')
+    expect(firstPage.items[0].attachments[0].assetUrl).toMatch(/^\/api\/assets\//)
     expect(firstPage.nextCursor).toEqual(expect.any(String))
 
     const secondResponse = await handleListFeed(
@@ -138,7 +162,6 @@ describe('synthesis REST auth', () => {
               originalUrl: 'https://x.com/example/status/2001',
               authorHandle: 'example',
               observedText: 'hbm allocation notes with packaging detail',
-              mediaUrls: ['https://pbs.twimg.com/media/hbm-1.jpg'],
             },
             {
               originalUrl: 'https://x.com/another/status/2002',
@@ -160,6 +183,7 @@ describe('synthesis REST auth', () => {
               url: 'https://pbs.twimg.com/media/hbm-1.jpg',
               sourceUrl: 'https://x.com/example/status/2001',
               mimeType: 'image/jpeg',
+              alt: 'chart text highlights HBM allocation pressure moving into packaging capacity',
             },
           ],
           generatedAttachments: [
@@ -186,6 +210,10 @@ describe('synthesis REST auth', () => {
     expect(payload.item.factChecks[0].status).toBe('verified')
     expect(payload.item.attachments).toHaveLength(2)
     expect(payload.item.attachments[0].assetUrl).toMatch(/^\/api\/assets\//)
+    expect(payload.item.embedding).toMatchObject({
+      model: 'local-test-embedding',
+      dimension: 3,
+    })
 
     const assetResponse = await handleGetAsset(
       new Request(`http://synthesis.test${payload.item.attachments[0].assetUrl}`),
@@ -233,7 +261,64 @@ describe('synthesis REST auth', () => {
     const feedPayload = await feedResponse.json()
 
     expect(secondPayload.item.sourceCount).toBe(2)
+    expect(secondPayload.item.embedding.dimension).toBe(3)
     expect(feedPayload.items).toHaveLength(1)
     expect(feedPayload.items[0].dedupeKey).toBe('theme:agent-browser-tooling')
+  })
+
+  test('uses semantic query embeddings for feed search instead of local text filtering', async () => {
+    const runResponse = await handleCreateRun(createRunRequest(`Bearer ${token}`))
+    const runPayload = await runResponse.json()
+    await handleSubmitItem(
+      new Request('http://synthesis.test/api/items', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          runId: runPayload.run.id,
+          title: 'Browser control surfaces are becoming agent infrastructure',
+          synthesis: 'Browser sessions are turning into the authenticated control layer for SaaS agents.',
+          takeaways: ['browser context matters for agent workflows'],
+          whyValuable: 'It is a product workflow signal.',
+          sourcePosts: [{ originalUrl: 'https://x.com/example/status/5001', observedText: 'browser agent workflow' }],
+          dedupeKey: 'theme:browser-control-surfaces',
+          topicTags: ['ai-agents'],
+          score: 0.92,
+          confidence: 0.8,
+        }),
+      }),
+    )
+    await handleSubmitItem(
+      new Request('http://synthesis.test/api/items', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          runId: runPayload.run.id,
+          title: 'Advanced memory stacks are becoming the capacity constraint',
+          synthesis: 'Supply-chain chatter points at HBM allocation as the practical limit for inference builds.',
+          takeaways: ['capacity planning depends on memory allocation'],
+          whyValuable: 'It turns scattered semiconductor posts into a watch item.',
+          sourcePosts: [{ originalUrl: 'https://x.com/example/status/5002', observedText: 'hbm supply note' }],
+          dedupeKey: 'theme:hbm-memory-capacity',
+          topicTags: ['semis'],
+          score: 0.93,
+          confidence: 0.8,
+        }),
+      }),
+    )
+
+    const response = await handleListFeed(
+      new Request('http://synthesis.test/api/feed?limit=1&minScore=0&query=gpu%20packaging'),
+    )
+    const payload = await response.json()
+
+    expect(payload.items).toHaveLength(1)
+    expect(payload.items[0].dedupeKey).toBe('theme:hbm-memory-capacity')
+    expect(payload.nextCursor).toBeNull()
   })
 })
