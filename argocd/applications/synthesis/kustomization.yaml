@@ -10,5 +10,5 @@ resources:
   - networkpolicy.yaml
 images:
   - name: registry.ide-newton.ts.net/lab/synthesis
-    newTag: 0.576.0
+    newTag: xcurate-backfill-202605260253-9eaea9508
     newName: registry.ide-newton.ts.net/lab/synthesis
