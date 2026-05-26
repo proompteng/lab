@@ -11,11 +11,13 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as McpRouteImport } from './routes/mcp'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as CompaniesSymbolRouteImport } from './routes/companies/$symbol'
 import { Route as ApiRunsRouteImport } from './routes/api/runs'
 import { Route as ApiItemsRouteImport } from './routes/api/items'
 import { Route as ApiFeedRouteImport } from './routes/api/feed'
 import { Route as ApiItemsBatchRouteImport } from './routes/api/items/batch'
 import { Route as ApiItemsIdRouteImport } from './routes/api/items/$id'
+import { Route as ApiCompaniesSymbolRouteImport } from './routes/api/companies/$symbol'
 import { Route as ApiAssetsIdRouteImport } from './routes/api/assets/$id'
 import { Route as ApiItemsIdFeedbackRouteImport } from './routes/api/items/$id/feedback'
 
@@ -27,6 +29,11 @@ const McpRoute = McpRouteImport.update({
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CompaniesSymbolRoute = CompaniesSymbolRouteImport.update({
+  id: '/companies/$symbol',
+  path: '/companies/$symbol',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiRunsRoute = ApiRunsRouteImport.update({
@@ -54,6 +61,11 @@ const ApiItemsIdRoute = ApiItemsIdRouteImport.update({
   path: '/$id',
   getParentRoute: () => ApiItemsRoute,
 } as any)
+const ApiCompaniesSymbolRoute = ApiCompaniesSymbolRouteImport.update({
+  id: '/api/companies/$symbol',
+  path: '/api/companies/$symbol',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiAssetsIdRoute = ApiAssetsIdRouteImport.update({
   id: '/api/assets/$id',
   path: '/api/assets/$id',
@@ -71,7 +83,9 @@ export interface FileRoutesByFullPath {
   '/api/feed': typeof ApiFeedRoute
   '/api/items': typeof ApiItemsRouteWithChildren
   '/api/runs': typeof ApiRunsRoute
+  '/companies/$symbol': typeof CompaniesSymbolRoute
   '/api/assets/$id': typeof ApiAssetsIdRoute
+  '/api/companies/$symbol': typeof ApiCompaniesSymbolRoute
   '/api/items/$id': typeof ApiItemsIdRouteWithChildren
   '/api/items/batch': typeof ApiItemsBatchRoute
   '/api/items/$id/feedback': typeof ApiItemsIdFeedbackRoute
@@ -82,7 +96,9 @@ export interface FileRoutesByTo {
   '/api/feed': typeof ApiFeedRoute
   '/api/items': typeof ApiItemsRouteWithChildren
   '/api/runs': typeof ApiRunsRoute
+  '/companies/$symbol': typeof CompaniesSymbolRoute
   '/api/assets/$id': typeof ApiAssetsIdRoute
+  '/api/companies/$symbol': typeof ApiCompaniesSymbolRoute
   '/api/items/$id': typeof ApiItemsIdRouteWithChildren
   '/api/items/batch': typeof ApiItemsBatchRoute
   '/api/items/$id/feedback': typeof ApiItemsIdFeedbackRoute
@@ -94,7 +110,9 @@ export interface FileRoutesById {
   '/api/feed': typeof ApiFeedRoute
   '/api/items': typeof ApiItemsRouteWithChildren
   '/api/runs': typeof ApiRunsRoute
+  '/companies/$symbol': typeof CompaniesSymbolRoute
   '/api/assets/$id': typeof ApiAssetsIdRoute
+  '/api/companies/$symbol': typeof ApiCompaniesSymbolRoute
   '/api/items/$id': typeof ApiItemsIdRouteWithChildren
   '/api/items/batch': typeof ApiItemsBatchRoute
   '/api/items/$id/feedback': typeof ApiItemsIdFeedbackRoute
@@ -107,7 +125,9 @@ export interface FileRouteTypes {
     | '/api/feed'
     | '/api/items'
     | '/api/runs'
+    | '/companies/$symbol'
     | '/api/assets/$id'
+    | '/api/companies/$symbol'
     | '/api/items/$id'
     | '/api/items/batch'
     | '/api/items/$id/feedback'
@@ -118,7 +138,9 @@ export interface FileRouteTypes {
     | '/api/feed'
     | '/api/items'
     | '/api/runs'
+    | '/companies/$symbol'
     | '/api/assets/$id'
+    | '/api/companies/$symbol'
     | '/api/items/$id'
     | '/api/items/batch'
     | '/api/items/$id/feedback'
@@ -129,7 +151,9 @@ export interface FileRouteTypes {
     | '/api/feed'
     | '/api/items'
     | '/api/runs'
+    | '/companies/$symbol'
     | '/api/assets/$id'
+    | '/api/companies/$symbol'
     | '/api/items/$id'
     | '/api/items/batch'
     | '/api/items/$id/feedback'
@@ -141,7 +165,9 @@ export interface RootRouteChildren {
   ApiFeedRoute: typeof ApiFeedRoute
   ApiItemsRoute: typeof ApiItemsRouteWithChildren
   ApiRunsRoute: typeof ApiRunsRoute
+  CompaniesSymbolRoute: typeof CompaniesSymbolRoute
   ApiAssetsIdRoute: typeof ApiAssetsIdRoute
+  ApiCompaniesSymbolRoute: typeof ApiCompaniesSymbolRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -158,6 +184,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/companies/$symbol': {
+      id: '/companies/$symbol'
+      path: '/companies/$symbol'
+      fullPath: '/companies/$symbol'
+      preLoaderRoute: typeof CompaniesSymbolRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/runs': {
@@ -194,6 +227,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/api/items/$id'
       preLoaderRoute: typeof ApiItemsIdRouteImport
       parentRoute: typeof ApiItemsRoute
+    }
+    '/api/companies/$symbol': {
+      id: '/api/companies/$symbol'
+      path: '/api/companies/$symbol'
+      fullPath: '/api/companies/$symbol'
+      preLoaderRoute: typeof ApiCompaniesSymbolRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/api/assets/$id': {
       id: '/api/assets/$id'
@@ -244,7 +284,9 @@ const rootRouteChildren: RootRouteChildren = {
   ApiFeedRoute: ApiFeedRoute,
   ApiItemsRoute: ApiItemsRouteWithChildren,
   ApiRunsRoute: ApiRunsRoute,
+  CompaniesSymbolRoute: CompaniesSymbolRoute,
   ApiAssetsIdRoute: ApiAssetsIdRoute,
+  ApiCompaniesSymbolRoute: ApiCompaniesSymbolRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

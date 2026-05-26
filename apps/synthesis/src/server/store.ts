@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { Pool, type PoolClient } from 'pg'
 
+import { deriveTopicTagsFromItemContent } from '~/lib/tags'
+
 import { materializeAttachments, normalizeAttachmentInputs } from './assets'
 import {
   buildEmbeddingText,
@@ -237,7 +239,15 @@ const normalizeSubmitItem = async (input: SubmitItemInput): Promise<NormalizedSu
     summary: input.synthesis,
     whyValuable: input.whyValuable,
     evidence: input.factChecks.map((factCheck) => `${factCheck.status}: ${factCheck.claim}`),
-    topicTags: input.topicTags,
+    topicTags: deriveTopicTagsFromItemContent({
+      title: input.title,
+      synthesis: input.synthesis,
+      takeaways: input.takeaways,
+      whyValuable: input.whyValuable,
+      sourcePosts,
+      factChecks: input.factChecks,
+      topicTags: input.topicTags,
+    }),
     score: input.score,
     confidence: input.confidence,
   }
@@ -485,13 +495,30 @@ const mapItemRow = (row: ItemRow): SynthesisItem => {
   const sourcePosts = parseJsonValue<SynthesisSourcePost[]>(row.source_posts, [])
   const resolvedSourcePosts = sourcePosts.length ? sourcePosts : [sourcePostFromRow(row)]
   const attachments = parseJsonValue<SynthesisAttachment[]>(row.attachments, [])
+  const takeaways = parseJsonValue<string[]>(row.takeaways, [])
+  const evidence = parseJsonArray(row.evidence)
+  const factChecks = parseJsonValue<SynthesisFactCheck[]>(row.fact_checks, [])
+  const title = row.title ?? row.summary
+  const synthesis = row.synthesis ?? row.summary
+  const topicTags = deriveTopicTagsFromItemContent({
+    title,
+    synthesis,
+    summary: row.summary,
+    whyValuable: row.why_valuable,
+    observedText: row.observed_text,
+    takeaways,
+    evidence,
+    sourcePosts: resolvedSourcePosts,
+    factChecks,
+    topicTags: parseJsonArray(row.topic_tags),
+  })
 
   return {
     id: row.id,
     runId: row.run_id,
-    title: row.title ?? row.summary,
-    synthesis: row.synthesis ?? row.summary,
-    takeaways: parseJsonValue<string[]>(row.takeaways, []),
+    title,
+    synthesis,
+    takeaways,
     dedupeKey: row.dedupe_key ?? row.x_post_key,
     originalUrl: row.canonical_url,
     xPostId: row.x_post_id,
@@ -503,10 +530,10 @@ const mapItemRow = (row: ItemRow): SynthesisItem => {
     mediaUrls: parseJsonArray(row.media_urls),
     summary: row.summary,
     whyValuable: row.why_valuable,
-    evidence: parseJsonArray(row.evidence),
+    evidence,
     sourcePosts: resolvedSourcePosts,
     sourceCount: resolvedSourcePosts.length,
-    factChecks: parseJsonValue<SynthesisFactCheck[]>(row.fact_checks, []),
+    factChecks,
     attachments,
     generatedAttachments: parseJsonValue<SynthesisAttachment[]>(
       row.generated_attachments,
@@ -521,7 +548,7 @@ const mapItemRow = (row: ItemRow): SynthesisItem => {
             createdAt: toIso(row.embedding_created_at) ?? nowIso(),
           }
         : null,
-    topicTags: parseJsonArray(row.topic_tags),
+    topicTags,
     score: Number(row.score),
     confidence: Number(row.confidence),
     createdAt: toIso(row.created_at) ?? nowIso(),
@@ -887,6 +914,32 @@ class PostgresSynthesisStore implements SynthesisStore {
     )
   }
 
+  private async backfillMissingTopicTags() {
+    const result = await this.pool.query<ItemRow>(
+      `SELECT ${this.itemSelectSql('i')}
+       FROM ${this.itemRelationSql('i')}
+       WHERE jsonb_array_length(i.topic_tags) = 0
+       ORDER BY i.created_at ASC, i.id ASC
+       LIMIT $1`,
+      [embeddingBackfillLimit()],
+    )
+    if (!result.rows.length) return
+
+    const client = await this.pool.connect()
+    try {
+      for (const row of result.rows) {
+        const item = mapItemRow(row)
+        if (!item.topicTags.length) continue
+        await client.query(`UPDATE synthesis_items SET topic_tags = $2::jsonb, updated_at = updated_at WHERE id = $1`, [
+          item.id,
+          JSON.stringify(item.topicTags),
+        ])
+      }
+    } finally {
+      client.release()
+    }
+  }
+
   private async backfillMissingEmbeddings() {
     const result = await this.pool.query<ItemRow>(
       `SELECT ${this.itemSelectSql('i')}
@@ -1058,6 +1111,7 @@ class PostgresSynthesisStore implements SynthesisStore {
       CREATE INDEX IF NOT EXISTS synthesis_attachments_item_idx ON synthesis_attachments (item_id);
       CREATE INDEX IF NOT EXISTS synthesis_item_embeddings_model_idx ON synthesis_item_embeddings (model, dimension);
     `)
+    await this.backfillMissingTopicTags()
     await this.backfillMissingEmbeddings()
   }
 }
