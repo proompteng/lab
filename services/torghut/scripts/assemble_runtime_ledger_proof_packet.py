@@ -27,6 +27,9 @@ DOC29_LIVE_SCALE_GATE = "live_scale_observed"
 DEFAULT_MIN_RUNTIME_LEDGER_NET_PNL = Decimal("500")
 DEFAULT_MIN_RUNTIME_LEDGER_DAILY_NET_PNL = Decimal("500")
 DEFAULT_MIN_RUNTIME_LEDGER_TRADING_DAYS = 1
+DEFAULT_MAX_RUNTIME_LEDGER_DRAWDOWN_PCT_EQUITY = Decimal("0.08")
+DEFAULT_MAX_RUNTIME_LEDGER_BEST_DAY_SHARE = Decimal("0.25")
+DEFAULT_MAX_RUNTIME_LEDGER_SYMBOL_CONCENTRATION_SHARE = Decimal("0.50")
 STATUS_ENDPOINT = "/trading/status"
 PAPER_ROUTE_EVIDENCE_ENDPOINT = "/trading/paper-route-evidence"
 COMPLETION_DOC29_ENDPOINT = "/trading/completion/doc29"
@@ -108,6 +111,18 @@ def _decimal_text(value: Decimal | None) -> str | None:
         return None
     text = format(value, "f")
     return text.rstrip("0").rstrip(".") if "." in text else text
+
+
+def _first_decimal(
+    payload: Mapping[str, Any],
+    keys: Sequence[str],
+) -> tuple[Decimal | None, str]:
+    for key in keys:
+        if key in payload:
+            value = _decimal(payload.get(key))
+            if value is not None:
+                return value, key
+    return None, ""
 
 
 def _mapping(value: object) -> Mapping[str, Any]:
@@ -746,6 +761,18 @@ def _required_actions(blockers: Sequence[str], *, verdict: str) -> list[str]:
             _extend_unique(
                 actions, ["collect_or_improve_post_cost_runtime_profit_evidence"]
             )
+        elif blocker in {
+            "runtime_ledger_drawdown_pct_equity_missing",
+            "runtime_ledger_drawdown_pct_equity_above_limit",
+            "runtime_ledger_best_day_share_missing",
+            "runtime_ledger_best_day_share_above_limit",
+            "runtime_ledger_symbol_concentration_share_missing",
+            "runtime_ledger_symbol_concentration_share_above_limit",
+        }:
+            _extend_unique(
+                actions,
+                ["improve_runtime_ledger_drawdown_concentration_or_position_sizing"],
+            )
         elif blocker.startswith("runtime_ledger_") or blocker in {
             "filled_notional_missing",
             "closed_round_trip_missing",
@@ -796,6 +823,15 @@ def build_runtime_ledger_proof_packet(
     min_runtime_ledger_net_pnl: Decimal = DEFAULT_MIN_RUNTIME_LEDGER_NET_PNL,
     min_runtime_ledger_daily_net_pnl: Decimal = DEFAULT_MIN_RUNTIME_LEDGER_DAILY_NET_PNL,
     min_runtime_ledger_trading_days: int = DEFAULT_MIN_RUNTIME_LEDGER_TRADING_DAYS,
+    max_runtime_ledger_drawdown_pct_equity: Decimal = (
+        DEFAULT_MAX_RUNTIME_LEDGER_DRAWDOWN_PCT_EQUITY
+    ),
+    max_runtime_ledger_best_day_share: Decimal = (
+        DEFAULT_MAX_RUNTIME_LEDGER_BEST_DAY_SHARE
+    ),
+    max_runtime_ledger_symbol_concentration_share: Decimal = (
+        DEFAULT_MAX_RUNTIME_LEDGER_SYMBOL_CONCENTRATION_SHARE
+    ),
     generated_at: str | None = None,
 ) -> dict[str, Any]:
     checks: dict[str, dict[str, Any]] = {}
@@ -1068,6 +1104,31 @@ def build_runtime_ledger_proof_packet(
         if net_pnl is not None and trading_days > 0
         else None
     )
+    drawdown_pct, drawdown_source = _first_decimal(
+        runtime_summary,
+        (
+            "runtime_ledger_max_drawdown_pct_equity",
+            "runtime_ledger_drawdown_pct_equity",
+            "max_drawdown_pct_equity",
+            "drawdown_pct_equity",
+        ),
+    )
+    best_day_share, best_day_share_source = _first_decimal(
+        runtime_summary,
+        (
+            "runtime_ledger_best_day_share",
+            "runtime_ledger_max_single_day_contribution_share",
+            "best_day_share",
+            "max_single_day_contribution_share",
+        ),
+    )
+    symbol_concentration_share, symbol_concentration_source = _first_decimal(
+        runtime_summary,
+        (
+            "runtime_ledger_symbol_concentration_share",
+            "symbol_concentration_share",
+        ),
+    )
     _check(
         checks,
         "runtime_ledger_db_refs",
@@ -1143,6 +1204,57 @@ def build_runtime_ledger_proof_packet(
         status=None if runtime_import_due else deferred_until_runtime_import_due,
     )
     _extend_unique(blockers, pnl_blockers)
+    risk_blockers: list[str] = []
+    if runtime_import_due and drawdown_pct is None:
+        risk_blockers.append("runtime_ledger_drawdown_pct_equity_missing")
+    elif (
+        runtime_import_due
+        and drawdown_pct is not None
+        and drawdown_pct > max_runtime_ledger_drawdown_pct_equity
+    ):
+        risk_blockers.append("runtime_ledger_drawdown_pct_equity_above_limit")
+    if runtime_import_due and best_day_share is None:
+        risk_blockers.append("runtime_ledger_best_day_share_missing")
+    elif (
+        runtime_import_due
+        and best_day_share is not None
+        and best_day_share > max_runtime_ledger_best_day_share
+    ):
+        risk_blockers.append("runtime_ledger_best_day_share_above_limit")
+    if runtime_import_due and symbol_concentration_share is None:
+        risk_blockers.append("runtime_ledger_symbol_concentration_share_missing")
+    elif (
+        runtime_import_due
+        and symbol_concentration_share is not None
+        and symbol_concentration_share > max_runtime_ledger_symbol_concentration_share
+    ):
+        risk_blockers.append("runtime_ledger_symbol_concentration_share_above_limit")
+    _check(
+        checks,
+        "runtime_ledger_risk_quality",
+        passed=not risk_blockers,
+        observed={
+            "runtime_import_due": runtime_import_due,
+            "drawdown_pct_equity": _decimal_text(drawdown_pct),
+            "drawdown_pct_equity_source": drawdown_source,
+            "best_day_share": _decimal_text(best_day_share),
+            "best_day_share_source": best_day_share_source,
+            "symbol_concentration_share": _decimal_text(symbol_concentration_share),
+            "symbol_concentration_share_source": symbol_concentration_source,
+        },
+        expected={
+            "max_drawdown_pct_equity": _decimal_text(
+                max_runtime_ledger_drawdown_pct_equity
+            ),
+            "max_best_day_share": _decimal_text(max_runtime_ledger_best_day_share),
+            "max_symbol_concentration_share": _decimal_text(
+                max_runtime_ledger_symbol_concentration_share
+            ),
+        },
+        blockers=risk_blockers,
+        status=None if runtime_import_due else deferred_until_runtime_import_due,
+    )
+    _extend_unique(blockers, risk_blockers)
 
     failed_checks = [key for key, value in checks.items() if not value["passed"]]
     waiting_blockers = {
@@ -1180,6 +1292,15 @@ def build_runtime_ledger_proof_packet(
                 min_runtime_ledger_daily_net_pnl
             ),
             "min_runtime_ledger_trading_days": min_runtime_ledger_trading_days,
+            "max_runtime_ledger_drawdown_pct_equity": _decimal_text(
+                max_runtime_ledger_drawdown_pct_equity
+            ),
+            "max_runtime_ledger_best_day_share": _decimal_text(
+                max_runtime_ledger_best_day_share
+            ),
+            "max_runtime_ledger_symbol_concentration_share": _decimal_text(
+                max_runtime_ledger_symbol_concentration_share
+            ),
         },
         "candidate": _first_identity(
             paper_targets=paper_targets,
@@ -1294,6 +1415,21 @@ def _parser() -> argparse.ArgumentParser:
         default=DEFAULT_MIN_RUNTIME_LEDGER_TRADING_DAYS,
         help="Minimum observed runtime-ledger trading days.",
     )
+    parser.add_argument(
+        "--max-runtime-ledger-drawdown-pct-equity",
+        default=str(DEFAULT_MAX_RUNTIME_LEDGER_DRAWDOWN_PCT_EQUITY),
+        help="Maximum observed runtime-ledger drawdown as a fraction of equity.",
+    )
+    parser.add_argument(
+        "--max-runtime-ledger-best-day-share",
+        default=str(DEFAULT_MAX_RUNTIME_LEDGER_BEST_DAY_SHARE),
+        help="Maximum share of post-cost runtime-ledger PnL attributable to one trading day.",
+    )
+    parser.add_argument(
+        "--max-runtime-ledger-symbol-concentration-share",
+        default=str(DEFAULT_MAX_RUNTIME_LEDGER_SYMBOL_CONCENTRATION_SHARE),
+        help="Maximum share of post-cost runtime-ledger PnL attributable to one symbol.",
+    )
     parser.add_argument("--generated-at", default=None)
     parser.add_argument("--timeout-seconds", type=float, default=10.0)
     parser.add_argument("--output-file", type=Path, default=None)
@@ -1360,6 +1496,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise SystemExit(
             f"--min-runtime-ledger-daily-net-pnl must be decimal: {args.min_runtime_ledger_daily_net_pnl!r}"
         )
+    max_drawdown_pct_equity = _decimal(args.max_runtime_ledger_drawdown_pct_equity)
+    if max_drawdown_pct_equity is None:
+        raise SystemExit(
+            "--max-runtime-ledger-drawdown-pct-equity must be decimal: "
+            f"{args.max_runtime_ledger_drawdown_pct_equity!r}"
+        )
+    max_best_day_share = _decimal(args.max_runtime_ledger_best_day_share)
+    if max_best_day_share is None:
+        raise SystemExit(
+            "--max-runtime-ledger-best-day-share must be decimal: "
+            f"{args.max_runtime_ledger_best_day_share!r}"
+        )
+    max_symbol_concentration_share = _decimal(
+        args.max_runtime_ledger_symbol_concentration_share
+    )
+    if max_symbol_concentration_share is None:
+        raise SystemExit(
+            "--max-runtime-ledger-symbol-concentration-share must be decimal: "
+            f"{args.max_runtime_ledger_symbol_concentration_share!r}"
+        )
     status = _load_optional_json_object(
         path=args.status_file,
         url=args.status_url,
@@ -1391,6 +1547,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         min_runtime_ledger_trading_days=max(
             0, int(args.min_runtime_ledger_trading_days)
         ),
+        max_runtime_ledger_drawdown_pct_equity=max_drawdown_pct_equity,
+        max_runtime_ledger_best_day_share=max_best_day_share,
+        max_runtime_ledger_symbol_concentration_share=max_symbol_concentration_share,
         generated_at=args.generated_at,
     )
     if service_default_urls:
