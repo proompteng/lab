@@ -32,6 +32,14 @@ generic runtime-ledger-missing diagnosis.
 
 Trigger a simulation run via Argo:
 
+The proof packet separates post-cost proof authority from live capital promotion
+authority. `post_cost_proof_authority.allowed=true` means the runtime-ledger
+packet proved the configured post-cost target from paper-route/runtime evidence.
+`promotion_authority.allowed` and `capital_promotion_authority.allowed` can still
+remain false when submit, certificate, or promotion-decision gates are blocked;
+that is an explicit GitOps/manual-promotion prerequisite, not evidence that the
+runtime-ledger proof is missing.
+
 ```bash
 argo submit --from workflowtemplate/torghut-historical-simulation -n argo-workflows \
   --parameter mode=plan \

@@ -354,6 +354,64 @@ class TestRuntimeLedgerProofPacket(TestCase):
             "0.08",
         )
 
+    def test_packet_splits_post_cost_proof_from_capital_promotion_gate(self) -> None:
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(
+                blockers=[
+                    "simple_submit_disabled",
+                    "promotion_decision_not_allowed",
+                    "promotion_certificate_shadow_only",
+                ]
+            ),
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=_runtime_import(),
+            completion_status=_completion(),
+            min_runtime_ledger_net_pnl=Decimal("500"),
+            min_runtime_ledger_daily_net_pnl=Decimal("500"),
+            min_runtime_ledger_trading_days=1,
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(
+            result["verdict"],
+            "post_cost_proof_authority_allowed_capital_promotion_blocked",
+        )
+        self.assertTrue(result["post_cost_proof_authority"]["allowed"])
+        self.assertEqual(result["post_cost_proof_authority"]["blocking_reasons"], [])
+        self.assertFalse(result["capital_promotion_authority"]["allowed"])
+        self.assertEqual(
+            result["capital_promotion_authority"]["blocking_reasons"],
+            [
+                "simple_submit_disabled",
+                "promotion_decision_not_allowed",
+                "promotion_certificate_shadow_only",
+            ],
+        )
+        self.assertFalse(result["promotion_authority"]["allowed"])
+        self.assertEqual(
+            result["promotion_authority"]["failed_checks"],
+            ["capital_promotion_gate"],
+        )
+        self.assertEqual(
+            result["checks"]["live_status_gate"]["observed"]["proof_blockers"],
+            [],
+        )
+        self.assertEqual(
+            result["checks"]["live_status_gate"]["observed"][
+                "capital_promotion_blockers"
+            ],
+            [
+                "simple_submit_disabled",
+                "promotion_decision_not_allowed",
+                "promotion_certificate_shadow_only",
+            ],
+        )
+        self.assertIn(
+            "keep_promotion_blocked_until_live_gate_and_proof_floor_pass",
+            result["required_actions"],
+        )
+
     def test_cli_uploads_durable_proof_packet_artifact_with_runtime_run_id(
         self,
     ) -> None:
