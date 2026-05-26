@@ -777,6 +777,8 @@ class TestTradingPipeline(TestCase):
                 "trading_simple_order_feed_telemetry_enabled",
                 "trading_simple_paper_route_probe_enabled",
                 "trading_simple_paper_route_probe_max_notional",
+                "trading_paper_route_target_plan_url",
+                "trading_paper_route_target_plan_timeout_seconds",
                 "trading_universe_static_fallback_enabled",
                 "trading_universe_static_fallback_symbols_raw",
                 "trading_market_context_url",
@@ -3397,6 +3399,98 @@ class TestTradingPipeline(TestCase):
                 decision=decision,
             )
         )
+
+    def test_paper_route_probe_context_honors_external_target_plan_scope(self) -> None:
+        from app import config
+
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        decision = StrategyDecision(
+            strategy_id="strategy-1",
+            symbol="NVDA",
+            event_ts=datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            rationale="route-probe-target-plan-scope",
+            params={"price": "100"},
+        )
+        proof_floor = {
+            "market_window": {"session_open": True},
+            "blocking_reasons": ["alpha_readiness_not_promotion_eligible"],
+            "route_reacquisition_book": {
+                "summary": {
+                    "repair_candidate_symbols": ["AAPL", "NVDA"],
+                    "paper_route_probe_eligible_symbols": ["AAPL", "NVDA"],
+                }
+            },
+        }
+        config.settings.trading_mode = "paper"
+        config.settings.trading_simple_submit_enabled = True
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_simple_paper_route_probe_max_notional = 25.0
+        config.settings.trading_paper_route_target_plan_url = (
+            "http://torghut.local/trading/paper-route-evidence"
+        )
+        config.settings.trading_paper_route_target_plan_timeout_seconds = 1.0
+
+        with patch(
+            "app.trading.scheduler.simple_pipeline.fetch_paper_route_target_plan_url",
+            return_value={"targets": [{"paper_route_probe_symbols": ["AAPL"]}]},
+        ):
+            self.assertIsNone(
+                pipeline._paper_route_probe_context(
+                    proof_floor=proof_floor,
+                    decision=decision,
+                )
+            )
+            scoped_context = pipeline._paper_route_probe_context(
+                proof_floor=proof_floor,
+                decision=decision.model_copy(update={"symbol": "AAPL"}),
+            )
+
+        self.assertIsNotNone(scoped_context)
+        assert scoped_context is not None
+        self.assertEqual(
+            scoped_context.get("paper_route_target_plan_symbols"), ["AAPL"]
+        )
+        self.assertEqual(
+            scoped_context.get("paper_route_target_plan_source"),
+            "external_target_plan_url",
+        )
+
+        with patch(
+            "app.trading.scheduler.simple_pipeline.fetch_paper_route_target_plan_url",
+            return_value={"load_error": "paper_route_target_plan_fetch_failed:test"},
+        ):
+            self.assertIsNone(
+                pipeline._paper_route_probe_context(
+                    proof_floor=proof_floor,
+                    decision=decision.model_copy(update={"symbol": "AAPL"}),
+                )
+            )
+        with patch(
+            "app.trading.scheduler.simple_pipeline.fetch_paper_route_target_plan_url",
+            return_value={"targets": [{"paper_route_probe_symbols": []}]},
+        ):
+            self.assertIsNone(
+                pipeline._paper_route_probe_context(
+                    proof_floor=proof_floor,
+                    decision=decision.model_copy(update={"symbol": "AAPL"}),
+                )
+            )
 
     def test_paper_route_probe_short_increasing_sell_classification(self) -> None:
         decision = StrategyDecision(
