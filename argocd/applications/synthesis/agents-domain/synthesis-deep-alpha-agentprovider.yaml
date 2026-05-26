@@ -7,8 +7,8 @@ spec:
   adapter:
     type: codex-app-server
     codex:
-      model: gpt-5.3-codex-spark
-      effort: xhigh
+      model: gpt-5.5
+      effort: high
       sandbox: danger-full-access
       approval: never
       cwd: /workspace/lab
@@ -30,16 +30,16 @@ spec:
     CODEX_CONFIG: /root/.codex/config.toml
     CODEX_LOG_LEVEL: info
     CODEX_MAX_SESSION_ATTEMPTS: "3"
-    CODEX_MODEL: gpt-5.3-codex-spark
-    CODEX_MODEL_FALLBACKS: gpt-5.5,gpt-5.4,gpt-5.4-mini,gpt-5.2-codex,gpt-5-codex
+    CODEX_MODEL: gpt-5.5
+    CODEX_MODEL_FALLBACKS: gpt-5.4,gpt-5.4-mini,gpt-5.2-codex,gpt-5-codex
     HOME: /root
     SYNTHESIS_MCP_URL: http://synthesis.synthesis.svc.cluster.local:3000/mcp
   inputFiles:
     - path: /root/.codex/config.toml
       content: |-
-        model = "gpt-5.3-codex-spark"
-        model_reasoning_summary = "none"
-        model_reasoning_effort = "xhigh"
+        model = "gpt-5.5"
+        model_reasoning_summary = "detailed"
+        model_reasoning_effort = "high"
         model_verbosity = "medium"
         approval_policy = "never"
         sandbox_mode = "danger-full-access"

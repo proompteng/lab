@@ -39,7 +39,8 @@ spec:
        - interests: `["deep-alpha","options","technical-analysis","equities","2-3-week-hold"]`
        - notes: current UTC timestamp, market session context, and that this is a scheduled run.
     2. Gather current market evidence with live web search and any available market-data tools.
-    3. Select 3 to 6 candidates. Prefer liquid large-cap equities or ETFs. Avoid obscure tickers.
+       Keep the research pass bounded: use no more than 12 source URLs total and keep only evidence needed for submission.
+    3. Select 3 to 4 candidates. Prefer liquid large-cap equities or ETFs. Avoid obscure tickers.
     4. For each candidate, require:
        - ticker or theme
        - directional thesis
@@ -67,6 +68,6 @@ spec:
 
     Submission quality bar:
     - Do not submit generic market commentary.
-    - Do not submit an item without at least two independent sources unless the confidence is no higher than 0.45 and the missing evidence is stated.
+    - Prefer two independent sources per item. If only one source is available, confidence must be no higher than 0.45 and the missing evidence must be stated.
     - Do not submit naked high-risk options as the preferred structure; prefer defined-risk strategies.
     - Do not finish until `synthesis_submit_batch` returns success.
