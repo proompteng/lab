@@ -102,9 +102,26 @@ export const fetchPrimitiveDefinitions = async () => {
   return (await response.json()) as PrimitiveListResponse
 }
 
-export const fetchPrimitiveResources = async (kind: string, namespace = 'agents') => {
+export type PrimitiveResourceQuery = {
+  namespace?: string
+  phase?: string
+  status?: string
+  runtime?: string
+  labelSelector?: string
+  label_selector?: string
+  limit?: number
+}
+
+export const fetchPrimitiveResources = async (kind: string, query: PrimitiveResourceQuery | string = {}) => {
   const url = new URL(`/api/primitives/${encodeURIComponent(kind)}/resources`, window.location.origin)
-  url.searchParams.set('namespace', namespace)
+  const params = typeof query === 'string' ? { namespace: query } : query
+  url.searchParams.set('namespace', params.namespace ?? 'agents')
+  if (params.phase) url.searchParams.set('phase', params.phase)
+  if (!params.phase && params.status) url.searchParams.set('phase', params.status)
+  if (params.runtime) url.searchParams.set('runtime', params.runtime)
+  if (params.labelSelector) url.searchParams.set('labelSelector', params.labelSelector)
+  if (params.label_selector) url.searchParams.set('label_selector', params.label_selector)
+  if (typeof params.limit === 'number') url.searchParams.set('limit', params.limit.toString())
   const response = await assertOk(await fetch(url))
   return (await response.json()) as PrimitiveResourceListResponse
 }
