@@ -184,26 +184,24 @@ const statusIcon = (status: SynthesisItem['engagementStatus']) => {
   return <Filter />
 }
 
-const extractUrls = (text: string) =>
-  Array.from(text.matchAll(/https?:\/\/[^\s)\]]+/g), (match) => match[0].replace(/[.,;:]+$/, ''))
-
 const isMediaLikeUrl = (url: string) =>
   url.startsWith('data:image/') ||
+  url.startsWith('/api/assets/') ||
   /pbs\.twimg\.com|twimg\.com|\/photo\/\d+|\.(png|jpe?g|webp|gif|avif)(\?|$)/i.test(url)
 
 const isInlineImageUrl = (url: string) =>
-  url.startsWith('data:image/') || /pbs\.twimg\.com|twimg\.com|\.(png|jpe?g|webp|gif|avif)(\?|$)/i.test(url)
+  url.startsWith('data:image/') ||
+  url.startsWith('/api/assets/') ||
+  /pbs\.twimg\.com|twimg\.com|\.(png|jpe?g|webp|gif|avif)(\?|$)/i.test(url)
 
 const mediaUrlsForItem = (item: SynthesisItem) => {
   const urls = new Set<string>()
+  for (const attachment of item.attachments) {
+    if (isMediaLikeUrl(attachment.assetUrl)) urls.add(attachment.assetUrl)
+  }
+  if (urls.size > 0) return [...urls]
   for (const url of item.mediaUrls) {
     if (isMediaLikeUrl(url)) urls.add(url)
-  }
-  for (const url of extractUrls([item.observedText, ...item.evidence].join(' '))) {
-    if (isMediaLikeUrl(url)) urls.add(url)
-  }
-  if (urls.size === 0 && /\bimage\b/i.test(item.observedText)) {
-    urls.add(`${item.originalUrl}/photo/1`)
   }
   return [...urls]
 }
@@ -237,7 +235,15 @@ function App() {
     const lowered = query.trim().toLowerCase()
     if (!lowered) return loadedItems
     return loadedItems.filter((item) =>
-      [item.summary, item.whyValuable, item.observedText, item.authorHandle, item.authorName, item.topicTags.join(' ')]
+      [
+        item.title,
+        item.synthesis,
+        item.whyValuable,
+        item.takeaways.join(' '),
+        item.factChecks.map((factCheck) => factCheck.claim).join(' '),
+        item.sourcePosts.map((source) => [source.authorHandle, source.authorName].filter(Boolean).join(' ')).join(' '),
+        item.topicTags.join(' '),
+      ]
         .filter(Boolean)
         .some((value) => value?.toLowerCase().includes(lowered)),
     )
@@ -465,7 +471,8 @@ function FeedPost({
             <span className="text-[#71767b]">{formatDate(item.observedAt)}</span>
           </div>
 
-          <p className="mt-2 line-clamp-3 text-[15px] leading-6">{compactText(item.summary)}</p>
+          <h2 className="mt-2 line-clamp-2 text-[16px] font-semibold leading-6">{compactText(item.title, 180)}</h2>
+          <p className="mt-1 line-clamp-3 text-[15px] leading-6 text-[#d8dadd]">{compactText(item.synthesis, 280)}</p>
 
           {inlineImage ? (
             <div className="mt-3 overflow-hidden rounded-md border border-[#2f3336] bg-[#080808]">
@@ -481,6 +488,9 @@ function FeedPost({
           <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-2 text-sm text-[#71767b]">
             <span>score {formatScore(item.score)}</span>
             <span>conf {formatScore(item.confidence)}</span>
+            <span>
+              {item.sourceCount} source{item.sourceCount === 1 ? '' : 's'}
+            </span>
             <span className="inline-flex items-center gap-1 [&>svg]:size-3.5">
               {statusIcon(item.engagementStatus)}
               {statusLabel(item.engagementStatus)}
@@ -510,7 +520,7 @@ function FeedPost({
               className="inline-flex items-center gap-2 text-sm transition-colors hover:text-[#1d9bf0]"
             >
               <ArrowUpRight className="size-4" />
-              original
+              source
             </a>
           </div>
         </div>
@@ -529,7 +539,7 @@ function DetailPanel({ item }: { item: SynthesisItem | null }) {
         {item ? (
           <a href={item.originalUrl} target="_blank" rel="noreferrer" className={buttonClass('ghost', 'sm')}>
             <ExternalLink data-icon="inline-start" />
-            Original
+            Source
           </a>
         ) : null}
       </div>
@@ -570,14 +580,82 @@ function DetailContent({ item }: { item: SynthesisItem }) {
       </div>
 
       <Section title="Synthesis">
-        <p className="text-[15px] leading-7">{compactText(item.summary, 420)}</p>
+        <h1 className="mb-3 text-2xl font-bold leading-8 tracking-normal">{item.title}</h1>
+        <p className="text-[15px] leading-7">{compactText(item.synthesis, 900)}</p>
         {item.whyValuable ? (
-          <p className="mt-3 text-[15px] leading-7 text-[#a6a6a6]">{compactText(item.whyValuable, 360)}</p>
+          <div className="mt-4 rounded-md border border-[#2f3336] bg-[#080808] px-3 py-3">
+            <h4 className="mb-1 text-xs font-semibold uppercase tracking-wide text-[#71767b]">Why it matters</h4>
+            <p className="text-[15px] leading-7 text-[#d8dadd]">{compactText(item.whyValuable, 520)}</p>
+          </div>
         ) : null}
       </Section>
 
+      {item.takeaways.length ? (
+        <Section title="Takeaways">
+          <ul className="grid gap-2 text-[15px] leading-6 text-[#d8dadd]">
+            {item.takeaways.map((takeaway) => (
+              <li key={takeaway} className="rounded-md border border-[#2f3336] bg-[#080808] px-3 py-2">
+                {takeaway}
+              </li>
+            ))}
+          </ul>
+        </Section>
+      ) : null}
+
+      {item.factChecks.length ? (
+        <Section title="Fact Checks">
+          <div className="grid gap-3">
+            {item.factChecks.map((factCheck) => (
+              <div key={factCheck.claim} className="rounded-md border border-[#2f3336] bg-[#080808] px-3 py-3">
+                <div className="mb-1 flex flex-wrap items-center gap-2">
+                  <Badge variant={factCheck.status === 'verified' ? 'secondary' : 'outline'}>{factCheck.status}</Badge>
+                  <span className="text-sm font-semibold text-[#e7e9ea]">{factCheck.claim}</span>
+                </div>
+                <p className="text-sm leading-6 text-[#a6a6a6]">{factCheck.explanation}</p>
+                {factCheck.sources.length ? (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {factCheck.sources.map((source) => (
+                      <a
+                        key={source.url}
+                        href={source.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex max-w-full items-center gap-1 rounded-md border border-[#2f3336] px-2 py-1 text-xs text-[#71767b] transition-colors hover:border-[#1d9bf0]/60 hover:text-[#e7e9ea]"
+                      >
+                        <span className="truncate">{source.title ?? source.publisher ?? source.url}</span>
+                        <ExternalLink className="size-3 shrink-0" />
+                      </a>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </Section>
+      ) : null}
+
+      <Section title="Sources">
+        <div className="flex flex-wrap gap-2">
+          {item.sourcePosts.map((source, index) => (
+            <a
+              key={source.postKey}
+              href={source.canonicalUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex max-w-full items-center gap-2 rounded-md border border-[#2f3336] bg-[#080808] px-3 py-2 text-sm text-[#e7e9ea] transition-colors hover:border-[#1d9bf0]/60"
+            >
+              <span className="text-[#71767b]">{index + 1}</span>
+              <span className="truncate">
+                {source.authorHandle ? displayHandle(source.authorHandle) : 'x.com post'}
+              </span>
+              <ExternalLink className="size-4 shrink-0 text-[#71767b]" />
+            </a>
+          ))}
+        </div>
+      </Section>
+
       {mediaUrls.length ? (
-        <Section title="Media">
+        <Section title="Attachments">
           <div className="grid gap-3">
             {mediaUrls.map((url) =>
               isInlineImageUrl(url) ? (
@@ -608,22 +686,6 @@ function DetailContent({ item }: { item: SynthesisItem }) {
         </Section>
       ) : null}
 
-      {item.evidence.length ? (
-        <Section title="Evidence">
-          <ul className="flex flex-col gap-2 text-[15px] leading-6 text-[#d8dadd]">
-            {item.evidence.map((evidence) => (
-              <li key={evidence} className="rounded-md border border-[#2f3336] bg-[#080808] px-3 py-2">
-                {evidence}
-              </li>
-            ))}
-          </ul>
-        </Section>
-      ) : null}
-
-      <Section title="Raw">
-        <p className="whitespace-pre-wrap text-sm leading-6 text-[#a6a6a6]">{item.observedText}</p>
-      </Section>
-
       <Separator className="bg-[#2f3336]" />
       <div className="flex flex-wrap gap-2">
         {item.topicTags.map((topic) => (
@@ -650,7 +712,7 @@ function EmptyDetail() {
     <div className="flex h-full min-h-[420px] items-center justify-center px-8 text-center text-[#71767b]">
       <div>
         <Newspaper className="mx-auto mb-3 size-8" />
-        <p className="text-sm">Select an item to inspect the post, evidence, raw text, and media.</p>
+        <p className="text-sm">Select an item to inspect synthesis, sources, fact checks, and attachments.</p>
       </div>
     </div>
   )
