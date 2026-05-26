@@ -64,39 +64,111 @@ const toolsListResult = {
     },
     {
       name: 'synthesis_submit_item',
-      description: 'Submit one condensed high-signal X.com post synthesis item.',
+      description:
+        'Submit one polished synthesis item. One item can represent multiple X posts; raw post text is stored only as source/audit material.',
       inputSchema: {
         type: 'object',
         properties: {
           runId: { type: 'string' },
-          originalUrl: { type: 'string' },
-          authorHandle: { type: 'string' },
-          authorName: { type: 'string' },
-          postedAt: { type: 'string' },
-          observedAt: { type: 'string' },
-          observedText: { type: 'string' },
-          mediaUrls: {
+          title: { type: 'string', description: 'Human title for the synthesized theme.' },
+          synthesis: { type: 'string', description: 'Concise human synthesis, not a raw post summary.' },
+          takeaways: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 8 },
+          whyValuable: { type: 'string', description: 'Why this item belongs in the curated feed.' },
+          sourcePosts: {
             type: 'array',
-            items: { type: 'string' },
-            description:
-              'Observed media from the original post: direct image URLs, X photo URLs, or browser screenshots of actual visible post media. Do not submit generated placeholders.',
+            minItems: 1,
+            maxItems: 12,
+            items: {
+              type: 'object',
+              properties: {
+                originalUrl: { type: 'string' },
+                authorHandle: { type: 'string' },
+                authorName: { type: 'string' },
+                postedAt: { type: 'string' },
+                observedAt: { type: 'string' },
+                observedText: { type: 'string' },
+                mediaUrls: { type: 'array', items: { type: 'string' } },
+              },
+              required: ['originalUrl', 'observedText'],
+              additionalProperties: false,
+            },
+            description: 'Original X posts that support the synthesis. Can contain multiple posts for one theme.',
           },
-          summary: { type: 'string' },
-          whyValuable: { type: 'string' },
-          evidence: { type: 'array', items: { type: 'string' } },
+          factChecks: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                claim: { type: 'string' },
+                status: { type: 'string', enum: ['verified', 'unclear', 'refuted'] },
+                explanation: { type: 'string' },
+                sources: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      title: { type: 'string' },
+                      url: { type: 'string' },
+                      publisher: { type: 'string' },
+                      checkedAt: { type: 'string' },
+                    },
+                    required: ['url'],
+                    additionalProperties: false,
+                  },
+                },
+              },
+              required: ['claim', 'status', 'explanation'],
+              additionalProperties: false,
+            },
+          },
+          attachments: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                kind: { type: 'string', enum: ['source_image', 'source_screenshot', 'generated_infographic'] },
+                url: { type: 'string' },
+                data: { type: 'string' },
+                sourceUrl: { type: 'string' },
+                mimeType: { type: 'string' },
+                alt: { type: 'string' },
+                label: { type: 'string' },
+              },
+              required: ['kind'],
+              additionalProperties: false,
+            },
+          },
+          generatedAttachments: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                kind: { type: 'string', enum: ['generated_infographic'] },
+                url: { type: 'string' },
+                data: { type: 'string' },
+                sourceUrl: { type: 'string' },
+                mimeType: { type: 'string' },
+                alt: { type: 'string' },
+                label: { type: 'string' },
+              },
+              required: ['kind'],
+              additionalProperties: false,
+            },
+          },
+          dedupeKey: { type: 'string' },
           topicTags: { type: 'array', items: { type: 'string' } },
           score: { type: 'number', minimum: 0, maximum: 1 },
           confidence: { type: 'number', minimum: 0, maximum: 1 },
           engagementRecommendation: { type: 'string', enum: ['none', 'like', 'reply'] },
           replyText: { type: 'string' },
         },
-        required: ['originalUrl', 'observedText', 'summary', 'score'],
+        required: ['title', 'synthesis', 'takeaways', 'whyValuable', 'sourcePosts', 'dedupeKey', 'score', 'confidence'],
         additionalProperties: false,
       },
     },
     {
       name: 'synthesis_submit_batch',
-      description: 'Submit multiple condensed X.com synthesis items.',
+      description: 'Submit multiple polished synthesis theme items.',
       inputSchema: {
         type: 'object',
         properties: {

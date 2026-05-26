@@ -7,6 +7,7 @@ import {
   SubmitBatchInputSchema,
   SubmitItemInputSchema,
 } from './schema'
+import { assetResponseForAttachment } from './assets'
 import { getSynthesisStore } from './store'
 import { requireAuthorized } from './auth'
 import { badRequest, jsonResponse, notFound, readJson } from './http'
@@ -87,6 +88,16 @@ export const handleGetItem = async (_request: Request, id: string) => {
     const item = await getSynthesisStore().getItem(id)
     if (!item) return notFound('synthesis item not found')
     return jsonResponse({ item })
+  } catch (error) {
+    return internalError(error)
+  }
+}
+
+export const handleGetAsset = async (_request: Request, id: string) => {
+  try {
+    const attachment = await getSynthesisStore().getAttachment(id)
+    if (!attachment) return notFound('asset not found')
+    return assetResponseForAttachment(attachment)
   } catch (error) {
     return internalError(error)
   }

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { Pool, type PoolClient } from 'pg'
 
+import { materializeAttachments, normalizeAttachmentInputs } from './assets'
 import type {
   EngagementAction,
   EngagementActionKind,
@@ -13,12 +14,16 @@ import type {
   NextEngagementResult,
   RecordEngagementResultInput,
   RecordFeedbackInput,
+  SourcePostInput,
   StartRunInput,
   SubmitBatchInput,
   SubmitBatchResult,
   SubmitItemInput,
   SubmitItemResult,
+  SynthesisAttachment,
+  SynthesisFactCheck,
   SynthesisItem,
+  SynthesisSourcePost,
   SynthesisRun,
 } from './schema'
 
@@ -32,6 +37,7 @@ export type SynthesisStore = {
   submitBatch(input: SubmitBatchInput): Promise<SubmitBatchResult>
   listFeed(input: ListFeedInput): Promise<FeedResponse>
   getItem(id: string): Promise<SynthesisItem | null>
+  getAttachment(id: string): Promise<SynthesisAttachment | null>
   recordFeedback(input: RecordFeedbackInput): Promise<FeedbackEvent>
   nextEngagement(input: NextEngagementInput): Promise<NextEngagementResult>
   recordEngagementResult(input: RecordEngagementResultInput): Promise<EngagementAction>
@@ -135,6 +141,16 @@ const parseJsonArray = (value: unknown): string[] => {
   return []
 }
 
+const parseJsonValue = <T>(value: unknown, fallback: T): T => {
+  if (value == null) return fallback
+  if (typeof value !== 'string') return value as T
+  try {
+    return JSON.parse(value) as T
+  } catch {
+    return fallback
+  }
+}
+
 const getEngagementMode = (): EngagementMode => {
   const raw = process.env.SYNTHESIS_ENGAGEMENT_MODE?.trim().toLowerCase()
   return raw === 'off' ? 'off' : 'queue'
@@ -179,10 +195,105 @@ const planEngagement = async (
   return { status: 'queued', action: 'like', replyText: null, reason: 'like recommended by synthesis' }
 }
 
+type NormalizedSubmitItem = {
+  runId: string | undefined
+  title: string
+  synthesis: string
+  takeaways: string[]
+  dedupeKey: string
+  sourcePosts: SynthesisSourcePost[]
+  factChecks: SynthesisFactCheck[]
+  attachments: SynthesisAttachment[]
+  generatedAttachments: SynthesisAttachment[]
+  mediaUrls: string[]
+  summary: string
+  whyValuable: string | null
+  evidence: string[]
+  topicTags: string[]
+  score: number
+  confidence: number
+  engagementRecommendation: SubmitItemInput['engagementRecommendation']
+  replyText: string | undefined
+}
+
+const normalizeSourcePost = (source: SourcePostInput): SynthesisSourcePost => {
+  const canonical = canonicalizeXPostUrl(source.originalUrl)
+  return {
+    originalUrl: source.originalUrl,
+    canonicalUrl: canonical.canonicalUrl,
+    xPostId: canonical.xPostId,
+    postKey: canonical.postKey,
+    authorHandle: source.authorHandle ?? null,
+    authorName: source.authorName ?? null,
+    postedAt: toIso(source.postedAt),
+    observedAt: toIso(source.observedAt) ?? nowIso(),
+    observedText: source.observedText,
+    mediaUrls: source.mediaUrls,
+  }
+}
+
+const mergeSourcePosts = (left: SynthesisSourcePost[], right: SynthesisSourcePost[]) => {
+  const posts = new Map<string, SynthesisSourcePost>()
+  for (const source of [...left, ...right]) posts.set(source.postKey, source)
+  return [...posts.values()]
+}
+
+const attachmentMergeKey = (attachment: SynthesisAttachment) =>
+  `${attachment.kind}:${attachment.objectKey ?? attachment.sourceUrl ?? attachment.assetUrl}`
+
+const mergeAttachments = (left: SynthesisAttachment[], right: SynthesisAttachment[]) => {
+  const attachments = new Map<string, SynthesisAttachment>()
+  for (const attachment of [...left, ...right]) attachments.set(attachmentMergeKey(attachment), attachment)
+  return [...attachments.values()]
+}
+
+const digestKey = (value: string) => createHash('sha256').update(value).digest('base64url').slice(0, 24)
+
+const normalizeSubmitItem = async (input: SubmitItemInput): Promise<NormalizedSubmitItem> => {
+  const sourcePosts = input.sourcePosts.map(normalizeSourcePost)
+  const primarySource = sourcePosts[0]
+  if (!primarySource) throw new Error('submit item requires at least one source post')
+  const sourceKey = sourcePosts
+    .map((source) => source.postKey)
+    .sort()
+    .join('|')
+  const dedupeKey = input.dedupeKey || `theme:${digestKey(sourceKey)}`
+  const mediaUrls = [...new Set(sourcePosts.flatMap((source) => source.mediaUrls))]
+  const attachments = await materializeAttachments(
+    normalizeAttachmentInputs({
+      attachments: input.attachments,
+      generatedAttachments: input.generatedAttachments,
+      mediaUrls,
+    }),
+  )
+  const generatedAttachments = attachments.filter((attachment) => attachment.generated)
+
+  return {
+    runId: input.runId,
+    title: input.title,
+    synthesis: input.synthesis,
+    takeaways: input.takeaways,
+    dedupeKey,
+    sourcePosts,
+    factChecks: input.factChecks,
+    attachments,
+    generatedAttachments,
+    mediaUrls,
+    summary: input.synthesis,
+    whyValuable: input.whyValuable,
+    evidence: input.factChecks.map((factCheck) => `${factCheck.status}: ${factCheck.claim}`),
+    topicTags: input.topicTags,
+    score: input.score,
+    confidence: input.confidence,
+    engagementRecommendation: input.engagementRecommendation,
+    replyText: input.replyText,
+  }
+}
+
 class InMemorySynthesisStore implements SynthesisStore {
   private runs = new Map<string, SynthesisRun>()
   private posts = new Map<string, CanonicalXPost & { observedText: string }>()
-  private itemByPostKey = new Map<string, string>()
+  private itemByDedupeKey = new Map<string, string>()
   private items = new Map<string, SynthesisItem>()
   private engagements = new Map<string, EngagementAction>()
   private feedbackEvents = new Map<string, FeedbackEvent>()
@@ -203,38 +314,59 @@ class InMemorySynthesisStore implements SynthesisStore {
   }
 
   async submitItem(input: SubmitItemInput): Promise<SubmitItemResult> {
-    const canonical = canonicalizeXPostUrl(input.originalUrl)
-    this.posts.set(canonical.postKey, { ...canonical, observedText: input.observedText })
+    const normalized = await normalizeSubmitItem(input)
+    for (const source of normalized.sourcePosts) {
+      this.posts.set(source.postKey, {
+        canonicalUrl: source.canonicalUrl,
+        xPostId: source.xPostId,
+        postKey: source.postKey,
+        observedText: source.observedText,
+      })
+    }
 
-    const runId = input.runId ?? (await this.startRun({ source: 'x.com/home', interests: [] })).id
-    const existingId = this.itemByPostKey.get(canonical.postKey)
+    const primarySource = normalized.sourcePosts[0]
+    if (!primarySource) throw new Error('submit item requires at least one source post')
+    const runId = normalized.runId ?? (await this.startRun({ source: 'x.com/home', interests: [] })).id
+    const existingId = this.itemByDedupeKey.get(normalized.dedupeKey)
     const existing = existingId ? this.items.get(existingId) : null
     const timestamp = nowIso()
+    const sourcePosts = mergeSourcePosts(existing?.sourcePosts ?? [], normalized.sourcePosts)
+    const attachments = mergeAttachments(existing?.attachments ?? [], normalized.attachments)
+    const generatedAttachments = attachments.filter((attachment) => attachment.generated)
     const item: SynthesisItem = {
       id: existing?.id ?? randomUUID(),
       runId,
-      originalUrl: canonical.canonicalUrl,
-      xPostId: canonical.xPostId,
-      authorHandle: input.authorHandle ?? existing?.authorHandle ?? null,
-      authorName: input.authorName ?? existing?.authorName ?? null,
-      postedAt: toIso(input.postedAt) ?? existing?.postedAt ?? null,
-      observedAt: toIso(input.observedAt) ?? timestamp,
-      observedText: input.observedText,
-      mediaUrls: input.mediaUrls.length ? input.mediaUrls : (existing?.mediaUrls ?? []),
-      summary: input.summary,
-      whyValuable: input.whyValuable ?? null,
-      evidence: input.evidence,
-      topicTags: input.topicTags,
-      score: input.score,
-      confidence: input.confidence,
-      engagementRecommendation: input.engagementRecommendation,
+      title: normalized.title,
+      synthesis: normalized.synthesis,
+      takeaways: normalized.takeaways,
+      dedupeKey: normalized.dedupeKey,
+      originalUrl: primarySource.canonicalUrl,
+      xPostId: primarySource.xPostId,
+      authorHandle: primarySource.authorHandle ?? existing?.authorHandle ?? null,
+      authorName: primarySource.authorName ?? existing?.authorName ?? null,
+      postedAt: primarySource.postedAt ?? existing?.postedAt ?? null,
+      observedAt: primarySource.observedAt,
+      observedText: primarySource.observedText,
+      mediaUrls: normalized.mediaUrls.length ? normalized.mediaUrls : (existing?.mediaUrls ?? []),
+      summary: normalized.summary,
+      whyValuable: normalized.whyValuable,
+      evidence: normalized.evidence,
+      sourcePosts,
+      sourceCount: sourcePosts.length,
+      factChecks: normalized.factChecks,
+      attachments,
+      generatedAttachments,
+      topicTags: normalized.topicTags,
+      score: normalized.score,
+      confidence: normalized.confidence,
+      engagementRecommendation: normalized.engagementRecommendation,
       engagementStatus: existing?.engagementStatus ?? 'none',
-      replyText: input.replyText ? normalizeReplyText(input.replyText) : null,
+      replyText: normalized.replyText ? normalizeReplyText(normalized.replyText) : null,
       createdAt: existing?.createdAt ?? timestamp,
       updatedAt: timestamp,
     }
 
-    this.itemByPostKey.set(canonical.postKey, item.id)
+    this.itemByDedupeKey.set(normalized.dedupeKey, item.id)
     this.items.set(item.id, item)
 
     const engagementAction = await this.maybeQueueEngagement(item, input)
@@ -279,6 +411,14 @@ class InMemorySynthesisStore implements SynthesisStore {
 
   async getItem(id: string): Promise<SynthesisItem | null> {
     return this.items.get(id) ?? null
+  }
+
+  async getAttachment(id: string): Promise<SynthesisAttachment | null> {
+    for (const item of this.items.values()) {
+      const attachment = item.attachments.find((candidate) => candidate.id === id)
+      if (attachment) return attachment
+    }
+    return null
   }
 
   async recordFeedback(input: RecordFeedbackInput): Promise<FeedbackEvent> {
@@ -385,6 +525,11 @@ class InMemorySynthesisStore implements SynthesisStore {
 type ItemRow = {
   id: string
   run_id: string
+  x_post_key: string
+  title: string | null
+  synthesis: string | null
+  takeaways: unknown
+  dedupe_key: string | null
   canonical_url: string
   x_post_id: string | null
   author_handle: string | null
@@ -396,6 +541,10 @@ type ItemRow = {
   summary: string
   why_valuable: string | null
   evidence: unknown
+  source_posts: unknown
+  fact_checks: unknown
+  attachments: unknown
+  generated_attachments: unknown
   topic_tags: unknown
   score: number | string
   confidence: number | string
@@ -404,6 +553,19 @@ type ItemRow = {
   reply_text: string | null
   created_at: Date | string
   updated_at: Date | string
+}
+
+type AttachmentRow = {
+  id: string
+  kind: SynthesisAttachment['kind']
+  source_url: string | null
+  asset_url: string
+  object_key: string | null
+  mime_type: string | null
+  size_bytes: number | string | null
+  alt: string | null
+  label: string | null
+  generated: boolean
 }
 
 type EngagementRow = {
@@ -420,28 +582,72 @@ type EngagementRow = {
   performed_at: Date | string | null
 }
 
-const mapItemRow = (row: ItemRow): SynthesisItem => ({
-  id: row.id,
-  runId: row.run_id,
+const sourcePostFromRow = (row: ItemRow): SynthesisSourcePost => ({
   originalUrl: row.canonical_url,
+  canonicalUrl: row.canonical_url,
   xPostId: row.x_post_id,
+  postKey: row.x_post_key,
   authorHandle: row.author_handle,
   authorName: row.author_name,
   postedAt: toIso(row.posted_at),
   observedAt: toIso(row.last_observed_at) ?? nowIso(),
   observedText: row.observed_text,
   mediaUrls: parseJsonArray(row.media_urls),
-  summary: row.summary,
-  whyValuable: row.why_valuable,
-  evidence: parseJsonArray(row.evidence),
-  topicTags: parseJsonArray(row.topic_tags),
-  score: Number(row.score),
-  confidence: Number(row.confidence),
-  engagementRecommendation: row.engagement_recommendation,
-  engagementStatus: row.engagement_status,
-  replyText: row.reply_text,
-  createdAt: toIso(row.created_at) ?? nowIso(),
-  updatedAt: toIso(row.updated_at) ?? nowIso(),
+})
+
+const mapItemRow = (row: ItemRow): SynthesisItem => {
+  const sourcePosts = parseJsonValue<SynthesisSourcePost[]>(row.source_posts, [])
+  const resolvedSourcePosts = sourcePosts.length ? sourcePosts : [sourcePostFromRow(row)]
+  const attachments = parseJsonValue<SynthesisAttachment[]>(row.attachments, [])
+
+  return {
+    id: row.id,
+    runId: row.run_id,
+    title: row.title ?? row.summary,
+    synthesis: row.synthesis ?? row.summary,
+    takeaways: parseJsonValue<string[]>(row.takeaways, []),
+    dedupeKey: row.dedupe_key ?? row.x_post_key,
+    originalUrl: row.canonical_url,
+    xPostId: row.x_post_id,
+    authorHandle: row.author_handle,
+    authorName: row.author_name,
+    postedAt: toIso(row.posted_at),
+    observedAt: toIso(row.last_observed_at) ?? nowIso(),
+    observedText: row.observed_text,
+    mediaUrls: parseJsonArray(row.media_urls),
+    summary: row.summary,
+    whyValuable: row.why_valuable,
+    evidence: parseJsonArray(row.evidence),
+    sourcePosts: resolvedSourcePosts,
+    sourceCount: resolvedSourcePosts.length,
+    factChecks: parseJsonValue<SynthesisFactCheck[]>(row.fact_checks, []),
+    attachments,
+    generatedAttachments: parseJsonValue<SynthesisAttachment[]>(
+      row.generated_attachments,
+      attachments.filter((attachment) => attachment.generated),
+    ),
+    topicTags: parseJsonArray(row.topic_tags),
+    score: Number(row.score),
+    confidence: Number(row.confidence),
+    engagementRecommendation: row.engagement_recommendation,
+    engagementStatus: row.engagement_status,
+    replyText: row.reply_text,
+    createdAt: toIso(row.created_at) ?? nowIso(),
+    updatedAt: toIso(row.updated_at) ?? nowIso(),
+  }
+}
+
+const mapAttachmentRow = (row: AttachmentRow): SynthesisAttachment => ({
+  id: row.id,
+  kind: row.kind,
+  sourceUrl: row.source_url,
+  assetUrl: row.asset_url,
+  objectKey: row.object_key,
+  mimeType: row.mime_type,
+  sizeBytes: row.size_bytes == null ? null : Number(row.size_bytes),
+  alt: row.alt,
+  label: row.label,
+  generated: row.generated,
 })
 
 const mapEngagementRow = (row: EngagementRow): EngagementAction => ({
@@ -497,43 +703,69 @@ class PostgresSynthesisStore implements SynthesisStore {
 
   async submitItem(input: SubmitItemInput): Promise<SubmitItemResult> {
     await this.ensureSchema()
-    const runId = input.runId ?? (await this.startRun({ source: 'x.com/home', interests: [] })).id
+    const normalized = await normalizeSubmitItem(input)
+    const primarySource = normalized.sourcePosts[0]
+    if (!primarySource) throw new Error('submit item requires at least one source post')
+
+    const runId = normalized.runId ?? (await this.startRun({ source: 'x.com/home', interests: [] })).id
     const client = await this.pool.connect()
     try {
       await client.query('BEGIN')
-      const canonical = canonicalizeXPostUrl(input.originalUrl)
-      await client.query(
-        `INSERT INTO x_posts (
-          id, canonical_url, x_post_id, author_handle, author_name, posted_at, first_observed_at, last_observed_at,
-          observed_text
+      for (const source of normalized.sourcePosts) {
+        await client.query(
+          `INSERT INTO x_posts (
+            id, canonical_url, x_post_id, author_handle, author_name, posted_at, first_observed_at, last_observed_at,
+            observed_text
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7::timestamptz, now()), COALESCE($7::timestamptz, now()), $8)
+          ON CONFLICT (canonical_url) DO UPDATE SET
+            author_handle = COALESCE(EXCLUDED.author_handle, x_posts.author_handle),
+            author_name = COALESCE(EXCLUDED.author_name, x_posts.author_name),
+            posted_at = COALESCE(EXCLUDED.posted_at, x_posts.posted_at),
+            last_observed_at = EXCLUDED.last_observed_at,
+            observed_text = EXCLUDED.observed_text`,
+          [
+            source.postKey,
+            source.canonicalUrl,
+            source.xPostId,
+            source.authorHandle,
+            source.authorName,
+            toIso(source.postedAt),
+            toIso(source.observedAt),
+            source.observedText,
+          ],
         )
-        VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7::timestamptz, now()), COALESCE($7::timestamptz, now()), $8)
-        ON CONFLICT (canonical_url) DO UPDATE SET
-          author_handle = COALESCE(EXCLUDED.author_handle, x_posts.author_handle),
-          author_name = COALESCE(EXCLUDED.author_name, x_posts.author_name),
-          posted_at = COALESCE(EXCLUDED.posted_at, x_posts.posted_at),
-          last_observed_at = EXCLUDED.last_observed_at,
-          observed_text = EXCLUDED.observed_text`,
-        [
-          canonical.postKey,
-          canonical.canonicalUrl,
-          canonical.xPostId,
-          input.authorHandle ?? null,
-          input.authorName ?? null,
-          toIso(input.postedAt),
-          toIso(input.observedAt),
-          input.observedText,
-        ],
+      }
+
+      const existingResult = await client.query<ItemRow>(
+        `SELECT ${this.itemSelectSql('i')} FROM synthesis_items i JOIN x_posts p ON p.id = i.x_post_key
+         WHERE i.dedupe_key = $1 LIMIT 1`,
+        [normalized.dedupeKey],
       )
+      const existing = existingResult.rows[0] ? mapItemRow(existingResult.rows[0]) : null
+      const sourcePosts = mergeSourcePosts(existing?.sourcePosts ?? [], normalized.sourcePosts)
+      const attachments = mergeAttachments(existing?.attachments ?? [], normalized.attachments)
+      const generatedAttachments = attachments.filter((attachment) => attachment.generated)
 
       const result = await client.query<{ id: string }>(
         `INSERT INTO synthesis_items (
-          id, run_id, x_post_key, media_urls, summary, why_valuable, evidence, topic_tags, score, confidence,
+          id, run_id, x_post_key, dedupe_key, title, synthesis, takeaways, source_posts, fact_checks, attachments,
+          generated_attachments, media_urls, summary, why_valuable, evidence, topic_tags, score, confidence,
           engagement_recommendation, engagement_status, reply_text
         )
-        VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11, 'none', $12)
-        ON CONFLICT (x_post_key) DO UPDATE SET
+        VALUES (
+          $1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb, $11::jsonb, $12::jsonb,
+          $13, $14, $15::jsonb, $16::jsonb, $17, $18, $19, 'none', $20
+        )
+        ON CONFLICT (dedupe_key) DO UPDATE SET
           run_id = EXCLUDED.run_id,
+          title = EXCLUDED.title,
+          synthesis = EXCLUDED.synthesis,
+          takeaways = EXCLUDED.takeaways,
+          source_posts = EXCLUDED.source_posts,
+          fact_checks = EXCLUDED.fact_checks,
+          attachments = EXCLUDED.attachments,
+          generated_attachments = EXCLUDED.generated_attachments,
           media_urls = EXCLUDED.media_urls,
           summary = EXCLUDED.summary,
           why_valuable = EXCLUDED.why_valuable,
@@ -548,18 +780,60 @@ class PostgresSynthesisStore implements SynthesisStore {
         [
           randomUUID(),
           runId,
-          canonical.postKey,
-          JSON.stringify(input.mediaUrls),
-          input.summary,
-          input.whyValuable ?? null,
-          JSON.stringify(input.evidence),
-          JSON.stringify(input.topicTags),
-          input.score,
-          input.confidence,
-          input.engagementRecommendation,
-          input.replyText ? normalizeReplyText(input.replyText) : null,
+          primarySource.postKey,
+          normalized.dedupeKey,
+          normalized.title,
+          normalized.synthesis,
+          JSON.stringify(normalized.takeaways),
+          JSON.stringify(sourcePosts),
+          JSON.stringify(normalized.factChecks),
+          JSON.stringify(attachments),
+          JSON.stringify(generatedAttachments),
+          JSON.stringify(normalized.mediaUrls),
+          normalized.summary,
+          normalized.whyValuable,
+          JSON.stringify(normalized.evidence),
+          JSON.stringify(normalized.topicTags),
+          normalized.score,
+          normalized.confidence,
+          normalized.engagementRecommendation,
+          normalized.replyText ? normalizeReplyText(normalized.replyText) : null,
         ],
       )
+
+      await client.query(`DELETE FROM synthesis_item_sources WHERE item_id = $1`, [result.rows[0].id])
+      for (const [index, source] of sourcePosts.entries()) {
+        await client.query(
+          `INSERT INTO synthesis_item_sources (item_id, x_post_key, source_order)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (item_id, x_post_key) DO UPDATE SET source_order = EXCLUDED.source_order`,
+          [result.rows[0].id, source.postKey, index],
+        )
+      }
+
+      await client.query(`DELETE FROM synthesis_attachments WHERE item_id = $1`, [result.rows[0].id])
+      for (const attachment of attachments) {
+        await client.query(
+          `INSERT INTO synthesis_attachments (
+            id, item_id, kind, source_url, asset_url, object_key, mime_type, size_bytes, alt, label, generated
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+          [
+            attachment.id,
+            result.rows[0].id,
+            attachment.kind,
+            attachment.sourceUrl,
+            attachment.assetUrl,
+            attachment.objectKey,
+            attachment.mimeType,
+            attachment.sizeBytes,
+            attachment.alt,
+            attachment.label,
+            attachment.generated,
+          ],
+        )
+      }
+
       const itemResult = await client.query<ItemRow>(
         `SELECT ${this.itemSelectSql('i')} FROM synthesis_items i JOIN x_posts p ON p.id = i.x_post_key WHERE i.id = $1`,
         [result.rows[0].id],
@@ -643,6 +917,12 @@ class PostgresSynthesisStore implements SynthesisStore {
       [id],
     )
     return result.rows[0] ? mapItemRow(result.rows[0]) : null
+  }
+
+  async getAttachment(id: string): Promise<SynthesisAttachment | null> {
+    await this.ensureSchema()
+    const result = await this.pool.query<AttachmentRow>(`SELECT * FROM synthesis_attachments WHERE id = $1`, [id])
+    return result.rows[0] ? mapAttachmentRow(result.rows[0]) : null
   }
 
   async recordFeedback(input: RecordFeedbackInput): Promise<FeedbackEvent> {
@@ -756,9 +1036,11 @@ class PostgresSynthesisStore implements SynthesisStore {
   }
 
   private itemSelectSql(alias: string) {
-    return `${alias}.id, ${alias}.run_id, p.canonical_url, p.x_post_id, p.author_handle, p.author_name, p.posted_at,
-      p.last_observed_at, p.observed_text, ${alias}.media_urls, ${alias}.summary, ${alias}.why_valuable, ${alias}.evidence,
-      ${alias}.topic_tags, ${alias}.score, ${alias}.confidence, ${alias}.engagement_recommendation,
+    return `${alias}.id, ${alias}.run_id, ${alias}.x_post_key, ${alias}.dedupe_key, ${alias}.title, ${alias}.synthesis,
+      ${alias}.takeaways, ${alias}.source_posts, ${alias}.fact_checks, ${alias}.attachments,
+      ${alias}.generated_attachments, p.canonical_url, p.x_post_id, p.author_handle, p.author_name, p.posted_at,
+      p.last_observed_at, p.observed_text, ${alias}.media_urls, ${alias}.summary, ${alias}.why_valuable,
+      ${alias}.evidence, ${alias}.topic_tags, ${alias}.score, ${alias}.confidence, ${alias}.engagement_recommendation,
       ${alias}.engagement_status, ${alias}.reply_text, ${alias}.created_at, ${alias}.updated_at`
   }
 
@@ -795,6 +1077,14 @@ class PostgresSynthesisStore implements SynthesisStore {
         id text PRIMARY KEY,
         run_id text NOT NULL REFERENCES synthesis_runs(id) ON DELETE CASCADE,
         x_post_key text NOT NULL UNIQUE REFERENCES x_posts(id) ON DELETE CASCADE,
+        dedupe_key text NOT NULL UNIQUE,
+        title text NOT NULL,
+        synthesis text NOT NULL,
+        takeaways jsonb NOT NULL DEFAULT '[]'::jsonb,
+        source_posts jsonb NOT NULL DEFAULT '[]'::jsonb,
+        fact_checks jsonb NOT NULL DEFAULT '[]'::jsonb,
+        attachments jsonb NOT NULL DEFAULT '[]'::jsonb,
+        generated_attachments jsonb NOT NULL DEFAULT '[]'::jsonb,
         media_urls jsonb NOT NULL DEFAULT '[]'::jsonb,
         summary text NOT NULL,
         why_valuable text,
@@ -812,6 +1102,46 @@ class PostgresSynthesisStore implements SynthesisStore {
       );
 
       ALTER TABLE synthesis_items ADD COLUMN IF NOT EXISTS media_urls jsonb NOT NULL DEFAULT '[]'::jsonb;
+      ALTER TABLE synthesis_items ADD COLUMN IF NOT EXISTS dedupe_key text;
+      ALTER TABLE synthesis_items ADD COLUMN IF NOT EXISTS title text;
+      ALTER TABLE synthesis_items ADD COLUMN IF NOT EXISTS synthesis text;
+      ALTER TABLE synthesis_items ADD COLUMN IF NOT EXISTS takeaways jsonb NOT NULL DEFAULT '[]'::jsonb;
+      ALTER TABLE synthesis_items ADD COLUMN IF NOT EXISTS source_posts jsonb NOT NULL DEFAULT '[]'::jsonb;
+      ALTER TABLE synthesis_items ADD COLUMN IF NOT EXISTS fact_checks jsonb NOT NULL DEFAULT '[]'::jsonb;
+      ALTER TABLE synthesis_items ADD COLUMN IF NOT EXISTS attachments jsonb NOT NULL DEFAULT '[]'::jsonb;
+      ALTER TABLE synthesis_items ADD COLUMN IF NOT EXISTS generated_attachments jsonb NOT NULL DEFAULT '[]'::jsonb;
+      UPDATE synthesis_items
+      SET
+        dedupe_key = COALESCE(dedupe_key, x_post_key),
+        title = COALESCE(title, summary),
+        synthesis = COALESCE(synthesis, summary)
+      WHERE dedupe_key IS NULL OR title IS NULL OR synthesis IS NULL;
+      ALTER TABLE synthesis_items ALTER COLUMN dedupe_key SET NOT NULL;
+      ALTER TABLE synthesis_items ALTER COLUMN title SET NOT NULL;
+      ALTER TABLE synthesis_items ALTER COLUMN synthesis SET NOT NULL;
+
+      CREATE TABLE IF NOT EXISTS synthesis_item_sources (
+        item_id text NOT NULL REFERENCES synthesis_items(id) ON DELETE CASCADE,
+        x_post_key text NOT NULL REFERENCES x_posts(id) ON DELETE CASCADE,
+        source_order integer NOT NULL DEFAULT 0,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (item_id, x_post_key)
+      );
+
+      CREATE TABLE IF NOT EXISTS synthesis_attachments (
+        id text PRIMARY KEY,
+        item_id text NOT NULL REFERENCES synthesis_items(id) ON DELETE CASCADE,
+        kind text NOT NULL CHECK (kind IN ('source_image', 'source_screenshot', 'generated_infographic')),
+        source_url text,
+        asset_url text NOT NULL,
+        object_key text,
+        mime_type text,
+        size_bytes bigint,
+        alt text,
+        label text,
+        generated boolean NOT NULL DEFAULT false,
+        created_at timestamptz NOT NULL DEFAULT now()
+      );
 
       CREATE TABLE IF NOT EXISTS engagement_actions (
         id text PRIMARY KEY,
@@ -851,7 +1181,10 @@ class PostgresSynthesisStore implements SynthesisStore {
       );
 
       CREATE INDEX IF NOT EXISTS synthesis_items_created_at_idx ON synthesis_items (created_at DESC);
+      CREATE UNIQUE INDEX IF NOT EXISTS synthesis_items_dedupe_key_idx ON synthesis_items (dedupe_key);
       CREATE INDEX IF NOT EXISTS synthesis_items_score_idx ON synthesis_items (score DESC);
+      CREATE INDEX IF NOT EXISTS synthesis_item_sources_x_post_idx ON synthesis_item_sources (x_post_key);
+      CREATE INDEX IF NOT EXISTS synthesis_attachments_item_idx ON synthesis_attachments (item_id);
       CREATE INDEX IF NOT EXISTS engagement_actions_status_created_idx ON engagement_actions (status, created_at);
     `)
   }
