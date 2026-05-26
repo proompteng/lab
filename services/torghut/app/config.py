@@ -1404,6 +1404,30 @@ class Settings(BaseSettings):
         alias="TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL",
         description="Maximum notional per paper route-acquisition probe order.",
     )
+    trading_simple_paper_route_probe_retry_attempt_limit: int = Field(
+        default=2,
+        alias="TRADING_SIMPLE_PAPER_ROUTE_PROBE_RETRY_ATTEMPT_LIMIT",
+        description=(
+            "Maximum times a persisted proof-floor-blocked decision may be reopened "
+            "for bounded paper-route probe submission."
+        ),
+    )
+    trading_simple_paper_route_probe_retry_batch_limit: int = Field(
+        default=4,
+        alias="TRADING_SIMPLE_PAPER_ROUTE_PROBE_RETRY_BATCH_LIMIT",
+        description=(
+            "Maximum persisted proof-floor-blocked decisions to retry in one simple "
+            "pipeline cycle."
+        ),
+    )
+    trading_simple_paper_route_probe_retry_scan_limit: int = Field(
+        default=64,
+        alias="TRADING_SIMPLE_PAPER_ROUTE_PROBE_RETRY_SCAN_LIMIT",
+        description=(
+            "Maximum recent blocked decisions to scan when looking for bounded "
+            "paper-route probe retry candidates."
+        ),
+    )
     trading_paper_route_target_plan_url: Optional[str] = Field(
         default=None,
         alias="TRADING_PAPER_ROUTE_TARGET_PLAN_URL",

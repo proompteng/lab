@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_DOWN
 from typing import Any, Optional, cast
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ...config import settings
@@ -25,6 +26,7 @@ from ..paper_route_target_plan import (
 )
 from ..prices import MarketSnapshot
 from ..proof_floor import build_profitability_proof_floor_receipt
+from ..session_context import REGULAR_OPEN_UTC
 from ..simple_risk import (
     position_qty_for_symbol,
     prepare_simple_decision,
@@ -35,6 +37,7 @@ from ..submission_council import (
     load_quant_evidence_status,
 )
 from ..tca import build_tca_gate_inputs
+from ..time_source import trading_now
 from .pipeline import TradingPipeline
 from .pipeline_helpers import (
     _extract_json_error_payload,
@@ -82,6 +85,69 @@ def _safe_int(value: object) -> int:
 
 class SimpleTradingPipeline(TradingPipeline):
     """Minimal signal -> hard-risk -> direct execution lane."""
+
+    def run_once(self) -> None:
+        self._label_mature_rejected_signal_outcome_events()
+        with self.session_factory() as session:
+            self.state.metrics.planned_decision_age_seconds = 0
+            strategies = self._prepare_run_once(session)
+            if not strategies:
+                return
+            self._warm_session_context_from_open(session, strategies=strategies)
+
+            batch = self.ingestor.fetch_signals(session)
+            self._record_ingest_window(batch)
+            if not batch.signals:
+                self._prepare_batch_for_decisions(
+                    session,
+                    batch,
+                    quality_signals=batch.signals,
+                )
+                context = self._build_run_context(session)
+                if context is None:
+                    return
+                _account_snapshot, account, positions, allowed_symbols = context
+                self._process_paper_route_probe_retry_decisions(
+                    session=session,
+                    strategies=strategies,
+                    account=account,
+                    positions=positions,
+                    allowed_symbols=allowed_symbols,
+                )
+                return
+            context = self._build_run_context(session)
+            if context is None:
+                self.ingestor.commit_cursor(session, batch)
+                return
+            account_snapshot, account, positions, allowed_symbols = context
+            quality_signals = self._quality_gate_signals(
+                signals=batch.signals,
+                strategies=strategies,
+                allowed_symbols=allowed_symbols,
+            )
+            if not self._prepare_batch_for_decisions(
+                session,
+                batch,
+                quality_signals=quality_signals,
+            ):
+                return
+            self._process_batch_signals(
+                session=session,
+                batch=batch,
+                strategies=strategies,
+                account_snapshot=account_snapshot,
+                account=account,
+                positions=positions,
+                allowed_symbols=allowed_symbols,
+            )
+            self._process_paper_route_probe_retry_decisions(
+                session=session,
+                strategies=strategies,
+                account=account,
+                positions=positions,
+                allowed_symbols=allowed_symbols,
+            )
+            self.ingestor.commit_cursor(session, batch)
 
     def _live_submission_gate(
         self,
@@ -266,6 +332,136 @@ class SimpleTradingPipeline(TradingPipeline):
                     self.state.metrics.record_decision_rejection_reasons(
                         ["broker_submit_failed"]
                     )
+
+    @staticmethod
+    def _trade_decision_from_retry_row(
+        decision_row: TradeDecision,
+    ) -> StrategyDecision | None:
+        decision_json = decision_row.decision_json
+        if not isinstance(decision_json, Mapping):
+            return None
+        try:
+            return StrategyDecision.model_validate(decision_json)
+        except Exception:
+            logger.warning(
+                "Skipping paper route probe retry with invalid decision payload decision_id=%s",
+                decision_row.id,
+                exc_info=True,
+            )
+            return None
+
+    def _paper_route_probe_retry_session_open(self) -> datetime:
+        now = trading_now(account_label=self.account_label).astimezone(timezone.utc)
+        return datetime.combine(now.date(), REGULAR_OPEN_UTC, tzinfo=timezone.utc)
+
+    def _created_in_current_regular_session(
+        self,
+        decision_row: TradeDecision,
+        decision: StrategyDecision,
+        *,
+        session_open: datetime,
+    ) -> bool:
+        for raw_ts in (decision.event_ts, decision_row.created_at):
+            ts = (
+                raw_ts
+                if raw_ts.tzinfo is not None
+                else raw_ts.replace(tzinfo=timezone.utc)
+            )
+            if ts.astimezone(timezone.utc) >= session_open:
+                return True
+        return False
+
+    def _paper_route_probe_retry_decisions(
+        self,
+        *,
+        session: Session,
+    ) -> list[StrategyDecision]:
+        if not settings.trading_simple_paper_route_probe_enabled:
+            return []
+        batch_limit = max(
+            _safe_int(settings.trading_simple_paper_route_probe_retry_batch_limit),
+            0,
+        )
+        scan_limit = max(
+            _safe_int(settings.trading_simple_paper_route_probe_retry_scan_limit),
+            0,
+        )
+        if batch_limit <= 0 or scan_limit <= 0:
+            return []
+
+        session_open = self._paper_route_probe_retry_session_open()
+        rows = (
+            session.execute(
+                select(TradeDecision)
+                .where(
+                    TradeDecision.status == "blocked",
+                    TradeDecision.alpaca_account_label == self.account_label,
+                )
+                .order_by(TradeDecision.created_at.desc())
+                .limit(scan_limit)
+            )
+            .scalars()
+            .all()
+        )
+        decisions: list[StrategyDecision] = []
+        for decision_row in rows:
+            if len(decisions) >= batch_limit:
+                break
+            if self._paper_route_probe_retry_metadata(decision_row) is None:
+                continue
+            if self.executor.execution_exists(session, decision_row):
+                continue
+            decision = self._trade_decision_from_retry_row(decision_row)
+            if decision is None:
+                continue
+            if not self._created_in_current_regular_session(
+                decision_row,
+                decision,
+                session_open=session_open,
+            ):
+                continue
+            decisions.append(decision)
+        return decisions
+
+    def _process_paper_route_probe_retry_decisions(
+        self,
+        *,
+        session: Session,
+        strategies: list[Strategy],
+        account: dict[str, str],
+        positions: list[dict[str, Any]],
+        allowed_symbols: set[str],
+    ) -> None:
+        decisions = self._paper_route_probe_retry_decisions(session=session)
+        for decision in decisions:
+            self.state.metrics.decisions_total += 1
+            try:
+                submitted = self._handle_decision(
+                    session,
+                    decision,
+                    strategies,
+                    account,
+                    positions,
+                    allowed_symbols,
+                )
+                if submitted is not None:
+                    self._apply_simple_projected_buying_power(
+                        account,
+                        positions,
+                        submitted,
+                    )
+                    self._apply_simple_projected_position(positions, submitted)
+            except Exception:
+                logger.exception(
+                    "Paper route probe retry handling failed strategy_id=%s symbol=%s timeframe=%s",
+                    decision.strategy_id,
+                    decision.symbol,
+                    decision.timeframe,
+                )
+                self.state.metrics.orders_rejected_total += 1
+                self.state.metrics.record_decision_rejection_reasons(
+                    ["broker_submit_failed"]
+                )
 
     def _submission_control_plane_snapshot(
         self,
@@ -836,6 +1032,15 @@ class SimpleTradingPipeline(TradingPipeline):
         reason = str(decision_json.get("submission_block_reason") or "").strip()
         if not reason:
             return None
+        retry_attempts = _safe_int(
+            decision_json.get("paper_route_probe_retry_attempts")
+        )
+        retry_limit = max(
+            _safe_int(settings.trading_simple_paper_route_probe_retry_attempt_limit),
+            0,
+        )
+        if retry_limit <= 0 or retry_attempts >= retry_limit:
+            return None
         proof_floor = decision_json.get("profitability_proof_floor")
         if not isinstance(proof_floor, Mapping):
             return None
@@ -843,6 +1048,7 @@ class SimpleTradingPipeline(TradingPipeline):
             "previous_submission_stage": "blocked_profitability_proof_floor",
             "previous_submission_block_reason": reason,
             "previous_decision_status": "blocked",
+            "previous_paper_route_probe_retry_attempts": retry_attempts,
         }
 
     def _ensure_pending_decision_row(

@@ -53,7 +53,7 @@ from app.trading.ingest import SignalBatch
 from app.trading.reconcile import Reconciler
 from app.trading.risk import RiskEngine
 from app.trading.scheduler.pipeline import TradingPipeline
-from app.trading.scheduler.simple_pipeline import SimpleTradingPipeline
+from app.trading.scheduler.simple_pipeline import SimpleTradingPipeline, _safe_int
 from app.trading.scheduler.pipeline_helpers import (
     _apply_projected_position_decision,
     _build_dspy_lineage,
@@ -778,6 +778,9 @@ class TestTradingPipeline(TestCase):
                 "trading_simple_order_feed_telemetry_enabled",
                 "trading_simple_paper_route_probe_enabled",
                 "trading_simple_paper_route_probe_max_notional",
+                "trading_simple_paper_route_probe_retry_attempt_limit",
+                "trading_simple_paper_route_probe_retry_batch_limit",
+                "trading_simple_paper_route_probe_retry_scan_limit",
                 "trading_paper_route_target_plan_url",
                 "trading_paper_route_target_plan_timeout_seconds",
                 "trading_universe_static_fallback_enabled",
@@ -2884,8 +2887,233 @@ class TestTradingPipeline(TestCase):
                 "previous_submission_stage": "blocked_profitability_proof_floor",
                 "previous_submission_block_reason": "alpha_readiness_not_promotion_eligible",
                 "previous_decision_status": "blocked",
+                "previous_paper_route_probe_retry_attempts": 0,
             },
         )
+
+        from app import config
+
+        config.settings.trading_simple_paper_route_probe_retry_attempt_limit = 1
+        self.assertIsNone(
+            SimpleTradingPipeline._paper_route_probe_retry_metadata(
+                decision_row(
+                    decision_json={
+                        "submission_stage": "blocked_profitability_proof_floor",
+                        "submission_block_reason": "alpha_readiness_not_promotion_eligible",
+                        "paper_route_probe_retry_attempts": 1,
+                        "profitability_proof_floor": {"route_state": "repair_only"},
+                    }
+                )
+            )
+        )
+
+    def test_simple_pipeline_retry_helpers_filter_invalid_rows_and_limits(
+        self,
+    ) -> None:
+        from app import config
+
+        self.assertEqual(_safe_int(True), 1)
+        self.assertEqual(_safe_int("7"), 7)
+        self.assertEqual(_safe_int("bad"), 0)
+
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        strategy_id = uuid4()
+        invalid_row = TradeDecision(
+            strategy_id=strategy_id,
+            alpaca_account_label="paper",
+            symbol="AAPL",
+            timeframe="1Min",
+            decision_json=["not", "a", "mapping"],
+            status="blocked",
+        )
+        self.assertIsNone(
+            SimpleTradingPipeline._trade_decision_from_retry_row(invalid_row)
+        )
+
+        event_ts = datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc)
+        decision = StrategyDecision(
+            strategy_id=str(strategy_id),
+            symbol="AAPL",
+            event_ts=event_ts,
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            rationale="paper-route-retry-filter",
+            params={"price": Decimal("100")},
+        )
+        old_row = TradeDecision(
+            strategy_id=strategy_id,
+            alpaca_account_label="paper",
+            symbol="AAPL",
+            timeframe="1Min",
+            decision_json=decision.model_dump(mode="json"),
+            status="blocked",
+            created_at=datetime(2026, 3, 25, 19, 0, tzinfo=timezone.utc),
+        )
+        self.assertFalse(
+            pipeline._created_in_current_regular_session(
+                old_row,
+                decision.model_copy(
+                    update={
+                        "event_ts": datetime(
+                            2026,
+                            3,
+                            25,
+                            19,
+                            0,
+                            tzinfo=timezone.utc,
+                        )
+                    }
+                ),
+                session_open=datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc),
+            )
+        )
+
+        config.settings.trading_simple_paper_route_probe_enabled = False
+        with self.session_local() as session:
+            self.assertEqual(
+                pipeline._paper_route_probe_retry_decisions(session=session), []
+            )
+
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_simple_paper_route_probe_retry_batch_limit = 0
+        config.settings.trading_simple_paper_route_probe_retry_scan_limit = 16
+        with self.session_local() as session:
+            self.assertEqual(
+                pipeline._paper_route_probe_retry_decisions(session=session), []
+            )
+
+        config.settings.trading_simple_paper_route_probe_retry_batch_limit = 2
+        config.settings.trading_simple_paper_route_probe_retry_attempt_limit = 2
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="simple-paper-proof-floor-retry-filter",
+                description="simple paper retry filter fixtures",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+                max_notional_per_trade=Decimal("1000"),
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            stale_payload = decision.model_copy(
+                update={
+                    "strategy_id": str(strategy.id),
+                    "event_ts": datetime(2026, 3, 25, 19, 0, tzinfo=timezone.utc),
+                }
+            ).model_dump(mode="json")
+            stale_payload.update(
+                {
+                    "submission_stage": "blocked_profitability_proof_floor",
+                    "submission_block_reason": "alpha_readiness_not_promotion_eligible",
+                    "profitability_proof_floor": {"route_state": "repair_only"},
+                }
+            )
+            stale_row = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="paper",
+                symbol="AAPL",
+                timeframe="1Min",
+                decision_json=stale_payload,
+                status="blocked",
+                created_at=datetime(2026, 3, 25, 19, 0, tzinfo=timezone.utc),
+            )
+            invalid_payload_row = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="paper",
+                symbol="AAPL",
+                timeframe="1Min",
+                decision_json={
+                    "submission_stage": "blocked_profitability_proof_floor",
+                    "submission_block_reason": "alpha_readiness_not_promotion_eligible",
+                    "profitability_proof_floor": {"route_state": "repair_only"},
+                },
+                status="blocked",
+                created_at=event_ts,
+            )
+            metadata_miss_row = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="paper",
+                symbol="AAPL",
+                timeframe="1Min",
+                decision_json={
+                    "submission_stage": "blocked_other",
+                    "submission_block_reason": "alpha_readiness_not_promotion_eligible",
+                    "profitability_proof_floor": {"route_state": "repair_only"},
+                },
+                status="blocked",
+                created_at=event_ts,
+            )
+            executed_payload = decision.model_copy(
+                update={"strategy_id": str(strategy.id)}
+            ).model_dump(mode="json")
+            executed_payload.update(
+                {
+                    "submission_stage": "blocked_profitability_proof_floor",
+                    "submission_block_reason": "alpha_readiness_not_promotion_eligible",
+                    "profitability_proof_floor": {"route_state": "repair_only"},
+                }
+            )
+            executed_row = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="paper",
+                symbol="AAPL",
+                timeframe="1Min",
+                decision_json=executed_payload,
+                status="blocked",
+                created_at=event_ts,
+            )
+            session.add_all(
+                [
+                    stale_row,
+                    invalid_payload_row,
+                    metadata_miss_row,
+                    executed_row,
+                ]
+            )
+            session.commit()
+            session.refresh(executed_row)
+            session.add(
+                Execution(
+                    trade_decision_id=executed_row.id,
+                    alpaca_account_label="paper",
+                    alpaca_order_id="order-existing",
+                    client_order_id="client-existing",
+                    symbol="AAPL",
+                    side="buy",
+                    order_type="market",
+                    time_in_force="day",
+                    submitted_qty=Decimal("1"),
+                    status="accepted",
+                    raw_order={},
+                )
+            )
+            session.commit()
+
+            with patch(
+                "app.trading.scheduler.simple_pipeline.trading_now",
+                return_value=datetime(2026, 3, 26, 14, 0, tzinfo=timezone.utc),
+            ):
+                self.assertEqual(
+                    pipeline._paper_route_probe_retry_decisions(session=session),
+                    [],
+                )
 
     def test_simple_pipeline_reopens_profit_floor_block_for_bounded_paper_route_retry(
         self,
@@ -3002,6 +3230,7 @@ class TestTradingPipeline(TestCase):
                 retry.get("previous_submission_block_reason"),
                 "alpha_readiness_not_promotion_eligible",
             )
+            self.assertEqual(retry.get("previous_paper_route_probe_retry_attempts"), 0)
             self.assertEqual(retry.get("symbol"), "AAPL")
             self.assertEqual(
                 retry.get("submission_stage"),
@@ -3010,6 +3239,144 @@ class TestTradingPipeline(TestCase):
             context = cast(dict[str, Any], retry.get("context"))
             self.assertEqual(context.get("mode"), "paper_route_acquisition")
             self.assertEqual(context.get("max_notional"), "25.0")
+
+    def test_simple_pipeline_retries_blocked_paper_route_decision_without_new_signal(
+        self,
+    ) -> None:
+        from app import config
+
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_live_enabled = False
+        config.settings.trading_pipeline_mode = "simple"
+        config.settings.trading_simple_submit_enabled = True
+        config.settings.trading_fractional_equities_enabled = True
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_simple_paper_route_probe_max_notional = 25.0
+        config.settings.trading_simple_paper_route_probe_retry_attempt_limit = 2
+        config.settings.trading_simple_paper_route_probe_retry_batch_limit = 4
+        config.settings.trading_simple_paper_route_probe_retry_scan_limit = 16
+        config.settings.trading_paper_route_target_plan_url = ""
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+        config.settings.trading_universe_static_fallback_enabled = True
+        config.settings.trading_universe_static_fallback_symbols_raw = "AAPL"
+
+        proof_floor = {
+            "route_state": "repair_only",
+            "capital_state": "paper",
+            "max_notional": "25",
+            "market_window": {"session_open": True},
+            "blocking_reasons": ["execution_tca_route_universe_empty"],
+            "route_reacquisition_book": {
+                "summary": {"repair_candidate_symbols": ["AAPL"]}
+            },
+        }
+        event_ts = datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc)
+
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="simple-paper-proof-floor-no-signal-retry",
+                description="simple paper retry after proof floor block without new signal",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+                max_notional_per_trade=Decimal("1000"),
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=event_ts,
+                timeframe="1Min",
+                action="buy",
+                qty=Decimal("1"),
+                rationale="paper-route-retry",
+                params={"price": Decimal("100")},
+            )
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(
+                session,
+                decision,
+                strategy,
+                "paper",
+            )
+            decision_json = dict(cast(Mapping[str, Any], decision_row.decision_json))
+            decision_json.update(
+                {
+                    "submission_stage": "blocked_profitability_proof_floor",
+                    "submission_block_reason": "alpha_readiness_not_promotion_eligible",
+                    "submission_block_atomic": [
+                        "alpha_readiness_not_promotion_eligible"
+                    ],
+                    "profitability_proof_floor": proof_floor,
+                }
+            )
+            decision_row.status = "blocked"
+            decision_row.decision_json = decision_json
+            session.add(decision_row)
+            session.commit()
+
+        alpaca_client = FakeAlpacaClient()
+        ingestor = FakeIngestor([])
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=alpaca_client,
+            order_firewall=OrderFirewall(alpaca_client),
+            ingestor=ingestor,
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=alpaca_client,
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+
+        with (
+            patch.object(
+                SimpleTradingPipeline,
+                "_profitability_proof_floor",
+                return_value=proof_floor,
+            ),
+            patch(
+                "app.trading.scheduler.simple_pipeline.trading_now",
+                return_value=datetime(2026, 3, 26, 14, 0, tzinfo=timezone.utc),
+            ),
+        ):
+            pipeline.run_once()
+
+        self.assertEqual(ingestor.committed_batches, 1)
+        self.assertEqual(len(alpaca_client.submitted), 1)
+        self.assertEqual(alpaca_client.submitted[0]["qty"], "0.25")
+        with self.session_local() as session:
+            refreshed = session.execute(select(TradeDecision)).scalar_one()
+            execution = session.execute(select(Execution)).scalar_one()
+            refreshed_json = cast(dict[str, Any], refreshed.decision_json)
+            params = cast(dict[str, Any], refreshed_json.get("params"))
+            paper_route_probe = cast(dict[str, Any], params.get("paper_route_probe"))
+            simple_lane = cast(dict[str, Any], params.get("simple_lane"))
+            retry = cast(dict[str, Any], refreshed_json.get("paper_route_probe_retry"))
+
+            self.assertEqual(refreshed.status, "submitted")
+            self.assertEqual(execution.trade_decision_id, refreshed.id)
+            self.assertEqual(paper_route_probe.get("mode"), "paper_route_acquisition")
+            self.assertEqual(
+                Decimal(str(paper_route_probe.get("capped_notional"))),
+                Decimal("25.000000"),
+            )
+            self.assertEqual(simple_lane.get("paper_route_probe_cap_applied"), True)
+            self.assertEqual(
+                retry.get("previous_submission_block_reason"),
+                "alpha_readiness_not_promotion_eligible",
+            )
+            self.assertEqual(refreshed_json.get("paper_route_probe_retry_attempts"), 1)
 
     def test_simple_pipeline_proof_floor_includes_paper_route_probe_settings(
         self,
