@@ -103,15 +103,24 @@ const signedS3Request = (input: {
   key: string
   method: 'GET' | 'PUT'
   body?: Buffer
+  contentType?: string
   now: Date
 }) => {
   const { amzDate, datestamp } = toAmzDates(input.now)
   const payloadHash = input.body ? sha256Hex(input.body) : sha256Hex('')
   const { url, canonicalUri, host } = buildObjectUrl(input.config, input.key)
-  const signedHeaders = 'host;x-amz-content-sha256;x-amz-date'
-  const canonicalHeaders = [`host:${host}`, `x-amz-content-sha256:${payloadHash}`, `x-amz-date:${amzDate}`, ''].join(
-    '\n',
-  )
+  const headers = {
+    ...(input.contentType ? { 'content-type': input.contentType } : {}),
+    host,
+    'x-amz-content-sha256': payloadHash,
+    'x-amz-date': amzDate,
+  }
+  const signedHeaders = Object.keys(headers).sort().join(';')
+  const canonicalHeaders = Object.entries(headers)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}:${value}`)
+    .join('\n')
+    .concat('\n')
   const canonicalRequest = [input.method, canonicalUri, '', canonicalHeaders, signedHeaders, payloadHash].join('\n')
   const scope = `${datestamp}/${input.config.region}/s3/aws4_request`
   const stringToSign = ['AWS4-HMAC-SHA256', amzDate, scope, sha256Hex(canonicalRequest)].join('\n')
@@ -124,6 +133,7 @@ const signedS3Request = (input: {
         `SignedHeaders=${signedHeaders}`,
         `Signature=${signature}`,
       ].join(', '),
+      ...(input.contentType ? { 'content-type': input.contentType } : {}),
       'x-amz-content-sha256': payloadHash,
       'x-amz-date': amzDate,
     },
@@ -262,7 +272,14 @@ export const materializeAttachments = async (
         mimeType = body.mimeType
         sizeBytes = body.body.length
         objectKey = `synthesis/${now().toISOString().slice(0, 10)}/${id}.${extensionForMime(body.mimeType)}`
-        const request = signedS3Request({ config, key: objectKey, method: 'PUT', body: body.body, now: now() })
+        const request = signedS3Request({
+          config,
+          key: objectKey,
+          method: 'PUT',
+          body: body.body,
+          contentType: body.mimeType,
+          now: now(),
+        })
         const response = await fetchImpl(request.url, {
           method: 'PUT',
           headers: request.headers,
@@ -302,11 +319,12 @@ export const assetResponseForAttachment = async (attachment: SynthesisAttachment
     const request = signedS3Request({ config, key: attachment.objectKey, method: 'GET', now: new Date() })
     const response = await fetch(request.url, { headers: request.headers })
     if (!response.ok) return new Response('asset not found', { status: response.status })
+    const contentType = attachment.mimeType ?? response.headers.get('content-type')
     return new Response(response.body, {
       status: 200,
       headers: {
         'cache-control': 'private, max-age=3600',
-        ...(response.headers.get('content-type') ? { 'content-type': response.headers.get('content-type') ?? '' } : {}),
+        ...(contentType ? { 'content-type': contentType } : {}),
       },
     })
   }
