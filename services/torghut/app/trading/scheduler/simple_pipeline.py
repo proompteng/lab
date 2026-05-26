@@ -728,8 +728,6 @@ class SimpleTradingPipeline(TradingPipeline):
             return None
         if not settings.trading_simple_paper_route_probe_enabled:
             return None
-        if not settings.trading_simple_submit_enabled:
-            return None
         if (
             decision.action == "sell"
             and not settings.trading_allow_shorts
@@ -792,6 +790,10 @@ class SimpleTradingPipeline(TradingPipeline):
             "paper_route_target_plan_symbols": sorted(target_plan_symbols),
             "paper_route_target_plan_source": "external_target_plan_url"
             if target_plan_symbols
+            else None,
+            "simple_submit_enabled": settings.trading_simple_submit_enabled,
+            "simple_submit_bypass_scope": "paper_route_probe_only"
+            if not settings.trading_simple_submit_enabled
             else None,
         }
 

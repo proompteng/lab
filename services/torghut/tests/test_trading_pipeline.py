@@ -3228,11 +3228,18 @@ class TestTradingPipeline(TestCase):
 
         config.settings.trading_mode = "paper"
         config.settings.trading_simple_submit_enabled = False
-        self.assertIsNone(
-            pipeline._paper_route_probe_context(
-                proof_floor=proof_floor,
-                decision=decision,
-            )
+        disabled_submit_probe_context = pipeline._paper_route_probe_context(
+            proof_floor=proof_floor,
+            decision=decision,
+        )
+        self.assertIsNotNone(disabled_submit_probe_context)
+        assert disabled_submit_probe_context is not None
+        self.assertEqual(
+            disabled_submit_probe_context.get("simple_submit_enabled"), False
+        )
+        self.assertEqual(
+            disabled_submit_probe_context.get("simple_submit_bypass_scope"),
+            "paper_route_probe_only",
         )
 
         config.settings.trading_simple_submit_enabled = True
