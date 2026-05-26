@@ -6,6 +6,7 @@ import {
   SubmitItemInputSchema,
 } from './schema'
 import { assetResponseForAttachment } from './assets'
+import { createCompanyDataProvider } from './company'
 import { getSynthesisStore } from './store'
 import { requireAuthorized } from './auth'
 import { badRequest, jsonResponse, notFound, readJson } from './http'
@@ -78,6 +79,21 @@ export const handleListFeed = async (request: Request) => {
     return jsonResponse(await getSynthesisStore().listFeed(query))
   } catch (error) {
     return internalError(error)
+  }
+}
+
+export const handleGetCompany = async (_request: Request, symbol: string) => {
+  const provider = createCompanyDataProvider()
+  if (!provider) {
+    return jsonResponse({ error: 'company market data provider is not configured' }, { status: 503 })
+  }
+
+  try {
+    return jsonResponse({ company: await provider.getCompanyAnalysis(symbol) })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'company analysis unavailable'
+    if (message.startsWith('unsupported company symbol')) return badRequest(message)
+    return jsonResponse({ error: message }, { status: 502 })
   }
 }
 

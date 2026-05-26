@@ -1,17 +1,25 @@
-import { ScrollArea as DesignScrollArea } from '@proompteng/design/ui'
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
-import { ArrowUpRight, ExternalLink, ImageIcon, Newspaper, Search } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { ArrowUpRight, ExternalLink, ImageIcon, Newspaper, Search, X } from 'lucide-react'
+import { useEffect, useMemo, useReducer, useState } from 'react'
 import type {
   ButtonHTMLAttributes,
   HTMLAttributes,
   InputHTMLAttributes,
   KeyboardEvent,
+  MouseEvent,
   ReactNode,
   UIEvent,
 } from 'react'
-import type { FeedResponse, SynthesisItem } from '~/server/schema'
+import {
+  imageModalCaptionId,
+  imageModalTitleId,
+  initialImageModalState,
+  reduceImageModalState,
+} from '~/lib/image-modal'
+import { normalizeCompanySymbol, segmentCompanySymbols, symbolsFromSynthesisItem } from '~/lib/company-symbols'
+import { synthesisSearchInputClassName, synthesisSidebarItems } from '~/lib/synthesis-ui-contract'
+import type { FeedResponse, SynthesisAttachment, SynthesisItem } from '~/server/schema'
 
 export const Route = createFileRoute('/')({
   component: App,
@@ -33,26 +41,12 @@ const topicTabs = [
 const cx = (...values: Array<string | false | null | undefined>) => values.filter(Boolean).join(' ')
 
 function UiScrollArea({ className, children, ...props }: HTMLAttributes<HTMLDivElement> & { children: ReactNode }) {
-  const [isMounted, setIsMounted] = useState(false)
-
-  useEffect(() => {
-    setIsMounted(true)
-  }, [])
-
-  if (!isMounted) {
-    return (
-      <div data-slot="scroll-area" className={cx('relative', className)} {...props}>
-        <div data-slot="scroll-area-viewport" className="size-full rounded-[inherit]">
-          {children}
-        </div>
-      </div>
-    )
-  }
-
   return (
-    <DesignScrollArea className={className} {...props}>
-      {children}
-    </DesignScrollArea>
+    <div data-slot="scroll-area" className={cx('relative overflow-hidden', className)} {...props}>
+      <div data-slot="scroll-area-viewport" className="size-full rounded-[inherit]">
+        {children}
+      </div>
+    </div>
   )
 }
 
@@ -186,6 +180,7 @@ function App() {
   const [tag, setTag] = useState('all')
   const [query, setQuery] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [imageModal, dispatchImageModal] = useReducer(reduceImageModalState, initialImageModalState)
 
   const feed = useInfiniteQuery({
     queryKey: ['synthesis-feed', tag, query.trim()],
@@ -202,6 +197,19 @@ function App() {
     () => items.find((item) => item.id === selectedId) ?? items[0] ?? null,
     [items, selectedId],
   )
+  const selectedModalAttachment = useMemo(() => {
+    if (!imageModal.imageId) return null
+    return items.flatMap((item) => item.attachments).find((attachment) => attachment.id === imageModal.imageId) ?? null
+  }, [imageModal.imageId, items])
+
+  useEffect(() => {
+    if (!imageModal.isOpen) return undefined
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      dispatchImageModal({ type: 'escape', key: event.key })
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [imageModal.isOpen])
 
   useEffect(() => {
     if (!selectedId && items[0]) {
@@ -227,40 +235,37 @@ function App() {
   }
 
   return (
-    <main className="grid h-dvh w-full grid-cols-1 overflow-hidden bg-black text-[#e7e9ea] xl:grid-cols-[244px_minmax(0,620px)_minmax(360px,1fr)]">
+    <main className="grid h-dvh w-full grid-cols-1 overflow-hidden bg-black text-[#e7e9ea] xl:grid-cols-[220px_minmax(0,760px)_minmax(360px,1fr)]">
       <aside className="hidden min-h-0 justify-end border-r border-[#2f3336] bg-black xl:flex">
-        <div className="flex w-[244px] flex-col px-2 py-3">
-          <nav className="grid gap-1">
-            <RailButton active icon={<Newspaper />}>
-              Feed
-            </RailButton>
-            <RailButton icon={<Search />}>Search</RailButton>
+        <div className="flex w-[220px] flex-col px-2 py-3">
+          <nav className="grid gap-1" aria-label="Synthesis navigation">
+            {synthesisSidebarItems.map((item) => (
+              <RailButton key={item} active={item === 'Feed'} icon={<Newspaper />}>
+                {item}
+              </RailButton>
+            ))}
           </nav>
-          <Button className="mt-5 h-10 w-full rounded-full text-sm">Curate</Button>
-          <div className="mt-auto px-3 py-4 text-sm leading-6 text-[#71767b]">
-            <p>{loadedItems.length} loaded</p>
-            <p>{items.length} visible</p>
-          </div>
+          <div className="mt-auto px-3 py-4 font-mono text-xs leading-6 text-[#71767b]">private reading output</div>
         </div>
       </aside>
 
       <section className="flex min-h-0 min-w-0 flex-col border-x border-[#2f3336] bg-black">
-        <header className="shrink-0 border-b border-[#2f3336] bg-black/90 px-4 py-3 backdrop-blur">
+        <header className="shrink-0 border-b border-[#2f3336] bg-black/90 px-4 py-3 backdrop-blur sm:px-5">
           <div className="flex items-center gap-3">
             <div className="min-w-0">
-              <h1 className="text-xl font-bold tracking-normal">Synthesis</h1>
-              <p className="mt-0.5 text-xs text-[#71767b]">{loadedItems.length} loaded</p>
+              <h1 className="text-xl font-semibold tracking-[-0.01em]">Synthesis</h1>
+              <p className="mt-0.5 text-xs text-[#71767b]">curated research feed</p>
             </div>
           </div>
 
-          <div className="mt-3">
-            <div className="relative min-w-0 flex-1">
+          <div className="mt-3 w-full">
+            <div className="relative w-full min-w-0">
               <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#71767b]" />
               <Input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Search"
-                className="h-9 rounded-md border-[#2f3336] bg-[#080808] pl-9 text-[15px] text-[#e7e9ea] placeholder:text-[#71767b]"
+                className={synthesisSearchInputClassName}
               />
             </div>
           </div>
@@ -290,7 +295,13 @@ function App() {
           ) : (
             <>
               {items.map((item) => (
-                <FeedPost key={item.id} item={item} selected={item.id === selectedItem?.id} onSelect={setSelectedId} />
+                <FeedPost
+                  key={item.id}
+                  item={item}
+                  selected={item.id === selectedItem?.id}
+                  onOpenImage={(imageId) => dispatchImageModal({ type: 'open', imageId })}
+                  onSelect={setSelectedId}
+                />
               ))}
               <InfiniteFooter
                 hasNextPage={Boolean(feed.hasNextPage)}
@@ -302,7 +313,14 @@ function App() {
         </UiScrollArea>
       </section>
 
-      <DetailPanel item={selectedItem} />
+      <DetailPanel item={selectedItem} onOpenImage={(imageId) => dispatchImageModal({ type: 'open', imageId })} />
+
+      {imageModal.isOpen && selectedModalAttachment ? (
+        <AttachmentImageModal
+          attachment={selectedModalAttachment}
+          onClose={() => dispatchImageModal({ type: 'close' })}
+        />
+      ) : null}
     </main>
   )
 }
@@ -352,10 +370,12 @@ function TopicTabs({ tag, setTag }: { tag: string; setTag: (value: string) => vo
 function FeedPost({
   item,
   selected,
+  onOpenImage,
   onSelect,
 }: {
   item: SynthesisItem
   selected: boolean
+  onOpenImage: (imageId: string) => void
   onSelect: (id: string) => void
 }) {
   const mediaAttachments = mediaAttachmentsForItem(item)
@@ -393,18 +413,30 @@ function FeedPost({
             <span className="text-[#71767b]">{formatDate(item.observedAt)}</span>
           </div>
 
-          <h2 className="mt-2 line-clamp-2 text-[16px] font-semibold leading-6">{compactText(item.title, 180)}</h2>
-          <p className="mt-1 line-clamp-3 text-[15px] leading-6 text-[#d8dadd]">{compactText(item.synthesis, 280)}</p>
+          <h2 className="mt-2 line-clamp-2 text-[16px] font-semibold leading-6">
+            <SymbolLinkedText text={compactText(item.title, 180)} onClick={(event) => event.stopPropagation()} />
+          </h2>
+          <p className="mt-1 line-clamp-3 text-[15px] leading-6 text-[#d8dadd]">
+            <SymbolLinkedText text={compactText(item.synthesis, 280)} onClick={(event) => event.stopPropagation()} />
+          </p>
 
           {inlineImage ? (
-            <div className="mt-3 overflow-hidden rounded-md border border-[#2f3336] bg-[#080808]">
+            <button
+              type="button"
+              className="mt-3 block w-full overflow-hidden rounded-md border border-[#2f3336] bg-[#080808] text-left transition-colors hover:border-[#1d9bf0]/60 focus-visible:ring-2 focus-visible:ring-[#1d9bf0]/50"
+              aria-label="Open attachment image"
+              onClick={(event) => {
+                event.stopPropagation()
+                onOpenImage(inlineImage.id)
+              }}
+            >
               <img
                 src={inlineImage.assetUrl}
                 alt={inlineImage.alt ?? inlineImage.label ?? ''}
                 className="max-h-64 w-full object-cover"
                 loading="lazy"
               />
-            </div>
+            </button>
           ) : mediaAttachments.length ? (
             <div className="mt-3 inline-flex items-center gap-2 rounded-md border border-[#2f3336] px-2 py-1 text-xs text-[#71767b]">
               <ImageIcon className="size-3.5" />
@@ -420,11 +452,13 @@ function FeedPost({
             </span>
           </div>
 
-          <div className="mt-3 flex flex-wrap gap-2 text-sm text-[#71767b]">
-            {item.topicTags.slice(0, 4).map((topic) => (
-              <span key={topic}>#{topic}</span>
-            ))}
-          </div>
+          {item.topicTags.length ? (
+            <div className="mt-3 flex flex-wrap gap-2 text-sm text-[#71767b]">
+              {item.topicTags.slice(0, 4).map((topic) => (
+                <TopicTagLink key={topic} topic={topic} onClick={(event) => event.stopPropagation()} />
+              ))}
+            </div>
+          ) : null}
 
           <div className="mt-3 flex max-w-md justify-between text-[#71767b]">
             <a
@@ -448,7 +482,7 @@ function FeedPost({
   )
 }
 
-function DetailPanel({ item }: { item: SynthesisItem | null }) {
+function DetailPanel({ item, onOpenImage }: { item: SynthesisItem | null; onOpenImage: (imageId: string) => void }) {
   return (
     <aside className="hidden min-h-0 min-w-0 flex-col bg-black xl:flex">
       <div className="flex h-[57px] shrink-0 items-center justify-between border-b border-[#2f3336] px-5">
@@ -464,13 +498,13 @@ function DetailPanel({ item }: { item: SynthesisItem | null }) {
       </div>
 
       <UiScrollArea className="min-h-0 flex-1 [&_[data-slot=scroll-area-viewport]]:overflow-x-hidden [&_[data-slot=scroll-area-viewport]]:overflow-y-auto [&_[data-slot=scroll-area-viewport]]:overscroll-contain">
-        {item ? <DetailContent item={item} /> : <EmptyDetail />}
+        {item ? <DetailContent item={item} onOpenImage={onOpenImage} /> : <EmptyDetail />}
       </UiScrollArea>
     </aside>
   )
 }
 
-function DetailContent({ item }: { item: SynthesisItem }) {
+function DetailContent({ item, onOpenImage }: { item: SynthesisItem; onOpenImage: (imageId: string) => void }) {
   const mediaAttachments = mediaAttachmentsForItem(item)
 
   return (
@@ -499,12 +533,18 @@ function DetailContent({ item }: { item: SynthesisItem }) {
       </div>
 
       <Section title="Synthesis">
-        <h1 className="mb-3 text-2xl font-bold leading-8 tracking-normal">{item.title}</h1>
-        <p className="text-[15px] leading-7">{compactText(item.synthesis, 900)}</p>
+        <h1 className="mb-3 text-2xl font-bold leading-8 tracking-[-0.01em]">
+          <SymbolLinkedText text={item.title} />
+        </h1>
+        <p className="text-[15px] leading-7">
+          <SymbolLinkedText text={compactText(item.synthesis, 900)} />
+        </p>
         {item.whyValuable ? (
           <div className="mt-4 rounded-md border border-[#2f3336] bg-[#080808] px-3 py-3">
             <h4 className="mb-1 text-xs font-semibold uppercase tracking-wide text-[#71767b]">Why it matters</h4>
-            <p className="text-[15px] leading-7 text-[#d8dadd]">{compactText(item.whyValuable, 520)}</p>
+            <p className="text-[15px] leading-7 text-[#d8dadd]">
+              <SymbolLinkedText text={compactText(item.whyValuable, 520)} />
+            </p>
           </div>
         ) : null}
       </Section>
@@ -514,7 +554,7 @@ function DetailContent({ item }: { item: SynthesisItem }) {
           <ul className="grid gap-2 text-[15px] leading-6 text-[#d8dadd]">
             {item.takeaways.map((takeaway) => (
               <li key={takeaway} className="rounded-md border border-[#2f3336] bg-[#080808] px-3 py-2">
-                {takeaway}
+                <SymbolLinkedText text={takeaway} />
               </li>
             ))}
           </ul>
@@ -579,12 +619,19 @@ function DetailContent({ item }: { item: SynthesisItem }) {
             {mediaAttachments.map((attachment) =>
               isInlineImageUrl(attachment.assetUrl) ? (
                 <figure key={attachment.id} className="overflow-hidden rounded-md border border-[#2f3336] bg-[#080808]">
-                  <img
-                    src={attachment.assetUrl}
-                    alt={attachment.alt ?? attachment.label ?? ''}
-                    className="max-h-[520px] w-full object-contain"
-                    loading="lazy"
-                  />
+                  <button
+                    type="button"
+                    className="block w-full bg-black focus-visible:ring-2 focus-visible:ring-[#1d9bf0]/50"
+                    aria-label="Open attachment image"
+                    onClick={() => onOpenImage(attachment.id)}
+                  >
+                    <img
+                      src={attachment.assetUrl}
+                      alt={attachment.alt ?? attachment.label ?? ''}
+                      className="max-h-[520px] w-full object-contain"
+                      loading="lazy"
+                    />
+                  </button>
                   {attachment.label || attachment.alt ? (
                     <figcaption className="border-t border-[#2f3336] px-3 py-2 text-sm leading-6 text-[#a6a6a6]">
                       {attachment.label ? <p className="font-semibold text-[#e7e9ea]">{attachment.label}</p> : null}
@@ -613,12 +660,118 @@ function DetailContent({ item }: { item: SynthesisItem }) {
       ) : null}
 
       <Separator className="bg-[#2f3336]" />
-      <div className="flex flex-wrap gap-2">
-        {item.topicTags.map((topic) => (
-          <Badge key={topic} variant="outline">
-            #{topic}
-          </Badge>
-        ))}
+      {item.topicTags.length || symbolsFromSynthesisItem(item).length ? (
+        <div className="flex flex-wrap gap-2">
+          {item.topicTags.map((topic) => (
+            <TopicTagLink key={topic} topic={topic} />
+          ))}
+          {symbolsFromSynthesisItem(item).map((symbol) => (
+            <a
+              key={symbol}
+              href={`/companies/${symbol}`}
+              className="inline-flex h-5 w-fit shrink-0 items-center justify-center rounded-full border border-[#2f3336] bg-[#080808] px-2 py-0.5 font-mono text-[0.625rem] font-medium text-[#e7e9ea] transition-colors hover:border-[#1d9bf0]/60"
+            >
+              ${symbol}
+            </a>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function SymbolLinkedText({
+  text,
+  onClick,
+}: {
+  text: string
+  onClick?: (event: MouseEvent<HTMLAnchorElement>) => void
+}) {
+  return (
+    <>
+      {segmentCompanySymbols(text).map((segment, index) =>
+        segment.kind === 'symbol' ? (
+          <a
+            key={`${segment.symbol}-${index}`}
+            href={segment.href}
+            onClick={onClick}
+            className="font-mono text-[#e7e9ea] underline decoration-[#1d9bf0]/60 underline-offset-2 transition-colors hover:text-[#1d9bf0]"
+          >
+            {segment.text}
+          </a>
+        ) : (
+          <span key={`text-${index}`}>{segment.text}</span>
+        ),
+      )}
+    </>
+  )
+}
+
+function TopicTagLink({ topic, onClick }: { topic: string; onClick?: (event: MouseEvent<HTMLAnchorElement>) => void }) {
+  const symbol = normalizeCompanySymbol(topic)
+  if (symbol) {
+    return (
+      <a
+        href={`/companies/${symbol}`}
+        onClick={onClick}
+        className="inline-flex h-5 w-fit shrink-0 items-center justify-center rounded-full border border-[#2f3336] bg-[#080808] px-2 py-0.5 font-mono text-[0.625rem] font-medium text-[#e7e9ea] transition-colors hover:border-[#1d9bf0]/60"
+      >
+        ${symbol}
+      </a>
+    )
+  }
+
+  return (
+    <span className="inline-flex h-5 w-fit shrink-0 items-center justify-center rounded-full border border-[#2f3336] bg-[#080808] px-2 py-0.5 text-[0.625rem] font-medium text-[#e7e9ea]">
+      #{topic}
+    </span>
+  )
+}
+
+function AttachmentImageModal({ attachment, onClose }: { attachment: SynthesisAttachment; onClose: () => void }) {
+  const caption = [attachment.label, attachment.alt].filter(Boolean).join(' — ')
+  const titleId = imageModalTitleId(attachment.id)
+  const captionId = imageModalCaptionId(attachment.id)
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
+      aria-describedby={caption ? captionId : undefined}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 px-3 py-4 backdrop-blur-sm sm:px-6"
+      onClick={onClose}
+    >
+      <div
+        className="flex max-h-full w-full max-w-5xl flex-col overflow-hidden rounded-lg border border-[#2f3336] bg-[#080808] shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex min-h-12 items-center justify-between gap-3 border-b border-[#2f3336] px-3 py-2 sm:px-4">
+          <h2 id={titleId} className="truncate text-sm font-semibold text-[#e7e9ea]">
+            {attachment.label ?? 'Attachment image'}
+          </h2>
+          <button
+            type="button"
+            aria-label="Close image preview"
+            autoFocus
+            className="inline-flex size-8 shrink-0 items-center justify-center rounded-full text-[#a6a6a6] transition-colors hover:bg-[#181818] hover:text-[#e7e9ea] focus-visible:ring-2 focus-visible:ring-[#1d9bf0]/50"
+            onClick={onClose}
+          >
+            <X className="size-5" />
+          </button>
+        </div>
+        <div className="flex min-h-0 flex-1 items-center justify-center bg-black p-2 sm:p-4">
+          <img
+            src={attachment.assetUrl}
+            alt={attachment.alt ?? attachment.label ?? ''}
+            className="max-h-[78dvh] max-w-full object-contain"
+          />
+        </div>
+        {caption ? (
+          <p id={captionId} className="border-t border-[#2f3336] px-3 py-2 text-sm leading-6 text-[#a6a6a6] sm:px-4">
+            {caption}
+          </p>
+        ) : null}
       </div>
     </div>
   )

@@ -141,6 +141,41 @@ describe('synthesis REST auth', () => {
     expect(secondPage.items.some((item: { id: string }) => firstIds.has(item.id))).toBe(false)
   })
 
+  test('derives non-empty topic tags for submitted items when content has enough signal', async () => {
+    const runResponse = await handleCreateRun(createRunRequest(`Bearer ${token}`))
+    const runPayload = await runResponse.json()
+    const submitResponse = await handleSubmitItem(
+      new Request('http://synthesis.test/api/items', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          runId: runPayload.run.id,
+          title: 'NVDA HBM packaging is tightening around inference demand',
+          synthesis:
+            'Semiconductor supply-chain posts point to HBM packaging becoming a concrete inference deployment bottleneck.',
+          takeaways: ['watch HBM allocation for model deployment'],
+          whyValuable: 'It turns scattered chip supply commentary into a useful supply-chain watch item.',
+          sourcePosts: [
+            {
+              originalUrl: 'https://x.com/example/status/2101',
+              observedText: 'hbm packaging notes for semis and inference systems',
+            },
+          ],
+          dedupeKey: 'theme:hbm-tag-derivation',
+          score: 0.91,
+          confidence: 0.82,
+        }),
+      }),
+    )
+    const payload = await submitResponse.json()
+
+    expect(submitResponse.status).toBe(201)
+    expect(payload.item.topicTags).toEqual(expect.arrayContaining(['semis', 'machine-learning']))
+  })
+
   test('stores one synthesized theme with multiple sources and app-owned attachments', async () => {
     const runResponse = await handleCreateRun(createRunRequest(`Bearer ${token}`))
     const runPayload = await runResponse.json()
