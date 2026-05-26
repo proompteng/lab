@@ -9395,6 +9395,111 @@ class TestTradingPipeline(TestCase):
 
         self.assertNotIn("strategy_id", positions[0])
 
+    def test_resolve_execution_context_positions_splits_multi_strategy_symbol_position(
+        self,
+    ) -> None:
+        session_open = datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc)
+        with self.session_local() as session:
+            strategies = [
+                Strategy(
+                    name="microbar-cross-sectional-pairs-v1",
+                    description="runtime isolated paper proof",
+                    enabled=True,
+                    base_timeframe="1Sec",
+                    universe_type="microbar_cross_sectional_pairs_v1",
+                    universe_symbols=["AAPL"],
+                ),
+                Strategy(
+                    name="microbar-volume-continuation-long-top2-chip-v1",
+                    description="runtime isolated paper proof",
+                    enabled=True,
+                    base_timeframe="1Sec",
+                    universe_type="microbar_cross_sectional_pairs_v1",
+                    universe_symbols=["AAPL"],
+                ),
+            ]
+            session.add_all(strategies)
+            session.commit()
+            for strategy in strategies:
+                session.refresh(strategy)
+
+            for index, (strategy, qty, price) in enumerate(
+                [
+                    (strategies[0], Decimal("1.25"), Decimal("100")),
+                    (strategies[1], Decimal("2.75"), Decimal("104")),
+                ],
+                start=1,
+            ):
+                decision = TradeDecision(
+                    strategy_id=strategy.id,
+                    alpaca_account_label="paper",
+                    symbol="AAPL",
+                    timeframe="1Sec",
+                    decision_json={"action": "buy"},
+                    rationale="paper-route-entry",
+                    status="filled",
+                    created_at=session_open + timedelta(minutes=60 + index),
+                )
+                session.add(decision)
+                session.commit()
+                session.refresh(decision)
+                session.add(
+                    Execution(
+                        trade_decision_id=decision.id,
+                        alpaca_account_label="paper",
+                        alpaca_order_id=f"paper-aapl-{index}",
+                        client_order_id=f"paper-aapl-{index}-client",
+                        symbol="AAPL",
+                        side="buy",
+                        order_type="market",
+                        time_in_force="day",
+                        submitted_qty=qty,
+                        filled_qty=qty,
+                        avg_fill_price=price,
+                        status="filled",
+                        raw_order={},
+                        created_at=session_open + timedelta(minutes=61 + index),
+                        updated_at=session_open + timedelta(minutes=61 + index),
+                    )
+                )
+            session.commit()
+
+            pipeline = TradingPipeline.__new__(TradingPipeline)
+            pipeline.account_label = "paper"
+
+            class AdapterWithoutOpenOrders:
+                name = "test"
+
+                def list_orders(self, status: str = "all") -> list[dict[str, str]]:
+                    return []
+
+            pipeline.execution_adapter = AdapterWithoutOpenOrders()
+
+            with patch(
+                "app.trading.scheduler.pipeline.trading_now",
+                return_value=session_open + timedelta(minutes=150),
+            ):
+                positions = pipeline._resolve_execution_context_positions(
+                    [{"symbol": "AAPL", "qty": "4.00", "side": "long"}],
+                    session=session,
+                )
+
+        self.assertEqual(len(positions), 2)
+        self.assertEqual(
+            {position["strategy_id"] for position in positions},
+            {str(strategy.id) for strategy in strategies},
+        )
+        self.assertEqual(
+            {Decimal(str(position["qty"])) for position in positions},
+            {Decimal("1.25"), Decimal("2.75")},
+        )
+        self.assertTrue(
+            all(
+                position["strategy_position_split_from_aggregate"]
+                for position in positions
+            )
+        )
+
     def test_attach_current_session_strategy_position_tags_fails_closed_on_query_error(
         self,
     ) -> None:

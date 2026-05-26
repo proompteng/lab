@@ -763,8 +763,8 @@ class TradingPipeline:
 
         tagged_positions: list[dict[str, Any]] = []
         for position in positions:
-            tagged_positions.append(
-                self._attach_strategy_position_tag(
+            tagged_positions.extend(
+                self._attach_strategy_position_tags(
                     position,
                     exposures=exposures,
                     session_open=session_open,
@@ -790,14 +790,30 @@ class TradingPipeline:
         exposures: Mapping[str, Mapping[str, Mapping[str, Any]]],
         session_open: datetime,
     ) -> dict[str, Any]:
+        tagged_positions = TradingPipeline._attach_strategy_position_tags(
+            position,
+            exposures=exposures,
+            session_open=session_open,
+        )
+        if len(tagged_positions) == 1:
+            return tagged_positions[0]
+        return position
+
+    @staticmethod
+    def _attach_strategy_position_tags(
+        position: dict[str, Any],
+        *,
+        exposures: Mapping[str, Mapping[str, Mapping[str, Any]]],
+        session_open: datetime,
+    ) -> list[dict[str, Any]]:
         if str(position.get("strategy_id") or "").strip():
-            return position
+            return [position]
         symbol = _normalized_symbol(position.get("symbol"))
         if not symbol:
-            return position
+            return [position]
         symbol_exposures = exposures.get(symbol)
         if not symbol_exposures:
-            return position
+            return [position]
         raw_qty = (
             position.get("qty")
             or position.get("quantity")
@@ -806,7 +822,7 @@ class TradingPipeline:
         )
         position_qty = _optional_decimal(raw_qty)
         if position_qty is None or position_qty <= 0:
-            return position
+            return [position]
         side = str(position.get("side") or "").strip().lower()
         signed_position_qty = -position_qty if side == "short" else position_qty
         same_side_exposures = [
@@ -818,7 +834,13 @@ class TradingPipeline:
             )
         ]
         if len(same_side_exposures) != 1:
-            return position
+            split_positions = TradingPipeline._split_strategy_position_tags(
+                position,
+                same_side_exposures=same_side_exposures,
+                signed_position_qty=signed_position_qty,
+                session_open=session_open,
+            )
+            return split_positions or [position]
 
         strategy_id, exposure = same_side_exposures[0]
         exposure_qty = cast(Decimal, exposure.get("qty") or Decimal("0"))
@@ -826,12 +848,79 @@ class TradingPipeline:
             abs(abs(exposure_qty) - abs(signed_position_qty))
             > _STRATEGY_POSITION_TAG_TOLERANCE
         ):
-            return position
+            return [position]
 
+        return [
+            TradingPipeline._strategy_tagged_position(
+                position,
+                strategy_id=strategy_id,
+                exposure=exposure,
+                qty=position_qty,
+                side=side,
+                session_open=session_open,
+            )
+        ]
+
+    @staticmethod
+    def _split_strategy_position_tags(
+        position: dict[str, Any],
+        *,
+        same_side_exposures: list[tuple[str, Mapping[str, Any]]],
+        signed_position_qty: Decimal,
+        session_open: datetime,
+    ) -> list[dict[str, Any]]:
+        if len(same_side_exposures) <= 1:
+            return []
+        exposure_total = sum(
+            (
+                cast(Decimal, exposure.get("qty") or Decimal("0"))
+                for _strategy_id, exposure in same_side_exposures
+            ),
+            Decimal("0"),
+        )
+        if (
+            abs(abs(exposure_total) - abs(signed_position_qty))
+            > _STRATEGY_POSITION_TAG_TOLERANCE
+        ):
+            return []
+        side = "short" if signed_position_qty < 0 else "long"
+        split_positions: list[dict[str, Any]] = []
+        for strategy_id, exposure in same_side_exposures:
+            exposure_qty = cast(Decimal, exposure.get("qty") or Decimal("0"))
+            if exposure_qty == 0:
+                continue
+            split_positions.append(
+                TradingPipeline._strategy_tagged_position(
+                    position,
+                    strategy_id=strategy_id,
+                    exposure=exposure,
+                    qty=abs(exposure_qty),
+                    side=side,
+                    session_open=session_open,
+                    split_from_aggregate=True,
+                )
+            )
+        return split_positions
+
+    @staticmethod
+    def _strategy_tagged_position(
+        position: dict[str, Any],
+        *,
+        strategy_id: str,
+        exposure: Mapping[str, Any],
+        qty: Decimal,
+        side: str,
+        session_open: datetime,
+        split_from_aggregate: bool = False,
+    ) -> dict[str, Any]:
         tagged = dict(position)
         tagged["strategy_id"] = strategy_id
+        tagged["qty"] = str(qty)
+        tagged["side"] = side or "long"
         tagged["strategy_position_source"] = "current_session_filled_executions"
         tagged["strategy_position_session_open"] = session_open.isoformat()
+        if split_from_aggregate:
+            tagged["strategy_position_split_from_aggregate"] = True
         latest_execution_at = exposure.get("latest_execution_at")
         if isinstance(latest_execution_at, datetime):
             tagged["strategy_position_latest_execution_at"] = (
