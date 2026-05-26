@@ -2399,6 +2399,535 @@ class TestRunEmpiricalPromotionJobs(TestCase):
             "25",
         )
 
+    def test_deferred_paper_route_targets_emit_offline_replay_triage(
+        self,
+    ) -> None:
+        manifest_path = self.tmp_dir / "empirical-promotion-manifest.yaml"
+        manifest_path.write_text("run_id: renew-1\n", encoding="utf-8")
+        hypothesis_path = self.tmp_dir / "h-pairs-01.json"
+        hypothesis_path.write_text(
+            json.dumps({"candidate_id": "cand-paper-route"}),
+            encoding="utf-8",
+        )
+        ranking_path = self.tmp_dir / "exact-replay-ledger-ranking.json"
+        ranking_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "torghut.exact-replay-ledger-ranking.v1",
+                    "candidate_count": 1,
+                    "candidates": [
+                        {
+                            "candidate_id": "cand-replay-triage",
+                            "artifact_ref": "proof/exact-replay-ledger.json",
+                            "promotion_status": "blocked_pending_runtime_promotion_proof",
+                            "promotion_blockers": ["replay_artifact_only_not_live"],
+                            "runtime_ledger_blockers": [],
+                            "window_start": "2026-05-25T13:30:00Z",
+                            "window_end": "2026-05-25T20:00:00Z",
+                            "window_net_pnl_per_day": "625",
+                            "total_net_pnl_after_costs": "625",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        plan_path = self.tmp_dir / "paper-route-plan.json"
+        plan_path.write_text(
+            json.dumps(
+                {
+                    "next_paper_route_runtime_window_targets": {
+                        "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                        "targets": [
+                            {
+                                "candidate_id": "cand-paper-route",
+                                "hypothesis_id": "H-PAIRS-01",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_cross_sectional_pairs",
+                                "strategy_name": "paper-route-candidate-v1",
+                                "source_manifest_ref": str(hypothesis_path),
+                                "source_dsn_env": "SIM_DB_DSN",
+                                "source_kind": "paper_route_probe_runtime_observed",
+                                "artifact_refs": [str(ranking_path)],
+                                "exact_replay_ledger_artifact_ref": "proof/exact-replay-ledger.json",
+                                "window_start": "2026-05-26T13:30:00Z",
+                                "window_end": "2026-05-26T20:00:00Z",
+                                "paper_route_probe_next_session_max_notional": "25",
+                                "paper_probation_authorized": True,
+                                "promotion_allowed": False,
+                                "final_promotion_authorized": False,
+                                "final_promotion_allowed": False,
+                                "runtime_ledger_target_metadata_blockers": [
+                                    "replay_artifact_only_not_live"
+                                ],
+                            }
+                        ],
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        args = SimpleNamespace(
+            runtime_window_import=True,
+            runtime_window_target=[],
+            runtime_window_target_plan_ref=[str(plan_path)],
+            runtime_window_target_plan_url=[],
+            runtime_window_target_plan_url_timeout_seconds=2.0,
+            runtime_window_target_plan_exclusive=True,
+            runtime_window_target_plan_required=True,
+            runtime_window_target_plan_settlement_seconds=0,
+            runtime_window_targets_from_latest_autoresearch=True,
+            runtime_window_targets_from_registry=True,
+            runtime_window_hypothesis_id="",
+            runtime_window_candidate_id="",
+            runtime_window_observed_stage="paper",
+            runtime_window_strategy_family="",
+            runtime_window_source_dsn_env="SIM_DB_DSN",
+            runtime_window_strategy_name="",
+            runtime_window_account_label="TORGHUT_SIM",
+            runtime_window_start="",
+            runtime_window_end="",
+            runtime_window_dataset_snapshot_ref="",
+            runtime_window_bucket_minutes=30,
+            runtime_window_sample_minutes=5,
+            runtime_window_source_manifest_ref="",
+            runtime_window_source_kind="paper_runtime_observed",
+        )
+
+        with (
+            patch.object(
+                renewal.subprocess,
+                "run",
+                side_effect=AssertionError("future target window should not import"),
+            ),
+            patch.object(
+                renewal,
+                "_latest_autoresearch_runtime_window_targets",
+                side_effect=AssertionError("autoresearch fallback should not run"),
+            ),
+            patch.object(
+                renewal,
+                "_registry_runtime_window_targets",
+                side_effect=AssertionError("registry fallback should not run"),
+            ),
+        ):
+            payload = renewal._run_runtime_window_import(
+                args=args,
+                manifest={},
+                run_id="renew-1",
+                manifest_path=manifest_path,
+                now=datetime(2026, 5, 25, 20, 23, tzinfo=timezone.utc),
+            )
+
+        self.assertIsNotNone(payload)
+        assert payload is not None
+        self.assertEqual(payload["status"], "deferred")
+        self.assertEqual(payload["proof_status"], "deferred")
+        self.assertEqual(
+            payload["reason"], "runtime_window_target_plan_window_not_closed"
+        )
+        self.assertEqual(
+            payload["proof_blockers"][0]["type"],
+            "runtime_window_target_plan_window_not_closed",
+        )
+        triage = payload["offline_replay_triage"]
+        self.assertEqual(triage["authority"], "non_authoritative_research_triage")
+        self.assertFalse(triage["promotion_allowed"])
+        self.assertEqual(triage["promotion_authority"], "blocked")
+        self.assertTrue(triage["excluded_from_runtime_window_import_proof"])
+        self.assertEqual(
+            triage["source_kind"], "simulation_exact_replay_runtime_ledger"
+        )
+        self.assertEqual(triage["proof_status_effect"], "none")
+        self.assertEqual(triage["runtime_window_import_proof_effect"], "none")
+        self.assertEqual(triage["lifecycle_count_effect"], "none")
+        self.assertEqual(triage["doc29_live_scale_gate_effect"], "none")
+        self.assertEqual(triage["post_cost_pnl_target_gate_effect"], "none")
+        self.assertEqual(
+            triage["deferred_reasons"],
+            ["runtime_window_target_plan_window_not_closed"],
+        )
+        self.assertEqual(triage["candidates"][0]["candidate_id"], "cand-paper-route")
+        self.assertFalse(triage["candidates"][0]["promotion_allowed"])
+        self.assertTrue(
+            triage["candidates"][0]["excluded_from_runtime_window_import_proof"]
+        )
+        self.assertEqual(
+            triage["candidates"][0]["source_kind"],
+            "simulation_exact_replay_runtime_ledger",
+        )
+        self.assertEqual(
+            triage["source_reports"][0]["schema_version"],
+            "torghut.exact-replay-ledger-ranking.v1",
+        )
+        self.assertEqual(
+            triage["source_report_candidates"][0]["candidate_id"],
+            "cand-replay-triage",
+        )
+        self.assertFalse(triage["source_report_candidates"][0]["promotion_allowed"])
+
+    def test_offline_replay_triage_does_not_displace_import_ready_paper_route(
+        self,
+    ) -> None:
+        manifest_path = self.tmp_dir / "empirical-promotion-manifest.yaml"
+        manifest_path.write_text("run_id: renew-1\n", encoding="utf-8")
+        hypothesis_path = self.tmp_dir / "h-pairs-01.json"
+        hypothesis_path.write_text(
+            json.dumps({"candidate_id": "cand-paper-route"}),
+            encoding="utf-8",
+        )
+        plan_path = self.tmp_dir / "paper-route-plan.json"
+        plan_path.write_text(
+            json.dumps(
+                {
+                    "next_paper_route_runtime_window_targets": {
+                        "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                        "targets": [
+                            {
+                                "candidate_id": "cand-paper-route",
+                                "hypothesis_id": "H-PAIRS-01",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_cross_sectional_pairs",
+                                "strategy_name": "paper-route-candidate-v1",
+                                "source_manifest_ref": str(hypothesis_path),
+                                "source_dsn_env": "SIM_DB_DSN",
+                                "source_kind": "paper_route_probe_runtime_observed",
+                                "runtime_ledger_artifact_ref": "proof/exact-replay-ledger.json",
+                                "window_start": "2026-05-25T13:30:00Z",
+                                "window_end": "2026-05-25T20:00:00Z",
+                                "paper_route_probe_next_session_max_notional": "25",
+                            }
+                        ],
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        completed = SimpleNamespace(
+            stdout=json.dumps(
+                {
+                    "status": "ok",
+                    "promotion_allowed": False,
+                    "promotion_blocking_reasons": [
+                        "paper_stage_evidence_collection_only"
+                    ],
+                    "runtime_observation": {
+                        "authoritative": False,
+                        "authority_reason": "runtime_without_runtime_ledger_profit_proof",
+                    },
+                }
+            )
+        )
+        args = SimpleNamespace(
+            runtime_window_import=True,
+            runtime_window_target=[],
+            runtime_window_target_plan_ref=[str(plan_path)],
+            runtime_window_target_plan_url=[],
+            runtime_window_target_plan_url_timeout_seconds=2.0,
+            runtime_window_target_plan_exclusive=True,
+            runtime_window_target_plan_required=True,
+            runtime_window_target_plan_settlement_seconds=0,
+            runtime_window_targets_from_latest_autoresearch=False,
+            runtime_window_targets_from_registry=False,
+            runtime_window_hypothesis_id="",
+            runtime_window_candidate_id="",
+            runtime_window_observed_stage="paper",
+            runtime_window_strategy_family="",
+            runtime_window_source_dsn_env="SIM_DB_DSN",
+            runtime_window_strategy_name="",
+            runtime_window_account_label="TORGHUT_SIM",
+            runtime_window_start="",
+            runtime_window_end="",
+            runtime_window_dataset_snapshot_ref="",
+            runtime_window_bucket_minutes=30,
+            runtime_window_sample_minutes=5,
+            runtime_window_source_manifest_ref="",
+            runtime_window_source_kind="paper_runtime_observed",
+        )
+
+        with patch.object(
+            renewal.subprocess,
+            "run",
+            return_value=completed,
+        ) as run_mock:
+            payload = renewal._run_runtime_window_import(
+                args=args,
+                manifest={},
+                run_id="renew-1",
+                manifest_path=manifest_path,
+                now=datetime(2026, 5, 25, 21, 23, tzinfo=timezone.utc),
+            )
+
+        self.assertIsNotNone(payload)
+        assert payload is not None
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["proof_status"], "blocked")
+        self.assertNotIn("offline_replay_triage", payload)
+        command = run_mock.call_args.args[0]
+        self.assertIn("scripts/import_hypothesis_runtime_windows.py", command)
+        self.assertIn("cand-paper-route", command)
+        self.assertIn("proof/exact-replay-ledger.json", command)
+
+    def test_offline_replay_triage_handles_multi_deferred_bounded_sources(
+        self,
+    ) -> None:
+        manifest_path = self.tmp_dir / "empirical-promotion-manifest.yaml"
+        manifest_path.write_text("run_id: renew-1\n", encoding="utf-8")
+        hypothesis_path = self.tmp_dir / "h-pairs-01.json"
+        hypothesis_path.write_text(
+            json.dumps({"candidate_id": "cand-paper-route"}),
+            encoding="utf-8",
+        )
+        ranking_path = self.tmp_dir / "exact-replay-ledger-ranking.json"
+        ranking_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "torghut.exact-replay-ledger-ranking.v1",
+                    "candidates": [
+                        {
+                            "candidate_id": f"cand-replay-triage-{index}",
+                            "artifact_ref": f"proof/exact-replay-ledger-{index}.json",
+                            "promotion_status": "blocked_pending_runtime_promotion_proof",
+                        }
+                        for index in range(7)
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        plan_path = self.tmp_dir / "paper-route-plan.json"
+        plan_path.write_text(
+            json.dumps(
+                {
+                    "next_paper_route_runtime_window_targets": {
+                        "targets": [
+                            {
+                                "candidate_id": "cand-paper-route-a",
+                                "hypothesis_id": "H-PAIRS-01",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_cross_sectional_pairs",
+                                "strategy_name": "paper-route-candidate-v1",
+                                "source_manifest_ref": str(hypothesis_path),
+                                "source_dsn_env": "SIM_DB_DSN",
+                                "source_kind": "research_handoff",
+                                "artifact_refs": [str(ranking_path)],
+                                "exact_replay_ledger_artifact_refs": [
+                                    "proof/exact-replay-ledger-a.json"
+                                ],
+                                "runtime_ledger_artifact_refs": [
+                                    "proof/runtime-ledger-a.json"
+                                ],
+                                "candidate_selection": "exact_replay_ledger_best_candidate",
+                                "selected_by": "replay_runtime_window_handoff_ranking",
+                                "selection_reason": "blocked_pending_runtime_proof",
+                                "handoff": "runtime_window_import_from_exact_replay_ledger",
+                                "window_start": "2026-05-26T13:30:00Z",
+                                "window_end": "2026-05-26T20:00:00Z",
+                                "paper_route_probe_next_session_max_notional": "25",
+                            },
+                            {
+                                "candidate_id": "cand-paper-route-b",
+                                "hypothesis_id": "H-PAIRS-02",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_cross_sectional_pairs",
+                                "strategy_name": "paper-route-candidate-v2",
+                                "source_manifest_ref": str(hypothesis_path),
+                                "source_dsn_env": "SIM_DB_DSN",
+                                "source_kind": "research_handoff",
+                                "artifact_refs": [str(ranking_path)],
+                                "exact_replay_ledger_artifact_refs": [
+                                    "proof/exact-replay-ledger-b.json"
+                                ],
+                                "runtime_ledger_artifact_refs": [
+                                    "proof/runtime-ledger-b.json"
+                                ],
+                                "handoff": "runtime_window_import_from_exact_replay_ledger",
+                                "window_start": "2026-05-26T13:30:00Z",
+                                "window_end": "2026-05-26T20:00:00Z",
+                                "paper_route_probe_next_session_max_notional": "25",
+                            },
+                        ],
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        args = SimpleNamespace(
+            runtime_window_import=True,
+            runtime_window_target=[],
+            runtime_window_target_plan_ref=[str(plan_path)],
+            runtime_window_target_plan_url=[],
+            runtime_window_target_plan_url_timeout_seconds=2.0,
+            runtime_window_target_plan_exclusive=True,
+            runtime_window_target_plan_required=True,
+            runtime_window_target_plan_settlement_seconds=0,
+            runtime_window_targets_from_latest_autoresearch=False,
+            runtime_window_targets_from_registry=False,
+            runtime_window_hypothesis_id="",
+            runtime_window_candidate_id="",
+            runtime_window_observed_stage="paper",
+            runtime_window_strategy_family="",
+            runtime_window_source_dsn_env="SIM_DB_DSN",
+            runtime_window_strategy_name="",
+            runtime_window_account_label="TORGHUT_SIM",
+            runtime_window_start="",
+            runtime_window_end="",
+            runtime_window_dataset_snapshot_ref="",
+            runtime_window_bucket_minutes=30,
+            runtime_window_sample_minutes=5,
+            runtime_window_source_manifest_ref="",
+            runtime_window_source_kind="paper_runtime_observed",
+        )
+
+        with patch.object(
+            renewal.subprocess,
+            "run",
+            side_effect=AssertionError("future target window should not import"),
+        ):
+            payload = renewal._run_runtime_window_import(
+                args=args,
+                manifest={},
+                run_id="renew-1",
+                manifest_path=manifest_path,
+                now=datetime(2026, 5, 25, 20, 23, tzinfo=timezone.utc),
+            )
+
+        self.assertIsNotNone(payload)
+        assert payload is not None
+        self.assertEqual(payload["target_count"], 2)
+        self.assertEqual(
+            [item["status"] for item in payload["imports"]],
+            ["deferred", "deferred"],
+        )
+        triage = payload["offline_replay_triage"]
+        self.assertEqual(
+            triage["source_kind"], "simulation_exact_replay_runtime_ledger"
+        )
+        self.assertEqual(len(triage["source_reports"]), 1)
+        self.assertEqual(len(triage["source_report_candidates"]), 5)
+        self.assertEqual(
+            triage["candidates"][0]["selection"]["selected_by"],
+            "replay_runtime_window_handoff_ranking",
+        )
+        self.assertEqual(
+            triage["candidates"][0]["handoff"],
+            "runtime_window_import_from_exact_replay_ledger",
+        )
+        self.assertEqual(
+            triage["candidates"][0]["exact_replay_ledger_artifact_refs"],
+            ["proof/exact-replay-ledger-a.json", "proof/runtime-ledger-a.json"],
+        )
+
+    def test_offline_replay_triage_artifact_payload_variants(
+        self,
+    ) -> None:
+        handoff_report = renewal._offline_replay_triage_from_artifact_payload(
+            payload={
+                "schema_version": "torghut.replay-runtime-window-handoff.v1",
+                "source": "",
+                "ranking": {"candidates": []},
+                "best_exact_replay_ledger_candidate": {
+                    "candidate_id": "cand-handoff",
+                    "artifact_ref": "proof/handoff-ledger.json",
+                },
+            },
+            source_ref="handoff.json",
+        )
+        self.assertIsNotNone(handoff_report)
+        assert handoff_report is not None
+        self.assertEqual(
+            handoff_report["source"], "exact_replay_ledger_runtime_window_handoff"
+        )
+        self.assertEqual(
+            handoff_report["candidates"][0]["candidate_id"], "cand-handoff"
+        )
+
+        candidate_board_report = renewal._offline_replay_triage_from_artifact_payload(
+            payload={
+                "candidate_board": {
+                    "schema_version": "torghut.strategy-autoresearch-candidate-board.v1",
+                    "best_exact_replay_ledger_candidate": {
+                        "candidate_id": "cand-board",
+                        "artifact_ref": "proof/board-ledger.json",
+                    },
+                }
+            },
+            source_ref="candidate-board.json",
+        )
+        self.assertIsNotNone(candidate_board_report)
+        assert candidate_board_report is not None
+        self.assertEqual(
+            candidate_board_report["source"], "autoresearch_candidate_board"
+        )
+        self.assertEqual(
+            candidate_board_report["candidates"][0]["candidate_id"], "cand-board"
+        )
+
+        self.assertEqual(
+            renewal._offline_replay_triage_candidates_from_ranking(
+                ranking={"candidates": "not-a-list"},
+                source_ref="ranking.json",
+            ),
+            [],
+        )
+        self.assertEqual(
+            renewal._offline_replay_triage_candidates_from_ranking(
+                ranking={"candidates": ["not-a-mapping", {"candidate_id": "cand-ok"}]},
+                source_ref="ranking.json",
+            )[0]["candidate_id"],
+            "cand-ok",
+        )
+
+    def test_offline_replay_triage_early_exit_guards(self) -> None:
+        now = datetime(2026, 5, 25, 20, 23, tzinfo=timezone.utc)
+        args = SimpleNamespace(runtime_window_target_plan_exclusive=False)
+        deferred = {
+            "status": "deferred",
+            "reason": "runtime_window_target_plan_window_not_closed",
+            "source_kind": "paper_route_probe_runtime_observed",
+            "target_metadata": {},
+        }
+
+        self.assertIsNone(
+            renewal._offline_replay_triage_for_deferred_imports(
+                args=args,
+                imports=[deferred],
+                now=now,
+            )
+        )
+        args.runtime_window_target_plan_exclusive = True
+        self.assertIsNone(
+            renewal._offline_replay_triage_for_deferred_imports(
+                args=args,
+                imports=[],
+                now=now,
+            )
+        )
+        self.assertIsNone(
+            renewal._offline_replay_triage_for_deferred_imports(
+                args=args,
+                imports=[
+                    {
+                        **deferred,
+                        "reason": "runtime_window_import_blocked_for_other_reason",
+                    }
+                ],
+                now=now,
+            )
+        )
+        self.assertIsNone(
+            renewal._offline_replay_triage_for_deferred_imports(
+                args=args,
+                imports=[
+                    {
+                        **deferred,
+                        "source_kind": "research_handoff",
+                    }
+                ],
+                now=now,
+            )
+        )
+
     def test_runtime_window_import_future_target_plan_requires_candidate_id(
         self,
     ) -> None:

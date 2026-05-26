@@ -98,6 +98,13 @@ RUNTIME_WINDOW_TARGET_METADATA_KEYS = (
     "handoff",
     "promotion_gate",
 )
+RUNTIME_WINDOW_TARGET_PLAN_DEFERRED_REASONS = frozenset(
+    (
+        "runtime_window_target_plan_window_not_closed",
+        "runtime_window_target_plan_window_settlement_pending",
+    )
+)
+OFFLINE_REPLAY_TRIAGE_CANDIDATE_LIMIT = 5
 
 
 def _parse_args() -> argparse.Namespace:
@@ -1231,8 +1238,9 @@ def _run_runtime_window_import(
     default_window_start, default_window_end = (
         explicit_window or _runtime_window_bounds(args, now)
     )
+    targets = _runtime_window_targets(args)
     imports: list[dict[str, Any]] = []
-    for target in _runtime_window_targets(args):
+    for target in targets:
         imports.append(
             _run_runtime_window_import_target(
                 args=args,
@@ -1246,20 +1254,357 @@ def _run_runtime_window_import(
                 allow_source_activity_window=explicit_window is None,
             )
         )
+    offline_replay_triage = _offline_replay_triage_for_deferred_imports(
+        args=args,
+        imports=imports,
+        now=now,
+    )
     if len(imports) == 1:
-        return imports[0]
+        payload = dict(imports[0])
+        if offline_replay_triage is not None:
+            payload["offline_replay_triage"] = offline_replay_triage
+        return payload
     proof_blockers = [
         blocker
         for item in imports
         for blocker in item.get("proof_blockers", [])
         if isinstance(blocker, Mapping)
     ]
-    return {
+    payload = {
         "status": "ok",
         "proof_status": "blocked" if proof_blockers else "ok",
         "proof_blockers": proof_blockers,
         "target_count": len(imports),
         "imports": imports,
+    }
+    if offline_replay_triage is not None:
+        payload["offline_replay_triage"] = offline_replay_triage
+    return payload
+
+
+def _runtime_window_import_is_paper_route(item: Mapping[str, Any]) -> bool:
+    source_kind = _as_text(item.get("source_kind")) or ""
+    if "paper_route" in source_kind:
+        return True
+    metadata = _as_dict(item.get("target_metadata"))
+    return any(str(key).startswith("paper_route_") for key in metadata)
+
+
+def _offline_replay_artifact_refs(item: Mapping[str, Any]) -> list[str]:
+    refs: list[str] = []
+
+    def append_ref(value: Any) -> None:
+        ref = _as_text(value)
+        if ref is not None and ref not in refs:
+            refs.append(ref)
+
+    metadata = _as_dict(item.get("target_metadata"))
+    for key in (
+        "runtime_ledger_artifact_ref",
+        "exact_replay_ledger_artifact_ref",
+        "runtime_ledger_bucket_ref",
+    ):
+        append_ref(metadata.get(key))
+    for key in ("runtime_ledger_artifact_refs", "exact_replay_ledger_artifact_refs"):
+        for ref in _as_text_list(metadata.get(key)):
+            append_ref(ref)
+    for ref in _as_text_list(item.get("artifact_refs")):
+        append_ref(ref)
+    return refs
+
+
+def _offline_replay_exact_artifact_refs(item: Mapping[str, Any]) -> list[str]:
+    refs: list[str] = []
+    metadata = _as_dict(item.get("target_metadata"))
+    for key in ("exact_replay_ledger_artifact_ref", "runtime_ledger_artifact_ref"):
+        ref = _as_text(metadata.get(key))
+        if ref is not None and ref not in refs:
+            refs.append(ref)
+    for key in ("exact_replay_ledger_artifact_refs", "runtime_ledger_artifact_refs"):
+        for ref in _as_text_list(metadata.get(key)):
+            if ref not in refs:
+                refs.append(ref)
+    return refs
+
+
+def _offline_replay_triage_source_kind(item: Mapping[str, Any]) -> str:
+    source_kind = _as_text(item.get("source_kind")) or ""
+    exact_refs = _offline_replay_exact_artifact_refs(item)
+    if source_kind == "simulation_exact_replay_runtime_ledger" or exact_refs:
+        return "simulation_exact_replay_runtime_ledger"
+    return source_kind or "research_handoff"
+
+
+def _offline_replay_triage_candidate_from_import(
+    item: Mapping[str, Any],
+) -> dict[str, Any]:
+    metadata = _as_dict(item.get("target_metadata"))
+    candidate: dict[str, Any] = {
+        "authority": "non_authoritative_research_triage",
+        "promotion_allowed": False,
+        "excluded_from_runtime_window_import_proof": True,
+        "source_kind": _offline_replay_triage_source_kind(item),
+        "hypothesis_id": _as_text(item.get("hypothesis_id")) or "",
+        "candidate_id": _as_text(item.get("candidate_id")) or "",
+        "strategy_name": _as_text(item.get("strategy_name")) or "",
+        "account_label": _as_text(item.get("account_label")) or "",
+        "window_start": _as_text(item.get("window_start")) or "",
+        "window_end": _as_text(item.get("window_end")) or "",
+        "deferred_reason": _as_text(item.get("reason")) or "",
+        "source_artifact_refs": _offline_replay_artifact_refs(item),
+        "exact_replay_ledger_artifact_refs": _offline_replay_exact_artifact_refs(item),
+    }
+    selection = {
+        key: metadata[key]
+        for key in (
+            "candidate_selection",
+            "selected_by",
+            "selection_reason",
+            "replay_selection_reason",
+            "probation_reason",
+            "promotion_gate",
+        )
+        if key in metadata
+    }
+    if selection:
+        candidate["selection"] = selection
+    blockers: list[str] = []
+    for key in (
+        "runtime_ledger_target_metadata_blockers",
+        "runtime_window_import_health_gate_blockers",
+        "runtime_window_import_promotion_blockers",
+        "final_promotion_blockers",
+        "candidate_blockers",
+    ):
+        for blocker in _as_text_list(metadata.get(key)):
+            if blocker not in blockers:
+                blockers.append(blocker)
+    if blockers:
+        candidate["research_blockers"] = blockers
+    handoff = metadata.get("paper_route_runtime_import_handoff") or metadata.get(
+        "handoff"
+    )
+    if handoff:
+        candidate["handoff"] = handoff
+    return candidate
+
+
+def _offline_replay_triage_candidate_from_ranking(
+    candidate: Mapping[str, Any],
+    *,
+    source_ref: str,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "authority": "non_authoritative_research_triage",
+        "promotion_allowed": False,
+        "excluded_from_runtime_window_import_proof": True,
+        "source_kind": "simulation_exact_replay_runtime_ledger",
+        "source_artifact_ref": source_ref,
+    }
+    for key in (
+        "candidate_id",
+        "artifact_ref",
+        "promotion_status",
+        "window_start",
+        "window_end",
+        "window_net_pnl_per_day",
+        "active_net_pnl_per_day",
+        "total_net_pnl_after_costs",
+        "window_weekday_count",
+        "avg_filled_notional_per_window_weekday",
+        "best_day_share",
+        "max_single_fill_notional_pct_equity",
+    ):
+        value = candidate.get(key)
+        if value not in (None, ""):
+            payload[key] = value
+    for key in ("promotion_blockers", "runtime_ledger_blockers"):
+        values = _as_text_list(candidate.get(key))
+        if values:
+            payload[key] = values
+    return payload
+
+
+def _offline_replay_triage_from_artifact_payload(
+    *,
+    payload: Mapping[str, Any],
+    source_ref: str,
+) -> dict[str, Any] | None:
+    schema_version = _as_text(payload.get("schema_version")) or ""
+    if schema_version == "torghut.replay-runtime-window-handoff.v1":
+        ranking = _as_dict(payload.get("ranking"))
+        candidates = _offline_replay_triage_candidates_from_ranking(
+            ranking=ranking,
+            source_ref=source_ref,
+        )
+        best_candidate = _as_dict(payload.get("best_exact_replay_ledger_candidate"))
+        if best_candidate and not candidates:
+            candidates = [
+                _offline_replay_triage_candidate_from_ranking(
+                    best_candidate,
+                    source_ref=source_ref,
+                )
+            ]
+        return {
+            "source_ref": source_ref,
+            "schema_version": schema_version,
+            "source": _as_text(payload.get("source"))
+            or "exact_replay_ledger_runtime_window_handoff",
+            "candidate_count": len(candidates),
+            "candidates": candidates,
+        }
+    if schema_version == "torghut.exact-replay-ledger-ranking.v1":
+        candidates = _offline_replay_triage_candidates_from_ranking(
+            ranking=payload,
+            source_ref=source_ref,
+        )
+        return {
+            "source_ref": source_ref,
+            "schema_version": schema_version,
+            "source": "exact_replay_ledger_ranking",
+            "candidate_count": len(candidates),
+            "candidates": candidates,
+        }
+    candidate_board = _as_dict(payload.get("candidate_board"))
+    if candidate_board:
+        best_candidate = _as_dict(
+            candidate_board.get("best_exact_replay_ledger_candidate")
+        )
+        candidates = (
+            [
+                _offline_replay_triage_candidate_from_ranking(
+                    best_candidate,
+                    source_ref=source_ref,
+                )
+            ]
+            if best_candidate
+            else []
+        )
+        return {
+            "source_ref": source_ref,
+            "schema_version": _as_text(candidate_board.get("schema_version"))
+            or "candidate_board",
+            "source": "autoresearch_candidate_board",
+            "candidate_count": len(candidates),
+            "candidates": candidates,
+        }
+    return None
+
+
+def _offline_replay_triage_candidates_from_ranking(
+    *,
+    ranking: Mapping[str, Any],
+    source_ref: str,
+) -> list[dict[str, Any]]:
+    raw_candidates = ranking.get("candidates")
+    if not isinstance(raw_candidates, Sequence) or isinstance(
+        raw_candidates,
+        (str, bytes, bytearray),
+    ):
+        return []
+    candidates: list[dict[str, Any]] = []
+    for raw_candidate in raw_candidates[:OFFLINE_REPLAY_TRIAGE_CANDIDATE_LIMIT]:
+        candidate = _as_dict(raw_candidate)
+        if not candidate:
+            continue
+        candidates.append(
+            _offline_replay_triage_candidate_from_ranking(
+                candidate,
+                source_ref=source_ref,
+            )
+        )
+    return candidates
+
+
+def _offline_replay_triage_source_reports(
+    imports: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    reports: list[dict[str, Any]] = []
+    seen_refs: set[str] = set()
+    for item in imports:
+        for ref in _offline_replay_artifact_refs(item):
+            if ref in seen_refs:
+                continue
+            seen_refs.add(ref)
+            path = Path(ref)
+            if not path.exists() or not path.is_file():
+                continue
+            report = _offline_replay_triage_from_artifact_payload(
+                payload=_read_json_mapping(path),
+                source_ref=ref,
+            )
+            if report is not None:
+                reports.append(report)
+    return reports
+
+
+def _offline_replay_triage_for_deferred_imports(
+    *,
+    args: argparse.Namespace,
+    imports: Sequence[Mapping[str, Any]],
+    now: datetime,
+) -> dict[str, Any] | None:
+    if not bool(getattr(args, "runtime_window_target_plan_exclusive", False)):
+        return None
+    if not imports:
+        return None
+    deferred_reasons = [
+        _as_text(item.get("reason")) or ""
+        for item in imports
+        if _as_text(item.get("status")) == "deferred"
+    ]
+    if len(deferred_reasons) != len(imports):
+        return None
+    if any(
+        reason not in RUNTIME_WINDOW_TARGET_PLAN_DEFERRED_REASONS
+        for reason in deferred_reasons
+    ):
+        return None
+    if not any(_runtime_window_import_is_paper_route(item) for item in imports):
+        return None
+    import_candidates = [
+        _offline_replay_triage_candidate_from_import(item)
+        for item in imports[:OFFLINE_REPLAY_TRIAGE_CANDIDATE_LIMIT]
+    ]
+    source_reports = _offline_replay_triage_source_reports(imports)
+    report_candidates: list[dict[str, Any]] = []
+    for report in source_reports:
+        for candidate in report.get("candidates", []):
+            if isinstance(candidate, Mapping):
+                report_candidates.append(dict(candidate))
+            if len(report_candidates) >= OFFLINE_REPLAY_TRIAGE_CANDIDATE_LIMIT:
+                break
+        if len(report_candidates) >= OFFLINE_REPLAY_TRIAGE_CANDIDATE_LIMIT:
+            break
+    source_kind = (
+        "simulation_exact_replay_runtime_ledger"
+        if any(
+            candidate.get("source_kind") == "simulation_exact_replay_runtime_ledger"
+            for candidate in (*import_candidates, *report_candidates)
+        )
+        else "research_handoff"
+    )
+    return {
+        "schema_version": "torghut.offline-replay-triage.v1",
+        "status": "informational",
+        "authority": "non_authoritative_research_triage",
+        "promotion_allowed": False,
+        "promotion_authority": "blocked",
+        "excluded_from_runtime_window_import_proof": True,
+        "source_kind": source_kind,
+        "reason": "authoritative_runtime_window_imports_deferred",
+        "generated_at": _utc_iso(now),
+        "deferred_reasons": sorted(set(deferred_reasons)),
+        "authoritative_import_target_count": len(imports),
+        "proof_status_effect": "none",
+        "promotion_authority_effect": "none",
+        "runtime_window_import_proof_effect": "none",
+        "lifecycle_count_effect": "none",
+        "doc29_live_scale_gate_effect": "none",
+        "post_cost_pnl_target_gate_effect": "none",
+        "candidates": import_candidates,
+        "source_reports": source_reports,
+        "source_report_candidates": report_candidates,
     }
 
 
