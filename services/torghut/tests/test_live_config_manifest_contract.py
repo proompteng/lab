@@ -558,7 +558,7 @@ class TestLiveConfigManifestContract(TestCase):
         )
         self.assertEqual(
             sim_env.get("TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL"),
-            "25",
+            "63180",
         )
         self.assertEqual(
             sim_env.get("TRADING_PAPER_ROUTE_TARGET_PLAN_URL"),
@@ -1083,7 +1083,9 @@ class TestLiveConfigManifestContract(TestCase):
         )
         self.assertFalse(_manifest_bool(env, "TRADING_SIMPLE_SUBMIT_ENABLED"))
         self.assertTrue(_manifest_bool(env, "TRADING_SIMPLE_PAPER_ROUTE_PROBE_ENABLED"))
-        self.assertEqual(env.get("TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL"), "25")
+        self.assertEqual(
+            env.get("TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL"), "63180"
+        )
         self.assertFalse(_manifest_bool(env, "TRADING_ALPACA_QUOTE_FALLBACK_ENABLED"))
         self.assertFalse(_manifest_bool(env, "TRADING_AUTONOMY_ENABLED"))
         self.assertFalse(_manifest_bool(env, "TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION"))
