@@ -4,7 +4,7 @@
 
 **Goal:** Add a GitOps-managed Synthesis AgentRun that runs every 3 hours, researches short-term 2-3 week options strategy candidates with technical-analysis entry timing, and posts strict synthesized items to Synthesis.
 
-**Architecture:** Keep the resources owned by the Synthesis Argo CD app under `argocd/applications/synthesis`, but run the AgentRun primitives in the existing `agents` namespace where the controller, `agents-sa`, and `codex-auth` already work. Reflect the existing `synthesis/synthesis-env` secret into `agents`, inject `SYNTHESIS_API_TOKEN` into the Codex runner, and connect Codex to the in-cluster Synthesis MCP endpoint through an input-file MCP proxy.
+**Architecture:** Keep the resources owned by the Synthesis Argo CD app under `argocd/applications/synthesis`, but run the AgentRun primitives in the existing `agents` namespace where the controller, `agents-sa`, and `codex-auth` already work. Reflect the existing `synthesis/synthesis-env` secret into `agents`, inject `SYNTHESIS_API_TOKEN` into the Codex runner, mount the same secret at `/var/run/synthesis` so Codex MCP subprocesses can read a token file even when secret env is scrubbed, and connect Codex to the in-cluster Synthesis MCP endpoint through an input-file MCP proxy. Keyed reports upload to the existing `agents-artifacts` bucket.
 
 **Tech Stack:** Argo CD/Kustomize, Agents CRDs (`AgentProvider`, `Agent`, `ImplementationSpec`, `AgentRun`, `Schedule`), Kubernetes reflector, Bitnami SealedSecret template annotations, Codex app-server runner, Synthesis MCP.
 

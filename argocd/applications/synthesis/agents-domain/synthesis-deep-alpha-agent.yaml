@@ -13,6 +13,7 @@ spec:
   security:
     allowedSecrets:
       - codex-auth
+      - agents-artifacts
       - synthesis-env
     allowedServiceAccounts:
       - agents-sa
