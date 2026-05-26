@@ -441,6 +441,12 @@ def _target_identity(
         "dataset_snapshot_ref": _safe_text(target.get("dataset_snapshot_ref")),
         "window_start": _safe_text(target.get("window_start")),
         "window_end": _safe_text(target.get("window_end")),
+        "paper_route_target_plan_source": _safe_text(
+            target.get("paper_route_target_plan_source")
+        ),
+        "paper_route_probe_scope_authority": _safe_text(
+            target.get("paper_route_probe_scope_authority")
+        ),
         "paper_route_probe_symbols": _target_probe_symbols(target, probe),
         "runtime_ledger_bucket_ref": _safe_text(
             target.get("runtime_ledger_bucket_ref")
@@ -730,6 +736,12 @@ def _next_paper_route_runtime_window_targets(
         health_gate_promotion_blockers = _unique_text_items(
             health_gate.get("promotion_blockers")
         )
+        paper_route_target_plan_source = _safe_text(
+            target.get("paper_route_target_plan_source")
+        )
+        paper_route_probe_scope_authority = _safe_text(
+            target.get("paper_route_probe_scope_authority")
+        )
         planned_target: dict[str, object] = {
             "hypothesis_id": hypothesis_id,
             "candidate_id": candidate_id,
@@ -760,6 +772,9 @@ def _next_paper_route_runtime_window_targets(
             "paper_route_probe_next_session_max_notional": next_notional,
             "paper_route_probe_window_start": _isoformat(window_start),
             "paper_route_probe_window_end": _isoformat(window_end),
+            "paper_route_target_plan_source": paper_route_target_plan_source or "",
+            "paper_route_probe_scope_authority": paper_route_probe_scope_authority
+            or "",
             "paper_route_session_readiness_state": _safe_text(
                 session_readiness.get("state")
             )
