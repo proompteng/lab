@@ -797,7 +797,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
                                 "observed_stage": "paper",
                                 "strategy_family": "microbar_pairs",
                                 "strategy_name": strategy_name,
-                                "account_label": "paper",
+                                "account_label": "TORGHUT_SIM",
                                 "source_manifest_ref": "config/trading/hypotheses/h-ledger-audit.json",
                                 "window_start": window_start.isoformat(),
                                 "window_end": window_end.isoformat(),
@@ -842,7 +842,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
             session.flush()
             decision = TradeDecision(
                 strategy_id=strategy.id,
-                alpaca_account_label="paper",
+                alpaca_account_label="TORGHUT_SIM",
                 symbol="AAPL",
                 timeframe="1Min",
                 decision_json={"action": "buy", "qty": "2"},
@@ -855,7 +855,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
             session.flush()
             execution = Execution(
                 trade_decision_id=decision.id,
-                alpaca_account_label="paper",
+                alpaca_account_label="TORGHUT_SIM",
                 alpaca_order_id="ledger-audit-order-1",
                 client_order_id="ledger-audit-client-1",
                 symbol="AAPL",
@@ -878,7 +878,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
                     execution_id=execution.id,
                     trade_decision_id=decision.id,
                     strategy_id=strategy.id,
-                    alpaca_account_label="paper",
+                    alpaca_account_label="TORGHUT_SIM",
                     symbol="AAPL",
                     side="buy",
                     arrival_price=Decimal("99"),
@@ -924,7 +924,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
                     observed_stage="paper",
                     bucket_started_at=window_start,
                     bucket_ended_at=window_end,
-                    account_label="paper",
+                    account_label="TORGHUT_SIM",
                     runtime_strategy_name=strategy_name,
                     strategy_family="microbar_pairs",
                     fill_count=2,
@@ -991,7 +991,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
             session.flush()
             decision = TradeDecision(
                 strategy_id=strategy.id,
-                alpaca_account_label="paper",
+                alpaca_account_label="TORGHUT_SIM",
                 symbol="AAPL",
                 timeframe="1Min",
                 decision_json={"action": "buy", "qty": "1"},
@@ -1004,7 +1004,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
             session.flush()
             execution = Execution(
                 trade_decision_id=decision.id,
-                alpaca_account_label="paper",
+                alpaca_account_label="TORGHUT_SIM",
                 alpaca_order_id="post-window-order-1",
                 client_order_id="post-window-client-1",
                 symbol="AAPL",
@@ -1027,7 +1027,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
                     execution_id=execution.id,
                     trade_decision_id=decision.id,
                     strategy_id=strategy.id,
-                    alpaca_account_label="paper",
+                    alpaca_account_label="TORGHUT_SIM",
                     symbol="AAPL",
                     side="buy",
                     arrival_price=Decimal("99"),
@@ -1063,7 +1063,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
                                 "observed_stage": "paper",
                                 "strategy_family": "microbar_pairs",
                                 "strategy_name": strategy_name,
-                                "account_label": "paper",
+                                "account_label": "TORGHUT_SIM",
                                 "source_manifest_ref": "config/trading/hypotheses/h-post-window.json",
                                 "window_start": window_start.isoformat(),
                                 "window_end": window_end.isoformat(),
@@ -1134,7 +1134,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
             session.flush()
             decision = TradeDecision(
                 strategy_id=strategy.id,
-                alpaca_account_label="paper",
+                alpaca_account_label="TORGHUT_SIM",
                 symbol="INTC",
                 timeframe="1Min",
                 decision_json={"action": "buy", "qty": "1"},
@@ -1147,7 +1147,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
             session.flush()
             execution = Execution(
                 trade_decision_id=decision.id,
-                alpaca_account_label="paper",
+                alpaca_account_label="TORGHUT_SIM",
                 alpaca_order_id="refreshed-probe-order-1",
                 client_order_id="refreshed-probe-client-1",
                 symbol="INTC",
@@ -1170,7 +1170,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
                     execution_id=execution.id,
                     trade_decision_id=decision.id,
                     strategy_id=strategy.id,
-                    alpaca_account_label="paper",
+                    alpaca_account_label="TORGHUT_SIM",
                     symbol="INTC",
                     side="buy",
                     arrival_price=Decimal("99"),
@@ -1206,7 +1206,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
                                 "observed_stage": "paper",
                                 "strategy_family": "microbar_pairs",
                                 "strategy_name": strategy_name,
-                                "account_label": "paper",
+                                "account_label": "TORGHUT_SIM",
                                 "source_kind": "paper_route_probe_runtime_observed",
                                 "window_start": window_start.isoformat(),
                                 "window_end": window_end.isoformat(),
@@ -1404,7 +1404,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
             session.flush()
             decision = TradeDecision(
                 strategy_id=strategy.id,
-                alpaca_account_label="paper",
+                alpaca_account_label="TORGHUT_SIM",
                 symbol="AAPL",
                 timeframe="1Min",
                 decision_json={"action": "buy", "qty": "2"},
@@ -1417,7 +1417,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
             session.flush()
             execution = Execution(
                 trade_decision_id=decision.id,
-                alpaca_account_label="paper",
+                alpaca_account_label="TORGHUT_SIM",
                 alpaca_order_id="paper-route-order-1",
                 client_order_id="paper-route-client-1",
                 symbol="AAPL",
@@ -1441,7 +1441,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
                         execution_id=execution.id,
                         trade_decision_id=decision.id,
                         strategy_id=strategy.id,
-                        alpaca_account_label="paper",
+                        alpaca_account_label="TORGHUT_SIM",
                         symbol="AAPL",
                         side="buy",
                         arrival_price=Decimal("99"),
@@ -1464,7 +1464,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
                         observed_stage="paper",
                         bucket_started_at=window_start,
                         bucket_ended_at=window_end,
-                        account_label="paper",
+                        account_label="TORGHUT_SIM",
                         runtime_strategy_name=strategy_name,
                         strategy_family="microbar_pairs",
                         fill_count=2,
@@ -1530,7 +1530,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
                                 "observed_stage": "paper",
                                 "strategy_family": "microbar_pairs",
                                 "strategy_name": strategy_name,
-                                "account_label": "paper",
+                                "account_label": "TORGHUT_SIM",
                                 "source_manifest_ref": "config/trading/hypotheses/h-active-route.json",
                                 "window_start": window_start.isoformat(),
                                 "window_end": window_end.isoformat(),
@@ -1659,7 +1659,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
             session.flush()
             decision = TradeDecision(
                 strategy_id=strategy.id,
-                alpaca_account_label="paper",
+                alpaca_account_label="TORGHUT_SIM",
                 symbol="AAPL",
                 timeframe="1Min",
                 decision_json={"action": "buy", "qty": "2"},
@@ -1672,7 +1672,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
             session.flush()
             execution = Execution(
                 trade_decision_id=decision.id,
-                alpaca_account_label="paper",
+                alpaca_account_label="TORGHUT_SIM",
                 alpaca_order_id="selected-paper-route-order-1",
                 client_order_id="selected-paper-route-client-1",
                 symbol="AAPL",
@@ -1696,7 +1696,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
                         execution_id=execution.id,
                         trade_decision_id=decision.id,
                         strategy_id=strategy.id,
-                        alpaca_account_label="paper",
+                        alpaca_account_label="TORGHUT_SIM",
                         symbol="AAPL",
                         side="buy",
                         arrival_price=Decimal("99"),
@@ -1719,7 +1719,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
                         observed_stage="paper",
                         bucket_started_at=window_start,
                         bucket_ended_at=window_end,
-                        account_label="paper",
+                        account_label="TORGHUT_SIM",
                         runtime_strategy_name=strategy_name,
                         strategy_family="microbar_pairs",
                         fill_count=2,
@@ -1760,7 +1760,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
                                 "observed_stage": "paper",
                                 "strategy_family": "microbar_pairs",
                                 "strategy_name": strategy_name,
-                                "account_label": "paper",
+                                "account_label": "TORGHUT_SIM",
                                 "source_manifest_ref": "config/trading/hypotheses/h-selected-route.json",
                                 "window_start": window_start.isoformat(),
                                 "window_end": window_end.isoformat(),
@@ -1831,6 +1831,121 @@ class TestPaperRouteEvidenceAudit(TestCase):
             import_audit["counts"]["raw_source_plan_targets_with_runtime_ledger"],
             1,
         )
+        next_window_audits = payload["next_runtime_window_target_audits"]
+        self.assertEqual(len(next_window_audits), 1)
+        self.assertEqual(
+            next_window_audits[0]["target"]["account_label"], "TORGHUT_SIM"
+        )
+
+    def test_runtime_import_audit_does_not_count_historical_ledger_as_next_window(
+        self,
+    ) -> None:
+        historical_start = datetime(2026, 5, 21, 17, tzinfo=timezone.utc)
+        historical_end = datetime(2026, 5, 21, 17, 30, tzinfo=timezone.utc)
+        now = datetime(2026, 5, 26, 21, tzinfo=timezone.utc)
+        strategy_name = "historical-paper-route"
+        with Session(self.engine) as session:
+            session.add(
+                StrategyRuntimeLedgerBucket(
+                    run_id="historical-paper-route-run",
+                    candidate_id="candidate-historical-route",
+                    hypothesis_id="H-HISTORICAL-ROUTE",
+                    observed_stage="paper",
+                    bucket_started_at=historical_start,
+                    bucket_ended_at=historical_end,
+                    account_label="TORGHUT_REPLAY",
+                    runtime_strategy_name=strategy_name,
+                    strategy_family="microbar_pairs",
+                    fill_count=2,
+                    decision_count=1,
+                    submitted_order_count=1,
+                    closed_trade_count=1,
+                    open_position_count=0,
+                    filled_notional=Decimal("200"),
+                    gross_strategy_pnl=Decimal("12"),
+                    cost_amount=Decimal("2"),
+                    net_strategy_pnl_after_costs=Decimal("10"),
+                    post_cost_expectancy_bps=Decimal("500"),
+                    ledger_schema_version="torghut.runtime-ledger-bucket.v1",
+                    pnl_basis="realized_strategy_pnl_after_explicit_costs",
+                    execution_policy_hash_counts={"policy-a": 1},
+                    cost_model_hash_counts={"cost-a": 1},
+                    lineage_hash_counts={"lineage-a": 1},
+                    blockers_json=[],
+                )
+            )
+            session.commit()
+
+            payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "paper_route_probe_only",
+                    "blocked_reasons": [],
+                    "promotion_eligible_total": 1,
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "target_count": 1,
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-HISTORICAL-ROUTE",
+                                "candidate_id": "candidate-historical-route",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_pairs",
+                                "strategy_name": strategy_name,
+                                "account_label": "TORGHUT_REPLAY",
+                                "source_manifest_ref": "config/trading/hypotheses/h-historical-route.json",
+                                "window_start": historical_start.isoformat(),
+                                "window_end": historical_end.isoformat(),
+                                "paper_probation_authorized": True,
+                                "promotion_allowed": False,
+                                "final_promotion_authorized": False,
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "summary": {
+                        "paper_route_probe_eligible_symbols": ["AAPL"],
+                        "paper_route_probe_active_symbols": ["AAPL"],
+                    },
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": True,
+                        "effective_max_notional": 25,
+                        "next_session_max_notional": 25,
+                    },
+                },
+                generated_at=now,
+            )
+
+        import_audit = payload["runtime_window_import_audit"]
+        self.assertEqual(import_audit["state"], "import_due_source_activity_missing")
+        self.assertEqual(import_audit["counts"]["selected_target_count"], 1)
+        self.assertEqual(import_audit["counts"]["targets_with_source_activity"], 0)
+        self.assertEqual(import_audit["counts"]["targets_with_runtime_ledger"], 0)
+        self.assertEqual(
+            import_audit["counts"]["targets_with_evidence_grade_runtime_ledger"],
+            0,
+        )
+        self.assertEqual(
+            import_audit["counts"]["raw_source_plan_targets_with_runtime_ledger"],
+            1,
+        )
+        self.assertEqual(
+            import_audit["blockers"],
+            [
+                "paper_route_source_activity_missing",
+                "source_decisions_missing",
+                "source_executions_missing",
+                "source_tca_missing",
+            ],
+        )
+        next_window_audit = payload["next_runtime_window_target_audits"][0]
+        self.assertEqual(next_window_audit["target"]["account_label"], "TORGHUT_SIM")
+        self.assertEqual(next_window_audit["runtime_ledger"]["bucket_count"], 0)
 
     def test_runtime_ledger_summary_is_scoped_to_target_stage_account_and_strategy(
         self,

@@ -1356,17 +1356,14 @@ def _runtime_window_import_audit(
     *,
     next_targets: Mapping[str, object],
     target_audits: Sequence[Mapping[str, object]],
+    next_target_audits: Sequence[Mapping[str, object]],
 ) -> dict[str, object]:
     session_readiness = _as_mapping(next_targets.get("session_readiness"))
     import_blockers = _unique_text_items(session_readiness.get("import_blockers"))
-    selected_target_audits = _selected_runtime_window_target_audits(
-        next_targets=next_targets,
-        target_audits=target_audits,
-    )
     source_missing_reasons = sorted(
         {
             str(reason).strip()
-            for audit in selected_target_audits
+            for audit in next_target_audits
             for reason in _as_sequence(
                 _as_mapping(audit.get("source_activity")).get("missing_reasons")
             )
@@ -1376,7 +1373,7 @@ def _runtime_window_import_audit(
     runtime_ledger_blockers = sorted(
         {
             str(blocker).strip()
-            for audit in selected_target_audits
+            for audit in next_target_audits
             for blocker in _as_sequence(
                 _as_mapping(audit.get("runtime_ledger")).get("blockers")
             )
@@ -1384,9 +1381,9 @@ def _runtime_window_import_audit(
         }
     )
     source_plan_target_count = len(target_audits)
-    current_target_count = len(selected_target_audits)
+    current_target_count = len(next_target_audits)
     raw_source_counts = _runtime_window_target_counts(target_audits)
-    selected_target_counts = _runtime_window_target_counts(selected_target_audits)
+    selected_target_counts = _runtime_window_target_counts(next_target_audits)
     targets_with_source_activity = selected_target_counts["source_activity"]
     targets_with_runtime_ledger = selected_target_counts["runtime_ledger"]
     targets_with_evidence_grade_runtime_ledger = selected_target_counts[
@@ -1478,38 +1475,6 @@ def _runtime_window_import_audit(
             ],
         },
     }
-
-
-def _runtime_window_target_key(target: Mapping[str, object]) -> tuple[str | None, ...]:
-    return (
-        _safe_text(target.get("hypothesis_id")),
-        _safe_text(target.get("candidate_id")),
-        _safe_text(target.get("strategy_family")),
-        _safe_text(target.get("strategy_name")),
-        _safe_text(target.get("source_manifest_ref")),
-        _safe_text(target.get("dataset_snapshot_ref")),
-    )
-
-
-def _selected_runtime_window_target_audits(
-    *,
-    next_targets: Mapping[str, object],
-    target_audits: Sequence[Mapping[str, object]],
-) -> list[Mapping[str, object]]:
-    selected_keys = {
-        _runtime_window_target_key(_as_mapping(target))
-        for target in _as_mapping_items(next_targets.get("targets"))
-    }
-    if not selected_keys:
-        return []
-    selected: list[Mapping[str, object]] = []
-    seen: set[tuple[str | None, ...]] = set()
-    for audit in target_audits:
-        key = _runtime_window_target_key(_as_mapping(audit.get("target")))
-        if key in selected_keys and key not in seen:
-            selected.append(audit)
-            seen.add(key)
-    return selected
 
 
 def _runtime_window_target_counts(
@@ -1724,9 +1689,20 @@ def build_paper_route_evidence_audit(
         live_submission_gate=live_submission_gate,
         generated_at=resolved_generated_at,
     )
+    next_target_audits = [
+        _target_audit(
+            session,
+            raw_target=target,
+            probe=probe,
+            generated_at=resolved_generated_at,
+            lookback_hours=lookback_hours,
+        )
+        for target in _as_mapping_items(next_targets.get("targets"))
+    ]
     runtime_window_import_audit = _runtime_window_import_audit(
         next_targets=next_targets,
         target_audits=target_audits,
+        next_target_audits=next_target_audits,
     )
     proof_packet_handoff = _runtime_ledger_proof_packet_handoff(
         next_targets=next_targets,
@@ -1776,6 +1752,7 @@ def build_paper_route_evidence_audit(
         },
         "paper_route_probe": probe,
         "next_paper_route_runtime_window_targets": next_targets,
+        "next_runtime_window_target_audits": next_target_audits,
         "runtime_window_import_audit": runtime_window_import_audit,
         "runtime_ledger_proof_packet_handoff": proof_packet_handoff,
         "summary": {
