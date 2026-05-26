@@ -7602,7 +7602,18 @@ class TestTradingApi(TestCase):
                 0
             ]
             self.assertEqual(next_target["paper_route_probe_symbols"], ["AAPL", "AMZN"])
+            self.assertEqual(
+                next_target["paper_route_probe_scope_authority"],
+                "external_target_plan",
+            )
+            next_audit_target = payload["next_runtime_window_target_audits"][0][
+                "target"
+            ]
+            self.assertEqual(
+                next_audit_target["paper_route_probe_symbols"], ["AAPL", "AMZN"]
+            )
             self.assertNotIn("INTC", next_target["paper_route_probe_symbols"])
+            self.assertNotIn("INTC", next_audit_target["paper_route_probe_symbols"])
         finally:
             settings.trading_paper_route_target_plan_url = original_target_plan_url
             if original_scheduler is None:
