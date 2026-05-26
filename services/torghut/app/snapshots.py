@@ -14,10 +14,36 @@ from sqlalchemy.orm import Session
 
 from .alpaca_client import TorghutAlpacaClient
 from .models import Execution, PositionSnapshot, coerce_json_payload
-from .trading.route_metadata import coerce_route_text, coerce_route_int, normalize_route_provenance
+from .trading.route_metadata import (
+    coerce_route_text,
+    coerce_route_int,
+    normalize_route_provenance,
+)
 from .trading.simulation import resolve_simulation_context
 
 logger = logging.getLogger(__name__)
+
+_RUNTIME_COST_AMOUNT_FIELDS = (
+    "cost_amount",
+    "explicit_cost",
+    "commission",
+    "fees",
+    "fee_amount",
+    "broker_fee",
+)
+_RUNTIME_COST_BASIS_FIELDS = (
+    "cost_basis",
+    "cost_source",
+    "fee_basis",
+    "commission_basis",
+    "broker_fee_basis",
+)
+_BROKER_COST_BASIS_BY_FIELD = {
+    "commission": "broker_reported_commission",
+    "fees": "broker_reported_fees",
+    "fee_amount": "broker_reported_fees",
+    "broker_fee": "broker_reported_fees",
+}
 
 
 def snapshot_account_and_positions(
@@ -96,7 +122,9 @@ def sync_order_to_db(
         resolved_fallback_count=resolved_fallback_count,
     )
     if existing is not None:
-        return _persist_existing_execution(session=session, existing=existing, data=data)
+        return _persist_existing_execution(
+            session=session, existing=existing, data=data
+        )
 
     execution = Execution(**data)
     session.add(execution)
@@ -115,7 +143,9 @@ def sync_order_to_db(
         )
         if existing is None:
             raise
-        return _persist_existing_execution(session=session, existing=existing, data=data)
+        return _persist_existing_execution(
+            session=session, existing=existing, data=data
+        )
 
 
 def _resolve_execution_route_metadata(
@@ -240,6 +270,11 @@ def _build_execution_payload(
     if simulation_context is not None:
         audit_payload["simulation_context"] = simulation_context
         raw_order_payload["simulation_context"] = simulation_context
+    _attach_runtime_ledger_cost_payload(
+        order_response=order_response,
+        audit_payload=audit_payload,
+        raw_order_payload=raw_order_payload,
+    )
 
     return {
         "trade_decision_id": trade_decision_id,
@@ -276,6 +311,7 @@ def _persist_existing_execution(
     existing: Execution,
     data: dict[str, Any],
 ) -> Execution:
+    data = _preserve_existing_execution_audit(existing=existing, data=data)
     for key, value in data.items():
         setattr(existing, key, value)
     session.add(existing)
@@ -284,11 +320,89 @@ def _persist_existing_execution(
     return existing
 
 
+def _attach_runtime_ledger_cost_payload(
+    *,
+    order_response: Mapping[str, Any],
+    audit_payload: dict[str, Any],
+    raw_order_payload: dict[str, Any],
+) -> None:
+    cost_payload = _runtime_ledger_cost_payload_from_order(order_response)
+    if cost_payload is None:
+        return
+
+    audit_payload.setdefault("runtime_ledger_cost", cost_payload)
+    raw_order_payload.setdefault("runtime_ledger_cost", cost_payload)
+    audit_payload.setdefault("cost_amount", cost_payload["cost_amount"])
+    audit_payload.setdefault("cost_basis", cost_payload["cost_basis"])
+    raw_order_payload.setdefault("cost_amount", cost_payload["cost_amount"])
+    raw_order_payload.setdefault("cost_basis", cost_payload["cost_basis"])
+
+    fee_model = {
+        "source": "broker_order_response",
+        "source_field": cost_payload["source_field"],
+        "cost_basis": cost_payload["cost_basis"],
+    }
+    audit_payload.setdefault("fee_model", fee_model)
+    raw_order_payload.setdefault("fee_model", fee_model)
+
+
+def _runtime_ledger_cost_payload_from_order(
+    order_response: Mapping[str, Any],
+) -> dict[str, str] | None:
+    basis = _first_text(order_response, *_RUNTIME_COST_BASIS_FIELDS)
+    for amount_key in _RUNTIME_COST_AMOUNT_FIELDS:
+        amount = _optional_decimal(order_response.get(amount_key))
+        if amount is None or amount < 0:
+            continue
+        resolved_basis = basis or _BROKER_COST_BASIS_BY_FIELD.get(amount_key)
+        if resolved_basis is None:
+            continue
+        return {
+            "cost_amount": str(amount),
+            "cost_basis": resolved_basis,
+            "source_field": amount_key,
+        }
+    return None
+
+
+def _preserve_existing_execution_audit(
+    *,
+    existing: Execution,
+    data: dict[str, Any],
+) -> dict[str, Any]:
+    existing_audit = existing.execution_audit_json
+    incoming_audit = data.get("execution_audit_json")
+    if not isinstance(existing_audit, Mapping):
+        return data
+    merged = {
+        str(key): value
+        for key, value in cast(Mapping[object, Any], existing_audit).items()
+    }
+    if isinstance(incoming_audit, Mapping):
+        merged.update(
+            {
+                str(key): value
+                for key, value in cast(Mapping[object, Any], incoming_audit).items()
+            }
+        )
+    updated = dict(data)
+    updated["execution_audit_json"] = coerce_json_payload(merged)
+    return updated
+
+
 def _coerce_text(value: Any) -> Optional[str]:
     if value is None:
         return None
     if isinstance(value, str):
         return value.strip() or None
+    return None
+
+
+def _first_text(payload: Mapping[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        text = _coerce_text(payload.get(key))
+        if text is not None:
+            return text
     return None
 
 

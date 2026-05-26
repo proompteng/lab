@@ -1347,6 +1347,73 @@ class TestOrderIdempotency(TestCase):
             assert isinstance(execution_microstructure, dict)
             self.assertEqual(execution_microstructure.get('state_valid'), True)
 
+    def test_submit_order_persists_runtime_ledger_metadata_in_audit(self) -> None:
+        with self.session_local() as session:
+            strategy = Strategy(
+                name='demo',
+                description='demo',
+                enabled=True,
+                base_timeframe='1Min',
+                universe_type='static',
+                universe_symbols=['AAPL'],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol='AAPL',
+                event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+                timeframe='1Min',
+                action='buy',
+                qty=Decimal('1.0'),
+                params={
+                    'price': Decimal('100'),
+                    'execution_policy': {
+                        'selected_order_type': 'limit',
+                        'adaptive': {
+                            'applied': True,
+                            'max_participation_rate': '0.05',
+                        },
+                    },
+                    'cost_model': {
+                        'source': 'broker_reported',
+                        'commission_bps': '0',
+                    },
+                    'candidate_lineage': {
+                        'candidate_id': 'H-PAIRS-LIVE-PAPER',
+                        'runtime_window_id': '2026-02-10-paper',
+                    },
+                    'runtime_ledger_cost': {
+                        'cost_amount': '0',
+                        'cost_basis': 'broker_reported_commission',
+                    },
+                },
+            )
+
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(session, decision, strategy, 'paper')
+            execution = executor.submit_order(
+                session, FakeAlpacaClient(), decision, decision_row, 'paper'
+            )
+            assert execution is not None
+            audit = execution.execution_audit_json
+            assert isinstance(audit, dict)
+
+            execution_policy = audit.get('execution_policy')
+            assert isinstance(execution_policy, dict)
+            self.assertEqual(execution_policy.get('selected_order_type'), 'limit')
+            self.assertTrue(audit.get('execution_policy_hash'))
+            self.assertTrue(audit.get('cost_model_hash'))
+            self.assertTrue(audit.get('lineage_hash'))
+            self.assertEqual(audit.get('cost_amount'), '0')
+            self.assertEqual(audit.get('cost_basis'), 'broker_reported_commission')
+            runtime_cost = audit.get('runtime_ledger_cost')
+            assert isinstance(runtime_cost, dict)
+            self.assertEqual(runtime_cost.get('cost_amount'), '0')
+            self.assertEqual(runtime_cost.get('cost_basis'), 'broker_reported_commission')
+
     def test_submit_order_falls_back_to_transient_execution_policy_context(self) -> None:
         with self.session_local() as session:
             strategy = Strategy(

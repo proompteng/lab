@@ -1216,6 +1216,81 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertGreaterEqual(len(bucket["cost_model_hash_counts"]), 1)
         self.assertGreaterEqual(len(bucket["lineage_hash_counts"]), 1)
 
+    def test_build_realized_strategy_pnl_rows_materializes_audit_only_runtime_metadata(
+        self,
+    ) -> None:
+        rows = _build_realized_strategy_pnl_rows(
+            [
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                    "symbol": "AAPL",
+                    "side": "buy",
+                    "filled_qty": Decimal("1"),
+                    "avg_fill_price": Decimal("100"),
+                    "decision_hash": "decision-buy",
+                    "alpaca_order_id": "order-buy",
+                    "execution_audit_json": {
+                        "execution_policy": {
+                            "selected_order_type": "limit",
+                            "adaptive": {"max_participation_rate": "0.05"},
+                        },
+                        "cost_model": {
+                            "source": "broker_reported",
+                            "commission_bps": "0",
+                        },
+                        "lineage": {
+                            "candidate_id": "H-PAIRS-LIVE-PAPER",
+                            "runtime_window_id": "2026-03-06-paper",
+                        },
+                        "runtime_ledger_cost": {
+                            "cost_amount": "0.20",
+                            "cost_basis": "broker_reported_commission",
+                        },
+                    },
+                },
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
+                    "symbol": "AAPL",
+                    "side": "sell",
+                    "filled_qty": Decimal("1"),
+                    "avg_fill_price": Decimal("101"),
+                    "decision_hash": "decision-sell",
+                    "alpaca_order_id": "order-sell",
+                    "execution_audit_json": {
+                        "execution_policy": {
+                            "selected_order_type": "limit",
+                            "adaptive": {"max_participation_rate": "0.05"},
+                        },
+                        "cost_model": {
+                            "source": "broker_reported",
+                            "commission_bps": "0",
+                        },
+                        "lineage": {
+                            "candidate_id": "H-PAIRS-LIVE-PAPER",
+                            "runtime_window_id": "2026-03-06-paper",
+                        },
+                        "runtime_ledger_cost": {
+                            "cost_amount": "0.10",
+                            "cost_basis": "broker_reported_commission",
+                        },
+                    },
+                },
+            ],
+            allow_authoritative_runtime_ledger_materialization=True,
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["authoritative"], True)
+        self.assertEqual(
+            rows[0]["authority_reason"],
+            "source_execution_runtime_ledger_materialized",
+        )
+        bucket = rows[0]["runtime_ledger_bucket"]
+        self.assertIsInstance(bucket, dict)
+        assert isinstance(bucket, dict)
+        self.assertEqual(bucket["blockers"], [])
+        self.assertTrue(_runtime_ledger_bucket_profit_proof_present(bucket))
+
     def test_runtime_ledger_tca_row_separates_explicit_cost_from_slippage(
         self,
     ) -> None:
