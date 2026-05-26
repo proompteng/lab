@@ -1290,7 +1290,7 @@ def build_runtime_ledger_proof_packet(
         ),
         status=None if runtime_import_due else deferred_until_runtime_import_due,
     )
-    if completion_gate_blockers:
+    if runtime_import_due and completion_gate_blockers:
         _extend_unique(blockers, completion_gate_blockers)
     elif runtime_import_due and not gate_satisfied:
         _extend_unique(blockers, ["doc29_live_scale_gate_not_satisfied"])

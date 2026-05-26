@@ -651,6 +651,50 @@ class TestRuntimeLedgerProofPacket(TestCase):
             result["required_actions"],
         )
 
+    def test_waiting_packet_defers_doc29_completion_blockers_until_import_due(
+        self,
+    ) -> None:
+        completion = _completion(status="blocked")
+        gate = completion["gates"][0]
+        assert isinstance(gate, dict)
+        gate["blocking_reasons"] = ["live_scale_runtime_ledger_summary_incomplete"]
+        gate["blocked_reason"] = "live_canary_not_satisfied"
+
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            paper_route_evidence=_paper_route_evidence(
+                import_ready=False,
+                import_blockers=["paper_route_session_window_not_open"],
+            ),
+            completion_status=completion,
+            generated_at="2026-05-25T21:05:00+00:00",
+        )
+
+        self.assertEqual(result["verdict"], "waiting_for_runtime_window")
+        self.assertEqual(
+            result["post_cost_proof_authority"]["blocking_reasons"],
+            ["paper_route_session_window_not_open"],
+        )
+        self.assertEqual(
+            result["required_actions"],
+            ["wait_for_regular_session_runtime_window"],
+        )
+        self.assertEqual(
+            result["checks"]["doc29_live_scale_gate"]["status"],
+            "deferred_until_paper_route_runtime_window_import_is_due",
+        )
+        self.assertEqual(
+            result["checks"]["doc29_live_scale_gate"]["observed"]["blockers"],
+            [
+                "live_scale_runtime_ledger_summary_incomplete",
+                "live_canary_not_satisfied",
+            ],
+        )
+        self.assertNotIn(
+            "live_canary_not_satisfied",
+            result["post_cost_proof_authority"]["blocking_reasons"],
+        )
+
     def test_packet_blocks_with_source_activity_audit_before_generic_import_missing(
         self,
     ) -> None:
