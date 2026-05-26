@@ -405,13 +405,13 @@ class TestPaperRouteEvidenceAudit(TestCase):
         )
         self.assertEqual(
             proof_handoff["default_paper_route_service_base_url"],
-            "http://torghut.torghut.svc.cluster.local",
+            "http://torghut-sim.torghut.svc.cluster.local",
         )
         self.assertEqual(
             proof_handoff["source_service_authority"],
             {
                 "status": "live_torghut_service",
-                "paper_route_evidence": "live_torghut_service",
+                "paper_route_evidence": "torghut_sim_service",
                 "completion_doc29": "live_torghut_service",
             },
         )
