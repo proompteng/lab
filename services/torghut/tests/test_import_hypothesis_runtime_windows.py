@@ -14,6 +14,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.models import Base, StrategyRuntimeLedgerBucket
+from app.trading.runtime_ledger import RuntimeLedgerBucket
 from scripts.import_hypothesis_runtime_windows import (
     EXECUTION_ELIGIBLE_DECISION_STATUSES,
     POST_COST_BASIS_EXECUTION_RECONSTRUCTION,
@@ -35,9 +36,11 @@ from scripts.import_hypothesis_runtime_windows import (
     _runtime_ledger_profit_proof_present,
     _runtime_observation_authority_payload,
     _runtime_ledger_target_metadata_blockers,
+    _runtime_ledger_tca_row_from_bucket,
     _runtime_ledger_tca_rows_from_durable_buckets,
     _runtime_ledger_tca_rows_from_source_dsn,
     _runtime_ledger_tca_rows_from_artifacts,
+    _runtime_window_import_proof_hygiene_blockers,
     _stable_payload_digest,
     _strategy_name_candidates,
     main,
@@ -694,6 +697,39 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             ["runtime_ledger_artifact_candidate_id_mismatch"],
         )
 
+    def test_runtime_window_proof_hygiene_blocks_missing_authoritative_gates(
+        self,
+    ) -> None:
+        self.assertEqual(
+            _runtime_window_import_proof_hygiene_blockers(
+                source_kind="paper_runtime_observed",
+                target_metadata={},
+                dependency_quorum_decision="",
+                continuity_ok="",
+                drift_ok="",
+            ),
+            [
+                "runtime_window_target_metadata_missing",
+                "dependency_quorum_decision_missing",
+                "continuity_gate_missing",
+                "drift_gate_missing",
+            ],
+        )
+        self.assertEqual(
+            _runtime_window_import_proof_hygiene_blockers(
+                source_kind="simulation_paper_runtime",
+                target_metadata={},
+                dependency_quorum_decision="",
+                continuity_ok="",
+                drift_ok="",
+            ),
+            [
+                "dependency_quorum_decision_missing",
+                "continuity_gate_missing",
+                "drift_gate_missing",
+            ],
+        )
+
     def test_main_requires_source_dsn_or_durable_runtime_ledger_bucket(self) -> None:
         args = SimpleNamespace(
             run_id="run-missing-source",
@@ -934,6 +970,11 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             rows[0]["post_cost_expectancy_bps"],
             Decimal("34.82587064676616915422885572"),
         )
+        self.assertEqual(rows[0]["authoritative"], False)
+        self.assertEqual(
+            rows[0]["authority_reason"],
+            "execution_reconstruction_not_runtime_ledger_proof",
+        )
 
     def test_build_realized_strategy_pnl_rows_normalizes_nested_runtime_payloads(
         self,
@@ -1006,9 +1047,45 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             ["execution_reconstruction_not_runtime_ledger_proof"],
         )
         self.assertEqual(bucket["pnl_basis"], POST_COST_BASIS_EXECUTION_RECONSTRUCTION)
+        self.assertEqual(bucket["authoritative"], False)
         self.assertGreaterEqual(len(bucket["execution_policy_hash_counts"]), 1)
         self.assertGreaterEqual(len(bucket["cost_model_hash_counts"]), 1)
         self.assertGreaterEqual(len(bucket["lineage_hash_counts"]), 1)
+
+    def test_runtime_ledger_tca_row_separates_explicit_cost_from_slippage(
+        self,
+    ) -> None:
+        bucket = RuntimeLedgerBucket(
+            bucket_started_at=datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+            bucket_ended_at=datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+            account_label="TORGHUT_SIM",
+            strategy_id="intraday-tsmom-profit-v3",
+            symbol="AAPL",
+            fill_count=2,
+            decision_count=2,
+            submitted_order_count=2,
+            cancelled_order_count=0,
+            rejected_order_count=0,
+            unfilled_order_count=0,
+            closed_trade_count=1,
+            open_position_count=0,
+            filled_notional=Decimal("200"),
+            gross_strategy_pnl=Decimal("1"),
+            cost_amount=Decimal("0.25"),
+            net_strategy_pnl_after_costs=Decimal("0.75"),
+            post_cost_expectancy_bps=Decimal("37.5"),
+            cost_basis_counts={"broker_reported_commission_and_fees": 2},
+            execution_policy_hash_counts={"policy-sha": 2},
+            cost_model_hash_counts={"cost-sha": 2},
+            lineage_hash_counts={"lineage-sha": 2},
+            blockers=[],
+        )
+
+        row = _runtime_ledger_tca_row_from_bucket(bucket=bucket)
+
+        self.assertIsNone(row["abs_slippage_bps"])
+        self.assertEqual(row["explicit_cost_bps"], Decimal("12.50000"))
+        self.assertEqual(row["post_cost_promotion_eligible"], True)
 
     def test_build_realized_strategy_pnl_rows_rejects_shortfall_only_costs(
         self,

@@ -14,7 +14,7 @@ from sqlalchemy.pool import StaticPool
 from app.config import settings
 from app.db import get_session
 from app.main import _build_current_evidence_epoch, _env_json_string_list, app
-from app.models import Base, EvidenceEpochRecord
+from app.models import Base, EvidenceEpochRecord, StrategyRuntimeLedgerBucket
 from app.trading.evidence_epochs import (
     compile_evidence_epoch,
     load_evidence_epoch_payload,
@@ -260,6 +260,136 @@ class TestEvidenceEpochs(TestCase):
             "service_health:trading_status_failed",
             epoch.reason_codes,
         )
+
+    def test_current_epoch_portfolio_proof_uses_stage_account_runtime_ledger(
+        self,
+    ) -> None:
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        now = datetime.now(timezone.utc)
+        with session_local() as session:
+            for suffix, observed_stage, account_label, net_pnl in (
+                ("wrong-stage", "live", "paper", Decimal("999")),
+                ("wrong-account", "paper", "other-paper", Decimal("999")),
+                ("right", "paper", "paper", Decimal("525")),
+            ):
+                session.add(
+                    StrategyRuntimeLedgerBucket(
+                        run_id=f"portfolio-proof-{suffix}",
+                        candidate_id=f"candidate-{suffix}",
+                        hypothesis_id="H-PORTFOLIO-PROOF",
+                        observed_stage=observed_stage,
+                        bucket_started_at=now - timedelta(hours=1),
+                        bucket_ended_at=now - timedelta(minutes=30),
+                        account_label=account_label,
+                        runtime_strategy_name="portfolio-proof-strategy",
+                        strategy_family="portfolio_proof",
+                        fill_count=2,
+                        decision_count=2,
+                        submitted_order_count=2,
+                        closed_trade_count=1,
+                        open_position_count=0,
+                        filled_notional=Decimal("1000"),
+                        gross_strategy_pnl=net_pnl + Decimal("1"),
+                        cost_amount=Decimal("1"),
+                        net_strategy_pnl_after_costs=net_pnl,
+                        post_cost_expectancy_bps=Decimal("1250"),
+                        ledger_schema_version="torghut.runtime-ledger-bucket.v1",
+                        pnl_basis="realized_strategy_pnl_after_explicit_costs",
+                        execution_policy_hash_counts={"policy": 2},
+                        cost_model_hash_counts={"cost": 2},
+                        lineage_hash_counts={"lineage": 2},
+                        blockers_json=[],
+                    )
+                )
+            session.commit()
+            with (
+                patch(
+                    "app.main._evaluate_database_contract",
+                    return_value={
+                        "ok": True,
+                        "schema_current": True,
+                        "schema_graph_lineage_ready": True,
+                        "schema_graph_lineage_errors": [],
+                        "schema_head_signature": "abc123",
+                    },
+                ),
+                patch(
+                    "app.main.build_empirical_jobs_status", return_value={"ready": True}
+                ),
+            ):
+                epoch = _build_current_evidence_epoch(
+                    session=session,
+                    account_label="paper",
+                    stage_scope="paper",
+                )
+
+        receipt = next(
+            item for item in epoch.receipts if item.receipt_type == "portfolio_proof"
+        )
+        self.assertEqual(receipt.payload["post_cost_net_pnl_per_day"], "525")
+        self.assertEqual(receipt.payload["portfolio_candidate_id"], "candidate-right")
+        summary = receipt.payload["runtime_ledger_summary"]
+        self.assertEqual(summary["bucket_count"], 1)
+        self.assertEqual(summary["evidence_grade_bucket_count"], 1)
+        self.assertEqual(
+            summary["filters"],
+            {
+                "account_label": "paper",
+                "stage_scope": "paper",
+                "observed_stage": "paper",
+            },
+        )
+        self.assertIn("portfolio_holdout_missing", receipt.reason_codes)
+
+    def test_current_epoch_portfolio_proof_fails_closed_without_daily_ledger(
+        self,
+    ) -> None:
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        with session_local() as session:
+            with (
+                patch(
+                    "app.main._evaluate_database_contract",
+                    return_value={
+                        "ok": True,
+                        "schema_current": True,
+                        "schema_graph_lineage_ready": True,
+                        "schema_graph_lineage_errors": [],
+                        "schema_head_signature": "abc123",
+                    },
+                ),
+                patch(
+                    "app.main.build_empirical_jobs_status", return_value={"ready": True}
+                ),
+            ):
+                epoch = _build_current_evidence_epoch(
+                    session=session,
+                    account_label="paper",
+                    stage_scope="paper",
+                )
+
+        receipt = next(
+            item for item in epoch.receipts if item.receipt_type == "portfolio_proof"
+        )
+        self.assertEqual(receipt.state, "missing")
+        self.assertIn(
+            "portfolio_runtime_ledger_summary_missing",
+            receipt.reason_codes,
+        )
+        self.assertEqual(receipt.payload["post_cost_net_pnl_per_day"], "0")
 
     def test_compile_epoch_flags_missing_and_reasonless_required_receipts(self) -> None:
         observed_at = datetime(2026, 5, 5, 12, 0)

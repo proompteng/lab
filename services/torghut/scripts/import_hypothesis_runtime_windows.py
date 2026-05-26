@@ -353,7 +353,8 @@ def _runtime_ledger_tca_row_from_bucket(
             bucket.bucket_started_at,
             bucket.bucket_ended_at - timedelta(microseconds=1),
         ),
-        "abs_slippage_bps": (
+        "abs_slippage_bps": None,
+        "explicit_cost_bps": (
             (bucket.cost_amount / bucket.filled_notional) * Decimal("10000")
             if bucket.filled_notional > 0
             else None
@@ -535,6 +536,60 @@ def _runtime_ledger_target_metadata_blockers(
             blockers.append("runtime_ledger_artifact_window_weekday_count_below_min")
 
     return list(dict.fromkeys(blockers))
+
+
+def _runtime_window_source_kind_is_informational(
+    *,
+    source_kind: str,
+    target_metadata: Mapping[str, Any],
+) -> bool:
+    normalized = source_kind.strip().lower().replace("-", "_")
+    if normalized.startswith("simulation_"):
+        return True
+    if any(
+        marker in normalized
+        for marker in (
+            "informational",
+            "non_authoritative",
+            "offline_replay_triage",
+            "selection_only",
+        )
+    ):
+        return True
+    scope = (
+        str(
+            target_metadata.get("paper_probation_authorization_scope")
+            or target_metadata.get("evidence_scope")
+            or ""
+        )
+        .strip()
+        .lower()
+        .replace("-", "_")
+    )
+    return scope == "evidence_collection_only"
+
+
+def _runtime_window_import_proof_hygiene_blockers(
+    *,
+    source_kind: str,
+    target_metadata: Mapping[str, Any],
+    dependency_quorum_decision: str,
+    continuity_ok: str,
+    drift_ok: str,
+) -> list[str]:
+    blockers: list[str] = []
+    if not target_metadata and not _runtime_window_source_kind_is_informational(
+        source_kind=source_kind,
+        target_metadata=target_metadata,
+    ):
+        blockers.append("runtime_window_target_metadata_missing")
+    if not dependency_quorum_decision.strip():
+        blockers.append("dependency_quorum_decision_missing")
+    if not continuity_ok.strip():
+        blockers.append("continuity_gate_missing")
+    if not drift_ok.strip():
+        blockers.append("drift_gate_missing")
+    return blockers
 
 
 def _runtime_ledger_profit_proof_present(
@@ -747,6 +802,9 @@ def _build_realized_strategy_pnl_rows(
         )
         row["post_cost_expectancy_basis"] = POST_COST_BASIS_EXECUTION_RECONSTRUCTION
         row["post_cost_promotion_eligible"] = False
+        row["authoritative"] = False
+        row["authority_reason"] = "execution_reconstruction_not_runtime_ledger_proof"
+        row["pnl_derivation"] = "execution_reconstructed_from_execution_rows"
         row["promotion_blocker"] = "execution_reconstruction_not_runtime_ledger_proof"
         blockers = list(row.get("runtime_ledger_blockers") or [])
         if "execution_reconstruction_not_runtime_ledger_proof" not in blockers:
@@ -757,6 +815,10 @@ def _build_realized_strategy_pnl_rows(
             bucket_payload = dict(bucket_payload)
             bucket_payload["blockers"] = blockers
             bucket_payload["pnl_basis"] = POST_COST_BASIS_EXECUTION_RECONSTRUCTION
+            bucket_payload["authoritative"] = False
+            bucket_payload["authority_reason"] = (
+                "execution_reconstruction_not_runtime_ledger_proof"
+            )
             row["runtime_ledger_bucket"] = bucket_payload
         realized_rows.append(row)
     return realized_rows
@@ -1549,6 +1611,7 @@ def _source_activity_missing_summary(
     dataset_snapshot_ref: str | None,
     source_activity_symbols: Sequence[str] | None = None,
     target_metadata: Mapping[str, Any] | None = None,
+    proof_hygiene_blockers: Sequence[str] = (),
 ) -> dict[str, Any]:
     metadata = _as_mapping(target_metadata)
     symbol_filter = _metadata_symbol_list(source_activity_symbols or ())
@@ -1568,10 +1631,26 @@ def _source_activity_missing_summary(
             "before importing promotion evidence."
         ),
     }
+    proof_blockers = [blocker]
+    for reason in proof_hygiene_blockers:
+        proof_blockers.append(
+            {
+                "blocker": reason,
+                "hypothesis_id": hypothesis_id,
+                "candidate_id": candidate_id or None,
+                "observed_stage": observed_stage,
+                "window_start": window_start.isoformat(),
+                "window_end": window_end.isoformat(),
+                "remediation": (
+                    "Provide explicit runtime-window target metadata and health-gate "
+                    "inputs before treating this import as proof-grade evidence."
+                ),
+            }
+        )
     return {
         "status": "skipped",
         "proof_status": "blocked",
-        "proof_blockers": [blocker],
+        "proof_blockers": proof_blockers,
         "run_id": run_id,
         "candidate_id": candidate_id or None,
         "hypothesis_id": hypothesis_id,
@@ -1635,6 +1714,9 @@ def main() -> int:
         str(getattr(args, "target_metadata_json", "") or "")
     )
     source_activity_symbols = _target_metadata_source_symbols(target_metadata)
+    source_kind = args.source_kind.strip() or (
+        "simulation_paper_runtime" if args.observed_stage == "paper" else "live_runtime"
+    )
     decisions: list[datetime] = []
     executions: list[datetime] = []
     tca_rows: list[dict[str, object]] = []
@@ -1729,11 +1811,24 @@ def main() -> int:
     dataset_snapshot_ref = (
         str(getattr(args, "dataset_snapshot_ref", "") or "").strip() or None
     )
-    runtime_ledger_target_metadata_blockers = _runtime_ledger_target_metadata_blockers(
-        target_metadata=target_metadata,
-        runtime_ledger_artifact_metadata=runtime_ledger_artifact_metadata,
-        window_start=window_start,
-        window_end=window_end,
+    runtime_ledger_target_metadata_blockers = list(
+        dict.fromkeys(
+            [
+                *_runtime_ledger_target_metadata_blockers(
+                    target_metadata=target_metadata,
+                    runtime_ledger_artifact_metadata=runtime_ledger_artifact_metadata,
+                    window_start=window_start,
+                    window_end=window_end,
+                ),
+                *_runtime_window_import_proof_hygiene_blockers(
+                    source_kind=source_kind,
+                    target_metadata=target_metadata,
+                    dependency_quorum_decision=args.dependency_quorum_decision,
+                    continuity_ok=args.continuity_ok,
+                    drift_ok=args.drift_ok,
+                ),
+            ]
+        )
     )
     if not decisions and not executions and not tca_rows:
         summary = _source_activity_missing_summary(
@@ -1751,6 +1846,7 @@ def main() -> int:
             dataset_snapshot_ref=dataset_snapshot_ref,
             source_activity_symbols=source_activity_symbols,
             target_metadata=target_metadata,
+            proof_hygiene_blockers=runtime_ledger_target_metadata_blockers,
         )
         if args.json:
             print(json.dumps(summary, indent=2))
@@ -1799,9 +1895,6 @@ def main() -> int:
         "paper_runtime_observed"
         if args.observed_stage == "paper"
         else "live_runtime_observed"
-    )
-    source_kind = args.source_kind.strip() or (
-        "simulation_paper_runtime" if args.observed_stage == "paper" else "live_runtime"
     )
     runtime_observation_payload = {
         **_runtime_observation_authority_payload(

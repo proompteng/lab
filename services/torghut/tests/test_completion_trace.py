@@ -81,6 +81,7 @@ def _runtime_ledger_bucket(
     bucket_started_at: datetime,
     bucket_ended_at: datetime,
     ledger_schema_version: str = 'torghut.runtime-ledger-bucket.v1',
+    payload_json: dict[str, object] | None = None,
 ) -> StrategyRuntimeLedgerBucket:
     return StrategyRuntimeLedgerBucket(
         run_id=run_id,
@@ -110,7 +111,7 @@ def _runtime_ledger_bucket(
         cost_model_hash_counts={'cost-hash': 12},
         lineage_hash_counts={'lineage-hash': 12},
         blockers_json=[],
-        payload_json={'source': 'test-runtime-ledger'},
+        payload_json=payload_json or {'source': 'test-runtime-ledger'},
     )
 
 
@@ -510,6 +511,23 @@ class TestCompletionTrace(TestCase):
                 )
 
             live_window_start = now - timedelta(days=1)
+            runtime_daily_summary = {
+                'runtime_ledger_observed_trading_day_count': 25,
+                'runtime_ledger_net_pnl_by_trading_day': {
+                    '2026-03-06': '600',
+                    '2026-03-09': '0',
+                },
+                'runtime_ledger_mean_daily_net_pnl_after_costs': '24',
+                'runtime_ledger_median_daily_net_pnl_after_costs': '0',
+                'runtime_ledger_p10_daily_net_pnl_after_costs': '0',
+                'runtime_ledger_worst_day_net_pnl_after_costs': '0',
+                'runtime_ledger_max_intraday_drawdown': '0',
+                'runtime_ledger_avg_daily_filled_notional': '4800',
+                'runtime_ledger_closed_trade_count_by_day': {
+                    '2026-03-06': 6,
+                    '2026-03-09': 0,
+                },
+            }
             for index in range(10):
                 run_id = f'live-run-{index}'
                 live_window_end = live_window_start + timedelta(minutes=index + 1)
@@ -552,6 +570,10 @@ class TestCompletionTrace(TestCase):
                         run_id=run_id,
                         bucket_started_at=live_window_start,
                         bucket_ended_at=live_window_end,
+                        payload_json={
+                            'source': 'test-runtime-ledger',
+                            'runtime_ledger_daily_summary': runtime_daily_summary,
+                        },
                     )
                 )
             session.commit()
@@ -574,6 +596,14 @@ class TestCompletionTrace(TestCase):
         self.assertEqual(
             scale_gate['runtime_ledger_summary']['runtime_ledger_post_cost_expectancy_bps'],
             1.4,
+        )
+        self.assertEqual(
+            scale_gate['runtime_ledger_summary']['runtime_ledger_observed_trading_day_count'],
+            25,
+        )
+        self.assertEqual(
+            scale_gate['runtime_ledger_summary']['runtime_ledger_mean_daily_net_pnl_after_costs'],
+            '24',
         )
 
     def test_doc29_live_scale_blocks_non_runtime_ledger_window_pnl(self) -> None:

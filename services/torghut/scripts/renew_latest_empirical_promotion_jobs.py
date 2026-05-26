@@ -1677,17 +1677,15 @@ def _runtime_window_import_health_gate_args(
     dependency_quorum_decision = (
         _as_text(target.dependency_quorum_decision)
         or _as_text(runtime_manifest.get("dependency_quorum_decision"))
-        or "missing"
+        or ""
     )
     continuity_ok = (
         _as_text(target.continuity_ok)
         or _as_text(runtime_manifest.get("continuity_ok"))
-        or "false"
+        or ""
     )
     drift_ok = (
-        _as_text(target.drift_ok)
-        or _as_text(runtime_manifest.get("drift_ok"))
-        or "false"
+        _as_text(target.drift_ok) or _as_text(runtime_manifest.get("drift_ok")) or ""
     )
     return dependency_quorum_decision, continuity_ok, drift_ok
 

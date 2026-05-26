@@ -33,6 +33,7 @@ from .models import (
     ExecutionTCAMetric,
     RejectedSignalOutcomeEvent,
     Strategy,
+    StrategyRuntimeLedgerBucket,
     TradeDecision,
     VNextDatasetSnapshot,
     VNextExperimentRun,
@@ -3859,6 +3860,93 @@ def trading_autonomy() -> dict[str, object]:
     }
 
 
+def _runtime_ledger_bucket_evidence_grade(row: StrategyRuntimeLedgerBucket) -> bool:
+    raw_blockers = cast(Sequence[object], row.blockers_json or [])
+    blockers = [str(item).strip() for item in raw_blockers if str(item).strip()]
+    return (
+        row.pnl_basis == "realized_strategy_pnl_after_explicit_costs"
+        and int(row.fill_count or 0) > 0
+        and int(row.submitted_order_count or 0) > 0
+        and int(row.closed_trade_count or 0) > 0
+        and int(row.open_position_count or 0) == 0
+        and row.filled_notional > 0
+        and bool(row.execution_policy_hash_counts)
+        and bool(row.cost_model_hash_counts)
+        and bool(row.lineage_hash_counts)
+        and not blockers
+    )
+
+
+def _daily_runtime_ledger_portfolio_summary(
+    *,
+    session: Session,
+    account_label: str,
+    stage_scope: str,
+    observed_at: datetime,
+) -> dict[str, object]:
+    observed = (
+        observed_at.astimezone(timezone.utc)
+        if observed_at.tzinfo
+        else observed_at.replace(tzinfo=timezone.utc)
+    )
+    day_start = observed.replace(hour=0, minute=0, second=0, microsecond=0)
+    stage = stage_scope.strip()
+    account = account_label.strip()
+    stmt = (
+        select(StrategyRuntimeLedgerBucket)
+        .where(StrategyRuntimeLedgerBucket.bucket_started_at >= day_start)
+        .where(StrategyRuntimeLedgerBucket.bucket_ended_at <= observed)
+        .where(StrategyRuntimeLedgerBucket.account_label == account)
+        .order_by(
+            StrategyRuntimeLedgerBucket.bucket_ended_at.desc(),
+            StrategyRuntimeLedgerBucket.created_at.desc(),
+        )
+    )
+    if stage in {"paper", "live"}:
+        stmt = stmt.where(StrategyRuntimeLedgerBucket.observed_stage == stage)
+    else:
+        stmt = stmt.where(StrategyRuntimeLedgerBucket.observed_stage == "__missing__")
+    rows = list(session.execute(stmt.limit(200)).scalars())
+    evidence_rows = [row for row in rows if _runtime_ledger_bucket_evidence_grade(row)]
+    net_pnl = sum(
+        (row.net_strategy_pnl_after_costs for row in evidence_rows),
+        Decimal("0"),
+    )
+    filled_notional = sum(
+        (row.filled_notional for row in evidence_rows),
+        Decimal("0"),
+    )
+    candidate_ids = sorted(
+        {
+            str(row.candidate_id).strip()
+            for row in evidence_rows
+            if str(row.candidate_id or "").strip()
+        }
+    )
+    blockers: list[str] = []
+    if not rows:
+        blockers.append("portfolio_runtime_ledger_summary_missing")
+    elif not evidence_rows:
+        blockers.append("portfolio_runtime_ledger_summary_not_evidence_grade")
+    return {
+        "summary_basis": "runtime_ledger_daily_stage_account_scope",
+        "day_start": day_start.isoformat(),
+        "observed_at": observed.isoformat(),
+        "filters": {
+            "account_label": account,
+            "stage_scope": stage,
+            "observed_stage": stage if stage in {"paper", "live"} else "__missing__",
+        },
+        "bucket_count": len(rows),
+        "evidence_grade_bucket_count": len(evidence_rows),
+        "post_cost_net_pnl_per_day": str(net_pnl),
+        "filled_notional": str(filled_notional),
+        "candidate_ids": candidate_ids,
+        "db_row_refs": [str(row.id) for row in evidence_rows],
+        "blockers": blockers,
+    }
+
+
 def _build_current_evidence_epoch(
     *,
     session: Session,
@@ -3981,13 +4069,44 @@ def _build_current_evidence_epoch(
             observed_at=observed_at,
         )
     )
+    portfolio_runtime_ledger_summary = _daily_runtime_ledger_portfolio_summary(
+        session=session,
+        account_label=account_label,
+        stage_scope=stage_scope,
+        observed_at=observed_at,
+    )
+    candidate_ids_raw = portfolio_runtime_ledger_summary.get("candidate_ids")
+    candidate_id_items: Sequence[object]
+    if isinstance(candidate_ids_raw, Sequence) and not isinstance(
+        candidate_ids_raw, (str, bytes, bytearray)
+    ):
+        candidate_id_items = cast(Sequence[object], candidate_ids_raw)
+    else:
+        candidate_id_items = ()
+    portfolio_candidate_ids = [
+        str(item).strip() for item in candidate_id_items if str(item).strip()
+    ]
+    portfolio_runtime_ledger_bucket_count = int(
+        Decimal(str(portfolio_runtime_ledger_summary.get("bucket_count") or "0"))
+    )
     receipts.append(
         build_portfolio_proof_receipt(
-            portfolio_candidate_id="",
+            portfolio_candidate_id=(
+                ",".join(portfolio_candidate_ids) if portfolio_candidate_ids else ""
+            ),
             target_net_pnl_per_day=Decimal("500"),
-            post_cost_net_pnl_per_day=Decimal("0"),
+            post_cost_net_pnl_per_day=Decimal(
+                str(
+                    portfolio_runtime_ledger_summary.get("post_cost_net_pnl_per_day")
+                    or "0"
+                )
+            ),
             holdout_result=None,
             runtime_closure_artifact_refs=(),
+            runtime_ledger_summary=portfolio_runtime_ledger_summary
+            if portfolio_runtime_ledger_bucket_count > 0
+            else None,
+            require_runtime_ledger_summary=True,
             observed_at=observed_at,
         )
     )

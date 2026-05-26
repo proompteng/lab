@@ -682,6 +682,90 @@ class TestRuntimeWindowImport(TestCase):
             decision.payload_json["runtime_ledger_filled_notional"], "10100"
         )
 
+    def test_persist_observed_runtime_windows_daily_pnl_counts_idle_days(
+        self,
+    ) -> None:
+        buckets = build_observed_runtime_buckets(
+            bucket_ranges=[
+                (
+                    datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                    6,
+                ),
+                (
+                    datetime(2026, 3, 9, 13, 30, tzinfo=timezone.utc),
+                    datetime(2026, 3, 9, 14, 0, tzinfo=timezone.utc),
+                    6,
+                ),
+            ],
+            decision_times=[datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)],
+            execution_times=[datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc)],
+            tca_rows=[
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "abs_slippage_bps": Decimal("1"),
+                    "post_cost_expectancy_bps": Decimal("600"),
+                    "runtime_ledger_bucket": _runtime_ledger_bucket(
+                        filled_notional="10000",
+                        net_strategy_pnl_after_costs="600",
+                        cost_amount="1",
+                        post_cost_expectancy_bps="600",
+                    ),
+                    **_runtime_pnl_basis(),
+                },
+            ],
+            continuity_ok=True,
+            drift_ok=True,
+            dependency_quorum_decision="allow",
+        )
+
+        with self.session_local() as session:
+            summary = persist_observed_runtime_windows(
+                session=session,
+                run_id="import-live-daily-dollar-proof",
+                candidate_id="cand-daily-proof",
+                hypothesis_id="H-CONT-01",
+                observed_stage="live",
+                strategy_family="intraday_continuation",
+                source_manifest_ref="config/trading/hypotheses/h-cont-01.json",
+                buckets=buckets,
+            )
+            session.commit()
+            decision = session.execute(select(StrategyPromotionDecision)).scalar_one()
+            ledger_bucket = session.execute(
+                select(StrategyRuntimeLedgerBucket)
+            ).scalar_one()
+
+        self.assertEqual(summary["raw_window_count"], 2)
+        self.assertEqual(summary["window_count"], 1)
+        self.assertEqual(summary["skipped_zero_activity_window_count"], 1)
+        self.assertEqual(summary["runtime_ledger_observed_trading_day_count"], 2)
+        self.assertEqual(
+            summary["runtime_ledger_net_pnl_by_trading_day"],
+            {"2026-03-06": "600", "2026-03-09": "0"},
+        )
+        self.assertEqual(
+            summary["runtime_ledger_mean_daily_net_pnl_after_costs"], "300"
+        )
+        self.assertEqual(
+            summary["runtime_ledger_median_daily_net_pnl_after_costs"], "300"
+        )
+        self.assertEqual(summary["runtime_ledger_p10_daily_net_pnl_after_costs"], "0")
+        self.assertEqual(summary["runtime_ledger_worst_day_net_pnl_after_costs"], "0")
+        self.assertEqual(summary["runtime_ledger_avg_daily_filled_notional"], "5000")
+        assert decision.payload_json is not None
+        self.assertEqual(
+            decision.payload_json["runtime_ledger_mean_daily_net_pnl_after_costs"],
+            "300",
+        )
+        assert ledger_bucket.payload_json is not None
+        self.assertEqual(
+            ledger_bucket.payload_json["runtime_ledger_daily_summary"][
+                "runtime_ledger_observed_trading_day_count"
+            ],
+            2,
+        )
+
     def test_persist_observed_runtime_windows_blocks_missing_health_gate_evidence(
         self,
     ) -> None:
