@@ -226,10 +226,21 @@ def _tca_symbol_routes(
             continue
         order_count = _int(row.get("order_count"))
         avg_abs_slippage = _decimal(row.get("avg_abs_slippage_bps"))
+        avg_realized_shortfall = _decimal(row.get("avg_realized_shortfall_bps"))
+        route_adverse_slippage = (
+            max(avg_realized_shortfall, Decimal("0"))
+            if avg_realized_shortfall is not None
+            else avg_abs_slippage
+        )
         symbol_payload: dict[str, object] = {
             "symbol": symbol,
             "order_count": order_count,
             "avg_abs_slippage_bps": _decimal_text(avg_abs_slippage),
+            "avg_realized_shortfall_bps": _decimal_text(avg_realized_shortfall),
+            "route_adverse_slippage_bps": _decimal_text(route_adverse_slippage),
+            "route_slippage_basis": "signed_realized_shortfall_bps"
+            if avg_realized_shortfall is not None
+            else "avg_abs_slippage_bps_fallback",
             "max_abs_slippage_bps": _decimal_text(
                 _decimal(row.get("max_abs_slippage_bps"))
             ),
@@ -241,8 +252,8 @@ def _tca_symbol_routes(
         route_guardrail = route_slippage_guardrail or slippage_guardrail
         if (
             route_guardrail is not None
-            and avg_abs_slippage is not None
-            and avg_abs_slippage > route_guardrail
+            and route_adverse_slippage is not None
+            and route_adverse_slippage > route_guardrail
         ):
             blocked_symbols.append(symbol_payload)
             continue

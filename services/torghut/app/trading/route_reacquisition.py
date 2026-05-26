@@ -139,7 +139,7 @@ def _record_from_symbol(
         symbol_payload.get("filled_execution_count"),
         _int(symbol_payload.get("order_count")),
     )
-    return {
+    payload: dict[str, object] = {
         "symbol": symbol,
         "account_label": account_label,
         "state": state,
@@ -169,6 +169,15 @@ def _record_from_symbol(
         "rollback_trigger": reason,
         "next_repair_action": _next_action(state=state, reason=reason),
     }
+    for key in (
+        "avg_realized_shortfall_bps",
+        "route_adverse_slippage_bps",
+        "route_slippage_basis",
+    ):
+        value = symbol_payload.get(key)
+        if value is not None:
+            payload[key] = value
+    return payload
 
 
 def _missing_record(
@@ -223,6 +232,14 @@ def _repair_candidate(record: Mapping[str, object], *, rank: int) -> dict[str, o
         "paper_probe_notional_limit": "0",
         "next_repair_action": _text(record.get("next_repair_action")),
     }
+    for key in (
+        "avg_realized_shortfall_bps",
+        "route_adverse_slippage_bps",
+        "route_slippage_basis",
+    ):
+        value = record.get(key)
+        if value is not None:
+            payload[key] = value
     paper_route_probe = _mapping(record.get("paper_route_probe"))
     if paper_route_probe and bool(paper_route_probe.get("eligible")):
         payload["paper_route_probe"] = dict(paper_route_probe)
