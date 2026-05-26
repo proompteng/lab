@@ -788,6 +788,18 @@ def _completion_blockers(gate: Mapping[str, Any]) -> list[str]:
 
 def _required_actions(blockers: Sequence[str], *, verdict: str) -> list[str]:
     actions: list[str] = []
+    if verdict == "waiting_for_runtime_window":
+        for blocker in blockers:
+            if blocker in {
+                "paper_route_session_window_not_open",
+                "paper_route_session_window_not_closed",
+                "paper_route_import_not_ready",
+            }:
+                _extend_unique(actions, ["wait_for_regular_session_runtime_window"])
+            elif blocker == "paper_route_session_settlement_pending":
+                _extend_unique(actions, ["wait_for_paper_route_settlement_grace"])
+        if actions:
+            return actions
     for blocker in blockers:
         if blocker in {
             "paper_route_session_window_not_open",

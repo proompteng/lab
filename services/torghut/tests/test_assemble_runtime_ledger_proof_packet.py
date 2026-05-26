@@ -597,6 +597,50 @@ class TestRuntimeLedgerProofPacket(TestCase):
             ]
         )
 
+    def test_waiting_packet_prioritizes_wait_action_over_drift_repair(
+        self,
+    ) -> None:
+        evidence = _paper_route_evidence(
+            import_ready=False,
+            import_blockers=["paper_route_session_window_not_open"],
+        )
+        plan = evidence["next_paper_route_runtime_window_targets"]
+        assert isinstance(plan, dict)
+        target = plan["targets"][0]
+        assert isinstance(target, dict)
+        target["drift_ok"] = "false"
+        target["drift_reason"] = "drift_live_promotion_ineligible"
+        target["runtime_window_import_health_gate"] = {
+            "schema_version": "torghut.runtime-window-import-health-gate.v1",
+            "dependency_quorum_decision": "allow",
+            "continuity_ok": "true",
+            "drift_ok": "false",
+            "drift_reason": "drift_live_promotion_ineligible",
+            "blockers": [],
+            "promotion_blockers": ["drift_checks_not_ok"],
+        }
+        target["runtime_window_import_health_gate_blockers"] = []
+
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            paper_route_evidence=evidence,
+            generated_at="2026-05-25T21:05:00+00:00",
+        )
+
+        self.assertEqual(result["verdict"], "waiting_for_runtime_window")
+        self.assertIn(
+            "drift_checks_not_ok",
+            result["promotion_authority"]["blocking_reasons"],
+        )
+        self.assertEqual(
+            result["required_actions"],
+            ["wait_for_regular_session_runtime_window"],
+        )
+        self.assertNotIn(
+            "repair_runtime_window_import_health_gate",
+            result["required_actions"],
+        )
+
     def test_packet_blocks_with_source_activity_audit_before_generic_import_missing(
         self,
     ) -> None:
