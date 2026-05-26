@@ -37,6 +37,7 @@ from scripts.import_hypothesis_runtime_windows import (
     _runtime_observation_authority_payload,
     _runtime_ledger_target_metadata_blockers,
     _runtime_ledger_tca_row_from_bucket,
+    _runtime_ledger_tca_materialization_metadata,
     _runtime_ledger_tca_rows_from_durable_buckets,
     _runtime_ledger_tca_rows_from_source_dsn,
     _runtime_ledger_tca_rows_from_artifacts,
@@ -1090,6 +1091,54 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(bucket["pnl_basis"], POST_COST_BASIS_RUNTIME_LEDGER)
         self.assertEqual(bucket["source_materialization"], "source_execution_lifecycle")
         self.assertTrue(_runtime_ledger_bucket_profit_proof_present(bucket))
+
+    def test_runtime_ledger_tca_materialization_metadata_separates_authority(
+        self,
+    ) -> None:
+        metadata = _runtime_ledger_tca_materialization_metadata(
+            [
+                {
+                    "authoritative": True,
+                    "authority_reason": "source_execution_runtime_ledger_materialized",
+                    "pnl_derivation": (
+                        "source_execution_lifecycle_materialized_runtime_ledger"
+                    ),
+                    "runtime_ledger_bucket": _complete_runtime_ledger_bucket(
+                        source_materialization="source_execution_lifecycle",
+                        authoritative=True,
+                    ),
+                },
+                {
+                    "authoritative": False,
+                    "authority_reason": (
+                        "execution_reconstruction_not_runtime_ledger_proof"
+                    ),
+                    "runtime_ledger_blockers": [
+                        "execution_reconstruction_not_runtime_ledger_proof"
+                    ],
+                    "runtime_ledger_bucket": _complete_runtime_ledger_bucket(
+                        pnl_basis=POST_COST_BASIS_EXECUTION_RECONSTRUCTION,
+                        blockers=["execution_reconstruction_not_runtime_ledger_proof"],
+                    ),
+                },
+            ]
+        )
+
+        self.assertEqual(metadata["runtime_ledger_tca_runtime_bucket_row_count"], 2)
+        self.assertEqual(metadata["runtime_ledger_tca_profit_proof_count"], 1)
+        self.assertEqual(metadata["runtime_ledger_tca_authoritative_bucket_count"], 1)
+        self.assertEqual(
+            metadata["runtime_ledger_source_execution_materialized_bucket_count"],
+            1,
+        )
+        self.assertEqual(
+            metadata["runtime_ledger_execution_reconstruction_bucket_count"],
+            1,
+        )
+        self.assertEqual(
+            metadata["runtime_ledger_materialization_blockers"],
+            ["execution_reconstruction_not_runtime_ledger_proof"],
+        )
 
     def test_build_realized_strategy_pnl_rows_normalizes_nested_runtime_payloads(
         self,

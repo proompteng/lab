@@ -7,6 +7,10 @@ on:
       - 'packages/**'
       - 'services/**'
 
+permissions:
+  contents: read
+  pull-requests: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -25,31 +29,51 @@ jobs:
       codex: ${{ steps.filter.outputs.codex }}
       discord: ${{ steps.filter.outputs.discord }}
     steps:
-      - uses: actions/checkout@v5
-      - uses: dorny/paths-filter@v3
+      - name: Check changed files
         id: filter
-        with:
-          filters: |
-            proompteng:
-              - 'apps/landing/**'
-            app:
-              - 'apps/app/**'
-            cms:
-              - 'apps/cms/**'
-            bonjour:
-              - 'services/bonjour/**'
-            docs:
-              - 'apps/docs/**'
-            kitty-krew:
-              - 'apps/kitty-krew/**'
-            reviseur:
-              - 'apps/reviseur/**'
-            codex:
-              - 'packages/codex/**'
-            discord:
-              - 'packages/discord/**'
-            packages:
-              - 'packages/**'
+        shell: bash
+        env:
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          changed_files="$(mktemp)"
+          page=1
+          while true; do
+            response="$(
+              curl -fsSL \
+                -H 'Accept: application/vnd.github+json' \
+                -H 'X-GitHub-Api-Version: 2022-11-28' \
+                "https://api.github.com/repos/${GH_REPO}/pulls/${PR_NUMBER}/files?per_page=100&page=${page}"
+            )"
+            count="$(jq 'length' <<< "${response}")"
+            if [ "${count}" -eq 0 ]; then
+              break
+            fi
+            jq -r '.[].filename' <<< "${response}" >> "${changed_files}"
+            page=$((page + 1))
+          done
+
+          output_flag() {
+            local name="$1"
+            local regex="$2"
+            local value=false
+            if grep -Eq "${regex}" "${changed_files}"; then
+              value=true
+            fi
+            echo "${name}=${value}" >> "$GITHUB_OUTPUT"
+          }
+
+          output_flag proompteng '^apps/landing/'
+          output_flag app '^apps/app/'
+          output_flag cms '^apps/cms/'
+          output_flag bonjour '^services/bonjour/'
+          output_flag docs '^apps/docs/'
+          output_flag kitty-krew '^apps/kitty-krew/'
+          output_flag reviseur '^apps/reviseur/'
+          output_flag codex '^packages/codex/'
+          output_flag discord '^packages/discord/'
 
   docs:
     needs: check_changed_files

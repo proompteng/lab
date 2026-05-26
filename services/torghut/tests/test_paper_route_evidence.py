@@ -1537,6 +1537,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
         window_end = datetime(2026, 5, 26, 20, tzinfo=timezone.utc)
         now = datetime(2026, 5, 26, 21, tzinfo=timezone.utc)
         strategy_name = "active-paper-route"
+        target_strategy_name = "69cf50e3-4815-47c2-b802-1efbaac09ecb"
         with Session(self.engine) as session:
             strategy = Strategy(
                 name=strategy_name,
@@ -1677,7 +1678,8 @@ class TestPaperRouteEvidenceAudit(TestCase):
                                 "candidate_id": "candidate-active-route",
                                 "observed_stage": "paper",
                                 "strategy_family": "microbar_pairs",
-                                "strategy_name": strategy_name,
+                                "strategy_name": target_strategy_name,
+                                "strategy_id": "active_paper_route@research",
                                 "account_label": "TORGHUT_SIM",
                                 "source_manifest_ref": "config/trading/hypotheses/h-active-route.json",
                                 "window_start": window_start.isoformat(),
@@ -1717,6 +1719,8 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertFalse(audit["target"]["final_promotion_allowed"])
         self.assertTrue(audit["target"]["source_promotion_allowed"])
         self.assertTrue(audit["target"]["source_final_promotion_allowed"])
+        self.assertEqual(audit["target"]["strategy_name"], target_strategy_name)
+        self.assertIn(strategy_name, audit["target"]["strategy_lookup_names"])
         self.assertFalse(audit["source_activity"]["missing"])
         self.assertEqual(audit["source_activity"]["decision_count"], 1)
         self.assertEqual(audit["source_activity"]["execution_count"], 1)
@@ -2193,6 +2197,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
                 "observed_stage": "paper",
                 "account_label": "paper",
                 "strategy_name": strategy_name,
+                "strategy_lookup_names": [strategy_name],
                 "strategy_family": "microbar_pairs",
             },
         )

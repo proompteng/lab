@@ -1291,6 +1291,23 @@ def _strategy_name_from_strategy_id(strategy_id: object) -> str | None:
     return base.replace("_", "-") if base else None
 
 
+def _strategy_lookup_names(*values: object) -> list[str]:
+    names: list[str] = []
+    for value in values:
+        raw_items: Sequence[object]
+        if isinstance(value, Sequence) and not isinstance(
+            value, (str, bytes, bytearray)
+        ):
+            raw_items = cast(Sequence[object], value)
+        else:
+            raw_items = (value,)
+        for raw_item in raw_items:
+            text = _safe_text(raw_item)
+            if text is not None and text not in names:
+                names.append(text)
+    return names
+
+
 def _hypothesis_manifest_ref(hypothesis_id: object) -> str | None:
     text = _safe_text(hypothesis_id)
     if text is None:
@@ -1328,7 +1345,15 @@ def _runtime_ledger_paper_probation_import_plan(
         hypothesis_id = _safe_text(candidate.get("hypothesis_id"))
         candidate_id = _safe_text(candidate.get("candidate_id"))
         strategy_family = _safe_text(candidate.get("strategy_family"))
+        strategy_id = _safe_text(candidate.get("strategy_id"))
+        candidate_strategy_name = _safe_text(candidate.get("strategy_name"))
         strategy_name = _runtime_ledger_paper_probation_strategy_name(candidate)
+        strategy_lookup_names = _strategy_lookup_names(
+            candidate.get("strategy_lookup_names"),
+            strategy_name,
+            candidate_strategy_name,
+            _strategy_name_from_strategy_id(strategy_id),
+        )
         account_label = _safe_text(candidate.get("account")) or "TORGHUT_SIM"
         window_start = _safe_text(candidate.get("bucket_started_at"))
         window_end = _safe_text(candidate.get("bucket_ended_at"))
@@ -1404,6 +1429,9 @@ def _runtime_ledger_paper_probation_import_plan(
             "observed_stage": "paper",
             "strategy_family": strategy_family,
             "strategy_name": strategy_name,
+            "strategy_id": strategy_id or "",
+            "runtime_strategy_name": strategy_name,
+            "strategy_lookup_names": strategy_lookup_names,
             "account_label": account_label,
             "source_dsn_env": _RUNTIME_LEDGER_PAPER_PROBATION_SOURCE_DSN_ENV,
             "dataset_snapshot_ref": dataset_snapshot_ref or "",

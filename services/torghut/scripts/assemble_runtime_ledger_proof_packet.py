@@ -702,6 +702,106 @@ def _runtime_import_authoritative_observation_count(payload: Mapping[str, Any]) 
     return count
 
 
+def _runtime_import_runtime_observations(
+    payload: Mapping[str, Any],
+) -> list[Mapping[str, Any]]:
+    observations: list[Mapping[str, Any]] = []
+    for item in _runtime_window_import_items(payload):
+        summary = _mapping(item.get("summary"))
+        observation = _mapping(summary.get("runtime_observation"))
+        if observation:
+            observations.append(observation)
+    return observations
+
+
+def _runtime_import_materialization_summary(
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    observations = _runtime_import_runtime_observations(payload)
+    source_kinds: list[str] = []
+    authority_reasons: list[str] = []
+    pnl_derivations: list[str] = []
+    materialization_blockers: list[str] = []
+    counts = {
+        "runtime_observation_count": len(observations),
+        "authoritative_observation_count": 0,
+        "runtime_ledger_profit_proof_count": 0,
+        "runtime_ledger_tca_row_count": 0,
+        "runtime_ledger_tca_runtime_bucket_row_count": 0,
+        "runtime_ledger_tca_authoritative_bucket_count": 0,
+        "runtime_ledger_source_execution_materialized_bucket_count": 0,
+        "runtime_ledger_execution_reconstruction_bucket_count": 0,
+        "runtime_ledger_source_bucket_profit_proof_count": 0,
+        "runtime_ledger_durable_bucket_profit_proof_count": 0,
+        "runtime_ledger_artifact_tca_row_count": 0,
+    }
+    profit_proof_authority_reasons = {
+        "runtime_ledger_profit_proof",
+        "runtime_ledger_profit_proof_present",
+    }
+    for observation in observations:
+        if observation.get("authoritative") is True:
+            counts["authoritative_observation_count"] += 1
+        authority_reason = _text(observation.get("authority_reason"))
+        tca_profit_proof_count = _int(
+            observation.get("runtime_ledger_tca_profit_proof_count")
+        )
+        source_profit_proof_count = _int(
+            observation.get("runtime_ledger_source_bucket_profit_proof_count")
+        )
+        durable_profit_proof_count = _int(
+            observation.get("runtime_ledger_durable_bucket_profit_proof_count")
+        )
+        authority_reason_implies_profit_proof = (
+            authority_reason in profit_proof_authority_reasons
+        )
+        profit_proof_count = max(
+            1
+            if _bool(observation.get("runtime_ledger_profit_proof_present"))
+            or authority_reason_implies_profit_proof
+            else 0,
+            tca_profit_proof_count,
+            source_profit_proof_count,
+            durable_profit_proof_count,
+        )
+        counts["runtime_ledger_profit_proof_count"] += profit_proof_count
+        for key in (
+            "runtime_ledger_tca_row_count",
+            "runtime_ledger_tca_runtime_bucket_row_count",
+            "runtime_ledger_tca_authoritative_bucket_count",
+            "runtime_ledger_source_execution_materialized_bucket_count",
+            "runtime_ledger_execution_reconstruction_bucket_count",
+            "runtime_ledger_source_bucket_profit_proof_count",
+            "runtime_ledger_durable_bucket_profit_proof_count",
+            "runtime_ledger_artifact_tca_row_count",
+        ):
+            counts[key] += _int(observation.get(key))
+        _extend_unique(source_kinds, [_text(observation.get("source_kind"))])
+        _extend_unique(authority_reasons, [authority_reason])
+        _extend_unique(
+            pnl_derivations,
+            _text_list(
+                observation.get("runtime_ledger_materialization_pnl_derivations")
+            ),
+        )
+        _extend_unique(
+            materialization_blockers,
+            _text_list(observation.get("runtime_ledger_materialization_blockers")),
+        )
+        _extend_unique(
+            materialization_blockers,
+            _text_list(observation.get("runtime_ledger_target_metadata_blockers")),
+        )
+    return {
+        "schema_version": "torghut.runtime-window-import-materialization-summary.v1",
+        **counts,
+        "source_kinds": source_kinds,
+        "authority_reasons": authority_reasons,
+        "pnl_derivations": pnl_derivations,
+        "blockers": materialization_blockers,
+    }
+
+
 def _first_identity(
     *,
     paper_targets: Sequence[Mapping[str, Any]],
@@ -810,6 +910,7 @@ def _required_actions(blockers: Sequence[str], *, verdict: str) -> list[str]:
             _extend_unique(actions, ["wait_for_paper_route_settlement_grace"])
         elif blocker in {
             "runtime_window_import_missing",
+            "runtime_window_import_runtime_ledger_materialization_missing",
             "runtime_ledger_bucket_missing",
             "paper_route_runtime_ledger_import_pending",
         }:
@@ -1085,6 +1186,12 @@ def build_runtime_ledger_proof_packet(
     authoritative_observation_count = _runtime_import_authoritative_observation_count(
         runtime_import
     )
+    materialization_summary = _runtime_import_materialization_summary(runtime_import)
+    runtime_import_materialization_ok = not runtime_import_due or (
+        _int(materialization_summary.get("authoritative_observation_count")) > 0
+        and _int(materialization_summary.get("runtime_ledger_profit_proof_count")) > 0
+        and not _text_list(materialization_summary.get("blockers"))
+    )
     runtime_import_ok = (
         runtime_import_due
         and bool(runtime_import)
@@ -1106,6 +1213,7 @@ def build_runtime_ledger_proof_packet(
             "target_count": len(runtime_import_items),
             "runtime_import_due": runtime_import_due,
             "authoritative_observation_count": authoritative_observation_count,
+            "materialization": materialization_summary,
             "proof_blockers": runtime_import_blockers,
             "import_audit_state": _text(import_audit.get("state"), "missing"),
             "import_audit_blockers": import_audit_blockers,
@@ -1127,6 +1235,29 @@ def build_runtime_ledger_proof_packet(
         _extend_unique(blockers, import_audit_blockers)
     elif runtime_import_due and not runtime_import_ok:
         _extend_unique(blockers, ["runtime_window_import_missing"])
+    materialization_blockers = _text_list(materialization_summary.get("blockers"))
+    _check(
+        checks,
+        "runtime_window_import_materialization",
+        passed=runtime_import_materialization_ok,
+        observed=materialization_summary,
+        expected="runtime-window import contains at least one authoritative runtime-ledger profit-proof observation",
+        blockers=materialization_blockers
+        or (
+            []
+            if runtime_import_materialization_ok or not runtime_import_due
+            else ["runtime_window_import_runtime_ledger_materialization_missing"]
+        ),
+        status=None
+        if runtime_import_due
+        else "waiting_for_paper_route_runtime_window_import",
+    )
+    if runtime_import_due and not runtime_import_materialization_ok:
+        _extend_unique(
+            blockers,
+            materialization_blockers
+            or ["runtime_window_import_runtime_ledger_materialization_missing"],
+        )
 
     completion = completion_status or {}
     live_scale_gate = _completion_live_scale_gate(completion)
@@ -1159,7 +1290,7 @@ def build_runtime_ledger_proof_packet(
         ),
         status=None if runtime_import_due else deferred_until_runtime_import_due,
     )
-    if completion_gate_blockers:
+    if runtime_import_due and completion_gate_blockers:
         _extend_unique(blockers, completion_gate_blockers)
     elif runtime_import_due and not gate_satisfied:
         _extend_unique(blockers, ["doc29_live_scale_gate_not_satisfied"])
@@ -1459,6 +1590,7 @@ def build_runtime_ledger_proof_packet(
                 "target_count": len(runtime_import_items),
                 "proof_blockers": runtime_import_blockers,
                 "authoritative_observation_count": authoritative_observation_count,
+                "materialization": materialization_summary,
                 "lineage": runtime_import_lineage,
             },
             "completion_live_scale": {

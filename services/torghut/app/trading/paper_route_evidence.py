@@ -101,6 +101,31 @@ def _safe_text(value: object) -> str | None:
     return text or None
 
 
+def _strategy_name_from_strategy_id(strategy_id: object) -> str | None:
+    text = _safe_text(strategy_id)
+    if text is None:
+        return None
+    base = text.split("@", 1)[0].strip()
+    return base.replace("_", "-") if base else None
+
+
+def _strategy_lookup_names(*values: object) -> list[str]:
+    names: list[str] = []
+    for value in values:
+        raw_items: Sequence[object]
+        if isinstance(value, Sequence) and not isinstance(
+            value, (str, bytes, bytearray)
+        ):
+            raw_items = cast(Sequence[object], value)
+        else:
+            raw_items = (value,)
+        for raw_item in raw_items:
+            text = _safe_text(raw_item)
+            if text is not None and text not in names:
+                names.append(text)
+    return names
+
+
 def _health_gate_bool_text(value: object) -> str | None:
     if isinstance(value, bool):
         return "true" if value else "false"
@@ -525,12 +550,26 @@ def _target_identity(
         target.get("final_promotion_allowed")
         or target.get("final_promotion_authorized")
     )
+    strategy_name = _safe_text(target.get("strategy_name"))
+    strategy_id = _safe_text(target.get("strategy_id"))
+    runtime_strategy_name = (
+        _safe_text(target.get("runtime_strategy_name")) or strategy_name
+    )
+    strategy_lookup_names = _strategy_lookup_names(
+        target.get("strategy_lookup_names"),
+        runtime_strategy_name,
+        strategy_name,
+        _strategy_name_from_strategy_id(strategy_id),
+    )
     return {
         "hypothesis_id": _safe_text(target.get("hypothesis_id")),
         "candidate_id": _safe_text(target.get("candidate_id")),
         "observed_stage": _safe_text(target.get("observed_stage")) or "paper",
         "strategy_family": _safe_text(target.get("strategy_family")),
-        "strategy_name": _safe_text(target.get("strategy_name")),
+        "strategy_name": strategy_name,
+        "strategy_id": strategy_id,
+        "runtime_strategy_name": runtime_strategy_name,
+        "strategy_lookup_names": strategy_lookup_names,
         "account_label": _safe_text(target.get("account_label")),
         "source_kind": _safe_text(target.get("source_kind")),
         "source_dsn_env": _safe_text(target.get("source_dsn_env")),
@@ -794,6 +833,16 @@ def _next_paper_route_runtime_window_targets(
         candidate_id = _safe_text(target.get("candidate_id"))
         strategy_family = _safe_text(target.get("strategy_family"))
         strategy_name = _safe_text(target.get("strategy_name"))
+        strategy_id = _safe_text(target.get("strategy_id"))
+        runtime_strategy_name = (
+            _safe_text(target.get("runtime_strategy_name")) or strategy_name
+        )
+        strategy_lookup_names = _strategy_lookup_names(
+            target.get("strategy_lookup_names"),
+            runtime_strategy_name,
+            strategy_name,
+            _strategy_name_from_strategy_id(strategy_id),
+        )
         source_manifest_ref = _safe_text(target.get("source_manifest_ref"))
         missing = [
             field
@@ -845,6 +894,9 @@ def _next_paper_route_runtime_window_targets(
             "observed_stage": "paper",
             "strategy_family": strategy_family,
             "strategy_name": strategy_name,
+            "strategy_id": strategy_id or "",
+            "runtime_strategy_name": runtime_strategy_name or "",
+            "strategy_lookup_names": strategy_lookup_names,
             "account_label": PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
             "source_account_label": source_account_label or "",
             "source_dsn_env": "SIM_DB_DSN",
@@ -1011,6 +1063,7 @@ def _strategy_source_activity(
     session: Session,
     *,
     strategy_name: str | None,
+    strategy_lookup_names: Sequence[str] | None = None,
     account_label: str | None,
     symbols: Sequence[str],
     window_start: datetime,
@@ -1019,9 +1072,11 @@ def _strategy_source_activity(
     symbol_filters = [
         str(item).strip().upper() for item in symbols if str(item).strip()
     ]
-    if strategy_name is None:
+    strategy_filters = _strategy_lookup_names(strategy_name, strategy_lookup_names)
+    if not strategy_filters:
         return {
             "strategy_name": None,
+            "strategy_lookup_names": [],
             "account_label": account_label,
             "symbols": symbol_filters,
             "decision_count": 0,
@@ -1038,7 +1093,7 @@ def _strategy_source_activity(
     decision_stmt = (
         select(TradeDecision)
         .join(Strategy, TradeDecision.strategy_id == Strategy.id)
-        .where(Strategy.name == strategy_name)
+        .where(Strategy.name.in_(strategy_filters))
         .where(TradeDecision.created_at >= window_start)
         .where(TradeDecision.created_at <= window_end)
     )
@@ -1082,7 +1137,7 @@ def _strategy_source_activity(
         tca_stmt = (
             select(ExecutionTCAMetric)
             .join(Strategy, ExecutionTCAMetric.strategy_id == Strategy.id)
-            .where(Strategy.name == strategy_name)
+            .where(Strategy.name.in_(strategy_filters))
             .where(ExecutionTCAMetric.computed_at >= window_start)
             .where(ExecutionTCAMetric.computed_at <= window_end)
         )
@@ -1117,6 +1172,7 @@ def _strategy_source_activity(
         missing_reasons.append("source_tca_missing")
     return {
         "strategy_name": strategy_name,
+        "strategy_lookup_names": strategy_filters,
         "account_label": account_label,
         "symbols": symbol_filters,
         "decision_count": decision_count,
@@ -1183,10 +1239,12 @@ def _runtime_ledger_summary(
     observed_stage: str | None,
     account_label: str | None,
     strategy_name: str | None,
+    strategy_lookup_names: Sequence[str] | None = None,
     strategy_family: str | None,
     window_start: datetime,
     window_end: datetime,
 ) -> dict[str, object]:
+    strategy_filters = _strategy_lookup_names(strategy_name, strategy_lookup_names)
     stmt = select(StrategyRuntimeLedgerBucket).order_by(
         StrategyRuntimeLedgerBucket.bucket_ended_at.desc(),
         StrategyRuntimeLedgerBucket.created_at.desc(),
@@ -1203,9 +1261,9 @@ def _runtime_ledger_summary(
         stmt = stmt.where(StrategyRuntimeLedgerBucket.observed_stage == observed_stage)
     if account_label:
         stmt = stmt.where(StrategyRuntimeLedgerBucket.account_label == account_label)
-    if strategy_name:
+    if strategy_filters:
         stmt = stmt.where(
-            StrategyRuntimeLedgerBucket.runtime_strategy_name == strategy_name
+            StrategyRuntimeLedgerBucket.runtime_strategy_name.in_(strategy_filters)
         )
     if strategy_family:
         stmt = stmt.where(
@@ -1243,6 +1301,7 @@ def _runtime_ledger_summary(
             "observed_stage": observed_stage,
             "account_label": account_label,
             "strategy_name": strategy_name,
+            "strategy_lookup_names": strategy_filters,
             "strategy_family": strategy_family,
         },
         "latest_bucket_ended_at": _isoformat(rows[0].bucket_ended_at if rows else None),
@@ -1407,9 +1466,15 @@ def _target_audit(
     )
     hypothesis_id = cast(str | None, target.get("hypothesis_id"))
     candidate_id = cast(str | None, target.get("candidate_id"))
+    strategy_lookup_names = [
+        str(item)
+        for item in _as_sequence(target.get("strategy_lookup_names"))
+        if str(item).strip()
+    ]
     source_activity = _strategy_source_activity(
         session,
         strategy_name=cast(str | None, target.get("strategy_name")),
+        strategy_lookup_names=strategy_lookup_names,
         account_label=cast(str | None, target.get("account_label")),
         symbols=_target_probe_symbols(target, probe),
         window_start=window_start,
@@ -1422,6 +1487,7 @@ def _target_audit(
         observed_stage=cast(str | None, target.get("observed_stage")),
         account_label=cast(str | None, target.get("account_label")),
         strategy_name=cast(str | None, target.get("strategy_name")),
+        strategy_lookup_names=strategy_lookup_names,
         strategy_family=cast(str | None, target.get("strategy_family")),
         window_start=window_start,
         window_end=window_end,

@@ -657,6 +657,82 @@ def _runtime_observation_authority_payload(
     }
 
 
+def _runtime_ledger_tca_materialization_metadata(
+    tca_rows: Sequence[Mapping[str, object]],
+) -> dict[str, object]:
+    bucket_row_count = 0
+    profit_proof_count = 0
+    authoritative_bucket_count = 0
+    source_execution_materialized_count = 0
+    execution_reconstruction_count = 0
+    authority_reasons: list[str] = []
+    pnl_derivations: list[str] = []
+    source_materializations: list[str] = []
+    blockers: list[str] = []
+    for row in tca_rows:
+        bucket = row.get("runtime_ledger_bucket")
+        if not isinstance(bucket, Mapping):
+            continue
+        bucket_payload = {str(key): value for key, value in bucket.items()}
+        bucket_row_count += 1
+        if _runtime_ledger_bucket_profit_proof_present(bucket_payload):
+            profit_proof_count += 1
+        if bool(row.get("authoritative")) or bool(bucket_payload.get("authoritative")):
+            authoritative_bucket_count += 1
+        authority_reason = _text_or_none(
+            row.get("authority_reason") or bucket_payload.get("authority_reason")
+        )
+        if authority_reason is not None:
+            authority_reasons.append(authority_reason)
+        pnl_derivation = _text_or_none(
+            row.get("pnl_derivation") or bucket_payload.get("pnl_derivation")
+        )
+        if pnl_derivation is not None:
+            pnl_derivations.append(pnl_derivation)
+        source_materialization = _text_or_none(
+            bucket_payload.get("source_materialization")
+        )
+        if source_materialization is not None:
+            source_materializations.append(source_materialization)
+        if (
+            authority_reason == "source_execution_runtime_ledger_materialized"
+            or pnl_derivation
+            == "source_execution_lifecycle_materialized_runtime_ledger"
+            or source_materialization == "source_execution_lifecycle"
+        ):
+            source_execution_materialized_count += 1
+        if authority_reason == "execution_reconstruction_not_runtime_ledger_proof":
+            execution_reconstruction_count += 1
+        for blocker_source in (
+            row.get("runtime_ledger_blockers"),
+            row.get("promotion_blocker"),
+            bucket_payload.get("blockers"),
+        ):
+            blockers.extend(_metadata_text_list(blocker_source))
+    return {
+        "runtime_ledger_tca_row_count": len(tca_rows),
+        "runtime_ledger_tca_runtime_bucket_row_count": bucket_row_count,
+        "runtime_ledger_tca_profit_proof_count": profit_proof_count,
+        "runtime_ledger_tca_authoritative_bucket_count": authoritative_bucket_count,
+        "runtime_ledger_source_execution_materialized_bucket_count": (
+            source_execution_materialized_count
+        ),
+        "runtime_ledger_execution_reconstruction_bucket_count": (
+            execution_reconstruction_count
+        ),
+        "runtime_ledger_materialization_authority_reasons": sorted(
+            dict.fromkeys(authority_reasons)
+        ),
+        "runtime_ledger_materialization_pnl_derivations": sorted(
+            dict.fromkeys(pnl_derivations)
+        ),
+        "runtime_ledger_source_materializations": sorted(
+            dict.fromkeys(source_materializations)
+        ),
+        "runtime_ledger_materialization_blockers": sorted(dict.fromkeys(blockers)),
+    }
+
+
 def _strategy_name_candidates(*values: str | None) -> list[str]:
     candidates: list[str] = []
     for value in values:
@@ -853,9 +929,13 @@ def _build_realized_strategy_pnl_rows(
             row["post_cost_expectancy_basis"] = POST_COST_BASIS_EXECUTION_RECONSTRUCTION
             row["post_cost_promotion_eligible"] = False
             row["authoritative"] = False
-            row["authority_reason"] = "execution_reconstruction_not_runtime_ledger_proof"
+            row["authority_reason"] = (
+                "execution_reconstruction_not_runtime_ledger_proof"
+            )
             row["pnl_derivation"] = "execution_reconstructed_from_execution_rows"
-            row["promotion_blocker"] = "execution_reconstruction_not_runtime_ledger_proof"
+            row["promotion_blocker"] = (
+                "execution_reconstruction_not_runtime_ledger_proof"
+            )
             blockers = list(row.get("runtime_ledger_blockers") or [])
             if "execution_reconstruction_not_runtime_ledger_proof" not in blockers:
                 blockers.append("execution_reconstruction_not_runtime_ledger_proof")
@@ -1967,6 +2047,7 @@ def main() -> int:
             source_kind=source_kind,
             tca_rows=tca_rows,
         ),
+        **_runtime_ledger_tca_materialization_metadata(tca_rows),
         "observed_stage": args.observed_stage,
         "evidence_provenance": evidence_provenance,
         "source_kind": source_kind,

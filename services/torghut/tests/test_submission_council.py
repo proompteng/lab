@@ -735,6 +735,10 @@ class TestSubmissionCouncil(TestCase):
         self.assertEqual(target["observed_stage"], "paper")
         self.assertEqual(target["strategy_family"], "microbar_cross_sectional_pairs")
         self.assertEqual(target["strategy_name"], "microbar-pairs-vwap-cap-safe")
+        self.assertEqual(
+            target["runtime_strategy_name"], "microbar-pairs-vwap-cap-safe"
+        )
+        self.assertIn("microbar-pairs-vwap-cap-safe", target["strategy_lookup_names"])
         self.assertEqual(target["account_label"], "TORGHUT_SIM")
         self.assertEqual(
             target["source_dsn_env"], "TORGHUT_DURABLE_RUNTIME_LEDGER_SOURCE_DSN"
@@ -789,6 +793,15 @@ class TestSubmissionCouncil(TestCase):
         self.assertEqual(plan["skipped_target_count"], 1)
         target = plan["targets"][0]
         self.assertEqual(target["strategy_name"], "microbar-cross-sectional-pairs-v1")
+        self.assertEqual(
+            target["strategy_id"], "microbar_cross_sectional_pairs_v1@research"
+        )
+        self.assertEqual(
+            target["runtime_strategy_name"], "microbar-cross-sectional-pairs-v1"
+        )
+        self.assertEqual(
+            target["strategy_lookup_names"], ["microbar-cross-sectional-pairs-v1"]
+        )
         self.assertEqual(
             target["source_manifest_ref"],
             "config/trading/hypotheses/h-fallback-01.json",
