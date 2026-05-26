@@ -1,11 +1,13 @@
 #!/usr/bin/env python
-"""Assemble the Torghut runtime-ledger promotion proof packet.
+"""Assemble the Torghut runtime-ledger proof packet.
 
 The packet is deliberately stricter than a research scorecard. It only grants
-promotion authority when live status, paper-route runtime-window import output,
-and doc29 runtime-ledger completion evidence all agree on post-cost ledger
-proof. Discovery/replay artifacts can be included as lineage, but they do not
-make the packet promotable by themselves.
+post-cost proof authority when paper-route runtime-window import output and
+doc29 runtime-ledger completion evidence agree on ledger proof. Capital
+promotion authority stays separate so disabled submit lanes or shadow promotion
+certificates cannot make valid proof look absent. Discovery/replay artifacts can
+be included as lineage, but they do not make the packet promotable by
+themselves.
 """
 
 from __future__ import annotations
@@ -34,6 +36,28 @@ STATUS_ENDPOINT = "/trading/status"
 PAPER_ROUTE_EVIDENCE_ENDPOINT = "/trading/paper-route-evidence"
 COMPLETION_DOC29_ENDPOINT = "/trading/completion/doc29"
 ARTIFACT_SCHEMA_VERSION = "torghut.runtime-ledger-proof-packet-artifact.v1"
+CAPITAL_PROMOTION_STATUS_BLOCKERS = frozenset(
+    {
+        "alpha_hypothesis_not_promotion_eligible",
+        "alpha_hypothesis_shadow_only",
+        "alpha_readiness_not_promotion_eligible",
+        "drift_checks_not_ok",
+        "hypothesis_window_evidence_stale",
+        "paper_probation_evidence_collection_only",
+        "post_cost_expectancy_below_manifest_threshold",
+        "promotion_certificate_not_live_runtime",
+        "promotion_certificate_shadow_only",
+        "promotion_decision_not_allowed",
+        "runtime_ledger_stage_not_live",
+        "sample_count_below_canary_minimum",
+        "simple_submit_disabled",
+    }
+)
+CAPITAL_PROMOTION_STATUS_BLOCKER_PREFIXES = (
+    "alpha_",
+    "promotion_",
+    "paper_probation_",
+)
 
 
 class _ObjectStoreClient(Protocol):
@@ -728,6 +752,32 @@ def _status_blockers(status: Mapping[str, Any]) -> list[str]:
     return blockers
 
 
+def _is_capital_promotion_status_blocker(blocker: str) -> bool:
+    if blocker in CAPITAL_PROMOTION_STATUS_BLOCKERS:
+        return True
+    return any(
+        blocker.startswith(prefix)
+        for prefix in CAPITAL_PROMOTION_STATUS_BLOCKER_PREFIXES
+    )
+
+
+def _status_gate_blocker_summary(status: Mapping[str, Any]) -> dict[str, list[str]]:
+    raw_blockers = _status_blockers(status)
+    capital_blockers = [
+        blocker
+        for blocker in raw_blockers
+        if _is_capital_promotion_status_blocker(blocker)
+    ]
+    proof_blockers = [
+        blocker for blocker in raw_blockers if blocker not in capital_blockers
+    ]
+    return {
+        "raw_blockers": raw_blockers,
+        "proof_blockers": proof_blockers,
+        "capital_promotion_blockers": capital_blockers,
+    }
+
+
 def _completion_blockers(gate: Mapping[str, Any]) -> list[str]:
     blockers = _text_list(gate.get("blocking_reasons"))
     blocked_reason = _text(gate.get("blocked_reason"))
@@ -838,13 +888,23 @@ def build_runtime_ledger_proof_packet(
     blockers: list[str] = []
     generated_at = generated_at or _utc_now()
 
-    live_blockers = _status_blockers(status)
+    status_gate = _status_gate_blocker_summary(status)
+    raw_live_blockers = status_gate["raw_blockers"]
+    live_blockers = status_gate["proof_blockers"]
+    capital_status_blockers = status_gate["capital_promotion_blockers"]
     _check(
         checks,
         "live_status_gate",
         passed=not live_blockers,
-        observed=live_blockers,
-        expected="no live submission gate or proof-floor blockers",
+        observed={
+            "proof_blockers": live_blockers,
+            "capital_promotion_blockers": capital_status_blockers,
+            "raw_blockers": raw_live_blockers,
+        },
+        expected=(
+            "no live runtime/proof blockers; capital promotion blockers are "
+            "reported separately"
+        ),
         blockers=live_blockers,
     )
     _extend_unique(blockers, live_blockers)
@@ -1257,32 +1317,70 @@ def build_runtime_ledger_proof_packet(
     _extend_unique(blockers, risk_blockers)
 
     failed_checks = [key for key, value in checks.items() if not value["passed"]]
+    post_cost_proof_allowed = not failed_checks
+    capital_promotion_allowed = post_cost_proof_allowed and not capital_status_blockers
+    capital_promotion_failed_checks = (
+        ["capital_promotion_gate"] if capital_status_blockers else []
+    )
+    promotion_failed_checks = list(failed_checks)
+    _extend_unique(promotion_failed_checks, capital_promotion_failed_checks)
+    promotion_blockers = list(blockers)
+    _extend_unique(promotion_blockers, capital_status_blockers)
     waiting_blockers = {
         "paper_route_session_window_not_open",
         "paper_route_session_window_not_closed",
         "paper_route_session_settlement_pending",
         "paper_route_import_not_ready",
     }
-    if not failed_checks:
+    if post_cost_proof_allowed and not capital_status_blockers:
         verdict = "promotion_authority_allowed"
         reason = "runtime_ledger_live_paper_post_cost_proof_satisfied"
+        promotion_reason = reason
+        capital_reason = "live_capital_promotion_gate_clear"
+    elif post_cost_proof_allowed:
+        verdict = "post_cost_proof_authority_allowed_capital_promotion_blocked"
+        reason = (
+            "runtime_ledger_live_paper_post_cost_proof_satisfied_"
+            "capital_promotion_blocked"
+        )
+        promotion_reason = "live_capital_promotion_gate_blocked"
+        capital_reason = "live_capital_promotion_gate_blocked"
     elif set(blockers).issubset(waiting_blockers):
         verdict = "waiting_for_runtime_window"
         reason = "paper_route_runtime_window_not_importable_yet"
+        promotion_reason = reason
+        capital_reason = "post_cost_proof_not_satisfied"
     else:
         verdict = "blocked"
         reason = "runtime_ledger_live_paper_post_cost_proof_blocked"
+        promotion_reason = reason
+        capital_reason = "post_cost_proof_not_satisfied"
 
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": generated_at,
         "verdict": verdict,
-        "ok": verdict == "promotion_authority_allowed",
-        "promotion_authority": {
-            "allowed": verdict == "promotion_authority_allowed",
+        "ok": post_cost_proof_allowed,
+        "post_cost_proof_authority": {
+            "allowed": post_cost_proof_allowed,
             "reason": reason,
             "blocking_reasons": blockers,
             "failed_checks": failed_checks,
+        },
+        "capital_promotion_authority": {
+            "allowed": capital_promotion_allowed,
+            "reason": capital_reason,
+            "blocking_reasons": capital_status_blockers,
+            "proof_prerequisite_blocking_reasons": blockers,
+            "failed_checks": capital_promotion_failed_checks
+            if post_cost_proof_allowed
+            else promotion_failed_checks,
+        },
+        "promotion_authority": {
+            "allowed": capital_promotion_allowed,
+            "reason": promotion_reason,
+            "blocking_reasons": promotion_blockers,
+            "failed_checks": promotion_failed_checks,
         },
         "target": {
             "min_runtime_ledger_net_pnl_after_costs": _decimal_text(
@@ -1307,13 +1405,15 @@ def build_runtime_ledger_proof_packet(
             runtime_import=runtime_import,
             completion_gate=live_scale_gate,
         ),
-        "required_actions": _required_actions(blockers, verdict=verdict),
+        "required_actions": _required_actions(promotion_blockers, verdict=verdict),
         "checks": checks,
         "evidence": {
             "status": {
                 "mode": status.get("mode"),
                 "running": status.get("running"),
                 "live_status_blockers": live_blockers,
+                "capital_promotion_blockers": capital_status_blockers,
+                "raw_live_status_blockers": raw_live_blockers,
             },
             "paper_route_target_plan": {
                 "schema_version": plan.get("schema_version"),
