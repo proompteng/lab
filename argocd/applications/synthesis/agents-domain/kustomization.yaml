@@ -1,0 +1,9 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: agents
+resources:
+  - synthesis-deep-alpha-agentprovider.yaml
+  - synthesis-deep-alpha-agent.yaml
+  - synthesis-deep-alpha-implspec.yaml
+  - synthesis-deep-alpha-agentrun-template.yaml
+  - synthesis-deep-alpha-schedule.yaml

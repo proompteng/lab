@@ -1,0 +1,13 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: Agent
+metadata:
+  name: synthesis-deep-alpha-agent
+spec:
+  providerRef:
+    name: synthesis-deep-alpha
+  security:
+    allowedSecrets:
+      - codex-auth
+      - synthesis-env
+    allowedServiceAccounts:
+      - agents-sa
