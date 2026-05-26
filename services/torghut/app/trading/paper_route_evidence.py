@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from ..models import (
     Execution,
     ExecutionTCAMetric,
+    RejectedSignalOutcomeEvent,
     Strategy,
     StrategyHypothesisMetricWindow,
     StrategyPromotionDecision,
@@ -176,6 +177,12 @@ def _decimal_text(value: object) -> str:
     if "." not in text:
         return text
     return text.rstrip("0").rstrip(".") or "0"
+
+
+def _optional_decimal_text(value: object) -> str | None:
+    if value is None:
+        return None
+    return _decimal_text(value)
 
 
 def _isoformat(value: datetime | None) -> str | None:
@@ -1191,6 +1198,89 @@ def _strategy_source_activity(
     }
 
 
+def _rejected_signal_activity(
+    session: Session,
+    *,
+    account_label: str | None,
+    symbols: Sequence[str],
+    window_start: datetime,
+    window_end: datetime,
+) -> dict[str, object]:
+    symbol_filters = [
+        str(item).strip().upper() for item in symbols if str(item).strip()
+    ]
+    stmt = (
+        select(RejectedSignalOutcomeEvent)
+        .where(RejectedSignalOutcomeEvent.event_ts >= window_start)
+        .where(RejectedSignalOutcomeEvent.event_ts <= window_end)
+    )
+    if account_label:
+        stmt = stmt.where(RejectedSignalOutcomeEvent.account_label == account_label)
+    if symbol_filters:
+        stmt = stmt.where(
+            func.upper(RejectedSignalOutcomeEvent.symbol).in_(symbol_filters)
+        )
+    rows = list(
+        session.execute(
+            stmt.order_by(
+                RejectedSignalOutcomeEvent.event_ts.desc(),
+                RejectedSignalOutcomeEvent.created_at.desc(),
+            ).limit(500)
+        ).scalars()
+    )
+    reason_counts: dict[str, int] = {}
+    symbol_reason_counts: dict[tuple[str, str], int] = {}
+    max_spread_bps: Decimal | None = None
+    for row in rows:
+        reason = str(row.reject_reason or "unknown").strip() or "unknown"
+        symbol = str(row.symbol or "").strip().upper()
+        reason_counts[reason] = reason_counts.get(reason, 0) + 1
+        symbol_reason_counts[(symbol, reason)] = (
+            symbol_reason_counts.get((symbol, reason), 0) + 1
+        )
+        spread = _safe_decimal(row.spread_bps)
+        if spread > 0 and (max_spread_bps is None or spread > max_spread_bps):
+            max_spread_bps = spread
+    blocking_reasons: list[str] = []
+    if rows:
+        blocking_reasons.append("source_signal_rejected_by_quote_quality")
+        blocking_reasons.extend(
+            f"source_reject_{reason}" for reason in sorted(reason_counts) if reason
+        )
+    latest_events = [
+        {
+            "event_id": row.event_id,
+            "symbol": str(row.symbol or "").strip().upper(),
+            "event_ts": _isoformat(row.event_ts),
+            "timeframe": row.timeframe,
+            "reject_reason": row.reject_reason,
+            "spread_bps": _optional_decimal_text(row.spread_bps),
+            "jump_bps": _optional_decimal_text(row.jump_bps),
+            "outcome_label_status": row.outcome_label_status,
+            "counterfactual_required": bool(row.counterfactual_required),
+        }
+        for row in rows[:10]
+    ]
+    return {
+        "account_label": account_label,
+        "symbols": symbol_filters,
+        "event_count": len(rows),
+        "reason_counts": [
+            {"reason": reason, "count": count}
+            for reason, count in sorted(reason_counts.items())
+        ],
+        "symbol_reason_counts": [
+            {"symbol": symbol, "reason": reason, "count": count}
+            for (symbol, reason), count in sorted(symbol_reason_counts.items())
+        ],
+        "latest_events": latest_events,
+        "last_rejected_at": _isoformat(rows[0].event_ts if rows else None),
+        "max_spread_bps": _optional_decimal_text(max_spread_bps),
+        "blocking_reasons": blocking_reasons,
+        "missing": not bool(rows),
+    }
+
+
 def _target_filters(
     stmt: Any,
     model: Any,
@@ -1400,6 +1490,7 @@ def _readiness_blockers(
     target: Mapping[str, object],
     probe: Mapping[str, object],
     source_activity: Mapping[str, object],
+    rejected_signal_activity: Mapping[str, object],
     runtime_ledger: Mapping[str, object],
     hypothesis_windows: Mapping[str, object],
     promotion_decisions: Mapping[str, object],
@@ -1435,6 +1526,12 @@ def _readiness_blockers(
         for item in _as_sequence(source_activity.get("missing_reasons"))
         if str(item).strip()
     )
+    if bool(source_activity.get("missing")):
+        blockers.update(
+            str(item).strip()
+            for item in _as_sequence(rejected_signal_activity.get("blocking_reasons"))
+            if str(item).strip()
+        )
     if _safe_int(runtime_ledger.get("bucket_count")) <= 0:
         blockers.add("runtime_ledger_bucket_missing")
     if _safe_int(runtime_ledger.get("evidence_grade_bucket_count")) <= 0:
@@ -1480,6 +1577,13 @@ def _target_audit(
         window_start=window_start,
         window_end=window_end,
     )
+    rejected_signal_activity = _rejected_signal_activity(
+        session,
+        account_label=cast(str | None, target.get("account_label")),
+        symbols=_target_probe_symbols(target, probe),
+        window_start=window_start,
+        window_end=window_end,
+    )
     runtime_ledger = _runtime_ledger_summary(
         session,
         hypothesis_id=hypothesis_id,
@@ -1508,6 +1612,7 @@ def _target_audit(
         target=target,
         probe=probe,
         source_activity=source_activity,
+        rejected_signal_activity=rejected_signal_activity,
         runtime_ledger=runtime_ledger,
         hypothesis_windows=hypothesis_windows,
         promotion_decisions=promotion_decisions,
@@ -1524,6 +1629,7 @@ def _target_audit(
             "end": _isoformat(window_end),
         },
         "source_activity": source_activity,
+        "rejected_signal_activity": rejected_signal_activity,
         "runtime_ledger": runtime_ledger,
         "hypothesis_windows": hypothesis_windows,
         "promotion_decisions": promotion_decisions,
@@ -1564,8 +1670,15 @@ def _runtime_window_import_audit(
         {
             str(reason).strip()
             for audit in next_target_audits
-            for reason in _as_sequence(
-                _as_mapping(audit.get("source_activity")).get("missing_reasons")
+            for reason in (
+                *_as_sequence(
+                    _as_mapping(audit.get("source_activity")).get("missing_reasons")
+                ),
+                *_as_sequence(
+                    _as_mapping(audit.get("rejected_signal_activity")).get(
+                        "blocking_reasons"
+                    )
+                ),
             )
             if str(reason).strip()
         }
@@ -1585,6 +1698,9 @@ def _runtime_window_import_audit(
     raw_source_counts = _runtime_window_target_counts(target_audits)
     selected_target_counts = _runtime_window_target_counts(next_target_audits)
     targets_with_source_activity = selected_target_counts["source_activity"]
+    targets_with_rejected_signal_activity = selected_target_counts[
+        "rejected_signal_activity"
+    ]
     targets_with_runtime_ledger = selected_target_counts["runtime_ledger"]
     targets_with_evidence_grade_runtime_ledger = selected_target_counts[
         "evidence_grade_runtime_ledger"
@@ -1645,6 +1761,9 @@ def _runtime_window_import_audit(
                 next_targets.get("target_count")
             ),
             "targets_with_source_activity": targets_with_source_activity,
+            "targets_with_rejected_signal_activity": (
+                targets_with_rejected_signal_activity
+            ),
             "targets_with_runtime_ledger": targets_with_runtime_ledger,
             "targets_with_evidence_grade_runtime_ledger": (
                 targets_with_evidence_grade_runtime_ledger
@@ -1652,6 +1771,9 @@ def _runtime_window_import_audit(
             "targets_with_promotion_decision": targets_with_promotion_decision,
             "raw_source_plan_targets_with_source_activity": raw_source_counts[
                 "source_activity"
+            ],
+            "raw_source_plan_targets_with_rejected_signal_activity": raw_source_counts[
+                "rejected_signal_activity"
             ],
             "raw_source_plan_targets_with_runtime_ledger": raw_source_counts[
                 "runtime_ledger"
@@ -1688,6 +1810,15 @@ def _runtime_window_target_counts(
         int(_safe_int(_as_mapping(audit.get("runtime_ledger")).get("bucket_count")) > 0)
         for audit in target_audits
     )
+    targets_with_rejected_signal_activity = sum(
+        int(
+            _safe_int(
+                _as_mapping(audit.get("rejected_signal_activity")).get("event_count")
+            )
+            > 0
+        )
+        for audit in target_audits
+    )
     targets_with_evidence_grade_runtime_ledger = sum(
         int(
             _safe_int(
@@ -1710,6 +1841,7 @@ def _runtime_window_target_counts(
     )
     return {
         "source_activity": targets_with_source_activity,
+        "rejected_signal_activity": targets_with_rejected_signal_activity,
         "runtime_ledger": targets_with_runtime_ledger,
         "evidence_grade_runtime_ledger": targets_with_evidence_grade_runtime_ledger,
         "promotion_decision": targets_with_promotion_decision,
@@ -1975,6 +2107,17 @@ def build_paper_route_evidence_audit(
             "target_count": len(targets),
             "target_with_source_activity_count": sum(
                 int(not bool(_as_mapping(audit.get("source_activity")).get("missing")))
+                for audit in target_audits
+            ),
+            "target_with_rejected_signal_activity_count": sum(
+                int(
+                    _safe_int(
+                        _as_mapping(audit.get("rejected_signal_activity")).get(
+                            "event_count"
+                        )
+                    )
+                    > 0
+                )
                 for audit in target_audits
             ),
             "target_with_runtime_ledger_count": sum(

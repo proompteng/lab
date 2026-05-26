@@ -12,6 +12,7 @@ from app.models import (
     Base,
     Execution,
     ExecutionTCAMetric,
+    RejectedSignalOutcomeEvent,
     Strategy,
     StrategyHypothesisMetricWindow,
     StrategyPromotionDecision,
@@ -972,6 +973,145 @@ class TestPaperRouteEvidenceAudit(TestCase):
                 non_grade_audit["counts"]["targets_with_evidence_grade_runtime_ledger"],
                 0,
             )
+
+    def test_runtime_window_import_audit_explains_quote_rejected_source_activity(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            session.add_all(
+                [
+                    RejectedSignalOutcomeEvent(
+                        event_id="paper-route-reject-aapl",
+                        source="quote_quality_gate",
+                        paper_source="paper-arxiv-2605.12151",
+                        paper_claim_id="rejection-event-outcome-labels",
+                        account_label="TORGHUT_SIM",
+                        symbol="AAPL",
+                        event_ts=window_start + timedelta(minutes=20),
+                        timeframe="1Sec",
+                        seq="1",
+                        reject_reason="spread_bps_exceeded",
+                        spread_bps=Decimal("51.35410106"),
+                        outcome_label_status="pending",
+                        counterfactual_required=True,
+                        required_outcome_fields_json=[
+                            "counterfactual_return",
+                            "route_tca",
+                            "post_cost_net_pnl",
+                            "executable_quote",
+                        ],
+                        event_payload_json={
+                            "event_id": "paper-route-reject-aapl",
+                            "signal_payload": {
+                                "price": "309.615",
+                                "imbalance": {
+                                    "bid_px": "308.82",
+                                    "ask_px": "310.41",
+                                },
+                            },
+                        },
+                    ),
+                    RejectedSignalOutcomeEvent(
+                        event_id="paper-route-reject-amzn",
+                        source="quote_quality_gate",
+                        paper_source="paper-arxiv-2605.12151",
+                        paper_claim_id="rejection-event-outcome-labels",
+                        account_label="TORGHUT_SIM",
+                        symbol="AMZN",
+                        event_ts=window_start + timedelta(minutes=21),
+                        timeframe="1Sec",
+                        seq="2",
+                        reject_reason="missing_executable_quote",
+                        outcome_label_status="pending",
+                        counterfactual_required=True,
+                        required_outcome_fields_json=[
+                            "counterfactual_return",
+                            "route_tca",
+                            "post_cost_net_pnl",
+                            "executable_quote",
+                        ],
+                        event_payload_json={"event_id": "paper-route-reject-amzn"},
+                    ),
+                ]
+            )
+            session.commit()
+
+            payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "paper_route_probe_only",
+                    "blocked_reasons": [],
+                    "promotion_eligible_total": 0,
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "target_count": 1,
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-QUOTE-REJECT",
+                                "candidate_id": "candidate-quote-reject",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_pairs",
+                                "strategy_name": "microbar-cross-sectional-pairs-v1",
+                                "account_label": "TORGHUT_SIM",
+                                "source_manifest_ref": "config/trading/hypotheses/h-quote-reject.json",
+                                "window_start": window_start.isoformat(),
+                                "window_end": window_end.isoformat(),
+                                "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                                "paper_probation_authorized": True,
+                                "promotion_allowed": False,
+                                "final_promotion_authorized": False,
+                                "max_notional": "63180",
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "summary": {
+                        "paper_route_probe_eligible_symbols": ["AAPL", "AMZN"],
+                        "paper_route_probe_active_symbols": ["AAPL", "AMZN"],
+                    },
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": True,
+                        "next_session_max_notional": "63180",
+                        "eligible_symbol_count": 2,
+                    },
+                },
+                generated_at=datetime(2026, 5, 26, 21, tzinfo=timezone.utc),
+            )
+
+        target_audit = payload["next_runtime_window_target_audits"][0]
+        rejected_activity = target_audit["rejected_signal_activity"]
+        self.assertEqual(rejected_activity["event_count"], 2)
+        self.assertEqual(
+            rejected_activity["blocking_reasons"],
+            [
+                "source_signal_rejected_by_quote_quality",
+                "source_reject_missing_executable_quote",
+                "source_reject_spread_bps_exceeded",
+            ],
+        )
+        self.assertEqual(rejected_activity["max_spread_bps"], "51.35410106")
+        self.assertIn(
+            "source_reject_spread_bps_exceeded",
+            target_audit["readiness"]["blockers"],
+        )
+        import_audit = payload["runtime_window_import_audit"]
+        self.assertEqual(import_audit["state"], "import_due_source_activity_missing")
+        self.assertEqual(
+            import_audit["counts"]["targets_with_rejected_signal_activity"],
+            1,
+        )
+        self.assertIn(
+            "source_signal_rejected_by_quote_quality",
+            import_audit["blockers"],
+        )
+        self.assertIn("source_reject_spread_bps_exceeded", import_audit["blockers"])
 
     def test_source_activity_is_bound_to_target_window_end(self) -> None:
         window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
