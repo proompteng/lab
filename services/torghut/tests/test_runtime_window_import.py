@@ -805,6 +805,8 @@ class TestRuntimeWindowImport(TestCase):
                         net_strategy_pnl_after_costs="100",
                         filled_notional="1000",
                         closed_trade_count=2,
+                        account_equity="1000",
+                        symbol="AAPL",
                     ),
                 },
                 {
@@ -815,6 +817,8 @@ class TestRuntimeWindowImport(TestCase):
                         net_strategy_pnl_after_costs="-130",
                         filled_notional="500",
                         closed_trade_count=1,
+                        account_equity="1000",
+                        symbol="AAPL",
                     ),
                 },
                 {
@@ -825,6 +829,8 @@ class TestRuntimeWindowImport(TestCase):
                         net_strategy_pnl_after_costs="10",
                         filled_notional="100",
                         closed_trade_count=1,
+                        account_equity="1000",
+                        symbol="AMZN",
                     ),
                 },
             ],
@@ -843,6 +849,14 @@ class TestRuntimeWindowImport(TestCase):
         )
         self.assertEqual(summary["runtime_ledger_p10_daily_net_pnl_after_costs"], "-30")
         self.assertEqual(summary["runtime_ledger_max_intraday_drawdown"], "130")
+        self.assertEqual(summary["runtime_ledger_drawdown_pct_equity"], "0.13")
+        self.assertEqual(summary["runtime_ledger_max_drawdown_pct_equity"], "0.13")
+        self.assertEqual(summary["runtime_ledger_best_day_share"], "1")
+        self.assertEqual(summary["runtime_ledger_symbol_concentration_share"], "0.75")
+        self.assertEqual(
+            summary["runtime_ledger_net_pnl_by_symbol"],
+            {"AAPL": "-30", "AMZN": "10"},
+        )
         self.assertEqual(
             summary["runtime_ledger_closed_trade_count_by_day"],
             {"2026-03-06": 3, "2026-03-09": 1},

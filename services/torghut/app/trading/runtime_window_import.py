@@ -994,6 +994,66 @@ def _p10_decimal(values: Sequence[Decimal]) -> Decimal:
     return sorted_values[index]
 
 
+_RUNTIME_LEDGER_EQUITY_DENOMINATOR_KEYS = (
+    "account_equity",
+    "portfolio_equity",
+    "start_equity",
+    "starting_equity",
+    "equity",
+    "portfolio_value",
+    "net_liquidation",
+    "net_liquidation_value",
+)
+_RUNTIME_LEDGER_SYMBOL_KEYS = ("symbol", "ticker")
+_RUNTIME_LEDGER_SYMBOL_PNL_KEYS = (
+    "net_pnl_by_symbol",
+    "symbol_net_pnl_after_costs",
+    "net_strategy_pnl_after_costs_by_symbol",
+)
+
+
+def _runtime_ledger_equity_denominator(
+    bucket: Mapping[str, Any],
+) -> tuple[Decimal, str] | None:
+    for key in _RUNTIME_LEDGER_EQUITY_DENOMINATOR_KEYS:
+        value = _optional_decimal(bucket.get(key))
+        if value is not None and value > 0:
+            return value, key
+    return None
+
+
+def _runtime_ledger_symbol(bucket: Mapping[str, Any]) -> str | None:
+    for key in _RUNTIME_LEDGER_SYMBOL_KEYS:
+        symbol = _text(bucket.get(key))
+        if symbol is not None:
+            return symbol.upper()
+    return None
+
+
+def _runtime_ledger_symbol_pnl_items(
+    bucket: Mapping[str, Any],
+    *,
+    net_pnl: Decimal | None,
+) -> list[tuple[str, Decimal]]:
+    for key in _RUNTIME_LEDGER_SYMBOL_PNL_KEYS:
+        raw_mapping = bucket.get(key)
+        if not isinstance(raw_mapping, Mapping):
+            continue
+        items: list[tuple[str, Decimal]] = []
+        for raw_symbol, raw_pnl in cast(Mapping[object, object], raw_mapping).items():
+            symbol = str(raw_symbol).strip().upper()
+            pnl = _optional_decimal(raw_pnl)
+            if symbol and pnl is not None:
+                items.append((symbol, pnl))
+        if items:
+            return items
+
+    symbol = _runtime_ledger_symbol(bucket)
+    if symbol is None or net_pnl is None:
+        return []
+    return [(symbol, net_pnl)]
+
+
 def _runtime_ledger_daily_summary_from_observed_buckets(
     buckets: Sequence[ObservedRuntimeBucket],
 ) -> dict[str, Any]:
@@ -1010,6 +1070,8 @@ def _runtime_ledger_daily_summary_from_observed_buckets(
     cumulative_by_day = {day: Decimal("0") for day in trading_days}
     peak_by_day = {day: Decimal("0") for day in trading_days}
     max_intraday_drawdown = Decimal("0")
+    symbol_net_pnl: dict[str, Decimal] = {}
+    equity_denominators: list[tuple[Decimal, str]] = []
 
     for bucket in ordered_buckets:
         day = _runtime_ledger_trading_day_key(bucket.window_started_at)
@@ -1029,6 +1091,14 @@ def _runtime_ledger_daily_summary_from_observed_buckets(
             closed_trade_count_by_day[day] += _observation_int(
                 ledger_payload.get("closed_trade_count")
             )
+            for symbol, pnl in _runtime_ledger_symbol_pnl_items(
+                ledger_payload,
+                net_pnl=net_pnl,
+            ):
+                symbol_net_pnl[symbol] = symbol_net_pnl.get(symbol, Decimal("0")) + pnl
+            equity_denominator = _runtime_ledger_equity_denominator(ledger_payload)
+            if equity_denominator is not None:
+                equity_denominators.append(equity_denominator)
         cumulative_by_day[day] += bucket_net_pnl
         if cumulative_by_day[day] > peak_by_day[day]:
             peak_by_day[day] = cumulative_by_day[day]
@@ -1049,7 +1119,9 @@ def _runtime_ledger_daily_summary_from_observed_buckets(
     avg_daily_filled_notional = (
         total_filled_notional / Decimal(day_count) if day_count > 0 else Decimal("0")
     )
-    return {
+    positive_daily_values = [value for value in daily_net_values if value > 0]
+    total_positive_daily_net_pnl = sum(positive_daily_values, Decimal("0"))
+    summary: dict[str, Any] = {
         "runtime_ledger_observed_trading_day_count": day_count,
         "runtime_ledger_net_pnl_by_trading_day": {
             day: str(net_pnl_by_day[day]) for day in trading_days
@@ -1070,6 +1142,35 @@ def _runtime_ledger_daily_summary_from_observed_buckets(
             day: closed_trade_count_by_day[day] for day in trading_days
         },
     }
+    if total_positive_daily_net_pnl > 0:
+        summary["runtime_ledger_best_day_share"] = str(
+            max(positive_daily_values) / total_positive_daily_net_pnl
+        )
+
+    if equity_denominators and max_intraday_drawdown > 0:
+        equity_denominator, equity_source = min(equity_denominators, key=lambda item: item[0])
+        summary["runtime_ledger_drawdown_pct_equity"] = str(
+            max_intraday_drawdown / equity_denominator
+        )
+        summary["runtime_ledger_max_drawdown_pct_equity"] = summary[
+            "runtime_ledger_drawdown_pct_equity"
+        ]
+        summary["runtime_ledger_drawdown_pct_equity_source"] = equity_source
+
+    symbol_abs_pnl = {
+        symbol: abs(value) for symbol, value in symbol_net_pnl.items() if value != 0
+    }
+    total_symbol_abs_pnl = sum(symbol_abs_pnl.values(), Decimal("0"))
+    if total_symbol_abs_pnl > 0:
+        summary["runtime_ledger_net_pnl_by_symbol"] = {
+            symbol: str(symbol_net_pnl[symbol]) for symbol in sorted(symbol_net_pnl)
+        }
+        summary["runtime_ledger_symbol_concentration_share"] = str(
+            max(symbol_abs_pnl.values()) / total_symbol_abs_pnl
+        )
+        summary["runtime_ledger_symbol_concentration_basis"] = "absolute_net_pnl"
+
+    return summary
 
 
 def persist_observed_runtime_windows(
