@@ -315,6 +315,11 @@ metadata:
 spec:
   providerRef:
     name: synthesis-deep-alpha
+  defaults:
+    systemPromptRef:
+      kind: ConfigMap
+      name: codex-agent-system-prompt
+      key: system-prompt.md
   security:
     allowedSecrets:
       - codex-auth
