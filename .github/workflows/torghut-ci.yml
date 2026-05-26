@@ -648,26 +648,18 @@ jobs:
         working-directory: services/torghut
         run: uv sync --frozen --extra dev
 
-      - name: Download coverage data
-        uses: actions/download-artifact@v4
-        with:
-          pattern: torghut-coverage-*
-          path: services/torghut/.coverage-shards
-          merge-multiple: true
-
-      - name: Combine coverage
+      - name: Run coverage suite
         working-directory: services/torghut
         run: |
           set -euo pipefail
-          mapfile -t COVERAGE_FILES < <(find .coverage-shards -type f -name '.coverage*' -print | sort)
-          printf 'Combining %s coverage data files\n' "${#COVERAGE_FILES[@]}"
-          if [ "${#COVERAGE_FILES[@]}" -lt 20 ]; then
-            echo "Expected coverage data from all 4 pytest shards and all 16 autoresearch runner slices"
-            exit 1
-          fi
-          uv run --frozen coverage combine "${COVERAGE_FILES[@]}"
-          uv run --frozen coverage report --fail-under=70
-          uv run --frozen coverage xml -o coverage.xml
+          uv run --frozen pytest \
+            -n auto \
+            --dist=worksteal \
+            --cov \
+            --cov-branch \
+            --cov-report=term \
+            --cov-report=xml:coverage.xml \
+            --cov-fail-under=70
 
       - name: Changed-file coverage
         working-directory: services/torghut
