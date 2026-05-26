@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 
 import type { CodexAppServerOptions, CodexAppServerTurnOptions, StreamDelta, Turn } from '@proompteng/codex'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   CodexRunnerArtifactError,
@@ -48,8 +48,26 @@ const deferred = <T = void>() => {
 }
 
 const NORMALIZED_PROMPT = 'run the normalized Codex adapter contract'
+const systemPromptEnvKeys = [
+  'CODEX_SYSTEM_PROMPT_PATH',
+  'CODEX_SYSTEM_PROMPT_EXPECTED_HASH',
+  'CODEX_SYSTEM_PROMPT_REQUIRED',
+]
+const originalSystemPromptEnv = Object.fromEntries(systemPromptEnvKeys.map((key) => [key, process.env[key]]))
 
 describe('codex app-server runner adapter', () => {
+  beforeEach(() => {
+    for (const key of systemPromptEnvKeys) delete process.env[key]
+  })
+
+  afterEach(() => {
+    for (const key of systemPromptEnvKeys) {
+      const value = originalSystemPromptEnv[key]
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  })
+
   it('uses an absolute Codex binary path by default for Bun child-process spawning', () => {
     expect(resolveCodexBinaryPath({}, {})).toBe(DEFAULT_CODEX_BINARY_PATH)
     expect(resolveCodexBinaryPath({}, { AGENTS_CODEX_BINARY: '/custom/agents-codex' })).toBe('/custom/agents-codex')

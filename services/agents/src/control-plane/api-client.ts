@@ -29,6 +29,43 @@ export type PrimitiveResourceGetResponse = {
   resource: Record<string, unknown>
 }
 
+export type AgentRunLogsResponse = {
+  ok: true
+  name: string
+  namespace: string
+  pods: Array<{
+    name: string
+    phase: string | null
+    containers: Array<{ name: string; type: 'main' | 'init' }>
+  }>
+  logs: string
+  pod: string | null
+  container: string | null
+  tailLines: number | null
+}
+
+export type PrimitiveEventSummary = {
+  name: string | null
+  namespace: string | null
+  type: string | null
+  reason: string | null
+  action: string | null
+  count: number | null
+  message: string | null
+  firstTimestamp: string | null
+  lastTimestamp: string | null
+  eventTime: string | null
+  involvedObject: unknown
+}
+
+export type PrimitiveEventsResponse = {
+  ok: true
+  kind: string
+  namespace: string
+  name: string
+  items: PrimitiveEventSummary[]
+}
+
 const assertOk = async (response: Response) => {
   if (response.ok) return response
   const body = (await response.text()).trim()
@@ -92,4 +129,50 @@ export const createPrimitiveResource = async (kind: string, manifest: Record<str
     }),
   )
   return (await response.json()) as PrimitiveResourceGetResponse
+}
+
+export const fetchAgentRunLogs = async ({
+  namespace,
+  name,
+  pod,
+  container,
+  tailLines,
+}: {
+  namespace: string
+  name: string
+  pod?: string | null
+  container?: string | null
+  tailLines?: number | null
+}) => {
+  const url = new URL('/v1/control-plane/logs', window.location.origin)
+  url.searchParams.set('namespace', namespace)
+  url.searchParams.set('name', name)
+  if (pod) url.searchParams.set('pod', pod)
+  if (container) url.searchParams.set('container', container)
+  if (tailLines) url.searchParams.set('tailLines', String(tailLines))
+  const response = await assertOk(await fetch(url))
+  return (await response.json()) as AgentRunLogsResponse
+}
+
+export const fetchPrimitiveEvents = async ({
+  kind,
+  namespace,
+  name,
+  uid,
+  limit = 50,
+}: {
+  kind: string
+  namespace: string
+  name: string
+  uid?: string | null
+  limit?: number
+}) => {
+  const url = new URL('/v1/control-plane/events', window.location.origin)
+  url.searchParams.set('kind', kind)
+  url.searchParams.set('namespace', namespace)
+  url.searchParams.set('name', name)
+  url.searchParams.set('limit', String(limit))
+  if (uid) url.searchParams.set('uid', uid)
+  const response = await assertOk(await fetch(url))
+  return (await response.json()) as PrimitiveEventsResponse
 }
