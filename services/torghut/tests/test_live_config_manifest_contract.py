@@ -370,6 +370,7 @@ class TestLiveConfigManifestContract(TestCase):
                 "mean-reversion-exhaustion-short-v1",
                 "washout-rebound-long-v1",
                 "late-day-continuation-long-v1",
+                "microbar-cross-sectional-pairs-v1",
             },
         )
 
@@ -387,6 +388,13 @@ class TestLiveConfigManifestContract(TestCase):
                     cast(list[object], raw_symbols),
                     context=f"{name} universe",
                 )
+            elif name == "microbar-cross-sectional-pairs-v1":
+                self.assertIn("h-pairs", description)
+                self.assertEqual(
+                    tuple(str(symbol) for symbol in cast(list[object], raw_symbols)),
+                    ("AAPL", "AMZN"),
+                    f"{name} must stay aligned to the active H-PAIRS paper-route probe symbols",
+                )
             else:
                 self.assertIn("$300/day", description)
                 _assert_exact_quote_covered_paper_strategy_universe(
@@ -395,15 +403,30 @@ class TestLiveConfigManifestContract(TestCase):
                     context=f"{name} universe",
                 )
             if str(strategy.get("strategy_type")) == "microbar_cross_sectional_long_v1":
+                expected_notional = (
+                    Decimal("31590")
+                    if name == "microbar-cross-sectional-pairs-v1"
+                    else Decimal("50000")
+                )
+                expected_position_pct = (
+                    Decimal("1.0")
+                    if name == "microbar-cross-sectional-pairs-v1"
+                    else Decimal("2.0")
+                )
                 self.assertEqual(
                     _strategy_decimal(strategy, "max_notional_per_trade"),
-                    Decimal("50000"),
+                    expected_notional,
                 )
                 self.assertEqual(
                     _strategy_decimal(strategy, "max_position_pct_equity"),
-                    Decimal("2.0"),
+                    expected_position_pct,
                 )
                 self.assertEqual(params.get("position_isolation_mode"), "per_strategy")
+                if name == "microbar-cross-sectional-pairs-v1":
+                    self.assertEqual(params.get("max_gross_exposure_pct_equity"), "2.0")
+                    self.assertEqual(params.get("max_pair_legs"), "2")
+                    self.assertEqual(params.get("entry_minute_after_open"), "60")
+                    self.assertEqual(params.get("exit_minute_after_open"), "120")
             elif str(strategy.get("strategy_type")) == "intraday_tsmom_v1":
                 self.assertEqual(name, "intraday-tsmom-profit-v3")
                 self.assertEqual(
