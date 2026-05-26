@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import Mock, patch
 from typing import Any, Callable, Mapping, cast
+from uuid import uuid4
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.exc import SQLAlchemyError
@@ -2801,6 +2802,214 @@ class TestTradingPipeline(TestCase):
             )
             self.assertEqual(proof_floor.get("capital_state"), "zero_notional")
             self.assertEqual(control_plane.get("execution_lane"), "simple")
+
+    def test_simple_pipeline_retry_metadata_requires_prior_profit_floor_block(
+        self,
+    ) -> None:
+        def decision_row(
+            *,
+            status: str = "blocked",
+            decision_json: object,
+        ) -> TradeDecision:
+            return TradeDecision(
+                strategy_id=uuid4(),
+                alpaca_account_label="paper",
+                symbol="AAPL",
+                timeframe="1Min",
+                decision_json=decision_json,
+                status=status,
+            )
+
+        self.assertIsNone(
+            SimpleTradingPipeline._paper_route_probe_retry_metadata(
+                decision_row(
+                    status="planned",
+                    decision_json={
+                        "submission_stage": "blocked_profitability_proof_floor",
+                        "submission_block_reason": "alpha_readiness_not_promotion_eligible",
+                        "profitability_proof_floor": {},
+                    },
+                )
+            )
+        )
+        self.assertIsNone(
+            SimpleTradingPipeline._paper_route_probe_retry_metadata(
+                decision_row(decision_json=["not", "a", "mapping"])
+            )
+        )
+        self.assertIsNone(
+            SimpleTradingPipeline._paper_route_probe_retry_metadata(
+                decision_row(
+                    decision_json={
+                        "submission_stage": "blocked_other",
+                        "submission_block_reason": "alpha_readiness_not_promotion_eligible",
+                        "profitability_proof_floor": {},
+                    }
+                )
+            )
+        )
+        self.assertIsNone(
+            SimpleTradingPipeline._paper_route_probe_retry_metadata(
+                decision_row(
+                    decision_json={
+                        "submission_stage": "blocked_profitability_proof_floor",
+                        "submission_block_reason": "",
+                        "profitability_proof_floor": {},
+                    }
+                )
+            )
+        )
+        self.assertIsNone(
+            SimpleTradingPipeline._paper_route_probe_retry_metadata(
+                decision_row(
+                    decision_json={
+                        "submission_stage": "blocked_profitability_proof_floor",
+                        "submission_block_reason": "alpha_readiness_not_promotion_eligible",
+                        "profitability_proof_floor": "not-a-mapping",
+                    }
+                )
+            )
+        )
+        self.assertEqual(
+            SimpleTradingPipeline._paper_route_probe_retry_metadata(
+                decision_row(
+                    decision_json={
+                        "submission_stage": "blocked_profitability_proof_floor",
+                        "submission_block_reason": "alpha_readiness_not_promotion_eligible",
+                        "profitability_proof_floor": {"route_state": "repair_only"},
+                    }
+                )
+            ),
+            {
+                "previous_submission_stage": "blocked_profitability_proof_floor",
+                "previous_submission_block_reason": "alpha_readiness_not_promotion_eligible",
+                "previous_decision_status": "blocked",
+            },
+        )
+
+    def test_simple_pipeline_reopens_profit_floor_block_for_bounded_paper_route_retry(
+        self,
+    ) -> None:
+        from app import config
+
+        config.settings.trading_mode = "paper"
+        config.settings.trading_simple_submit_enabled = True
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_simple_paper_route_probe_max_notional = 25.0
+        config.settings.trading_paper_route_target_plan_url = ""
+
+        proof_floor = {
+            "route_state": "repair_only",
+            "capital_state": "paper",
+            "max_notional": "25",
+            "market_window": {"session_open": True},
+            "blocking_reasons": ["execution_tca_route_universe_empty"],
+            "route_reacquisition_book": {
+                "summary": {"repair_candidate_symbols": ["AAPL"]}
+            },
+        }
+
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="simple-paper-proof-floor-retry",
+                description="simple paper retry after proof floor block",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+                max_notional_per_trade=Decimal("1000"),
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="buy",
+                qty=Decimal("1"),
+                rationale="paper-route-retry",
+                params={"price": Decimal("100")},
+            )
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(
+                session,
+                decision,
+                strategy,
+                "paper",
+            )
+            decision_json = dict(cast(Mapping[str, Any], decision_row.decision_json))
+            decision_json.update(
+                {
+                    "submission_stage": "blocked_profitability_proof_floor",
+                    "submission_block_reason": "alpha_readiness_not_promotion_eligible",
+                    "submission_block_atomic": [
+                        "alpha_readiness_not_promotion_eligible"
+                    ],
+                    "profitability_proof_floor": proof_floor,
+                }
+            )
+            decision_row.status = "blocked"
+            decision_row.decision_json = decision_json
+            session.add(decision_row)
+            session.commit()
+            session.refresh(decision_row)
+
+            pipeline = SimpleTradingPipeline(
+                alpaca_client=FakeAlpacaClient(),
+                order_firewall=OrderFirewall(FakeAlpacaClient()),
+                ingestor=FakeIngestor([]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=executor,
+                execution_adapter=FakeAlpacaClient(),
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=TradingState(),
+                account_label="paper",
+                session_factory=self.session_local,
+            )
+
+            with patch.object(
+                pipeline,
+                "_profitability_proof_floor",
+                return_value=proof_floor,
+            ):
+                pending = pipeline._ensure_pending_decision_row(
+                    session=session,
+                    decision=decision,
+                    strategy=strategy,
+                )
+
+            self.assertIsNotNone(pending)
+            assert pending is not None
+            self.assertEqual(pending.id, decision_row.id)
+            refreshed = session.get(TradeDecision, decision_row.id)
+            assert refreshed is not None
+            self.assertEqual(refreshed.status, "planned")
+            refreshed_json = cast(dict[str, Any], refreshed.decision_json)
+            self.assertEqual(
+                refreshed_json.get("submission_stage"),
+                "paper_route_probe_retry_pending",
+            )
+            self.assertNotIn("submission_block_reason", refreshed_json)
+            self.assertNotIn("submission_block_atomic", refreshed_json)
+            self.assertEqual(refreshed_json.get("paper_route_probe_retry_attempts"), 1)
+            retry = cast(dict[str, Any], refreshed_json.get("paper_route_probe_retry"))
+            self.assertEqual(
+                retry.get("previous_submission_block_reason"),
+                "alpha_readiness_not_promotion_eligible",
+            )
+            self.assertEqual(retry.get("symbol"), "AAPL")
+            self.assertEqual(
+                retry.get("submission_stage"),
+                "paper_route_probe_retry_pending",
+            )
+            context = cast(dict[str, Any], retry.get("context"))
+            self.assertEqual(context.get("mode"), "paper_route_acquisition")
+            self.assertEqual(context.get("max_notional"), "25.0")
 
     def test_simple_pipeline_proof_floor_includes_paper_route_probe_settings(
         self,

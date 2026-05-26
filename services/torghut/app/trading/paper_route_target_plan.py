@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Mapping, Sequence
 from http.client import HTTPConnection, HTTPSConnection
 from typing import Any, cast
@@ -54,6 +55,34 @@ def paper_route_target_plan_from_payload(payload: Mapping[str, Any]) -> dict[str
 
 
 def fetch_paper_route_target_plan_url(
+    url: str,
+    *,
+    timeout_seconds: float,
+    attempts: int = 1,
+    retry_backoff_seconds: float = 0.25,
+) -> dict[str, Any]:
+    max_attempts = max(int(attempts), 1)
+    result: dict[str, Any] = {}
+    for attempt in range(1, max_attempts + 1):
+        result = _fetch_paper_route_target_plan_url_once(
+            url,
+            timeout_seconds=timeout_seconds,
+        )
+        if not str(result.get("load_error") or "").strip():
+            if attempt > 1:
+                result = dict(result)
+                result["fetch_attempts"] = attempt
+            return result
+        if attempt < max_attempts:
+            time.sleep(max(float(retry_backoff_seconds), 0.0))
+
+    if max_attempts > 1:
+        result = dict(result)
+        result["fetch_attempts"] = max_attempts
+    return result
+
+
+def _fetch_paper_route_target_plan_url_once(
     url: str,
     *,
     timeout_seconds: float,

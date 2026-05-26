@@ -64,6 +64,22 @@ _SIMPLE_MARKET_CONTEXT_RETRY_INTERVAL = timedelta(seconds=30)
 _PAPER_ROUTE_PROBE_QTY_STEP = Decimal("0.0001")
 
 
+def _safe_int(value: object) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float | str | Decimal):
+        try:
+            return int(value)
+        except ValueError:
+            return 0
+    try:
+        return int(cast(Any, value))
+    except (TypeError, ValueError):
+        return 0
+
+
 class SimpleTradingPipeline(TradingPipeline):
     """Minimal signal -> hard-risk -> direct execution lane."""
 
@@ -709,9 +725,17 @@ class SimpleTradingPipeline(TradingPipeline):
         plan = fetch_paper_route_target_plan_url(
             url,
             timeout_seconds=settings.trading_paper_route_target_plan_timeout_seconds,
+            attempts=2,
+            retry_backoff_seconds=0.25,
         )
         load_error = str(plan.get("load_error") or "").strip()
         if load_error:
+            logger.warning(
+                "Paper-route target plan unavailable for bounded probe url=%s error=%s attempts=%s",
+                url,
+                load_error,
+                plan.get("fetch_attempts") or 1,
+            )
             return set(), load_error
         symbols = paper_route_target_plan_probe_symbols(plan)
         if not symbols:
@@ -796,6 +820,91 @@ class SimpleTradingPipeline(TradingPipeline):
             if not settings.trading_simple_submit_enabled
             else None,
         }
+
+    @staticmethod
+    def _paper_route_probe_retry_metadata(
+        decision_row: TradeDecision,
+    ) -> dict[str, object] | None:
+        if decision_row.status != "blocked":
+            return None
+        decision_json_raw = decision_row.decision_json
+        if not isinstance(decision_json_raw, Mapping):
+            return None
+        decision_json = cast(Mapping[str, object], decision_json_raw)
+        if decision_json.get("submission_stage") != "blocked_profitability_proof_floor":
+            return None
+        reason = str(decision_json.get("submission_block_reason") or "").strip()
+        if not reason:
+            return None
+        proof_floor = decision_json.get("profitability_proof_floor")
+        if not isinstance(proof_floor, Mapping):
+            return None
+        return {
+            "previous_submission_stage": "blocked_profitability_proof_floor",
+            "previous_submission_block_reason": reason,
+            "previous_decision_status": "blocked",
+        }
+
+    def _ensure_pending_decision_row(
+        self,
+        *,
+        session: Session,
+        decision: StrategyDecision,
+        strategy: Strategy,
+    ) -> TradeDecision | None:
+        decision_row = self.executor.ensure_decision(
+            session, decision, strategy, self.account_label
+        )
+        retry_metadata = self._paper_route_probe_retry_metadata(decision_row)
+        if retry_metadata is None:
+            return super()._ensure_pending_decision_row(
+                session=session,
+                decision=decision,
+                strategy=strategy,
+            )
+        if self.executor.execution_exists(session, decision_row):
+            return None
+
+        proof_floor = self._profitability_proof_floor(session=session)
+        if self._proof_floor_submission_block_reason(proof_floor) is None:
+            return None
+        probe_context = self._paper_route_probe_context(
+            proof_floor=proof_floor,
+            decision=decision,
+        )
+        if probe_context is None:
+            return None
+        if self._paper_route_probe_reference_price(decision) is None:
+            return None
+
+        decision_row.status = "planned"
+        decision_json = dict(cast(Mapping[str, Any], decision_row.decision_json))
+        retry_attempts = _safe_int(
+            decision_json.get("paper_route_probe_retry_attempts")
+        )
+        decision_json["paper_route_probe_retry_attempts"] = retry_attempts + 1
+        decision_json["paper_route_probe_retry"] = {
+            **retry_metadata,
+            "submission_stage": "paper_route_probe_retry_pending",
+            "symbol": decision.symbol.strip().upper(),
+            "strategy_id": decision.strategy_id,
+            "context": dict(probe_context),
+        }
+        decision_json["submission_stage"] = "paper_route_probe_retry_pending"
+        decision_json.pop("submission_block_reason", None)
+        decision_json.pop("submission_block_atomic", None)
+        decision_row.decision_json = decision_json
+        session.add(decision_row)
+        session.commit()
+        session.refresh(decision_row)
+        logger.warning(
+            "Reopening proof-floor-blocked decision for bounded paper route probe strategy_id=%s decision_id=%s symbol=%s previous_reason=%s",
+            decision.strategy_id,
+            decision_row.id,
+            decision.symbol,
+            retry_metadata["previous_submission_block_reason"],
+        )
+        return decision_row
 
     def _apply_paper_route_probe_cap(
         self,

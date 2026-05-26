@@ -113,7 +113,7 @@ spec:
             - name: TRADING_PAPER_ROUTE_TARGET_PLAN_URL
               value: http://torghut.torghut.svc.cluster.local/trading/paper-route-evidence
             - name: TRADING_PAPER_ROUTE_TARGET_PLAN_TIMEOUT_SECONDS
-              value: "3"
+              value: "5"
             - name: TRADING_KILL_SWITCH_ENABLED
               value: "false"
             - name: TRADING_FEATURE_FLAGS_ENABLED

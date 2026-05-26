@@ -7311,6 +7311,75 @@ class TestTradingApi(TestCase):
         self.assertEqual(http_error_connection.instances[0].timeout, 0.1)
         self.assertTrue(http_error_connection.instances[0].closed)
 
+        class FlakyConnection:
+            instances: list["FlakyConnection"] = []
+            responses = [
+                FakeResponse(503, b"{}"),
+                FakeResponse(
+                    200,
+                    json.dumps(
+                        {
+                            "runtime_window_import_plan": {
+                                "targets": [
+                                    {
+                                        "candidate_id": "retry-candidate",
+                                        "paper_route_probe_symbols": ["AAPL"],
+                                    }
+                                ]
+                            }
+                        }
+                    ).encode("utf-8"),
+                ),
+            ]
+
+            def __init__(
+                self,
+                hostname: str,
+                port: int | None,
+                *,
+                timeout: float,
+            ) -> None:
+                self.hostname = hostname
+                self.port = port
+                self.timeout = timeout
+                self.closed = False
+                self.instances.append(self)
+
+            def request(
+                self,
+                method: str,
+                path: str,
+                *,
+                headers: dict[str, str],
+            ) -> None:
+                self.request_method = method
+                self.request_path = path
+                self.request_headers = headers
+
+            def getresponse(self) -> FakeResponse:
+                return self.responses[len(self.instances) - 1]
+
+            def close(self) -> None:
+                self.closed = True
+
+        with patch(
+            "app.trading.paper_route_target_plan.HTTPConnection",
+            FlakyConnection,
+        ):
+            retried_plan = shared_fetch_paper_route_target_plan_url(
+                "http://torghut.example",
+                timeout_seconds=1,
+                attempts=2,
+                retry_backoff_seconds=0,
+            )
+        self.assertEqual(retried_plan["fetch_attempts"], 2)
+        self.assertEqual(
+            paper_route_target_plan_probe_symbols(retried_plan),
+            {"AAPL"},
+        )
+        self.assertEqual(len(FlakyConnection.instances), 2)
+        self.assertTrue(all(item.closed for item in FlakyConnection.instances))
+
         for raw, expected in (
             (b"{", "paper_route_target_plan_invalid_json:"),
             (b"[]", "paper_route_target_plan_invalid_payload"),
@@ -7432,6 +7501,28 @@ class TestTradingApi(TestCase):
         )
         self.assertEqual(http_error_connection.instances[0].timeout, 0.1)
         self.assertTrue(http_error_connection.instances[0].closed)
+
+        retry_exhausted_connection = connection_class(503, b"{}")
+        with patch(
+            "app.trading.paper_route_target_plan.HTTPConnection",
+            retry_exhausted_connection,
+        ):
+            self.assertEqual(
+                shared_fetch_paper_route_target_plan_url(
+                    "http://torghut.example/plan?mode=paper",
+                    timeout_seconds=0,
+                    attempts=2,
+                    retry_backoff_seconds=0,
+                ),
+                {
+                    "load_error": "paper_route_target_plan_http_status:503",
+                    "fetch_attempts": 2,
+                },
+            )
+        self.assertEqual(len(retry_exhausted_connection.instances), 2)
+        self.assertTrue(
+            all(item.closed for item in retry_exhausted_connection.instances)
+        )
 
         for raw, expected in (
             (b"{", "paper_route_target_plan_invalid_json:"),
