@@ -630,15 +630,23 @@ class TestLiveConfigManifestContract(TestCase):
             _load_torghut_knative_env().get(
                 "TRADING_EXECUTABLE_QUOTE_LOOKBACK_SECONDS"
             ),
-            "60",
+            "300",
         )
         self.assertEqual(
             _load_torghut_knative_env().get("TRADING_EXECUTABLE_QUOTE_FORWARD_SECONDS"),
-            "0",
+            "60",
         )
         self.assertEqual(
             _load_torghut_knative_env().get("TRADING_ALPACA_QUOTE_FALLBACK_ENABLED"),
-            "false",
+            "true",
+        )
+        self.assertEqual(
+            _load_torghut_knative_env().get("TRADING_ALPACA_QUOTE_FEED"),
+            "iex",
+        )
+        self.assertEqual(
+            _load_torghut_knative_env().get("TRADING_ALPACA_QUOTE_MAX_AGE_SECONDS"),
+            "20",
         )
         self.assertEqual(
             sim_env.get("TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS"),
@@ -1109,7 +1117,9 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertEqual(
             env.get("TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL"), "63180"
         )
-        self.assertFalse(_manifest_bool(env, "TRADING_ALPACA_QUOTE_FALLBACK_ENABLED"))
+        self.assertTrue(_manifest_bool(env, "TRADING_ALPACA_QUOTE_FALLBACK_ENABLED"))
+        self.assertEqual(env.get("TRADING_ALPACA_QUOTE_FEED"), "iex")
+        self.assertEqual(env.get("TRADING_ALPACA_QUOTE_MAX_AGE_SECONDS"), "20")
         self.assertFalse(_manifest_bool(env, "TRADING_AUTONOMY_ENABLED"))
         self.assertFalse(_manifest_bool(env, "TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION"))
         self.assertFalse(_manifest_bool(env, "TRADING_KILL_SWITCH_ENABLED"))
