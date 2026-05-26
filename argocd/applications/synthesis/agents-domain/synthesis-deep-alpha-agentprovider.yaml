@@ -18,21 +18,34 @@ spec:
             command: node
             args:
               - /root/.codex/synthesis-mcp-proxy.mjs
+            env:
+              SYNTHESIS_API_TOKEN_FILE: /var/run/synthesis/SYNTHESIS_API_TOKEN
+              SYNTHESIS_MCP_URL: http://synthesis.synthesis.svc.cluster.local:3000/mcp
         web_search: live
   argsTemplate: []
   secretEnv:
     - name: SYNTHESIS_API_TOKEN
       secretName: synthesis-env
       key: SYNTHESIS_API_TOKEN
+    - name: AGENTS_ARTIFACTS_ACCESS_KEY_ID
+      secretName: agents-artifacts
+      key: AWS_ACCESS_KEY_ID
+    - name: AGENTS_ARTIFACTS_SECRET_ACCESS_KEY
+      secretName: agents-artifacts
+      key: AWS_SECRET_ACCESS_KEY
   envTemplate:
     AGENT_RUN_NAME: "{{agentRun.name}}"
     AGENT_RUN_NAMESPACE: "{{agentRun.namespace}}"
+    AGENTS_ARTIFACTS_BUCKET: agents-artifacts
+    AGENTS_ARTIFACTS_ENDPOINT: http://rook-ceph-rgw-objectstore.rook-ceph.svc:80
+    AGENTS_ARTIFACTS_SECURE: "false"
     CODEX_CONFIG: /root/.codex/config.toml
     CODEX_LOG_LEVEL: info
     CODEX_MAX_SESSION_ATTEMPTS: "3"
     CODEX_MODEL: gpt-5.5
     CODEX_MODEL_FALLBACKS: gpt-5.4,gpt-5.4-mini,gpt-5.2-codex,gpt-5-codex
     HOME: /root
+    SYNTHESIS_API_TOKEN_FILE: /var/run/synthesis/SYNTHESIS_API_TOKEN
     SYNTHESIS_MCP_URL: http://synthesis.synthesis.svc.cluster.local:3000/mcp
   inputFiles:
     - path: /root/.codex/config.toml
@@ -71,14 +84,30 @@ spec:
         [mcp_servers.synthesis]
         command = "node"
         args = ["/root/.codex/synthesis-mcp-proxy.mjs"]
+        env = { SYNTHESIS_API_TOKEN_FILE = "/var/run/synthesis/SYNTHESIS_API_TOKEN", SYNTHESIS_MCP_URL = "http://synthesis.synthesis.svc.cluster.local:3000/mcp" }
     - path: /root/.codex/synthesis-mcp-proxy.mjs
       content: |-
         #!/usr/bin/env node
 
+        import { readFileSync } from 'node:fs'
         import readline from 'node:readline'
 
+        const readFirstTokenFile = (paths) => {
+          for (const path of paths) {
+            if (!path) continue
+            try {
+              const token = readFileSync(path, 'utf8').trim()
+              if (token) return token
+            } catch {}
+          }
+          return ''
+        }
+
         const endpoint = process.env.SYNTHESIS_MCP_URL || 'http://synthesis.synthesis.svc.cluster.local:3000/mcp'
-        const token = process.env.SYNTHESIS_API_TOKEN || process.env.SYNTHESIS_MCP_TOKEN || ''
+        const token =
+          process.env.SYNTHESIS_API_TOKEN ||
+          process.env.SYNTHESIS_MCP_TOKEN ||
+          readFirstTokenFile([process.env.SYNTHESIS_API_TOKEN_FILE, '/var/run/synthesis/SYNTHESIS_API_TOKEN'])
 
         const buildError = (id, code, message, data) => ({
           jsonrpc: '2.0',
