@@ -8,6 +8,7 @@ from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Mapping, Sequence, cast
+from zoneinfo import ZoneInfo
 
 import yaml
 from sqlalchemy import select
@@ -61,6 +62,7 @@ DOC29_EMPIRICAL_JOBS_GATE = 'empirical_jobs_persisted'
 DOC29_PAPER_GATE = 'paper_gate_satisfied'
 DOC29_LIVE_CANARY_GATE = 'live_canary_observed'
 DOC29_LIVE_SCALE_GATE = 'live_scale_observed'
+US_EQUITIES_REGULAR_TIMEZONE = 'America/New_York'
 
 
 def _as_dict(value: Any) -> dict[str, Any]:
@@ -114,6 +116,30 @@ def _safe_float(value: Any, *, default: float = 0.0) -> float:
             except ValueError:
                 return default
     return default
+
+
+def _runtime_ledger_trading_day_key(dt: datetime) -> str:
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(ZoneInfo(US_EQUITIES_REGULAR_TIMEZONE)).date().isoformat()
+
+
+def _median_decimal(values: Sequence[Decimal]) -> Decimal:
+    if not values:
+        return Decimal('0')
+    sorted_values = sorted(values)
+    middle = len(sorted_values) // 2
+    if len(sorted_values) % 2:
+        return sorted_values[middle]
+    return (sorted_values[middle - 1] + sorted_values[middle]) / Decimal('2')
+
+
+def _p10_decimal(values: Sequence[Decimal]) -> Decimal:
+    if not values:
+        return Decimal('0')
+    sorted_values = sorted(values)
+    index = max(0, ((len(sorted_values) + 9) // 10) - 1)
+    return sorted_values[index]
 
 
 def _gate_policy_parameters(
@@ -609,7 +635,9 @@ def _runtime_ledger_bucket_matches_window(
     return bucket_started <= window_ended and bucket_ended >= window_started
 
 
-def _runtime_ledger_bucket_is_promotion_grade(bucket: StrategyRuntimeLedgerBucket) -> bool:
+def _runtime_ledger_bucket_is_promotion_grade(
+    bucket: StrategyRuntimeLedgerBucket,
+) -> bool:
     blockers = [item for item in _as_list(bucket.blockers_json) if str(item).strip()]
     return (
         _as_text(bucket.ledger_schema_version) in _RUNTIME_LEDGER_BUCKET_SCHEMAS
@@ -639,22 +667,86 @@ def _runtime_ledger_bucket_summary(
         Decimal('0'),
     )
     expectancy_bps = (
-        float((total_net_pnl / total_filled_notional) * Decimal('10000'))
-        if total_filled_notional > 0
-        else 0.0
+        float((total_net_pnl / total_filled_notional) * Decimal('10000')) if total_filled_notional > 0 else 0.0
     )
+    daily_summary = _runtime_ledger_daily_summary(rows)
     return {
         'runtime_ledger_bucket_count': len(rows),
         'runtime_ledger_fill_count': sum(max(0, _safe_int(row.fill_count)) for row in rows),
-        'runtime_ledger_submitted_order_count': sum(
-            max(0, _safe_int(row.submitted_order_count)) for row in rows
-        ),
+        'runtime_ledger_submitted_order_count': sum(max(0, _safe_int(row.submitted_order_count)) for row in rows),
         'runtime_ledger_closed_trade_count': sum(max(0, _safe_int(row.closed_trade_count)) for row in rows),
         'runtime_ledger_filled_notional': float(total_filled_notional),
         'runtime_ledger_net_strategy_pnl_after_costs': float(total_net_pnl),
         'runtime_ledger_post_cost_expectancy_bps': expectancy_bps,
+        **daily_summary,
         'db_row_refs': [str(row.id) for row in rows],
     }
+
+
+def _runtime_ledger_daily_summary(
+    rows: Sequence[StrategyRuntimeLedgerBucket],
+) -> dict[str, Any]:
+    persisted = _runtime_ledger_persisted_daily_summary(rows)
+    if persisted:
+        return persisted
+    trading_days = sorted({_runtime_ledger_trading_day_key(row.bucket_started_at) for row in rows})
+    net_pnl_by_day = {day: Decimal('0') for day in trading_days}
+    filled_notional_by_day = {day: Decimal('0') for day in trading_days}
+    closed_trade_count_by_day = {day: 0 for day in trading_days}
+    cumulative_by_day = {day: Decimal('0') for day in trading_days}
+    peak_by_day = {day: Decimal('0') for day in trading_days}
+    max_intraday_drawdown = Decimal('0')
+    for row in sorted(rows, key=lambda item: item.bucket_started_at or item.created_at):
+        day = _runtime_ledger_trading_day_key(row.bucket_started_at)
+        net_pnl = row.net_strategy_pnl_after_costs or Decimal('0')
+        net_pnl_by_day[day] += net_pnl
+        filled_notional_by_day[day] += row.filled_notional or Decimal('0')
+        closed_trade_count_by_day[day] += max(0, _safe_int(row.closed_trade_count))
+        cumulative_by_day[day] += net_pnl
+        if cumulative_by_day[day] > peak_by_day[day]:
+            peak_by_day[day] = cumulative_by_day[day]
+        drawdown = peak_by_day[day] - cumulative_by_day[day]
+        if drawdown > max_intraday_drawdown:
+            max_intraday_drawdown = drawdown
+    day_count = len(trading_days)
+    daily_net_values = [net_pnl_by_day[day] for day in trading_days]
+    total_daily_net_pnl = sum(daily_net_values, Decimal('0'))
+    total_filled_notional = sum(
+        (filled_notional_by_day[day] for day in trading_days),
+        Decimal('0'),
+    )
+    mean_daily_net_pnl = total_daily_net_pnl / Decimal(day_count) if day_count > 0 else Decimal('0')
+    avg_daily_filled_notional = total_filled_notional / Decimal(day_count) if day_count > 0 else Decimal('0')
+    return {
+        'runtime_ledger_observed_trading_day_count': day_count,
+        'runtime_ledger_net_pnl_by_trading_day': {day: str(net_pnl_by_day[day]) for day in trading_days},
+        'runtime_ledger_mean_daily_net_pnl_after_costs': str(mean_daily_net_pnl),
+        'runtime_ledger_median_daily_net_pnl_after_costs': str(_median_decimal(daily_net_values)),
+        'runtime_ledger_p10_daily_net_pnl_after_costs': str(_p10_decimal(daily_net_values)),
+        'runtime_ledger_worst_day_net_pnl_after_costs': str(
+            min(daily_net_values) if daily_net_values else Decimal('0')
+        ),
+        'runtime_ledger_max_intraday_drawdown': str(max_intraday_drawdown),
+        'runtime_ledger_avg_daily_filled_notional': str(avg_daily_filled_notional),
+        'runtime_ledger_closed_trade_count_by_day': {day: closed_trade_count_by_day[day] for day in trading_days},
+    }
+
+
+def _runtime_ledger_persisted_daily_summary(
+    rows: Sequence[StrategyRuntimeLedgerBucket],
+) -> dict[str, Any]:
+    selected: dict[str, Any] = {}
+    selected_day_count = -1
+    for row in rows:
+        payload = _as_dict(row.payload_json)
+        summary = _as_dict(payload.get('runtime_ledger_daily_summary'))
+        if not summary:
+            continue
+        day_count = _safe_int(summary.get('runtime_ledger_observed_trading_day_count'))
+        if day_count > selected_day_count:
+            selected = summary
+            selected_day_count = day_count
+    return dict(selected)
 
 
 def _runtime_ledger_bucket_refs_for_windows(

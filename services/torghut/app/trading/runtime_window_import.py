@@ -970,6 +970,108 @@ def _runtime_ledger_post_cost_from_observed_buckets(
     )
 
 
+def _runtime_ledger_trading_day_key(dt: datetime) -> str:
+    return (
+        _utc(dt).astimezone(ZoneInfo(US_EQUITIES_REGULAR_TIMEZONE)).date().isoformat()
+    )
+
+
+def _median_decimal(values: Sequence[Decimal]) -> Decimal:
+    if not values:
+        return Decimal("0")
+    sorted_values = sorted(values)
+    middle = len(sorted_values) // 2
+    if len(sorted_values) % 2:
+        return sorted_values[middle]
+    return (sorted_values[middle - 1] + sorted_values[middle]) / Decimal("2")
+
+
+def _p10_decimal(values: Sequence[Decimal]) -> Decimal:
+    if not values:
+        return Decimal("0")
+    sorted_values = sorted(values)
+    index = max(0, ((len(sorted_values) + 9) // 10) - 1)
+    return sorted_values[index]
+
+
+def _runtime_ledger_daily_summary_from_observed_buckets(
+    buckets: Sequence[ObservedRuntimeBucket],
+) -> dict[str, Any]:
+    ordered_buckets = sorted(buckets, key=lambda item: item.window_started_at)
+    trading_days = sorted(
+        {
+            _runtime_ledger_trading_day_key(bucket.window_started_at)
+            for bucket in ordered_buckets
+        }
+    )
+    net_pnl_by_day = {day: Decimal("0") for day in trading_days}
+    filled_notional_by_day = {day: Decimal("0") for day in trading_days}
+    closed_trade_count_by_day = {day: 0 for day in trading_days}
+    cumulative_by_day = {day: Decimal("0") for day in trading_days}
+    peak_by_day = {day: Decimal("0") for day in trading_days}
+    max_intraday_drawdown = Decimal("0")
+
+    for bucket in ordered_buckets:
+        day = _runtime_ledger_trading_day_key(bucket.window_started_at)
+        bucket_net_pnl = Decimal("0")
+        for ledger_payload in _runtime_ledger_bucket_payloads(bucket.payload_json):
+            if _runtime_ledger_bucket_blockers(ledger_payload):
+                continue
+            net_pnl = _optional_decimal(
+                ledger_payload.get("net_strategy_pnl_after_costs")
+            )
+            filled_notional = _optional_decimal(ledger_payload.get("filled_notional"))
+            if net_pnl is not None:
+                bucket_net_pnl += net_pnl
+                net_pnl_by_day[day] += net_pnl
+            if filled_notional is not None and filled_notional > 0:
+                filled_notional_by_day[day] += filled_notional
+            closed_trade_count_by_day[day] += _observation_int(
+                ledger_payload.get("closed_trade_count")
+            )
+        cumulative_by_day[day] += bucket_net_pnl
+        if cumulative_by_day[day] > peak_by_day[day]:
+            peak_by_day[day] = cumulative_by_day[day]
+        drawdown = peak_by_day[day] - cumulative_by_day[day]
+        if drawdown > max_intraday_drawdown:
+            max_intraday_drawdown = drawdown
+
+    day_count = len(trading_days)
+    daily_net_values = [net_pnl_by_day[day] for day in trading_days]
+    total_daily_net_pnl = sum(daily_net_values, Decimal("0"))
+    total_filled_notional = sum(
+        (filled_notional_by_day[day] for day in trading_days),
+        Decimal("0"),
+    )
+    mean_daily_net_pnl = (
+        total_daily_net_pnl / Decimal(day_count) if day_count > 0 else Decimal("0")
+    )
+    avg_daily_filled_notional = (
+        total_filled_notional / Decimal(day_count) if day_count > 0 else Decimal("0")
+    )
+    return {
+        "runtime_ledger_observed_trading_day_count": day_count,
+        "runtime_ledger_net_pnl_by_trading_day": {
+            day: str(net_pnl_by_day[day]) for day in trading_days
+        },
+        "runtime_ledger_mean_daily_net_pnl_after_costs": str(mean_daily_net_pnl),
+        "runtime_ledger_median_daily_net_pnl_after_costs": str(
+            _median_decimal(daily_net_values)
+        ),
+        "runtime_ledger_p10_daily_net_pnl_after_costs": str(
+            _p10_decimal(daily_net_values)
+        ),
+        "runtime_ledger_worst_day_net_pnl_after_costs": str(
+            min(daily_net_values) if daily_net_values else Decimal("0")
+        ),
+        "runtime_ledger_max_intraday_drawdown": str(max_intraday_drawdown),
+        "runtime_ledger_avg_daily_filled_notional": str(avg_daily_filled_notional),
+        "runtime_ledger_closed_trade_count_by_day": {
+            day: closed_trade_count_by_day[day] for day in trading_days
+        },
+    }
+
+
 def persist_observed_runtime_windows(
     *,
     session: Session,
@@ -1108,6 +1210,9 @@ def persist_observed_runtime_windows(
     ]
     raw_window_count = len(raw_buckets)
     skipped_zero_activity_window_count = raw_window_count - len(sorted_buckets)
+    runtime_ledger_daily_summary = _runtime_ledger_daily_summary_from_observed_buckets(
+        raw_buckets
+    )
     inserted = len(sorted_buckets)
     total_session_samples = sum(
         bucket.market_session_count for bucket in sorted_buckets
@@ -1342,7 +1447,10 @@ def persist_observed_runtime_windows(
                     )
                     or None,
                     blockers_json=_string_list(ledger_payload.get("blockers")),
-                    payload_json=ledger_payload,
+                    payload_json={
+                        **ledger_payload,
+                        "runtime_ledger_daily_summary": runtime_ledger_daily_summary,
+                    },
                 )
             )
 
@@ -1384,6 +1492,7 @@ def persist_observed_runtime_windows(
                 "runtime_ledger_net_strategy_pnl_after_costs": str(
                     runtime_ledger_net_strategy_pnl_after_costs
                 ),
+                **runtime_ledger_daily_summary,
                 "promotion_allowed": promotion_allowed,
                 "promotion_blocking_reasons": promotion_blocking_reasons,
                 "delay_adjusted_depth_stress": delay_depth_stress_summary,
@@ -1420,6 +1529,7 @@ def persist_observed_runtime_windows(
                 "runtime_ledger_net_strategy_pnl_after_costs": str(
                     runtime_ledger_net_strategy_pnl_after_costs
                 ),
+                **runtime_ledger_daily_summary,
                 "latest_three_within_budget": latest_three_budget_ok,
                 "promotion_allowed": promotion_allowed,
                 "promotion_blocking_reasons": promotion_blocking_reasons,
@@ -1451,6 +1561,7 @@ def persist_observed_runtime_windows(
         "runtime_ledger_net_strategy_pnl_after_costs": str(
             runtime_ledger_net_strategy_pnl_after_costs
         ),
+        **runtime_ledger_daily_summary,
         "latest_three_within_budget": latest_three_budget_ok,
         "slippage_budget_bps": str(budget),
         "promotion_allowed": promotion_allowed,

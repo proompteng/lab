@@ -461,6 +461,27 @@ def _runtime_ledger_trading_day_count(
     return 0, None
 
 
+def _runtime_ledger_daily_net_pnl(
+    summary: Mapping[str, Any],
+    *,
+    net_pnl: Decimal | None,
+    trading_day_count: int,
+) -> tuple[Decimal | None, str]:
+    for key in (
+        "runtime_ledger_mean_daily_net_pnl_after_costs",
+        "runtime_ledger_daily_net_pnl_after_costs",
+        "mean_daily_net_pnl_after_costs",
+        "daily_net_pnl_after_costs",
+    ):
+        if key in summary:
+            parsed = _decimal(summary.get(key))
+            if parsed is not None:
+                return parsed, key
+    if net_pnl is not None and trading_day_count > 0:
+        return net_pnl / Decimal(trading_day_count), "computed_from_total_net_pnl"
+    return None, "missing"
+
+
 def _add_runtime_ledger_proof_packet_check(
     checks: dict[str, dict[str, Any]],
     runtime_ledger_proof_packet: Mapping[str, Any] | None,
@@ -599,10 +620,10 @@ def _add_runtime_ledger_profit_proof_checks(
         observed=str(net_pnl) if net_pnl is not None else None,
         expected=f">={min_runtime_ledger_net_pnl}",
     )
-    daily_net_pnl = (
-        net_pnl / Decimal(trading_day_count)
-        if net_pnl is not None and trading_day_count > 0
-        else None
+    daily_net_pnl, daily_net_pnl_key = _runtime_ledger_daily_net_pnl(
+        summary,
+        net_pnl=net_pnl,
+        trading_day_count=trading_day_count,
     )
     daily_net_pnl_required = min_runtime_ledger_daily_net_pnl > 0
     _add_check(
@@ -615,7 +636,10 @@ def _add_runtime_ledger_profit_proof_checks(
         ),
         observed=str(daily_net_pnl) if daily_net_pnl is not None else None,
         expected=f">={min_runtime_ledger_daily_net_pnl}",
-        detail={"trading_day_count": trading_day_count},
+        detail={
+            "trading_day_count": trading_day_count,
+            "source_key": daily_net_pnl_key,
+        },
     )
     _add_check(
         checks,

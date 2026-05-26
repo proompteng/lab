@@ -2049,9 +2049,12 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         self.assertIn("torghut-chip-full-day-20260505-4c330ce9-r1", joined)
         self.assertIn("--delay-adjusted-depth-stress-report-ref", joined)
         self.assertIn("/proof/h-micro-delay-depth.json", joined)
-        self.assertIn("--dependency-quorum-decision missing", joined)
-        self.assertIn("--continuity-ok false", joined)
-        self.assertIn("--drift-ok false", joined)
+        for command in commands:
+            self.assertEqual(
+                command[command.index("--dependency-quorum-decision") + 1], ""
+            )
+            self.assertEqual(command[command.index("--continuity-ok") + 1], "")
+            self.assertEqual(command[command.index("--drift-ok") + 1], "")
 
     def test_runtime_window_import_uses_latest_source_activity_window_when_unpinned(
         self,
@@ -3276,6 +3279,31 @@ class TestRunEmpiricalPromotionJobs(TestCase):
                 "paper_stage_evidence_collection_only",
                 "runtime_observation_not_authoritative",
             ],
+        )
+
+    def test_runtime_window_import_health_gate_args_do_not_synthesize_passes(
+        self,
+    ) -> None:
+        target = renewal.RuntimeWindowImportTarget(
+            hypothesis_id="H-PAIRS-01",
+            candidate_id="cand-paper-route",
+            observed_stage="paper",
+            strategy_family="microbar_cross_sectional_pairs",
+            source_dsn_env="SIM_DB_DSN",
+            strategy_name="paper-route-candidate-v1",
+            account_label="TORGHUT_SIM",
+            dataset_snapshot_ref="",
+            source_manifest_ref="manifest.json",
+            source_kind="paper_route_probe_runtime_observed",
+            delay_adjusted_depth_stress_report_ref="",
+        )
+
+        self.assertEqual(
+            renewal._runtime_window_import_health_gate_args(
+                target=target,
+                runtime_manifest={},
+            ),
+            ("", "", ""),
         )
 
     def test_runtime_window_import_rejects_non_mapping_import_payload(

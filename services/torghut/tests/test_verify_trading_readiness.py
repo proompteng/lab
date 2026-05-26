@@ -128,6 +128,7 @@ def _completion_status(
     net_pnl: str = "600",
     expectancy_bps: str = "12.5",
     trading_day_count: int | None = 25,
+    mean_daily_net_pnl: str | None = None,
     ledger_refs: list[str] | None = None,
     unbacked_refs: list[str] | None = None,
 ) -> dict[str, object]:
@@ -142,6 +143,10 @@ def _completion_status(
     if trading_day_count is not None:
         runtime_ledger_summary["runtime_ledger_observed_trading_day_count"] = (
             trading_day_count
+        )
+    if mean_daily_net_pnl is not None:
+        runtime_ledger_summary["runtime_ledger_mean_daily_net_pnl_after_costs"] = (
+            mean_daily_net_pnl
         )
     return {
         "doc_id": "doc29",
@@ -452,6 +457,39 @@ class TestVerifyTradingReadiness(TestCase):
         self.assertIn(
             "runtime_ledger_daily_net_pnl_target",
             weak_daily["failed_checks"],
+        )
+
+    def test_runtime_ledger_profit_proof_prefers_persisted_daily_mean(self) -> None:
+        result = evaluate_trading_readiness(
+            _ready_status(),
+            completion_status=_completion_status(
+                net_pnl="15000",
+                trading_day_count=25,
+                mean_daily_net_pnl="300",
+            ),
+            min_runtime_ledger_net_pnl=Decimal("12500"),
+            min_runtime_ledger_trading_days=25,
+            min_runtime_ledger_daily_net_pnl=Decimal("500"),
+            require_runtime_ledger_profit_proof=True,
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertIn("runtime_ledger_daily_net_pnl_target", result["failed_checks"])
+        self.assertEqual(
+            result["checks"]["runtime_ledger_daily_net_pnl_target"]["detail"][
+                "source_key"
+            ],
+            "runtime_ledger_mean_daily_net_pnl_after_costs",
+        )
+
+    def test_runtime_ledger_daily_net_pnl_reports_missing_without_inputs(self) -> None:
+        self.assertEqual(
+            verifier._runtime_ledger_daily_net_pnl(
+                {},
+                net_pnl=None,
+                trading_day_count=0,
+            ),
+            (None, "missing"),
         )
 
     def test_live_and_either_profiles_use_live_floor_states_and_market_window(

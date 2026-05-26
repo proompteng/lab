@@ -465,6 +465,8 @@ def build_portfolio_proof_receipt(
     holdout_result: Mapping[str, object] | None,
     runtime_closure_artifact_refs: Sequence[str],
     contribution: Mapping[str, object] | None = None,
+    runtime_ledger_summary: Mapping[str, object] | None = None,
+    require_runtime_ledger_summary: bool = False,
     observed_at: datetime | None = None,
     ttl_seconds: int = _DEFAULT_TTL_SECONDS,
 ) -> EvidenceReceipt:
@@ -472,8 +474,19 @@ def build_portfolio_proof_receipt(
     holdout = dict(holdout_result or {})
     holdout_status = _string(holdout.get("status"))
     refs = tuple(item for item in runtime_closure_artifact_refs if item.strip())
+    ledger_summary = dict(runtime_ledger_summary or {})
     reasons: list[str] = []
-    if not _string(portfolio_candidate_id):
+    if require_runtime_ledger_summary and not ledger_summary:
+        state: ReceiptState = "missing"
+        reasons.append("portfolio_runtime_ledger_summary_missing")
+    elif (
+        require_runtime_ledger_summary
+        and int(Decimal(str(ledger_summary.get("evidence_grade_bucket_count") or "0")))
+        <= 0
+    ):
+        state = "fail"
+        reasons.append("portfolio_runtime_ledger_summary_not_evidence_grade")
+    elif not _string(portfolio_candidate_id):
         state: ReceiptState = "missing"
         reasons.append("portfolio_proof_missing")
     elif post_cost_net_pnl_per_day < target_net_pnl_per_day:
@@ -506,6 +519,8 @@ def build_portfolio_proof_receipt(
             "holdout_result": holdout,
             "runtime_closure_artifact_refs": list(refs),
             "contribution": dict(contribution or {}),
+            "runtime_ledger_summary": ledger_summary,
+            "require_runtime_ledger_summary": require_runtime_ledger_summary,
         },
         ttl_seconds=ttl_seconds,
         consumer_refs=("paper", "canary", "live", "scale"),
