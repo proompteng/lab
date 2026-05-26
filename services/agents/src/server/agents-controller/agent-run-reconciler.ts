@@ -32,6 +32,7 @@ import {
 import {
   extractRunnerStatusFromJobPods,
   mergeAgentRunArtifacts,
+  parseRunnerTerminalStatus,
   runnerStatusForAgentRunStatus,
   runnerStatusOutputArtifacts,
   runnerStatusToTerminalOutcome,
@@ -1171,12 +1172,41 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
       if (!job) {
         if (jobObservedAt) {
           const message = `job ${jobName || 'unknown'} not found`
-          const updated = upsertCondition(conditions, {
+          const warningConditions = upsertCondition(conditions, {
             type: 'Warning',
             status: 'True',
             reason: 'JobMissing',
             message,
           })
+          const storedRunnerStatus = parseRunnerTerminalStatus(status.runner)
+          if (storedRunnerStatus) {
+            const runnerOutcome = runnerStatusToTerminalOutcome(storedRunnerStatus)
+            const terminalMessage = runnerOutcome.message ?? message
+            const terminalConditions = upsertCondition(warningConditions, {
+              type: runnerOutcome.conditionType,
+              status: 'True',
+              reason: runnerOutcome.reason,
+              message: runnerOutcome.message,
+            })
+            const runnerArtifacts = runnerStatusOutputArtifacts(storedRunnerStatus)
+            logTerminalOutcome(runnerOutcome.phase, runnerOutcome.reason, terminalMessage)
+            await setStatus(kube, agentRun, {
+              observedGeneration,
+              phase: runnerOutcome.phase,
+              reason: runnerOutcome.phase === 'Succeeded' ? undefined : runnerOutcome.reason,
+              message: runnerOutcome.phase === 'Succeeded' ? undefined : terminalMessage,
+              startedAt: storedRunnerStatus.startedAt ?? asString(status.startedAt) ?? undefined,
+              finishedAt: storedRunnerStatus.finishedAt ?? asString(status.finishedAt) ?? nowIso(),
+              runtimeRef,
+              conditions: terminalConditions,
+              vcs: asRecord(status.vcs) ?? undefined,
+              runner: runnerStatusForAgentRunStatus(storedRunnerStatus),
+              ...(runnerArtifacts.length > 0
+                ? { artifacts: mergeAgentRunArtifacts(status.artifacts, runnerArtifacts) }
+                : {}),
+            })
+            return
+          }
           logAgentsControllerWarn('reconcile_runtime_orphaned', {
             ...logContext,
             decision: 'runtime_orphaned',
@@ -1189,7 +1219,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
             phase: 'Running',
             startedAt: asString(status.startedAt) ?? nowIso(),
             runtimeRef,
-            conditions: updated,
+            conditions: warningConditions,
             vcs: asRecord(status.vcs) ?? undefined,
           })
         }
