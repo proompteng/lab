@@ -903,6 +903,10 @@ class TestLiveConfigManifestContract(TestCase):
             "PROOF_PACKET_OUTPUT=/tmp/torghut-empirical-renewal/runtime-ledger-proof-packet.json",
             args,
         )
+        self.assertIn(
+            'mkdir -p "$(dirname "${RENEWAL_OUTPUT}")" "$(dirname "${PROOF_PACKET_OUTPUT}")"',
+            args,
+        )
         self.assertIn("scripts/assemble_runtime_ledger_proof_packet.py", args)
         self.assertIn(
             "--status-service-base-url http://torghut.torghut.svc.cluster.local",

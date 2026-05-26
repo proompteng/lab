@@ -41,6 +41,7 @@ spec:
                   cd /app
                   RENEWAL_OUTPUT=/tmp/torghut-empirical-renewal/runtime-window-renewal.json
                   PROOF_PACKET_OUTPUT=/tmp/torghut-empirical-renewal/runtime-ledger-proof-packet.json
+                  mkdir -p "$(dirname "${RENEWAL_OUTPUT}")" "$(dirname "${PROOF_PACKET_OUTPUT}")"
                   /opt/venv/bin/python scripts/renew_latest_empirical_promotion_jobs.py \
                     --output-dir /tmp/torghut-empirical-renewal \
                     --strategy-spec-ref intraday_tsmom_v2@research \
