@@ -4,6 +4,10 @@
   "lane_id": "microbar-cross-sectional-pairs",
   "strategy_family": "microbar_cross_sectional_pairs",
   "candidate_id": "c88421d619759b2cfaa6f4d0",
+  "paper_probation_candidate_ids": [
+    "c88421d619759b2cfaa6f4d0",
+    "3e49d7da73ac2456c3eecb02"
+  ],
   "strategy_id": "microbar_cross_sectional_pairs_v1@research",
   "dataset_snapshot_ref": "portfolio-profit-autoresearch-500-v1",
   "initial_state": "blocked",

@@ -515,11 +515,15 @@ class TestSubmissionCouncil(TestCase):
                 strategy_id: str,
                 strategy_family: str,
                 segment_dependencies: list[str] | None = None,
+                paper_probation_candidate_ids: list[str] | None = None,
             ) -> None:
                 self.hypothesis_id = hypothesis_id
                 self._payload = {
                     "hypothesis_id": hypothesis_id,
                     "candidate_id": candidate_id,
+                    "paper_probation_candidate_ids": list(
+                        paper_probation_candidate_ids or []
+                    ),
                     "strategy_id": strategy_id,
                     "strategy_family": strategy_family,
                     "lane_id": strategy_family,
@@ -546,6 +550,10 @@ class TestSubmissionCouncil(TestCase):
                     candidate_id="c88421d619759b2cfaa6f4d0",
                     strategy_id="microbar_cross_sectional_pairs_v1@research",
                     strategy_family="microbar_cross_sectional_pairs",
+                    paper_probation_candidate_ids=[
+                        "c88421d619759b2cfaa6f4d0",
+                        "3e49d7da73ac2456c3eecb02",
+                    ],
                 ),
                 _RegistryItem(
                     hypothesis_id="H-REV-01",
@@ -618,6 +626,36 @@ class TestSubmissionCouncil(TestCase):
                         execution_policy_hash_counts={"policy": 2},
                         cost_model_hash_counts={"cost": 2},
                         lineage_hash_counts={"lineage": 2},
+                        blockers_json=[],
+                    ),
+                    StrategyRuntimeLedgerBucket(
+                        run_id="pairs-reversal-runtime",
+                        candidate_id="3e49d7da73ac2456c3eecb02",
+                        hypothesis_id="H-PAIRS-01",
+                        observed_stage="paper",
+                        bucket_started_at=now - timedelta(minutes=75),
+                        bucket_ended_at=now - timedelta(minutes=60),
+                        account_label="TORGHUT_SIM",
+                        runtime_strategy_name="microbar-pairs-vwap-reversal",
+                        strategy_family="microbar_cross_sectional_pairs",
+                        fill_count=1,
+                        decision_count=1,
+                        submitted_order_count=1,
+                        cancelled_order_count=0,
+                        rejected_order_count=0,
+                        unfilled_order_count=0,
+                        closed_trade_count=1,
+                        open_position_count=0,
+                        filled_notional=Decimal("316509.62015600"),
+                        gross_strategy_pnl=Decimal("555.25627600"),
+                        cost_amount=Decimal("123.22325790"),
+                        net_strategy_pnl_after_costs=Decimal("432.03301810"),
+                        post_cost_expectancy_bps=Decimal("13.64991743"),
+                        ledger_schema_version="torghut.runtime-ledger-bucket.v1",
+                        pnl_basis="realized_strategy_pnl_after_explicit_costs",
+                        execution_policy_hash_counts={"policy": 1},
+                        cost_model_hash_counts={"cost": 1},
+                        lineage_hash_counts={"lineage": 1},
                         blockers_json=[],
                     ),
                 ]
@@ -707,16 +745,20 @@ class TestSubmissionCouncil(TestCase):
             "runtime_ledger_candidate_mismatch", candidates[0]["reason_codes"]
         )
         paper_candidates = gate["runtime_ledger_paper_probation_candidates"]
-        self.assertEqual(gate["paper_probation_eligible_total"], 1)
-        self.assertEqual(gate["runtime_ledger_paper_probation_eligible_total"], 1)
+        self.assertEqual(gate["paper_probation_eligible_total"], 2)
+        self.assertEqual(gate["runtime_ledger_paper_probation_eligible_total"], 2)
         self.assertIn(
             "paper_probation_evidence_collection_only", gate["blocked_reasons"]
         )
         self.assertNotIn("segment_market-context_blocked", gate["blocked_reasons"])
         self.assertNotIn("market_context_stale", gate["blocked_reasons"])
         self.assertNotIn("market_context_domain_news_stale", gate["blocked_reasons"])
-        self.assertEqual(len(paper_candidates), 1)
+        self.assertEqual(len(paper_candidates), 2)
         self.assertEqual(paper_candidates[0]["hypothesis_id"], "H-PAIRS-01")
+        self.assertEqual(paper_candidates[1]["hypothesis_id"], "H-PAIRS-01")
+        self.assertEqual(
+            paper_candidates[1]["candidate_id"], "3e49d7da73ac2456c3eecb02"
+        )
         self.assertEqual(
             paper_candidates[0]["paper_probation_scope"], "evidence_collection_only"
         )
@@ -727,7 +769,7 @@ class TestSubmissionCouncil(TestCase):
             import_plan["schema_version"],
             "torghut.runtime-ledger-paper-probation-import-plan.v1",
         )
-        self.assertEqual(import_plan["target_count"], 1)
+        self.assertEqual(import_plan["target_count"], 2)
         self.assertEqual(import_plan["skipped_target_count"], 0)
         target = import_plan["targets"][0]
         self.assertEqual(target["hypothesis_id"], "H-PAIRS-01")
@@ -740,6 +782,13 @@ class TestSubmissionCouncil(TestCase):
         )
         self.assertIn("microbar-pairs-vwap-cap-safe", target["strategy_lookup_names"])
         self.assertEqual(target["account_label"], "TORGHUT_SIM")
+        self.assertEqual(
+            import_plan["targets"][1]["candidate_id"], "3e49d7da73ac2456c3eecb02"
+        )
+        self.assertEqual(
+            import_plan["targets"][1]["strategy_name"],
+            "microbar-pairs-vwap-reversal",
+        )
         self.assertEqual(
             target["source_dsn_env"], "TORGHUT_DURABLE_RUNTIME_LEDGER_SOURCE_DSN"
         )
@@ -764,7 +813,11 @@ class TestSubmissionCouncil(TestCase):
         )
         self.assertNotIn("runtime_ledger_artifact_refs", target)
         self.assertNotIn("runtime_ledger_artifact_row_count", target)
-        self.assertEqual(candidates[1]["hypothesis_id"], "H-CONT-01")
+        self.assertEqual(candidates[1]["hypothesis_id"], "H-PAIRS-01")
+        self.assertEqual(candidates[1]["candidate_id"], "3e49d7da73ac2456c3eecb02")
+        self.assertTrue(
+            any(candidate["hypothesis_id"] == "H-CONT-01" for candidate in candidates)
+        )
 
     def test_runtime_ledger_paper_probation_import_plan_falls_back_and_skips_incomplete_targets(
         self,
