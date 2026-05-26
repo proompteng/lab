@@ -420,6 +420,7 @@ class HypothesisManifest(BaseModel):
     lane_id: str
     strategy_family: str
     candidate_id: str | None = None
+    paper_probation_candidate_ids: list[str] = Field(default_factory=list)
     strategy_id: str | None = None
     dataset_snapshot_ref: str | None = None
     initial_state: Literal["shadow", "blocked"] = "shadow"
@@ -443,6 +444,7 @@ class HypothesisManifest(BaseModel):
         "required_feature_sets",
         "required_dependency_capabilities",
         "segment_dependencies",
+        "paper_probation_candidate_ids",
         "rollback_triggers",
         "promotion_gates",
         mode="before",

@@ -246,6 +246,11 @@ class TestHypothesisReadiness(TestCase):
                         "hypothesis_id": "H-CONT-01",
                         "lane_id": "continuation",
                         "strategy_family": "intraday_continuation",
+                        "paper_probation_candidate_ids": [
+                            " secondary-candidate ",
+                            "primary-candidate",
+                            "primary-candidate",
+                        ],
                         "initial_state": "shadow",
                         "expected_gross_edge_bps": "6",
                         "max_allowed_slippage_bps": "12",
@@ -263,6 +268,10 @@ class TestHypothesisReadiness(TestCase):
         self.assertTrue(result.loaded)
         self.assertEqual(len(result.items), 1)
         self.assertEqual(result.items[0].hypothesis_id, "H-CONT-01")
+        self.assertEqual(
+            result.items[0].paper_probation_candidate_ids,
+            ["primary-candidate", "secondary-candidate"],
+        )
         self.assertEqual(result.errors, [])
 
     def test_compile_hypothesis_runtime_statuses_stays_shadow_without_feature_and_evidence(

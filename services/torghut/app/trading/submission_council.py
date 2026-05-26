@@ -1091,12 +1091,12 @@ def _runtime_ledger_target_reason_codes(
     manifest: Mapping[str, object],
 ) -> list[str]:
     reasons: list[str] = []
-    expected_candidate = _safe_text(manifest.get("candidate_id"))
+    expected_candidates = _runtime_ledger_manifest_candidate_ids(manifest)
     actual_candidate = _safe_text(payload.get("candidate_id"))
-    if expected_candidate is not None:
+    if expected_candidates:
         if actual_candidate is None:
             reasons.append("runtime_ledger_candidate_missing")
-        elif actual_candidate != expected_candidate:
+        elif actual_candidate not in expected_candidates:
             reasons.append("runtime_ledger_candidate_mismatch")
 
     expected_family = _normalized_strategy_family(manifest.get("strategy_family"))
@@ -1108,6 +1108,24 @@ def _runtime_ledger_target_reason_codes(
     ):
         reasons.append("runtime_ledger_strategy_family_mismatch")
     return reasons
+
+
+def _runtime_ledger_manifest_candidate_ids(
+    manifest: Mapping[str, object],
+) -> set[str]:
+    candidates: set[str] = set()
+    primary_candidate = _safe_text(manifest.get("candidate_id"))
+    if primary_candidate is not None:
+        candidates.add(primary_candidate)
+    raw_probation_candidates = manifest.get("paper_probation_candidate_ids")
+    if isinstance(raw_probation_candidates, Sequence) and not isinstance(
+        raw_probation_candidates, (str, bytes, bytearray)
+    ):
+        for raw_candidate in cast(Sequence[object], raw_probation_candidates):
+            candidate = _safe_text(raw_candidate)
+            if candidate is not None:
+                candidates.add(candidate)
+    return candidates
 
 
 def _runtime_ledger_repair_reason_codes(
