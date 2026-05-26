@@ -1359,10 +1359,14 @@ def _runtime_window_import_audit(
 ) -> dict[str, object]:
     session_readiness = _as_mapping(next_targets.get("session_readiness"))
     import_blockers = _unique_text_items(session_readiness.get("import_blockers"))
+    selected_target_audits = _selected_runtime_window_target_audits(
+        next_targets=next_targets,
+        target_audits=target_audits,
+    )
     source_missing_reasons = sorted(
         {
             str(reason).strip()
-            for audit in target_audits
+            for audit in selected_target_audits
             for reason in _as_sequence(
                 _as_mapping(audit.get("source_activity")).get("missing_reasons")
             )
@@ -1372,46 +1376,27 @@ def _runtime_window_import_audit(
     runtime_ledger_blockers = sorted(
         {
             str(blocker).strip()
-            for audit in target_audits
+            for audit in selected_target_audits
             for blocker in _as_sequence(
                 _as_mapping(audit.get("runtime_ledger")).get("blockers")
             )
             if str(blocker).strip()
         }
     )
-    current_target_count = len(target_audits)
-    targets_with_source_activity = sum(
-        int(not bool(_as_mapping(audit.get("source_activity")).get("missing")))
-        for audit in target_audits
-    )
-    targets_with_runtime_ledger = sum(
-        int(_safe_int(_as_mapping(audit.get("runtime_ledger")).get("bucket_count")) > 0)
-        for audit in target_audits
-    )
-    targets_with_evidence_grade_runtime_ledger = sum(
-        int(
-            _safe_int(
-                _as_mapping(audit.get("runtime_ledger")).get(
-                    "evidence_grade_bucket_count"
-                )
-            )
-            > 0
-        )
-        for audit in target_audits
-    )
-    targets_with_promotion_decision = sum(
-        int(
-            _safe_int(
-                _as_mapping(audit.get("promotion_decisions")).get("decision_count")
-            )
-            > 0
-        )
-        for audit in target_audits
-    )
+    source_plan_target_count = len(target_audits)
+    current_target_count = len(selected_target_audits)
+    raw_source_counts = _runtime_window_target_counts(target_audits)
+    selected_target_counts = _runtime_window_target_counts(selected_target_audits)
+    targets_with_source_activity = selected_target_counts["source_activity"]
+    targets_with_runtime_ledger = selected_target_counts["runtime_ledger"]
+    targets_with_evidence_grade_runtime_ledger = selected_target_counts[
+        "evidence_grade_runtime_ledger"
+    ]
+    targets_with_promotion_decision = selected_target_counts["promotion_decision"]
     import_ready = bool(session_readiness.get("import_ready"))
     session_state = _safe_text(session_readiness.get("state")) or "unknown"
     blockers: list[str]
-    if current_target_count <= 0:
+    if source_plan_target_count <= 0:
         state = "paper_probation_import_plan_missing"
         next_action = "repair_runtime_ledger_paper_probation_import_plan"
         blockers = ["paper_probation_import_plan_missing"]
@@ -1424,6 +1409,10 @@ def _runtime_window_import_audit(
             "window_closed_import_blocked": "repair_paper_route_probe_before_import",
         }.get(session_state, "wait_for_runtime_window_import_readiness")
         blockers = import_blockers
+    elif current_target_count <= 0:
+        state = "next_runtime_window_target_missing"
+        next_action = "repair_next_paper_route_runtime_window_target_plan"
+        blockers = ["next_runtime_window_target_missing"]
     elif targets_with_source_activity < current_target_count:
         state = "import_due_source_activity_missing"
         next_action = "inspect_paper_route_source_activity_before_import"
@@ -1453,7 +1442,8 @@ def _runtime_window_import_audit(
         "import_ready": import_ready,
         "blockers": sorted(dict.fromkeys(blockers)),
         "counts": {
-            "source_plan_target_count": current_target_count,
+            "source_plan_target_count": source_plan_target_count,
+            "selected_target_count": current_target_count,
             "next_runtime_window_target_count": _safe_int(
                 next_targets.get("target_count")
             ),
@@ -1463,6 +1453,18 @@ def _runtime_window_import_audit(
                 targets_with_evidence_grade_runtime_ledger
             ),
             "targets_with_promotion_decision": targets_with_promotion_decision,
+            "raw_source_plan_targets_with_source_activity": raw_source_counts[
+                "source_activity"
+            ],
+            "raw_source_plan_targets_with_runtime_ledger": raw_source_counts[
+                "runtime_ledger"
+            ],
+            "raw_source_plan_targets_with_evidence_grade_runtime_ledger": (
+                raw_source_counts["evidence_grade_runtime_ledger"]
+            ),
+            "raw_source_plan_targets_with_promotion_decision": raw_source_counts[
+                "promotion_decision"
+            ],
         },
         "promotion_authority": {
             "allowed": False,
@@ -1475,6 +1477,77 @@ def _runtime_window_import_audit(
                 "lineage_hashes_required",
             ],
         },
+    }
+
+
+def _runtime_window_target_key(target: Mapping[str, object]) -> tuple[str | None, ...]:
+    return (
+        _safe_text(target.get("hypothesis_id")),
+        _safe_text(target.get("candidate_id")),
+        _safe_text(target.get("strategy_family")),
+        _safe_text(target.get("strategy_name")),
+        _safe_text(target.get("source_manifest_ref")),
+        _safe_text(target.get("dataset_snapshot_ref")),
+    )
+
+
+def _selected_runtime_window_target_audits(
+    *,
+    next_targets: Mapping[str, object],
+    target_audits: Sequence[Mapping[str, object]],
+) -> list[Mapping[str, object]]:
+    selected_keys = {
+        _runtime_window_target_key(_as_mapping(target))
+        for target in _as_mapping_items(next_targets.get("targets"))
+    }
+    if not selected_keys:
+        return []
+    selected: list[Mapping[str, object]] = []
+    seen: set[tuple[str | None, ...]] = set()
+    for audit in target_audits:
+        key = _runtime_window_target_key(_as_mapping(audit.get("target")))
+        if key in selected_keys and key not in seen:
+            selected.append(audit)
+            seen.add(key)
+    return selected
+
+
+def _runtime_window_target_counts(
+    target_audits: Sequence[Mapping[str, object]],
+) -> dict[str, int]:
+    targets_with_source_activity = sum(
+        int(not bool(_as_mapping(audit.get("source_activity")).get("missing")))
+        for audit in target_audits
+    )
+    targets_with_runtime_ledger = sum(
+        int(_safe_int(_as_mapping(audit.get("runtime_ledger")).get("bucket_count")) > 0)
+        for audit in target_audits
+    )
+    targets_with_evidence_grade_runtime_ledger = sum(
+        int(
+            _safe_int(
+                _as_mapping(audit.get("runtime_ledger")).get(
+                    "evidence_grade_bucket_count"
+                )
+            )
+            > 0
+        )
+        for audit in target_audits
+    )
+    targets_with_promotion_decision = sum(
+        int(
+            _safe_int(
+                _as_mapping(audit.get("promotion_decisions")).get("decision_count")
+            )
+            > 0
+        )
+        for audit in target_audits
+    )
+    return {
+        "source_activity": targets_with_source_activity,
+        "runtime_ledger": targets_with_runtime_ledger,
+        "evidence_grade_runtime_ledger": targets_with_evidence_grade_runtime_ledger,
+        "promotion_decision": targets_with_promotion_decision,
     }
 
 

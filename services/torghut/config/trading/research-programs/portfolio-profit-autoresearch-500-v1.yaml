@@ -338,6 +338,50 @@ research_sources:
       - claim_id: subhour_liquidity_reversal
         summary: Short-term reversals can be driven by temporary liquidity imbalances lasting less than an hour.
         implication: Add sub-hour reversal sleeves with strict turnover, cost, and drawdown evidence.
+  - source_id: attention_factors_stat_arb_2025
+    title: 'Attention Factors for Statistical Arbitrage'
+    url: https://arxiv.org/abs/2510.11616
+    published_at: '2025-10-13'
+    claims:
+      - claim_id: attention_factor_residual_statarb
+        claim_type: signal_mechanism
+        summary: Conditional latent attention factors can identify similar-asset residual portfolios and mispricing signals for statistical arbitrage after trading costs.
+        implication: Route H-PAIRS and cross-sectional pairs candidates through factor-neutral residual and attention-weighted similarity features instead of static pair-spread z-scores alone.
+        data_requirements:
+          - firm_characteristic_embeddings
+          - attention_factor_exposures
+          - cross_sectional_similarity_graph
+          - residual_portfolio_returns
+          - transaction_cost_model
+        asset_scope: us_equities_cross_section
+        horizon_scope: statistical_arbitrage
+        expected_direction: positive
+      - claim_id: residual_sequence_policy_features
+        claim_type: feature_recipe
+        summary: Residual-portfolio return sequences should feed candidate ranking and policy selection.
+        implication: Add residual sequence, pair-relative return, and factor-neutral residual checks to the candidate compiler before promotion review.
+        data_requirements:
+          - residual_return_sequence
+          - pair_relative_return
+          - factor_neutral_residual
+          - residual_spread_zscore
+          - turnover
+        asset_scope: us_equities_cross_section
+        horizon_scope: statistical_arbitrage
+        expected_direction: positive
+      - claim_id: attention_factor_post_cost_validation
+        claim_type: validation_requirement
+        summary: Attention-factor statistical-arbitrage candidates remain research candidates until walk-forward replay, cost stress, and runtime-ledger or live-paper proof validate closed-position post-cost PnL.
+        implication: Keep attention-factor outputs as search guidance only; promotion still requires real runtime-ledger proof with filled notional, costs, and closed round trips.
+        data_requirements:
+          - walk_forward_replay
+          - transaction_cost_stress
+          - runtime_ledger_profit_proof
+          - post_cost_net_pnl
+          - closed_round_trips
+        asset_scope: us_equities_cross_section
+        horizon_scope: statistical_arbitrage_validation
+        expected_direction: neutral
   - source_id: asymmetric_ofi_hmm_regime_2025
     title: 'Asymmetric Hidden Markov Modeling of Order Flow Imbalances for Microstructure-Aware Market Regime Detection'
     url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=5315733

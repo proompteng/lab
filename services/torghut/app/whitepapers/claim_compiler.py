@@ -2085,6 +2085,81 @@ RECENT_WHITEPAPER_SEEDS: tuple[WhitepaperResearchSource, ...] = (
             },
         ),
     ),
+    WhitepaperResearchSource(
+        run_id="seed-arxiv-2510-11616",
+        title="Attention Factors for Statistical Arbitrage",
+        source_url="https://arxiv.org/abs/2510.11616",
+        published_at="2025-10-13",
+        claims=(
+            {
+                "claim_id": "attention-factor-residual-statarb",
+                "claim_type": "signal_mechanism",
+                "claim_text": (
+                    "Conditional latent attention factors can identify similar-asset residual "
+                    "portfolios and mispricing signals for statistical arbitrage when the factor "
+                    "model and trading policy are optimized jointly after transaction costs."
+                ),
+                "asset_scope": "us_equities_cross_section",
+                "horizon_scope": "statistical_arbitrage",
+                "expected_direction": "positive",
+                "data_requirements": [
+                    "firm_characteristic_embeddings",
+                    "attention_factor_exposures",
+                    "cross_sectional_similarity_graph",
+                    "residual_portfolio_returns",
+                    "transaction_cost_model",
+                ],
+                "confidence": "0.75",
+            },
+            {
+                "claim_id": "residual-sequence-policy-features",
+                "claim_type": "feature_recipe",
+                "claim_text": (
+                    "Residual-portfolio return sequences should feed candidate ranking and policy "
+                    "selection instead of relying only on static pair-spread z-scores."
+                ),
+                "asset_scope": "us_equities_cross_section",
+                "horizon_scope": "statistical_arbitrage",
+                "expected_direction": "positive",
+                "data_requirements": [
+                    "residual_return_sequence",
+                    "pair_relative_return",
+                    "factor_neutral_residual",
+                    "residual_spread_zscore",
+                    "turnover",
+                ],
+                "confidence": "0.74",
+            },
+            {
+                "claim_id": "attention-factor-post-cost-validation",
+                "claim_type": "validation_requirement",
+                "claim_text": (
+                    "Attention-factor statistical-arbitrage candidates remain research candidates "
+                    "until walk-forward replay, transaction-cost stress, and runtime-ledger or "
+                    "live-paper proof validate closed-position post-cost PnL."
+                ),
+                "asset_scope": "us_equities_cross_section",
+                "horizon_scope": "statistical_arbitrage_validation",
+                "expected_direction": "neutral",
+                "data_requirements": [
+                    "walk_forward_replay",
+                    "transaction_cost_stress",
+                    "runtime_ledger_profit_proof",
+                    "post_cost_net_pnl",
+                    "closed_round_trips",
+                ],
+                "confidence": "0.76",
+            },
+        ),
+        claim_relations=(
+            {
+                "relation_id": "attention-factor-statarb-requires-ledger-proof",
+                "relation_type": "requires_validation",
+                "source_claim_id": "attention-factor-post-cost-validation",
+                "target_claim_id": "attention-factor-residual-statarb",
+            },
+        ),
+    ),
 )
 
 

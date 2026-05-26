@@ -361,6 +361,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
             ["paper_route_session_window_not_open"],
         )
         self.assertEqual(import_audit["counts"]["source_plan_target_count"], 2)
+        self.assertEqual(import_audit["counts"]["selected_target_count"], 1)
         self.assertEqual(import_audit["counts"]["next_runtime_window_target_count"], 1)
         self.assertFalse(import_audit["promotion_authority"]["allowed"])
         proof_handoff = payload["runtime_ledger_proof_packet_handoff"]
@@ -797,6 +798,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
                                 "strategy_family": "microbar_pairs",
                                 "strategy_name": strategy_name,
                                 "account_label": "paper",
+                                "source_manifest_ref": "config/trading/hypotheses/h-ledger-audit.json",
                                 "window_start": window_start.isoformat(),
                                 "window_end": window_end.isoformat(),
                                 "paper_route_probe_symbols": ["AAPL"],
@@ -1062,6 +1064,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
                                 "strategy_family": "microbar_pairs",
                                 "strategy_name": strategy_name,
                                 "account_label": "paper",
+                                "source_manifest_ref": "config/trading/hypotheses/h-post-window.json",
                                 "window_start": window_start.isoformat(),
                                 "window_end": window_end.isoformat(),
                                 "paper_route_probe_symbols": [" aapl ", "AAPL"],
@@ -1340,6 +1343,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
                                 "strategy_family": "microbar_pairs",
                                 "strategy_name": strategy_name,
                                 "account_label": "paper",
+                                "source_manifest_ref": "config/trading/hypotheses/h-scoped-source.json",
                                 "window_start": window_start.isoformat(),
                                 "window_end": window_end.isoformat(),
                                 "paper_probation_authorized": True,
@@ -1527,6 +1531,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
                                 "strategy_family": "microbar_pairs",
                                 "strategy_name": strategy_name,
                                 "account_label": "paper",
+                                "source_manifest_ref": "config/trading/hypotheses/h-active-route.json",
                                 "window_start": window_start.isoformat(),
                                 "window_end": window_end.isoformat(),
                                 "paper_probation_authorized": True,
@@ -1624,12 +1629,208 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertTrue(import_audit["import_ready"])
         self.assertEqual(import_audit["blockers"], [])
         self.assertEqual(import_audit["counts"]["source_plan_target_count"], 1)
+        self.assertEqual(import_audit["counts"]["selected_target_count"], 1)
         self.assertEqual(import_audit["counts"]["targets_with_source_activity"], 1)
         self.assertEqual(import_audit["counts"]["targets_with_runtime_ledger"], 1)
         self.assertEqual(
             import_audit["counts"]["targets_with_evidence_grade_runtime_ledger"], 1
         )
         self.assertFalse(import_audit["promotion_authority"]["allowed"])
+
+    def test_runtime_import_audit_counts_selected_targets_not_raw_plan_noise(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, tzinfo=timezone.utc)
+        now = datetime(2026, 5, 26, 21, tzinfo=timezone.utc)
+        strategy_name = "selected-paper-route"
+        with Session(self.engine) as session:
+            strategy = Strategy(
+                name=strategy_name,
+                description="selected paper route source activity",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+                created_at=window_start,
+                updated_at=window_start,
+            )
+            session.add(strategy)
+            session.flush()
+            decision = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="paper",
+                symbol="AAPL",
+                timeframe="1Min",
+                decision_json={"action": "buy", "qty": "2"},
+                rationale="selected paper route fixture",
+                status="executed",
+                created_at=window_start + timedelta(minutes=10),
+                executed_at=window_start + timedelta(minutes=11),
+            )
+            session.add(decision)
+            session.flush()
+            execution = Execution(
+                trade_decision_id=decision.id,
+                alpaca_account_label="paper",
+                alpaca_order_id="selected-paper-route-order-1",
+                client_order_id="selected-paper-route-client-1",
+                symbol="AAPL",
+                side="buy",
+                order_type="limit",
+                time_in_force="day",
+                submitted_qty=Decimal("2"),
+                filled_qty=Decimal("2"),
+                avg_fill_price=Decimal("100"),
+                status="filled",
+                raw_order={},
+                created_at=window_start + timedelta(minutes=12),
+                updated_at=window_start + timedelta(minutes=12),
+                last_update_at=window_start + timedelta(minutes=12),
+            )
+            session.add(execution)
+            session.flush()
+            session.add_all(
+                [
+                    ExecutionTCAMetric(
+                        execution_id=execution.id,
+                        trade_decision_id=decision.id,
+                        strategy_id=strategy.id,
+                        alpaca_account_label="paper",
+                        symbol="AAPL",
+                        side="buy",
+                        arrival_price=Decimal("99"),
+                        avg_fill_price=Decimal("100"),
+                        filled_qty=Decimal("2"),
+                        signed_qty=Decimal("2"),
+                        slippage_bps=Decimal("5"),
+                        shortfall_notional=Decimal("1"),
+                        realized_shortfall_bps=Decimal("5"),
+                        churn_qty=Decimal("0"),
+                        churn_ratio=Decimal("0"),
+                        computed_at=window_start + timedelta(minutes=13),
+                        created_at=window_start + timedelta(minutes=13),
+                        updated_at=window_start + timedelta(minutes=13),
+                    ),
+                    StrategyRuntimeLedgerBucket(
+                        run_id="selected-paper-route-run",
+                        candidate_id="candidate-selected-route",
+                        hypothesis_id="H-SELECTED-ROUTE",
+                        observed_stage="paper",
+                        bucket_started_at=window_start,
+                        bucket_ended_at=window_end,
+                        account_label="paper",
+                        runtime_strategy_name=strategy_name,
+                        strategy_family="microbar_pairs",
+                        fill_count=2,
+                        decision_count=1,
+                        submitted_order_count=1,
+                        closed_trade_count=1,
+                        open_position_count=0,
+                        filled_notional=Decimal("200"),
+                        gross_strategy_pnl=Decimal("12"),
+                        cost_amount=Decimal("2"),
+                        net_strategy_pnl_after_costs=Decimal("10"),
+                        post_cost_expectancy_bps=Decimal("500"),
+                        ledger_schema_version="torghut.runtime-ledger-bucket.v1",
+                        pnl_basis="realized_strategy_pnl_after_explicit_costs",
+                        execution_policy_hash_counts={"policy-a": 1},
+                        cost_model_hash_counts={"cost-a": 1},
+                        lineage_hash_counts={"lineage-a": 1},
+                        blockers_json=[],
+                    ),
+                ]
+            )
+            session.commit()
+
+            payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "paper_route_probe_only",
+                    "blocked_reasons": [],
+                    "promotion_eligible_total": 1,
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "target_count": "3",
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-SELECTED-ROUTE",
+                                "candidate_id": "candidate-selected-route",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_pairs",
+                                "strategy_name": strategy_name,
+                                "account_label": "paper",
+                                "source_manifest_ref": "config/trading/hypotheses/h-selected-route.json",
+                                "window_start": window_start.isoformat(),
+                                "window_end": window_end.isoformat(),
+                                "paper_probation_authorized": True,
+                                "promotion_allowed": False,
+                                "final_promotion_authorized": False,
+                            },
+                            {
+                                "hypothesis_id": "H-SKIPPED-A",
+                                "candidate_id": "candidate-skipped-a",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_pairs",
+                                "strategy_name": "skipped-no-manifest-a",
+                                "account_label": "paper",
+                                "window_start": window_start.isoformat(),
+                                "window_end": window_end.isoformat(),
+                            },
+                            {
+                                "hypothesis_id": "H-SKIPPED-B",
+                                "candidate_id": "candidate-skipped-b",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_pairs",
+                                "strategy_name": "skipped-no-manifest-b",
+                                "account_label": "paper",
+                                "window_start": window_start.isoformat(),
+                                "window_end": window_end.isoformat(),
+                            },
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "summary": {
+                        "paper_route_probe_eligible_symbols": ["AAPL"],
+                        "paper_route_probe_active_symbols": ["AAPL"],
+                    },
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": True,
+                        "effective_max_notional": 25,
+                        "next_session_max_notional": 25,
+                    },
+                },
+                generated_at=now,
+            )
+
+        next_targets = payload["next_paper_route_runtime_window_targets"]
+        self.assertEqual(next_targets["target_count"], 1)
+        self.assertEqual(next_targets["skipped_target_count"], 2)
+        import_audit = payload["runtime_window_import_audit"]
+        self.assertEqual(import_audit["state"], "runtime_ledger_ready_for_gate_review")
+        self.assertEqual(import_audit["blockers"], [])
+        self.assertEqual(import_audit["counts"]["source_plan_target_count"], 3)
+        self.assertEqual(import_audit["counts"]["selected_target_count"], 1)
+        self.assertEqual(import_audit["counts"]["next_runtime_window_target_count"], 1)
+        self.assertEqual(import_audit["counts"]["targets_with_source_activity"], 1)
+        self.assertEqual(import_audit["counts"]["targets_with_runtime_ledger"], 1)
+        self.assertEqual(
+            import_audit["counts"]["targets_with_evidence_grade_runtime_ledger"],
+            1,
+        )
+        self.assertEqual(
+            import_audit["counts"]["raw_source_plan_targets_with_source_activity"],
+            1,
+        )
+        self.assertEqual(
+            import_audit["counts"]["raw_source_plan_targets_with_runtime_ledger"],
+            1,
+        )
 
     def test_runtime_ledger_summary_is_scoped_to_target_stage_account_and_strategy(
         self,

@@ -1966,6 +1966,7 @@ class TestStrategyAutoresearch(TestCase):
                 "end_of_day_reversal_2024",
                 "overnight_jump_intraday_reversal_2026",
                 "intraday_cross_section_patterns_2010",
+                "attention_factors_stat_arb_2025",
                 "asymmetric_ofi_hmm_regime_2025",
                 "opening_range_breakout_stocks_in_play_2024",
                 "realistic_market_impact_rl_envs_2026",
@@ -2002,6 +2003,22 @@ class TestStrategyAutoresearch(TestCase):
         self.assertIn("execution_delay", depth_delay_source.claims[0].data_requirements)
         self.assertEqual(
             depth_delay_source.claims[0].horizon_scope, "intraday_execution"
+        )
+        attention_factor_source = next(
+            source
+            for source in program.research_sources
+            if source.source_id == "attention_factors_stat_arb_2025"
+        )
+        self.assertEqual(
+            attention_factor_source.claims[0].claim_type, "signal_mechanism"
+        )
+        self.assertIn(
+            "residual_portfolio_returns",
+            attention_factor_source.claims[0].data_requirements,
+        )
+        self.assertIn(
+            "runtime_ledger_profit_proof",
+            attention_factor_source.claims[2].data_requirements,
         )
 
         microbar_seed_names = {

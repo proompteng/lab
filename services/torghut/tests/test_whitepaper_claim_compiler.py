@@ -54,11 +54,30 @@ class TestWhitepaperClaimCompiler(TestCase):
                 "seed-arxiv-2508-06788",
                 "seed-arxiv-2507-22712",
                 "seed-arxiv-2512-15720",
+                "seed-arxiv-2510-11616",
             }.issubset({source.run_id for source in RECENT_WHITEPAPER_SEEDS})
         )
         self.assertTrue(all(card.source_run_id.startswith("seed-") for card in cards))
         self.assertTrue(all(card.required_features for card in cards))
         self.assertTrue(all(card.risk_controls for card in cards))
+
+    def test_attention_factor_stat_arb_seed_compiles_runtime_gated_card(self) -> None:
+        cards = compile_sources_to_hypothesis_cards(RECENT_WHITEPAPER_SEEDS)
+        card_by_source = {card.source_run_id: card for card in cards}
+
+        card = card_by_source["seed-arxiv-2510-11616"]
+
+        self.assertIn("firm_characteristic_embeddings", card.required_features)
+        self.assertIn("residual_portfolio_returns", card.required_features)
+        self.assertEqual(card.asset_scope, "us_equities_cross_section")
+        self.assertEqual(card.horizon_scope, "statistical_arbitrage")
+        validation = card.implementation_constraints["validation_requirements"][0]
+        self.assertEqual(
+            validation["claim_id"],
+            "attention-factor-post-cost-validation",
+        )
+        self.assertIn("transaction_cost_stress", validation["data_requirements"])
+        self.assertIn("runtime_ledger_profit_proof", validation["data_requirements"])
 
     def test_incomplete_risk_only_source_is_blocked(self) -> None:
         source = WhitepaperResearchSource(
