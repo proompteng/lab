@@ -26,6 +26,7 @@ from app.trading.runtime_window_import import (
     _parse_observation_datetime,
     _runtime_ledger_bucket_blockers,
     _runtime_ledger_bucket_payloads,
+    _runtime_ledger_daily_summary_from_observed_buckets,
     _runtime_window_import_proof_blockers,
     build_observed_runtime_buckets,
     build_regular_session_buckets,
@@ -764,6 +765,87 @@ class TestRuntimeWindowImport(TestCase):
                 "runtime_ledger_observed_trading_day_count"
             ],
             2,
+        )
+
+    def test_runtime_ledger_daily_summary_from_observed_buckets_tracks_drawdown(
+        self,
+    ) -> None:
+        self.assertEqual(
+            _runtime_ledger_daily_summary_from_observed_buckets([])[
+                "runtime_ledger_median_daily_net_pnl_after_costs"
+            ],
+            "0",
+        )
+        buckets = build_observed_runtime_buckets(
+            bucket_ranges=[
+                (
+                    datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                    1,
+                ),
+                (
+                    datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 15, 30, tzinfo=timezone.utc),
+                    1,
+                ),
+                (
+                    datetime(2026, 3, 9, 14, 30, tzinfo=timezone.utc),
+                    datetime(2026, 3, 9, 15, 0, tzinfo=timezone.utc),
+                    1,
+                ),
+            ],
+            decision_times=[],
+            execution_times=[],
+            tca_rows=[
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 45, tzinfo=timezone.utc),
+                    "post_cost_expectancy_basis": "realized_strategy_pnl_after_explicit_costs",
+                    "post_cost_promotion_eligible": True,
+                    "runtime_ledger_bucket": _runtime_ledger_bucket(
+                        net_strategy_pnl_after_costs="100",
+                        filled_notional="1000",
+                        closed_trade_count=2,
+                    ),
+                },
+                {
+                    "computed_at": datetime(2026, 3, 6, 15, 15, tzinfo=timezone.utc),
+                    "post_cost_expectancy_basis": "realized_strategy_pnl_after_explicit_costs",
+                    "post_cost_promotion_eligible": True,
+                    "runtime_ledger_bucket": _runtime_ledger_bucket(
+                        net_strategy_pnl_after_costs="-130",
+                        filled_notional="500",
+                        closed_trade_count=1,
+                    ),
+                },
+                {
+                    "computed_at": datetime(2026, 3, 9, 14, 45, tzinfo=timezone.utc),
+                    "post_cost_expectancy_basis": "realized_strategy_pnl_after_explicit_costs",
+                    "post_cost_promotion_eligible": True,
+                    "runtime_ledger_bucket": _runtime_ledger_bucket(
+                        net_strategy_pnl_after_costs="10",
+                        filled_notional="100",
+                        closed_trade_count=1,
+                    ),
+                },
+            ],
+            continuity_ok=True,
+            drift_ok=True,
+            dependency_quorum_decision="allow",
+        )
+
+        summary = _runtime_ledger_daily_summary_from_observed_buckets(buckets)
+
+        self.assertEqual(
+            summary["runtime_ledger_net_pnl_by_trading_day"]["2026-03-06"], "-30"
+        )
+        self.assertEqual(
+            summary["runtime_ledger_mean_daily_net_pnl_after_costs"], "-10"
+        )
+        self.assertEqual(summary["runtime_ledger_p10_daily_net_pnl_after_costs"], "-30")
+        self.assertEqual(summary["runtime_ledger_max_intraday_drawdown"], "130")
+        self.assertEqual(
+            summary["runtime_ledger_closed_trade_count_by_day"],
+            {"2026-03-06": 3, "2026-03-09": 1},
         )
 
     def test_persist_observed_runtime_windows_blocks_missing_health_gate_evidence(

@@ -482,6 +482,16 @@ class TestVerifyTradingReadiness(TestCase):
             "runtime_ledger_mean_daily_net_pnl_after_costs",
         )
 
+    def test_runtime_ledger_daily_net_pnl_reports_missing_without_inputs(self) -> None:
+        self.assertEqual(
+            verifier._runtime_ledger_daily_net_pnl(
+                {},
+                net_pnl=None,
+                trading_day_count=0,
+            ),
+            (None, "missing"),
+        )
+
     def test_live_and_either_profiles_use_live_floor_states_and_market_window(
         self,
     ) -> None:

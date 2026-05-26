@@ -13,7 +13,12 @@ from sqlalchemy.pool import StaticPool
 
 from app.config import settings
 from app.db import get_session
-from app.main import _build_current_evidence_epoch, _env_json_string_list, app
+from app.main import (
+    _build_current_evidence_epoch,
+    _daily_runtime_ledger_portfolio_summary,
+    _env_json_string_list,
+    app,
+)
 from app.models import Base, EvidenceEpochRecord, StrategyRuntimeLedgerBucket
 from app.trading.evidence_epochs import (
     compile_evidence_epoch,
@@ -190,10 +195,25 @@ class TestEvidenceEpochs(TestCase):
             runtime_closure_artifact_refs=("runtime-closure/summary.json",),
             observed_at=observed_at,
         )
+        non_evidence_grade_receipt = build_portfolio_proof_receipt(
+            portfolio_candidate_id="portfolio-1",
+            target_net_pnl_per_day=Decimal("500"),
+            post_cost_net_pnl_per_day=Decimal("525"),
+            holdout_result={"status": "pass"},
+            runtime_closure_artifact_refs=("runtime-closure/summary.json",),
+            runtime_ledger_summary={"evidence_grade_bucket_count": 0},
+            require_runtime_ledger_summary=True,
+            observed_at=observed_at,
+        )
         self.assertIn("portfolio_holdout_missing", holdout_missing_receipt.reason_codes)
         self.assertIn(
             "portfolio_runtime_closure_refs_missing",
             refs_missing_receipt.reason_codes,
+        )
+        self.assertEqual(non_evidence_grade_receipt.state, "fail")
+        self.assertIn(
+            "portfolio_runtime_ledger_summary_not_evidence_grade",
+            non_evidence_grade_receipt.reason_codes,
         )
         self.assertEqual(serializable_receipt.state, "pass")
 
@@ -348,6 +368,92 @@ class TestEvidenceEpochs(TestCase):
         )
         self.assertIn("portfolio_holdout_missing", receipt.reason_codes)
 
+    def test_daily_runtime_ledger_portfolio_summary_fails_non_evidence_rows(
+        self,
+    ) -> None:
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        observed_at = datetime.now(timezone.utc)
+        with session_local() as session:
+            session.add(
+                StrategyRuntimeLedgerBucket(
+                    run_id="portfolio-proof-blocked",
+                    candidate_id="candidate-blocked",
+                    hypothesis_id="H-PORTFOLIO-PROOF",
+                    observed_stage="paper",
+                    bucket_started_at=observed_at - timedelta(hours=1),
+                    bucket_ended_at=observed_at - timedelta(minutes=30),
+                    account_label="paper",
+                    runtime_strategy_name="portfolio-proof-strategy",
+                    strategy_family="portfolio_proof",
+                    fill_count=2,
+                    decision_count=2,
+                    submitted_order_count=2,
+                    closed_trade_count=1,
+                    open_position_count=0,
+                    filled_notional=Decimal("1000"),
+                    gross_strategy_pnl=Decimal("526"),
+                    cost_amount=Decimal("1"),
+                    net_strategy_pnl_after_costs=Decimal("525"),
+                    post_cost_expectancy_bps=Decimal("1250"),
+                    ledger_schema_version="torghut.runtime-ledger-bucket.v1",
+                    pnl_basis="realized_strategy_pnl_after_explicit_costs",
+                    execution_policy_hash_counts={"policy": 2},
+                    cost_model_hash_counts={"cost": 2},
+                    lineage_hash_counts={"lineage": 2},
+                    blockers_json=["runtime_ledger_stage_not_live"],
+                )
+            )
+            session.commit()
+
+            summary = _daily_runtime_ledger_portfolio_summary(
+                session=session,
+                account_label="paper",
+                stage_scope="paper",
+                observed_at=observed_at,
+            )
+
+        self.assertEqual(summary["bucket_count"], 1)
+        self.assertEqual(summary["evidence_grade_bucket_count"], 0)
+        self.assertEqual(
+            summary["blockers"],
+            ["portfolio_runtime_ledger_summary_not_evidence_grade"],
+        )
+
+    def test_daily_runtime_ledger_portfolio_summary_uses_missing_stage_filter(
+        self,
+    ) -> None:
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        observed_at = datetime(2026, 5, 26, 12, 0, tzinfo=timezone.utc)
+        with session_local() as session:
+            summary = _daily_runtime_ledger_portfolio_summary(
+                session=session,
+                account_label="paper",
+                stage_scope="research",
+                observed_at=observed_at,
+            )
+
+        self.assertEqual(
+            summary["filters"]["observed_stage"],
+            "__missing__",
+        )
+        self.assertEqual(
+            summary["blockers"], ["portfolio_runtime_ledger_summary_missing"]
+        )
+
     def test_current_epoch_portfolio_proof_fails_closed_without_daily_ledger(
         self,
     ) -> None:
@@ -390,6 +496,52 @@ class TestEvidenceEpochs(TestCase):
             receipt.reason_codes,
         )
         self.assertEqual(receipt.payload["post_cost_net_pnl_per_day"], "0")
+
+    def test_current_epoch_ignores_scalar_portfolio_candidate_ids(self) -> None:
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        with session_local() as session:
+            with (
+                patch(
+                    "app.main._evaluate_database_contract",
+                    return_value={
+                        "ok": True,
+                        "schema_current": True,
+                        "schema_graph_lineage_ready": True,
+                        "schema_graph_lineage_errors": [],
+                        "schema_head_signature": "abc123",
+                    },
+                ),
+                patch(
+                    "app.main.build_empirical_jobs_status", return_value={"ready": True}
+                ),
+                patch(
+                    "app.main._daily_runtime_ledger_portfolio_summary",
+                    return_value={
+                        "bucket_count": 1,
+                        "evidence_grade_bucket_count": 1,
+                        "post_cost_net_pnl_per_day": "525",
+                        "candidate_ids": "candidate-scalar",
+                    },
+                ),
+            ):
+                epoch = _build_current_evidence_epoch(
+                    session=session,
+                    account_label="paper",
+                    stage_scope="paper",
+                )
+
+        receipt = next(
+            item for item in epoch.receipts if item.receipt_type == "portfolio_proof"
+        )
+        self.assertEqual(receipt.payload["portfolio_candidate_id"], "")
+        self.assertIn("portfolio_proof_missing", receipt.reason_codes)
 
     def test_compile_epoch_flags_missing_and_reasonless_required_receipts(self) -> None:
         observed_at = datetime(2026, 5, 5, 12, 0)

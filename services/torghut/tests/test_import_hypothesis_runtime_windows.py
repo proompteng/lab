@@ -41,6 +41,8 @@ from scripts.import_hypothesis_runtime_windows import (
     _runtime_ledger_tca_rows_from_source_dsn,
     _runtime_ledger_tca_rows_from_artifacts,
     _runtime_window_import_proof_hygiene_blockers,
+    _runtime_window_source_kind_is_informational,
+    _source_activity_missing_summary,
     _stable_payload_digest,
     _strategy_name_candidates,
     main,
@@ -727,6 +729,41 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 "dependency_quorum_decision_missing",
                 "continuity_gate_missing",
                 "drift_gate_missing",
+            ],
+        )
+        self.assertTrue(
+            _runtime_window_source_kind_is_informational(
+                source_kind="non-authoritative-selection",
+                target_metadata={},
+            )
+        )
+
+    def test_source_activity_missing_summary_includes_proof_hygiene_blockers(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
+        summary = _source_activity_missing_summary(
+            run_id="run-source-missing",
+            candidate_id="cand-1",
+            hypothesis_id="H-PAIRS-01",
+            observed_stage="paper",
+            strategy_name="microbar-cross-sectional-pairs-v1",
+            strategy_names=["microbar-cross-sectional-pairs-v1"],
+            account_label="TORGHUT_SIM",
+            window_start=window_start,
+            window_end=datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+            source_manifest_ref="config/trading/hypotheses/h-pairs-01.json",
+            source_kind="paper_runtime_observed",
+            dataset_snapshot_ref="snapshot-1",
+            proof_hygiene_blockers=("runtime_window_target_metadata_missing",),
+        )
+
+        self.assertEqual(summary["proof_status"], "blocked")
+        self.assertEqual(
+            [item["blocker"] for item in summary["proof_blockers"]],
+            [
+                "runtime_window_source_activity_missing",
+                "runtime_window_target_metadata_missing",
             ],
         )
 

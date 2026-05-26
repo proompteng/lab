@@ -23,6 +23,10 @@ from app.trading.completion import (
     DOC29_PAPER_GATE,
     DOC29_SIMULATION_FULL_DAY_GATE,
     TRACE_STATUS_SATISFIED,
+    _median_decimal,
+    _p10_decimal,
+    _runtime_ledger_daily_summary,
+    _runtime_ledger_trading_day_key,
     build_completion_trace,
     build_doc29_completion_status,
     persist_completion_trace,
@@ -165,6 +169,68 @@ class TestCompletionTrace(TestCase):
 
     def test_runtime_and_doc_completion_matrices_match(self) -> None:
         self.assertTrue(runtime_and_doc_completion_matrices_match())
+
+    def test_runtime_ledger_daily_summary_counts_day_distribution_and_drawdown(
+        self,
+    ) -> None:
+        self.assertEqual(
+            _runtime_ledger_trading_day_key(datetime(2026, 3, 6, 14, 30)),
+            '2026-03-06',
+        )
+        self.assertEqual(
+            _median_decimal([Decimal('3'), Decimal('1'), Decimal('2')]),
+            Decimal('2'),
+        )
+        self.assertEqual(_p10_decimal([Decimal('5'), Decimal('-1')]), Decimal('-1'))
+
+        rows = [
+            _runtime_ledger_bucket(
+                run_id='daily-positive',
+                bucket_started_at=datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                bucket_ended_at=datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                payload_json={'source': 'raw-runtime-ledger'},
+            ),
+            _runtime_ledger_bucket(
+                run_id='daily-drawdown',
+                bucket_started_at=datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                bucket_ended_at=datetime(2026, 3, 6, 15, 30, tzinfo=timezone.utc),
+                payload_json={'source': 'raw-runtime-ledger'},
+            ),
+            _runtime_ledger_bucket(
+                run_id='persisted-summary',
+                bucket_started_at=datetime(2026, 3, 9, 13, 30, tzinfo=timezone.utc),
+                bucket_ended_at=datetime(2026, 3, 9, 14, 0, tzinfo=timezone.utc),
+                payload_json={
+                    'runtime_ledger_daily_summary': {
+                        'runtime_ledger_observed_trading_day_count': 25,
+                        'runtime_ledger_mean_daily_net_pnl_after_costs': '24',
+                    }
+                },
+            ),
+        ]
+        rows[0].net_strategy_pnl_after_costs = Decimal('100')
+        rows[1].net_strategy_pnl_after_costs = Decimal('-40')
+
+        summary = _runtime_ledger_daily_summary(rows[:2])
+        self.assertEqual(
+            summary['runtime_ledger_net_pnl_by_trading_day'],
+            {'2026-03-06': '60'},
+        )
+        self.assertEqual(summary['runtime_ledger_max_intraday_drawdown'], '40')
+        self.assertEqual(
+            summary['runtime_ledger_closed_trade_count_by_day'],
+            {'2026-03-06': 12},
+        )
+
+        persisted_summary = _runtime_ledger_daily_summary(rows)
+        self.assertEqual(
+            persisted_summary['runtime_ledger_observed_trading_day_count'],
+            25,
+        )
+        self.assertEqual(
+            persisted_summary['runtime_ledger_mean_daily_net_pnl_after_costs'],
+            '24',
+        )
 
     def test_persist_completion_trace_round_trips_gate_rows(self) -> None:
         trace = build_completion_trace(
@@ -604,6 +670,50 @@ class TestCompletionTrace(TestCase):
         self.assertEqual(
             scale_gate['runtime_ledger_summary']['runtime_ledger_mean_daily_net_pnl_after_costs'],
             '24',
+        )
+
+    def test_runtime_ledger_daily_summary_falls_back_to_bucket_rows(self) -> None:
+        first = _runtime_ledger_bucket(
+            run_id='fallback-day-1a',
+            bucket_started_at=datetime(2026, 3, 6, 14, 30),
+            bucket_ended_at=datetime(2026, 3, 6, 15, 0),
+        )
+        first.net_strategy_pnl_after_costs = Decimal('100')
+        first.filled_notional = Decimal('1000')
+        first.closed_trade_count = 2
+        second = _runtime_ledger_bucket(
+            run_id='fallback-day-1b',
+            bucket_started_at=datetime(2026, 3, 6, 15, 0),
+            bucket_ended_at=datetime(2026, 3, 6, 15, 30),
+        )
+        second.net_strategy_pnl_after_costs = Decimal('-130')
+        second.filled_notional = Decimal('500')
+        second.closed_trade_count = -2
+        third = _runtime_ledger_bucket(
+            run_id='fallback-day-2',
+            bucket_started_at=datetime(2026, 3, 9, 14, 30),
+            bucket_ended_at=datetime(2026, 3, 9, 15, 0),
+        )
+        third.net_strategy_pnl_after_costs = Decimal('10')
+        third.filled_notional = Decimal('100')
+        third.closed_trade_count = 0
+
+        summary = _runtime_ledger_daily_summary([first, second, third])
+
+        self.assertEqual(summary['runtime_ledger_observed_trading_day_count'], 2)
+        self.assertEqual(
+            summary['runtime_ledger_net_pnl_by_trading_day'],
+            {'2026-03-06': '-30', '2026-03-09': '10'},
+        )
+        self.assertEqual(summary['runtime_ledger_mean_daily_net_pnl_after_costs'], '-10')
+        self.assertEqual(summary['runtime_ledger_median_daily_net_pnl_after_costs'], '-10')
+        self.assertEqual(summary['runtime_ledger_p10_daily_net_pnl_after_costs'], '-30')
+        self.assertEqual(summary['runtime_ledger_worst_day_net_pnl_after_costs'], '-30')
+        self.assertEqual(summary['runtime_ledger_max_intraday_drawdown'], '130')
+        self.assertEqual(summary['runtime_ledger_avg_daily_filled_notional'], '800')
+        self.assertEqual(
+            summary['runtime_ledger_closed_trade_count_by_day'],
+            {'2026-03-06': 2, '2026-03-09': 0},
         )
 
     def test_doc29_live_scale_blocks_non_runtime_ledger_window_pnl(self) -> None:
