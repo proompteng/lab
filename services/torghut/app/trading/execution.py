@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import time
@@ -33,13 +34,68 @@ from .quantity_rules import (
     qty_step_for_symbol,
     resolve_quantity_resolution,
 )
-from .simulation import resolve_event_persisted_at, resolve_simulation_context, simulation_context_enabled
+from .simulation import (
+    resolve_event_persisted_at,
+    resolve_simulation_context,
+    simulation_context_enabled,
+)
 from .time_source import trading_now
 from .tca import upsert_execution_tca_metric
 
 logger = logging.getLogger(__name__)
 
 _SHORTING_METADATA_CACHE_TTL_SECONDS = 30.0
+_EXECUTION_POLICY_HASH_KEYS = (
+    "execution_policy_hash",
+    "execution_policy_sha256",
+    "policy_hash",
+)
+_COST_MODEL_HASH_KEYS = (
+    "cost_model_hash",
+    "cost_model_sha256",
+    "fee_model_hash",
+)
+_COST_MODEL_PAYLOAD_KEYS = (
+    "cost_model",
+    "cost_model_config",
+    "transaction_cost_model",
+    "fee_model",
+    "fees_model",
+    "market_impact_cost_model",
+    "proportional_cost_model",
+)
+_LINEAGE_HASH_KEYS = (
+    "lineage_hash",
+    "candidate_lineage_hash",
+    "replay_lineage_hash",
+)
+_LINEAGE_PAYLOAD_KEYS = (
+    "lineage",
+    "candidate_lineage",
+    "source_lineage",
+    "runtime_lineage",
+    "replay_lineage",
+)
+_RUNTIME_COST_PAYLOAD_KEYS = (
+    "runtime_ledger_cost",
+    "execution_cost",
+    "explicit_execution_cost",
+)
+_RUNTIME_COST_AMOUNT_KEYS = (
+    "cost_amount",
+    "explicit_cost",
+    "commission",
+    "fees",
+    "fee_amount",
+    "broker_fee",
+)
+_RUNTIME_COST_BASIS_KEYS = (
+    "cost_basis",
+    "cost_source",
+    "fee_basis",
+    "commission_basis",
+    "broker_fee_basis",
+)
 
 
 class OrderExecutor:
@@ -282,6 +338,7 @@ class OrderExecutor:
         execution_metadata = _extract_execution_metadata(
             decision,
             decision_row=decision_row,
+            execution_policy_context=execution_policy_context,
         )
         if execution_metadata is not None:
             existing_audit = order_payload.get("_execution_audit")
@@ -353,6 +410,7 @@ class OrderExecutor:
         execution_metadata = _extract_execution_metadata(
             decision,
             decision_row=decision_row,
+            execution_policy_context=execution_policy_context,
         )
         if execution_metadata is not None:
             existing_audit = existing_payload.get("_execution_audit")
@@ -412,7 +470,9 @@ class OrderExecutor:
                 or conflicting_order.get("order_type")
                 or "unknown"
             ).lower()
-            existing_order_side = str(conflicting_order.get("side") or "unknown").lower()
+            existing_order_side = str(
+                conflicting_order.get("side") or "unknown"
+            ).lower()
             payload = {
                 "source": "broker_precheck",
                 "code": "precheck_opposite_side_open_order",
@@ -661,9 +721,7 @@ class OrderExecutor:
                 continue
             held_for_open_sells += remaining_qty
             existing_order_id = (
-                order.get("id")
-                or order.get("order_id")
-                or order.get("client_order_id")
+                order.get("id") or order.get("order_id") or order.get("client_order_id")
             )
             if existing_order_id is not None:
                 existing_order_ids.append(str(existing_order_id))
@@ -687,7 +745,9 @@ class OrderExecutor:
                 "position_qty": None,
                 "held_for_open_sells": str(held_for_open_sells),
                 "available_qty": None,
-                "existing_order_id": existing_order_ids[0] if existing_order_ids else None,
+                "existing_order_id": existing_order_ids[0]
+                if existing_order_ids
+                else None,
                 "existing_order_ids": existing_order_ids,
             }
         if position_qty <= 0:
@@ -1183,6 +1243,84 @@ def _coerce_json(value: Any) -> dict[str, Any]:
     return {}
 
 
+def _copy_mapping(value: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        str(key): coerce_json_payload(item)
+        for key, item in cast(Mapping[object, Any], value).items()
+    }
+
+
+def _json_default(value: Any) -> str:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return str(value)
+    return str(value)
+
+
+def _stable_payload_hash(value: Mapping[str, Any] | None) -> str | None:
+    if not isinstance(value, Mapping) or not value:
+        return None
+    encoded = json.dumps(
+        _copy_mapping(value),
+        sort_keys=True,
+        separators=(",", ":"),
+        default=_json_default,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _first_param_value(
+    params_candidates: Sequence[Mapping[str, Any]],
+    *keys: str,
+) -> Any | None:
+    for params in params_candidates:
+        for key in keys:
+            if key in params and params.get(key) is not None:
+                return params.get(key)
+    return None
+
+
+def _first_param_text(
+    params_candidates: Sequence[Mapping[str, Any]],
+    *keys: str,
+) -> str | None:
+    for params in params_candidates:
+        for key in keys:
+            value = params.get(key)
+            text = str(value or "").strip()
+            if text:
+                return text
+    return None
+
+
+def _first_param_mapping(
+    params_candidates: Sequence[Mapping[str, Any]],
+    *keys: str,
+) -> dict[str, Any] | None:
+    for params in params_candidates:
+        for key in keys:
+            value = params.get(key)
+            if isinstance(value, Mapping):
+                return _copy_mapping(cast(Mapping[str, Any], value))
+    return None
+
+
+def _first_mapping_value(payload: Mapping[str, Any], *keys: str) -> Any | None:
+    for key in keys:
+        if key in payload and payload.get(key) is not None:
+            return payload.get(key)
+    return None
+
+
+def _first_mapping_text(payload: Mapping[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        text = str(payload.get(key) or "").strip()
+        if text:
+            return text
+    return None
+
+
 def _coerce_string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
@@ -1209,8 +1347,12 @@ def _merge_decision_metadata(
         return
     for key, value in metadata_update.items():
         if key == "control_plane_snapshot" and isinstance(value, Mapping):
-            existing_snapshot = _coerce_json(decision_json.get("control_plane_snapshot"))
-            for snapshot_key, snapshot_value in cast(Mapping[object, Any], value).items():
+            existing_snapshot = _coerce_json(
+                decision_json.get("control_plane_snapshot")
+            )
+            for snapshot_key, snapshot_value in cast(
+                Mapping[object, Any], value
+            ).items():
                 existing_snapshot[str(snapshot_key)] = coerce_json_payload(
                     snapshot_value
                 )
@@ -1236,30 +1378,51 @@ def _normalize_reject_reason(reason: str) -> _NormalizedRejectReason:
     if normalized == "llm_error" or normalized.startswith("llm_error"):
         return _NormalizedRejectReason("llm_error", "runtime", "llm_review")
     if normalized == "market_context_block" or normalized.startswith("market_context_"):
-        return _NormalizedRejectReason("market_context_block", "market_context", "market_context")
+        return _NormalizedRejectReason(
+            "market_context_block", "market_context", "market_context"
+        )
     if normalized == "symbol_capacity_exhausted":
-        return _NormalizedRejectReason("symbol_capacity_exhausted", "capacity", "portfolio_sizing")
+        return _NormalizedRejectReason(
+            "symbol_capacity_exhausted", "capacity", "portfolio_sizing"
+        )
     if normalized == "qty_below_min":
         return _NormalizedRejectReason("qty_below_min", "capacity", "portfolio_sizing")
     if normalized == "max_position_pct_exceeded":
-        return _NormalizedRejectReason("max_position_pct_exceeded", "policy", "risk_engine")
+        return _NormalizedRejectReason(
+            "max_position_pct_exceeded", "policy", "risk_engine"
+        )
     if normalized.startswith("runtime_uncertainty_gate_"):
         return _NormalizedRejectReason(normalized, "policy", "runtime_uncertainty_gate")
     if "code=precheck_sell_qty_exceeds_available" in normalized:
-        return _NormalizedRejectReason("sell_inventory_unavailable", "broker_precheck", "broker_precheck")
-    if "code=shorting_metadata_unavailable" in normalized or "code=local_account_metadata_unavailable" in normalized:
-        return _NormalizedRejectReason("shorting_metadata_unavailable", "broker_precheck", "local_pre_submit")
+        return _NormalizedRejectReason(
+            "sell_inventory_unavailable", "broker_precheck", "broker_precheck"
+        )
+    if (
+        "code=shorting_metadata_unavailable" in normalized
+        or "code=local_account_metadata_unavailable" in normalized
+    ):
+        return _NormalizedRejectReason(
+            "shorting_metadata_unavailable", "broker_precheck", "local_pre_submit"
+        )
     if normalized.startswith("local_pre_submit_rejected"):
-        return _NormalizedRejectReason("broker_precheck_rejected", "broker_precheck", "local_pre_submit")
+        return _NormalizedRejectReason(
+            "broker_precheck_rejected", "broker_precheck", "local_pre_submit"
+        )
     if normalized.startswith("broker_precheck_rejected"):
-        return _NormalizedRejectReason("broker_precheck_rejected", "broker_precheck", "broker_precheck")
+        return _NormalizedRejectReason(
+            "broker_precheck_rejected", "broker_precheck", "broker_precheck"
+        )
     if normalized.startswith("llm_"):
         return _NormalizedRejectReason(normalized, "policy", "llm_review")
     return _NormalizedRejectReason(normalized, "runtime", "scheduler")
 
 
 def _normalize_reject_reasons(reason: str) -> list[_NormalizedRejectReason]:
-    return [_normalize_reject_reason(part.strip()) for part in reason.split(";") if part.strip()]
+    return [
+        _normalize_reject_reason(part.strip())
+        for part in reason.split(";")
+        if part.strip()
+    ]
 
 
 def _normalize_submission_block_reasons(reason: str) -> list[str]:
@@ -1301,8 +1464,12 @@ def _decision_state_payload(decision: StrategyDecision) -> dict[str, Any]:
         "qty": str(decision.qty),
         "order_type": decision.order_type,
         "time_in_force": decision.time_in_force,
-        "limit_price": str(decision.limit_price) if decision.limit_price is not None else None,
-        "stop_price": str(decision.stop_price) if decision.stop_price is not None else None,
+        "limit_price": str(decision.limit_price)
+        if decision.limit_price is not None
+        else None,
+        "stop_price": str(decision.stop_price)
+        if decision.stop_price is not None
+        else None,
     }
 
 
@@ -1415,18 +1582,22 @@ def _extract_execution_policy_context(
     ):
         return {}
     context: dict[str, Any] = {
-        'selected_order_type': str(
-            policy_map.get('selected_order_type') or decision.order_type
+        "selected_order_type": str(
+            policy_map.get("selected_order_type") or decision.order_type
         ),
-        'adaptive': adaptive_payload,
+        "adaptive": adaptive_payload,
     }
     if isinstance(execution_advisor, Mapping):
         context["execution_advisor"] = {
-            str(key): value for key, value in cast(Mapping[str, Any], execution_advisor).items()
+            str(key): value
+            for key, value in cast(Mapping[str, Any], execution_advisor).items()
         }
     elif isinstance(decision_params.get("execution_advisor"), Mapping):
         context["execution_advisor"] = {
-            str(key): value for key, value in cast(Mapping[str, Any], decision_params.get("execution_advisor")).items()
+            str(key): value
+            for key, value in cast(
+                Mapping[str, Any], decision_params.get("execution_advisor")
+            ).items()
         }
 
     if isinstance(execution_microstructure, Mapping):
@@ -1484,7 +1655,7 @@ def _resolve_submission_simulation_context(
 
 
 def _simulation_queue_context_from_execution_policy(
-    execution_policy_context: Mapping[str, Any] | None
+    execution_policy_context: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     if not isinstance(execution_policy_context, Mapping):
         return {}
@@ -1560,11 +1731,13 @@ def _nonnegative_decimal(value: Any) -> Decimal | None:
     return parsed
 
 
-def _attach_execution_policy_context(execution: Execution, context: dict[str, Any]) -> None:
+def _attach_execution_policy_context(
+    execution: Execution, context: dict[str, Any]
+) -> None:
     if not context:
         return
     raw_order = _coerce_json(execution.raw_order)
-    raw_order['execution_policy'] = context
+    raw_order["execution_policy"] = context
     execution.raw_order = raw_order
 
 
@@ -1598,6 +1771,7 @@ def _extract_execution_metadata(
     decision: StrategyDecision,
     *,
     decision_row: Optional[TradeDecision] = None,
+    execution_policy_context: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     persisted_params: Mapping[str, Any] = {}
     if decision_row is not None:
@@ -1606,6 +1780,7 @@ def _extract_execution_metadata(
         if isinstance(params_value, Mapping):
             persisted_params = cast(Mapping[str, Any], params_value)
 
+    params_candidates = (persisted_params, decision.params)
     execution_lane = persisted_params.get("execution_lane") or decision.params.get(
         "execution_lane"
     )
@@ -1617,6 +1792,63 @@ def _extract_execution_metadata(
         metadata["execution_lane"] = str(execution_lane)
     if submit_path is not None:
         metadata["submit_path"] = str(submit_path)
+
+    if execution_policy_context:
+        policy_context = _copy_mapping(execution_policy_context)
+        metadata["execution_policy"] = policy_context
+        execution_policy_hash = _first_param_text(
+            params_candidates, *_EXECUTION_POLICY_HASH_KEYS
+        ) or _stable_payload_hash(policy_context)
+    else:
+        execution_policy_hash = _first_param_text(
+            params_candidates, *_EXECUTION_POLICY_HASH_KEYS
+        )
+    if execution_policy_hash is not None:
+        metadata["execution_policy_hash"] = execution_policy_hash
+
+    cost_model_payload = _first_param_mapping(
+        params_candidates, *_COST_MODEL_PAYLOAD_KEYS
+    )
+    cost_model_hash = _first_param_text(params_candidates, *_COST_MODEL_HASH_KEYS)
+    if cost_model_payload is not None:
+        metadata["cost_model"] = cost_model_payload
+        cost_model_hash = cost_model_hash or _stable_payload_hash(cost_model_payload)
+    if cost_model_hash is not None:
+        metadata["cost_model_hash"] = cost_model_hash
+
+    lineage_payload = _first_param_mapping(params_candidates, *_LINEAGE_PAYLOAD_KEYS)
+    lineage_hash = _first_param_text(params_candidates, *_LINEAGE_HASH_KEYS)
+    if lineage_payload is not None:
+        metadata["lineage"] = lineage_payload
+        lineage_hash = lineage_hash or _stable_payload_hash(lineage_payload)
+    if lineage_hash is not None:
+        metadata["lineage_hash"] = lineage_hash
+    candidate_evaluation_key = _first_param_text(
+        params_candidates, "candidate_evaluation_key"
+    )
+    if candidate_evaluation_key is not None:
+        metadata["candidate_evaluation_key"] = candidate_evaluation_key
+    replay_data_hash = _first_param_text(
+        params_candidates,
+        "replay_data_hash",
+        "replay_tape_content_sha256",
+        "dataset_snapshot_hash",
+        "source_query_digest",
+    )
+    if replay_data_hash is not None:
+        metadata["replay_data_hash"] = replay_data_hash
+
+    cost_payload = _first_param_mapping(params_candidates, *_RUNTIME_COST_PAYLOAD_KEYS)
+    if cost_payload is not None:
+        metadata["runtime_ledger_cost"] = cost_payload
+        cost_amount = _first_mapping_value(cost_payload, *_RUNTIME_COST_AMOUNT_KEYS)
+        cost_basis = _first_mapping_text(cost_payload, *_RUNTIME_COST_BASIS_KEYS)
+    else:
+        cost_amount = _first_param_value(params_candidates, *_RUNTIME_COST_AMOUNT_KEYS)
+        cost_basis = _first_param_text(params_candidates, *_RUNTIME_COST_BASIS_KEYS)
+    if cost_amount is not None and cost_basis is not None:
+        metadata["cost_amount"] = cost_amount
+        metadata["cost_basis"] = cost_basis
     return metadata or None
 
 
@@ -1642,10 +1874,14 @@ def _apply_execution_status(
             if isinstance(simulation_payload, Mapping)
             else None
         )
-        signal_event_ts = simulation_context.get("signal_event_ts") if simulation_context is not None else None
+        signal_event_ts = (
+            simulation_context.get("signal_event_ts")
+            if simulation_context is not None
+            else None
+        )
         if isinstance(signal_event_ts, str) and signal_event_ts.strip():
             normalized = (
-                f'{signal_event_ts[:-1]}+00:00'
+                f"{signal_event_ts[:-1]}+00:00"
                 if signal_event_ts.endswith("Z")
                 else signal_event_ts
             )
@@ -1668,27 +1904,26 @@ def _persist_lean_shadow_event(
     order_payload: Mapping[str, Any],
     decision: StrategyDecision,
 ) -> None:
-    raw_shadow = order_payload.get('_lean_shadow')
+    raw_shadow = order_payload.get("_lean_shadow")
     if not isinstance(raw_shadow, Mapping):
         return
     shadow = cast(Mapping[str, Any], raw_shadow)
 
-    parity_status = str(shadow.get('parity_status') or 'unknown').strip() or 'unknown'
+    parity_status = str(shadow.get("parity_status") or "unknown").strip() or "unknown"
     event = LeanExecutionShadowEvent(
-        correlation_id=str(order_payload.get('_execution_correlation_id') or '').strip() or None,
+        correlation_id=str(order_payload.get("_execution_correlation_id") or "").strip()
+        or None,
         trade_decision_id=execution.trade_decision_id,
         execution_id=execution.id,
         symbol=decision.symbol,
         side=decision.action,
         qty=decision.qty,
-        intent_notional=_optional_decimal(shadow.get('intent_notional')),
-        simulated_fill_price=_optional_decimal(shadow.get('simulated_fill_price')),
-        simulated_slippage_bps=_optional_decimal(shadow.get('simulated_slippage_bps')),
-        parity_delta_bps=_optional_decimal(shadow.get('parity_delta_bps')),
+        intent_notional=_optional_decimal(shadow.get("intent_notional")),
+        simulated_fill_price=_optional_decimal(shadow.get("simulated_fill_price")),
+        simulated_slippage_bps=_optional_decimal(shadow.get("simulated_slippage_bps")),
+        parity_delta_bps=_optional_decimal(shadow.get("parity_delta_bps")),
         parity_status=parity_status,
-        failure_taxonomy=(
-            str(shadow.get('failure_taxonomy') or '').strip() or None
-        ),
+        failure_taxonomy=(str(shadow.get("failure_taxonomy") or "").strip() or None),
         simulation_json=coerce_json_payload(dict(shadow)),
     )
     session.add(event)

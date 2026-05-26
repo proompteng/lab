@@ -237,3 +237,86 @@ class TestSnapshots(TestCase):
             self.assertEqual(simulation_context.get('simulation_run_id'), 'sim-2026-02-27-01')
             self.assertEqual(simulation_context.get('dataset_event_id'), 'evt-1')
             self.assertEqual(raw_order.get('simulation_context'), simulation_context)
+
+    def test_sync_order_to_db_preserves_execution_audit_metadata_on_update(self) -> None:
+        with Session(self.engine) as session:
+            execution = sync_order_to_db(
+                session,
+                {
+                    'id': 'order-runtime-audit',
+                    'symbol': 'AAPL',
+                    'side': 'buy',
+                    'type': 'market',
+                    'time_in_force': 'day',
+                    'qty': '1',
+                    'filled_qty': '0',
+                    'status': 'accepted',
+                    '_execution_audit': {
+                        'execution_policy_hash': 'policy-sha',
+                        'cost_model_hash': 'cost-sha',
+                        'lineage_hash': 'lineage-sha',
+                        'runtime_ledger_cost': {
+                            'cost_amount': '0',
+                            'cost_basis': 'broker_reported_commission',
+                        },
+                    },
+                },
+            )
+
+            updated = sync_order_to_db(
+                session,
+                {
+                    'id': 'order-runtime-audit',
+                    'symbol': 'AAPL',
+                    'side': 'buy',
+                    'type': 'market',
+                    'time_in_force': 'day',
+                    'qty': '1',
+                    'filled_qty': '1',
+                    'filled_avg_price': '100',
+                    'status': 'filled',
+                },
+            )
+
+            self.assertEqual(updated.id, execution.id)
+            audit = updated.execution_audit_json
+            self.assertIsInstance(audit, dict)
+            assert isinstance(audit, dict)
+            self.assertEqual(audit.get('execution_policy_hash'), 'policy-sha')
+            self.assertEqual(audit.get('cost_model_hash'), 'cost-sha')
+            self.assertEqual(audit.get('lineage_hash'), 'lineage-sha')
+            cost = audit.get('runtime_ledger_cost')
+            self.assertIsInstance(cost, dict)
+            assert isinstance(cost, dict)
+            self.assertEqual(cost.get('cost_amount'), '0')
+            self.assertEqual(cost.get('cost_basis'), 'broker_reported_commission')
+
+    def test_sync_order_to_db_normalizes_explicit_broker_cost_metadata(self) -> None:
+        with Session(self.engine) as session:
+            execution = sync_order_to_db(
+                session,
+                {
+                    'id': 'order-runtime-cost',
+                    'symbol': 'AAPL',
+                    'side': 'buy',
+                    'type': 'market',
+                    'time_in_force': 'day',
+                    'qty': '1',
+                    'filled_qty': '1',
+                    'filled_avg_price': '100',
+                    'status': 'filled',
+                    'commission': '0',
+                },
+            )
+
+            audit = execution.execution_audit_json
+            self.assertIsInstance(audit, dict)
+            assert isinstance(audit, dict)
+            cost = audit.get('runtime_ledger_cost')
+            self.assertIsInstance(cost, dict)
+            assert isinstance(cost, dict)
+            self.assertEqual(cost.get('cost_amount'), '0')
+            self.assertEqual(cost.get('cost_basis'), 'broker_reported_commission')
+            self.assertEqual(audit.get('cost_amount'), '0')
+            self.assertEqual(audit.get('cost_basis'), 'broker_reported_commission')
+            self.assertIn('fee_model', audit)
