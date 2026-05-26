@@ -8,12 +8,14 @@ from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_DOWN
 from typing import Any, Optional, cast
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ...config import settings
 from ...models import Strategy, TradeDecision
+from ...strategies.catalog import extract_catalog_metadata
 from ..autonomy import DriftThresholds, detect_drift
 from ..empirical_jobs import build_empirical_jobs_status
 from ..feature_quality import FeatureQualityThresholds, evaluate_feature_batch_quality
@@ -65,6 +67,7 @@ _PAPER_ROUTE_PROBE_REASONS = {
 _PROFITABILITY_PROOF_FLOOR_TCA_MAX_AGE_SECONDS = 86_400
 _SIMPLE_MARKET_CONTEXT_RETRY_INTERVAL = timedelta(seconds=30)
 _PAPER_ROUTE_PROBE_QTY_STEP = Decimal("0.0001")
+_REGULAR_SESSION_MINUTES = 390
 
 
 def _safe_int(value: object) -> int:
@@ -354,6 +357,82 @@ class SimpleTradingPipeline(TradingPipeline):
         now = trading_now(account_label=self.account_label).astimezone(timezone.utc)
         return datetime.combine(now.date(), REGULAR_OPEN_UTC, tzinfo=timezone.utc)
 
+    @staticmethod
+    def _paper_route_probe_strategy(
+        *,
+        session: Session,
+        decision: StrategyDecision,
+    ) -> Strategy | None:
+        try:
+            strategy_id = UUID(decision.strategy_id)
+        except (TypeError, ValueError):
+            return None
+        return session.get(Strategy, strategy_id)
+
+    @staticmethod
+    def _paper_route_probe_exit_minute_value(raw_value: object) -> int | None:
+        if raw_value is None:
+            return None
+        if isinstance(raw_value, str):
+            text = raw_value.strip().lower()
+            if not text:
+                return None
+            if text == "close":
+                return _REGULAR_SESSION_MINUTES
+            try:
+                return max(0, int(Decimal(text)))
+            except Exception:
+                return None
+        try:
+            return max(0, int(cast(Any, raw_value)))
+        except (TypeError, ValueError, ArithmeticError):
+            return None
+
+    @staticmethod
+    def _paper_route_probe_exit_minute_after_open(
+        *,
+        decision: StrategyDecision,
+        strategy: Strategy | None = None,
+    ) -> int | None:
+        direct_exit_minute = SimpleTradingPipeline._paper_route_probe_exit_minute_value(
+            decision.params.get("exit_minute_after_open")
+        )
+        if direct_exit_minute is not None:
+            return direct_exit_minute
+        if strategy is None:
+            return None
+        metadata = extract_catalog_metadata(strategy.description)
+        metadata_params = metadata.get("params")
+        if not isinstance(metadata_params, Mapping):
+            return None
+        params = cast(Mapping[str, object], metadata_params)
+        return SimpleTradingPipeline._paper_route_probe_exit_minute_value(
+            params.get("exit_minute_after_open")
+        )
+
+    def _paper_route_probe_entry_after_exit_minute(
+        self,
+        *,
+        decision: StrategyDecision,
+        strategy: Strategy | None = None,
+    ) -> bool:
+        if decision.action != "buy":
+            return False
+        exit_minute = self._paper_route_probe_exit_minute_after_open(
+            decision=decision,
+            strategy=strategy,
+        )
+        if exit_minute is None:
+            return False
+        now = trading_now(account_label=self.account_label).astimezone(timezone.utc)
+        session_open = datetime.combine(
+            now.date(),
+            REGULAR_OPEN_UTC,
+            tzinfo=timezone.utc,
+        )
+        minutes_elapsed = int((now - session_open).total_seconds() // 60)
+        return minutes_elapsed >= exit_minute
+
     def _created_in_current_regular_session(
         self,
         decision_row: TradeDecision,
@@ -419,6 +498,20 @@ class SimpleTradingPipeline(TradingPipeline):
                 decision,
                 session_open=session_open,
             ):
+                continue
+            strategy = self._paper_route_probe_strategy(
+                session=session,
+                decision=decision,
+            )
+            if self._paper_route_probe_entry_after_exit_minute(
+                decision=decision,
+                strategy=strategy,
+            ):
+                logger.warning(
+                    "Skipping stale paper route probe entry retry after strategy exit minute strategy_id=%s symbol=%s",
+                    decision.strategy_id,
+                    decision.symbol,
+                )
                 continue
             decisions.append(decision)
         return decisions
@@ -943,6 +1036,7 @@ class SimpleTradingPipeline(TradingPipeline):
         *,
         proof_floor: Mapping[str, object],
         decision: StrategyDecision,
+        strategy: Strategy | None = None,
     ) -> dict[str, object] | None:
         if settings.trading_mode != "paper":
             return None
@@ -960,6 +1054,11 @@ class SimpleTradingPipeline(TradingPipeline):
         if cap is None or cap <= 0:
             return None
         if not self._proof_floor_market_session_open(proof_floor):
+            return None
+        if self._paper_route_probe_entry_after_exit_minute(
+            decision=decision,
+            strategy=strategy,
+        ):
             return None
 
         blocking_reasons = {
@@ -1077,6 +1176,7 @@ class SimpleTradingPipeline(TradingPipeline):
         probe_context = self._paper_route_probe_context(
             proof_floor=proof_floor,
             decision=decision,
+            strategy=strategy,
         )
         if probe_context is None:
             return None
@@ -1225,9 +1325,14 @@ class SimpleTradingPipeline(TradingPipeline):
         )
         paper_route_probe_applied = False
         if proof_floor_block_reason is not None:
+            strategy = self._paper_route_probe_strategy(
+                session=session,
+                decision=decision,
+            )
             probe_context = self._paper_route_probe_context(
                 proof_floor=proof_floor,
                 decision=decision,
+                strategy=strategy,
             )
             if probe_context is None or not self._apply_paper_route_probe_cap(
                 session=session,

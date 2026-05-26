@@ -3001,7 +3001,17 @@ class TestTradingPipeline(TestCase):
         with self.session_local() as session:
             strategy = Strategy(
                 name="simple-paper-proof-floor-retry-filter",
-                description="simple paper retry filter fixtures",
+                description=(
+                    "simple paper retry filter fixtures\n[catalog_metadata]\n"
+                    + json.dumps(
+                        {
+                            "params": {
+                                "entry_minute_after_open": "60",
+                                "exit_minute_after_open": "120",
+                            }
+                        }
+                    )
+                ),
                 enabled=True,
                 base_timeframe="1Min",
                 universe_type="static",
@@ -3109,6 +3119,41 @@ class TestTradingPipeline(TestCase):
             with patch(
                 "app.trading.scheduler.simple_pipeline.trading_now",
                 return_value=datetime(2026, 3, 26, 14, 0, tzinfo=timezone.utc),
+            ):
+                self.assertEqual(
+                    pipeline._paper_route_probe_retry_decisions(session=session),
+                    [],
+                )
+
+            stale_after_exit_payload = decision.model_copy(
+                update={
+                    "strategy_id": str(strategy.id),
+                    "event_ts": datetime(2026, 3, 26, 14, 30, tzinfo=timezone.utc),
+                }
+            ).model_dump(mode="json")
+            stale_after_exit_payload.update(
+                {
+                    "submission_stage": "blocked_profitability_proof_floor",
+                    "submission_block_reason": "alpha_readiness_not_promotion_eligible",
+                    "profitability_proof_floor": {"route_state": "repair_only"},
+                }
+            )
+            session.add(
+                TradeDecision(
+                    strategy_id=strategy.id,
+                    alpaca_account_label="paper",
+                    symbol="AAPL",
+                    timeframe="1Min",
+                    decision_json=stale_after_exit_payload,
+                    status="blocked",
+                    created_at=datetime(2026, 3, 26, 14, 30, tzinfo=timezone.utc),
+                )
+            )
+            session.commit()
+
+            with patch(
+                "app.trading.scheduler.simple_pipeline.trading_now",
+                return_value=datetime(2026, 3, 26, 15, 31, tzinfo=timezone.utc),
             ):
                 self.assertEqual(
                     pipeline._paper_route_probe_retry_decisions(session=session),
