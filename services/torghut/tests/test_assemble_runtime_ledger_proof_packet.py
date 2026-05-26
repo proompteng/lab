@@ -171,6 +171,16 @@ def _runtime_import(
                         "authority_reason": "runtime_ledger_profit_proof_present"
                         if authoritative
                         else "runtime_without_runtime_ledger_profit_proof",
+                        "runtime_ledger_profit_proof_present": authoritative,
+                        "runtime_ledger_tca_profit_proof_count": 1
+                        if authoritative
+                        else 0,
+                        "runtime_ledger_tca_runtime_bucket_row_count": 1
+                        if authoritative
+                        else 0,
+                        "runtime_ledger_tca_authoritative_bucket_count": 1
+                        if authoritative
+                        else 0,
                     },
                 },
             }
@@ -1015,6 +1025,72 @@ class TestRuntimeLedgerProofPacket(TestCase):
             result["required_actions"],
         )
 
+    def test_packet_surfaces_runtime_import_materialization_summary(self) -> None:
+        runtime_import = _runtime_import()
+        observation = runtime_import["imports"][0]["summary"]["runtime_observation"]
+        assert isinstance(observation, dict)
+        observation.update(
+            {
+                "runtime_ledger_tca_row_count": 2,
+                "runtime_ledger_tca_runtime_bucket_row_count": 1,
+                "runtime_ledger_tca_profit_proof_count": 1,
+                "runtime_ledger_tca_authoritative_bucket_count": 1,
+                "runtime_ledger_source_execution_materialized_bucket_count": 1,
+                "runtime_ledger_execution_reconstruction_bucket_count": 0,
+                "runtime_ledger_materialization_pnl_derivations": [
+                    "source_execution_lifecycle_materialized_runtime_ledger"
+                ],
+                "runtime_ledger_materialization_blockers": [],
+            }
+        )
+
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=runtime_import,
+            completion_status=_completion(),
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        materialization = result["evidence"]["runtime_window_import"]["materialization"]
+        self.assertTrue(
+            result["checks"]["runtime_window_import_materialization"]["passed"]
+        )
+        self.assertEqual(
+            materialization[
+                "runtime_ledger_source_execution_materialized_bucket_count"
+            ],
+            1,
+        )
+        self.assertEqual(
+            materialization["pnl_derivations"],
+            ["source_execution_lifecycle_materialized_runtime_ledger"],
+        )
+
+    def test_packet_blocks_runtime_import_without_materialized_runtime_ledger(
+        self,
+    ) -> None:
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=_runtime_import(authoritative=False),
+            completion_status=_completion(),
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertIn(
+            "runtime_window_import_runtime_ledger_materialization_missing",
+            result["promotion_authority"]["blocking_reasons"],
+        )
+        self.assertFalse(
+            result["checks"]["runtime_window_import_materialization"]["passed"]
+        )
+        self.assertIn(
+            "run_runtime_window_import_from_paper_route_target_plan",
+            result["required_actions"],
+        )
+
     def test_packet_waits_on_target_level_settlement_blocker(self) -> None:
         paper = _paper_route_evidence()
         target = paper["next_paper_route_runtime_window_targets"]["targets"][0]
@@ -1058,6 +1134,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
                 "summary": {
                     "runtime_observation": {
                         "authoritative": True,
+                        "runtime_ledger_profit_proof_present": True,
                     },
                 },
             },
