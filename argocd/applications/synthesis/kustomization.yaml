@@ -10,5 +10,5 @@ resources:
   - networkpolicy.yaml
 images:
   - name: registry.ide-newton.ts.net/lab/synthesis
-    newTag: xcurate-visual-202605260227-396398627
+    newTag: 0.575.0
     newName: registry.ide-newton.ts.net/lab/synthesis
