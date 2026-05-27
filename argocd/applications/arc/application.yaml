@@ -165,8 +165,8 @@ spec:
           runnerScaleSetName: analysis-arm64
           scaleSetLabels:
             - arc-arm64
-          minRunners: 1
-          maxRunners: 3
+          minRunners: 0
+          maxRunners: 2
           containerMode:
             type: "kubernetes"
             kubernetesModeWorkVolumeClaim:
@@ -223,13 +223,13 @@ spec:
                       docker version
                   resources:
                     requests:
+                      cpu: "1"
+                      memory: "2Gi"
+                      ephemeral-storage: "8Gi"
+                    limits:
                       cpu: "4"
                       memory: "8Gi"
-                      ephemeral-storage: "40Gi"
-                    limits:
-                      cpu: "8"
-                      memory: "16Gi"
-                      ephemeral-storage: "80Gi"
+                      ephemeral-storage: "32Gi"
                   env:
                     - name: ACTIONS_RUNNER_CONTAINER_HOOKS
                       value: /home/runner/k8s/index.js
@@ -255,13 +255,13 @@ spec:
                     - --max-concurrent-uploads=8
                   resources:
                     requests:
-                      cpu: "4"
-                      memory: "8Gi"
-                      ephemeral-storage: "30Gi"
+                      cpu: "1"
+                      memory: "2Gi"
+                      ephemeral-storage: "12Gi"
                     limits:
-                      cpu: "12"
-                      memory: "16Gi"
-                      ephemeral-storage: "50Gi"
+                      cpu: "6"
+                      memory: "10Gi"
+                      ephemeral-storage: "40Gi"
                   env:
                     - name: DOCKER_GROUP_GID
                       value: "123"
