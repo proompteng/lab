@@ -67,6 +67,7 @@ class _FakeCursor:
             ],
             [
                 (
+                    datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
                     datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
                     datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
                     "AAPL",
@@ -1469,6 +1470,60 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         )
         self.assertFalse(_runtime_ledger_bucket_profit_proof_present(bucket))
 
+    def test_build_realized_strategy_pnl_rows_prefers_execution_event_time(
+        self,
+    ) -> None:
+        rows = _build_realized_strategy_pnl_rows(
+            [
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    "execution_created_at": datetime(
+                        2026, 3, 6, 14, 30, 5, tzinfo=timezone.utc
+                    ),
+                    "execution_event_at": datetime(
+                        2026, 3, 6, 14, 35, tzinfo=timezone.utc
+                    ),
+                    "symbol": "AAPL",
+                    "side": "buy",
+                    "filled_qty": Decimal("1"),
+                    "avg_fill_price": Decimal("100"),
+                    "cost_amount": Decimal("0.20"),
+                    "cost_basis": "broker_reported_commission_and_fees",
+                    "decision_hash": "decision-buy",
+                    "alpaca_order_id": "order-buy",
+                    "execution_policy_hash": "policy-sha",
+                    "cost_model_hash": "cost-sha",
+                    "lineage_hash": "lineage-sha",
+                },
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    "execution_created_at": datetime(
+                        2026, 3, 6, 14, 30, 10, tzinfo=timezone.utc
+                    ),
+                    "execution_event_at": datetime(
+                        2026, 3, 6, 14, 40, tzinfo=timezone.utc
+                    ),
+                    "symbol": "AAPL",
+                    "side": "sell",
+                    "filled_qty": Decimal("1"),
+                    "avg_fill_price": Decimal("101"),
+                    "cost_amount": Decimal("0.10"),
+                    "cost_basis": "broker_reported_commission_and_fees",
+                    "decision_hash": "decision-sell",
+                    "alpaca_order_id": "order-sell",
+                    "execution_policy_hash": "policy-sha",
+                    "cost_model_hash": "cost-sha",
+                    "lineage_hash": "lineage-sha",
+                },
+            ]
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(
+            rows[0]["computed_at"], datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc)
+        )
+        self.assertEqual(rows[0]["realized_net_pnl"], Decimal("0.70"))
+
     def test_build_realized_strategy_pnl_rows_materializes_audit_only_runtime_metadata(
         self,
     ) -> None:
@@ -1750,17 +1805,28 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         tca_query, _ = cursor.executed[3]
         execution_query, _ = cursor.executed[1]
         self.assertIn("left join execution_tca_metrics", execution_query)
-        self.assertIn("d.created_at >= %s", execution_query)
-        self.assertIn("d.created_at < %s", execution_query)
-        self.assertNotIn("e.created_at >= %s", execution_query)
+        self.assertIn("e.alpaca_account_label = %s", execution_query)
+        self.assertIn("e.order_feed_last_event_ts", execution_query)
+        self.assertIn("e.last_update_at", execution_query)
+        self.assertIn("e.updated_at", execution_query)
+        self.assertIn("e.created_at", execution_query)
+        self.assertNotIn("and d.created_at >= %s", execution_query)
+        self.assertNotIn("and d.created_at < %s", execution_query)
         self.assertIn("from execution_order_events oe", order_event_query)
-        self.assertIn("d.created_at >= %s", order_event_query)
-        self.assertIn("d.created_at < %s", order_event_query)
-        self.assertIn("select\n                    d.created_at", tca_query)
-        self.assertIn("d.created_at >= %s", tca_query)
-        self.assertIn("d.created_at < %s", tca_query)
-        self.assertNotIn("e.created_at >= %s", tca_query)
-        self.assertNotIn("t.computed_at >= %s", tca_query)
+        self.assertIn("oe.alpaca_account_label = %s", order_event_query)
+        self.assertIn("coalesce(oe.event_ts, oe.created_at) >= %s", order_event_query)
+        self.assertIn("coalesce(oe.event_ts, oe.created_at) < %s", order_event_query)
+        self.assertNotIn("and d.created_at >= %s", order_event_query)
+        self.assertNotIn("and d.created_at < %s", order_event_query)
+        self.assertIn("select\n                    t.computed_at", tca_query)
+        self.assertIn(
+            "coalesce(t.alpaca_account_label, e.alpaca_account_label, d.alpaca_account_label) = %s",
+            tca_query,
+        )
+        self.assertIn("t.computed_at >= %s", tca_query)
+        self.assertIn("t.computed_at < %s", tca_query)
+        self.assertNotIn("and d.created_at >= %s", tca_query)
+        self.assertNotIn("and d.created_at < %s", tca_query)
 
     def test_query_timestamps_filters_to_target_symbols_when_configured(
         self,
@@ -1832,6 +1898,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 (
                     datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
                     datetime(2026, 3, 6, 14, 35, 30, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 14, 35, 30, tzinfo=timezone.utc),
                     "AAPL",
                     "buy",
                     Decimal("1"),
@@ -1852,6 +1919,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 ),
                 (
                     datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 14, 36, 30, tzinfo=timezone.utc),
                     datetime(2026, 3, 6, 14, 36, 30, tzinfo=timezone.utc),
                     "AAPL",
                     "buy",
@@ -1946,7 +2014,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
 
         self.assertEqual(decisions, [datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)])
         self.assertEqual(
-            executions, [datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)]
+            executions, [datetime(2026, 3, 6, 14, 35, 30, tzinfo=timezone.utc)]
         )
         proxy_rows = [
             row
