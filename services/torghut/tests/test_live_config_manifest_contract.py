@@ -579,6 +579,26 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertEqual(sim_env.get("TRADING_MODE"), "paper")
         self.assertEqual(sim_env.get("TRADING_PIPELINE_MODE"), "simple")
         self.assertTrue(_manifest_bool(sim_env, "TRADING_SIMPLE_SUBMIT_ENABLED"))
+        self.assertTrue(_manifest_bool(sim_env, "TRADING_ORDER_FEED_ENABLED"))
+        self.assertTrue(
+            _manifest_bool(sim_env, "TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED"),
+            "paper-route proof cannot materialize execution_order_events without simple order-feed telemetry",
+        )
+        self.assertEqual(
+            sim_env.get("TRADING_ORDER_FEED_TOPIC"),
+            "torghut.trade-updates.v1",
+            "live-paper proof must consume the broker trade-update topic, not the simulation topic",
+        )
+        self.assertEqual(
+            sim_env.get("TRADING_ORDER_FEED_AUTO_OFFSET_RESET"),
+            "earliest",
+            "first rollout must backfill existing broker order events for proof materialization",
+        )
+        self.assertEqual(
+            sim_env.get("TRADING_ORDER_FEED_TOPIC_V2"),
+            "",
+            "v2 broker envelopes carry the producer account label and can prevent TORGHUT_SIM linkage",
+        )
         self.assertTrue(
             _manifest_bool(sim_env, "TRADING_SIMPLE_PAPER_ROUTE_PROBE_ENABLED")
         )

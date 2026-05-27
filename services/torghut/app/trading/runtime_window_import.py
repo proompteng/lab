@@ -211,6 +211,25 @@ def _hash_count(value: Any) -> int:
     return sum(1 for key in mapping.keys() if str(key).strip())
 
 
+def _persisted_runtime_ledger_bucket_evidence_grade(
+    row: StrategyRuntimeLedgerBucket,
+) -> bool:
+    blockers = _string_list(row.blockers_json)
+    return (
+        row.pnl_basis == POST_COST_PNL_BASIS
+        and int(row.fill_count or 0) > 0
+        and int(row.submitted_order_count or 0) > 0
+        and int(row.closed_trade_count or 0) > 0
+        and int(row.open_position_count or 0) == 0
+        and row.filled_notional > 0
+        and row.post_cost_expectancy_bps is not None
+        and _hash_count(row.execution_policy_hash_counts) > 0
+        and _hash_count(row.cost_model_hash_counts) > 0
+        and _hash_count(row.lineage_hash_counts) > 0
+        and not blockers
+    )
+
+
 def _runtime_ledger_bucket_blockers(bucket: Mapping[str, Any]) -> list[str]:
     blockers = _string_list(bucket.get("blockers"))
     ledger_schema_version = _text(bucket.get("ledger_schema_version"))
@@ -1437,7 +1456,7 @@ def persist_observed_runtime_windows(
         window_end=import_window_end,
     )
     proof_status = "blocked" if proof_blockers else "ok"
-    runtime_materialization_target = {
+    runtime_materialization_target: dict[str, Any] = {
         "candidate_id": candidate_id,
         "hypothesis_id": hypothesis_id,
         "observed_stage": observed_stage,
@@ -1458,6 +1477,8 @@ def persist_observed_runtime_windows(
         "proof_status": proof_status,
         "proof_blockers": proof_blockers,
     }
+    metric_window_rows: list[StrategyHypothesisMetricWindow] = []
+    runtime_ledger_rows: list[StrategyRuntimeLedgerBucket] = []
     running_session_samples = 0
     for bucket in sorted_buckets:
         running_session_samples += bucket.market_session_count
@@ -1467,35 +1488,35 @@ def persist_observed_runtime_windows(
             session_samples=running_session_samples,
             manifest=manifest,
         )
-        session.add(
-            StrategyHypothesisMetricWindow(
-                run_id=run_id,
-                candidate_id=candidate_id,
-                hypothesis_id=hypothesis_id,
-                observed_stage=observed_stage,
-                window_started_at=bucket.window_started_at,
-                window_ended_at=bucket.window_ended_at,
-                market_session_count=bucket.market_session_count,
-                decision_count=bucket.decision_count,
-                trade_count=bucket.trade_count,
-                order_count=bucket.order_count,
-                evidence_provenance=evidence_provenance,
-                evidence_maturity="empirically_validated",
-                decision_alignment_ratio=str(bucket.decision_alignment_ratio),
-                avg_abs_slippage_bps=str(bucket.avg_abs_slippage_bps),
-                slippage_budget_bps=str(budget),
-                post_cost_expectancy_bps=str(bucket.post_cost_expectancy_bps),
-                continuity_ok=bucket.continuity_ok,
-                drift_ok=bucket.drift_ok,
-                dependency_quorum_decision=bucket.dependency_quorum_decision,
-                capital_stage=capital_stage,
-                payload_json={
-                    **bucket.payload_json,
-                    "source_manifest_ref": source_manifest_ref or registry.path,
-                    "runtime_observation": runtime_payload,
-                },
-            )
+        metric_window_row = StrategyHypothesisMetricWindow(
+            run_id=run_id,
+            candidate_id=candidate_id,
+            hypothesis_id=hypothesis_id,
+            observed_stage=observed_stage,
+            window_started_at=bucket.window_started_at,
+            window_ended_at=bucket.window_ended_at,
+            market_session_count=bucket.market_session_count,
+            decision_count=bucket.decision_count,
+            trade_count=bucket.trade_count,
+            order_count=bucket.order_count,
+            evidence_provenance=evidence_provenance,
+            evidence_maturity="empirically_validated",
+            decision_alignment_ratio=str(bucket.decision_alignment_ratio),
+            avg_abs_slippage_bps=str(bucket.avg_abs_slippage_bps),
+            slippage_budget_bps=str(budget),
+            post_cost_expectancy_bps=str(bucket.post_cost_expectancy_bps),
+            continuity_ok=bucket.continuity_ok,
+            drift_ok=bucket.drift_ok,
+            dependency_quorum_decision=bucket.dependency_quorum_decision,
+            capital_stage=capital_stage,
+            payload_json={
+                **bucket.payload_json,
+                "source_manifest_ref": source_manifest_ref or registry.path,
+                "runtime_observation": runtime_payload,
+            },
         )
+        session.add(metric_window_row)
+        metric_window_rows.append(metric_window_row)
         for ledger_payload in _runtime_ledger_bucket_payloads(bucket.payload_json):
             bucket_started_at = (
                 _parse_observation_datetime(ledger_payload.get("bucket_started_at"))
@@ -1505,78 +1526,72 @@ def persist_observed_runtime_windows(
                 _parse_observation_datetime(ledger_payload.get("bucket_ended_at"))
                 or bucket.window_ended_at
             )
-            session.add(
-                StrategyRuntimeLedgerBucket(
-                    run_id=run_id,
-                    candidate_id=candidate_id,
-                    hypothesis_id=hypothesis_id,
-                    observed_stage=observed_stage,
-                    bucket_started_at=bucket_started_at,
-                    bucket_ended_at=bucket_ended_at,
-                    account_label=_text(ledger_payload.get("account_label"))
-                    or _text(runtime_payload.get("account_label")),
-                    runtime_strategy_name=_text(ledger_payload.get("strategy_id"))
-                    or _text(runtime_payload.get("strategy_name")),
-                    strategy_family=manifest.strategy_family,
-                    fill_count=_observation_int(ledger_payload.get("fill_count")),
-                    decision_count=_observation_int(
-                        ledger_payload.get("decision_count")
-                    ),
-                    submitted_order_count=_observation_int(
-                        ledger_payload.get("submitted_order_count")
-                    ),
-                    cancelled_order_count=_observation_int(
-                        ledger_payload.get("cancelled_order_count")
-                    ),
-                    rejected_order_count=_observation_int(
-                        ledger_payload.get("rejected_order_count")
-                    ),
-                    unfilled_order_count=_observation_int(
-                        ledger_payload.get("unfilled_order_count")
-                    ),
-                    closed_trade_count=_observation_int(
-                        ledger_payload.get("closed_trade_count")
-                    ),
-                    open_position_count=_observation_int(
-                        ledger_payload.get("open_position_count")
-                    ),
-                    filled_notional=_observation_decimal(
-                        ledger_payload.get("filled_notional")
-                    ),
-                    gross_strategy_pnl=_observation_decimal(
-                        ledger_payload.get("gross_strategy_pnl")
-                    ),
-                    cost_amount=_observation_decimal(ledger_payload.get("cost_amount")),
-                    net_strategy_pnl_after_costs=_observation_decimal(
-                        ledger_payload.get("net_strategy_pnl_after_costs")
-                    ),
-                    post_cost_expectancy_bps=_optional_decimal(
-                        ledger_payload.get("post_cost_expectancy_bps")
-                    ),
-                    ledger_schema_version=_text(
-                        ledger_payload.get("ledger_schema_version")
-                    )
-                    or "unknown",
-                    pnl_basis=_text(ledger_payload.get("pnl_basis")) or "unknown",
-                    execution_policy_hash_counts=_mapping(
-                        ledger_payload.get("execution_policy_hash_counts")
-                    )
-                    or None,
-                    cost_model_hash_counts=_mapping(
-                        ledger_payload.get("cost_model_hash_counts")
-                    )
-                    or None,
-                    lineage_hash_counts=_mapping(
-                        ledger_payload.get("lineage_hash_counts")
-                    )
-                    or None,
-                    blockers_json=_string_list(ledger_payload.get("blockers")),
-                    payload_json={
-                        **ledger_payload,
-                        "runtime_ledger_daily_summary": runtime_ledger_daily_summary,
-                    },
+            runtime_ledger_row = StrategyRuntimeLedgerBucket(
+                run_id=run_id,
+                candidate_id=candidate_id,
+                hypothesis_id=hypothesis_id,
+                observed_stage=observed_stage,
+                bucket_started_at=bucket_started_at,
+                bucket_ended_at=bucket_ended_at,
+                account_label=_text(ledger_payload.get("account_label"))
+                or _text(runtime_payload.get("account_label")),
+                runtime_strategy_name=_text(ledger_payload.get("strategy_id"))
+                or _text(runtime_payload.get("strategy_name")),
+                strategy_family=manifest.strategy_family,
+                fill_count=_observation_int(ledger_payload.get("fill_count")),
+                decision_count=_observation_int(ledger_payload.get("decision_count")),
+                submitted_order_count=_observation_int(
+                    ledger_payload.get("submitted_order_count")
+                ),
+                cancelled_order_count=_observation_int(
+                    ledger_payload.get("cancelled_order_count")
+                ),
+                rejected_order_count=_observation_int(
+                    ledger_payload.get("rejected_order_count")
+                ),
+                unfilled_order_count=_observation_int(
+                    ledger_payload.get("unfilled_order_count")
+                ),
+                closed_trade_count=_observation_int(
+                    ledger_payload.get("closed_trade_count")
+                ),
+                open_position_count=_observation_int(
+                    ledger_payload.get("open_position_count")
+                ),
+                filled_notional=_observation_decimal(
+                    ledger_payload.get("filled_notional")
+                ),
+                gross_strategy_pnl=_observation_decimal(
+                    ledger_payload.get("gross_strategy_pnl")
+                ),
+                cost_amount=_observation_decimal(ledger_payload.get("cost_amount")),
+                net_strategy_pnl_after_costs=_observation_decimal(
+                    ledger_payload.get("net_strategy_pnl_after_costs")
+                ),
+                post_cost_expectancy_bps=_optional_decimal(
+                    ledger_payload.get("post_cost_expectancy_bps")
+                ),
+                ledger_schema_version=_text(ledger_payload.get("ledger_schema_version"))
+                or "unknown",
+                pnl_basis=_text(ledger_payload.get("pnl_basis")) or "unknown",
+                execution_policy_hash_counts=_mapping(
+                    ledger_payload.get("execution_policy_hash_counts")
                 )
+                or None,
+                cost_model_hash_counts=_mapping(
+                    ledger_payload.get("cost_model_hash_counts")
+                )
+                or None,
+                lineage_hash_counts=_mapping(ledger_payload.get("lineage_hash_counts"))
+                or None,
+                blockers_json=_string_list(ledger_payload.get("blockers")),
+                payload_json={
+                    **ledger_payload,
+                    "runtime_ledger_daily_summary": runtime_ledger_daily_summary,
+                },
             )
+            session.add(runtime_ledger_row)
+            runtime_ledger_rows.append(runtime_ledger_row)
 
     final_capital_stage = _capital_stage_for_runtime_import(
         observed_stage=observed_stage,
@@ -1624,45 +1639,122 @@ def persist_observed_runtime_windows(
             },
         )
     )
-    session.add(
-        StrategyPromotionDecision(
-            run_id=run_id,
-            candidate_id=candidate_id,
-            hypothesis_id=hypothesis_id,
-            promotion_target=observed_stage,
-            state=final_capital_stage,
-            allowed=promotion_allowed,
-            reason_summary=reason_summary,
-            payload_json={
-                "imported": True,
-                "observed_stage": observed_stage,
-                "raw_window_count": raw_window_count,
-                "window_count": inserted,
-                "skipped_zero_activity_window_count": skipped_zero_activity_window_count,
-                "market_session_samples": total_session_samples,
-                "decision_count": total_decision_count,
-                "trade_count": total_trade_count,
-                "order_count": total_order_count,
-                "post_cost_promotion_sample_count": total_post_cost_promotion_sample_count,
-                "post_cost_basis_counts": total_post_cost_basis_counts,
-                "avg_abs_slippage_bps": str(average_slippage),
-                "avg_post_cost_expectancy_bps": str(average_post_cost),
-                "post_cost_expectancy_aggregation": post_cost_expectancy_aggregation,
-                "runtime_ledger_notional_weighted_sample_count": runtime_ledger_sample_count,
-                "runtime_ledger_filled_notional": str(runtime_ledger_filled_notional),
-                "runtime_ledger_net_strategy_pnl_after_costs": str(
-                    runtime_ledger_net_strategy_pnl_after_costs
-                ),
-                **runtime_ledger_daily_summary,
-                "latest_three_within_budget": latest_three_budget_ok,
-                "promotion_allowed": promotion_allowed,
-                "promotion_blocking_reasons": promotion_blocking_reasons,
-                "delay_adjusted_depth_stress": delay_depth_stress_summary,
-                "runtime_observation": runtime_payload,
-            },
-        )
+    promotion_decision_row = StrategyPromotionDecision(
+        run_id=run_id,
+        candidate_id=candidate_id,
+        hypothesis_id=hypothesis_id,
+        promotion_target=observed_stage,
+        state=final_capital_stage,
+        allowed=promotion_allowed,
+        reason_summary=reason_summary,
+        payload_json={
+            "imported": True,
+            "observed_stage": observed_stage,
+            "raw_window_count": raw_window_count,
+            "window_count": inserted,
+            "skipped_zero_activity_window_count": skipped_zero_activity_window_count,
+            "market_session_samples": total_session_samples,
+            "decision_count": total_decision_count,
+            "trade_count": total_trade_count,
+            "order_count": total_order_count,
+            "post_cost_promotion_sample_count": total_post_cost_promotion_sample_count,
+            "post_cost_basis_counts": total_post_cost_basis_counts,
+            "avg_abs_slippage_bps": str(average_slippage),
+            "avg_post_cost_expectancy_bps": str(average_post_cost),
+            "post_cost_expectancy_aggregation": post_cost_expectancy_aggregation,
+            "runtime_ledger_notional_weighted_sample_count": runtime_ledger_sample_count,
+            "runtime_ledger_filled_notional": str(runtime_ledger_filled_notional),
+            "runtime_ledger_net_strategy_pnl_after_costs": str(
+                runtime_ledger_net_strategy_pnl_after_costs
+            ),
+            **runtime_ledger_daily_summary,
+            "latest_three_within_budget": latest_three_budget_ok,
+            "promotion_allowed": promotion_allowed,
+            "promotion_blocking_reasons": promotion_blocking_reasons,
+            "delay_adjusted_depth_stress": delay_depth_stress_summary,
+            "runtime_observation": runtime_payload,
+        },
     )
+    session.add(promotion_decision_row)
     session.flush()
+    evidence_grade_runtime_ledger_rows = [
+        row
+        for row in runtime_ledger_rows
+        if _persisted_runtime_ledger_bucket_evidence_grade(row)
+    ]
+    materialization_counts = {
+        "metric_window_count": len(metric_window_rows),
+        "promotion_decision_count": 1,
+        "runtime_ledger_bucket_count": len(runtime_ledger_rows),
+        "evidence_grade_runtime_ledger_bucket_count": len(
+            evidence_grade_runtime_ledger_rows
+        ),
+        "runtime_ledger_fill_count": sum(
+            max(0, int(row.fill_count or 0)) for row in runtime_ledger_rows
+        ),
+        "runtime_ledger_submitted_order_count": sum(
+            max(0, int(row.submitted_order_count or 0)) for row in runtime_ledger_rows
+        ),
+        "runtime_ledger_closed_trade_count": sum(
+            max(0, int(row.closed_trade_count or 0)) for row in runtime_ledger_rows
+        ),
+        "runtime_ledger_open_position_count": sum(
+            max(0, int(row.open_position_count or 0)) for row in runtime_ledger_rows
+        ),
+    }
+    materialization_blockers: list[str] = []
+    if not metric_window_rows:
+        materialization_blockers.append("runtime_window_import_metric_window_missing")
+    if runtime_payload.get("runtime_ledger_profit_proof_present") is True:
+        if not runtime_ledger_rows:
+            materialization_blockers.append(
+                "runtime_window_import_runtime_ledger_bucket_missing"
+            )
+        if not evidence_grade_runtime_ledger_rows:
+            materialization_blockers.append(
+                "runtime_window_import_evidence_grade_runtime_ledger_bucket_missing"
+            )
+    for blocker in materialization_blockers:
+        if blocker not in {str(item.get("blocker")) for item in proof_blockers}:
+            proof_blockers.append(
+                {
+                    "blocker": blocker,
+                    "hypothesis_id": hypothesis_id,
+                    "candidate_id": candidate_id,
+                    "observed_stage": observed_stage,
+                    "window_start": import_window_start.isoformat(),
+                    "window_end": import_window_end.isoformat(),
+                    "promotion_authority": _text(
+                        runtime_payload.get("promotion_authority")
+                    )
+                    or "unknown",
+                    "authority_reason": _text(runtime_payload.get("authority_reason")),
+                    "runtime_ledger_profit_proof_present": bool(
+                        runtime_payload.get("runtime_ledger_profit_proof_present")
+                    ),
+                    "remediation": (
+                        "Persist the scoped metric window, promotion decision, and "
+                        "evidence-grade runtime-ledger bucket before treating this "
+                        "runtime-window import target as proof."
+                    ),
+                }
+            )
+    proof_status = "blocked" if proof_blockers else "ok"
+    runtime_materialization_target.update(
+        {
+            "proof_status": proof_status,
+            "proof_blockers": proof_blockers,
+            "materialized": not proof_blockers,
+            "materialization_blockers": materialization_blockers,
+            **materialization_counts,
+            "metric_window_ids": [str(row.id) for row in metric_window_rows],
+            "promotion_decision_id": str(promotion_decision_row.id),
+            "runtime_ledger_bucket_ids": [str(row.id) for row in runtime_ledger_rows],
+            "evidence_grade_runtime_ledger_bucket_ids": [
+                str(row.id) for row in evidence_grade_runtime_ledger_rows
+            ],
+        }
+    )
     return {
         "run_id": run_id,
         "candidate_id": candidate_id,

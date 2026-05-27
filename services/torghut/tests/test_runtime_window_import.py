@@ -1687,6 +1687,82 @@ class TestRuntimeWindowImport(TestCase):
             target["runtime_ledger_net_strategy_pnl_after_costs"],
             "0.80",
         )
+        self.assertEqual(target["metric_window_count"], 1)
+        self.assertEqual(target["promotion_decision_count"], 1)
+        self.assertEqual(target["runtime_ledger_bucket_count"], 1)
+        self.assertEqual(target["evidence_grade_runtime_ledger_bucket_count"], 1)
+        self.assertEqual(target["runtime_ledger_fill_count"], 2)
+        self.assertEqual(target["runtime_ledger_submitted_order_count"], 2)
+        self.assertEqual(target["runtime_ledger_closed_trade_count"], 1)
+        self.assertEqual(target["runtime_ledger_open_position_count"], 0)
+        self.assertEqual(target["materialization_blockers"], [])
+        self.assertEqual(len(target["metric_window_ids"]), 1)
+        self.assertIsNotNone(target["promotion_decision_id"])
+        self.assertEqual(len(target["runtime_ledger_bucket_ids"]), 1)
+        self.assertEqual(len(target["evidence_grade_runtime_ledger_bucket_ids"]), 1)
+        self.assertFalse(target["materialized"])
+
+    def test_persist_observed_runtime_windows_blocks_claimed_ledger_proof_without_rows(
+        self,
+    ) -> None:
+        buckets = build_observed_runtime_buckets(
+            bucket_ranges=[
+                (
+                    datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                    30,
+                ),
+            ],
+            decision_times=[datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc)],
+            execution_times=[datetime(2026, 3, 6, 14, 37, tzinfo=timezone.utc)],
+            tca_rows=[
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 38, tzinfo=timezone.utc),
+                    "abs_slippage_bps": Decimal("4"),
+                    "post_cost_expectancy_bps": Decimal("40"),
+                    **_runtime_pnl_basis(),
+                },
+            ],
+            continuity_ok=True,
+            drift_ok=True,
+            dependency_quorum_decision="allow",
+        )
+
+        with self.session_local() as session:
+            summary = persist_observed_runtime_windows(
+                session=session,
+                run_id="import-claimed-ledger-proof-without-rows",
+                candidate_id="cand-claimed-ledger",
+                hypothesis_id="H-PAIRS-01",
+                observed_stage="paper",
+                strategy_family="microbar_cross_sectional_pairs",
+                source_manifest_ref="config/trading/hypotheses/h-pairs-01.json",
+                buckets=buckets,
+                runtime_observation_payload={
+                    "runtime_ledger_profit_proof_present": True,
+                    "promotion_authority": "runtime_ledger_profit_proof_present",
+                },
+            )
+            session.commit()
+
+        target = summary["runtime_materialization_target"]
+        self.assertEqual(target["metric_window_count"], 1)
+        self.assertEqual(target["promotion_decision_count"], 1)
+        self.assertEqual(target["runtime_ledger_bucket_count"], 0)
+        self.assertEqual(target["evidence_grade_runtime_ledger_bucket_count"], 0)
+        self.assertIn(
+            "runtime_window_import_runtime_ledger_bucket_missing",
+            target["materialization_blockers"],
+        )
+        self.assertIn(
+            "runtime_window_import_evidence_grade_runtime_ledger_bucket_missing",
+            target["materialization_blockers"],
+        )
+        self.assertIn(
+            "runtime_window_import_runtime_ledger_bucket_missing",
+            [item["blocker"] for item in target["proof_blockers"]],
+        )
+        self.assertFalse(target["materialized"])
 
     def test_persist_observed_runtime_windows_blocks_zero_activity_evidence(
         self,

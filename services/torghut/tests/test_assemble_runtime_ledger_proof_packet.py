@@ -144,8 +144,60 @@ def _runtime_import(
     proof_status: str = "ok",
     proof_blockers: list[str] | None = None,
     authoritative: bool = True,
+    materialization_target: bool = True,
 ) -> dict[str, object]:
     blocker_payloads = [{"blocker": blocker} for blocker in proof_blockers or []]
+    target_payload: dict[str, object] = {
+        "candidate_id": "c88421d619759b2cfaa6f4d0",
+        "hypothesis_id": "H-PAIRS-01",
+        "observed_stage": "paper",
+        "strategy_family": "microbar_cross_sectional_pairs",
+        "strategy_name": "microbar-pairs-vwap-cap-safe",
+        "account_label": "TORGHUT_SIM",
+        "window_start": "2026-05-26T13:30:00+00:00",
+        "window_end": "2026-05-26T20:00:00+00:00",
+        "runtime_ledger_profit_proof_present": authoritative,
+        "runtime_ledger_notional_weighted_sample_count": 1 if authoritative else 0,
+        "runtime_ledger_filled_notional": "50000" if authoritative else "0",
+        "runtime_ledger_net_strategy_pnl_after_costs": "650" if authoritative else "0",
+        "metric_window_count": 1,
+        "promotion_decision_count": 1,
+        "runtime_ledger_bucket_count": 1 if authoritative else 0,
+        "evidence_grade_runtime_ledger_bucket_count": 1 if authoritative else 0,
+        "metric_window_ids": ["metric-window-1"],
+        "promotion_decision_id": "promotion-decision-1",
+        "runtime_ledger_bucket_ids": ["runtime-ledger-bucket-1"]
+        if authoritative
+        else [],
+        "evidence_grade_runtime_ledger_bucket_ids": ["runtime-ledger-bucket-1"]
+        if authoritative
+        else [],
+        "materialization_blockers": []
+        if authoritative
+        else ["runtime_window_import_runtime_ledger_bucket_missing"],
+        "proof_status": proof_status,
+        "proof_blockers": blocker_payloads,
+        "materialized": authoritative and proof_status == "ok" and not blocker_payloads,
+    }
+    summary: dict[str, object] = {
+        "promotion_allowed": authoritative,
+        "runtime_observation": {
+            "authoritative": authoritative,
+            "authority_reason": "runtime_ledger_profit_proof_present"
+            if authoritative
+            else "runtime_without_runtime_ledger_profit_proof",
+            "runtime_ledger_profit_proof_present": authoritative,
+            "runtime_ledger_tca_profit_proof_count": 1 if authoritative else 0,
+            "runtime_ledger_tca_runtime_bucket_row_count": 1 if authoritative else 0,
+            "runtime_ledger_tca_authoritative_bucket_count": 1 if authoritative else 0,
+            "runtime_ledger_filled_notional": "50000" if authoritative else "0",
+            "runtime_ledger_net_strategy_pnl_after_costs": "650"
+            if authoritative
+            else "0",
+        },
+    }
+    if materialization_target:
+        summary["runtime_materialization_target"] = target_payload
     return {
         "status": "ok",
         "proof_status": proof_status,
@@ -164,25 +216,7 @@ def _runtime_import(
                 "account_label": "TORGHUT_SIM",
                 "window_start": "2026-05-26T13:30:00+00:00",
                 "window_end": "2026-05-26T20:00:00+00:00",
-                "summary": {
-                    "promotion_allowed": authoritative,
-                    "runtime_observation": {
-                        "authoritative": authoritative,
-                        "authority_reason": "runtime_ledger_profit_proof_present"
-                        if authoritative
-                        else "runtime_without_runtime_ledger_profit_proof",
-                        "runtime_ledger_profit_proof_present": authoritative,
-                        "runtime_ledger_tca_profit_proof_count": 1
-                        if authoritative
-                        else 0,
-                        "runtime_ledger_tca_runtime_bucket_row_count": 1
-                        if authoritative
-                        else 0,
-                        "runtime_ledger_tca_authoritative_bucket_count": 1
-                        if authoritative
-                        else 0,
-                    },
-                },
+                "summary": summary,
             }
         ],
     }
@@ -1219,6 +1253,35 @@ class TestRuntimeLedgerProofPacket(TestCase):
             result["promotion_authority"]["blocking_reasons"],
         )
 
+    def test_packet_blocks_when_runtime_import_target_lacks_db_materialization_verdict(
+        self,
+    ) -> None:
+        runtime_import = _runtime_import(materialization_target=False)
+
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=runtime_import,
+            completion_status=_completion(),
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        materialization = result["evidence"]["runtime_window_import"]["materialization"]
+        self.assertFalse(result["ok"])
+        self.assertFalse(
+            result["checks"]["runtime_window_import_materialization"]["passed"]
+        )
+        self.assertEqual(materialization["materialized_target_count"], 0)
+        self.assertEqual(materialization["unmaterialized_target_count"], 1)
+        self.assertIn(
+            "runtime_window_import_materialization_target_missing",
+            materialization["unmaterialized_targets"][0]["blockers"],
+        )
+        self.assertIn(
+            "runtime_window_import_materialization_target_missing",
+            result["promotion_authority"]["blocking_reasons"],
+        )
+
     def test_packet_blocks_when_runtime_import_target_count_is_incomplete(
         self,
     ) -> None:
@@ -1429,6 +1492,56 @@ class TestRuntimeLedgerProofPacket(TestCase):
             materialization["blockers"],
         )
 
+    def test_packet_surfaces_target_materialization_count_and_string_blockers(
+        self,
+    ) -> None:
+        runtime_import = _runtime_import()
+        first_import = runtime_import["imports"][0]
+        assert isinstance(first_import, dict)
+        first_summary = first_import["summary"]
+        assert isinstance(first_summary, dict)
+        target = first_summary["runtime_materialization_target"]
+        assert isinstance(target, dict)
+        target.update(
+            {
+                "metric_window_count": 0,
+                "promotion_decision_count": 0,
+                "runtime_ledger_bucket_count": 0,
+                "evidence_grade_runtime_ledger_bucket_count": 0,
+                "materialization_blockers": [],
+                "proof_blockers": ["source_runtime_ledger_missing"],
+                "materialized": False,
+            }
+        )
+
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=runtime_import,
+            completion_status=_completion(),
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        materialization = result["evidence"]["runtime_window_import"]["materialization"]
+        self.assertFalse(result["ok"])
+        self.assertEqual(materialization["materialized_target_count"], 0)
+        self.assertEqual(materialization["unmaterialized_target_count"], 1)
+        target_blockers = materialization["unmaterialized_targets"][0]["blockers"]
+        self.assertIn("runtime_window_import_metric_window_missing", target_blockers)
+        self.assertIn(
+            "runtime_window_import_promotion_decision_missing",
+            target_blockers,
+        )
+        self.assertIn(
+            "runtime_window_import_runtime_ledger_bucket_missing",
+            target_blockers,
+        )
+        self.assertIn(
+            "runtime_window_import_evidence_grade_runtime_ledger_bucket_missing",
+            target_blockers,
+        )
+        self.assertIn("source_runtime_ledger_missing", target_blockers)
+
     def test_packet_waits_on_target_level_settlement_blocker(self) -> None:
         paper = _paper_route_evidence()
         target = paper["next_paper_route_runtime_window_targets"]["targets"][0]
@@ -1473,6 +1586,24 @@ class TestRuntimeLedgerProofPacket(TestCase):
                     "runtime_observation": {
                         "authoritative": True,
                         "runtime_ledger_profit_proof_present": True,
+                    },
+                    "runtime_materialization_target": {
+                        "candidate_id": "c88421d619759b2cfaa6f4d0",
+                        "observed_stage": "paper",
+                        "account_label": "TORGHUT_SIM",
+                        "runtime_ledger_profit_proof_present": True,
+                        "metric_window_count": 1,
+                        "promotion_decision_count": 1,
+                        "runtime_ledger_bucket_count": 1,
+                        "evidence_grade_runtime_ledger_bucket_count": 1,
+                        "materialized": True,
+                        "materialization_blockers": [],
+                        "metric_window_ids": ["metric-window-1"],
+                        "promotion_decision_id": "promotion-decision-1",
+                        "runtime_ledger_bucket_ids": ["runtime-ledger-bucket-1"],
+                        "evidence_grade_runtime_ledger_bucket_ids": [
+                            "runtime-ledger-bucket-1"
+                        ],
                     },
                 },
             },
