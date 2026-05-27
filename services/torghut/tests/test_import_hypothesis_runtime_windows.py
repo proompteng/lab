@@ -755,10 +755,18 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 target_metadata={"paper_route_probe_symbols": ["AAPL"]},
             )
         )
-        self.assertFalse(
+        self.assertTrue(
             _source_kind_allows_runtime_ledger_materialization(
                 source_kind="paper_runtime_observed",
                 target_metadata={"evidence_scope": "evidence_collection_only"},
+            )
+        )
+        self.assertFalse(
+            _runtime_window_source_kind_is_informational(
+                source_kind="paper_route_probe_runtime_observed",
+                target_metadata={
+                    "paper_probation_authorization_scope": "evidence_collection_only"
+                },
             )
         )
 
@@ -1215,6 +1223,82 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertGreaterEqual(len(bucket["execution_policy_hash_counts"]), 1)
         self.assertGreaterEqual(len(bucket["cost_model_hash_counts"]), 1)
         self.assertGreaterEqual(len(bucket["lineage_hash_counts"]), 1)
+
+    def test_build_realized_strategy_pnl_rows_uses_raw_order_fill_fields(
+        self,
+    ) -> None:
+        rows = _build_realized_strategy_pnl_rows(
+            [
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                    "execution_created_at": datetime(
+                        2026, 3, 6, 15, 45, tzinfo=timezone.utc
+                    ),
+                    "symbol": "AAPL",
+                    "decision_hash": "decision-buy",
+                    "alpaca_order_id": "order-buy",
+                    "execution_audit_json": {
+                        "fees": {
+                            "cost_amount": "0.20",
+                            "cost_basis": "broker_reported_commission_and_fees",
+                        },
+                        "lineage": {"runtime_window_id": "paper-route-session"},
+                    },
+                    "raw_order": {
+                        "side": "buy",
+                        "filled_qty": "1",
+                        "filled_avg_price": "100",
+                        "execution_policy": {"selected_order_type": "limit"},
+                        "cost_model": {"source": "broker_reported"},
+                    },
+                },
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 50, tzinfo=timezone.utc),
+                    "execution_created_at": datetime(
+                        2026, 3, 6, 15, 55, tzinfo=timezone.utc
+                    ),
+                    "symbol": "AAPL",
+                    "decision_hash": "decision-sell",
+                    "alpaca_order_id": "order-sell",
+                    "execution_audit_json": {
+                        "fees": {
+                            "cost_amount": "0.10",
+                            "cost_basis": "broker_reported_commission_and_fees",
+                        },
+                        "lineage": {"runtime_window_id": "paper-route-session"},
+                    },
+                    "raw_order": {
+                        "side": "sell",
+                        "filled_qty": "1",
+                        "filled_avg_price": "101",
+                        "execution_policy": {"selected_order_type": "limit"},
+                        "cost_model": {"source": "broker_reported"},
+                    },
+                },
+            ],
+            allow_authoritative_runtime_ledger_materialization=True,
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["authoritative"], True)
+        self.assertEqual(
+            rows[0]["authority_reason"],
+            "source_execution_runtime_ledger_materialized",
+        )
+        self.assertEqual(
+            rows[0]["computed_at"], datetime(2026, 3, 6, 15, 55, tzinfo=timezone.utc)
+        )
+        self.assertEqual(rows[0]["realized_net_pnl"], Decimal("0.70"))
+        bucket = rows[0]["runtime_ledger_bucket"]
+        self.assertIsInstance(bucket, dict)
+        assert isinstance(bucket, dict)
+        self.assertEqual(bucket["fill_count"], 2)
+        self.assertEqual(bucket["filled_notional"], "201")
+        self.assertNotIn("runtime_fills_missing", bucket["blockers"])
+        self.assertNotIn("filled_notional_missing", bucket["blockers"])
+        self.assertNotIn("explicit_cost_missing", bucket["blockers"])
+        self.assertEqual(bucket["blockers"], [])
+        self.assertTrue(_runtime_ledger_bucket_profit_proof_present(bucket))
 
     def test_build_realized_strategy_pnl_rows_materializes_audit_only_runtime_metadata(
         self,
@@ -2434,6 +2518,12 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             dataset_snapshot_ref="source-runtime-ledger-snapshot",
             target_metadata_json=json.dumps(
                 {
+                    "paper_probation_authorized": True,
+                    "paper_probation_authorization_scope": ("evidence_collection_only"),
+                    "evidence_collection_stage": "paper",
+                    "promotion_allowed": False,
+                    "final_promotion_authorized": False,
+                    "final_promotion_allowed": False,
                     "runtime_ledger_target_metadata_blockers": [
                         "paper_route_runtime_ledger_import_pending"
                     ],
