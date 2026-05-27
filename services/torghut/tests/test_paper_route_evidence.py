@@ -2293,6 +2293,115 @@ class TestPaperRouteEvidenceAudit(TestCase):
             matched_payload["summary"]["target_with_source_activity_count"], 1
         )
 
+    def test_next_runtime_window_targets_dedupe_same_execution_source(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, tzinfo=timezone.utc)
+        now = datetime(2026, 5, 26, 21, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            session.add(
+                Strategy(
+                    name="microbar-cross-sectional-pairs-v1",
+                    description="canonical executable H-PAIRS source strategy",
+                    enabled=True,
+                    base_timeframe="1Sec",
+                    universe_type="static",
+                    universe_symbols=["AAPL", "AMZN"],
+                    created_at=window_start,
+                    updated_at=window_start,
+                )
+            )
+            session.commit()
+
+            payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "paper_route_probe_only",
+                    "blocked_reasons": [],
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "target_count": "2",
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-PAIRS-01",
+                                "candidate_id": "candidate-pairs-a",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_cross_sectional_pairs",
+                                "strategy_name": "69cf50e3-4815-47c2-b802-1efbaac09ecb",
+                                "runtime_strategy_name": "69cf50e3-4815-47c2-b802-1efbaac09ecb",
+                                "strategy_id": "microbar_cross_sectional_pairs_v1@research",
+                                "strategy_lookup_names": [
+                                    "69cf50e3-4815-47c2-b802-1efbaac09ecb",
+                                    "microbar-cross-sectional-pairs-v1",
+                                ],
+                                "account_label": "TORGHUT_SIM",
+                                "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
+                                "window_start": window_start.isoformat(),
+                                "window_end": window_end.isoformat(),
+                                "paper_probation_authorized": True,
+                            },
+                            {
+                                "hypothesis_id": "H-PAIRS-01",
+                                "candidate_id": "candidate-pairs-b",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_cross_sectional_pairs",
+                                "strategy_name": "09fabf57-71ec-44c9-af1a-4d2df98e7d83",
+                                "runtime_strategy_name": "09fabf57-71ec-44c9-af1a-4d2df98e7d83",
+                                "strategy_id": "microbar_cross_sectional_pairs_v1@research",
+                                "strategy_lookup_names": [
+                                    "09fabf57-71ec-44c9-af1a-4d2df98e7d83",
+                                    "microbar-cross-sectional-pairs-v1",
+                                ],
+                                "account_label": "TORGHUT_SIM",
+                                "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
+                                "window_start": window_start.isoformat(),
+                                "window_end": window_end.isoformat(),
+                                "paper_probation_authorized": True,
+                            },
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "summary": {
+                        "paper_route_probe_eligible_symbols": ["AAPL", "AMZN"],
+                        "paper_route_probe_active_symbols": ["AAPL", "AMZN"],
+                    },
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": True,
+                        "effective_max_notional": 25,
+                        "next_session_max_notional": 25,
+                    },
+                },
+                generated_at=now,
+            )
+
+        next_targets = payload["next_paper_route_runtime_window_targets"]
+        self.assertEqual(next_targets["target_count"], 1)
+        self.assertEqual(next_targets["skipped_target_count"], 1)
+        self.assertEqual(next_targets["targets"][0]["candidate_id"], "candidate-pairs-a")
+        self.assertEqual(
+            next_targets["targets"][0]["paper_route_execution_source_key"]["strategy"],
+            "microbar-cross-sectional-pairs-v1",
+        )
+        self.assertEqual(
+            next_targets["skipped_targets"][0]["reason"],
+            "duplicate_next_paper_route_runtime_window_execution_source",
+        )
+        self.assertEqual(
+            next_targets["skipped_targets"][0]["duplicate_of_candidate_id"],
+            "candidate-pairs-a",
+        )
+        import_audit = payload["runtime_window_import_audit"]
+        self.assertEqual(import_audit["counts"]["selected_target_count"], 1)
+        self.assertEqual(
+            import_audit["counts"]["next_runtime_window_target_count"], 1
+        )
+
     def test_runtime_import_audit_counts_selected_targets_not_raw_plan_noise(
         self,
     ) -> None:

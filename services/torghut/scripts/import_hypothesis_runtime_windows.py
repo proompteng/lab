@@ -908,6 +908,7 @@ def _runtime_lifecycle_ledger_row(
     row: Mapping[str, object],
     *,
     event_type: str,
+    require_complete_fill: bool = False,
 ) -> dict[str, object] | None:
     event_time = _runtime_ledger_row_time(
         {str(key): value for key, value in row.items()}
@@ -915,7 +916,7 @@ def _runtime_lifecycle_ledger_row(
     if event_time is None:
         return None
     symbol = _first_text(row, "symbol", "order_symbol")
-    return {
+    ledger_row: dict[str, object] = {
         "executed_at": event_time,
         "event_type": event_type,
         "account_label": _first_text(row, "account_label", "alpaca_account_label"),
@@ -985,6 +986,70 @@ def _runtime_lifecycle_ledger_row(
             "source_offset",
         ),
     }
+    if event_type in _RUNTIME_LEDGER_FILL_EVENTS:
+        side = _first_text(row, "side", "action", "order_side")
+        filled_qty = _first_decimal(
+            row,
+            "filled_qty",
+            "filled_quantity",
+            "qty",
+            "quantity",
+        )
+        avg_fill_price = _first_decimal(
+            row,
+            "avg_fill_price",
+            "filled_avg_price",
+            "filled_average_price",
+            "average_fill_price",
+            "fill_price",
+            "filled_price",
+            "price",
+        )
+        filled_notional = _first_decimal(
+            row,
+            "filled_notional",
+            "notional",
+            "fill_notional",
+        )
+        if (
+            filled_notional is None
+            and filled_qty is not None
+            and avg_fill_price is not None
+        ):
+            filled_notional = filled_qty * avg_fill_price
+        cost_amount = (
+            _runtime_execution_cost_amount(row, filled_notional=filled_notional)
+            if filled_notional is not None
+            else None
+        )
+        cost_basis = _runtime_execution_cost_basis(row, cost_amount=cost_amount)
+        if require_complete_fill and (
+            side is None
+            or filled_qty is None
+            or filled_qty <= 0
+            or avg_fill_price is None
+            or avg_fill_price <= 0
+            or filled_notional is None
+            or filled_notional <= 0
+            or cost_amount is None
+            or cost_amount < 0
+            or cost_basis is None
+        ):
+            return None
+        if side is not None:
+            ledger_row["side"] = side
+        if filled_qty is not None:
+            ledger_row["filled_qty"] = filled_qty
+        if avg_fill_price is not None:
+            ledger_row["avg_fill_price"] = avg_fill_price
+        if filled_notional is not None:
+            ledger_row["filled_notional"] = filled_notional
+        if cost_amount is not None:
+            ledger_row["cost_amount"] = cost_amount
+        if cost_basis is not None:
+            ledger_row["cost_basis"] = cost_basis
+        ledger_row["source"] = "execution_order_event"
+    return ledger_row
 
 
 def _runtime_order_id(row: Mapping[str, object]) -> str | None:
@@ -1041,13 +1106,27 @@ def _order_feed_fill_lifecycle_blockers(
     if not expected_order_ids and not missing_execution_order_id:
         return []
 
-    observed_fill_order_ids = {
-        order_id
-        for row in order_lifecycle_rows or []
-        if _runtime_ledger_event_type({str(key): value for key, value in row.items()})
-        in _RUNTIME_LEDGER_FILL_EVENTS
-        if (order_id := _runtime_order_id(row)) is not None
-    }
+    observed_fill_order_ids: set[str] = set()
+    complete_fill_order_ids: set[str] = set()
+    for row in order_lifecycle_rows or []:
+        event_type = _runtime_ledger_event_type(
+            {str(key): value for key, value in row.items()}
+        )
+        if event_type not in _RUNTIME_LEDGER_FILL_EVENTS:
+            continue
+        order_id = _runtime_order_id(row)
+        if order_id is None:
+            continue
+        observed_fill_order_ids.add(order_id)
+        if (
+            _runtime_lifecycle_ledger_row(
+                row,
+                event_type=event_type,
+                require_complete_fill=True,
+            )
+            is not None
+        ):
+            complete_fill_order_ids.add(order_id)
 
     blockers: list[str] = []
     if missing_execution_order_id:
@@ -1055,6 +1134,8 @@ def _order_feed_fill_lifecycle_blockers(
     if not observed_fill_order_ids:
         blockers.append(ORDER_FEED_FILL_LIFECYCLE_MISSING_BLOCKER)
     elif expected_order_ids - observed_fill_order_ids:
+        blockers.append(ORDER_FEED_FILL_LIFECYCLE_INCOMPLETE_BLOCKER)
+    elif expected_order_ids - complete_fill_order_ids:
         blockers.append(ORDER_FEED_FILL_LIFECYCLE_INCOMPLETE_BLOCKER)
     return blockers
 
@@ -1069,6 +1150,7 @@ def _build_realized_strategy_pnl_rows(
     ledger_rows: list[RuntimeLedgerFill | dict[str, object]] = []
     event_times: list[datetime] = []
     event_sourced_lifecycle_rows = 0
+    materialized_order_fill_ids: set[str] = set()
     order_feed_fill_lifecycle_blockers = _order_feed_fill_lifecycle_blockers(
         execution_rows=execution_rows,
         order_lifecycle_rows=order_lifecycle_rows,
@@ -1086,13 +1168,19 @@ def _build_realized_strategy_pnl_rows(
         event_type = _runtime_ledger_event_type(
             {str(key): value for key, value in row.items()}
         )
-        if event_type in _RUNTIME_LEDGER_FILL_EVENTS:
-            continue
-        lifecycle_row = _runtime_lifecycle_ledger_row(row, event_type=event_type)
+        lifecycle_row = _runtime_lifecycle_ledger_row(
+            row,
+            event_type=event_type,
+            require_complete_fill=event_type in _RUNTIME_LEDGER_FILL_EVENTS,
+        )
         if lifecycle_row is None:
             continue
         ledger_rows.append(lifecycle_row)
         event_sourced_lifecycle_rows += 1
+        if event_type in _RUNTIME_LEDGER_FILL_EVENTS:
+            order_id = _runtime_order_id(lifecycle_row)
+            if order_id is not None:
+                materialized_order_fill_ids.add(order_id)
         event_time = lifecycle_row.get("executed_at")
         if isinstance(event_time, datetime):
             event_times.append(event_time)
@@ -1132,9 +1220,6 @@ def _build_realized_strategy_pnl_rows(
         symbol = str(row.get("symbol") or "").strip().upper()
         if not symbol or not isinstance(ledger_computed_at, datetime):
             continue
-        event_times.append(ledger_computed_at)
-        if isinstance(fill_event_at, datetime):
-            event_times.append(fill_event_at)
         decision_id = _first_text(
             row, "decision_id", "trade_decision_id", "decision_hash"
         )
@@ -1145,6 +1230,11 @@ def _build_realized_strategy_pnl_rows(
             "client_order_id",
             "execution_correlation_id",
         )
+        if order_id is not None and order_id in materialized_order_fill_ids:
+            continue
+        event_times.append(ledger_computed_at)
+        if isinstance(fill_event_at, datetime):
+            event_times.append(fill_event_at)
         common_ledger_fields = {
             "executed_at": ledger_computed_at,
             "account_label": str(row.get("account_label") or "") or None,
