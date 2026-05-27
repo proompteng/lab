@@ -10,6 +10,7 @@ from app.trading.discovery.candidate_specs import (
     candidate_spec_from_payload,
     compile_candidate_specs,
 )
+from app.trading.discovery.factor_acceptance import build_factor_acceptance_artifact
 from app.trading.discovery.hypothesis_cards import (
     HYPOTHESIS_CARD_SCHEMA_VERSION,
     HypothesisCard,
@@ -31,6 +32,134 @@ def _capital_profile(spec: candidate_specs_module.CandidateSpec) -> object:
 
 
 class TestCandidateSpecs(TestCase):
+    def test_factor_acceptance_artifact_accepts_rankic_cost_stressed_factor(
+        self,
+    ) -> None:
+        artifact = build_factor_acceptance_artifact(
+            factor_expression="cross_section_recent_15m_return_rank",
+            source_idea="nvidia_signal_discovery_rankic_acceptance",
+            allowed_feature_dependencies=[
+                "cross_section_recent_15m_return_rank",
+                "spread_bps",
+            ],
+            train_window={"start": "2026-01-02", "end": "2026-03-31"},
+            test_window={"start": "2026-04-01", "end": "2026-04-30"},
+            sample_count=144,
+            candidate_count=4,
+            rank_ic=Decimal("0.061"),
+            rank_ir=Decimal("0.71"),
+            p_value=Decimal("0.006"),
+            gross_expectancy_bps=Decimal("5.2"),
+            cost_stress_bps=Decimal("1.8"),
+        )
+
+        self.assertEqual(artifact["status"], "accepted")
+        self.assertEqual(artifact["rejection_reasons"], [])
+        self.assertEqual(artifact["deflated_p_value"], "0.024")
+        self.assertEqual(artifact["cost_stressed_net_expectancy_bps"], "3.4")
+        self.assertTrue(artifact["does_not_authorize_live_promotion"])
+        self.assertEqual(
+            artifact["lineage_hash"],
+            build_factor_acceptance_artifact(
+                factor_expression="cross_section_recent_15m_return_rank",
+                source_idea="nvidia_signal_discovery_rankic_acceptance",
+                allowed_feature_dependencies=[
+                    "cross_section_recent_15m_return_rank",
+                    "spread_bps",
+                ],
+                train_window={"start": "2026-01-02", "end": "2026-03-31"},
+                test_window={"start": "2026-04-01", "end": "2026-04-30"},
+                sample_count=144,
+                candidate_count=4,
+                rank_ic=Decimal("0.061"),
+                rank_ir=Decimal("0.71"),
+                p_value=Decimal("0.006"),
+                gross_expectancy_bps=Decimal("5.2"),
+                cost_stress_bps=Decimal("1.8"),
+            )["lineage_hash"],
+        )
+
+    def test_factor_acceptance_artifact_rejects_missing_features_low_ic_and_cost(
+        self,
+    ) -> None:
+        artifact = build_factor_acceptance_artifact(
+            factor_expression="unavailable_alt_data_factor",
+            source_idea="rankic_factor_acceptance_negative_case",
+            allowed_feature_dependencies=[
+                "unavailable_alt_data_factor",
+                "cross_section_recent_15m_return_rank",
+            ],
+            sample_count=12,
+            candidate_count=8,
+            rank_ic=Decimal("0.01"),
+            rank_ir=Decimal("0.10"),
+            p_value=Decimal("0.02"),
+            gross_expectancy_bps=Decimal("1.0"),
+            cost_stress_bps=Decimal("1.5"),
+        )
+
+        self.assertEqual(artifact["status"], "rejected")
+        self.assertIn("feature_dependency_missing", artifact["rejection_reasons"])
+        self.assertIn("sample_count_below_floor", artifact["rejection_reasons"])
+        self.assertIn("rank_ic_below_floor", artifact["rejection_reasons"])
+        self.assertIn("rank_ir_below_floor", artifact["rejection_reasons"])
+        self.assertIn("deflated_p_value_above_floor", artifact["rejection_reasons"])
+        self.assertIn(
+            "cost_stressed_expectancy_non_positive",
+            artifact["rejection_reasons"],
+        )
+
+    def test_rankic_signal_discovery_claim_adds_fail_closed_factor_harness(
+        self,
+    ) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-nvidia-signal-discovery",
+            claims=[
+                {
+                    "claim_id": "rankic-factor-mining",
+                    "claim_type": "feature_recipe",
+                    "claim_text": (
+                        "NVIDIA quantitative signal discovery and FactorMiner style "
+                        "factor mining require RankIC, RankIR, p-value and cost "
+                        "stress acceptance before alpha factors enter paper routing."
+                    ),
+                    "data_requirements": [
+                        "cross_section_recent_15m_return_rank",
+                        "spread_bps",
+                    ],
+                    "confidence": "0.82",
+                }
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
+        )
+        first = specs[0]
+        artifact = first.feature_contract["factor_acceptance_artifact"]
+
+        self.assertIn(
+            "rankic_factor_acceptance_harness",
+            first.parameter_space["mechanism_overlay_ids"],
+        )
+        self.assertEqual(artifact["status"], "rejected")
+        self.assertIn("rank_ic_below_floor", artifact["rejection_reasons"])
+        self.assertTrue(first.hard_vetoes["required_factor_acceptance_artifact"])
+        self.assertEqual(
+            first.hard_vetoes["required_factor_acceptance_status"],
+            "accepted",
+        )
+        self.assertTrue(
+            first.promotion_contract[
+                "rejects_llm_generated_factor_without_deterministic_acceptance"
+            ]
+        )
+        self.assertTrue(
+            first.promotion_contract[
+                "rejects_factor_acceptance_as_live_promotion_proof"
+            ]
+        )
+
     def test_profile_rank_floor_handles_invalid_params_and_universe_fallbacks(
         self,
     ) -> None:

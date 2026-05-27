@@ -9,6 +9,7 @@ from decimal import Decimal
 from typing import Any, Literal, Mapping, Sequence, cast
 
 from app.trading.discovery.capital_budget import estimate_capital_pressure
+from app.trading.discovery.factor_acceptance import build_factor_acceptance_artifact
 from app.trading.discovery.hypothesis_cards import HypothesisCard
 from app.trading.semiconductor_universe import (
     LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE as LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE,
@@ -3243,6 +3244,125 @@ def _paper_mechanism_haystack(card: HypothesisCard) -> str:
     return f"{_hypothesis_haystack(card)} {validation_text}".lower()
 
 
+def _requires_factor_acceptance_harness(card: HypothesisCard) -> bool:
+    haystack = _paper_mechanism_haystack(card)
+    return any(
+        token in haystack
+        for token in (
+            "rankic",
+            "rank ic",
+            "rank-ir",
+            "rank ir",
+            "information coefficient",
+            "factor mining",
+            "factor discovery",
+            "factor screener",
+            "alpha factor",
+            "signal discovery",
+            "llm signal",
+            "quantitative signal discovery",
+            "adaptive factor",
+            "chain-of-alpha",
+            "alphacrafter",
+            "alpha-r1",
+            "r&d-agent-quant",
+            "rd-agent-quant",
+            "factorminer",
+        )
+    )
+
+
+def _factor_acceptance_dependencies(
+    card: HypothesisCard, strategy_overrides: Mapping[str, Any]
+) -> tuple[str, ...]:
+    params = _mapping(strategy_overrides.get("params"))
+    dependencies: list[str] = []
+    for key in ("rank_feature", "gate_feature"):
+        value = _string(params.get(key))
+        if value:
+            dependencies.append(value)
+    dependencies.extend(card.required_features)
+    return tuple(dict.fromkeys(item for item in dependencies if item))
+
+
+def _factor_acceptance_expression(strategy_overrides: Mapping[str, Any]) -> str:
+    params = _mapping(strategy_overrides.get("params"))
+    rank_feature = _string(params.get("rank_feature"))
+    gate_feature = _string(params.get("gate_feature"))
+    if rank_feature and gate_feature:
+        return f"{rank_feature}|gated_by:{gate_feature}"
+    if rank_feature:
+        return rank_feature
+    return "candidate_family_score"
+
+
+def _apply_factor_acceptance_harness(
+    *,
+    card: HypothesisCard,
+    feature_contract: dict[str, Any],
+    parameter_space: dict[str, Any],
+    strategy_overrides: Mapping[str, Any],
+    hard_vetoes: dict[str, Any],
+    promotion_contract: dict[str, Any],
+) -> None:
+    if not _requires_factor_acceptance_harness(card):
+        return
+    artifact = build_factor_acceptance_artifact(
+        factor_expression=_factor_acceptance_expression(strategy_overrides),
+        source_idea="2025_2026_signal_discovery_rankic_acceptance_harness",
+        allowed_feature_dependencies=_factor_acceptance_dependencies(
+            card, strategy_overrides
+        ),
+        train_window={"source": "runtime_replay_required"},
+        test_window={"source": "holdout_or_live_paper_required"},
+        sample_count=0,
+        candidate_count=1,
+    )
+    feature_contract["factor_acceptance_artifact"] = artifact
+    feature_contract["factor_acceptance_policy"] = (
+        "deterministic_rankic_rankir_cost_stress_fail_closed"
+    )
+    overlay_ids = [
+        str(item)
+        for item in cast(
+            Sequence[Any], parameter_space.get("mechanism_overlay_ids") or []
+        )
+    ]
+    if "rankic_factor_acceptance_harness" not in overlay_ids:
+        overlay_ids.append("rankic_factor_acceptance_harness")
+    parameter_space["mechanism_overlay_ids"] = overlay_ids
+    hard_vetoes.update(
+        {
+            "required_factor_acceptance_artifact": True,
+            "required_factor_acceptance_status": "accepted",
+            "required_factor_acceptance_min_rank_ic": artifact["thresholds"][
+                "min_rank_ic"
+            ],
+            "required_factor_acceptance_min_rank_ir": artifact["thresholds"][
+                "min_rank_ir"
+            ],
+            "required_factor_acceptance_max_deflated_p_value": artifact["thresholds"][
+                "max_deflated_p_value"
+            ],
+            "required_factor_acceptance_min_sample_count": artifact["thresholds"][
+                "min_sample_count"
+            ],
+            "required_factor_acceptance_cost_stressed_positive": True,
+        }
+    )
+    promotion_contract.update(
+        {
+            "requires_factor_acceptance_artifact": True,
+            "requires_feature_dependency_parity": True,
+            "requires_rankic_rankir_holdout_acceptance": True,
+            "requires_multiple_testing_penalty": True,
+            "requires_cost_stressed_factor_expectancy": True,
+            "rejects_llm_generated_factor_without_deterministic_acceptance": True,
+            "rejects_factor_acceptance_as_live_promotion_proof": True,
+        }
+    )
+
+
 def _mechanism_overlays_for_card(card: HypothesisCard) -> dict[str, Any]:
     haystack = _paper_mechanism_haystack(card)
     overlay_ids: list[str] = []
@@ -5594,6 +5714,14 @@ def compile_candidate_specs(
                 hard_vetoes.update(_mapping(mechanism_overlays.get("hard_vetoes")))
                 promotion_contract.update(
                     _mapping(mechanism_overlays.get("promotion_contract"))
+                )
+                _apply_factor_acceptance_harness(
+                    card=card,
+                    feature_contract=feature_contract,
+                    parameter_space=parameter_space,
+                    strategy_overrides=strategy_overrides,
+                    hard_vetoes=hard_vetoes,
+                    promotion_contract=promotion_contract,
                 )
                 base_payload = {
                     "hypothesis_id": card.hypothesis_id,
