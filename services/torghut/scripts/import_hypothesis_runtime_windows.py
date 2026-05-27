@@ -233,6 +233,10 @@ def _first_payload_digest(row: Mapping[str, object], *keys: str) -> str | None:
 
 
 _LINEAGE_CONTEXT_KEYS = (
+    "strategy_id",
+    "primary_declared_strategy_id",
+    "source_declared_strategy_ids",
+    "paper_route_target_plan_source",
     "simulation_run_id",
     "dataset_id",
     "dataset_snapshot_ref",
@@ -754,6 +758,64 @@ def _execution_signed_qty(*, side: Any, qty: Any) -> Decimal:
     return Decimal("0")
 
 
+def _runtime_execution_cost_amount(
+    row: Mapping[str, object],
+    *,
+    filled_notional: Decimal,
+) -> Decimal | None:
+    explicit_cost = _first_decimal(
+        row,
+        "cost_amount",
+        "explicit_cost",
+        "commission",
+        "fees",
+        "fee_amount",
+        "broker_fee",
+    )
+    if explicit_cost is not None:
+        return explicit_cost
+    total_cost_bps = _first_decimal(
+        row,
+        "total_cost_bps",
+        "estimated_total_cost_bps",
+        "explicit_cost_bps",
+        "execution_total_cost_bps",
+    )
+    if total_cost_bps is None or total_cost_bps < 0 or filled_notional <= 0:
+        return None
+    return filled_notional * total_cost_bps / Decimal("10000")
+
+
+def _runtime_execution_cost_basis(
+    row: Mapping[str, object],
+    *,
+    cost_amount: Decimal | None,
+) -> str | None:
+    cost_basis = _first_text(
+        row,
+        "cost_basis",
+        "cost_source",
+        "fee_basis",
+        "commission_basis",
+        "broker_fee_basis",
+    )
+    if cost_basis is not None:
+        return cost_basis
+    if (
+        cost_amount is not None
+        and _first_decimal(
+            row,
+            "total_cost_bps",
+            "estimated_total_cost_bps",
+            "explicit_cost_bps",
+            "execution_total_cost_bps",
+        )
+        is not None
+    ):
+        return "decision_impact_assumptions_total_cost_bps"
+    return None
+
+
 def _build_realized_strategy_pnl_rows(
     execution_rows: list[dict[str, object]],
     *,
@@ -861,22 +923,15 @@ def _build_realized_strategy_pnl_rows(
             )
         if price is None or price <= 0 or signed_qty == 0:
             continue
-        cost_amount = _first_decimal(
+        filled_qty = abs(signed_qty)
+        filled_notional = filled_qty * price
+        cost_amount = _runtime_execution_cost_amount(
             row,
-            "cost_amount",
-            "explicit_cost",
-            "commission",
-            "fees",
-            "fee_amount",
-            "broker_fee",
+            filled_notional=filled_notional,
         )
-        cost_basis = _first_text(
+        cost_basis = _runtime_execution_cost_basis(
             row,
-            "cost_basis",
-            "cost_source",
-            "fee_basis",
-            "commission_basis",
-            "broker_fee_basis",
+            cost_amount=cost_amount,
         )
         ledger_rows.append(
             RuntimeLedgerFill(
@@ -893,8 +948,9 @@ def _build_realized_strategy_pnl_rows(
                 lineage_hash=common_ledger_fields["lineage_hash"],
                 replay_data_hash=common_ledger_fields["replay_data_hash"],
                 side=_first_text(row, "side", "order_side") or "",
-                filled_qty=abs(signed_qty),
+                filled_qty=filled_qty,
                 avg_fill_price=price,
+                filled_notional=filled_notional,
                 cost_amount=cost_amount,
                 cost_basis=cost_basis,
                 account_label=str(row.get("account_label") or "") or None,
@@ -1654,6 +1710,7 @@ def _query_timestamps(
                     e.alpaca_account_label,
                     s.name,
                     d.decision_hash,
+                    d.decision_json,
                     e.alpaca_order_id,
                     e.client_order_id,
                     e.status
@@ -1690,9 +1747,10 @@ def _query_timestamps(
                     "account_label": row[9],
                     "strategy_id": row[10],
                     "decision_hash": row[11],
-                    "alpaca_order_id": row[12],
-                    "client_order_id": row[13],
-                    "order_status": row[14],
+                    "decision_json": row[12],
+                    "alpaca_order_id": row[13],
+                    "client_order_id": row[14],
+                    "order_status": row[15],
                 }
                 for row in cur.fetchall()
                 if row[0] is not None
