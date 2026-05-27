@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_DOWN
 from typing import Any, Optional, cast
@@ -25,6 +25,7 @@ from ..models import SignalEnvelope, StrategyDecision
 from ..paper_route_target_plan import (
     fetch_paper_route_target_plan_url,
     paper_route_target_plan_probe_symbols,
+    paper_route_target_plan_targets,
 )
 from ..prices import MarketSnapshot
 from ..proof_floor import build_profitability_proof_floor_receipt
@@ -84,6 +85,66 @@ def _safe_int(value: object) -> int:
         return int(cast(Any, value))
     except (TypeError, ValueError):
         return 0
+
+
+def _safe_text(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _target_symbols(target: Mapping[str, Any]) -> set[str]:
+    raw_symbols = target.get("paper_route_probe_symbols")
+    if isinstance(raw_symbols, str):
+        values = raw_symbols.split(",")
+    elif isinstance(raw_symbols, Sequence) and not isinstance(
+        raw_symbols, (str, bytes, bytearray)
+    ):
+        values = cast(Sequence[object], raw_symbols)
+    else:
+        values = ()
+    return {symbol for raw in values if (symbol := str(raw).strip().upper())}
+
+
+def _target_plan_lineage(
+    targets: list[dict[str, Any]], symbol: str
+) -> dict[str, object]:
+    normalized_symbol = symbol.strip().upper()
+    lineage_targets: list[dict[str, str]] = []
+    candidate_ids: list[str] = []
+    hypothesis_ids: list[str] = []
+    strategy_names: list[str] = []
+    for target in targets:
+        target_symbols = _target_symbols(target)
+        if target_symbols and normalized_symbol not in target_symbols:
+            continue
+        candidate_id = _safe_text(target.get("candidate_id"))
+        hypothesis_id = _safe_text(target.get("hypothesis_id"))
+        strategy_name = _safe_text(target.get("strategy_name"))
+        item = {
+            key: value
+            for key, value in {
+                "candidate_id": candidate_id,
+                "hypothesis_id": hypothesis_id,
+                "strategy_name": strategy_name,
+            }.items()
+            if value
+        }
+        if item:
+            lineage_targets.append(item)
+        if candidate_id and candidate_id not in candidate_ids:
+            candidate_ids.append(candidate_id)
+        if hypothesis_id and hypothesis_id not in hypothesis_ids:
+            hypothesis_ids.append(hypothesis_id)
+        if strategy_name and strategy_name not in strategy_names:
+            strategy_names.append(strategy_name)
+    return {
+        "paper_route_probe_lineage_targets": lineage_targets,
+        "source_candidate_ids": candidate_ids,
+        "source_hypothesis_ids": hypothesis_ids,
+        "source_strategy_names": strategy_names,
+    }
 
 
 class SimpleTradingPipeline(TradingPipeline):
@@ -1465,10 +1526,14 @@ class SimpleTradingPipeline(TradingPipeline):
         return True
 
     @staticmethod
-    def _external_paper_route_target_probe_symbols() -> tuple[set[str], str | None]:
+    def _external_paper_route_target_probe_symbols() -> tuple[
+        set[str],
+        str | None,
+        list[dict[str, Any]],
+    ]:
         url = str(settings.trading_paper_route_target_plan_url or "").strip()
         if not url:
-            return set(), None
+            return set(), None, []
         plan = fetch_paper_route_target_plan_url(
             url,
             timeout_seconds=settings.trading_paper_route_target_plan_timeout_seconds,
@@ -1483,11 +1548,11 @@ class SimpleTradingPipeline(TradingPipeline):
                 load_error,
                 plan.get("fetch_attempts") or 1,
             )
-            return set(), load_error
+            return set(), load_error, []
         symbols = paper_route_target_plan_probe_symbols(plan)
         if not symbols:
-            return set(), "paper_route_target_plan_probe_symbols_missing"
-        return symbols, None
+            return set(), "paper_route_target_plan_probe_symbols_missing", []
+        return symbols, None, paper_route_target_plan_targets(plan)
 
     def _paper_route_probe_context(
         self,
@@ -1542,7 +1607,7 @@ class SimpleTradingPipeline(TradingPipeline):
             if str(item).strip()
         }
         symbol = decision.symbol.strip().upper()
-        target_plan_symbols, target_plan_error = (
+        target_plan_symbols, target_plan_error, target_plan_targets = (
             self._external_paper_route_target_probe_symbols()
         )
         if target_plan_error:
@@ -1585,6 +1650,7 @@ class SimpleTradingPipeline(TradingPipeline):
             "paper_route_target_plan_source": "external_target_plan_url"
             if target_plan_symbols
             else None,
+            **_target_plan_lineage(target_plan_targets, symbol),
             "exit_minute_after_open": exit_minute,
             "effective_exit_minute_after_open": effective_exit_minute,
             "exit_due_at": exit_due_at,

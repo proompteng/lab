@@ -4886,7 +4886,22 @@ class TestTradingPipeline(TestCase):
 
         with patch(
             "app.trading.scheduler.simple_pipeline.fetch_paper_route_target_plan_url",
-            return_value={"targets": [{"paper_route_probe_symbols": ["AAPL"]}]},
+            return_value={
+                "targets": [
+                    {
+                        "paper_route_probe_symbols": ["AAPL"],
+                        "candidate_id": "candidate-pairs-a",
+                        "hypothesis_id": "H-PAIRS-01",
+                        "strategy_name": "pairs-runtime-a",
+                    },
+                    {
+                        "paper_route_probe_symbols": ["MSFT"],
+                        "candidate_id": "candidate-other",
+                        "hypothesis_id": "H-OTHER",
+                        "strategy_name": "other-runtime",
+                    },
+                ]
+            },
         ):
             self.assertIsNone(
                 pipeline._paper_route_probe_context(
@@ -4902,11 +4917,28 @@ class TestTradingPipeline(TestCase):
         self.assertIsNotNone(scoped_context)
         assert scoped_context is not None
         self.assertEqual(
-            scoped_context.get("paper_route_target_plan_symbols"), ["AAPL"]
+            scoped_context.get("paper_route_target_plan_symbols"), ["AAPL", "MSFT"]
         )
         self.assertEqual(
             scoped_context.get("paper_route_target_plan_source"),
             "external_target_plan_url",
+        )
+        self.assertEqual(
+            scoped_context.get("source_candidate_ids"), ["candidate-pairs-a"]
+        )
+        self.assertEqual(scoped_context.get("source_hypothesis_ids"), ["H-PAIRS-01"])
+        self.assertEqual(
+            scoped_context.get("source_strategy_names"), ["pairs-runtime-a"]
+        )
+        self.assertEqual(
+            scoped_context.get("paper_route_probe_lineage_targets"),
+            [
+                {
+                    "candidate_id": "candidate-pairs-a",
+                    "hypothesis_id": "H-PAIRS-01",
+                    "strategy_name": "pairs-runtime-a",
+                }
+            ],
         )
 
         with patch(

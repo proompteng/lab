@@ -2100,6 +2100,60 @@ class TestPaperRouteEvidenceAudit(TestCase):
                 },
                 generated_at=now,
             )
+            decision.decision_json = {
+                "action": "sell",
+                "qty": "1",
+                "params": {
+                    "paper_route_probe": {
+                        "source_candidate_ids": ["candidate-pairs-a"],
+                        "source_hypothesis_ids": ["H-PAIRS-01"],
+                    }
+                },
+            }
+            session.add(decision)
+            session.commit()
+            matched_payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "paper_route_probe_only",
+                    "blocked_reasons": [],
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "target_count": "1",
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-PAIRS-01",
+                                "candidate_id": "candidate-pairs-a",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_cross_sectional_pairs",
+                                "strategy_name": "69cf50e3-4815-47c2-b802-1efbaac09ecb",
+                                "strategy_id": "microbar_cross_sectional_pairs_v1@research",
+                                "account_label": "TORGHUT_SIM",
+                                "source_kind": "paper_route_probe_runtime_observed",
+                                "window_start": window_start.isoformat(),
+                                "window_end": window_end.isoformat(),
+                                "paper_probation_authorized": True,
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "summary": {
+                        "paper_route_probe_eligible_symbols": ["AAPL"],
+                        "paper_route_probe_active_symbols": ["AAPL"],
+                    },
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": True,
+                        "effective_max_notional": 25,
+                        "next_session_max_notional": 25,
+                    },
+                },
+                generated_at=now,
+            )
 
         source_activity = payload["targets"][0]["source_activity"]
         self.assertTrue(source_activity["lineage_required"])
@@ -2120,6 +2174,16 @@ class TestPaperRouteEvidenceAudit(TestCase):
             payload["targets"][0]["readiness"]["evidence_collection_blockers"],
         )
         self.assertEqual(payload["summary"]["target_with_source_activity_count"], 0)
+        matched_source_activity = matched_payload["targets"][0]["source_activity"]
+        self.assertEqual(matched_source_activity["raw_decision_count"], 1)
+        self.assertEqual(matched_source_activity["lineage_matched_decision_count"], 1)
+        self.assertEqual(matched_source_activity["decision_count"], 1)
+        self.assertEqual(matched_source_activity["execution_count"], 1)
+        self.assertEqual(matched_source_activity["tca_sample_count"], 1)
+        self.assertFalse(matched_source_activity["missing"])
+        self.assertEqual(
+            matched_payload["summary"]["target_with_source_activity_count"], 1
+        )
 
     def test_runtime_import_audit_counts_selected_targets_not_raw_plan_noise(
         self,
