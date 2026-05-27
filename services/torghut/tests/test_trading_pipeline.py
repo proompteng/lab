@@ -1146,6 +1146,58 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(enriched.payload.get("imbalance_ask_px"), Decimal("100.01"))
         self.assertTrue(pipeline._signal_quote_quality.assess(enriched).valid)
 
+    def test_ensure_signal_executable_price_replaces_wide_embedded_quote_with_snapshot(
+        self,
+    ) -> None:
+        alpaca_client = FakeAlpacaClient()
+        pipeline = TradingPipeline(
+            alpaca_client=alpaca_client,
+            order_firewall=OrderFirewall(alpaca_client),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=alpaca_client,
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+            price_fetcher=FakePriceFetcher(
+                Decimal("308.20"),
+                spread=Decimal("0.02"),
+                bid=Decimal("308.19"),
+                ask=Decimal("308.21"),
+            ),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 14, 31, tzinfo=timezone.utc),
+            symbol="AAPL",
+            payload={
+                "price": Decimal("308.21"),
+                "spread": Decimal("5.98"),
+                "spread_bps": Decimal("194.02355537"),
+                "imbalance_bid_px": Decimal("305.22"),
+                "imbalance_ask_px": Decimal("311.20"),
+                "imbalance_spread": Decimal("5.98"),
+                "macd": {"macd": Decimal("1.1"), "signal": Decimal("0.4")},
+            },
+            timeframe="1Sec",
+        )
+
+        enriched = pipeline._ensure_signal_executable_price(signal)
+
+        self.assertEqual(enriched.payload.get("price"), Decimal("308.20"))
+        self.assertEqual(enriched.payload.get("spread"), Decimal("0.02"))
+        self.assertEqual(
+            enriched.payload.get("spread_bps"),
+            Decimal("0.6489292667099286177806619079"),
+        )
+        self.assertEqual(enriched.payload.get("imbalance_spread"), Decimal("0.02"))
+        self.assertEqual(enriched.payload.get("imbalance_bid_px"), Decimal("308.19"))
+        self.assertEqual(enriched.payload.get("imbalance_ask_px"), Decimal("308.21"))
+        self.assertTrue(pipeline._signal_quote_quality.assess(enriched).valid)
+
     def test_ensure_signal_executable_price_backfills_missing_price_from_snapshot(
         self,
     ) -> None:

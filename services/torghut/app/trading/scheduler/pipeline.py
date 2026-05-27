@@ -74,6 +74,7 @@ from ..quote_quality import (
     QuoteQualityPolicy,
     QuoteQualityStatus,
     SignalQuoteQualityTracker,
+    assess_signal_quote_quality,
 )
 from ..quantity_rules import (
     min_qty_for_symbol,
@@ -1380,7 +1381,14 @@ class TradingPipeline:
                 nested_key="ask_px",
             )
         )
+        embedded_quote_status: QuoteQualityStatus | None = None
         if price is not None and bid is not None and ask is not None:
+            embedded_quote_status = assess_signal_quote_quality(
+                signal=signal,
+                previous_price=None,
+                policy=self._signal_quote_quality.policy,
+            )
+        if embedded_quote_status is not None and embedded_quote_status.valid:
             return signal
         snapshot = self.price_fetcher.fetch_market_snapshot(signal)
         if snapshot is None:
@@ -1388,6 +1396,11 @@ class TradingPipeline:
         payload = dict(signal.payload)
         snapshot_has_executable_quote = (
             snapshot.bid is not None and snapshot.ask is not None
+        )
+        replace_embedded_quote = (
+            snapshot_has_executable_quote
+            and embedded_quote_status is not None
+            and not embedded_quote_status.valid
         )
         if snapshot.price is not None and (
             price is None or snapshot_has_executable_quote
@@ -1401,14 +1414,14 @@ class TradingPipeline:
                 payload["spread_bps"] = (
                     abs(snapshot.spread) / snapshot.price
                 ) * Decimal("10000")
-        if bid is None and snapshot.bid is not None:
+        if (bid is None or replace_embedded_quote) and snapshot.bid is not None:
             payload["imbalance_bid_px"] = snapshot.bid
-        if ask is None and snapshot.ask is not None:
+        if (ask is None or replace_embedded_quote) and snapshot.ask is not None:
             payload["imbalance_ask_px"] = snapshot.ask
         if (
             snapshot_has_executable_quote
             and snapshot.spread is not None
-            and payload.get("imbalance_spread") is None
+            and (payload.get("imbalance_spread") is None or replace_embedded_quote)
         ):
             payload["imbalance_spread"] = snapshot.spread
         if payload == signal.payload:
