@@ -6,7 +6,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
-from typing import Any, Mapping, Sequence
+from typing import Any, Iterable, Mapping, Sequence, cast
 
 from app.trading.features import FEATURE_VECTOR_V3_VALUE_FIELDS
 
@@ -43,6 +43,19 @@ def _decimal(value: Any) -> Decimal | None:
         return None
 
 
+def _int(value: Any) -> int:
+    try:
+        return int(float(str(value or 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _mapping(value: Any) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        return {}
+    return {str(key): item for key, item in cast(Mapping[Any, Any], value).items()}
+
+
 def _string_sequence(value: Sequence[str] | None) -> tuple[str, ...]:
     if not value:
         return ()
@@ -54,6 +67,142 @@ def _string_sequence(value: Sequence[str] | None) -> tuple[str, ...]:
 def _stable_hash(payload: Mapping[str, Any]) -> str:
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _scorecard_decimal(
+    scorecard: Mapping[str, Any],
+    fold_metrics: Sequence[Mapping[str, Any]],
+    keys: Sequence[str],
+) -> Decimal | None:
+    for key in keys:
+        value = _decimal(scorecard.get(key))
+        if value is not None:
+            return value
+    fold_values = [
+        value
+        for fold in fold_metrics
+        for key in keys
+        if (value := _decimal(fold.get(key))) is not None
+    ]
+    if not fold_values:
+        return None
+    return sum(fold_values, Decimal("0")) / Decimal(len(fold_values))
+
+
+def _scorecard_sample_count(
+    scorecard: Mapping[str, Any],
+    fold_metrics: Sequence[Mapping[str, Any]],
+) -> int:
+    sample_keys = (
+        "factor_sample_count",
+        "rank_ic_sample_count",
+        "sample_count",
+        "market_limit_order_mix_sample_count",
+        "limit_fill_probability_sample_count",
+        "decision_count",
+        "trade_decision_count",
+        "runtime_decision_count",
+        "filled_count",
+        "fill_count",
+        "filled_order_count",
+        "closed_trade_count",
+        "trading_day_count",
+    )
+    scorecard_count = max(_int(scorecard.get(key)) for key in sample_keys)
+    fold_count = sum(
+        max(_int(fold.get(key)) for key in sample_keys) for fold in fold_metrics
+    )
+    return max(scorecard_count, fold_count)
+
+
+def _rank_ir_from_folds(fold_metrics: Sequence[Mapping[str, Any]]) -> Decimal | None:
+    rank_ic_values = [
+        value
+        for fold in fold_metrics
+        if (
+            value := _scorecard_decimal(
+                fold,
+                (),
+                (
+                    "rank_ic",
+                    "rank_ic_mean",
+                    "factor_rank_ic",
+                    "holdout_rank_ic",
+                    "information_coefficient",
+                ),
+            )
+        )
+        is not None
+    ]
+    if len(rank_ic_values) < 2:
+        return None
+    mean = sum(rank_ic_values, Decimal("0")) / Decimal(len(rank_ic_values))
+    variance = sum((value - mean) ** 2 for value in rank_ic_values) / Decimal(
+        len(rank_ic_values) - 1
+    )
+    if variance <= 0:
+        return None
+    return mean / variance.sqrt()
+
+
+def _expectancy_bps_from_scorecard(scorecard: Mapping[str, Any]) -> Decimal | None:
+    direct = _scorecard_decimal(
+        scorecard,
+        (),
+        (
+            "factor_post_cost_expectancy_bps",
+            "post_cost_expectancy_bps",
+            "net_expectancy_bps",
+            "realized_strategy_pnl_after_explicit_costs_bps",
+            "cost_stressed_net_expectancy_bps",
+        ),
+    )
+    if direct is not None:
+        return direct
+    net_pnl_per_day = _scorecard_decimal(
+        scorecard,
+        (),
+        (
+            "net_pnl_per_day",
+            "market_impact_stress_net_pnl_per_day",
+            "delay_adjusted_depth_stress_net_pnl_per_day",
+            "post_cost_net_pnl_after_queue_position_survival_fill_stress",
+        ),
+    )
+    filled_notional_per_day = _scorecard_decimal(
+        scorecard,
+        (),
+        (
+            "avg_filled_notional_per_day",
+            "daily_filled_notional",
+            "filled_notional_per_day",
+        ),
+    )
+    if net_pnl_per_day is None or filled_notional_per_day is None:
+        return None
+    if filled_notional_per_day <= 0:
+        return None
+    return (net_pnl_per_day / filled_notional_per_day) * Decimal("10000")
+
+
+def _window_payload(
+    scorecard: Mapping[str, Any], keys: Iterable[str]
+) -> dict[str, Any]:
+    for key in keys:
+        value = _mapping(scorecard.get(key))
+        if value:
+            return value
+    replay_lineage = _mapping(scorecard.get("replay_lineage"))
+    replay_coverage = _mapping(
+        scorecard.get("replay_window_coverage")
+        or replay_lineage.get("replay_window_coverage")
+    )
+    if replay_coverage:
+        return {
+            "source": "replay_window_coverage",
+            **replay_coverage,
+        }
+    return {"source": "scorecard_missing_window_metadata"}
 
 
 def build_factor_acceptance_artifact(
@@ -72,6 +221,8 @@ def build_factor_acceptance_artifact(
     cost_stress_bps: Decimal | str | float | None = None,
     available_feature_fields: Sequence[str] = FEATURE_VECTOR_V3_VALUE_FIELDS,
     thresholds: FactorAcceptanceThresholds = FactorAcceptanceThresholds(),
+    expectancy_basis: str | None = None,
+    evidence_metadata: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a fail-closed factor acceptance artifact.
 
@@ -152,5 +303,133 @@ def build_factor_acceptance_artifact(
         "promotion_scope": "research_paper_probation_only",
         "does_not_authorize_live_promotion": True,
     }
+    if expectancy_basis:
+        payload["expectancy_basis"] = expectancy_basis
+    if evidence_metadata:
+        payload["evidence_metadata"] = dict(evidence_metadata)
     payload["lineage_hash"] = _stable_hash(payload)
     return payload
+
+
+def build_factor_acceptance_artifact_from_scorecard(
+    *,
+    factor_expression: str,
+    source_idea: str,
+    allowed_feature_dependencies: Sequence[str],
+    scorecard: Mapping[str, Any],
+    fold_metrics: Sequence[Mapping[str, Any]] = (),
+    candidate_count: int = 1,
+    candidate_spec_id: str | None = None,
+    candidate_id: str | None = None,
+    evidence_bundle_id: str | None = None,
+    available_feature_fields: Sequence[str] = FEATURE_VECTOR_V3_VALUE_FIELDS,
+    thresholds: FactorAcceptanceThresholds = FactorAcceptanceThresholds(),
+) -> dict[str, Any]:
+    """Build factor acceptance from replay/live-paper scorecard evidence.
+
+    Missing RankIC/RankIR/p-value/cost inputs still reject. This function only
+    upgrades the metadata source from static compile-time placeholders to real
+    replay/runtime scorecards when those fields are present.
+    """
+
+    resolved_candidate_count = max(
+        _int(scorecard.get("factor_candidate_count"))
+        or _int(scorecard.get("tested_candidate_count"))
+        or _int(scorecard.get("candidate_count"))
+        or candidate_count,
+        1,
+    )
+    p_value = _scorecard_decimal(
+        scorecard,
+        fold_metrics,
+        (
+            "factor_p_value",
+            "rank_ic_p_value",
+            "p_value_two_sided",
+            "p_value",
+        ),
+    )
+    if p_value is None:
+        deflated_p_value = _scorecard_decimal(
+            scorecard,
+            fold_metrics,
+            (
+                "factor_deflated_p_value",
+                "deflated_p_value",
+            ),
+        )
+        if deflated_p_value is not None:
+            p_value = deflated_p_value / Decimal(resolved_candidate_count)
+
+    rank_ir = _scorecard_decimal(
+        scorecard,
+        fold_metrics,
+        (
+            "rank_ir",
+            "rank_ic_ir",
+            "factor_rank_ir",
+            "holdout_rank_ir",
+            "information_ratio",
+        ),
+    )
+    if rank_ir is None:
+        rank_ir = _rank_ir_from_folds(fold_metrics)
+
+    cost_stress_bps = _scorecard_decimal(
+        scorecard,
+        fold_metrics,
+        (
+            "factor_cost_stress_bps",
+            "cost_stress_bps",
+            "nonlinear_market_impact_stress_cost_bps",
+            "market_impact_stress_cost_bps",
+            "order_type_opportunity_cost_bps",
+        ),
+    )
+    artifact = build_factor_acceptance_artifact(
+        factor_expression=factor_expression,
+        source_idea=source_idea,
+        allowed_feature_dependencies=allowed_feature_dependencies,
+        train_window=_window_payload(scorecard, ("train_window", "training_window")),
+        test_window=_window_payload(
+            scorecard,
+            (
+                "test_window",
+                "holdout_window",
+                "second_oos_window",
+                "live_paper_window",
+            ),
+        ),
+        sample_count=_scorecard_sample_count(scorecard, fold_metrics),
+        candidate_count=resolved_candidate_count,
+        rank_ic=_scorecard_decimal(
+            scorecard,
+            fold_metrics,
+            (
+                "rank_ic",
+                "rank_ic_mean",
+                "factor_rank_ic",
+                "holdout_rank_ic",
+                "information_coefficient",
+            ),
+        ),
+        rank_ir=rank_ir,
+        p_value=p_value,
+        gross_expectancy_bps=_expectancy_bps_from_scorecard(scorecard),
+        cost_stress_bps=cost_stress_bps,
+        available_feature_fields=available_feature_fields,
+        thresholds=thresholds,
+        expectancy_basis="scorecard_post_cost_expectancy_bps_minus_additional_stress",
+        evidence_metadata={
+            "source": "replay_or_live_paper_scorecard",
+            "candidate_spec_id": candidate_spec_id,
+            "candidate_id": candidate_id,
+            "evidence_bundle_id": evidence_bundle_id,
+            "scorecard_keys": sorted(str(key) for key in scorecard.keys()),
+            "fold_metric_count": len(fold_metrics),
+        },
+    )
+    artifact["lineage_hash"] = _stable_hash(
+        {key: value for key, value in artifact.items() if key != "lineage_hash"}
+    )
+    return artifact
