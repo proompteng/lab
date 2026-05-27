@@ -1,7 +1,7 @@
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { ArrowUpRight, ExternalLink, ImageIcon, Newspaper, Search, X } from 'lucide-react'
-import { useEffect, useMemo, useReducer, useState } from 'react'
+import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import type {
   ButtonHTMLAttributes,
   HTMLAttributes,
@@ -9,6 +9,7 @@ import type {
   KeyboardEvent,
   MouseEvent,
   ReactNode,
+  Ref,
   UIEvent,
 } from 'react'
 import {
@@ -18,6 +19,7 @@ import {
   reduceImageModalState,
 } from '~/lib/image-modal'
 import { normalizeCompanySymbol, segmentCompanySymbols, symbolsFromSynthesisItem } from '~/lib/company-symbols'
+import { resetDetailScrollToTop } from '~/lib/detail-scroll'
 import { synthesisSearchInputClassName, synthesisSidebarItems } from '~/lib/synthesis-ui-contract'
 import type { FeedResponse, SynthesisAttachment, SynthesisItem } from '~/server/schema'
 
@@ -40,10 +42,15 @@ const topicTabs = [
 
 const cx = (...values: Array<string | false | null | undefined>) => values.filter(Boolean).join(' ')
 
-function UiScrollArea({ className, children, ...props }: HTMLAttributes<HTMLDivElement> & { children: ReactNode }) {
+function UiScrollArea({
+  className,
+  children,
+  viewportRef,
+  ...props
+}: HTMLAttributes<HTMLDivElement> & { children: ReactNode; viewportRef?: Ref<HTMLDivElement> }) {
   return (
     <div data-slot="scroll-area" className={cx('relative overflow-hidden', className)} {...props}>
-      <div data-slot="scroll-area-viewport" className="size-full rounded-[inherit]">
+      <div ref={viewportRef} data-slot="scroll-area-viewport" className="size-full rounded-[inherit]">
         {children}
       </div>
     </div>
@@ -483,6 +490,12 @@ function FeedPost({
 }
 
 function DetailPanel({ item, onOpenImage }: { item: SynthesisItem | null; onOpenImage: (imageId: string) => void }) {
+  const scrollViewportRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    resetDetailScrollToTop(scrollViewportRef.current)
+  }, [item?.id])
+
   return (
     <aside className="hidden min-h-0 min-w-0 flex-col bg-black xl:flex">
       <div className="flex h-[57px] shrink-0 items-center justify-between border-b border-[#2f3336] px-5">
@@ -497,7 +510,10 @@ function DetailPanel({ item, onOpenImage }: { item: SynthesisItem | null; onOpen
         ) : null}
       </div>
 
-      <UiScrollArea className="min-h-0 flex-1 [&_[data-slot=scroll-area-viewport]]:overflow-x-hidden [&_[data-slot=scroll-area-viewport]]:overflow-y-auto [&_[data-slot=scroll-area-viewport]]:overscroll-contain">
+      <UiScrollArea
+        viewportRef={scrollViewportRef}
+        className="min-h-0 flex-1 [&_[data-slot=scroll-area-viewport]]:overflow-x-hidden [&_[data-slot=scroll-area-viewport]]:overflow-y-auto [&_[data-slot=scroll-area-viewport]]:overscroll-contain"
+      >
         {item ? <DetailContent item={item} onOpenImage={onOpenImage} /> : <EmptyDetail />}
       </UiScrollArea>
     </aside>
