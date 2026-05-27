@@ -618,7 +618,7 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         self.assertEqual([target.hypothesis_id for target in targets], ["H-PAIRS-01"])
         self.assertEqual(targets[0].candidate_id, "cand-plan")
 
-    def test_runtime_window_target_plan_exclusive_allows_fallback_when_plan_empty(
+    def test_runtime_window_target_plan_exclusive_blocks_fallback_when_plan_empty(
         self,
     ) -> None:
         plan_path = Path(self.tmp_dir) / "candidate-board.json"
@@ -665,13 +665,11 @@ class TestRunEmpiricalPromotionJobs(TestCase):
             renewal,
             "_latest_autoresearch_runtime_window_targets",
             return_value=[fallback_target],
-        ):
+        ) as latest_autoresearch:
             targets = renewal._runtime_window_targets(args)
 
-        self.assertEqual(
-            [target.hypothesis_id for target in targets],
-            ["H-FALLBACK-01"],
-        )
+        latest_autoresearch.assert_not_called()
+        self.assertEqual(targets, [])
 
     def test_runtime_window_target_plan_required_fails_closed_when_plan_empty(
         self,

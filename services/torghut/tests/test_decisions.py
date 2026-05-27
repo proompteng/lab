@@ -2438,8 +2438,8 @@ class TestDecisionEngine(TestCase):
                 "vwap_w5m": 100,
                 "session_minutes_elapsed": 120,
                 "cross_section_continuation_breadth": 0.5,
-                "cross_section_session_open_rank": 1,
-                "cross_section_vwap_w5m_rank": 1,
+                "cross_section_session_open_rank": 0.5,
+                "cross_section_vwap_w5m_rank": 0.5,
             },
         )
 
@@ -2541,8 +2541,8 @@ class TestDecisionEngine(TestCase):
                 "vwap_w5m": 100,
                 "session_minutes_elapsed": 120,
                 "cross_section_continuation_breadth": 0.5,
-                "cross_section_session_open_rank": 0,
-                "cross_section_vwap_w5m_rank": 0,
+                "cross_section_session_open_rank": 0.5,
+                "cross_section_vwap_w5m_rank": 0.5,
             },
         )
 

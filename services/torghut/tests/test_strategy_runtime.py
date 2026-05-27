@@ -5996,6 +5996,7 @@ class TestStrategyRuntimeMicrobarCoverage(TestCase):
                 {
                     "session_minutes_elapsed": 120,
                     "cross_section_vwap_w5m_rank": Decimal("1"),
+                    "runtime_position_qty": Decimal("10"),
                 }
             ),
         )
@@ -6010,6 +6011,7 @@ class TestStrategyRuntimeMicrobarCoverage(TestCase):
                 {
                     "session_minutes_elapsed": 120,
                     "cross_section_vwap_w5m_rank": Decimal("0"),
+                    "runtime_position_qty": Decimal("-10"),
                 }
             ),
         )
@@ -6023,6 +6025,109 @@ class TestStrategyRuntimeMicrobarCoverage(TestCase):
         self.assertIn(
             "microbar_cross_sectional_pair_exit",
             high_rank_exit.intent.rationale,
+        )
+        self.assertIn("exit_basis:runtime_position", high_rank_exit.intent.rationale)
+
+    def test_microbar_cross_sectional_pairs_plugin_exits_by_position_after_rank_drift(
+        self,
+    ) -> None:
+        plugin = MicrobarCrossSectionalPairsPlugin()
+        params = {
+            "entry_minute_after_open": "60",
+            "exit_minute_after_open": "120",
+            "signal_motif": "vwap_close_continuation",
+            "rank_feature": "cross_section_vwap_w5m_rank",
+            "selection_mode": "continuation",
+            "top_n": "2",
+            "max_pair_legs": "2",
+        }
+
+        long_exit = plugin.evaluate(
+            self._context(
+                params=params, strategy_type="microbar_cross_sectional_pairs_v1"
+            ),
+            _test_feature_vector(
+                {
+                    "session_minutes_elapsed": 120,
+                    "cross_section_vwap_w5m_rank": Decimal("0.5"),
+                    "runtime_position_qty": Decimal("3"),
+                }
+            ),
+        )
+        short_exit = plugin.evaluate(
+            self._context(
+                params=params, strategy_type="microbar_cross_sectional_pairs_v1"
+            ),
+            _test_feature_vector(
+                {
+                    "session_minutes_elapsed": 120,
+                    "cross_section_vwap_w5m_rank": Decimal("0.5"),
+                    "runtime_position_qty": Decimal("-2"),
+                }
+            ),
+        )
+
+        self.assertIsNotNone(long_exit.intent)
+        self.assertIsNotNone(short_exit.intent)
+        assert long_exit.intent is not None
+        assert short_exit.intent is not None
+        self.assertEqual(long_exit.intent.action, "sell")
+        self.assertEqual(short_exit.intent.action, "buy")
+        self.assertIn("position_side:long", long_exit.intent.rationale)
+        self.assertIn("position_side:short", short_exit.intent.rationale)
+        assert long_exit.trace is not None
+        self.assertEqual(long_exit.trace.gates[0].gate, "pair_position_exit")
+
+    def test_microbar_cross_sectional_pairs_plugin_fails_closed_without_exit_position(
+        self,
+    ) -> None:
+        plugin = MicrobarCrossSectionalPairsPlugin()
+        params = {
+            "entry_minute_after_open": "60",
+            "exit_minute_after_open": "120",
+            "signal_motif": "vwap_close_continuation",
+            "rank_feature": "cross_section_vwap_w5m_rank",
+            "selection_mode": "continuation",
+            "max_pair_legs": "2",
+        }
+
+        missing_position = plugin.evaluate(
+            self._context(
+                params=params, strategy_type="microbar_cross_sectional_pairs_v1"
+            ),
+            _test_feature_vector(
+                {
+                    "session_minutes_elapsed": 120,
+                    "cross_section_vwap_w5m_rank": Decimal("1"),
+                }
+            ),
+        )
+        flat_position = plugin.evaluate(
+            self._context(
+                params=params, strategy_type="microbar_cross_sectional_pairs_v1"
+            ),
+            _test_feature_vector(
+                {
+                    "session_minutes_elapsed": 120,
+                    "cross_section_vwap_w5m_rank": Decimal("1"),
+                    "runtime_position_qty": Decimal("0"),
+                }
+            ),
+        )
+
+        self.assertIsNone(missing_position.intent)
+        self.assertIsNone(flat_position.intent)
+        assert missing_position.trace is not None
+        assert flat_position.trace is not None
+        self.assertEqual(missing_position.trace.first_failed_gate, "pair_position_exit")
+        self.assertEqual(flat_position.trace.first_failed_gate, "pair_position_exit")
+        self.assertEqual(
+            missing_position.trace.gates[0].context["reason"],
+            "missing_runtime_position_qty",
+        )
+        self.assertEqual(
+            flat_position.trace.gates[0].context["reason"],
+            "flat_runtime_position",
         )
 
     def test_microbar_cross_sectional_pairs_plugin_respects_max_pair_legs(

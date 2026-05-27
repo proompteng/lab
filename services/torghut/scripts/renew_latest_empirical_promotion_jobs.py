@@ -229,15 +229,17 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--runtime-window-autoresearch-scan-limit", type=int, default=20
     )
-    parser.add_argument("--runtime-window-hypothesis-id", default="H-TSMOM-01")
-    parser.add_argument("--runtime-window-candidate-id", default="")
+    parser.add_argument("--runtime-window-hypothesis-id", default="H-PAIRS-01")
+    parser.add_argument(
+        "--runtime-window-candidate-id", default="c88421d619759b2cfaa6f4d0"
+    )
     parser.add_argument(
         "--runtime-window-strategy-family",
-        default="intraday_tsmom_consistent",
+        default="microbar_cross_sectional_pairs",
     )
     parser.add_argument(
         "--runtime-window-strategy-name",
-        default="intraday-tsmom-profit-v3",
+        default="microbar-cross-sectional-pairs-v1",
     )
     parser.add_argument("--runtime-window-account-label", default="TORGHUT_SIM")
     parser.add_argument(
@@ -253,7 +255,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--runtime-window-sample-minutes", type=int, default=5)
     parser.add_argument(
         "--runtime-window-source-manifest-ref",
-        default="config/trading/hypotheses/h-tsmom-01.json",
+        default="config/trading/hypotheses/h-pairs-01.json",
     )
     parser.add_argument(
         "--runtime-window-source-kind", default="paper_runtime_observed"
@@ -877,7 +879,7 @@ def _runtime_window_targets(
         if not plan_targets:
             raise RuntimeError("runtime_window_target_plan_required_but_empty")
     plan_exclusive = bool(getattr(args, "runtime_window_target_plan_exclusive", False))
-    fallback_enabled = not (plan_exclusive and plan_targets)
+    fallback_enabled = not plan_exclusive
     autoresearch_targets = (
         _latest_autoresearch_runtime_window_targets(args) if fallback_enabled else []
     )
@@ -890,6 +892,8 @@ def _runtime_window_targets(
         and not autoresearch_targets
         and not registry_targets
     ):
+        if plan_exclusive:
+            return []
         specs = [""]
     targets: list[RuntimeWindowImportTarget] = []
     for spec in specs:

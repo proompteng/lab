@@ -218,6 +218,10 @@ def _microbar_rank_universe_size(
     return _microbar_universe_size(context=context, params=params)
 
 
+def _microbar_runtime_position_qty(features: FeatureVectorV3) -> Decimal | None:
+    return _decimal(features.values.get("runtime_position_qty"))
+
+
 def _microbar_required_features(params: dict[str, Any]) -> tuple[str, ...]:
     required = ["session_minutes_elapsed"]
     rank_feature = str(params.get("rank_feature") or "").strip()
@@ -227,10 +231,6 @@ def _microbar_required_features(params: dict[str, Any]) -> tuple[str, ...]:
     if gate_feature:
         required.append(gate_feature)
     return tuple(dict.fromkeys(required))
-
-
-def _opposite_action(action: Literal["buy", "sell"]) -> Literal["buy", "sell"]:
-    return "sell" if action == "buy" else "buy"
 
 
 def _evaluate_microbar_cross_sectional(
@@ -375,6 +375,78 @@ def _evaluate_microbar_cross_sectional(
                 ),
             )
 
+    if pair_mode and is_exit:
+        position_qty = _microbar_runtime_position_qty(features)
+        if position_qty is None:
+            return PluginEvaluationResult(
+                intent=None,
+                trace=_generic_plugin_trace(
+                    context=context,
+                    gate="pair_position_exit",
+                    passed=False,
+                    gate_context={
+                        "reason": "missing_runtime_position_qty",
+                        "minutes_elapsed": minutes_elapsed,
+                        "exit_minute_after_open": exit_minute,
+                    },
+                ),
+            )
+        if position_qty == 0:
+            return PluginEvaluationResult(
+                intent=None,
+                trace=_generic_plugin_trace(
+                    context=context,
+                    gate="pair_position_exit",
+                    passed=False,
+                    gate_context={
+                        "reason": "flat_runtime_position",
+                        "minutes_elapsed": minutes_elapsed,
+                        "exit_minute_after_open": exit_minute,
+                        "runtime_position_qty": position_qty,
+                    },
+                ),
+            )
+        position_side = "long" if position_qty > 0 else "short"
+        position_exit_action: Literal["buy", "sell"] = (
+            "sell" if position_qty > 0 else "buy"
+        )
+        rationale = (
+            "microbar_cross_sectional_pair_exit",
+            str(params.get("signal_motif") or "").strip().lower(),
+            "exit_basis:runtime_position",
+            f"position_side:{position_side}",
+        )
+        required_features = (
+            "session_minutes_elapsed",
+            "runtime_position_qty",
+        )
+        return PluginEvaluationResult(
+            intent=StrategyIntent(
+                strategy_id=context.strategy_id,
+                symbol=context.symbol,
+                direction=position_exit_action,
+                confidence=Decimal("0.51"),
+                target_notional=_resolved_target_notional(params),
+                horizon=context.timeframe,
+                explain=rationale,
+                feature_snapshot_hash=features.normalization_hash,
+                required_features=required_features,
+            ),
+            trace=_generic_plugin_trace(
+                context=context,
+                gate="pair_position_exit",
+                passed=True,
+                action=position_exit_action,
+                rationale=rationale,
+                gate_context={
+                    "minutes_elapsed": minutes_elapsed,
+                    "exit_minute_after_open": exit_minute,
+                    "runtime_position_qty": position_qty,
+                    "position_side": position_side,
+                },
+            ),
+        )
+
     rank_feature = str(params.get("rank_feature") or "").strip()
     rank_value = _decimal(features.values.get(rank_feature))
     if rank_value is None:
@@ -448,17 +520,9 @@ def _evaluate_microbar_cross_sectional(
             comparator = "lte"
             threshold_value = low_threshold
         should_trade = selected_entry_action is not None
-        resolved_action = (
-            _opposite_action(selected_entry_action)
-            if is_exit and selected_entry_action is not None
-            else selected_entry_action
-        )
+        resolved_action: Literal["buy", "sell"] | None = selected_entry_action
         rationale = (
-            (
-                "microbar_cross_sectional_pair_exit"
-                if is_exit
-                else "microbar_cross_sectional_pair_entry"
-            ),
+            "microbar_cross_sectional_pair_entry",
             str(params.get("signal_motif") or "").strip().lower(),
             f"selection_mode:{selection_mode}",
             f"rank_feature:{rank_feature}",
@@ -488,7 +552,7 @@ def _evaluate_microbar_cross_sectional(
         )
         trace = _generic_plugin_trace(
             context=context,
-            gate="pair_time_exit" if is_exit else "pair_rank_selection",
+            gate="pair_rank_selection",
             passed=should_trade,
             action=resolved_action if should_trade else None,
             rationale=rationale if should_trade else (),
@@ -521,8 +585,9 @@ def _evaluate_microbar_cross_sectional(
                 "pair_side": pair_side,
             },
         )
-        if not should_trade or resolved_action is None:
+        if not should_trade:
             return PluginEvaluationResult(intent=None, trace=trace)
+        assert resolved_action is not None
         rank_distance = (
             rank_value - threshold_value
             if comparator == "gte"
