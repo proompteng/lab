@@ -723,9 +723,22 @@ def _runtime_import_target_materialization_ref(
     blockers: Sequence[str],
 ) -> dict[str, Any]:
     summary = _mapping(item.get("summary"))
+    materialization_target = _mapping(summary.get("runtime_materialization_target"))
+    materialization_counts = {
+        "metric_window_count": _int(materialization_target.get("metric_window_count")),
+        "promotion_decision_count": _int(
+            materialization_target.get("promotion_decision_count")
+        ),
+        "runtime_ledger_bucket_count": _int(
+            materialization_target.get("runtime_ledger_bucket_count")
+        ),
+        "evidence_grade_runtime_ledger_bucket_count": _int(
+            materialization_target.get("evidence_grade_runtime_ledger_bucket_count")
+        ),
+    }
 
     def first_text(*keys: str) -> str:
-        for source in (item, summary, observation):
+        for source in (item, summary, materialization_target, observation):
             for key in keys:
                 value = _text(source.get(key))
                 if value:
@@ -761,9 +774,61 @@ def _runtime_import_target_materialization_ref(
         "runtime_ledger_net_strategy_pnl_after_costs": _text(
             observation.get("runtime_ledger_net_strategy_pnl_after_costs")
         ),
+        **materialization_counts,
+        "metric_window_ids": _text_list(
+            materialization_target.get("metric_window_ids")
+        ),
+        "promotion_decision_id": _text(
+            materialization_target.get("promotion_decision_id")
+        ),
+        "runtime_ledger_bucket_ids": _text_list(
+            materialization_target.get("runtime_ledger_bucket_ids")
+        ),
+        "evidence_grade_runtime_ledger_bucket_ids": _text_list(
+            materialization_target.get("evidence_grade_runtime_ledger_bucket_ids")
+        ),
         "blockers": list(blockers),
     }
     return {key: value for key, value in ref.items() if value not in ("", [], None)}
+
+
+def _runtime_import_target_blocker_codes(value: object) -> list[str]:
+    blockers: list[str] = []
+    for item in _sequence(value):
+        if isinstance(item, Mapping):
+            blocker = _text(item.get("blocker"))
+        else:
+            blocker = _text(item)
+        if blocker:
+            blockers.append(blocker)
+    return blockers
+
+
+def _runtime_import_target_surface_blockers(
+    *,
+    summary: Mapping[str, Any],
+    profit_proof_count: int,
+) -> list[str]:
+    target = _mapping(summary.get("runtime_materialization_target"))
+    if not target:
+        return ["runtime_window_import_materialization_target_missing"]
+    blockers = _text_list(target.get("materialization_blockers"))
+    if _int(target.get("metric_window_count")) <= 0:
+        blockers.append("runtime_window_import_metric_window_missing")
+    if _int(target.get("promotion_decision_count")) <= 0:
+        blockers.append("runtime_window_import_promotion_decision_missing")
+    if profit_proof_count > 0:
+        if _int(target.get("runtime_ledger_bucket_count")) <= 0:
+            blockers.append("runtime_window_import_runtime_ledger_bucket_missing")
+        if _int(target.get("evidence_grade_runtime_ledger_bucket_count")) <= 0:
+            blockers.append(
+                "runtime_window_import_evidence_grade_runtime_ledger_bucket_missing"
+            )
+    if target.get("materialized") is False:
+        blockers.extend(
+            _runtime_import_target_blocker_codes(target.get("proof_blockers"))
+        )
+    return list(dict.fromkeys(blockers))
 
 
 def _runtime_import_materialization_summary(
@@ -868,6 +933,13 @@ def _runtime_import_materialization_summary(
             )
         if profit_proof_count <= 0:
             target_blockers.append("runtime_window_import_target_profit_proof_missing")
+        _extend_unique(
+            target_blockers,
+            _runtime_import_target_surface_blockers(
+                summary=summary,
+                profit_proof_count=profit_proof_count,
+            ),
+        )
         _extend_unique(source_kinds, [_text(observation.get("source_kind"))])
         _extend_unique(authority_reasons, [authority_reason])
         _extend_unique(
@@ -885,7 +957,9 @@ def _runtime_import_materialization_summary(
             _text_list(observation.get("runtime_ledger_target_metadata_blockers")),
         )
         materialized = (
-            observation.get("authoritative") is True and profit_proof_count > 0
+            observation.get("authoritative") is True
+            and profit_proof_count > 0
+            and not target_blockers
         )
         target_ref = _runtime_import_target_materialization_ref(
             item=item,

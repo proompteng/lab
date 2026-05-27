@@ -105,7 +105,7 @@ spec:
             - name: TRADING_SIMPLE_SUBMIT_ENABLED
               value: "true"
             - name: TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED
-              value: "false"
+              value: "true"
             - name: TRADING_SIMPLE_PAPER_ROUTE_PROBE_ENABLED
               value: "true"
             - name: TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL
@@ -217,9 +217,11 @@ spec:
                   name: torghut-ws
                   key: password
             - name: TRADING_ORDER_FEED_TOPIC
-              value: torghut.sim.trade-updates.v1
+              value: torghut.trade-updates.v1
             - name: TRADING_ORDER_FEED_GROUP_ID
               value: torghut-order-feed-sim-default
+            - name: TRADING_ORDER_FEED_AUTO_OFFSET_RESET
+              value: earliest
             - name: TRADING_ORDER_FEED_TOPIC_V2
               value: ""
             - name: TRADING_SIMULATION_ORDER_UPDATES_TOPIC
