@@ -290,6 +290,9 @@ class SweepCandidateResult:
     holdout_total_net: Decimal
     active_holdout_days: int
     max_holdout_drawdown_day: Decimal
+    holdout_max_drawdown: Decimal
+    holdout_max_drawdown_pct_equity: Decimal | None
+    holdout_p10_daily_net: Decimal
     profit_factor: Decimal | None
     wins: int
     losses: int
@@ -309,6 +312,11 @@ class SweepCandidateResult:
             "holdout_total_net": str(self.holdout_total_net),
             "active_holdout_days": self.active_holdout_days,
             "max_holdout_drawdown_day": str(self.max_holdout_drawdown_day),
+            "holdout_max_drawdown": str(self.holdout_max_drawdown),
+            "holdout_max_drawdown_pct_equity": str(self.holdout_max_drawdown_pct_equity)
+            if self.holdout_max_drawdown_pct_equity is not None
+            else None,
+            "holdout_p10_daily_net": str(self.holdout_p10_daily_net),
             "profit_factor": str(self.profit_factor)
             if self.profit_factor is not None
             else None,

@@ -233,6 +233,9 @@ class TestEvaluationReport(TestCase):
         self.assertEqual(summary.net_pnl, Decimal("500"))
         self.assertEqual(summary.net_per_day, Decimal("125"))
         self.assertEqual(summary.worst_day_net, Decimal("-100"))
+        self.assertEqual(summary.p10_daily_net, Decimal("-100"))
+        self.assertEqual(summary.max_drawdown, Decimal("100"))
+        self.assertIsNone(summary.max_drawdown_pct_equity)
         self.assertEqual(summary.profit_factor, Decimal("6"))
 
     def test_summarize_replay_profitability_ignores_non_mapping_daily_rows(
@@ -390,3 +393,60 @@ class TestEvaluationReport(TestCase):
         self.assertEqual(candidate.profit_factor, Decimal("0.25"))
         self.assertEqual(candidate.max_holdout_drawdown_day, Decimal("200"))
         self.assertEqual(candidate.score, Decimal("-922.50"))
+
+    def test_score_replay_profitability_candidate_penalizes_tail_and_drawdown_pct(
+        self,
+    ) -> None:
+        candidate = score_replay_profitability_candidate(
+            family="breakout_continuation",
+            strategy_name="breakout-continuation-long-v1",
+            replay_config={"params": {"min_cross_section_continuation_rank": "0.65"}},
+            train_payload={
+                "start_date": "2026-03-03",
+                "end_date": "2026-03-07",
+                "start_equity": "10000",
+                "net_pnl": "1000",
+                "decision_count": 5,
+                "filled_count": 5,
+                "wins": 5,
+                "losses": 0,
+                "daily": {
+                    "2026-03-03": {"net_pnl": "200", "filled_count": 1},
+                    "2026-03-04": {"net_pnl": "200", "filled_count": 1},
+                    "2026-03-05": {"net_pnl": "200", "filled_count": 1},
+                    "2026-03-06": {"net_pnl": "200", "filled_count": 1},
+                    "2026-03-07": {"net_pnl": "200", "filled_count": 1},
+                },
+            },
+            holdout_payload={
+                "start_date": "2026-03-10",
+                "end_date": "2026-03-14",
+                "start_equity": "10000",
+                "net_pnl": "2800",
+                "decision_count": 5,
+                "filled_count": 5,
+                "wins": 4,
+                "losses": 1,
+                "daily": {
+                    "2026-03-10": {"net_pnl": "1000", "filled_count": 1},
+                    "2026-03-11": {"net_pnl": "-1200", "filled_count": 1},
+                    "2026-03-12": {"net_pnl": "1000", "filled_count": 1},
+                    "2026-03-13": {"net_pnl": "1000", "filled_count": 1},
+                    "2026-03-14": {"net_pnl": "1000", "filled_count": 1},
+                },
+            },
+            policy=ProfitabilityConstraintPolicy(
+                holdout_target_net_per_day=Decimal("0"),
+                min_active_holdout_days=5,
+                max_worst_holdout_day_loss=Decimal("2000"),
+                max_holdout_drawdown_pct_equity=Decimal("0.05"),
+                min_holdout_p10_daily_net=Decimal("-1000"),
+                min_profit_factor=Decimal("0"),
+            ),
+        )
+
+        self.assertEqual(candidate.holdout_net_per_day, Decimal("560"))
+        self.assertEqual(candidate.holdout_max_drawdown, Decimal("1200"))
+        self.assertEqual(candidate.holdout_max_drawdown_pct_equity, Decimal("0.12"))
+        self.assertEqual(candidate.holdout_p10_daily_net, Decimal("-1200"))
+        self.assertEqual(candidate.score, Decimal("-340.00"))

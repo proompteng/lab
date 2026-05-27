@@ -115,6 +115,7 @@ class TestSearchProfitabilityFrontier(TestCase):
                         "holdout_target_net_per_day": "250",
                         "min_active_holdout_days": 3,
                         "max_worst_holdout_day_loss": "150",
+                        "max_holdout_drawdown_pct_equity": "0.05",
                         "min_profit_factor": "1.5",
                         "require_training_decisions": True,
                         "require_holdout_decisions": True,
@@ -519,13 +520,16 @@ class TestSearchProfitabilityFrontier(TestCase):
         self.assertIn("toDate(event_ts) <= toDate('2026-03-27')", sql)
 
     def test_resolve_recent_trading_days_filters_partial_trading_day(self) -> None:
-        with patch(
-            "scripts.search_profitability_frontier.resolve_expected_last_trading_day",
-            return_value=date(2026, 5, 21),
-        ), patch(
-            "scripts.search_profitability_frontier._http_query",
-            return_value="2026-05-22\n2026-05-21\n2026-05-20\n",
-        ) as query:
+        with (
+            patch(
+                "scripts.search_profitability_frontier.resolve_expected_last_trading_day",
+                return_value=date(2026, 5, 21),
+            ),
+            patch(
+                "scripts.search_profitability_frontier._http_query",
+                return_value="2026-05-22\n2026-05-21\n2026-05-20\n",
+            ) as query,
+        ):
             days = frontier._resolve_recent_trading_days(
                 clickhouse_http_url="http://example.invalid:8123",
                 clickhouse_username="torghut",
@@ -895,6 +899,11 @@ class TestSearchProfitabilityFrontier(TestCase):
             self.assertEqual(exit_code, 0)
             payload = json.loads(json_output.read_text(encoding="utf-8"))
             self.assertEqual(payload["candidate_count"], 1)
+            self.assertEqual(
+                payload["constraints"]["max_holdout_drawdown_pct_equity"],
+                "0.05",
+            )
+            self.assertIsNone(payload["constraints"]["min_holdout_p10_daily_net"])
             self.assertEqual(
                 payload["top"][0]["replay_config"]["params"][
                     "min_cross_section_continuation_rank"

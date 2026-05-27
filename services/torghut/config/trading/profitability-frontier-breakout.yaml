@@ -6,6 +6,7 @@ constraints:
   holdout_target_net_per_day: '250'
   min_active_holdout_days: 3
   max_worst_holdout_day_loss: '150'
+  max_holdout_drawdown_pct_equity: '0.05'
   min_profit_factor: '1.5'
   require_training_decisions: true
   require_holdout_decisions: true

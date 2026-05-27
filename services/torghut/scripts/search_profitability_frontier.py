@@ -163,6 +163,18 @@ def _load_sweep_config(path: Path) -> dict[str, Any]:
     return payload
 
 
+def _optional_decimal_constraint(
+    constraints: Mapping[str, Any], key: str, *, default: str | None = None
+) -> Decimal | None:
+    value = constraints.get(key, default)
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return Decimal(text)
+
+
 def iter_parameter_candidates(
     parameter_grid: Mapping[str, Iterable[Any]],
 ) -> list[dict[str, Any]]:
@@ -353,6 +365,12 @@ def main() -> int:
         max_worst_holdout_day_loss=Decimal(
             str(constraints.get("max_worst_holdout_day_loss", "150"))
         ),
+        max_holdout_drawdown_pct_equity=_optional_decimal_constraint(
+            constraints, "max_holdout_drawdown_pct_equity", default="0.05"
+        ),
+        min_holdout_p10_daily_net=_optional_decimal_constraint(
+            constraints, "min_holdout_p10_daily_net"
+        ),
         min_profit_factor=Decimal(str(constraints.get("min_profit_factor", "1.5"))),
         require_training_decisions=bool(
             constraints.get("require_training_decisions", True)
@@ -468,6 +486,14 @@ def main() -> int:
             "holdout_target_net_per_day": str(policy.holdout_target_net_per_day),
             "min_active_holdout_days": policy.min_active_holdout_days,
             "max_worst_holdout_day_loss": str(policy.max_worst_holdout_day_loss),
+            "max_holdout_drawdown_pct_equity": str(
+                policy.max_holdout_drawdown_pct_equity
+            )
+            if policy.max_holdout_drawdown_pct_equity is not None
+            else None,
+            "min_holdout_p10_daily_net": str(policy.min_holdout_p10_daily_net)
+            if policy.min_holdout_p10_daily_net is not None
+            else None,
             "min_profit_factor": str(policy.min_profit_factor),
             "require_training_decisions": policy.require_training_decisions,
             "require_holdout_decisions": policy.require_holdout_decisions,

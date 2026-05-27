@@ -203,6 +203,9 @@ class TestEvaluationTrace(TestCase):
             holdout_total_net=Decimal("258.0"),
             active_holdout_days=2,
             max_holdout_drawdown_day=Decimal("0"),
+            holdout_max_drawdown=Decimal("25.5"),
+            holdout_max_drawdown_pct_equity=Decimal("0.00255"),
+            holdout_p10_daily_net=Decimal("-4.25"),
             profit_factor=None,
             wins=2,
             losses=0,
@@ -214,4 +217,9 @@ class TestEvaluationTrace(TestCase):
             candidate_payload["schema_version"], "torghut.sweep-candidate-result.v1"
         )
         self.assertEqual(candidate_payload["profit_factor"], None)
+        self.assertEqual(candidate_payload["holdout_max_drawdown"], "25.5")
+        self.assertEqual(
+            candidate_payload["holdout_max_drawdown_pct_equity"], "0.00255"
+        )
+        self.assertEqual(candidate_payload["holdout_p10_daily_net"], "-4.25")
         self.assertEqual(candidate_payload["replay_config"]["params"]["rank"], "0.45")
