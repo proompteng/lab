@@ -200,6 +200,92 @@ describe('codex app-server runner adapter', () => {
     expect(await readFile(logPath, 'utf8')).toContain('"delta":"done"')
   })
 
+  it('renders threadConfig string templates from runtime environment before creating the Codex client', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agents-codex-runner-'))
+    const runPath = join(dir, 'run.json')
+    await writeFile(
+      runPath,
+      `${JSON.stringify({
+        implementation: { text: 'check the broker connection' },
+        agentRun: { name: 'run-credentials' },
+      })}\n`,
+      'utf8',
+    )
+
+    const previousEnv = {
+      ALPACA_API_KEY: process.env.ALPACA_API_KEY,
+      ALPACA_SECRET_KEY: process.env.ALPACA_SECRET_KEY,
+      ALPACA_PAPER_TRADE: process.env.ALPACA_PAPER_TRADE,
+    }
+    process.env.ALPACA_API_KEY = 'paper-key'
+    process.env.ALPACA_SECRET_KEY = 'paper-secret'
+    process.env.ALPACA_PAPER_TRADE = 'true'
+
+    const createdClients: CodexAppServerOptions[] = []
+    const fakeClient: CodexAppServerRunnerClient = {
+      runTurnStream: async () => ({
+        stream: makeStream(),
+        turnId: 'turn-env',
+        threadId: 'thread-env',
+      }),
+      stop: () => undefined,
+    }
+
+    try {
+      const exitCode = await runCodexAppServerAdapter(
+        {
+          provider: 'codex-runner',
+          payloads: {
+            eventFilePath: runPath,
+          },
+        },
+        {
+          prompt: 'check broker connection',
+          threadConfig: {
+            mcp_servers: {
+              alpaca: {
+                command: '/usr/bin/python3',
+                args: ['-u', '/root/alpaca-mcp-stdio-bridge.py'],
+                env: {
+                  ALPACA_API_KEY: '{{ env.ALPACA_API_KEY }}',
+                  ALPACA_SECRET_KEY: '{{ env.ALPACA_SECRET_KEY }}',
+                  ALPACA_PAPER_TRADE: '{{ env.ALPACA_PAPER_TRADE }}',
+                  FASTMCP_LOG_LEVEL: 'ERROR',
+                },
+              },
+            },
+            web_search: 'live',
+          },
+        },
+        {
+          createClient: (options) => {
+            createdClients.push(options)
+            return fakeClient
+          },
+        },
+      )
+
+      expect(exitCode).toBe(0)
+      expect(createdClients[0].threadConfig).toMatchObject({
+        mcp_servers: {
+          alpaca: {
+            env: {
+              ALPACA_API_KEY: 'paper-key',
+              ALPACA_SECRET_KEY: 'paper-secret',
+              ALPACA_PAPER_TRADE: 'true',
+              FASTMCP_LOG_LEVEL: 'ERROR',
+            },
+          },
+        },
+      })
+    } finally {
+      for (const [key, value] of Object.entries(previousEnv)) {
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      }
+    }
+  })
+
   it('runs the deterministic fake app-server binary through the real Codex client protocol', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'agents-codex-runner-'))
     const runPath = join(dir, 'run.json')

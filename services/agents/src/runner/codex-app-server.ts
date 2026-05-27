@@ -641,11 +641,36 @@ const renderOptionalTemplate = (
   runPayload: AgentRunPayload,
 ): string | null => {
   if (!template) return null
-  const rendered = renderTemplate(template, {
-    ...buildTemplateContext(spec),
-    run: runPayload,
-  })
+  const rendered = renderTemplate(template, buildRuntimeTemplateContext(spec, runPayload))
   return nonBlankStringPreserve(rendered)
+}
+
+const buildRuntimeTemplateContext = (spec: AgentRunnerSpec, runPayload: AgentRunPayload) => ({
+  ...buildTemplateContext(spec),
+  run: runPayload,
+  env: process.env,
+})
+
+const renderTemplatedJsonValue = (value: unknown, context: ReturnType<typeof buildRuntimeTemplateContext>): unknown => {
+  if (typeof value === 'string') return renderTemplate(value, context)
+  if (Array.isArray(value)) return value.map((entry) => renderTemplatedJsonValue(entry, context))
+  if (!isRecord(value)) return value
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .map(([key, entry]) => [key, renderTemplatedJsonValue(entry, context)])
+      .filter(([, entry]) => entry !== undefined),
+  )
+}
+
+const renderThreadConfig = (
+  threadConfig: CodexAppServerAdapterConfig['threadConfig'],
+  spec: AgentRunnerSpec,
+  runPayload: AgentRunPayload,
+) => {
+  if (threadConfig === undefined || threadConfig === null) return threadConfig
+  const rendered = renderTemplatedJsonValue(threadConfig, buildRuntimeTemplateContext(spec, runPayload))
+  return isRecord(rendered) ? rendered : threadConfig
 }
 
 const resolvePrompt = (
@@ -1005,7 +1030,7 @@ export const runCodexAppServerAdapterEffect = ({
       approval: adapter.approval,
       defaultModel: adapter.model,
       defaultEffort: adapter.effort,
-      threadConfig: adapter.threadConfig as CodexAppServerOptions['threadConfig'],
+      threadConfig: renderThreadConfig(adapter.threadConfig, spec, runPayload) as CodexAppServerOptions['threadConfig'],
       experimentalRawEvents: adapter.experimentalRawEvents,
       persistExtendedHistory: adapter.persistExtendedHistory,
       bootstrapTimeoutMs: adapter.bootstrapTimeoutMs,
