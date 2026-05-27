@@ -19,8 +19,11 @@ spec:
       threadConfig:
         mcp_servers:
           alpaca:
-            command: /usr/local/bin/alpaca-mcp-server
+            command: /usr/bin/env
             args:
+              - FASTMCP_SHOW_SERVER_BANNER=false
+              - FASTMCP_LOG_LEVEL=ERROR
+              - /usr/local/bin/alpaca-mcp-server
               - --transport
               - stdio
             env:
@@ -104,8 +107,8 @@ spec:
         trust_level = "trusted"
 
         [mcp_servers.alpaca]
-        command = "/usr/local/bin/alpaca-mcp-server"
-        args = ["--transport", "stdio"]
+        command = "/usr/bin/env"
+        args = ["FASTMCP_SHOW_SERVER_BANNER=false", "FASTMCP_LOG_LEVEL=ERROR", "/usr/local/bin/alpaca-mcp-server", "--transport", "stdio"]
         env = { FASTMCP_SHOW_SERVER_BANNER = "false", FASTMCP_LOG_LEVEL = "ERROR" }
   outputArtifacts:
     - name: autonomous-trader-report
