@@ -61,6 +61,11 @@ _RUNTIME_LEDGER_DECISION_EVENTS = frozenset(
 _RUNTIME_LEDGER_FILL_EVENTS = frozenset(
     {"fill", "filled", "partial_fill", "partially_filled"}
 )
+ORDER_FEED_FILL_LIFECYCLE_MISSING_BLOCKER = "order_feed_fill_lifecycle_missing"
+ORDER_FEED_FILL_LIFECYCLE_INCOMPLETE_BLOCKER = "order_feed_fill_lifecycle_incomplete"
+ORDER_FEED_FILL_LIFECYCLE_ORDER_ID_MISSING_BLOCKER = (
+    "order_feed_fill_lifecycle_order_id_missing"
+)
 _RUNTIME_LEDGER_EQUITY_DENOMINATOR_KEYS = (
     "account_equity",
     "portfolio_equity",
@@ -982,6 +987,78 @@ def _runtime_lifecycle_ledger_row(
     }
 
 
+def _runtime_order_id(row: Mapping[str, object]) -> str | None:
+    return _first_text(
+        row,
+        "order_id",
+        "alpaca_order_id",
+        "client_order_id",
+        "execution_correlation_id",
+    )
+
+
+def _execution_row_has_fill(row: Mapping[str, object]) -> bool:
+    filled_qty = _first_decimal(
+        row,
+        "filled_qty",
+        "filled_quantity",
+        "qty",
+        "quantity",
+    )
+    avg_fill_price = _first_decimal(
+        row,
+        "avg_fill_price",
+        "filled_avg_price",
+        "filled_average_price",
+        "average_fill_price",
+        "fill_price",
+        "filled_price",
+    )
+    return (
+        filled_qty is not None
+        and filled_qty > 0
+        and avg_fill_price is not None
+        and avg_fill_price > 0
+    )
+
+
+def _order_feed_fill_lifecycle_blockers(
+    *,
+    execution_rows: list[dict[str, object]],
+    order_lifecycle_rows: list[dict[str, object]] | None,
+) -> list[str]:
+    expected_order_ids: set[str] = set()
+    missing_execution_order_id = False
+    for row in execution_rows:
+        if not _execution_row_has_fill(row):
+            continue
+        order_id = _runtime_order_id(row)
+        if order_id is None:
+            missing_execution_order_id = True
+            continue
+        expected_order_ids.add(order_id)
+
+    if not expected_order_ids and not missing_execution_order_id:
+        return []
+
+    observed_fill_order_ids = {
+        order_id
+        for row in order_lifecycle_rows or []
+        if _runtime_ledger_event_type({str(key): value for key, value in row.items()})
+        in _RUNTIME_LEDGER_FILL_EVENTS
+        if (order_id := _runtime_order_id(row)) is not None
+    }
+
+    blockers: list[str] = []
+    if missing_execution_order_id:
+        blockers.append(ORDER_FEED_FILL_LIFECYCLE_ORDER_ID_MISSING_BLOCKER)
+    if not observed_fill_order_ids:
+        blockers.append(ORDER_FEED_FILL_LIFECYCLE_MISSING_BLOCKER)
+    elif expected_order_ids - observed_fill_order_ids:
+        blockers.append(ORDER_FEED_FILL_LIFECYCLE_INCOMPLETE_BLOCKER)
+    return blockers
+
+
 def _build_realized_strategy_pnl_rows(
     execution_rows: list[dict[str, object]],
     *,
@@ -992,6 +1069,10 @@ def _build_realized_strategy_pnl_rows(
     ledger_rows: list[RuntimeLedgerFill | dict[str, object]] = []
     event_times: list[datetime] = []
     event_sourced_lifecycle_rows = 0
+    order_feed_fill_lifecycle_blockers = _order_feed_fill_lifecycle_blockers(
+        execution_rows=execution_rows,
+        order_lifecycle_rows=order_lifecycle_rows,
+    )
     for row in decision_lifecycle_rows or []:
         lifecycle_row = _runtime_lifecycle_ledger_row(row, event_type="decision")
         if lifecycle_row is None:
@@ -1177,6 +1258,7 @@ def _build_realized_strategy_pnl_rows(
         event_sourced_runtime_ledger = (
             allow_authoritative_runtime_ledger_materialization
             and event_sourced_lifecycle_rows > 0
+            and not order_feed_fill_lifecycle_blockers
             and isinstance(bucket_payload, Mapping)
             and _runtime_ledger_bucket_profit_proof_present(bucket_payload)
         )
@@ -1208,6 +1290,9 @@ def _build_realized_strategy_pnl_rows(
                 "execution_reconstruction_not_runtime_ledger_proof"
             )
             blockers = list(row.get("runtime_ledger_blockers") or [])
+            for blocker in order_feed_fill_lifecycle_blockers:
+                if blocker not in blockers:
+                    blockers.append(blocker)
             if "execution_reconstruction_not_runtime_ledger_proof" not in blockers:
                 blockers.append("execution_reconstruction_not_runtime_ledger_proof")
             row["runtime_ledger_blockers"] = blockers
