@@ -6,7 +6,7 @@ import json
 import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, ROUND_FLOOR
 from pathlib import Path
 from typing import Any, Literal, Mapping, Optional, cast
 
@@ -959,6 +959,8 @@ class ProfitabilityConstraintPolicy:
     holdout_target_net_per_day: Decimal = Decimal("250")
     min_active_holdout_days: int = 3
     max_worst_holdout_day_loss: Decimal = Decimal("150")
+    max_holdout_drawdown_pct_equity: Decimal | None = Decimal("0.05")
+    min_holdout_p10_daily_net: Decimal | None = None
     min_profit_factor: Decimal = Decimal("1.5")
     require_training_decisions: bool = True
     require_holdout_decisions: bool = True
@@ -968,6 +970,7 @@ class ProfitabilityConstraintPolicy:
 class ReplayProfitabilitySummary:
     start_date: str
     end_date: str
+    start_equity: Decimal | None
     trading_day_count: int
     net_pnl: Decimal
     net_per_day: Decimal
@@ -977,8 +980,40 @@ class ReplayProfitabilitySummary:
     wins: int
     losses: int
     worst_day_net: Decimal
+    p10_daily_net: Decimal
+    max_drawdown: Decimal
+    max_drawdown_pct_equity: Decimal | None
     profit_factor: Decimal | None
     daily_net: dict[str, Decimal]
+
+
+def _daily_drawdown(daily_net: Mapping[str, Decimal]) -> Decimal:
+    peak = Decimal("0")
+    cumulative = Decimal("0")
+    max_drawdown = Decimal("0")
+    for day in sorted(daily_net):
+        cumulative += daily_net[day]
+        if cumulative > peak:
+            peak = cumulative
+        drawdown = peak - cumulative
+        if drawdown > max_drawdown:
+            max_drawdown = drawdown
+    return max_drawdown
+
+
+def _daily_quantile_floor(
+    daily_net: Mapping[str, Decimal], quantile: Decimal
+) -> Decimal:
+    values = sorted(daily_net.values())
+    if not values:
+        return Decimal("0")
+    bounded_quantile = min(max(quantile, Decimal("0")), Decimal("1"))
+    index = int(
+        (Decimal(len(values) - 1) * bounded_quantile).to_integral_value(
+            rounding=ROUND_FLOOR
+        )
+    )
+    return values[index]
 
 
 def summarize_replay_profitability(
@@ -1012,12 +1047,20 @@ def summarize_replay_profitability(
         else (Decimal("999999") if positive_total > 0 else None)
     )
     worst_day_net = min(daily_net.values()) if daily_net else Decimal("0")
+    start_equity = _decimal(payload.get("start_equity"))
+    max_drawdown = _daily_drawdown(daily_net)
+    max_drawdown_pct_equity = (
+        max_drawdown / start_equity
+        if start_equity is not None and start_equity > 0
+        else None
+    )
     net_per_day = (
         net_pnl / Decimal(trading_day_count) if trading_day_count > 0 else Decimal("0")
     )
     return ReplayProfitabilitySummary(
         start_date=str(payload.get("start_date") or ""),
         end_date=str(payload.get("end_date") or ""),
+        start_equity=start_equity,
         trading_day_count=trading_day_count,
         net_pnl=net_pnl,
         net_per_day=net_per_day,
@@ -1027,6 +1070,9 @@ def summarize_replay_profitability(
         wins=int(payload.get("wins", 0)),
         losses=int(payload.get("losses", 0)),
         worst_day_net=worst_day_net,
+        p10_daily_net=_daily_quantile_floor(daily_net, Decimal("0.10")),
+        max_drawdown=max_drawdown,
+        max_drawdown_pct_equity=max_drawdown_pct_equity,
         profit_factor=profit_factor,
         daily_net=daily_net,
     )
@@ -1051,6 +1097,20 @@ def score_replay_profitability_candidate(
         ) * Decimal("250")
     if holdout.worst_day_net < -policy.max_worst_holdout_day_loss:
         penalties += abs(holdout.worst_day_net + policy.max_worst_holdout_day_loss)
+    if (
+        policy.max_holdout_drawdown_pct_equity is not None
+        and holdout.max_drawdown_pct_equity is not None
+        and holdout.max_drawdown_pct_equity > policy.max_holdout_drawdown_pct_equity
+    ):
+        equity = holdout.start_equity or Decimal("0")
+        penalties += (
+            holdout.max_drawdown_pct_equity - policy.max_holdout_drawdown_pct_equity
+        ) * equity
+    if (
+        policy.min_holdout_p10_daily_net is not None
+        and holdout.p10_daily_net < policy.min_holdout_p10_daily_net
+    ):
+        penalties += policy.min_holdout_p10_daily_net - holdout.p10_daily_net
     if holdout.profit_factor is None:
         penalties += Decimal("250")
     elif holdout.profit_factor < policy.min_profit_factor:
@@ -1093,6 +1153,9 @@ def score_replay_profitability_candidate(
         holdout_total_net=holdout.net_pnl,
         active_holdout_days=holdout.active_days,
         max_holdout_drawdown_day=abs(min(holdout.worst_day_net, Decimal("0"))),
+        holdout_max_drawdown=holdout.max_drawdown,
+        holdout_max_drawdown_pct_equity=holdout.max_drawdown_pct_equity,
+        holdout_p10_daily_net=holdout.p10_daily_net,
         profit_factor=holdout.profit_factor,
         wins=holdout.wins,
         losses=holdout.losses,
