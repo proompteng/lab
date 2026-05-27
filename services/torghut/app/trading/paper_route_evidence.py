@@ -917,6 +917,52 @@ def _runtime_window_import_health_gate_summary(
     }
 
 
+def _execution_source_strategy_key(
+    *,
+    strategy_id: str | None,
+    strategy_lookup_names: Sequence[str],
+    strategy_name: str | None,
+    runtime_strategy_name: str | None,
+) -> str:
+    strategy_from_id = _strategy_name_from_strategy_id(strategy_id)
+    if strategy_from_id is not None:
+        return strategy_from_id
+    for item in strategy_lookup_names:
+        text = _safe_text(item)
+        if text is not None and text != runtime_strategy_name:
+            return text
+    return _safe_text(strategy_name) or _safe_text(runtime_strategy_name) or ""
+
+
+def _runtime_window_execution_source_key(
+    *,
+    strategy_family: str | None,
+    strategy_id: str | None,
+    strategy_lookup_names: Sequence[str],
+    strategy_name: str | None,
+    runtime_strategy_name: str | None,
+    account_label: str,
+    source_manifest_ref: str | None,
+    window_start: datetime,
+    window_end: datetime,
+    probe_symbols: Sequence[str],
+) -> tuple[object, ...]:
+    return (
+        strategy_family or "",
+        _execution_source_strategy_key(
+            strategy_id=strategy_id,
+            strategy_lookup_names=strategy_lookup_names,
+            strategy_name=strategy_name,
+            runtime_strategy_name=runtime_strategy_name,
+        ),
+        account_label,
+        source_manifest_ref or "",
+        _isoformat(window_start),
+        _isoformat(window_end),
+        tuple(str(symbol).strip().upper() for symbol in probe_symbols),
+    )
+
+
 def _next_paper_route_runtime_window_targets(
     *,
     session: Session,
@@ -970,6 +1016,7 @@ def _next_paper_route_runtime_window_targets(
     planned_targets: list[dict[str, object]] = []
     skipped_targets: list[dict[str, object]] = []
     planned_keys: set[tuple[object, ...]] = set()
+    planned_execution_source_keys: dict[tuple[object, ...], dict[str, object]] = {}
     for target in targets:
         hypothesis_id = _safe_text(target.get("hypothesis_id"))
         candidate_id = _safe_text(target.get("candidate_id"))
@@ -1037,6 +1084,64 @@ def _next_paper_route_runtime_window_targets(
                 }
             )
             continue
+        planned_key = (
+            hypothesis_id,
+            candidate_id,
+            strategy_family,
+            strategy_name,
+            PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
+            source_manifest_ref,
+            _isoformat(window_start),
+            _isoformat(window_end),
+            tuple(target_probe_symbols),
+        )
+        if planned_key in planned_keys:
+            skipped_targets.append(
+                {
+                    "hypothesis_id": hypothesis_id,
+                    "candidate_id": candidate_id,
+                    "reason": "duplicate_next_paper_route_runtime_window_target",
+                    "missing_or_blocking_fields": [
+                        "duplicate_next_paper_route_runtime_window_target"
+                    ],
+                }
+            )
+            continue
+        execution_source_key = _runtime_window_execution_source_key(
+            strategy_family=strategy_family,
+            strategy_id=strategy_id,
+            strategy_lookup_names=strategy_lookup_names,
+            strategy_name=strategy_name,
+            runtime_strategy_name=runtime_strategy_name,
+            account_label=PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
+            source_manifest_ref=source_manifest_ref,
+            window_start=window_start,
+            window_end=window_end,
+            probe_symbols=target_probe_symbols,
+        )
+        existing_execution_source = planned_execution_source_keys.get(
+            execution_source_key
+        )
+        if existing_execution_source is not None:
+            skipped_targets.append(
+                {
+                    "hypothesis_id": hypothesis_id,
+                    "candidate_id": candidate_id,
+                    "reason": (
+                        "duplicate_next_paper_route_runtime_window_execution_source"
+                    ),
+                    "duplicate_of_hypothesis_id": existing_execution_source.get(
+                        "hypothesis_id"
+                    ),
+                    "duplicate_of_candidate_id": existing_execution_source.get(
+                        "candidate_id"
+                    ),
+                    "missing_or_blocking_fields": [
+                        "duplicate_next_paper_route_runtime_window_execution_source"
+                    ],
+                }
+            )
+            continue
         source_account_label = _safe_text(target.get("account_label"))
         health_gate = _runtime_window_import_health_gate(
             target=target,
@@ -1099,6 +1204,15 @@ def _next_paper_route_runtime_window_targets(
             "paper_route_target_plan_source": paper_route_target_plan_source or "",
             "paper_route_probe_scope_authority": paper_route_probe_scope_authority
             or "",
+            "paper_route_execution_source_key": {
+                "strategy_family": strategy_family or "",
+                "strategy": execution_source_key[1],
+                "account_label": PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
+                "source_manifest_ref": source_manifest_ref,
+                "window_start": _isoformat(window_start),
+                "window_end": _isoformat(window_end),
+                "paper_route_probe_symbols": target_probe_symbols,
+            },
             "paper_route_session_readiness_state": _safe_text(
                 session_readiness.get("state")
             )
@@ -1145,30 +1259,8 @@ def _next_paper_route_runtime_window_targets(
             "promotion_gate": "runtime_ledger_live_or_live_paper_required",
             "max_notional": "0",
         }
-        planned_key = (
-            hypothesis_id,
-            candidate_id,
-            strategy_family,
-            strategy_name,
-            planned_target["account_label"],
-            planned_target["source_manifest_ref"],
-            planned_target["window_start"],
-            planned_target["window_end"],
-            tuple(target_probe_symbols),
-        )
-        if planned_key in planned_keys:
-            skipped_targets.append(
-                {
-                    "hypothesis_id": hypothesis_id,
-                    "candidate_id": candidate_id,
-                    "reason": "duplicate_next_paper_route_runtime_window_target",
-                    "missing_or_blocking_fields": [
-                        "duplicate_next_paper_route_runtime_window_target"
-                    ],
-                }
-            )
-            continue
         planned_keys.add(planned_key)
+        planned_execution_source_keys[execution_source_key] = planned_target
         planned_targets.append(planned_target)
     health_gate_summary = _runtime_window_import_health_gate_summary(planned_targets)
     return {
