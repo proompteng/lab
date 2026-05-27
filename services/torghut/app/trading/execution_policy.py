@@ -848,6 +848,11 @@ class ExecutionPolicy:
                 price=price,
                 spread=spread,
             )
+            and not _should_keep_market_order_for_pair_runtime_exit(
+                decision,
+                price=price,
+                spread=spread,
+            )
         ):
             selected_order_type = "limit"
             limit_price = _near_touch_limit_price(price, spread, decision.action)
@@ -891,42 +896,16 @@ def _should_keep_market_order_for_high_conviction_entry(
     if decision.params.get("position_exit") is not None:
         return False
 
-    runtime_payload_raw = decision.params.get("strategy_runtime")
-    if not isinstance(runtime_payload_raw, Mapping):
-        return False
-    runtime_payload = cast(Mapping[str, Any], runtime_payload_raw)
-    raw_sources = runtime_payload.get("source_strategy_runtime")
-    if not isinstance(raw_sources, list):
-        return False
-    raw_sources_list = cast(list[Any], raw_sources)
-    source_strategy_runtime: list[Mapping[str, Any]] = []
-    for source_item in raw_sources_list:
-        if isinstance(source_item, Mapping):
-            source_strategy_runtime.append(cast(Mapping[str, Any], source_item))
-    strategy_types = {
-        str(source_runtime.get("strategy_type") or "").strip()
-        for source_runtime in source_strategy_runtime
-    }
-    strategy_types.discard("")
+    strategy_types = _decision_strategy_runtime_types(decision)
     if not strategy_types:
         return False
 
-    execution_features_raw = decision.params.get("execution_features")
-    execution_features: Mapping[str, Any]
-    if isinstance(execution_features_raw, Mapping):
-        execution_features = cast(Mapping[str, Any], execution_features_raw)
-    else:
-        execution_features = {}
-
-    spread_bps = _optional_decimal(execution_features.get("spread_bps"))
-    if (
-        spread_bps is None
-        and spread is not None
-        and spread > 0
-        and price is not None
-        and price > 0
-    ):
-        spread_bps = (spread / price) * Decimal("10000")
+    execution_features = _decision_execution_features(decision)
+    spread_bps = _decision_spread_bps(
+        price=price,
+        spread=spread,
+        execution_features=execution_features,
+    )
     if spread_bps is None or spread_bps > HIGH_CONVICTION_MARKET_SPREAD_BPS_MAX:
         return False
 
@@ -971,20 +950,103 @@ def _should_keep_market_order_for_high_conviction_entry(
         "microbar_cross_sectional_short_v1",
         "microbar_cross_sectional_pairs_v1",
     } & strategy_types:
-        rationale_tokens = {
-            token.strip().lower()
-            for token in str(decision.rationale or "").split(",")
-            if token.strip()
-        }
         return bool(
             {
                 "microbar_cross_sectional_entry",
                 "microbar_cross_sectional_pair_entry",
             }
-            & rationale_tokens
+            & _decision_rationale_tokens(decision)
         )
 
     return False
+
+
+def _should_keep_market_order_for_pair_runtime_exit(
+    decision: StrategyDecision,
+    *,
+    price: Decimal | None,
+    spread: Decimal | None,
+) -> bool:
+    if decision.order_type != "market":
+        return False
+
+    position_exit_raw = decision.params.get("position_exit")
+    if not isinstance(position_exit_raw, Mapping):
+        return False
+    position_exit = cast(Mapping[str, Any], position_exit_raw)
+    if str(position_exit.get("type") or "").strip().lower() != "runtime_signal_exit":
+        return False
+
+    strategy_types = _decision_strategy_runtime_types(decision)
+    if "microbar_cross_sectional_pairs_v1" not in strategy_types:
+        return False
+    if "microbar_cross_sectional_pair_exit" not in _decision_rationale_tokens(decision):
+        return False
+
+    spread_bps = _decision_spread_bps(
+        price=price,
+        spread=spread,
+        execution_features=_decision_execution_features(decision),
+    )
+    return (
+        spread_bps is not None and spread_bps <= HIGH_CONVICTION_MARKET_SPREAD_BPS_MAX
+    )
+
+
+def _decision_strategy_runtime_types(decision: StrategyDecision) -> set[str]:
+    runtime_payload_raw = decision.params.get("strategy_runtime")
+    if not isinstance(runtime_payload_raw, Mapping):
+        return set()
+    runtime_payload = cast(Mapping[str, Any], runtime_payload_raw)
+    raw_sources = runtime_payload.get("source_strategy_runtime")
+    if not isinstance(raw_sources, list):
+        return set()
+    raw_sources_list = cast(list[Any], raw_sources)
+    source_strategy_runtime: list[Mapping[str, Any]] = []
+    for source_item in raw_sources_list:
+        if isinstance(source_item, Mapping):
+            source_strategy_runtime.append(cast(Mapping[str, Any], source_item))
+    strategy_types = {
+        str(source_runtime.get("strategy_type") or "").strip()
+        for source_runtime in source_strategy_runtime
+    }
+    strategy_types.discard("")
+    return strategy_types
+
+
+def _decision_execution_features(
+    decision: StrategyDecision,
+) -> Mapping[str, Any]:
+    execution_features_raw = decision.params.get("execution_features")
+    if isinstance(execution_features_raw, Mapping):
+        return cast(Mapping[str, Any], execution_features_raw)
+    return {}
+
+
+def _decision_spread_bps(
+    *,
+    price: Decimal | None,
+    spread: Decimal | None,
+    execution_features: Mapping[str, Any],
+) -> Decimal | None:
+    spread_bps = _optional_decimal(execution_features.get("spread_bps"))
+    if (
+        spread_bps is None
+        and spread is not None
+        and spread > 0
+        and price is not None
+        and price > 0
+    ):
+        spread_bps = (spread / price) * Decimal("10000")
+    return spread_bps
+
+
+def _decision_rationale_tokens(decision: StrategyDecision) -> set[str]:
+    return {
+        token.strip().lower()
+        for token in str(decision.rationale or "").split(",")
+        if token.strip()
+    }
 
 
 def _near_touch_limit_price(

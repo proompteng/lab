@@ -1399,6 +1399,36 @@ class TestRuntimeLedgerProofPacket(TestCase):
             result["required_actions"],
         )
 
+    def test_packet_materialization_marks_non_authoritative_empty_target(
+        self,
+    ) -> None:
+        runtime_import = _runtime_import(authoritative=False)
+
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=runtime_import,
+            completion_status=_completion(),
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        materialization = result["evidence"]["runtime_window_import"]["materialization"]
+        self.assertFalse(result["ok"])
+        self.assertEqual(materialization["materialized_target_count"], 0)
+        self.assertEqual(materialization["unmaterialized_target_count"], 1)
+        self.assertIn(
+            "runtime_window_import_observation_not_authoritative",
+            materialization["unmaterialized_targets"][0]["blockers"],
+        )
+        self.assertIn(
+            "runtime_window_import_target_profit_proof_missing",
+            materialization["unmaterialized_targets"][0]["blockers"],
+        )
+        self.assertIn(
+            "runtime_window_import_target_materialization_missing",
+            materialization["blockers"],
+        )
+
     def test_packet_waits_on_target_level_settlement_blocker(self) -> None:
         paper = _paper_route_evidence()
         target = paper["next_paper_route_runtime_window_targets"]["targets"][0]
