@@ -3792,6 +3792,76 @@ class TestTradingPipeline(TestCase):
             )
             self.assertEqual(exit_metadata.get("stale_exit_repair"), True)
 
+    def test_paper_route_probe_exit_session_open_prefers_exit_metadata(
+        self,
+    ) -> None:
+        decision = StrategyDecision(
+            strategy_id="strategy-1",
+            symbol="AAPL",
+            event_ts=datetime(2026, 3, 26, 18, 40, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="sell",
+            qty=Decimal("1"),
+            rationale="paper-route-exit",
+            params={
+                "paper_route_probe_exit": {
+                    "mode": "paper_route_exit",
+                    "session_open": datetime(
+                        2026,
+                        3,
+                        25,
+                        16,
+                        tzinfo=timezone.utc,
+                    ),
+                }
+            },
+        )
+        fallback = datetime(2026, 3, 27, 14, 31, tzinfo=timezone.utc)
+
+        self.assertEqual(
+            SimpleTradingPipeline._paper_route_probe_exit_session_open(
+                decision=decision,
+                fallback=fallback,
+            ),
+            datetime(2026, 3, 25, 13, 30, tzinfo=timezone.utc),
+        )
+
+        parsed_text_decision = decision.model_copy(
+            update={
+                "params": {
+                    "paper_route_probe_exit": {
+                        "mode": "paper_route_exit",
+                        "session_open": "2026-03-24T17:55:00Z",
+                    }
+                }
+            }
+        )
+        self.assertEqual(
+            SimpleTradingPipeline._paper_route_probe_exit_session_open(
+                decision=parsed_text_decision,
+                fallback=fallback,
+            ),
+            datetime(2026, 3, 24, 13, 30, tzinfo=timezone.utc),
+        )
+
+        invalid_text_decision = decision.model_copy(
+            update={
+                "params": {
+                    "paper_route_probe_exit": {
+                        "mode": "paper_route_exit",
+                        "session_open": "not-a-timestamp",
+                    }
+                }
+            }
+        )
+        self.assertEqual(
+            SimpleTradingPipeline._paper_route_probe_exit_session_open(
+                decision=invalid_text_decision,
+                fallback=fallback,
+            ),
+            datetime(2026, 3, 27, 13, 30, tzinfo=timezone.utc),
+        )
+
     def test_simple_pipeline_does_not_close_paper_route_probe_before_exit_minute(
         self,
     ) -> None:
@@ -4451,6 +4521,26 @@ class TestTradingPipeline(TestCase):
             universe_type="static",
             universe_symbols=["NVDA"],
             max_notional_per_trade=Decimal("1000"),
+        )
+        with patch(
+            "app.trading.scheduler.simple_pipeline.trading_now",
+            return_value=datetime(2026, 3, 26, 14, 0, tzinfo=timezone.utc),
+        ):
+            exit_bound_probe_context = pipeline._paper_route_probe_context(
+                proof_floor=proof_floor,
+                decision=decision,
+                strategy=exit_bound_strategy,
+            )
+        self.assertIsNotNone(exit_bound_probe_context)
+        assert exit_bound_probe_context is not None
+        self.assertEqual(exit_bound_probe_context.get("exit_minute_after_open"), 120)
+        self.assertEqual(
+            exit_bound_probe_context.get("effective_exit_minute_after_open"),
+            120,
+        )
+        self.assertEqual(
+            exit_bound_probe_context.get("exit_due_at"),
+            "2026-03-26T15:30:00+00:00",
         )
         with patch(
             "app.trading.scheduler.simple_pipeline.trading_now",
