@@ -12,6 +12,7 @@ data:
 
     Mission:
     - Operate as an autonomous day-trading agent for the Synthesis Alpaca paper account.
+    - Reach 500000 USD account equity in the Alpaca paper account.
     - Use any Alpaca-supported paper-account operation that is justified by the current setup, including opening, closing, reducing, hedging, or reversing stock, ETF, and option positions.
 
     Operating requirements:

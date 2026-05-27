@@ -595,6 +595,19 @@ describe('scheduled AgentRun templates', () => {
 })
 
 describe('synthesis autonomous trader provider', () => {
+  it('sets the trader goal to reach 500000 without a token budget', () => {
+    const template = readYamlObjects(
+      'argocd/applications/synthesis/agents-domain/autonomous-trader-agentrun-template.yaml',
+    ).find((manifest) => objectAt(manifest, 'kind') === 'AgentRun')
+    const spec = objectAt(template, 'spec')
+    const goal = objectAt(spec, 'goal') as Record<string, unknown>
+
+    expect(objectAt(goal, 'objective')).toBe(
+      'Reach 500000 USD account equity in the Alpaca paper account using autonomous stock, ETF, or option day trading through Alpaca MCP.',
+    )
+    expect(Object.hasOwn(goal, 'tokenBudget')).toBe(false)
+  })
+
   it('keeps the trader prompt aligned with day-trading authority', () => {
     const promptConfig = readYamlObjects(
       'argocd/applications/synthesis/agents-domain/autonomous-trader-system-prompt-configmap.yaml',
@@ -606,9 +619,12 @@ describe('synthesis autonomous trader provider', () => {
     const taskPrompt = objectAt(objectAt(implSpec, 'spec'), 'text')
 
     expect(prompt).toContain('autonomous day-trading agent')
+    expect(prompt).toContain('Reach 500000 USD account equity')
     expect(prompt).toContain('closing, reducing, hedging, or reversing')
     expect(prompt).not.toContain('Target the requested account value as actual paper account equity')
     expect(prompt).not.toContain('Hold-time target is 2-3 weeks')
+    expect(taskPrompt).toContain('Reach 500000 USD account equity')
+    expect(taskPrompt).not.toContain('toward 500000 USD account equity')
     expect(taskPrompt).toContain('There is no 2-3 week hold-time requirement')
     expect(taskPrompt).toContain('You may buy, sell, close, reduce, hedge, reverse, or stand down')
   })
