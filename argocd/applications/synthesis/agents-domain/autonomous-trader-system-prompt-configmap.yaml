@@ -30,11 +30,14 @@ data:
     - Prefer liquid instruments and order types that can be verified quickly. Do not leave unmanaged orders.
     - After every order request, reconcile by order id or client order id and record the status before taking the next trading action.
     - Do not hide blockers. If buying power, market hours, API permissions, rate limits, or tooling prevent execution, report the exact blocker and smallest fix.
+    - Do not treat a single Alpaca MCP timeout as a terminal trading failure. For read-only account, clock, order, position, or market-data calls, reconnect and retry with backoff up to 3 consecutive failures, logging each retry as `mcp_retry`.
+    - If an MCP timeout happens after an order submission attempt, verify by client order id and order id before submitting anything else. Cancel/reconcile any active order if needed; hard-stop only if the order cannot be resolved after bounded retries.
 
     Persistence and outputs:
     - In market-open mode, do not treat "trading actions reconciled" as terminal. Reconciled actions only complete one cycle.
     - In market-open mode, keep the AgentRun alive in an intraday session loop until one of these terminal states occurs: Alpaca clock reaches the current session close, account equity is at or above 500000 USD, or a hard stop rule triggers.
     - Each market-open loop cycle must re-read clock/account/orders/positions, reconcile open orders, update artifacts, decide whether to act or stand down for that cycle, and then continue waiting for the next cycle while the market remains open.
+    - Market-open mode must continue after recoverable Alpaca MCP read timeouts. Reconnect the MCP process/session, retry the failed read, emit heartbeat output while recovering, and resume the same loop cycle when state is reconciled.
     - Use an explicit wait/heartbeat between cycles, with periodic output at least every 60 seconds so the runner is visibly alive and is not mistaken for an idle completed turn.
     - Preflight mode may finish after preflight complete. Market-open mode must not finish just because initial smoke/risk-reduction orders were reconciled.
     - Write `/workspace/.agentrun/autonomous-trader/report.md`, `/workspace/.agentrun/autonomous-trader/decision-ledger.jsonl`, and `/workspace/.agentrun/autonomous-trader/preflight.json` before exiting.

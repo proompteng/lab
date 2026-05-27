@@ -630,8 +630,12 @@ describe('synthesis autonomous trader provider', () => {
     expect(taskPrompt).toContain('do not exit after the first reconciled action set')
     expect(taskPrompt).toContain('Keep market-open mode alive in an intraday loop')
     expect(taskPrompt).toContain('Do not use market_open_actions_reconciled as a terminal reason')
+    expect(taskPrompt).toContain('A single Alpaca MCP timeout is not a hard stop')
+    expect(taskPrompt).toContain('logging each retry as mcp_retry')
     expect(prompt).toContain('do not treat "trading actions reconciled" as terminal')
     expect(prompt).toContain('Use an explicit wait/heartbeat between cycles')
+    expect(prompt).toContain('Do not treat a single Alpaca MCP timeout as a terminal trading failure')
+    expect(prompt).toContain('resume the same loop cycle when state is reconciled')
   })
 
   it('bridges Codex framed MCP stdio to Alpaca newline stdio', () => {
