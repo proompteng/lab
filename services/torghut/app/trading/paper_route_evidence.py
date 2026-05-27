@@ -65,6 +65,16 @@ PROMOTION_ONLY_READINESS_BLOCKERS = frozenset(
         "live_runtime_ledger_required",
     }
 )
+SOURCE_LINEAGE_CANDIDATE_KEYS = (
+    "candidate_id",
+    "strategy_candidate_id",
+    "source_candidate_id",
+)
+SOURCE_LINEAGE_HYPOTHESIS_KEYS = (
+    "hypothesis_id",
+    "strategy_hypothesis_id",
+    "source_hypothesis_id",
+)
 
 
 def _as_mapping(value: object) -> dict[str, Any]:
@@ -77,6 +87,91 @@ def _as_sequence(value: object) -> Sequence[object]:
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         return cast(Sequence[object], value)
     return ()
+
+
+def _source_payloads(value: object) -> list[Mapping[str, Any]]:
+    payloads: list[Mapping[str, Any]] = []
+
+    def append_payload(candidate: object, *, depth: int) -> None:
+        if not isinstance(candidate, Mapping):
+            return
+        payload = {str(key): item for key, item in cast(Mapping[str, Any], candidate).items()}
+        payloads.append(payload)
+        if depth <= 0:
+            return
+        for nested in payload.values():
+            append_payload(nested, depth=depth - 1)
+
+    append_payload(value, depth=4)
+    return payloads
+
+
+def _source_lineage_values(value: object, keys: Sequence[str]) -> set[str]:
+    values: set[str] = set()
+    for payload in _source_payloads(value):
+        for key in keys:
+            if text := _safe_text(payload.get(key)):
+                values.add(text)
+    return values
+
+
+def _source_decision_lineage_matches(
+    row: TradeDecision,
+    *,
+    candidate_id: str | None,
+    hypothesis_id: str | None,
+) -> bool:
+    payload = row.decision_json
+    if candidate_id is not None and candidate_id not in _source_lineage_values(
+        payload, SOURCE_LINEAGE_CANDIDATE_KEYS
+    ):
+        return False
+    if hypothesis_id is not None and hypothesis_id not in _source_lineage_values(
+        payload, SOURCE_LINEAGE_HYPOTHESIS_KEYS
+    ):
+        return False
+    return True
+
+
+def _source_lineage_blockers(
+    rows: Sequence[TradeDecision],
+    *,
+    candidate_id: str | None,
+    hypothesis_id: str | None,
+) -> list[str]:
+    if not rows:
+        return []
+    blockers: list[str] = []
+    if candidate_id is not None:
+        candidate_values: set[str] = set()
+        for row in rows:
+            candidate_values.update(
+                _source_lineage_values(row.decision_json, SOURCE_LINEAGE_CANDIDATE_KEYS)
+            )
+        if not candidate_values:
+            blockers.append("source_candidate_lineage_missing")
+        elif candidate_id not in candidate_values:
+            blockers.append("source_candidate_lineage_mismatch")
+    if hypothesis_id is not None:
+        hypothesis_values: set[str] = set()
+        for row in rows:
+            hypothesis_values.update(
+                _source_lineage_values(row.decision_json, SOURCE_LINEAGE_HYPOTHESIS_KEYS)
+            )
+        if not hypothesis_values:
+            blockers.append("source_hypothesis_lineage_missing")
+        elif hypothesis_id not in hypothesis_values:
+            blockers.append("source_hypothesis_lineage_mismatch")
+    return blockers
+
+
+def _target_requires_source_lineage(target: Mapping[str, object]) -> bool:
+    source_kind = str(target.get("source_kind") or "").strip().lower().replace("-", "_")
+    return source_kind in {
+        "paper_route_probe_runtime_observed",
+        "paper_runtime_observed",
+        "live_runtime_observed",
+    }
 
 
 def _unique_text_items(value: object) -> list[str]:
@@ -1076,6 +1171,9 @@ def _strategy_source_activity(
     symbols: Sequence[str],
     window_start: datetime,
     window_end: datetime,
+    candidate_id: str | None = None,
+    hypothesis_id: str | None = None,
+    require_source_lineage: bool = False,
 ) -> dict[str, object]:
     symbol_filters = [
         str(item).strip().upper() for item in symbols if str(item).strip()
@@ -1087,6 +1185,12 @@ def _strategy_source_activity(
             "strategy_lookup_names": [],
             "account_label": account_label,
             "symbols": symbol_filters,
+            "lineage_required": require_source_lineage,
+            "expected_candidate_id": candidate_id,
+            "expected_hypothesis_id": hypothesis_id,
+            "raw_decision_count": 0,
+            "lineage_matched_decision_count": 0,
+            "lineage_blockers": [],
             "decision_count": 0,
             "execution_count": 0,
             "filled_execution_count": 0,
@@ -1118,6 +1222,26 @@ def _strategy_source_activity(
             decision_stmt.order_by(TradeDecision.created_at.desc()).limit(500)
         ).scalars()
     )
+    raw_decision_count = len(decision_rows)
+    lineage_blockers = (
+        _source_lineage_blockers(
+            decision_rows,
+            candidate_id=candidate_id,
+            hypothesis_id=hypothesis_id,
+        )
+        if require_source_lineage
+        else []
+    )
+    if require_source_lineage:
+        decision_rows = [
+            row
+            for row in decision_rows
+            if _source_decision_lineage_matches(
+                row,
+                candidate_id=candidate_id,
+                hypothesis_id=hypothesis_id,
+            )
+        ]
     decision_ids = [row.id for row in decision_rows]
     execution_rows: list[Execution] = []
     if decision_ids:
@@ -1178,11 +1302,18 @@ def _strategy_source_activity(
         missing_reasons.append("source_executions_missing")
     if tca_sample_count <= 0:
         missing_reasons.append("source_tca_missing")
+    missing_reasons.extend(lineage_blockers)
     return {
         "strategy_name": strategy_name,
         "strategy_lookup_names": strategy_filters,
         "account_label": account_label,
         "symbols": symbol_filters,
+        "lineage_required": require_source_lineage,
+        "expected_candidate_id": candidate_id,
+        "expected_hypothesis_id": hypothesis_id,
+        "raw_decision_count": raw_decision_count,
+        "lineage_matched_decision_count": decision_count,
+        "lineage_blockers": lineage_blockers,
         "decision_count": decision_count,
         "execution_count": execution_count,
         "filled_execution_count": filled_execution_count,
@@ -1596,6 +1727,9 @@ def _target_audit(
         symbols=_target_probe_symbols(target, probe),
         window_start=window_start,
         window_end=window_end,
+        candidate_id=candidate_id,
+        hypothesis_id=hypothesis_id,
+        require_source_lineage=_target_requires_source_lineage(target),
     )
     rejected_signal_activity = _rejected_signal_activity(
         session,

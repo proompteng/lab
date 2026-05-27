@@ -71,6 +71,16 @@ _RUNTIME_LEDGER_EQUITY_DENOMINATOR_KEYS = (
     "net_liquidation",
     "net_liquidation_value",
 )
+SOURCE_LINEAGE_CANDIDATE_KEYS = (
+    "candidate_id",
+    "strategy_candidate_id",
+    "source_candidate_id",
+)
+SOURCE_LINEAGE_HYPOTHESIS_KEYS = (
+    "hypothesis_id",
+    "strategy_hypothesis_id",
+    "source_hypothesis_id",
+)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -209,6 +219,36 @@ def _first_text(row: Mapping[str, object], *keys: str) -> str | None:
             if text:
                 return text
     return None
+
+
+def _text_values(row: Mapping[str, object], *keys: str) -> set[str]:
+    values: set[str] = set()
+    for payload in _row_payloads(row):
+        for key in keys:
+            text = str(payload.get(key) or "").strip()
+            if text:
+                values.add(text)
+    return values
+
+
+def _source_row_matches_lineage(
+    row: Mapping[str, object],
+    *,
+    candidate_id: str | None,
+    hypothesis_id: str | None,
+    require_source_lineage: bool,
+) -> bool:
+    if not require_source_lineage:
+        return True
+    if candidate_id is not None and candidate_id not in _text_values(
+        row, *SOURCE_LINEAGE_CANDIDATE_KEYS
+    ):
+        return False
+    if hypothesis_id is not None and hypothesis_id not in _text_values(
+        row, *SOURCE_LINEAGE_HYPOTHESIS_KEYS
+    ):
+        return False
+    return True
 
 
 def _runtime_ledger_equity_denominator_from_rows(
@@ -1786,6 +1826,9 @@ def _query_timestamps(
     window_start: datetime,
     window_end: datetime,
     symbols: Sequence[str] | None = None,
+    candidate_id: str | None = None,
+    hypothesis_id: str | None = None,
+    require_source_lineage: bool = False,
     allow_authoritative_runtime_ledger_materialization: bool = False,
 ) -> tuple[list[datetime], list[datetime], list[dict[str, object]]]:
     if not strategy_names:
@@ -1864,6 +1907,16 @@ def _query_timestamps(
                 for row in cur.fetchall()
                 if row[0] is not None
             ]
+            decision_lifecycle_rows = [
+                row
+                for row in decision_lifecycle_rows
+                if _source_row_matches_lineage(
+                    row,
+                    candidate_id=candidate_id,
+                    hypothesis_id=hypothesis_id,
+                    require_source_lineage=require_source_lineage,
+                )
+            ]
             decisions = []
             for row in decision_lifecycle_rows:
                 computed_at = row.get("computed_at")
@@ -1929,6 +1982,16 @@ def _query_timestamps(
                 for row in cur.fetchall()
                 if row[0] is not None
             ]
+            execution_rows = [
+                row
+                for row in execution_rows
+                if _source_row_matches_lineage(
+                    row,
+                    candidate_id=candidate_id,
+                    hypothesis_id=hypothesis_id,
+                    require_source_lineage=require_source_lineage,
+                )
+            ]
             executions = []
             for row in execution_rows:
                 computed_at = row.get("computed_at")
@@ -1993,12 +2056,24 @@ def _query_timestamps(
                 for row in cur.fetchall()
                 if row[0] is not None
             ]
+            order_lifecycle_rows = [
+                row
+                for row in order_lifecycle_rows
+                if _source_row_matches_lineage(
+                    row,
+                    candidate_id=candidate_id,
+                    hypothesis_id=hypothesis_id,
+                    require_source_lineage=require_source_lineage,
+                )
+            ]
             cur.execute(
                 f"""
                 select
                     d.created_at,
                     abs(coalesce(t.realized_shortfall_bps, t.slippage_bps)) as abs_slippage_bps,
-                    (-coalesce(t.realized_shortfall_bps, t.slippage_bps)) as post_cost_expectancy_bps
+                    (-coalesce(t.realized_shortfall_bps, t.slippage_bps)) as post_cost_expectancy_bps,
+                    d.decision_hash,
+                    d.decision_json
                 from execution_tca_metrics t
                 join executions e on e.id = t.execution_id
                 join trade_decisions d on d.id = e.trade_decision_id
@@ -2023,11 +2098,23 @@ def _query_timestamps(
                     "computed_at": row[0],
                     "abs_slippage_bps": row[1] or Decimal("0"),
                     "post_cost_expectancy_bps": row[2] or Decimal("0"),
+                    "decision_hash": row[3],
+                    "decision_json": row[4],
                     "post_cost_expectancy_basis": POST_COST_BASIS_TCA_PROXY,
                     "post_cost_promotion_eligible": False,
                 }
                 for row in cur.fetchall()
                 if row[0] is not None
+            ]
+            tca_rows = [
+                row
+                for row in tca_rows
+                if _source_row_matches_lineage(
+                    row,
+                    candidate_id=candidate_id,
+                    hypothesis_id=hypothesis_id,
+                    require_source_lineage=require_source_lineage,
+                )
             ]
     tca_rows.extend(
         _build_realized_strategy_pnl_rows(
@@ -2181,6 +2268,9 @@ def main() -> int:
             window_start=window_start,
             window_end=window_end,
             symbols=source_activity_symbols,
+            candidate_id=args.candidate_id.strip() or None,
+            hypothesis_id=args.hypothesis_id,
+            require_source_lineage=allow_authoritative_runtime_ledger_materialization,
             allow_authoritative_runtime_ledger_materialization=(
                 allow_authoritative_runtime_ledger_materialization
             ),
