@@ -714,17 +714,77 @@ def _runtime_import_runtime_observations(
     return observations
 
 
+def _runtime_import_target_materialization_ref(
+    *,
+    item: Mapping[str, Any],
+    observation: Mapping[str, Any],
+    profit_proof_count: int,
+    materialized: bool,
+    blockers: Sequence[str],
+) -> dict[str, Any]:
+    summary = _mapping(item.get("summary"))
+
+    def first_text(*keys: str) -> str:
+        for source in (item, summary, observation):
+            for key in keys:
+                value = _text(source.get(key))
+                if value:
+                    return value
+        return ""
+
+    ref: dict[str, Any] = {
+        "materialized": materialized,
+        "candidate_id": first_text("candidate_id"),
+        "hypothesis_id": first_text("hypothesis_id"),
+        "observed_stage": first_text("observed_stage"),
+        "strategy_family": first_text("strategy_family"),
+        "strategy_name": first_text("strategy_name", "runtime_strategy_name"),
+        "account_label": first_text("account_label"),
+        "window_start": first_text("window_start", "window_started_at"),
+        "window_end": first_text("window_end", "window_ended_at"),
+        "authoritative": observation.get("authoritative") is True,
+        "authority_reason": _text(observation.get("authority_reason")),
+        "source_kind": _text(observation.get("source_kind")),
+        "runtime_ledger_profit_proof_count": profit_proof_count,
+        "runtime_ledger_tca_row_count": _int(
+            observation.get("runtime_ledger_tca_row_count")
+        ),
+        "runtime_ledger_tca_authoritative_bucket_count": _int(
+            observation.get("runtime_ledger_tca_authoritative_bucket_count")
+        ),
+        "runtime_ledger_source_execution_materialized_bucket_count": _int(
+            observation.get("runtime_ledger_source_execution_materialized_bucket_count")
+        ),
+        "runtime_ledger_filled_notional": _text(
+            observation.get("runtime_ledger_filled_notional")
+        ),
+        "runtime_ledger_net_strategy_pnl_after_costs": _text(
+            observation.get("runtime_ledger_net_strategy_pnl_after_costs")
+        ),
+        "blockers": list(blockers),
+    }
+    return {key: value for key, value in ref.items() if value not in ("", [], None)}
+
+
 def _runtime_import_materialization_summary(
     payload: Mapping[str, Any],
 ) -> dict[str, Any]:
+    items = _runtime_window_import_items(payload)
     observations = _runtime_import_runtime_observations(payload)
     source_kinds: list[str] = []
     authority_reasons: list[str] = []
     pnl_derivations: list[str] = []
     materialization_blockers: list[str] = []
+    materialized_targets: list[dict[str, Any]] = []
+    unmaterialized_targets: list[dict[str, Any]] = []
     counts = {
+        "declared_target_count": _int(payload.get("target_count"), len(items)),
+        "import_item_count": len(items),
         "runtime_observation_count": len(observations),
         "authoritative_observation_count": 0,
+        "materialized_target_count": 0,
+        "unmaterialized_target_count": 0,
+        "missing_target_import_count": 0,
         "authoritative_runtime_ledger_profit_proof_count": 0,
         "non_authoritative_runtime_ledger_profit_proof_count": 0,
         "runtime_ledger_profit_proof_count": 0,
@@ -741,7 +801,23 @@ def _runtime_import_materialization_summary(
         "runtime_ledger_profit_proof",
         "runtime_ledger_profit_proof_present",
     }
-    for observation in observations:
+    for item in items:
+        summary = _mapping(item.get("summary"))
+        observation = _mapping(summary.get("runtime_observation"))
+        target_blockers: list[str] = []
+        if not observation:
+            target_blockers.append("runtime_window_import_runtime_observation_missing")
+            unmaterialized_targets.append(
+                _runtime_import_target_materialization_ref(
+                    item=item,
+                    observation={},
+                    profit_proof_count=0,
+                    materialized=False,
+                    blockers=target_blockers,
+                )
+            )
+            _extend_unique(materialization_blockers, target_blockers)
+            continue
         if observation.get("authoritative") is True:
             counts["authoritative_observation_count"] += 1
         authority_reason = _text(observation.get("authority_reason"))
@@ -786,6 +862,12 @@ def _runtime_import_materialization_summary(
             "runtime_ledger_artifact_tca_row_count",
         ):
             counts[key] += _int(observation.get(key))
+        if observation.get("authoritative") is not True:
+            target_blockers.append(
+                "runtime_window_import_observation_not_authoritative"
+            )
+        if profit_proof_count <= 0:
+            target_blockers.append("runtime_window_import_target_profit_proof_missing")
         _extend_unique(source_kinds, [_text(observation.get("source_kind"))])
         _extend_unique(authority_reasons, [authority_reason])
         _extend_unique(
@@ -802,9 +884,51 @@ def _runtime_import_materialization_summary(
             materialization_blockers,
             _text_list(observation.get("runtime_ledger_target_metadata_blockers")),
         )
+        materialized = (
+            observation.get("authoritative") is True and profit_proof_count > 0
+        )
+        target_ref = _runtime_import_target_materialization_ref(
+            item=item,
+            observation=observation,
+            profit_proof_count=profit_proof_count,
+            materialized=materialized,
+            blockers=target_blockers,
+        )
+        if materialized:
+            counts["materialized_target_count"] += 1
+            materialized_targets.append(target_ref)
+        else:
+            unmaterialized_targets.append(target_ref)
+            _extend_unique(materialization_blockers, target_blockers)
+    counts["unmaterialized_target_count"] = len(unmaterialized_targets)
+    counts["missing_target_import_count"] = max(
+        0,
+        counts["declared_target_count"] - counts["import_item_count"],
+    )
+    if counts["missing_target_import_count"] > 0:
+        _extend_unique(
+            materialization_blockers,
+            ["runtime_window_import_target_count_mismatch"],
+        )
+    if unmaterialized_targets:
+        _extend_unique(
+            materialization_blockers,
+            ["runtime_window_import_target_materialization_missing"],
+        )
+    if (
+        counts["authoritative_runtime_ledger_profit_proof_count"] <= 0
+        or counts["unmaterialized_target_count"] > 0
+        or counts["missing_target_import_count"] > 0
+    ):
+        _extend_unique(
+            materialization_blockers,
+            ["runtime_window_import_runtime_ledger_materialization_missing"],
+        )
     return {
         "schema_version": "torghut.runtime-window-import-materialization-summary.v1",
         **counts,
+        "materialized_targets": materialized_targets,
+        "unmaterialized_targets": unmaterialized_targets,
         "source_kinds": source_kinds,
         "authority_reasons": authority_reasons,
         "pnl_derivations": pnl_derivations,
@@ -1205,6 +1329,9 @@ def build_runtime_ledger_proof_packet(
             )
         )
         > 0
+        and _int(materialization_summary.get("materialized_target_count")) > 0
+        and _int(materialization_summary.get("unmaterialized_target_count")) == 0
+        and _int(materialization_summary.get("missing_target_import_count")) == 0
         and not _text_list(materialization_summary.get("blockers"))
     )
     runtime_import_ok = (
@@ -1256,7 +1383,7 @@ def build_runtime_ledger_proof_packet(
         "runtime_window_import_materialization",
         passed=runtime_import_materialization_ok,
         observed=materialization_summary,
-        expected="runtime-window import contains at least one authoritative runtime-ledger profit-proof observation",
+        expected="every runtime-window import target contains authoritative runtime-ledger profit-proof materialization",
         blockers=materialization_blockers
         or (
             []

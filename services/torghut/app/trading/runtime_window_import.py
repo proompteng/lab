@@ -1148,7 +1148,9 @@ def _runtime_ledger_daily_summary_from_observed_buckets(
         )
 
     if equity_denominators and max_intraday_drawdown > 0:
-        equity_denominator, equity_source = min(equity_denominators, key=lambda item: item[0])
+        equity_denominator, equity_source = min(
+            equity_denominators, key=lambda item: item[0]
+        )
         summary["runtime_ledger_drawdown_pct_equity"] = str(
             max_intraday_drawdown / equity_denominator
         )
@@ -1435,6 +1437,27 @@ def persist_observed_runtime_windows(
         window_end=import_window_end,
     )
     proof_status = "blocked" if proof_blockers else "ok"
+    runtime_materialization_target = {
+        "candidate_id": candidate_id,
+        "hypothesis_id": hypothesis_id,
+        "observed_stage": observed_stage,
+        "strategy_family": manifest.strategy_family,
+        "account_label": _text(runtime_payload.get("account_label")),
+        "strategy_name": _text(runtime_payload.get("strategy_name")),
+        "window_start": import_window_start.isoformat(),
+        "window_end": import_window_end.isoformat(),
+        "runtime_ledger_profit_proof_present": bool(
+            runtime_payload.get("runtime_ledger_profit_proof_present")
+        ),
+        "runtime_ledger_notional_weighted_sample_count": runtime_ledger_sample_count,
+        "runtime_ledger_filled_notional": str(runtime_ledger_filled_notional),
+        "runtime_ledger_net_strategy_pnl_after_costs": str(
+            runtime_ledger_net_strategy_pnl_after_costs
+        ),
+        "runtime_ledger_daily_summary": runtime_ledger_daily_summary,
+        "proof_status": proof_status,
+        "proof_blockers": proof_blockers,
+    }
     running_session_samples = 0
     for bucket in sorted_buckets:
         running_session_samples += bucket.market_session_count
@@ -1669,6 +1692,7 @@ def persist_observed_runtime_windows(
         "promotion_blocking_reasons": promotion_blocking_reasons,
         "proof_status": proof_status,
         "proof_blockers": proof_blockers,
+        "runtime_materialization_target": runtime_materialization_target,
         "runtime_observation": runtime_payload,
         "delay_adjusted_depth_stress": delay_depth_stress_summary,
     }

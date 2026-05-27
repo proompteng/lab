@@ -1677,6 +1677,16 @@ class TestRuntimeWindowImport(TestCase):
             "paper_probation_evidence_collection_only",
             summary["promotion_blocking_reasons"],
         )
+        target = summary["runtime_materialization_target"]
+        self.assertEqual(target["candidate_id"], "cand-paper-route")
+        self.assertEqual(target["hypothesis_id"], "H-PAIRS-01")
+        self.assertTrue(target["runtime_ledger_profit_proof_present"])
+        self.assertEqual(target["runtime_ledger_notional_weighted_sample_count"], 1)
+        self.assertEqual(target["runtime_ledger_filled_notional"], "200")
+        self.assertEqual(
+            target["runtime_ledger_net_strategy_pnl_after_costs"],
+            "0.80",
+        )
 
     def test_persist_observed_runtime_windows_blocks_zero_activity_evidence(
         self,
