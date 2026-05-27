@@ -773,14 +773,37 @@ def _build_realized_strategy_pnl_rows(
     event_times: list[datetime] = []
     for row in execution_rows:
         computed_at = row.get("computed_at")
-        price = _decimal_or_none(row.get("avg_fill_price"))
+        execution_created_at = row.get("execution_created_at")
+        fill_event_at = (
+            execution_created_at
+            if isinstance(execution_created_at, datetime)
+            else computed_at
+        )
+        price = _first_decimal(
+            row,
+            "avg_fill_price",
+            "filled_avg_price",
+            "filled_average_price",
+            "average_fill_price",
+            "fill_price",
+            "filled_price",
+        )
         signed_qty = _execution_signed_qty(
-            side=row.get("side"), qty=row.get("filled_qty")
+            side=_first_text(row, "side", "order_side"),
+            qty=_first_decimal(
+                row,
+                "filled_qty",
+                "filled_quantity",
+                "qty",
+                "quantity",
+            ),
         )
         symbol = str(row.get("symbol") or "").strip().upper()
         if not symbol or not isinstance(computed_at, datetime):
             continue
         event_times.append(computed_at)
+        if isinstance(fill_event_at, datetime):
+            event_times.append(fill_event_at)
         decision_id = _first_text(
             row, "decision_id", "trade_decision_id", "decision_hash"
         )
@@ -867,7 +890,11 @@ def _build_realized_strategy_pnl_rows(
         )
         ledger_rows.append(
             RuntimeLedgerFill(
-                executed_at=computed_at,
+                executed_at=(
+                    fill_event_at
+                    if isinstance(fill_event_at, datetime)
+                    else computed_at
+                ),
                 event_type="fill",
                 decision_id=decision_id,
                 order_id=order_id,
@@ -875,7 +902,7 @@ def _build_realized_strategy_pnl_rows(
                 cost_model_hash=common_ledger_fields["cost_model_hash"],
                 lineage_hash=common_ledger_fields["lineage_hash"],
                 replay_data_hash=common_ledger_fields["replay_data_hash"],
-                side=str(row.get("side") or ""),
+                side=_first_text(row, "side", "order_side") or "",
                 filled_qty=abs(signed_qty),
                 avg_fill_price=price,
                 cost_amount=cost_amount,
