@@ -5698,6 +5698,15 @@ def _build_simple_lane_status_payload() -> dict[str, object]:
         "order_feed_telemetry_enabled": (
             settings.trading_simple_order_feed_telemetry_enabled
         ),
+        "order_feed_lifecycle_required": (
+            settings.trading_pipeline_mode == "simple"
+            and settings.trading_mode in {"paper", "live"}
+        ),
+        "order_feed_lifecycle_status": (
+            "enabled"
+            if settings.trading_simple_order_feed_telemetry_enabled
+            else "disabled"
+        ),
         "paper_route_probe_enabled": (
             settings.trading_simple_paper_route_probe_enabled
         ),

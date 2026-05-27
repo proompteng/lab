@@ -25,6 +25,8 @@ from app.trading.completion import (
     TRACE_STATUS_SATISFIED,
     _median_decimal,
     _p10_decimal,
+    _runtime_ledger_bucket_matches_window,
+    _runtime_ledger_bucket_refs_for_windows,
     _runtime_ledger_daily_summary,
     _runtime_ledger_trading_day_key,
     build_completion_trace,
@@ -715,6 +717,95 @@ class TestCompletionTrace(TestCase):
             summary['runtime_ledger_closed_trade_count_by_day'],
             {'2026-03-06': 2, '2026-03-09': 0},
         )
+
+    def test_runtime_ledger_bucket_match_requires_full_event_time_containment(
+        self,
+    ) -> None:
+        window = StrategyHypothesisMetricWindow(
+            run_id='strict-window',
+            candidate_id='cand-1',
+            hypothesis_id='legacy_macd_rsi',
+            observed_stage='live',
+            window_started_at=datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+            window_ended_at=datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+        )
+
+        overlapping = _runtime_ledger_bucket(
+            run_id='strict-window',
+            bucket_started_at=datetime(2026, 3, 6, 14, 45, tzinfo=timezone.utc),
+            bucket_ended_at=datetime(2026, 3, 6, 15, 15, tzinfo=timezone.utc),
+        )
+        containing = _runtime_ledger_bucket(
+            run_id='strict-window',
+            bucket_started_at=datetime(2026, 3, 6, 14, 0, tzinfo=timezone.utc),
+            bucket_ended_at=datetime(2026, 3, 6, 15, 30, tzinfo=timezone.utc),
+        )
+        missing_event_time = _runtime_ledger_bucket(
+            run_id='strict-window',
+            bucket_started_at=datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+            bucket_ended_at=datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+        )
+        missing_event_time.bucket_started_at = None
+
+        self.assertFalse(_runtime_ledger_bucket_matches_window(overlapping, window))
+        self.assertTrue(_runtime_ledger_bucket_matches_window(containing, window))
+        self.assertFalse(_runtime_ledger_bucket_matches_window(missing_event_time, window))
+
+    def test_runtime_ledger_window_refs_prefer_exact_boundaries_over_broad_buckets(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc)
+        with self.session_local() as session:
+            window = StrategyHypothesisMetricWindow(
+                run_id='exact-boundary-run',
+                candidate_id='cand-1',
+                hypothesis_id='legacy_macd_rsi',
+                observed_stage='live',
+                window_started_at=window_start,
+                window_ended_at=window_end,
+                market_session_count=1,
+                decision_count=20,
+                trade_count=12,
+                order_count=12,
+                evidence_provenance='live_runtime_observed',
+                evidence_maturity='empirically_validated',
+                decision_alignment_ratio='0.98',
+                avg_abs_slippage_bps='4.5',
+                slippage_budget_bps='8.0',
+                post_cost_expectancy_bps='1.4',
+                continuity_ok=True,
+                drift_ok=True,
+                dependency_quorum_decision='allow',
+                capital_stage='0.50x live',
+                payload_json={},
+            )
+            broad = _runtime_ledger_bucket(
+                run_id='exact-boundary-run',
+                bucket_started_at=window_start - timedelta(minutes=30),
+                bucket_ended_at=window_end + timedelta(minutes=30),
+            )
+            exact = _runtime_ledger_bucket(
+                run_id='exact-boundary-run',
+                bucket_started_at=window_start,
+                bucket_ended_at=window_end,
+            )
+            partial = _runtime_ledger_bucket(
+                run_id='exact-boundary-run',
+                bucket_started_at=window_start + timedelta(minutes=1),
+                bucket_ended_at=window_end + timedelta(minutes=1),
+            )
+            session.add_all([window, broad, exact, partial])
+            session.commit()
+
+            backed_windows, matched_buckets, unbacked_window_refs = _runtime_ledger_bucket_refs_for_windows(
+                session,
+                [window],
+            )
+
+        self.assertEqual(backed_windows, [window])
+        self.assertEqual(matched_buckets, [exact])
+        self.assertEqual(unbacked_window_refs, [])
 
     def test_doc29_live_scale_blocks_non_runtime_ledger_window_pnl(self) -> None:
         trace = build_completion_trace(

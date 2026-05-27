@@ -9397,7 +9397,8 @@ class TestStartHistoricalSimulation(TestCase):
         ignore_jq = runtime_ignore_differences[0]['jqPathExpressions'][0]
         self.assertIn('DB_DSN', ignore_jq)
         self.assertIn('TRADING_ORDER_FEED_AUTO_OFFSET_RESET', ignore_jq)
-        self.assertIn('TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED', ignore_jq)
+        self.assertNotIn('TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED', ignore_jq)
+        self.assertNotIn('TRADING_ORDER_FEED_ASSIGNMENT_MODE', ignore_jq)
         self.assertIn('TRADING_SIMULATION_ORDER_UPDATES_TOPIC', ignore_jq)
         self.assertNotIn('TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS', ignore_jq)
         with (
@@ -9483,6 +9484,8 @@ class TestStartHistoricalSimulation(TestCase):
             ignored_names,
             set(start_historical_simulation.SIMULATION_TORGHUT_RUNTIME_ENV_IGNORE_KEYS),
         )
+        self.assertNotIn('TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED', ignored_names)
+        self.assertNotIn('TRADING_ORDER_FEED_ASSIGNMENT_MODE', ignored_names)
         self.assertNotIn(
             'TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS',
             sim_rule['jqPathExpressions'][0],

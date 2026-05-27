@@ -2278,6 +2278,7 @@ class TestTradingPipeline(TestCase):
         config.settings.trading_mode = "paper"
         config.settings.trading_live_enabled = False
         config.settings.trading_pipeline_mode = "simple"
+        config.settings.trading_simple_order_feed_telemetry_enabled = True
         config.settings.trading_market_context_url = "http://market-context.test/api"
         config.settings.trading_market_context_timeout_seconds = 1
         config.settings.trading_market_context_max_staleness_seconds = 300
@@ -4258,6 +4259,8 @@ class TestTradingPipeline(TestCase):
         self.assertTrue(simple_lane_status["paper_route_probe_enabled"])
         self.assertEqual(simple_lane_status["paper_route_probe_max_notional"], 25.0)
         self.assertTrue(simple_lane_status["order_feed_telemetry_enabled"])
+        self.assertTrue(simple_lane_status["order_feed_lifecycle_required"])
+        self.assertEqual(simple_lane_status["order_feed_lifecycle_status"], "enabled")
 
     def test_simple_pipeline_allows_bounded_paper_route_probe_for_tca_repair(
         self,

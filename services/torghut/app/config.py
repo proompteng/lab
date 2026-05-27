@@ -1397,7 +1397,10 @@ class Settings(BaseSettings):
     trading_simple_order_feed_telemetry_enabled: bool = Field(
         default=False,
         alias="TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED",
-        description="In simple mode, keep Kafka order-feed ingestion only as optional telemetry.",
+        description=(
+            "In simple mode, enable Kafka order-feed ingestion for runtime lifecycle "
+            "evidence and proof-floor authority."
+        ),
     )
     trading_simple_paper_route_probe_enabled: bool = Field(
         default=False,
