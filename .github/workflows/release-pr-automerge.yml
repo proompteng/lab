@@ -64,6 +64,7 @@ jobs:
             "argocd/applications/synthesis/kustomization.yaml"
             "argocd/applications/bumba/kustomization.yaml"
             "argocd/applications/khoshut/kustomization.yaml"
+            "argocd/applications/analysis/kustomization.yaml"
             "argocd/applications/bilig/kustomization.yaml"
           )
 
