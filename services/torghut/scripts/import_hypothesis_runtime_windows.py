@@ -690,9 +690,12 @@ def _runtime_ledger_tca_materialization_metadata(
             source_materializations.append(source_materialization)
         if (
             authority_reason == "source_execution_runtime_ledger_materialized"
+            or authority_reason == "event_sourced_runtime_ledger_profit_proof"
             or pnl_derivation
             == "source_execution_lifecycle_materialized_runtime_ledger"
+            or pnl_derivation == "execution_order_events_runtime_ledger"
             or source_materialization == "source_execution_lifecycle"
+            or source_materialization == "execution_order_events"
         ):
             source_execution_materialized_count += 1
         if authority_reason == "execution_reconstruction_not_runtime_ledger_proof":
@@ -816,13 +819,122 @@ def _runtime_execution_cost_basis(
     return None
 
 
+def _runtime_lifecycle_ledger_row(
+    row: Mapping[str, object],
+    *,
+    event_type: str,
+) -> dict[str, object] | None:
+    event_time = _runtime_ledger_row_time(
+        {str(key): value for key, value in row.items()}
+    )
+    if event_time is None:
+        return None
+    symbol = _first_text(row, "symbol", "order_symbol")
+    return {
+        "executed_at": event_time,
+        "event_type": event_type,
+        "account_label": _first_text(row, "account_label", "alpaca_account_label"),
+        "strategy_id": _first_text(row, "strategy_id", "strategy_name"),
+        "symbol": symbol.strip().upper() if symbol is not None else None,
+        "decision_id": _first_text(
+            row,
+            "decision_id",
+            "trade_decision_id",
+            "decision_hash",
+        ),
+        "order_id": _first_text(
+            row,
+            "order_id",
+            "alpaca_order_id",
+            "client_order_id",
+            "execution_correlation_id",
+        ),
+        "execution_policy_hash": _first_text(
+            row,
+            "execution_policy_hash",
+            "execution_policy_sha256",
+            "policy_hash",
+            "execution_idempotency_key",
+        )
+        or _first_payload_digest(
+            row,
+            "execution_policy",
+            "execution_policy_context",
+            "execution_advisor",
+            "_execution_advice_provenance",
+            "decision_json",
+            "raw_event",
+        ),
+        "cost_model_hash": _first_text(
+            row,
+            "cost_model_hash",
+            "fee_model_hash",
+            "cost_model_sha256",
+        )
+        or _first_payload_digest(
+            row,
+            "cost_model",
+            "cost_model_config",
+            "transaction_cost_model",
+            "fee_model",
+            "fees_model",
+            "model",
+            "decision_json",
+            "raw_event",
+        ),
+        "lineage_hash": _first_text(
+            row,
+            "lineage_hash",
+            "candidate_lineage_hash",
+            "replay_lineage_hash",
+            "candidate_evaluation_key",
+            "event_fingerprint",
+        )
+        or _first_lineage_digest(row),
+        "replay_data_hash": _first_text(
+            row,
+            "replay_data_hash",
+            "replay_tape_content_sha256",
+            "dataset_snapshot_hash",
+            "source_query_digest",
+            "source_offset",
+        ),
+    }
+
+
 def _build_realized_strategy_pnl_rows(
     execution_rows: list[dict[str, object]],
     *,
+    decision_lifecycle_rows: list[dict[str, object]] | None = None,
+    order_lifecycle_rows: list[dict[str, object]] | None = None,
     allow_authoritative_runtime_ledger_materialization: bool = False,
 ) -> list[dict[str, object]]:
     ledger_rows: list[RuntimeLedgerFill | dict[str, object]] = []
     event_times: list[datetime] = []
+    event_sourced_lifecycle_rows = 0
+    for row in decision_lifecycle_rows or []:
+        lifecycle_row = _runtime_lifecycle_ledger_row(row, event_type="decision")
+        if lifecycle_row is None:
+            continue
+        ledger_rows.append(lifecycle_row)
+        event_sourced_lifecycle_rows += 1
+        event_time = lifecycle_row.get("executed_at")
+        if isinstance(event_time, datetime):
+            event_times.append(event_time)
+    for row in order_lifecycle_rows or []:
+        event_type = _runtime_ledger_event_type(
+            {str(key): value for key, value in row.items()}
+        )
+        if event_type in _RUNTIME_LEDGER_FILL_EVENTS:
+            continue
+        lifecycle_row = _runtime_lifecycle_ledger_row(row, event_type=event_type)
+        if lifecycle_row is None:
+            continue
+        ledger_rows.append(lifecycle_row)
+        event_sourced_lifecycle_rows += 1
+        event_time = lifecycle_row.get("executed_at")
+        if isinstance(event_time, datetime):
+            event_times.append(event_time)
     for row in execution_rows:
         computed_at = row.get("computed_at")
         execution_created_at = row.get("execution_created_at")
@@ -915,12 +1027,6 @@ def _build_realized_strategy_pnl_rows(
                 "source_query_digest",
             ),
         }
-        if decision_id is not None:
-            ledger_rows.append({**common_ledger_fields, "event_type": "decision"})
-        if order_id is not None:
-            ledger_rows.append(
-                {**common_ledger_fields, "event_type": "order_submitted"}
-            )
         if price is None or price <= 0 or signed_qty == 0:
             continue
         filled_qty = abs(signed_qty)
@@ -975,28 +1081,23 @@ def _build_realized_strategy_pnl_rows(
             computed_at=unique_times[-1],
         )
         bucket_payload = row.get("runtime_ledger_bucket")
-        source_execution_materialized = (
+        event_sourced_runtime_ledger = (
             allow_authoritative_runtime_ledger_materialization
+            and event_sourced_lifecycle_rows > 0
             and isinstance(bucket_payload, Mapping)
             and _runtime_ledger_bucket_profit_proof_present(bucket_payload)
         )
-        if source_execution_materialized:
+        if event_sourced_runtime_ledger:
             row["authoritative"] = True
-            row["authority_reason"] = "source_execution_runtime_ledger_materialized"
-            row["pnl_derivation"] = (
-                "source_execution_lifecycle_materialized_runtime_ledger"
-            )
+            row["authority_reason"] = "event_sourced_runtime_ledger_profit_proof"
+            row["pnl_derivation"] = "execution_order_events_runtime_ledger"
             if isinstance(bucket_payload, Mapping):
                 row["runtime_ledger_bucket"] = {
                     **dict(bucket_payload),
                     "authoritative": True,
-                    "authority_reason": (
-                        "source_execution_runtime_ledger_materialized"
-                    ),
-                    "pnl_derivation": (
-                        "source_execution_lifecycle_materialized_runtime_ledger"
-                    ),
-                    "source_materialization": "source_execution_lifecycle",
+                    "authority_reason": "event_sourced_runtime_ledger_profit_proof",
+                    "pnl_derivation": "execution_order_events_runtime_ledger",
+                    "source_materialization": "execution_order_events",
                 }
         else:
             row["post_cost_expectancy_basis"] = POST_COST_BASIS_EXECUTION_RECONSTRUCTION
@@ -1654,6 +1755,8 @@ def _query_timestamps(
     executions: list[datetime] = []
     tca_rows: list[dict[str, object]] = []
     execution_rows: list[dict[str, object]] = []
+    decision_lifecycle_rows: list[dict[str, object]] = []
+    order_lifecycle_rows: list[dict[str, object]] = []
     symbol_filter = _metadata_symbol_list(symbols or ())
     decision_symbol_clause = (
         "\n                  and upper(d.symbol) = any(%s)" if symbol_filter else ""
@@ -1664,17 +1767,32 @@ def _query_timestamps(
         if symbol_filter
         else ""
     )
+    order_event_symbol_clause = (
+        "\n                  and upper(d.symbol) = any(%s)"
+        "\n                  and upper(coalesce(oe.symbol, e.symbol, d.symbol)) = any(%s)"
+        if symbol_filter
+        else ""
+    )
     decision_symbol_params: tuple[object, ...] = (
         (symbol_filter,) if symbol_filter else ()
     )
     execution_symbol_params: tuple[object, ...] = (
         (symbol_filter, symbol_filter) if symbol_filter else ()
     )
+    order_event_symbol_params: tuple[object, ...] = (
+        (symbol_filter, symbol_filter) if symbol_filter else ()
+    )
     with psycopg.connect(dsn) as conn:
         with conn.cursor() as cur:
             cur.execute(
                 f"""
-                select d.created_at
+                select
+                    d.created_at,
+                    d.symbol,
+                    d.alpaca_account_label,
+                    s.name,
+                    d.decision_hash,
+                    d.decision_json
                 from trade_decisions d
                 join strategies s on s.id = d.strategy_id
                 where s.name = any(%s)
@@ -1694,7 +1812,24 @@ def _query_timestamps(
                     *decision_symbol_params,
                 ),
             )
-            decisions = [row[0] for row in cur.fetchall() if row[0] is not None]
+            decision_lifecycle_rows = [
+                {
+                    "computed_at": row[0],
+                    "event_type": "decision",
+                    "symbol": row[1],
+                    "account_label": row[2],
+                    "strategy_id": row[3],
+                    "decision_hash": row[4],
+                    "decision_json": row[5],
+                }
+                for row in cur.fetchall()
+                if row[0] is not None
+            ]
+            decisions = []
+            for row in decision_lifecycle_rows:
+                computed_at = row.get("computed_at")
+                if isinstance(computed_at, datetime):
+                    decisions.append(computed_at)
             cur.execute(
                 f"""
                 select
@@ -1763,6 +1898,65 @@ def _query_timestamps(
             cur.execute(
                 f"""
                 select
+                    coalesce(oe.event_ts, oe.created_at),
+                    oe.symbol,
+                    oe.alpaca_account_label,
+                    s.name,
+                    d.decision_hash,
+                    d.decision_json,
+                    oe.alpaca_order_id,
+                    oe.client_order_id,
+                    oe.event_type,
+                    oe.status,
+                    oe.event_fingerprint,
+                    oe.source_topic,
+                    oe.source_partition,
+                    oe.source_offset,
+                    oe.raw_event
+                from execution_order_events oe
+                left join executions e on e.id = oe.execution_id
+                join trade_decisions d
+                  on d.id = coalesce(oe.trade_decision_id, e.trade_decision_id)
+                join strategies s on s.id = d.strategy_id
+                where s.name = any(%s)
+                  and d.alpaca_account_label = %s
+                  and d.created_at >= %s
+                  and d.created_at < %s
+                  {order_event_symbol_clause}
+                order by coalesce(oe.event_ts, oe.created_at), oe.created_at
+                """,
+                (
+                    strategy_names,
+                    account_label,
+                    window_start,
+                    window_end,
+                    *order_event_symbol_params,
+                ),
+            )
+            order_lifecycle_rows = [
+                {
+                    "event_ts": row[0],
+                    "symbol": row[1],
+                    "account_label": row[2],
+                    "strategy_id": row[3],
+                    "decision_hash": row[4],
+                    "decision_json": row[5],
+                    "alpaca_order_id": row[6],
+                    "client_order_id": row[7],
+                    "event_type": row[8],
+                    "order_status": row[9],
+                    "event_fingerprint": row[10],
+                    "source_topic": row[11],
+                    "source_partition": row[12],
+                    "source_offset": row[13],
+                    "raw_event": row[14],
+                }
+                for row in cur.fetchall()
+                if row[0] is not None
+            ]
+            cur.execute(
+                f"""
+                select
                     d.created_at,
                     abs(coalesce(t.realized_shortfall_bps, t.slippage_bps)) as abs_slippage_bps,
                     (-coalesce(t.realized_shortfall_bps, t.slippage_bps)) as post_cost_expectancy_bps
@@ -1799,6 +1993,8 @@ def _query_timestamps(
     tca_rows.extend(
         _build_realized_strategy_pnl_rows(
             execution_rows,
+            decision_lifecycle_rows=decision_lifecycle_rows,
+            order_lifecycle_rows=order_lifecycle_rows,
             allow_authoritative_runtime_ledger_materialization=(
                 allow_authoritative_runtime_ledger_materialization
             ),

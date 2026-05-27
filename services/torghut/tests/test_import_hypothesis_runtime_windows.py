@@ -55,7 +55,16 @@ class _FakeCursor:
     def __init__(self) -> None:
         self.executed: list[tuple[str, tuple[object, ...]]] = []
         self._results = [
-            [(datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),)],
+            [
+                (
+                    datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                    "AAPL",
+                    "TORGHUT_SIM",
+                    "intraday_tsmom_v1@paper",
+                    "decision-sha",
+                    {},
+                )
+            ],
             [
                 (
                     datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
@@ -77,6 +86,28 @@ class _FakeCursor:
                     "alpaca-order-1",
                     "client-order-1",
                     "filled",
+                )
+            ],
+            [
+                (
+                    datetime(2026, 3, 6, 14, 35, 1, tzinfo=timezone.utc),
+                    "AAPL",
+                    "TORGHUT_SIM",
+                    "intraday_tsmom_v1@paper",
+                    "decision-sha",
+                    {},
+                    "alpaca-order-1",
+                    "client-order-1",
+                    "new",
+                    "new",
+                    "event-fingerprint-1",
+                    "alpaca-trade-updates",
+                    0,
+                    1,
+                    {
+                        "execution_policy": {"selected_order_type": "market"},
+                        "cost_model": {"source": "broker_reported"},
+                    },
                 )
             ],
             [
@@ -1036,17 +1067,26 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             "execution_reconstruction_not_runtime_ledger_proof",
         )
         self.assertEqual(rows[0]["realized_net_pnl"], Decimal("0.70"))
-        self.assertEqual(
-            rows[0]["post_cost_expectancy_bps"],
-            Decimal("34.82587064676616915422885572"),
-        )
+        self.assertIsNone(rows[0]["post_cost_expectancy_bps"])
         self.assertEqual(rows[0]["authoritative"], False)
         self.assertEqual(
             rows[0]["authority_reason"],
             "execution_reconstruction_not_runtime_ledger_proof",
         )
+        self.assertIn(
+            "runtime_decision_lifecycle_missing",
+            rows[0]["runtime_ledger_blockers"],
+        )
+        self.assertIn(
+            "submitted_order_lifecycle_missing",
+            rows[0]["runtime_ledger_blockers"],
+        )
+        self.assertIn(
+            "fill_order_submission_missing",
+            rows[0]["runtime_ledger_blockers"],
+        )
 
-    def test_build_realized_strategy_pnl_rows_can_materialize_source_runtime_ledger(
+    def test_build_realized_strategy_pnl_rows_cannot_materialize_source_lifecycle(
         self,
     ) -> None:
         rows = _build_realized_strategy_pnl_rows(
@@ -1085,20 +1125,133 @@ class TestImportHypothesisRuntimeWindows(TestCase):
 
         self.assertEqual(len(rows), 1)
         self.assertEqual(
+            rows[0]["post_cost_expectancy_basis"],
+            POST_COST_BASIS_EXECUTION_RECONSTRUCTION,
+        )
+        self.assertEqual(rows[0]["post_cost_promotion_eligible"], False)
+        self.assertEqual(rows[0]["authoritative"], False)
+        self.assertEqual(
+            rows[0]["authority_reason"],
+            "execution_reconstruction_not_runtime_ledger_proof",
+        )
+        bucket = rows[0]["runtime_ledger_bucket"]
+        self.assertIsInstance(bucket, dict)
+        assert isinstance(bucket, dict)
+        self.assertEqual(bucket["pnl_basis"], POST_COST_BASIS_EXECUTION_RECONSTRUCTION)
+        self.assertEqual(bucket["authoritative"], False)
+        self.assertNotIn("source_materialization", bucket)
+        self.assertIn("runtime_decision_lifecycle_missing", bucket["blockers"])
+        self.assertIn("submitted_order_lifecycle_missing", bucket["blockers"])
+        self.assertIn("fill_order_submission_missing", bucket["blockers"])
+        self.assertIn(
+            "execution_reconstruction_not_runtime_ledger_proof",
+            bucket["blockers"],
+        )
+        self.assertFalse(_runtime_ledger_bucket_profit_proof_present(bucket))
+
+    def test_build_realized_strategy_pnl_rows_authorizes_event_sourced_lifecycle(
+        self,
+    ) -> None:
+        rows = _build_realized_strategy_pnl_rows(
+            [
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                    "symbol": "AAPL",
+                    "side": "buy",
+                    "filled_qty": Decimal("1"),
+                    "avg_fill_price": Decimal("100"),
+                    "cost_amount": Decimal("0.20"),
+                    "cost_basis": "broker_reported_commission_and_fees",
+                    "decision_hash": "decision-buy",
+                    "alpaca_order_id": "order-buy",
+                    "execution_policy_hash": "policy-sha",
+                    "cost_model_hash": "cost-sha",
+                    "lineage_hash": "lineage-sha",
+                },
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
+                    "symbol": "AAPL",
+                    "side": "sell",
+                    "filled_qty": Decimal("1"),
+                    "avg_fill_price": Decimal("101"),
+                    "cost_amount": Decimal("0.10"),
+                    "cost_basis": "broker_reported_commission_and_fees",
+                    "decision_hash": "decision-sell",
+                    "alpaca_order_id": "order-sell",
+                    "execution_policy_hash": "policy-sha",
+                    "cost_model_hash": "cost-sha",
+                    "lineage_hash": "lineage-sha",
+                },
+            ],
+            decision_lifecycle_rows=[
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 34, tzinfo=timezone.utc),
+                    "event_type": "decision",
+                    "symbol": "AAPL",
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_id": "microbar-cross-sectional-pairs-v1",
+                    "decision_hash": "decision-buy",
+                    "execution_policy_hash": "policy-sha",
+                    "cost_model_hash": "cost-sha",
+                    "lineage_hash": "lineage-sha",
+                },
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 39, tzinfo=timezone.utc),
+                    "event_type": "decision",
+                    "symbol": "AAPL",
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_id": "microbar-cross-sectional-pairs-v1",
+                    "decision_hash": "decision-sell",
+                    "execution_policy_hash": "policy-sha",
+                    "cost_model_hash": "cost-sha",
+                    "lineage_hash": "lineage-sha",
+                },
+            ],
+            order_lifecycle_rows=[
+                {
+                    "event_ts": datetime(2026, 3, 6, 14, 34, 1, tzinfo=timezone.utc),
+                    "event_type": "new",
+                    "symbol": "AAPL",
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_id": "microbar-cross-sectional-pairs-v1",
+                    "decision_hash": "decision-buy",
+                    "alpaca_order_id": "order-buy",
+                    "execution_policy_hash": "policy-sha",
+                    "cost_model_hash": "cost-sha",
+                    "lineage_hash": "lineage-sha",
+                },
+                {
+                    "event_ts": datetime(2026, 3, 6, 14, 39, 1, tzinfo=timezone.utc),
+                    "event_type": "new",
+                    "symbol": "AAPL",
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_id": "microbar-cross-sectional-pairs-v1",
+                    "decision_hash": "decision-sell",
+                    "alpaca_order_id": "order-sell",
+                    "execution_policy_hash": "policy-sha",
+                    "cost_model_hash": "cost-sha",
+                    "lineage_hash": "lineage-sha",
+                },
+            ],
+            allow_authoritative_runtime_ledger_materialization=True,
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(
             rows[0]["post_cost_expectancy_basis"], POST_COST_BASIS_RUNTIME_LEDGER
         )
         self.assertEqual(rows[0]["post_cost_promotion_eligible"], True)
         self.assertEqual(rows[0]["authoritative"], True)
         self.assertEqual(
             rows[0]["authority_reason"],
-            "source_execution_runtime_ledger_materialized",
+            "event_sourced_runtime_ledger_profit_proof",
         )
         bucket = rows[0]["runtime_ledger_bucket"]
         self.assertIsInstance(bucket, dict)
         assert isinstance(bucket, dict)
         self.assertEqual(bucket["blockers"], [])
         self.assertEqual(bucket["pnl_basis"], POST_COST_BASIS_RUNTIME_LEDGER)
-        self.assertEqual(bucket["source_materialization"], "source_execution_lifecycle")
+        self.assertEqual(bucket["source_materialization"], "execution_order_events")
         self.assertTrue(_runtime_ledger_bucket_profit_proof_present(bucket))
 
     def test_runtime_ledger_tca_materialization_metadata_separates_authority(
@@ -1215,9 +1368,12 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         bucket = rows[0]["runtime_ledger_bucket"]
         self.assertIsInstance(bucket, dict)
         assert isinstance(bucket, dict)
-        self.assertEqual(
+        self.assertIn("runtime_decision_lifecycle_missing", bucket["blockers"])
+        self.assertIn("submitted_order_lifecycle_missing", bucket["blockers"])
+        self.assertIn("fill_order_submission_missing", bucket["blockers"])
+        self.assertIn(
+            "execution_reconstruction_not_runtime_ledger_proof",
             bucket["blockers"],
-            ["execution_reconstruction_not_runtime_ledger_proof"],
         )
         self.assertEqual(bucket["pnl_basis"], POST_COST_BASIS_EXECUTION_RECONSTRUCTION)
         self.assertEqual(bucket["authoritative"], False)
@@ -1281,10 +1437,10 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         )
 
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["authoritative"], True)
+        self.assertEqual(rows[0]["authoritative"], False)
         self.assertEqual(
             rows[0]["authority_reason"],
-            "source_execution_runtime_ledger_materialized",
+            "execution_reconstruction_not_runtime_ledger_proof",
         )
         self.assertEqual(
             rows[0]["computed_at"], datetime(2026, 3, 6, 15, 55, tzinfo=timezone.utc)
@@ -1298,8 +1454,14 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertNotIn("runtime_fills_missing", bucket["blockers"])
         self.assertNotIn("filled_notional_missing", bucket["blockers"])
         self.assertNotIn("explicit_cost_missing", bucket["blockers"])
-        self.assertEqual(bucket["blockers"], [])
-        self.assertTrue(_runtime_ledger_bucket_profit_proof_present(bucket))
+        self.assertIn("runtime_decision_lifecycle_missing", bucket["blockers"])
+        self.assertIn("submitted_order_lifecycle_missing", bucket["blockers"])
+        self.assertIn("fill_order_submission_missing", bucket["blockers"])
+        self.assertIn(
+            "execution_reconstruction_not_runtime_ledger_proof",
+            bucket["blockers"],
+        )
+        self.assertFalse(_runtime_ledger_bucket_profit_proof_present(bucket))
 
     def test_build_realized_strategy_pnl_rows_materializes_audit_only_runtime_metadata(
         self,
@@ -1365,16 +1527,22 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         )
 
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["authoritative"], True)
+        self.assertEqual(rows[0]["authoritative"], False)
         self.assertEqual(
             rows[0]["authority_reason"],
-            "source_execution_runtime_ledger_materialized",
+            "execution_reconstruction_not_runtime_ledger_proof",
         )
         bucket = rows[0]["runtime_ledger_bucket"]
         self.assertIsInstance(bucket, dict)
         assert isinstance(bucket, dict)
-        self.assertEqual(bucket["blockers"], [])
-        self.assertTrue(_runtime_ledger_bucket_profit_proof_present(bucket))
+        self.assertIn("runtime_decision_lifecycle_missing", bucket["blockers"])
+        self.assertIn("submitted_order_lifecycle_missing", bucket["blockers"])
+        self.assertIn("fill_order_submission_missing", bucket["blockers"])
+        self.assertIn(
+            "execution_reconstruction_not_runtime_ledger_proof",
+            bucket["blockers"],
+        )
+        self.assertFalse(_runtime_ledger_bucket_profit_proof_present(bucket))
 
     def test_build_realized_strategy_pnl_rows_uses_decision_impact_cost_model(
         self,
@@ -1419,18 +1587,24 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         )
 
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["authoritative"], True)
+        self.assertEqual(rows[0]["authoritative"], False)
         bucket = rows[0]["runtime_ledger_bucket"]
         self.assertIsInstance(bucket, dict)
         assert isinstance(bucket, dict)
-        self.assertEqual(bucket["blockers"], [])
+        self.assertIn("runtime_decision_lifecycle_missing", bucket["blockers"])
+        self.assertIn("submitted_order_lifecycle_missing", bucket["blockers"])
+        self.assertIn("fill_order_submission_missing", bucket["blockers"])
+        self.assertIn(
+            "execution_reconstruction_not_runtime_ledger_proof",
+            bucket["blockers"],
+        )
         self.assertEqual(
             bucket["cost_basis_counts"],
             {"decision_impact_assumptions_total_cost_bps": 2},
         )
         self.assertEqual(bucket["cost_amount"], "0.201")
         self.assertEqual(rows[0]["realized_net_pnl"], Decimal("0.799"))
-        self.assertTrue(_runtime_ledger_bucket_profit_proof_present(bucket))
+        self.assertFalse(_runtime_ledger_bucket_profit_proof_present(bucket))
 
     def test_runtime_ledger_tca_row_separates_explicit_cost_from_slippage(
         self,
@@ -1554,7 +1728,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(tca_rows[0]["post_cost_promotion_eligible"], False)
         self.assertEqual(tca_rows[1]["post_cost_promotion_eligible"], False)
         self.assertIn("unclosed_position", tca_rows[1]["runtime_ledger_blockers"])
-        self.assertEqual(len(cursor.executed), 3)
+        self.assertEqual(len(cursor.executed), 4)
         decision_query, decision_params = cursor.executed[0]
         self.assertIn("s.name = any(%s)", decision_query)
         self.assertIn("d.status = any(%s)", decision_query)
@@ -1566,12 +1740,16 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             decision_params[2],
             list(EXECUTION_ELIGIBLE_DECISION_STATUSES),
         )
-        tca_query, _ = cursor.executed[2]
+        order_event_query, _ = cursor.executed[2]
+        tca_query, _ = cursor.executed[3]
         execution_query, _ = cursor.executed[1]
         self.assertIn("left join execution_tca_metrics", execution_query)
         self.assertIn("d.created_at >= %s", execution_query)
         self.assertIn("d.created_at < %s", execution_query)
         self.assertNotIn("e.created_at >= %s", execution_query)
+        self.assertIn("from execution_order_events oe", order_event_query)
+        self.assertIn("d.created_at >= %s", order_event_query)
+        self.assertIn("d.created_at < %s", order_event_query)
         self.assertIn("select\n                    d.created_at", tca_query)
         self.assertIn("d.created_at >= %s", tca_query)
         self.assertIn("d.created_at < %s", tca_query)
@@ -1599,15 +1777,22 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 symbols=[" aapl ", "AAPL"],
             )
 
-        self.assertEqual(len(cursor.executed), 3)
+        self.assertEqual(len(cursor.executed), 4)
         decision_query, decision_params = cursor.executed[0]
         execution_query, execution_params = cursor.executed[1]
-        tca_query, tca_params = cursor.executed[2]
+        order_event_query, order_event_params = cursor.executed[2]
+        tca_query, tca_params = cursor.executed[3]
         self.assertIn("upper(d.symbol) = any(%s)", decision_query)
         self.assertEqual(decision_params[-1], ["AAPL"])
         self.assertIn("upper(d.symbol) = any(%s)", execution_query)
         self.assertIn("upper(e.symbol) = any(%s)", execution_query)
         self.assertEqual(execution_params[-2:], (["AAPL"], ["AAPL"]))
+        self.assertIn("upper(d.symbol) = any(%s)", order_event_query)
+        self.assertIn(
+            "upper(coalesce(oe.symbol, e.symbol, d.symbol)) = any(%s)",
+            order_event_query,
+        )
+        self.assertEqual(order_event_params[-2:], (["AAPL"], ["AAPL"]))
         self.assertIn("upper(d.symbol) = any(%s)", tca_query)
         self.assertIn("upper(e.symbol) = any(%s)", tca_query)
         self.assertEqual(tca_params[-2:], (["AAPL"], ["AAPL"]))
