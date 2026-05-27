@@ -632,10 +632,16 @@ describe('synthesis autonomous trader provider', () => {
     expect(taskPrompt).toContain('Do not use market_open_actions_reconciled as a terminal reason')
     expect(taskPrompt).toContain('A single Alpaca MCP timeout is not a hard stop')
     expect(taskPrompt).toContain('logging each retry as mcp_retry')
+    expect(taskPrompt).toContain('adopt them as current state, record external_fill_detected')
+    expect(taskPrompt).toContain('daytrading_buying_power is zero')
+    expect(taskPrompt).toContain('Record order_rejected_no_order_created')
     expect(prompt).toContain('do not treat "trading actions reconciled" as terminal')
     expect(prompt).toContain('Use an explicit wait/heartbeat between cycles')
     expect(prompt).toContain('Do not treat a single Alpaca MCP timeout as a terminal trading failure')
     expect(prompt).toContain('resume the same loop cycle when state is reconciled')
+    expect(prompt).toContain('adopt them as current state, record `external_fill_detected`')
+    expect(prompt).toContain('daytrading buying power is zero')
+    expect(prompt).toContain('Record `order_rejected_no_order_created`')
   })
 
   it('bridges Codex framed MCP stdio to Alpaca newline stdio', () => {
