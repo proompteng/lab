@@ -8,7 +8,7 @@ import tempfile
 from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import Mock, patch
-from typing import Any, Callable, Mapping, cast
+from typing import Any, Callable, Mapping, Sequence, cast
 from uuid import uuid4
 
 from sqlalchemy import create_engine, select
@@ -836,6 +836,9 @@ class TestTradingPipeline(TestCase):
         entry_ts: datetime = datetime(2026, 3, 26, 14, 0, tzinfo=timezone.utc),
         exit_minute_after_open: str = "120",
         include_decision_exit_minute: bool = True,
+        source_candidate_ids: Sequence[str] | None = None,
+        source_hypothesis_ids: Sequence[str] | None = None,
+        source_strategy_names: Sequence[str] | None = None,
     ) -> None:
         with self.session_local() as session:
             strategy = Strategy(
@@ -869,6 +872,31 @@ class TestTradingPipeline(TestCase):
                     "symbol": symbol,
                 },
             }
+            paper_route_probe = cast(dict[str, Any], params["paper_route_probe"])
+            if source_candidate_ids:
+                paper_route_probe["source_candidate_ids"] = list(source_candidate_ids)
+            if source_hypothesis_ids:
+                paper_route_probe["source_hypothesis_ids"] = list(source_hypothesis_ids)
+            if source_strategy_names:
+                paper_route_probe["source_strategy_names"] = list(source_strategy_names)
+            if source_candidate_ids or source_hypothesis_ids or source_strategy_names:
+                paper_route_probe["paper_route_probe_lineage_targets"] = [
+                    {
+                        key: value
+                        for key, value in {
+                            "candidate_id": (
+                                list(source_candidate_ids or []) or [None]
+                            )[0],
+                            "hypothesis_id": (
+                                list(source_hypothesis_ids or []) or [None]
+                            )[0],
+                            "strategy_name": (
+                                list(source_strategy_names or []) or [None]
+                            )[0],
+                        }.items()
+                        if value is not None
+                    }
+                ]
             if include_decision_exit_minute:
                 params["exit_minute_after_open"] = exit_minute_after_open
             decision = StrategyDecision(
@@ -3673,6 +3701,62 @@ class TestTradingPipeline(TestCase):
                 exit_metadata.get("exit_due_at"),
                 "2026-03-26T15:30:00+00:00",
             )
+
+    def test_simple_pipeline_carries_paper_route_lineage_to_exit_decision(
+        self,
+    ) -> None:
+        self._seed_filled_paper_route_probe_entry(
+            source_candidate_ids=("candidate-pairs-a",),
+            source_hypothesis_ids=("H-PAIRS-01",),
+            source_strategy_names=("microbar-cross-sectional-pairs-v1",),
+        )
+        alpaca_client = PositionedAlpacaClient(
+            [{"symbol": "AAPL", "qty": "2", "side": "long"}]
+        )
+
+        self._run_simple_paper_pipeline(
+            alpaca_client=alpaca_client,
+            now=datetime(2026, 3, 26, 15, 31, tzinfo=timezone.utc),
+        )
+
+        with self.session_local() as session:
+            decisions = (
+                session.execute(
+                    select(TradeDecision).order_by(TradeDecision.created_at.asc())
+                )
+                .scalars()
+                .all()
+            )
+            self.assertEqual(len(decisions), 2)
+            exit_payload = cast(dict[str, Any], decisions[-1].decision_json)
+            params = cast(dict[str, Any], exit_payload.get("params"))
+            exit_metadata = cast(
+                dict[str, Any],
+                params.get("paper_route_probe_exit"),
+            )
+
+        self.assertEqual(
+            exit_metadata.get("source_candidate_ids"),
+            ["candidate-pairs-a"],
+        )
+        self.assertEqual(
+            exit_metadata.get("source_hypothesis_ids"),
+            ["H-PAIRS-01"],
+        )
+        self.assertEqual(
+            exit_metadata.get("source_strategy_names"),
+            ["microbar-cross-sectional-pairs-v1"],
+        )
+        self.assertEqual(
+            exit_metadata.get("paper_route_probe_lineage_targets"),
+            [
+                {
+                    "candidate_id": "candidate-pairs-a",
+                    "hypothesis_id": "H-PAIRS-01",
+                    "strategy_name": "microbar-cross-sectional-pairs-v1",
+                }
+            ],
+        )
 
     def test_simple_pipeline_closes_late_filled_probe_from_strategy_exit_metadata(
         self,

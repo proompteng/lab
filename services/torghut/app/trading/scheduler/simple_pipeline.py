@@ -147,6 +147,153 @@ def _target_plan_lineage(
     }
 
 
+def _lineage_text_values(value: object) -> list[str]:
+    raw_items: Sequence[object]
+    if isinstance(value, str):
+        raw_items = value.split(",")
+    elif isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
+        raw_items = cast(Sequence[object], value)
+    else:
+        raw_items = (value,)
+
+    values: list[str] = []
+    for raw_item in raw_items:
+        text = _safe_text(raw_item)
+        if text and text not in values:
+            values.append(text)
+    return values
+
+
+def _merge_unique_texts(target: list[str], values: Sequence[str]) -> None:
+    for value in values:
+        if value not in target:
+            target.append(value)
+
+
+def _paper_route_probe_lineage_from_params(params: Mapping[str, Any]) -> dict[str, Any]:
+    payloads: list[Mapping[str, Any]] = [params]
+    for key in ("paper_route_probe", "paper_route_probe_exit"):
+        value = params.get(key)
+        if isinstance(value, Mapping):
+            payloads.append(cast(Mapping[str, Any], value))
+
+    candidate_ids: list[str] = []
+    hypothesis_ids: list[str] = []
+    strategy_names: list[str] = []
+    lineage_targets: list[dict[str, str]] = []
+    lineage_target_keys: set[tuple[str | None, str | None, str | None]] = set()
+    for payload in payloads:
+        _merge_unique_texts(
+            candidate_ids, _lineage_text_values(payload.get("source_candidate_id"))
+        )
+        _merge_unique_texts(
+            candidate_ids, _lineage_text_values(payload.get("source_candidate_ids"))
+        )
+        _merge_unique_texts(
+            hypothesis_ids, _lineage_text_values(payload.get("source_hypothesis_id"))
+        )
+        _merge_unique_texts(
+            hypothesis_ids, _lineage_text_values(payload.get("source_hypothesis_ids"))
+        )
+        _merge_unique_texts(
+            strategy_names, _lineage_text_values(payload.get("source_strategy_name"))
+        )
+        _merge_unique_texts(
+            strategy_names, _lineage_text_values(payload.get("source_strategy_names"))
+        )
+
+        raw_targets = payload.get("paper_route_probe_lineage_targets")
+        if isinstance(raw_targets, Sequence) and not isinstance(
+            raw_targets, (str, bytes, bytearray)
+        ):
+            for raw_target in cast(Sequence[object], raw_targets):
+                if not isinstance(raw_target, Mapping):
+                    continue
+                lineage_target = _lineage_target_from_mapping(
+                    cast(Mapping[str, object], raw_target)
+                )
+                if not lineage_target:
+                    continue
+                lineage_key = _lineage_target_key(lineage_target)
+                if lineage_key not in lineage_target_keys:
+                    lineage_target_keys.add(lineage_key)
+                    lineage_targets.append(lineage_target)
+
+    lineage: dict[str, Any] = {}
+    if candidate_ids:
+        lineage["source_candidate_ids"] = candidate_ids
+    if hypothesis_ids:
+        lineage["source_hypothesis_ids"] = hypothesis_ids
+    if strategy_names:
+        lineage["source_strategy_names"] = strategy_names
+    if lineage_targets:
+        lineage["paper_route_probe_lineage_targets"] = lineage_targets
+    return lineage
+
+
+def _lineage_target_from_mapping(raw_target: Mapping[str, object]) -> dict[str, str]:
+    return {
+        key: value
+        for key, value in {
+            "candidate_id": _safe_text(raw_target.get("candidate_id")),
+            "hypothesis_id": _safe_text(raw_target.get("hypothesis_id")),
+            "strategy_name": _safe_text(raw_target.get("strategy_name")),
+        }.items()
+        if value
+    }
+
+
+def _lineage_target_key(
+    lineage_target: Mapping[str, str],
+) -> tuple[str | None, str | None, str | None]:
+    return (
+        lineage_target.get("candidate_id"),
+        lineage_target.get("hypothesis_id"),
+        lineage_target.get("strategy_name"),
+    )
+
+
+def _merge_paper_route_probe_lineage(
+    target: dict[str, Any],
+    lineage: Mapping[str, Any],
+) -> None:
+    for key in (
+        "source_candidate_ids",
+        "source_hypothesis_ids",
+        "source_strategy_names",
+    ):
+        values = _lineage_text_values(lineage.get(key))
+        if not values:
+            continue
+        current = target.setdefault(key, [])
+        if isinstance(current, list):
+            _merge_unique_texts(cast(list[str], current), values)
+
+    raw_targets = lineage.get("paper_route_probe_lineage_targets")
+    if not isinstance(raw_targets, Sequence) or isinstance(
+        raw_targets, (str, bytes, bytearray)
+    ):
+        return
+    current_targets = target.setdefault("paper_route_probe_lineage_targets", [])
+    if not isinstance(current_targets, list):
+        return
+    typed_current_targets = cast(list[object], current_targets)
+    existing_keys: set[tuple[str | None, str | None, str | None]] = set()
+    for item in typed_current_targets:
+        if isinstance(item, Mapping):
+            existing_keys.add(_lineage_target_key(cast(Mapping[str, str], item)))
+    for raw_target in cast(Sequence[object], raw_targets):
+        if not isinstance(raw_target, Mapping):
+            continue
+        lineage_target = _lineage_target_from_mapping(
+            cast(Mapping[str, object], raw_target)
+        )
+        lineage_key = _lineage_target_key(lineage_target)
+        if lineage_target and lineage_key not in existing_keys:
+            existing_keys.add(lineage_key)
+            typed_current_targets.append(lineage_target)
+
+
 class SimpleTradingPipeline(TradingPipeline):
     """Minimal signal -> hard-risk -> direct execution lane."""
 
@@ -733,8 +880,15 @@ class SimpleTradingPipeline(TradingPipeline):
                     "buy_notional": Decimal("0"),
                     "latest_entry_at": None,
                     "exit_minute_after_open": None,
+                    "paper_route_probe_lineage": {},
                 },
             )
+            lineage = _paper_route_probe_lineage_from_params(params)
+            if lineage:
+                exposure_lineage = cast(
+                    dict[str, Any], exposure["paper_route_probe_lineage"]
+                )
+                _merge_paper_route_probe_lineage(exposure_lineage, lineage)
             signed_qty = filled_qty if side == "buy" else -filled_qty
             exposure["net_qty"] = cast(Decimal, exposure["net_qty"]) + signed_qty
             if side == "buy":
@@ -809,6 +963,9 @@ class SimpleTradingPipeline(TradingPipeline):
                     "avg_entry_price": str(avg_entry_price)
                     if avg_entry_price is not None
                     else None,
+                    **cast(
+                        dict[str, Any], exposure.get("paper_route_probe_lineage") or {}
+                    ),
                 },
                 "simple_lane": {
                     "final_qty": str(net_qty),
