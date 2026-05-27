@@ -19,7 +19,7 @@ spec:
       logRetentionSeconds: 604800
   ttlSecondsAfterFinished: 21600
   parameters:
-    cadence: three-hours
+    cadence: six-hours
     destination: synthesis
     holdingPeriod: two-to-three-weeks
     strategyScope: defined-risk-options
