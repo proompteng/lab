@@ -44,7 +44,7 @@ spec:
                   mkdir -p "$(dirname "${RENEWAL_OUTPUT}")" "$(dirname "${PROOF_PACKET_OUTPUT}")"
                   /opt/venv/bin/python scripts/renew_latest_empirical_promotion_jobs.py \
                     --output-dir /tmp/torghut-empirical-renewal \
-                    --strategy-spec-ref intraday_tsmom_v2@research \
+                    --strategy-spec-ref microbar_cross_sectional_pairs_v1@research \
                     --runtime-window-import \
                     --runtime-window-target-plan-url http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-evidence \
                     --runtime-window-target-plan-exclusive \
@@ -52,15 +52,15 @@ spec:
                     --runtime-window-target-plan-settlement-seconds 3600 \
                     --runtime-window-targets-from-latest-autoresearch \
                     --runtime-window-targets-from-registry \
-                    --runtime-window-hypothesis-id H-TSMOM-01 \
-                    --runtime-window-candidate-id spec-83161ae16d17828eabcc58cc \
-                    --runtime-window-strategy-family intraday_tsmom_consistent \
-                    --runtime-window-strategy-name intraday-tsmom-profit-v3 \
+                    --runtime-window-hypothesis-id H-PAIRS-01 \
+                    --runtime-window-candidate-id c88421d619759b2cfaa6f4d0 \
+                    --runtime-window-strategy-family microbar_cross_sectional_pairs \
+                    --runtime-window-strategy-name microbar-cross-sectional-pairs-v1 \
                     --runtime-window-account-label TORGHUT_SIM \
                     --runtime-window-observed-stage paper \
                     --runtime-window-source-dsn-env SIM_DB_DSN \
                     --runtime-window-dataset-snapshot-ref portfolio-profit-autoresearch-500-v1 \
-                    --runtime-window-source-manifest-ref config/trading/hypotheses/h-tsmom-01.json \
+                    --runtime-window-source-manifest-ref config/trading/hypotheses/h-pairs-01.json \
                     --json \
                     | tee "${RENEWAL_OUTPUT}"
                   /opt/venv/bin/python scripts/assemble_runtime_ledger_proof_packet.py \

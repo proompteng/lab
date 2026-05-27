@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import re
 from collections.abc import Mapping
@@ -14,6 +16,7 @@ from ..config import settings
 from ..models import Strategy
 from ..strategies.catalog import extract_catalog_metadata
 from .features import (
+    FeatureVectorV3,
     FeatureNormalizationError,
     SignalFeatures,
     extract_signal_features,
@@ -71,6 +74,44 @@ _LEGACY_BUY_EXIT_ONLY_UNIVERSE_TYPES = {
     "microbar_cross_sectional_pairs_v1",
 }
 _MICROBAR_PAIR_EXIT_RATIONALE = "microbar_cross_sectional_pair_exit"
+
+
+def _feature_vector_with_runtime_position(
+    feature_vector: FeatureVectorV3,
+    *,
+    position_qty: Decimal,
+    position_side: str | None,
+) -> FeatureVectorV3:
+    values = dict(feature_vector.values)
+    values["runtime_position_qty"] = position_qty
+    values["runtime_position_side"] = position_side
+    normalized_payload = {
+        "event_ts": feature_vector.event_ts.isoformat(),
+        "symbol": feature_vector.symbol,
+        "timeframe": feature_vector.timeframe,
+        "seq": feature_vector.seq,
+        "source": feature_vector.source,
+        "feature_schema_version": feature_vector.feature_schema_version,
+        "values": {key: values[key] for key in sorted(values)},
+    }
+    normalization_hash = hashlib.sha256(
+        json.dumps(
+            normalized_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+    ).hexdigest()
+    return FeatureVectorV3(
+        event_ts=feature_vector.event_ts,
+        symbol=feature_vector.symbol,
+        timeframe=feature_vector.timeframe,
+        seq=feature_vector.seq,
+        source=feature_vector.source,
+        feature_schema_version=feature_vector.feature_schema_version,
+        values=values,
+        normalization_hash=normalization_hash,
+    )
 
 
 @dataclass(frozen=True)
@@ -215,6 +256,17 @@ class DecisionEngine:
         normalized_payload = self._session_context_tracker.enrich_signal_payload(signal)
         if price is not None and "price" not in normalized_payload:
             normalized_payload["price"] = price
+        runtime_position_qty = _position_qty_for_symbol(actual_positions, signal.symbol)
+        runtime_position_side: str | None = None
+        if runtime_position_qty is not None:
+            normalized_payload["runtime_position_qty"] = str(runtime_position_qty)
+            if runtime_position_qty > 0:
+                runtime_position_side = "long"
+            elif runtime_position_qty < 0:
+                runtime_position_side = "short"
+            else:
+                runtime_position_side = "flat"
+            normalized_payload["runtime_position_side"] = runtime_position_side
         normalized_signal = signal.model_copy(update={"payload": normalized_payload})
         try:
             feature_vector = normalize_feature_vector_v3(normalized_signal)
@@ -226,6 +278,12 @@ class DecisionEngine:
                 fallback_to_legacy=False,
             )
             return []
+        if runtime_position_qty is not None:
+            feature_vector = _feature_vector_with_runtime_position(
+                feature_vector,
+                position_qty=runtime_position_qty,
+                position_side=runtime_position_side,
+            )
 
         runtime_eval = self.strategy_runtime.evaluate_all(
             strategies, feature_vector, timeframe=timeframe

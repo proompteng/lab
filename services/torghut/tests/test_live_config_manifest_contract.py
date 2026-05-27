@@ -892,7 +892,22 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("--runtime-window-target-plan-settlement-seconds 3600", args)
         self.assertIn("--runtime-window-targets-from-latest-autoresearch", args)
         self.assertIn("--runtime-window-targets-from-registry", args)
-        self.assertIn("--runtime-window-hypothesis-id H-TSMOM-01", args)
+        self.assertIn(
+            "--strategy-spec-ref microbar_cross_sectional_pairs_v1@research", args
+        )
+        self.assertIn("--runtime-window-hypothesis-id H-PAIRS-01", args)
+        self.assertIn("--runtime-window-candidate-id c88421d619759b2cfaa6f4d0", args)
+        self.assertIn(
+            "--runtime-window-strategy-family microbar_cross_sectional_pairs", args
+        )
+        self.assertIn(
+            "--runtime-window-strategy-name microbar-cross-sectional-pairs-v1", args
+        )
+        self.assertIn(
+            "--runtime-window-source-manifest-ref config/trading/hypotheses/h-pairs-01.json",
+            args,
+        )
+        self.assertNotIn("--runtime-window-hypothesis-id H-TSMOM-01", args)
         self.assertNotIn("--runtime-window-target hypothesis_id=", args)
         self.assertIn("--runtime-window-account-label TORGHUT_SIM", args)
         self.assertIn("--runtime-window-observed-stage paper", args)
