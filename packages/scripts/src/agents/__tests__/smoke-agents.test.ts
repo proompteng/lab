@@ -627,6 +627,11 @@ describe('synthesis autonomous trader provider', () => {
     expect(taskPrompt).not.toContain('toward 500000 USD account equity')
     expect(taskPrompt).toContain('There is no 2-3 week hold-time requirement')
     expect(taskPrompt).toContain('You may buy, sell, close, reduce, hedge, reverse, or stand down')
+    expect(taskPrompt).toContain('do not exit after the first reconciled action set')
+    expect(taskPrompt).toContain('Keep market-open mode alive in an intraday loop')
+    expect(taskPrompt).toContain('Do not use market_open_actions_reconciled as a terminal reason')
+    expect(prompt).toContain('do not treat "trading actions reconciled" as terminal')
+    expect(prompt).toContain('Use an explicit wait/heartbeat between cycles')
   })
 
   it('bridges Codex framed MCP stdio to Alpaca newline stdio', () => {
