@@ -1191,6 +1191,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "account_label": "TORGHUT_SIM",
                     "strategy_id": "microbar-cross-sectional-pairs-v1",
                     "decision_hash": "decision-buy",
+                    "decision_json": {"account": {"equity": "10000"}},
                     "execution_policy_hash": "policy-sha",
                     "cost_model_hash": "cost-sha",
                     "lineage_hash": "lineage-sha",
@@ -1202,6 +1203,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "account_label": "TORGHUT_SIM",
                     "strategy_id": "microbar-cross-sectional-pairs-v1",
                     "decision_hash": "decision-sell",
+                    "decision_json": {"account": {"equity": "10000"}},
                     "execution_policy_hash": "policy-sha",
                     "cost_model_hash": "cost-sha",
                     "lineage_hash": "lineage-sha",
@@ -1252,6 +1254,8 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(bucket["blockers"], [])
         self.assertEqual(bucket["pnl_basis"], POST_COST_BASIS_RUNTIME_LEDGER)
         self.assertEqual(bucket["source_materialization"], "execution_order_events")
+        self.assertEqual(bucket["account_equity"], "10000")
+        self.assertEqual(bucket["account_equity_source"], "equity")
         self.assertTrue(_runtime_ledger_bucket_profit_proof_present(bucket))
 
     def test_runtime_ledger_tca_materialization_metadata_separates_authority(
