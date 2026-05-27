@@ -5,6 +5,7 @@ resources:
   - autonomous-trader-agents-artifacts-sealedsecret.yaml
   - autonomous-trader-codex-auth-sealedsecret.yaml
   - autonomous-trader-github-token-sealedsecret.yaml
+  - autonomous-trader-system-prompt-configmap.yaml
   - synthesis-deep-alpha-agentprovider.yaml
   - synthesis-deep-alpha-agent.yaml
   - synthesis-deep-alpha-implspec.yaml
