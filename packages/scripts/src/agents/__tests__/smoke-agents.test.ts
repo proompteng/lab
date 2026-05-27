@@ -594,6 +594,34 @@ describe('scheduled AgentRun templates', () => {
   })
 })
 
+describe('synthesis autonomous trader provider', () => {
+  it('bridges Codex framed MCP stdio to Alpaca newline stdio', () => {
+    const provider = readYamlObjects(
+      'argocd/applications/synthesis/agents-domain/autonomous-trader-agentprovider.yaml',
+    ).find((manifest) => objectAt(manifest, 'kind') === 'AgentProvider')
+    const spec = objectAt(provider, 'spec')
+    const codex = objectAt(objectAt(spec, 'adapter'), 'codex')
+    const threadConfig = objectAt(codex, 'threadConfig')
+    const alpaca = objectAt(objectAt(threadConfig, 'mcp_servers'), 'alpaca')
+    const inputFiles = objectAt(spec, 'inputFiles') as Record<string, unknown>[] | undefined
+    const codexConfig = (inputFiles ?? []).find(
+      (inputFile) => objectAt(inputFile, 'path') === '/root/.codex/config.toml',
+    )
+    const bridge = (inputFiles ?? []).find(
+      (inputFile) => objectAt(inputFile, 'path') === '/root/alpaca-mcp-stdio-bridge.py',
+    )
+
+    expect(objectAt(alpaca, 'command')).toBe('/usr/bin/python3')
+    expect(objectAt(alpaca, 'args')).toEqual(['-u', '/root/alpaca-mcp-stdio-bridge.py'])
+    expect(objectAt(codexConfig, 'content')).toContain('command = "/usr/bin/python3"')
+    expect(objectAt(codexConfig, 'content')).toContain('args = ["-u", "/root/alpaca-mcp-stdio-bridge.py"]')
+    expect(objectAt(bridge, 'content')).toContain('Content-Length:')
+    expect(objectAt(bridge, 'content')).toContain('/usr/local/bin/alpaca-mcp-server')
+    expect(objectAt(bridge, 'content')).toContain('--transport')
+    expect(objectAt(bridge, 'content')).toContain('stdio')
+  })
+})
+
 describe('kubectl error classification', () => {
   it('treats fresh-kind API resets as transient instead of RBAC failures', () => {
     const error = `E0306 08:40:45.536606   21508 memcache.go:265] couldn't get current server API group list: Get "https://127.0.0.1:45497/api?timeout=32s": read tcp 127.0.0.1:46302->127.0.0.1:45497: read: connection reset by peer - error from a previous attempt: read tcp 127.0.0.1:46300->127.0.0.1:45497: read: connection reset by peer
