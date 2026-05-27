@@ -510,6 +510,14 @@ class Settings(BaseSettings):
         alias="TRADING_ORDER_FEED_GROUP_ID",
         description="Consumer group id for order-feed ingestion.",
     )
+    trading_order_feed_assignment_mode: Literal["group", "manual"] = Field(
+        default="group",
+        alias="TRADING_ORDER_FEED_ASSIGNMENT_MODE",
+        description=(
+            "Kafka partition assignment mode for order-feed ingestion. Manual mode "
+            "bypasses consumer-group rebalances and resumes from persisted DB offsets."
+        ),
+    )
     trading_order_feed_client_id: str = Field(
         default="torghut-order-feed",
         alias="TRADING_ORDER_FEED_CLIENT_ID",

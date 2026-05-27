@@ -297,6 +297,7 @@ spec:
                         .name == "TRADING_FEATURE_MAX_STALENESS_MS" or
                         .name == "TRADING_FEATURE_QUALITY_ENABLED" or
                         .name == "TRADING_MODE" or
+                        .name == "TRADING_ORDER_FEED_ASSIGNMENT_MODE" or
                         .name == "TRADING_ORDER_FEED_BOOTSTRAP_SERVERS" or
                         .name == "TRADING_ORDER_FEED_ENABLED" or
                         .name == "TRADING_ORDER_FEED_GROUP_ID" or

@@ -590,6 +590,11 @@ class TestLiveConfigManifestContract(TestCase):
             "live-paper proof must consume the broker trade-update topic, not the simulation topic",
         )
         self.assertEqual(
+            sim_env.get("TRADING_ORDER_FEED_ASSIGNMENT_MODE"),
+            "manual",
+            "sim proof ingestion must avoid unstable Kafka group rebalances and resume from DB offsets",
+        )
+        self.assertEqual(
             sim_env.get("TRADING_ORDER_FEED_AUTO_OFFSET_RESET"),
             "earliest",
             "first rollout must backfill existing broker order events for proof materialization",
