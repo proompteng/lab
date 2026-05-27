@@ -725,6 +725,8 @@ def _runtime_import_materialization_summary(
     counts = {
         "runtime_observation_count": len(observations),
         "authoritative_observation_count": 0,
+        "authoritative_runtime_ledger_profit_proof_count": 0,
+        "non_authoritative_runtime_ledger_profit_proof_count": 0,
         "runtime_ledger_profit_proof_count": 0,
         "runtime_ledger_tca_row_count": 0,
         "runtime_ledger_tca_runtime_bucket_row_count": 0,
@@ -765,6 +767,14 @@ def _runtime_import_materialization_summary(
             durable_profit_proof_count,
         )
         counts["runtime_ledger_profit_proof_count"] += profit_proof_count
+        if observation.get("authoritative") is True:
+            counts["authoritative_runtime_ledger_profit_proof_count"] += (
+                profit_proof_count
+            )
+        else:
+            counts["non_authoritative_runtime_ledger_profit_proof_count"] += (
+                profit_proof_count
+            )
         for key in (
             "runtime_ledger_tca_row_count",
             "runtime_ledger_tca_runtime_bucket_row_count",
@@ -1189,7 +1199,12 @@ def build_runtime_ledger_proof_packet(
     materialization_summary = _runtime_import_materialization_summary(runtime_import)
     runtime_import_materialization_ok = not runtime_import_due or (
         _int(materialization_summary.get("authoritative_observation_count")) > 0
-        and _int(materialization_summary.get("runtime_ledger_profit_proof_count")) > 0
+        and _int(
+            materialization_summary.get(
+                "authoritative_runtime_ledger_profit_proof_count"
+            )
+        )
+        > 0
         and not _text_list(materialization_summary.get("blockers"))
     )
     runtime_import_ok = (
