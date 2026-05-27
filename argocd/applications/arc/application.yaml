@@ -162,7 +162,7 @@ spec:
             namespace: arc
           githubConfigUrl: https://github.com/gregkonush/analysis
           githubConfigSecret: github-token
-          runnerScaleSetName: arc-arm64
+          runnerScaleSetName: analysis-arm64
           scaleSetLabels:
             - arc-arm64
           minRunners: 1
