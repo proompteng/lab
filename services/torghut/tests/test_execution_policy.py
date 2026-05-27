@@ -542,6 +542,48 @@ class TestExecutionPolicy(TestCase):
         self.assertEqual(outcome.decision.order_type, "market")
         self.assertIsNone(outcome.decision.limit_price)
 
+    def test_microbar_cross_sectional_pairs_signal_exit_keeps_market_order(
+        self,
+    ) -> None:
+        policy = ExecutionPolicy(config=_config(prefer_limit=True))
+        decision = _decision(
+            action="sell",
+            qty=Decimal("1"),
+            price=Decimal("189.24"),
+            order_type="market",
+        ).model_copy(
+            update={
+                "rationale": "microbar_cross_sectional_pair_exit,pair_side:high_rank",
+                "params": {
+                    "price": Decimal("189.24"),
+                    "spread": Decimal("0.04"),
+                    "execution_features": {
+                        "spread_bps": Decimal("2.11"),
+                    },
+                    "position_exit": {
+                        "type": "runtime_signal_exit",
+                        "position_side": "long",
+                        "source": "strategy_runtime",
+                    },
+                    "strategy_runtime": {
+                        "source_strategy_runtime": [
+                            {"strategy_type": "microbar_cross_sectional_pairs_v1"}
+                        ]
+                    },
+                },
+            }
+        )
+
+        outcome = policy.evaluate(
+            decision,
+            strategy=None,
+            positions=[{"symbol": "AAPL", "qty": Decimal("1")}],
+            market_snapshot=None,
+        )
+
+        self.assertEqual(outcome.decision.order_type, "market")
+        self.assertIsNone(outcome.decision.limit_price)
+
     def test_limit_and_stop_prices_are_quantized(self) -> None:
         decision = _decision(
             action="sell",
