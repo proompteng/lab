@@ -9,6 +9,11 @@ metadata:
 spec:
   providerRef:
     name: autonomous-trader-codex
+  defaults:
+    systemPromptRef:
+      kind: ConfigMap
+      name: autonomous-trader-system-prompt
+      key: system-prompt.md
   security:
     allowedSecrets:
       - alpaca-mcp
