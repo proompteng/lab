@@ -27,6 +27,56 @@ MARKET_SYMBOL_COLUMNS = (
     ("execution_tca_metrics", "symbol", False),
 )
 
+TCA_STRATEGY_VIEW_SQL = """
+CREATE OR REPLACE VIEW public.execution_tca_strategy_agg_v1 AS
+SELECT
+    strategy_id,
+    COALESCE(alpaca_account_label, 'unknown') AS alpaca_account_label,
+    COUNT(*)::BIGINT AS order_count,
+    COUNT(DISTINCT symbol)::BIGINT AS symbol_count,
+    AVG(slippage_bps) AS avg_slippage_bps,
+    AVG(shortfall_notional) AS avg_shortfall_notional,
+    AVG(churn_ratio) AS avg_churn_ratio,
+    percentile_cont(0.95) WITHIN GROUP (ORDER BY slippage_bps)
+        FILTER (WHERE slippage_bps IS NOT NULL) AS p95_slippage_bps,
+    MAX(computed_at) AS last_computed_at
+FROM public.execution_tca_metrics
+GROUP BY strategy_id, COALESCE(alpaca_account_label, 'unknown');
+"""
+
+TCA_SYMBOL_VIEW_SQL = """
+CREATE OR REPLACE VIEW public.execution_tca_symbol_agg_v1 AS
+SELECT
+    strategy_id,
+    COALESCE(alpaca_account_label, 'unknown') AS alpaca_account_label,
+    symbol,
+    COUNT(*)::BIGINT AS order_count,
+    AVG(slippage_bps) AS avg_slippage_bps,
+    AVG(shortfall_notional) AS avg_shortfall_notional,
+    AVG(churn_ratio) AS avg_churn_ratio,
+    percentile_cont(0.95) WITHIN GROUP (ORDER BY slippage_bps)
+        FILTER (WHERE slippage_bps IS NOT NULL) AS p95_slippage_bps,
+    MAX(computed_at) AS last_computed_at
+FROM public.execution_tca_metrics
+GROUP BY strategy_id, COALESCE(alpaca_account_label, 'unknown'), symbol;
+"""
+
+
+def _drop_execution_tca_views() -> None:
+    op.execute("DROP VIEW IF EXISTS public.execution_tca_symbol_agg_v1;")
+    op.execute("DROP VIEW IF EXISTS public.execution_tca_strategy_agg_v1;")
+
+
+def _create_execution_tca_views() -> None:
+    op.execute(TCA_STRATEGY_VIEW_SQL)
+    op.execute(TCA_SYMBOL_VIEW_SQL)
+    op.execute(
+        "GRANT SELECT ON TABLE public.execution_tca_strategy_agg_v1 TO torghut_app;"
+    )
+    op.execute(
+        "GRANT SELECT ON TABLE public.execution_tca_symbol_agg_v1 TO torghut_app;"
+    )
+
 
 def _column_type_length(
     inspector: Inspector, table_name: str, column_name: str
@@ -43,6 +93,9 @@ def _column_type_length(
 def _alter_symbols(target_length: int, existing_length: int, *, widen: bool) -> None:
     bind = op.get_bind()
     inspector = inspect(bind)
+    should_recreate_tca_views = inspector.has_table("execution_tca_metrics")
+    if should_recreate_tca_views:
+        _drop_execution_tca_views()
 
     for table_name, column_name, nullable in MARKET_SYMBOL_COLUMNS:
         if not inspector.has_table(table_name):
@@ -64,6 +117,9 @@ def _alter_symbols(target_length: int, existing_length: int, *, widen: bool) -> 
             type_=sa.String(length=target_length),
             existing_nullable=nullable,
         )
+
+    if should_recreate_tca_views:
+        _create_execution_tca_views()
 
 
 def upgrade() -> None:
