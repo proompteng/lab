@@ -24,8 +24,10 @@ from app.trading.research_sleeves import (
 from app.trading.strategy_runtime import (
     LegacyMacdRsiPlugin,
     MicrobarCrossSectionalLongPlugin,
+    MicrobarCrossSectionalPairsPlugin,
     MicrobarCrossSectionalShortPlugin,
     StrategyContext,
+    StrategyDefinition,
     StrategyIntent,
     StrategyRegistry,
     StrategyRuntime,
@@ -5462,6 +5464,7 @@ class TestStrategyRuntimeMicrobarCoverage(TestCase):
         params: dict[str, object] | None = None,
         event_ts: str = "2026-03-24T14:30:00+00:00",
         strategy_type: str = "microbar_cross_sectional_long_v1",
+        symbol: str = "META",
         strategy_spec: dict[str, object] | None = None,
     ) -> StrategyContext:
         return StrategyContext(
@@ -5471,7 +5474,7 @@ class TestStrategyRuntimeMicrobarCoverage(TestCase):
             strategy_type=strategy_type,
             strategy_version="1.0.0",
             event_ts=event_ts,
-            symbol="META",
+            symbol=symbol,
             timeframe="1Sec",
             params=dict(params or {}),
             trace_enabled=True,
@@ -5922,6 +5925,201 @@ class TestStrategyRuntimeMicrobarCoverage(TestCase):
         self.assertIsNotNone(continuation_sell.intent)
         assert continuation_sell.intent is not None
         self.assertEqual(continuation_sell.intent.action, "sell")
+
+    def test_microbar_cross_sectional_pairs_plugin_emits_balanced_pair_sides(
+        self,
+    ) -> None:
+        plugin = MicrobarCrossSectionalPairsPlugin()
+        params = {
+            "entry_minute_after_open": "60",
+            "exit_minute_after_open": "120",
+            "signal_motif": "vwap_close_continuation",
+            "rank_feature": "cross_section_vwap_w5m_rank",
+            "selection_mode": "continuation",
+            "top_n": "2",
+            "max_pair_legs": "2",
+        }
+
+        high_rank_entry = plugin.evaluate(
+            self._context(
+                params=params,
+                strategy_type="microbar_cross_sectional_pairs_v1",
+                symbol="AAPL",
+                strategy_spec={"universe_symbols": ["AAPL", "AMZN"]},
+            ),
+            _test_feature_vector(
+                {
+                    "session_minutes_elapsed": 60,
+                    "cross_section_vwap_w5m_rank": Decimal("1"),
+                }
+            ),
+        )
+        low_rank_entry = plugin.evaluate(
+            self._context(
+                params=params,
+                strategy_type="microbar_cross_sectional_pairs_v1",
+                symbol="AMZN",
+                strategy_spec={"universe_symbols": ["AAPL", "AMZN"]},
+            ),
+            _test_feature_vector(
+                {
+                    "session_minutes_elapsed": 60,
+                    "cross_section_vwap_w5m_rank": Decimal("0"),
+                }
+            ),
+        )
+
+        self.assertIsNotNone(high_rank_entry.intent)
+        self.assertIsNotNone(low_rank_entry.intent)
+        assert high_rank_entry.intent is not None
+        assert low_rank_entry.intent is not None
+        self.assertEqual(high_rank_entry.intent.action, "buy")
+        self.assertEqual(low_rank_entry.intent.action, "sell")
+        self.assertEqual(
+            high_rank_entry.intent.target_notional,
+            low_rank_entry.intent.target_notional,
+        )
+        self.assertIn("pair_side:high_rank", high_rank_entry.intent.rationale)
+        self.assertIn("pair_side:low_rank", low_rank_entry.intent.rationale)
+        self.assertIn("max_pair_legs:2", high_rank_entry.intent.rationale)
+        assert high_rank_entry.trace is not None
+        self.assertEqual(high_rank_entry.trace.gates[0].context["pair_side_count"], 1)
+
+        high_rank_exit = plugin.evaluate(
+            self._context(
+                params=params,
+                strategy_type="microbar_cross_sectional_pairs_v1",
+                symbol="AAPL",
+                strategy_spec={"universe_symbols": ["AAPL", "AMZN"]},
+            ),
+            _test_feature_vector(
+                {
+                    "session_minutes_elapsed": 120,
+                    "cross_section_vwap_w5m_rank": Decimal("1"),
+                }
+            ),
+        )
+        low_rank_exit = plugin.evaluate(
+            self._context(
+                params=params,
+                strategy_type="microbar_cross_sectional_pairs_v1",
+                symbol="AMZN",
+                strategy_spec={"universe_symbols": ["AAPL", "AMZN"]},
+            ),
+            _test_feature_vector(
+                {
+                    "session_minutes_elapsed": 120,
+                    "cross_section_vwap_w5m_rank": Decimal("0"),
+                }
+            ),
+        )
+
+        self.assertIsNotNone(high_rank_exit.intent)
+        self.assertIsNotNone(low_rank_exit.intent)
+        assert high_rank_exit.intent is not None
+        assert low_rank_exit.intent is not None
+        self.assertEqual(high_rank_exit.intent.action, "sell")
+        self.assertEqual(low_rank_exit.intent.action, "buy")
+        self.assertIn(
+            "microbar_cross_sectional_pair_exit",
+            high_rank_exit.intent.rationale,
+        )
+
+    def test_microbar_cross_sectional_pairs_plugin_respects_max_pair_legs(
+        self,
+    ) -> None:
+        plugin = MicrobarCrossSectionalPairsPlugin()
+        middle_rank = plugin.evaluate(
+            self._context(
+                params={
+                    "entry_minute_after_open": "60",
+                    "signal_motif": "vwap_close_continuation",
+                    "rank_feature": "cross_section_vwap_w5m_rank",
+                    "selection_mode": "continuation",
+                    "top_n": "3",
+                    "max_pair_legs": "2",
+                    "universe_size": "6",
+                },
+                strategy_type="microbar_cross_sectional_pairs_v1",
+            ),
+            _test_feature_vector(
+                {
+                    "session_minutes_elapsed": 60,
+                    "cross_section_vwap_w5m_rank": Decimal("0.80"),
+                }
+            ),
+        )
+        self.assertIsNone(middle_rank.intent)
+        assert middle_rank.trace is not None
+        self.assertEqual(middle_rank.trace.first_failed_gate, "pair_rank_selection")
+        self.assertEqual(middle_rank.trace.gates[0].context["pair_side_count"], 1)
+        self.assertEqual(middle_rank.trace.gates[0].context["max_pair_legs"], 2)
+
+        invalid_pair = plugin.evaluate(
+            self._context(
+                params={
+                    "entry_minute_after_open": "60",
+                    "signal_motif": "vwap_close_continuation",
+                    "rank_feature": "cross_section_vwap_w5m_rank",
+                    "selection_mode": "continuation",
+                    "max_pair_legs": "1",
+                    "universe_size": "6",
+                },
+                strategy_type="microbar_cross_sectional_pairs_v1",
+            ),
+            _test_feature_vector(
+                {
+                    "session_minutes_elapsed": 60,
+                    "cross_section_vwap_w5m_rank": Decimal("1"),
+                }
+            ),
+        )
+        self.assertIsNone(invalid_pair.intent)
+        assert invalid_pair.trace is not None
+        self.assertEqual(invalid_pair.trace.first_failed_gate, "pair_leg_selection")
+
+        reversal_high_rank = plugin.evaluate(
+            self._context(
+                params={
+                    "entry_minute_after_open": "60",
+                    "signal_motif": "vwap_close_reversal",
+                    "rank_feature": "cross_section_vwap_w5m_rank",
+                    "selection_mode": "reversal",
+                    "max_pair_legs": "2",
+                    "universe_size": "2",
+                },
+                strategy_type="microbar_cross_sectional_pairs_v1",
+            ),
+            _test_feature_vector(
+                {
+                    "session_minutes_elapsed": 60,
+                    "cross_section_vwap_w5m_rank": Decimal("1"),
+                }
+            ),
+        )
+        self.assertIsNotNone(reversal_high_rank.intent)
+        assert reversal_high_rank.intent is not None
+        self.assertEqual(reversal_high_rank.intent.action, "sell")
+
+    def test_strategy_registry_resolves_microbar_pairs_alias(self) -> None:
+        registry = StrategyRegistry()
+        definition = StrategyDefinition(
+            strategy_id="strategy-1",
+            strategy_name="microbar-cross-sectional-pairs-v1",
+            declared_strategy_id="microbar_cross_sectional_pairs_v1@research",
+            strategy_type="microbar_cross_sectional_pairs_v1",
+            version="1.0.0",
+            params={},
+            feature_requirements=(),
+            risk_profile="paper",
+            execution_profile="paper",
+            enabled=True,
+            base_timeframe="1Sec",
+        )
+
+        plugin = registry.resolve(definition)
+
+        self.assertIsInstance(plugin, MicrobarCrossSectionalPairsPlugin)
 
 
 class TestMeanReversionExhaustionShortSleeveCoverage(TestCase):

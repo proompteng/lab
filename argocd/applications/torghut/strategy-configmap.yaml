@@ -425,7 +425,7 @@ data:
           require_positive_price_for_signal_exit: "true"
       - name: microbar-cross-sectional-pairs-v1
         strategy_id: microbar_cross_sectional_pairs_v1@research
-        strategy_type: microbar_cross_sectional_long_v1
+        strategy_type: microbar_cross_sectional_pairs_v1
         version: 1.0.0
         description: Paper-only H-PAIRS microbar cross-sectional continuation sleeve for the runtime-ledger proof lane; production approval blocked pending live-paper runtime evidence, version=1.0.0
         enabled: true

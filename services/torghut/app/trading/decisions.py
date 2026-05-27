@@ -70,6 +70,7 @@ _BUY_EXIT_ONLY_STRATEGY_TYPES = {
 _LEGACY_BUY_EXIT_ONLY_UNIVERSE_TYPES = {
     "microbar_cross_sectional_pairs_v1",
 }
+_MICROBAR_PAIR_EXIT_RATIONALE = "microbar_cross_sectional_pair_exit"
 
 
 @dataclass(frozen=True)
@@ -276,6 +277,7 @@ class DecisionEngine:
             aggregated: bool,
             runtime_target_notional: Decimal | None = None,
             position_isolation_mode: str | None = None,
+            runtime_exit_side: Literal["long", "short"] | None = None,
         ) -> None:
             source_strategies = [
                 strategies_by_id[strategy_id]
@@ -303,6 +305,7 @@ class DecisionEngine:
                 positions=positions_scope,
                 capacity_positions=positions,
                 runtime_target_notional=runtime_target_notional,
+                runtime_exit_side=runtime_exit_side,
             )
 
             def _record_suppression(reason: str) -> None:
@@ -351,6 +354,7 @@ class DecisionEngine:
                 ),
                 positions=positions_scope,
                 policy=trade_policy,
+                runtime_exit_side=runtime_exit_side,
                 state_scope_key=position_state_scope_key,
             ):
                 _record_suppression("runtime_trade_policy_blocked")
@@ -362,9 +366,21 @@ class DecisionEngine:
                 price=price,
                 signal=signal,
                 positions=positions_scope,
+                runtime_exit_side=runtime_exit_side,
             ):
                 _record_suppression("signal_exit_policy_blocked")
                 return
+            position_exit_params = (
+                {
+                    "position_exit": {
+                        "type": "runtime_signal_exit",
+                        "position_side": runtime_exit_side,
+                        "source": "strategy_runtime",
+                    }
+                }
+                if runtime_exit_side is not None
+                else {}
+            )
             decision = StrategyDecision(
                 strategy_id=primary_strategy_id,
                 symbol=symbol,
@@ -378,6 +394,7 @@ class DecisionEngine:
                     _resolve_strategy_time_in_force(
                         strategies=source_strategies,
                         action=direction,
+                        runtime_exit_side=runtime_exit_side,
                     ),
                 ),
                 rationale=",".join(explain),
@@ -436,7 +453,8 @@ class DecisionEngine:
                     forecast_contract=forecast_contract,
                     forecast_audit=forecast_audit,
                 )
-                | {"sizing": sizing_meta},
+                | {"sizing": sizing_meta}
+                | position_exit_params,
             )
             decisions.append(decision)
             self._last_emitted_action_at[
@@ -461,6 +479,7 @@ class DecisionEngine:
                 signal=signal,
                 price=price,
                 decision=decision,
+                runtime_exit_side=runtime_exit_side,
             )
 
         for raw_decision in runtime_eval.raw_intents:
@@ -470,6 +489,10 @@ class DecisionEngine:
             strategy = strategies_by_id.get(primary_strategy_id)
             if strategy is None:
                 continue
+            runtime_exit_side = _runtime_intent_exit_side(
+                action=raw_decision.intent.direction,
+                explain=raw_decision.intent.explain,
+            )
             _append_runtime_intent_decision(
                 primary_strategy_id=primary_strategy_id,
                 source_strategy_ids=[primary_strategy_id],
@@ -481,10 +504,12 @@ class DecisionEngine:
                     positions,
                     strategy_id=primary_strategy_id,
                     action=raw_decision.intent.direction,
+                    runtime_exit_side=runtime_exit_side,
                 ),
                 aggregated=False,
                 runtime_target_notional=raw_decision.intent.target_notional,
                 position_isolation_mode="per_strategy",
+                runtime_exit_side=runtime_exit_side,
             )
 
         for intent in aggregated_intents:
@@ -499,6 +524,10 @@ class DecisionEngine:
                     intent.horizon,
                 )
                 continue
+            runtime_exit_side = _runtime_intent_exit_side(
+                action=intent.direction,
+                explain=intent.explain,
+            )
             _append_runtime_intent_decision(
                 primary_strategy_id=primary_strategy_id,
                 source_strategy_ids=source_strategy_ids,
@@ -507,10 +536,13 @@ class DecisionEngine:
                 explain=intent.explain,
                 feature_snapshot_hashes=list(intent.feature_snapshot_hashes),
                 positions_scope=(
-                    actual_positions if intent.direction == "sell" else positions
+                    actual_positions
+                    if runtime_exit_side is not None or intent.direction == "sell"
+                    else positions
                 ),
                 aggregated=True,
                 runtime_target_notional=intent.target_notional,
+                runtime_exit_side=runtime_exit_side,
             )
         for isolated_strategy_id in sorted(isolated_strategy_ids):
             strategy = strategies_by_id.get(isolated_strategy_id)
@@ -1408,6 +1440,7 @@ def _resolve_qty_for_aggregated(
     positions: Optional[list[dict[str, Any]]],
     capacity_positions: Optional[list[dict[str, Any]]] = None,
     runtime_target_notional: Decimal | None = None,
+    runtime_exit_side: Literal["long", "short"] | None = None,
 ) -> tuple[Decimal, dict[str, Any]]:
     default_qty = Decimal(str(settings.trading_default_qty))
     if price is None or price <= 0:
@@ -1447,11 +1480,11 @@ def _resolve_qty_for_aggregated(
     position_qty = _position_qty_for_symbol(positions, symbol)
     normalized_action = action.strip().lower()
     exit_only_sell = (
-        _treats_sell_as_exit_only_any(strategies) and normalized_action == "sell"
-    )
+        _treats_sell_as_exit_only_any(strategies) or runtime_exit_side == "long"
+    ) and normalized_action == "sell"
     exit_only_buy = (
-        _treats_buy_as_exit_only_any(strategies) and normalized_action == "buy"
-    )
+        _treats_buy_as_exit_only_any(strategies) or runtime_exit_side == "short"
+    ) and normalized_action == "buy"
     if exit_only_sell and position_qty is not None and position_qty <= 0:
         return Decimal("0"), {
             "method": budget_method,
@@ -2029,6 +2062,7 @@ def _positions_for_strategy_action(
     *,
     strategy_id: str,
     action: str,
+    runtime_exit_side: Literal["long", "short"] | None = None,
 ) -> Optional[list[dict[str, Any]]]:
     if not positions:
         return positions
@@ -2037,7 +2071,7 @@ def _positions_for_strategy_action(
         for position in positions
         if str(position.get("strategy_id") or "").strip() == strategy_id
     ]
-    if action.strip().lower() == "sell":
+    if runtime_exit_side is not None or action.strip().lower() == "sell":
         return _actual_positions_only(tagged_positions)
     if tagged_positions:
         return tagged_positions
@@ -2712,6 +2746,7 @@ def _passes_runtime_trade_policy(
     positions: Optional[list[dict[str, Any]]],
     policy: Mapping[str, int | Decimal],
     position_exit_type: str | None = None,
+    runtime_exit_side: Literal["long", "short"] | None = None,
     state_scope_key: str | None = None,
 ) -> bool:
     normalized_action = action.strip().lower()
@@ -2721,11 +2756,11 @@ def _passes_runtime_trade_policy(
         symbol=symbol,
         position_owner=position_owner,
     )
-    entry_action = _is_entry_action_for_strategies(
+    entry_action = runtime_exit_side is None and _is_entry_action_for_strategies(
         strategies=strategies,
         action=normalized_action,
     )
-    exit_action = _is_exit_action_for_strategies(
+    exit_action = runtime_exit_side is not None or _is_exit_action_for_strategies(
         strategies=strategies,
         action=normalized_action,
     )
@@ -2862,10 +2897,13 @@ def _resolve_strategy_time_in_force(
     *,
     strategies: list[Strategy],
     action: str,
+    runtime_exit_side: Literal["long", "short"] | None = None,
 ) -> str:
     normalized_action = str(action or "").strip().lower()
     param_key = (
-        "entry_time_in_force"
+        "exit_time_in_force"
+        if runtime_exit_side is not None
+        else "entry_time_in_force"
         if _is_entry_action_for_strategies(
             strategies=strategies, action=normalized_action
         )
@@ -2933,6 +2971,7 @@ def _record_runtime_trade_policy_decision(
     signal: SignalEnvelope,
     price: Decimal | None,
     decision: StrategyDecision,
+    runtime_exit_side: Literal["long", "short"] | None = None,
 ) -> None:
     normalized_action = action.strip().lower()
     state = _resolve_runtime_trade_policy_session_state(
@@ -2941,11 +2980,11 @@ def _record_runtime_trade_policy_decision(
         symbol=symbol,
         position_owner=position_owner,
     )
-    entry_action = _is_entry_action_for_strategies(
+    entry_action = runtime_exit_side is None and _is_entry_action_for_strategies(
         strategies=strategies,
         action=normalized_action,
     )
-    exit_side = _exit_position_side_for_strategies(
+    exit_side = runtime_exit_side or _exit_position_side_for_strategies(
         strategies=strategies,
         action=normalized_action,
     )
@@ -3001,9 +3040,10 @@ def _passes_signal_exit_policy(
     price: Optional[Decimal],
     signal: SignalEnvelope,
     positions: Optional[list[dict[str, Any]]],
+    runtime_exit_side: Literal["long", "short"] | None = None,
 ) -> bool:
     normalized_action = action.strip().lower()
-    exit_side = _exit_position_side_for_strategies(
+    exit_side = runtime_exit_side or _exit_position_side_for_strategies(
         strategies=strategies,
         action=normalized_action,
     )
@@ -3034,6 +3074,22 @@ def _passes_signal_exit_policy(
         strategies=strategies,
         realized_bps=realized_bps,
     )
+
+
+def _runtime_intent_exit_side(
+    *,
+    action: str,
+    explain: tuple[str, ...],
+) -> Literal["long", "short"] | None:
+    tokens = {str(item).strip().lower() for item in explain if str(item).strip()}
+    if _MICROBAR_PAIR_EXIT_RATIONALE not in tokens:
+        return None
+    normalized_action = action.strip().lower()
+    if normalized_action == "sell":
+        return "long"
+    if normalized_action == "buy":
+        return "short"
+    return None
 
 
 def _default_trailing_stop_requires_structure_loss(

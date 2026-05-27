@@ -51,7 +51,7 @@ default_hard_vetoes:
   required_min_cash: '0'
   required_min_regime_slice_pass_rate: '0'
 default_selection_objectives:
-  target_net_pnl_per_day: '300'
+  target_net_pnl_per_day: '500'
   require_positive_day_ratio: '0.75'
 runtime_harness:
   family: microbar_cross_sectional_pairs
