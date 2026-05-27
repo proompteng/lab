@@ -613,8 +613,10 @@ describe('synthesis autonomous trader provider', () => {
 
     expect(objectAt(alpaca, 'command')).toBe('/usr/bin/python3')
     expect(objectAt(alpaca, 'args')).toEqual(['-u', '/root/alpaca-mcp-stdio-bridge.py'])
+    expect(objectAt(alpaca, 'startup_timeout_sec')).toBe(60)
     expect(objectAt(codexConfig, 'content')).toContain('command = "/usr/bin/python3"')
     expect(objectAt(codexConfig, 'content')).toContain('args = ["-u", "/root/alpaca-mcp-stdio-bridge.py"]')
+    expect(objectAt(codexConfig, 'content')).toContain('startup_timeout_sec = 60.0')
     expect(objectAt(bridge, 'content')).toContain('Content-Length:')
     expect(objectAt(bridge, 'content')).toContain('/usr/local/bin/alpaca-mcp-server')
     expect(objectAt(bridge, 'content')).toContain('--transport')
