@@ -631,8 +631,32 @@ def _runtime_ledger_bucket_matches_window(
     bucket_started = _utc(bucket.bucket_started_at)
     bucket_ended = _utc(bucket.bucket_ended_at)
     if window_started is None or window_ended is None or bucket_started is None or bucket_ended is None:
-        return True
-    return bucket_started <= window_ended and bucket_ended >= window_started
+        return False
+    return bucket_started <= window_started and bucket_ended >= window_ended
+
+
+def _runtime_ledger_bucket_window_match_key(
+    bucket: StrategyRuntimeLedgerBucket,
+    window: StrategyHypothesisMetricWindow,
+) -> tuple[int, float, float, float, str]:
+    window_started = _utc(window.window_started_at)
+    window_ended = _utc(window.window_ended_at)
+    bucket_started = _utc(bucket.bucket_started_at)
+    bucket_ended = _utc(bucket.bucket_ended_at)
+    if window_started is None or window_ended is None or bucket_started is None or bucket_ended is None:
+        return (1, float('inf'), 0.0, 0.0, str(bucket.id))
+    exact_boundary_miss = int(bucket_started != window_started or bucket_ended != window_ended)
+    bucket_duration = max(0.0, (bucket_ended - bucket_started).total_seconds())
+    window_duration = max(0.0, (window_ended - window_started).total_seconds())
+    overcoverage_seconds = max(0.0, bucket_duration - window_duration)
+    created_at = _utc(bucket.created_at)
+    return (
+        exact_boundary_miss,
+        overcoverage_seconds,
+        -bucket_ended.timestamp(),
+        -created_at.timestamp() if created_at is not None else 0.0,
+        str(bucket.id),
+    )
 
 
 def _runtime_ledger_bucket_is_promotion_grade(
@@ -775,21 +799,22 @@ def _runtime_ledger_bucket_refs_for_windows(
     unbacked_window_refs: list[str] = []
     used_bucket_ids: set[str] = set()
     for window in rows:
-        matched_bucket: StrategyRuntimeLedgerBucket | None = None
-        for bucket in buckets:
-            bucket_id = str(bucket.id)
-            if bucket_id in used_bucket_ids:
-                continue
-            if not _runtime_ledger_bucket_matches_window(bucket, window):
-                continue
-            if not _runtime_ledger_bucket_is_promotion_grade(bucket):
-                continue
-            matched_bucket = bucket
-            used_bucket_ids.add(bucket_id)
-            break
+        candidates = [
+            bucket
+            for bucket in buckets
+            if str(bucket.id) not in used_bucket_ids
+            and _runtime_ledger_bucket_matches_window(bucket, window)
+            and _runtime_ledger_bucket_is_promotion_grade(bucket)
+        ]
+        matched_bucket = (
+            min(candidates, key=lambda bucket: _runtime_ledger_bucket_window_match_key(bucket, window))
+            if candidates
+            else None
+        )
         if matched_bucket is None:
             unbacked_window_refs.append(str(window.id))
             continue
+        used_bucket_ids.add(str(matched_bucket.id))
         backed_windows.append(window)
         matched_buckets.append(matched_bucket)
     return backed_windows, matched_buckets, unbacked_window_refs

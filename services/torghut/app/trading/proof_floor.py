@@ -513,6 +513,49 @@ def build_profitability_proof_floor_receipt(
         },
     )
 
+    simple_status = _mapping(simple_lane_status)
+    order_feed_lifecycle_required = _truthy(
+        simple_status.get("order_feed_lifecycle_required")
+    )
+    order_feed_telemetry_enabled = _truthy(
+        simple_status.get("order_feed_telemetry_enabled")
+    )
+    if order_feed_lifecycle_required and not order_feed_telemetry_enabled:
+        order_feed_state = "fail"
+        order_feed_reason = "order_feed_lifecycle_disabled"
+        _add_repair(
+            repairs,
+            code="enable_order_feed_lifecycle",
+            dimension="order_feed_lifecycle",
+            action="enable_simple_order_feed_ingestion_before_proof_floor_authority",
+            reason=order_feed_reason,
+            priority=72,
+        )
+    elif order_feed_lifecycle_required:
+        order_feed_state = "pass"
+        order_feed_reason = "order_feed_lifecycle_enabled"
+    else:
+        order_feed_state = "informational"
+        order_feed_reason = "order_feed_lifecycle_not_required"
+    add_dimension(
+        dimension="order_feed_lifecycle",
+        state=order_feed_state,
+        reason=order_feed_reason,
+        capital_effect="none"
+        if order_feed_state in {"informational", "pass"}
+        else "paper_hold"
+        if not live_mode
+        else "live_hold",
+        source_ref={
+            "simple_lane_enabled": _truthy(simple_status.get("enabled")),
+            "lifecycle_required": order_feed_lifecycle_required,
+            "order_feed_telemetry_enabled": order_feed_telemetry_enabled,
+            "order_feed_lifecycle_status": simple_status.get(
+                "order_feed_lifecycle_status"
+            ),
+        },
+    )
+
     market_alert = _bool(market_context_status.get("alert_active"))
     market_context_stale = reasons.get("market_context_stale", 0)
     market_reason = _text(
