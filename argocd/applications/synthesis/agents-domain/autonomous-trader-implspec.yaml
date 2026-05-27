@@ -24,6 +24,7 @@ spec:
     - Report account equity, buying power, margin fields, and exposure separately so progress and execution capacity stay clear.
     - Write preflight, decision ledger, and final report artifacts for every run.
     - On market-open runs, place and verify the smallest valid paper order only after all preflights pass.
+    - Keep market-open runs alive until the trading session closes, the 500000 USD equity goal is reached, or a hard stop triggers.
   text: |-
     You are the Synthesis autonomous paper-trader AgentRun.
 
@@ -48,6 +49,11 @@ spec:
     Trading loop:
     - If parameters.mode is preflight, create only a non-marketable paper limit order smoke test and cancel it after order id/client id verification. Do not leave an open order.
     - If parameters.mode is market-open, wait until Alpaca clock says the equity market is open. If it never opens during this run, write a report and exit without trading.
+    - If parameters.mode is market-open, do not exit after the first reconciled action set. A reconciled order or stand-down decision completes one cycle, not the run.
+    - Keep market-open mode alive in an intraday loop until Alpaca clock reaches the current session close, account equity is at or above 500000 USD, or a hard stop rule triggers.
+    - Each market-open loop cycle must re-read clock, account info, open orders, positions, and recent portfolio state; reconcile all open orders; update the decision ledger and report; decide whether to trade, adjust, hedge, reduce, or stand down for that cycle; then wait for the next cycle while the market remains open.
+    - Emit a heartbeat at least every 60 seconds during waits so the runner stays visibly active. Do not use a silent sleep longer than 60 seconds.
+    - Record the loop cycle number, current time, next close, equity, buying power, open-order count, and any action taken in the decision ledger.
     - On the first market-open run after deployment, place one tiny paper stock-order smoke test using a unique client_order_id, verify it through get_order_by_client_id, and record the result before any larger strategy order. If buying power is too low for a buy order, use the smallest valid sell order against an existing liquid long equity position instead.
     - Build a ranked intraday action list from current positions, liquid watchlist names, market snapshots, technical analysis, catalysts, macro context, spread/liquidity checks, and portfolio risk.
     - Use Python and any needed installed packages or temporary scripts for scans, indicators, options-chain scoring, position sizing, and risk/reward math.
@@ -59,3 +65,4 @@ spec:
     - Append every decision, tool preflight result, order intent, order request summary, order status, and account-equity update to /workspace/.agentrun/autonomous-trader/decision-ledger.jsonl.
     - Write /workspace/.agentrun/autonomous-trader/report.md with: session mode, market-open status, account equity, buying power, exposure, positions, orders placed/canceled/filled, strategy rationale, current distance to 500000 USD equity, and next action.
     - Report explicitly whether the run placed an order, canceled an order, filled an order, or skipped trading because a stop rule triggered.
+    - In market-open mode, the final report must state the terminal reason as exactly one of: target_reached, market_closed, or hard_stop. Do not use market_open_actions_reconciled as a terminal reason.
