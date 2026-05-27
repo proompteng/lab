@@ -50,6 +50,9 @@ from app.trading.discovery.evidence_bundles import (
     evidence_bundle_from_frontier_candidate,
     evidence_bundle_from_payload,
 )
+from app.trading.discovery.factor_acceptance import (
+    build_factor_acceptance_artifact_from_scorecard,
+)
 from app.trading.discovery.fast_replay import build_fast_replay_preview
 from app.trading.discovery.hypothesis_cards import HypothesisCard
 from app.trading.discovery.mlx_snapshot import build_mlx_snapshot_manifest
@@ -9978,6 +9981,102 @@ def _candidate_board_runtime_window_import_plan(
     }
 
 
+def _candidate_factor_acceptance_replay_metadata(
+    *,
+    spec: CandidateSpec,
+    evidence: CandidateEvidenceBundle | None,
+    candidate_count: int,
+) -> dict[str, Any]:
+    static_artifact = _mapping(spec.feature_contract.get("factor_acceptance_artifact"))
+    if not static_artifact:
+        return {}
+
+    if evidence is None:
+        artifact = {
+            **static_artifact,
+            "status": "rejected",
+            "rejection_reasons": list(
+                dict.fromkeys(
+                    [
+                        *_string_list_from_value(
+                            static_artifact.get("rejection_reasons")
+                        ),
+                        "replay_evidence_missing",
+                    ]
+                )
+            ),
+            "promotion_scope": "research_paper_probation_only",
+            "does_not_authorize_live_promotion": True,
+        }
+        evidence_status = "missing"
+        candidate_id = ""
+        evidence_bundle_id = ""
+    else:
+        artifact = build_factor_acceptance_artifact_from_scorecard(
+            factor_expression=_string(static_artifact.get("factor_expression"))
+            or "candidate_family_score",
+            source_idea=_string(static_artifact.get("source_idea"))
+            or "2025_2026_signal_discovery_rankic_acceptance_harness",
+            allowed_feature_dependencies=_string_list_from_value(
+                static_artifact.get("allowed_feature_dependencies")
+            )
+            or _string_list_from_value(spec.feature_contract.get("required_features")),
+            scorecard=evidence.objective_scorecard,
+            fold_metrics=evidence.fold_metrics,
+            candidate_count=max(1, candidate_count),
+            candidate_spec_id=spec.candidate_spec_id,
+            candidate_id=evidence.candidate_id,
+            evidence_bundle_id=evidence.evidence_bundle_id,
+        )
+        evidence_status = "replayed"
+        candidate_id = evidence.candidate_id
+        evidence_bundle_id = evidence.evidence_bundle_id
+
+    return {
+        "schema_version": "torghut.factor-acceptance-replay-metadata.v1",
+        "candidate_spec_id": spec.candidate_spec_id,
+        "candidate_id": candidate_id,
+        "evidence_bundle_id": evidence_bundle_id,
+        "evidence_status": evidence_status,
+        "status": _string(artifact.get("status")) or "rejected",
+        "rejection_reasons": _string_list_from_value(artifact.get("rejection_reasons")),
+        "lineage_hash": _string(artifact.get("lineage_hash")),
+        "replay_artifact": artifact,
+        "static_compile_artifact_lineage_hash": _string(
+            static_artifact.get("lineage_hash")
+        ),
+        "promotion_scope": "research_paper_probation_only",
+        "promotion_allowed": False,
+        "final_promotion_authorized": False,
+        "does_not_authorize_live_promotion": True,
+    }
+
+
+def _candidate_board_factor_acceptance_summary(
+    rows: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    metadata_rows = [
+        _mapping(row.get("factor_acceptance_replay_metadata"))
+        for row in rows
+        if _mapping(row.get("factor_acceptance_replay_metadata"))
+    ]
+    accepted = [
+        row for row in metadata_rows if _string(row.get("status")) == "accepted"
+    ]
+    return {
+        "schema_version": "torghut.factor-acceptance-board-summary.v1",
+        "candidate_count": len(metadata_rows),
+        "accepted_count": len(accepted),
+        "rejected_count": len(metadata_rows) - len(accepted),
+        "promotion_allowed": False,
+        "final_promotion_authorized": False,
+        "scope": "research_paper_probation_only",
+        "accepted_candidate_spec_ids": [
+            _string(row.get("candidate_spec_id")) for row in accepted
+        ],
+    }
+
+
 def _candidate_board_payload(
     *,
     epoch_id: str,
@@ -10007,6 +10106,15 @@ def _candidate_board_payload(
         for sleeve in _list_of_mappings(portfolio_payload.get("sleeves"))
         if _string(sleeve.get("candidate_spec_id"))
     }
+    factor_acceptance_candidate_count = max(
+        _candidate_board_int_field(
+            _mapping(candidate_selection.get("budget")),
+            "compiled_candidate_count",
+        ),
+        len(candidate_specs),
+        len(evidence_bundles),
+        1,
+    )
     rows: list[dict[str, Any]] = []
     for spec in candidate_specs:
         selection = selection_by_spec.get(spec.candidate_spec_id, {})
@@ -10100,6 +10208,13 @@ def _candidate_board_payload(
         runtime_ledger_artifact_ref = _string(
             scorecard.get("runtime_ledger_artifact_ref")
             or exact_replay_ledger_artifact_ref
+        )
+        factor_acceptance_replay_metadata = (
+            _candidate_factor_acceptance_replay_metadata(
+                spec=spec,
+                evidence=evidence,
+                candidate_count=factor_acceptance_candidate_count,
+            )
         )
         rows.append(
             {
@@ -10342,6 +10457,13 @@ def _candidate_board_payload(
                     queue_position_survival_summary
                 ),
                 "predictability_decay_stress": predictability_decay_summary,
+                "factor_acceptance_replay_metadata": (
+                    factor_acceptance_replay_metadata
+                ),
+                "factor_acceptance_status": _string(
+                    factor_acceptance_replay_metadata.get("status")
+                ),
+                "factor_acceptance_promotion_allowed": False,
                 "evidence_lineage": evidence_lineage,
                 "replay_window_coverage": replay_window_coverage,
                 "blockers": blockers,
@@ -10427,6 +10549,7 @@ def _candidate_board_payload(
             paper_probation_candidates=paper_probation_candidates,
             promotion_subject=promotion_subject,
         ),
+        "factor_acceptance_summary": _candidate_board_factor_acceptance_summary(rows),
         "double_oos_summary": _candidate_board_double_oos_summary(rows),
         "best_portfolio_candidate_id": _string(
             portfolio_payload.get("portfolio_candidate_id")

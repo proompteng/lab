@@ -336,6 +336,105 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             promotion_contract={},
         )
 
+    def test_candidate_board_adds_factor_acceptance_replay_metadata(self) -> None:
+        spec = replace(
+            self._candidate_spec("spec-factor-acceptance"),
+            feature_contract={
+                "mechanism": "rankic signal discovery",
+                "required_features": ("cross_section_session_open_rank", "spread_bps"),
+                "factor_acceptance_artifact": {
+                    "status": "rejected",
+                    "factor_expression": "cross_section_session_open_rank",
+                    "source_idea": "static_rankic_compile_contract",
+                    "allowed_feature_dependencies": [
+                        "cross_section_session_open_rank",
+                        "spread_bps",
+                    ],
+                    "rejection_reasons": ["rank_ic_below_floor"],
+                    "lineage_hash": "static-factor-lineage",
+                },
+            },
+            parameter_space={
+                "mechanism_overlay_ids": ["rankic_factor_acceptance_harness"]
+            },
+        )
+        evidence = runner.CandidateEvidenceBundle(
+            schema_version="torghut.candidate-evidence-bundle.v1",
+            evidence_bundle_id="ev-factor-acceptance",
+            candidate_id="candidate-factor-acceptance",
+            candidate_spec_id=spec.candidate_spec_id,
+            dataset_snapshot_id="snapshot-factor-acceptance",
+            feature_spec_hash="feature-hash",
+            code_commit="commit-sha",
+            replay_artifact_refs=("replay-factor.json",),
+            objective_scorecard={
+                "rank_ic": "0.061",
+                "rank_ir": "0.71",
+                "p_value": "0.006",
+                "decision_count": 144,
+                "net_pnl_per_day": "34",
+                "avg_filled_notional_per_day": "100000",
+                "market_impact_stress_cost_bps": "1.8",
+                "train_window": {"start": "2026-01-02", "end": "2026-03-31"},
+                "holdout_window": {"start": "2026-04-01", "end": "2026-04-30"},
+            },
+            fold_metrics=(),
+            stress_metrics=(),
+            cost_calibration={},
+            null_comparator={},
+            promotion_readiness={},
+        )
+
+        board = runner._candidate_board_payload(
+            epoch_id="epoch-factor-acceptance",
+            output_dir=Path("/tmp/torghut-factor-acceptance"),
+            target=Decimal("500"),
+            candidate_specs=[spec],
+            candidate_selection={
+                "budget": {"compiled_candidate_count": 4},
+                "rows": [
+                    {
+                        "candidate_spec_id": spec.candidate_spec_id,
+                        "selected_for_replay": True,
+                        "selection_reason": "top_k",
+                        "rank": 1,
+                    }
+                ],
+            },
+            pre_replay_proposal_rows=[
+                {
+                    "candidate_spec_id": spec.candidate_spec_id,
+                    "rank": 1,
+                    "proposal_score": "0.9",
+                }
+            ],
+            proposal_rows=[
+                {
+                    "candidate_spec_id": spec.candidate_spec_id,
+                    "rank": 1,
+                    "proposal_score": "0.9",
+                }
+            ],
+            evidence_bundles=[evidence],
+            portfolio=None,
+            promotion_readiness={"promotable": False},
+            runtime_closure={"status": "blocked"},
+        )
+
+        row = board["rows"][0]
+        metadata = row["factor_acceptance_replay_metadata"]
+        artifact = metadata["replay_artifact"]
+
+        self.assertEqual(board["factor_acceptance_summary"]["accepted_count"], 1)
+        self.assertEqual(metadata["status"], "accepted")
+        self.assertEqual(metadata["evidence_status"], "replayed")
+        self.assertFalse(metadata["promotion_allowed"])
+        self.assertFalse(metadata["final_promotion_authorized"])
+        self.assertEqual(artifact["deflated_p_value"], "0.024")
+        self.assertEqual(artifact["cost_stressed_net_expectancy_bps"], "1.60000")
+        self.assertFalse(row["factor_acceptance_promotion_allowed"])
+        self.assertEqual(board["current_answer"], "no_promotion_ready_candidate")
+
     def test_candidate_feedback_metadata_preserves_runtime_params_for_closure(
         self,
     ) -> None:

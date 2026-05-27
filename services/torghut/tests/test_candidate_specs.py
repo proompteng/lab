@@ -11,6 +11,9 @@ from app.trading.discovery.candidate_specs import (
     compile_candidate_specs,
 )
 from app.trading.discovery.factor_acceptance import build_factor_acceptance_artifact
+from app.trading.discovery.factor_acceptance import (
+    build_factor_acceptance_artifact_from_scorecard,
+)
 from app.trading.discovery.hypothesis_cards import (
     HYPOTHESIS_CARD_SCHEMA_VERSION,
     HypothesisCard,
@@ -108,6 +111,45 @@ class TestCandidateSpecs(TestCase):
             "cost_stressed_expectancy_non_positive",
             artifact["rejection_reasons"],
         )
+
+    def test_factor_acceptance_artifact_from_scorecard_uses_replay_metrics(
+        self,
+    ) -> None:
+        artifact = build_factor_acceptance_artifact_from_scorecard(
+            factor_expression="cross_section_session_open_rank",
+            source_idea="runtime_replay_rankic_factor_acceptance",
+            allowed_feature_dependencies=[
+                "cross_section_session_open_rank",
+                "spread_bps",
+            ],
+            scorecard={
+                "rank_ic": "0.061",
+                "rank_ir": "0.71",
+                "p_value": "0.006",
+                "factor_candidate_count": 4,
+                "decision_count": 144,
+                "net_pnl_per_day": "34",
+                "avg_filled_notional_per_day": "100000",
+                "market_impact_stress_cost_bps": "1.8",
+                "train_window": {"start": "2026-01-02", "end": "2026-03-31"},
+                "holdout_window": {"start": "2026-04-01", "end": "2026-04-30"},
+            },
+            candidate_spec_id="spec-rankic",
+            candidate_id="candidate-rankic",
+            evidence_bundle_id="ev-rankic",
+        )
+
+        self.assertEqual(artifact["status"], "accepted")
+        self.assertEqual(artifact["sample_count"], 144)
+        self.assertEqual(artifact["candidate_count"], 4)
+        self.assertEqual(artifact["deflated_p_value"], "0.024")
+        self.assertEqual(artifact["cost_stressed_net_expectancy_bps"], "1.60000")
+        self.assertEqual(
+            artifact["evidence_metadata"]["source"],
+            "replay_or_live_paper_scorecard",
+        )
+        self.assertEqual(artifact["promotion_scope"], "research_paper_probation_only")
+        self.assertTrue(artifact["does_not_authorize_live_promotion"])
 
     def test_rankic_signal_discovery_claim_adds_fail_closed_factor_harness(
         self,
