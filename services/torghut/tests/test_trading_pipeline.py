@@ -781,6 +781,7 @@ class TestTradingPipeline(TestCase):
                 "trading_simple_paper_route_probe_retry_attempt_limit",
                 "trading_simple_paper_route_probe_retry_batch_limit",
                 "trading_simple_paper_route_probe_retry_scan_limit",
+                "trading_simple_paper_route_probe_exit_lookback_hours",
                 "trading_paper_route_target_plan_url",
                 "trading_paper_route_target_plan_timeout_seconds",
                 "trading_universe_static_fallback_enabled",
@@ -834,6 +835,7 @@ class TestTradingPipeline(TestCase):
         avg_fill_price: Decimal = Decimal("100"),
         entry_ts: datetime = datetime(2026, 3, 26, 14, 0, tzinfo=timezone.utc),
         exit_minute_after_open: str = "120",
+        include_decision_exit_minute: bool = True,
     ) -> None:
         with self.session_local() as session:
             strategy = Strategy(
@@ -859,6 +861,16 @@ class TestTradingPipeline(TestCase):
             session.commit()
             session.refresh(strategy)
 
+            params: dict[str, Any] = {
+                "price": avg_fill_price,
+                "paper_route_probe": {
+                    "mode": "paper_route_acquisition",
+                    "source": "test",
+                    "symbol": symbol,
+                },
+            }
+            if include_decision_exit_minute:
+                params["exit_minute_after_open"] = exit_minute_after_open
             decision = StrategyDecision(
                 strategy_id=str(strategy.id),
                 symbol=symbol,
@@ -867,15 +879,7 @@ class TestTradingPipeline(TestCase):
                 action="buy",
                 qty=qty,
                 rationale="paper-route-entry",
-                params={
-                    "price": avg_fill_price,
-                    "exit_minute_after_open": exit_minute_after_open,
-                    "paper_route_probe": {
-                        "mode": "paper_route_acquisition",
-                        "source": "test",
-                        "symbol": symbol,
-                    },
-                },
+                params=params,
             )
             executor = OrderExecutor()
             decision_row = executor.ensure_decision(
@@ -914,6 +918,7 @@ class TestTradingPipeline(TestCase):
         alpaca_client: FakeAlpacaClient,
         now: datetime,
         proof_floor: Mapping[str, object] | None = None,
+        signals: list[SignalEnvelope] | None = None,
     ) -> FakeIngestor:
         from app import config
 
@@ -941,7 +946,7 @@ class TestTradingPipeline(TestCase):
                 "summary": {"paper_route_probe_eligible_symbols": ["AAPL"]}
             },
         }
-        ingestor = FakeIngestor([])
+        ingestor = FakeIngestor(signals or [])
         pipeline = SimpleTradingPipeline(
             alpaca_client=alpaca_client,
             order_firewall=OrderFirewall(alpaca_client),
@@ -3132,6 +3137,21 @@ class TestTradingPipeline(TestCase):
             ),
             45,
         )
+        self.assertEqual(
+            SimpleTradingPipeline._paper_route_probe_exit_minute_after_open(
+                decision=decision.model_copy(
+                    update={
+                        "params": {
+                            "price": Decimal("100"),
+                            "paper_route_probe": {
+                                "exit_minute_after_open": "120",
+                            },
+                        }
+                    }
+                )
+            ),
+            120,
+        )
         old_row = TradeDecision(
             strategy_id=strategy_id,
             alpaca_account_label="paper",
@@ -3651,6 +3671,196 @@ class TestTradingPipeline(TestCase):
                 exit_metadata.get("exit_due_at"),
                 "2026-03-26T15:30:00+00:00",
             )
+
+    def test_simple_pipeline_closes_late_filled_probe_from_strategy_exit_metadata(
+        self,
+    ) -> None:
+        self._seed_filled_paper_route_probe_entry(
+            entry_ts=datetime(2026, 3, 26, 15, 45, tzinfo=timezone.utc),
+            include_decision_exit_minute=False,
+        )
+        alpaca_client = PositionedAlpacaClient(
+            [{"symbol": "AAPL", "qty": "2", "side": "long"}]
+        )
+
+        self._run_simple_paper_pipeline(
+            alpaca_client=alpaca_client,
+            now=datetime(2026, 3, 26, 15, 46, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(len(alpaca_client.submitted), 1)
+        self.assertEqual(alpaca_client.submitted[0]["side"], "sell")
+        with self.session_local() as session:
+            decisions = (
+                session.execute(
+                    select(TradeDecision).order_by(TradeDecision.created_at.asc())
+                )
+                .scalars()
+                .all()
+            )
+            self.assertEqual(len(decisions), 2)
+            exit_payload = cast(dict[str, Any], decisions[-1].decision_json)
+            params = cast(dict[str, Any], exit_payload.get("params"))
+            exit_metadata = cast(
+                dict[str, Any],
+                params.get("paper_route_probe_exit"),
+            )
+            self.assertEqual(
+                exit_metadata.get("exit_due_at"),
+                "2026-03-26T15:30:00+00:00",
+            )
+
+    def test_simple_pipeline_closes_probe_even_when_signal_preparation_blocks(
+        self,
+    ) -> None:
+        self._seed_filled_paper_route_probe_entry()
+        alpaca_client = PositionedAlpacaClient(
+            [{"symbol": "AAPL", "qty": "2", "side": "long"}]
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 15, 31, tzinfo=timezone.utc),
+            ingest_ts=datetime(2026, 3, 26, 15, 31, 5, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Min",
+            seq=1,
+            payload={
+                "feature_schema_version": "3.0.0",
+                "macd": {"macd": 1.2, "signal": 0.5},
+                "rsi14": 25,
+                "price": 100,
+            },
+        )
+
+        with patch.object(
+            SimpleTradingPipeline,
+            "_prepare_batch_for_decisions",
+            return_value=False,
+        ):
+            self._run_simple_paper_pipeline(
+                alpaca_client=alpaca_client,
+                now=datetime(2026, 3, 26, 15, 31, tzinfo=timezone.utc),
+                signals=[signal],
+            )
+
+        self.assertEqual(len(alpaca_client.submitted), 1)
+        self.assertEqual(alpaca_client.submitted[0]["side"], "sell")
+
+    def test_simple_pipeline_repairs_stale_paper_route_probe_exit_next_session(
+        self,
+    ) -> None:
+        self._seed_filled_paper_route_probe_entry(
+            entry_ts=datetime(2026, 3, 26, 18, 40, tzinfo=timezone.utc),
+            exit_minute_after_open="120",
+        )
+        alpaca_client = PositionedAlpacaClient(
+            [{"symbol": "AAPL", "qty": "2", "side": "long"}]
+        )
+
+        self._run_simple_paper_pipeline(
+            alpaca_client=alpaca_client,
+            now=datetime(2026, 3, 27, 14, 31, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(len(alpaca_client.submitted), 1)
+        self.assertEqual(alpaca_client.submitted[0]["side"], "sell")
+        with self.session_local() as session:
+            exit_row = (
+                session.execute(
+                    select(TradeDecision)
+                    .where(TradeDecision.symbol == "AAPL")
+                    .order_by(TradeDecision.created_at.desc())
+                )
+                .scalars()
+                .first()
+            )
+            assert exit_row is not None
+            exit_payload = cast(dict[str, Any], exit_row.decision_json)
+            params = cast(dict[str, Any], exit_payload.get("params"))
+            exit_metadata = cast(
+                dict[str, Any],
+                params.get("paper_route_probe_exit"),
+            )
+
+            self.assertEqual(exit_payload.get("action"), "sell")
+            self.assertEqual(
+                exit_metadata.get("session_open"),
+                "2026-03-26T13:30:00+00:00",
+            )
+            self.assertEqual(
+                exit_metadata.get("exit_due_at"),
+                "2026-03-26T15:30:00+00:00",
+            )
+            self.assertEqual(exit_metadata.get("stale_exit_repair"), True)
+
+    def test_paper_route_probe_exit_session_open_prefers_exit_metadata(
+        self,
+    ) -> None:
+        decision = StrategyDecision(
+            strategy_id="strategy-1",
+            symbol="AAPL",
+            event_ts=datetime(2026, 3, 26, 18, 40, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="sell",
+            qty=Decimal("1"),
+            rationale="paper-route-exit",
+            params={
+                "paper_route_probe_exit": {
+                    "mode": "paper_route_exit",
+                    "session_open": datetime(
+                        2026,
+                        3,
+                        25,
+                        16,
+                        tzinfo=timezone.utc,
+                    ),
+                }
+            },
+        )
+        fallback = datetime(2026, 3, 27, 14, 31, tzinfo=timezone.utc)
+
+        self.assertEqual(
+            SimpleTradingPipeline._paper_route_probe_exit_session_open(
+                decision=decision,
+                fallback=fallback,
+            ),
+            datetime(2026, 3, 25, 13, 30, tzinfo=timezone.utc),
+        )
+
+        parsed_text_decision = decision.model_copy(
+            update={
+                "params": {
+                    "paper_route_probe_exit": {
+                        "mode": "paper_route_exit",
+                        "session_open": "2026-03-24T17:55:00Z",
+                    }
+                }
+            }
+        )
+        self.assertEqual(
+            SimpleTradingPipeline._paper_route_probe_exit_session_open(
+                decision=parsed_text_decision,
+                fallback=fallback,
+            ),
+            datetime(2026, 3, 24, 13, 30, tzinfo=timezone.utc),
+        )
+
+        invalid_text_decision = decision.model_copy(
+            update={
+                "params": {
+                    "paper_route_probe_exit": {
+                        "mode": "paper_route_exit",
+                        "session_open": "not-a-timestamp",
+                    }
+                }
+            }
+        )
+        self.assertEqual(
+            SimpleTradingPipeline._paper_route_probe_exit_session_open(
+                decision=invalid_text_decision,
+                fallback=fallback,
+            ),
+            datetime(2026, 3, 27, 13, 30, tzinfo=timezone.utc),
+        )
 
     def test_simple_pipeline_does_not_close_paper_route_probe_before_exit_minute(
         self,
@@ -4311,6 +4521,26 @@ class TestTradingPipeline(TestCase):
             universe_type="static",
             universe_symbols=["NVDA"],
             max_notional_per_trade=Decimal("1000"),
+        )
+        with patch(
+            "app.trading.scheduler.simple_pipeline.trading_now",
+            return_value=datetime(2026, 3, 26, 14, 0, tzinfo=timezone.utc),
+        ):
+            exit_bound_probe_context = pipeline._paper_route_probe_context(
+                proof_floor=proof_floor,
+                decision=decision,
+                strategy=exit_bound_strategy,
+            )
+        self.assertIsNotNone(exit_bound_probe_context)
+        assert exit_bound_probe_context is not None
+        self.assertEqual(exit_bound_probe_context.get("exit_minute_after_open"), 120)
+        self.assertEqual(
+            exit_bound_probe_context.get("effective_exit_minute_after_open"),
+            120,
+        )
+        self.assertEqual(
+            exit_bound_probe_context.get("exit_due_at"),
+            "2026-03-26T15:30:00+00:00",
         )
         with patch(
             "app.trading.scheduler.simple_pipeline.trading_now",

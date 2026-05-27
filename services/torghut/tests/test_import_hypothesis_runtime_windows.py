@@ -73,6 +73,7 @@ class _FakeCursor:
                     "TORGHUT_SIM",
                     "intraday_tsmom_v1@paper",
                     "decision-sha",
+                    {},
                     "alpaca-order-1",
                     "client-order-1",
                     "filled",
@@ -1373,6 +1374,62 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertIsInstance(bucket, dict)
         assert isinstance(bucket, dict)
         self.assertEqual(bucket["blockers"], [])
+        self.assertTrue(_runtime_ledger_bucket_profit_proof_present(bucket))
+
+    def test_build_realized_strategy_pnl_rows_uses_decision_impact_cost_model(
+        self,
+    ) -> None:
+        decision_json = {
+            "params": {
+                "execution_policy": {"selected_order_type": "market"},
+                "impact_assumptions": {
+                    "model": {
+                        "commission_bps": "0",
+                        "impact_bps_at_full_participation": "50",
+                    },
+                    "estimate": {"total_cost_bps": "10"},
+                },
+                "simulation_context": {"dataset_id": "runtime-paper-session"},
+            }
+        }
+        rows = _build_realized_strategy_pnl_rows(
+            [
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                    "symbol": "AAPL",
+                    "side": "buy",
+                    "filled_qty": Decimal("1"),
+                    "avg_fill_price": Decimal("100"),
+                    "decision_hash": "decision-buy",
+                    "alpaca_order_id": "order-buy",
+                    "decision_json": decision_json,
+                },
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
+                    "symbol": "AAPL",
+                    "side": "sell",
+                    "filled_qty": Decimal("1"),
+                    "avg_fill_price": Decimal("101"),
+                    "decision_hash": "decision-sell",
+                    "alpaca_order_id": "order-sell",
+                    "decision_json": decision_json,
+                },
+            ],
+            allow_authoritative_runtime_ledger_materialization=True,
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["authoritative"], True)
+        bucket = rows[0]["runtime_ledger_bucket"]
+        self.assertIsInstance(bucket, dict)
+        assert isinstance(bucket, dict)
+        self.assertEqual(bucket["blockers"], [])
+        self.assertEqual(
+            bucket["cost_basis_counts"],
+            {"decision_impact_assumptions_total_cost_bps": 2},
+        )
+        self.assertEqual(bucket["cost_amount"], "0.201")
+        self.assertEqual(rows[0]["realized_net_pnl"], Decimal("0.799"))
         self.assertTrue(_runtime_ledger_bucket_profit_proof_present(bucket))
 
     def test_runtime_ledger_tca_row_separates_explicit_cost_from_slippage(

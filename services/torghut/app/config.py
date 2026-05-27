@@ -1428,6 +1428,14 @@ class Settings(BaseSettings):
             "paper-route probe retry candidates."
         ),
     )
+    trading_simple_paper_route_probe_exit_lookback_hours: int = Field(
+        default=72,
+        alias="TRADING_SIMPLE_PAPER_ROUTE_PROBE_EXIT_LOOKBACK_HOURS",
+        description=(
+            "How far back the simple paper-route probe exit repair path scans for "
+            "filled paper probe entries that missed their configured exit minute."
+        ),
+    )
     trading_paper_route_target_plan_url: Optional[str] = Field(
         default=None,
         alias="TRADING_PAPER_ROUTE_TARGET_PLAN_URL",
@@ -2346,6 +2354,10 @@ class Settings(BaseSettings):
             (
                 self.trading_simple_paper_route_probe_max_notional,
                 "TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL must be >= 0",
+            ),
+            (
+                self.trading_simple_paper_route_probe_exit_lookback_hours,
+                "TRADING_SIMPLE_PAPER_ROUTE_PROBE_EXIT_LOOKBACK_HOURS must be >= 0",
             ),
             (
                 self.trading_paper_route_target_plan_timeout_seconds,

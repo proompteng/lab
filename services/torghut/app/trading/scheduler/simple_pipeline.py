@@ -130,6 +130,13 @@ class SimpleTradingPipeline(TradingPipeline):
                 self.ingestor.commit_cursor(session, batch)
                 return
             account_snapshot, account, positions, allowed_symbols = context
+            self._process_paper_route_probe_exit_decisions(
+                session=session,
+                strategies=strategies,
+                account=account,
+                positions=positions,
+                allowed_symbols=allowed_symbols,
+            )
             quality_signals = self._quality_gate_signals(
                 signals=batch.signals,
                 strategies=strategies,
@@ -146,13 +153,6 @@ class SimpleTradingPipeline(TradingPipeline):
                 batch=batch,
                 strategies=strategies,
                 account_snapshot=account_snapshot,
-                account=account,
-                positions=positions,
-                allowed_symbols=allowed_symbols,
-            )
-            self._process_paper_route_probe_exit_decisions(
-                session=session,
-                strategies=strategies,
                 account=account,
                 positions=positions,
                 allowed_symbols=allowed_symbols,
@@ -426,6 +426,20 @@ class SimpleTradingPipeline(TradingPipeline):
         )
         if direct_exit_minute is not None:
             return direct_exit_minute
+        probe_metadata = decision.params.get("paper_route_probe")
+        if isinstance(probe_metadata, Mapping):
+            probe_mapping = cast(Mapping[str, object], probe_metadata)
+            for key in (
+                "exit_minute_after_open",
+                "effective_exit_minute_after_open",
+            ):
+                metadata_exit_minute = (
+                    SimpleTradingPipeline._paper_route_probe_exit_minute_value(
+                        probe_mapping.get(key)
+                    )
+                )
+                if metadata_exit_minute is not None:
+                    return metadata_exit_minute
         if strategy is None:
             return None
         metadata = extract_catalog_metadata(strategy.description)
@@ -436,6 +450,35 @@ class SimpleTradingPipeline(TradingPipeline):
         return SimpleTradingPipeline._paper_route_probe_exit_minute_value(
             params.get("exit_minute_after_open")
         )
+
+    @staticmethod
+    def _paper_route_probe_session_open(value: datetime) -> datetime:
+        ts = (
+            value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+        ).astimezone(timezone.utc)
+        return datetime.combine(ts.date(), REGULAR_OPEN_UTC, tzinfo=timezone.utc)
+
+    @staticmethod
+    def _paper_route_probe_exit_session_open(
+        *,
+        decision: StrategyDecision,
+        fallback: datetime,
+    ) -> datetime:
+        metadata = SimpleTradingPipeline._paper_route_probe_exit_metadata(decision)
+        if metadata is not None:
+            raw_session_open = metadata.get("session_open")
+            if isinstance(raw_session_open, datetime):
+                return SimpleTradingPipeline._paper_route_probe_session_open(
+                    raw_session_open
+                )
+            raw_text = str(raw_session_open or "").strip()
+            if raw_text:
+                try:
+                    parsed = datetime.fromisoformat(raw_text.replace("Z", "+00:00"))
+                    return SimpleTradingPipeline._paper_route_probe_session_open(parsed)
+                except ValueError:
+                    pass
+        return SimpleTradingPipeline._paper_route_probe_session_open(fallback)
 
     def _paper_route_probe_entry_after_exit_minute(
         self,
@@ -561,6 +604,15 @@ class SimpleTradingPipeline(TradingPipeline):
             REGULAR_OPEN_UTC,
             tzinfo=timezone.utc,
         )
+        exit_lookback_hours = max(
+            0,
+            _safe_int(settings.trading_simple_paper_route_probe_exit_lookback_hours),
+        )
+        lookback_start = (
+            now - timedelta(hours=exit_lookback_hours)
+            if exit_lookback_hours > 0
+            else session_open
+        )
         rows = session.execute(
             select(Execution, TradeDecision)
             .join(TradeDecision, Execution.trade_decision_id == TradeDecision.id)
@@ -569,11 +621,11 @@ class SimpleTradingPipeline(TradingPipeline):
                 TradeDecision.alpaca_account_label == self.account_label,
                 Execution.status == "filled",
                 Execution.filled_qty > Decimal("0"),
-                Execution.created_at >= session_open,
+                Execution.created_at >= lookback_start,
             )
             .order_by(Execution.created_at.asc())
         ).all()
-        exposures: dict[tuple[str, str], dict[str, Any]] = {}
+        exposures: dict[tuple[str, str, str], dict[str, Any]] = {}
         for execution, decision_row in rows:
             decision = self._trade_decision_from_retry_row(decision_row)
             if decision is None:
@@ -599,13 +651,22 @@ class SimpleTradingPipeline(TradingPipeline):
             if not symbol:
                 continue
 
-            key = (str(strategy.id), symbol)
+            entry_session_open = (
+                self._paper_route_probe_session_open(decision.event_ts)
+                if is_entry
+                else self._paper_route_probe_exit_session_open(
+                    decision=decision,
+                    fallback=decision.event_ts,
+                )
+            )
+            key = (str(strategy.id), symbol, entry_session_open.isoformat())
             exposure = exposures.setdefault(
                 key,
                 {
                     "strategy": strategy,
                     "symbol": symbol,
                     "timeframe": decision.timeframe,
+                    "session_open": entry_session_open,
                     "net_qty": Decimal("0"),
                     "buy_qty": Decimal("0"),
                     "buy_notional": Decimal("0"),
@@ -652,7 +713,8 @@ class SimpleTradingPipeline(TradingPipeline):
             if exit_minute is None:
                 continue
             effective_exit_minute = min(exit_minute, _REGULAR_SESSION_MINUTES - 1)
-            exit_due_at = session_open + timedelta(minutes=effective_exit_minute)
+            entry_session_open = cast(datetime, exposure["session_open"])
+            exit_due_at = entry_session_open + timedelta(minutes=effective_exit_minute)
             if now < exit_due_at:
                 continue
             strategy = cast(Strategy, exposure["strategy"])
@@ -661,7 +723,7 @@ class SimpleTradingPipeline(TradingPipeline):
                 session=session,
                 strategy=strategy,
                 symbol=symbol,
-                session_open=session_open,
+                session_open=entry_session_open,
                 exit_due_at=exit_due_at,
             ):
                 continue
@@ -678,7 +740,8 @@ class SimpleTradingPipeline(TradingPipeline):
                     "exit_minute_after_open": exit_minute,
                     "effective_exit_minute_after_open": effective_exit_minute,
                     "exit_due_at": exit_due_at.isoformat(),
-                    "session_open": session_open.isoformat(),
+                    "session_open": entry_session_open.isoformat(),
+                    "stale_exit_repair": entry_session_open.date() < now.date(),
                     "latest_entry_at": exposure["latest_entry_at"].isoformat()
                     if isinstance(exposure.get("latest_entry_at"), datetime)
                     else None,
@@ -1372,6 +1435,23 @@ class SimpleTradingPipeline(TradingPipeline):
             strategy=strategy,
         ):
             return None
+        exit_minute = self._paper_route_probe_exit_minute_after_open(
+            decision=decision,
+            strategy=strategy,
+        )
+        effective_exit_minute: int | None = None
+        exit_due_at: str | None = None
+        if exit_minute is not None:
+            effective_exit_minute = min(exit_minute, _REGULAR_SESSION_MINUTES - 1)
+            now = trading_now(account_label=self.account_label).astimezone(timezone.utc)
+            session_open = datetime.combine(
+                now.date(),
+                REGULAR_OPEN_UTC,
+                tzinfo=timezone.utc,
+            )
+            exit_due_at = (
+                session_open + timedelta(minutes=effective_exit_minute)
+            ).isoformat()
 
         blocking_reasons = {
             str(item).strip()
@@ -1422,6 +1502,9 @@ class SimpleTradingPipeline(TradingPipeline):
             "paper_route_target_plan_source": "external_target_plan_url"
             if target_plan_symbols
             else None,
+            "exit_minute_after_open": exit_minute,
+            "effective_exit_minute_after_open": effective_exit_minute,
+            "exit_due_at": exit_due_at,
             "simple_submit_enabled": settings.trading_simple_submit_enabled,
             "simple_submit_bypass_scope": "paper_route_probe_only"
             if not settings.trading_simple_submit_enabled
