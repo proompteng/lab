@@ -61,6 +61,16 @@ _RUNTIME_LEDGER_DECISION_EVENTS = frozenset(
 _RUNTIME_LEDGER_FILL_EVENTS = frozenset(
     {"fill", "filled", "partial_fill", "partially_filled"}
 )
+_RUNTIME_LEDGER_EQUITY_DENOMINATOR_KEYS = (
+    "account_equity",
+    "portfolio_equity",
+    "start_equity",
+    "starting_equity",
+    "equity",
+    "portfolio_value",
+    "net_liquidation",
+    "net_liquidation_value",
+)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -199,6 +209,21 @@ def _first_text(row: Mapping[str, object], *keys: str) -> str | None:
             if text:
                 return text
     return None
+
+
+def _runtime_ledger_equity_denominator_from_rows(
+    rows: Sequence[Mapping[str, object]],
+) -> tuple[Decimal, str] | None:
+    denominators: list[tuple[Decimal, str]] = []
+    for row in rows:
+        for key in _RUNTIME_LEDGER_EQUITY_DENOMINATOR_KEYS:
+            value = _first_decimal(row, key)
+            if value is not None and value > 0:
+                denominators.append((value, key))
+                break
+    if not denominators:
+        return None
+    return min(denominators, key=lambda item: item[0])
 
 
 def _json_default(value: object) -> str:
@@ -1068,6 +1093,13 @@ def _build_realized_strategy_pnl_rows(
         return []
     unique_times = sorted(set(event_times))
     bucket_ranges = [(unique_times[0], unique_times[-1] + timedelta(microseconds=1))]
+    equity_denominator = _runtime_ledger_equity_denominator_from_rows(
+        [
+            *execution_rows,
+            *(decision_lifecycle_rows or []),
+            *(order_lifecycle_rows or []),
+        ]
+    )
     realized_rows: list[dict[str, object]] = []
     for bucket in build_runtime_ledger_buckets(
         ledger_rows,
@@ -1092,13 +1124,17 @@ def _build_realized_strategy_pnl_rows(
             row["authority_reason"] = "event_sourced_runtime_ledger_profit_proof"
             row["pnl_derivation"] = "execution_order_events_runtime_ledger"
             if isinstance(bucket_payload, Mapping):
-                row["runtime_ledger_bucket"] = {
+                runtime_bucket = {
                     **dict(bucket_payload),
                     "authoritative": True,
                     "authority_reason": "event_sourced_runtime_ledger_profit_proof",
                     "pnl_derivation": "execution_order_events_runtime_ledger",
                     "source_materialization": "execution_order_events",
                 }
+                if equity_denominator is not None:
+                    runtime_bucket["account_equity"] = str(equity_denominator[0])
+                    runtime_bucket["account_equity_source"] = equity_denominator[1]
+                row["runtime_ledger_bucket"] = runtime_bucket
         else:
             row["post_cost_expectancy_basis"] = POST_COST_BASIS_EXECUTION_RECONSTRUCTION
             row["post_cost_promotion_eligible"] = False
@@ -1122,6 +1158,9 @@ def _build_realized_strategy_pnl_rows(
                 bucket_payload["authority_reason"] = (
                     "execution_reconstruction_not_runtime_ledger_proof"
                 )
+                if equity_denominator is not None:
+                    bucket_payload["account_equity"] = str(equity_denominator[0])
+                    bucket_payload["account_equity_source"] = equity_denominator[1]
                 row["runtime_ledger_bucket"] = bucket_payload
         realized_rows.append(row)
     return realized_rows

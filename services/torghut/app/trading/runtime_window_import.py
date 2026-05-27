@@ -1166,7 +1166,7 @@ def _runtime_ledger_daily_summary_from_observed_buckets(
             max(positive_daily_values) / total_positive_daily_net_pnl
         )
 
-    if equity_denominators and max_intraday_drawdown > 0:
+    if equity_denominators:
         equity_denominator, equity_source = min(
             equity_denominators, key=lambda item: item[0]
         )

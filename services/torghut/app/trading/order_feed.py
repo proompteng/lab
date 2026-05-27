@@ -10,13 +10,14 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Callable, Mapping, cast
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
 from ..config import settings
 from ..models import Execution, ExecutionOrderEvent, TradeDecision, coerce_json_payload
+
 logger = logging.getLogger(__name__)
 
 
@@ -63,20 +64,19 @@ class OrderFeedIngestor:
         provided_label = (
             default_account_label.strip() if default_account_label is not None else ""
         )
-        self._default_account_label = (
-            provided_label or settings.trading_account_label
-        )
+        self._default_account_label = provided_label or settings.trading_account_label
         self._consumer: Any | None = None
         self._disabled_logged = False
+        self._manual_assignment_ready = False
 
     def ingest_once(self, session: Session) -> dict[str, int]:
         counters = self._new_counters()
         if not self._preconditions_met():
             return counters
 
-        consumer = self._ensure_consumer()
+        consumer = self._ensure_consumer(session)
         if consumer is None:
-            counters['consumer_errors_total'] += 1
+            counters["consumer_errors_total"] += 1
             return counters
 
         records = self._poll_records(consumer=consumer, counters=counters)
@@ -85,11 +85,14 @@ class OrderFeedIngestor:
 
         inserted_any = False
         for record in records:
-            inserted_any = self._ingest_record(
-                session=session,
-                record=record,
-                counters=counters,
-            ) or inserted_any
+            inserted_any = (
+                self._ingest_record(
+                    session=session,
+                    record=record,
+                    counters=counters,
+                )
+                or inserted_any
+            )
 
         if inserted_any:
             session.commit()
@@ -99,13 +102,13 @@ class OrderFeedIngestor:
     @staticmethod
     def _new_counters() -> dict[str, int]:
         return {
-            'messages_total': 0,
-            'events_persisted_total': 0,
-            'duplicates_total': 0,
-            'out_of_order_total': 0,
-            'missing_fields_total': 0,
-            'apply_updates_total': 0,
-            'consumer_errors_total': 0,
+            "messages_total": 0,
+            "events_persisted_total": 0,
+            "duplicates_total": 0,
+            "out_of_order_total": 0,
+            "missing_fields_total": 0,
+            "apply_updates_total": 0,
+            "consumer_errors_total": 0,
         }
 
     def _preconditions_met(self) -> bool:
@@ -114,7 +117,9 @@ class OrderFeedIngestor:
         if settings.trading_order_feed_bootstrap_server_list:
             return True
         if not self._disabled_logged:
-            logger.info('Order-feed ingestion enabled but TRADING_ORDER_FEED_BOOTSTRAP_SERVERS is not set; skipping')
+            logger.info(
+                "Order-feed ingestion enabled but TRADING_ORDER_FEED_BOOTSTRAP_SERVERS is not set; skipping"
+            )
             self._disabled_logged = True
         return False
 
@@ -125,8 +130,8 @@ class OrderFeedIngestor:
                 max_records=settings.trading_order_feed_batch_size,
             )
         except Exception as exc:  # pragma: no cover - external Kafka failure
-            counters['consumer_errors_total'] += 1
-            logger.warning('Order-feed poll failed: %s', exc)
+            counters["consumer_errors_total"] += 1
+            logger.warning("Order-feed poll failed: %s", exc)
             return []
         return _flatten_poll_records(polled)
 
@@ -137,24 +142,26 @@ class OrderFeedIngestor:
         record: Any,
         counters: dict[str, int],
     ) -> bool:
-        counters['messages_total'] += 1
+        counters["messages_total"] += 1
         normalized = normalize_order_feed_record(
             record,
             default_topic=settings.trading_order_feed_topic,
             default_account_label=self._default_account_label,
         )
         if normalized.event is None:
-            counters['missing_fields_total'] += 1
+            counters["missing_fields_total"] += 1
             if normalized.drop_reason:
-                logger.debug('Dropped order-feed message reason=%s', normalized.drop_reason)
+                logger.debug(
+                    "Dropped order-feed message reason=%s", normalized.drop_reason
+                )
             return False
 
         event = normalized.event
         persisted, duplicate = persist_order_event(session, event)
         if duplicate:
-            counters['duplicates_total'] += 1
+            counters["duplicates_total"] += 1
             return False
-        counters['events_persisted_total'] += 1
+        counters["events_persisted_total"] += 1
 
         if persisted.execution_id is None:
             return True
@@ -164,11 +171,11 @@ class OrderFeedIngestor:
 
         updated, out_of_order = apply_order_event_to_execution(execution, persisted)
         if out_of_order:
-            counters['out_of_order_total'] += 1
+            counters["out_of_order_total"] += 1
         if not updated:
             return True
 
-        counters['apply_updates_total'] += 1
+        counters["apply_updates_total"] += 1
         if execution.trade_decision_id is not None:
             _update_trade_decision_from_execution(session, execution)
         session.add(execution)
@@ -177,39 +184,138 @@ class OrderFeedIngestor:
     def close(self) -> None:
         if self._consumer is None:
             return
-        run_close = cast(Callable[[], Any] | None, getattr(self._consumer, 'close', None))
+        run_close = cast(
+            Callable[[], Any] | None, getattr(self._consumer, "close", None)
+        )
         self._consumer = None
+        self._manual_assignment_ready = False
         if run_close is None:
             return
         try:
             run_close()
         except Exception:  # pragma: no cover - defensive close
-            logger.debug('Order-feed consumer close failed', exc_info=True)
+            logger.debug("Order-feed consumer close failed", exc_info=True)
 
-    def _ensure_consumer(self) -> Any | None:
+    def _ensure_consumer(self, session: Session) -> Any | None:
         if self._consumer is not None:
+            if self._manual_assignment_required() and not self._manual_assignment_ready:
+                self._assign_manual_partitions(session)
             return self._consumer
         try:
             self._consumer = self._consumer_factory()
             self._disabled_logged = False
+            if self._manual_assignment_required():
+                self._assign_manual_partitions(session)
             return self._consumer
         except Exception as exc:  # pragma: no cover - external Kafka config failure
-            logger.warning('Failed to initialize order-feed consumer: %s', exc)
+            logger.warning("Failed to initialize order-feed consumer: %s", exc)
+            self._consumer = None
+            self._manual_assignment_ready = False
             return None
+
+    def _manual_assignment_required(self) -> bool:
+        return settings.trading_order_feed_assignment_mode == "manual"
+
+    def _assign_manual_partitions(self, session: Session) -> None:
+        consumer = self._consumer
+        if consumer is None:
+            return
+        assign = cast(
+            Callable[[list[Any]], Any] | None, getattr(consumer, "assign", None)
+        )
+        partitions_for_topic = cast(
+            Callable[[str], set[int] | list[int] | tuple[int, ...] | None] | None,
+            getattr(consumer, "partitions_for_topic", None),
+        )
+        seek = cast(Callable[[Any, int], Any] | None, getattr(consumer, "seek", None))
+        seek_to_beginning = cast(
+            Callable[..., Any] | None, getattr(consumer, "seek_to_beginning", None)
+        )
+        seek_to_end = cast(
+            Callable[..., Any] | None, getattr(consumer, "seek_to_end", None)
+        )
+        if assign is None or partitions_for_topic is None or seek is None:
+            raise RuntimeError(
+                "manual order-feed assignment requires KafkaConsumer assign/partition/seek support"
+            )
+
+        try:
+            from kafka import TopicPartition  # type: ignore[import-not-found]
+        except Exception as exc:  # pragma: no cover - import guarded at runtime
+            raise RuntimeError(
+                "kafka-python dependency is required for manual order-feed assignment"
+            ) from exc
+
+        topic_partitions: list[Any] = []
+        for topic in settings.trading_order_feed_topics:
+            partitions = partitions_for_topic(topic)
+            if partitions is None:
+                logger.warning(
+                    "Order-feed topic metadata unavailable topic=%s; manual assignment skipped",
+                    topic,
+                )
+                continue
+            for partition in sorted(partitions):
+                topic_partitions.append(TopicPartition(topic, int(partition)))
+
+        if not topic_partitions:
+            raise RuntimeError("manual order-feed assignment found no topic partitions")
+
+        assign(topic_partitions)
+        persisted_offsets = _latest_persisted_source_offsets(session)
+        unpositioned: list[Any] = []
+        for topic_partition in topic_partitions:
+            cursor = persisted_offsets.get(
+                (topic_partition.topic, topic_partition.partition)
+            )
+            if cursor is None:
+                unpositioned.append(topic_partition)
+                continue
+            seek(topic_partition, cursor + 1)
+
+        if unpositioned:
+            if settings.trading_order_feed_auto_offset_reset == "earliest":
+                if seek_to_beginning is None:
+                    raise RuntimeError(
+                        "manual order-feed earliest reset requires seek_to_beginning support"
+                    )
+                seek_to_beginning(*unpositioned)
+            else:
+                if seek_to_end is None:
+                    raise RuntimeError(
+                        "manual order-feed latest reset requires seek_to_end support"
+                    )
+                seek_to_end(*unpositioned)
+
+        self._manual_assignment_ready = True
+        logger.info(
+            "Order-feed manual assignment ready topics=%s partitions=%s resumed_partitions=%s reset_partitions=%s reset=%s",
+            ",".join(settings.trading_order_feed_topics),
+            len(topic_partitions),
+            len(topic_partitions) - len(unpositioned),
+            len(unpositioned),
+            settings.trading_order_feed_auto_offset_reset,
+        )
 
     @staticmethod
     def _build_consumer() -> Any:
         try:
             from kafka import KafkaConsumer  # type: ignore[import-not-found]
         except Exception as exc:  # pragma: no cover - import guarded at runtime
-            raise RuntimeError('kafka-python dependency is required for order-feed ingestion') from exc
+            raise RuntimeError(
+                "kafka-python dependency is required for order-feed ingestion"
+            ) from exc
 
+        manual_assignment = settings.trading_order_feed_assignment_mode == "manual"
+        topics = [] if manual_assignment else settings.trading_order_feed_topics
         return cast(
             Any,
             KafkaConsumer(
-                *settings.trading_order_feed_topics,
+                *topics,
                 bootstrap_servers=settings.trading_order_feed_bootstrap_server_list,
-                group_id=settings.trading_order_feed_group_id,
+                group_id=None
+                if manual_assignment
+                else settings.trading_order_feed_group_id,
                 client_id=settings.trading_order_feed_client_id,
                 enable_auto_commit=False,
                 auto_offset_reset=settings.trading_order_feed_auto_offset_reset,
@@ -226,77 +332,91 @@ def normalize_order_feed_record(
 ) -> NormalizationResult:
     """Normalize a Kafka record (or Kafka-like test object) into a canonical event."""
 
-    value = getattr(record, 'value', None)
+    value = getattr(record, "value", None)
     payload = _decode_json_payload(value)
     if payload is None:
-        return NormalizationResult(event=None, drop_reason='invalid_json')
+        return NormalizationResult(event=None, drop_reason="invalid_json")
 
     envelope = _as_mapping(payload)
     data_payload = _extract_trade_update_payload(payload)
     if data_payload is None:
-        return NormalizationResult(event=None, drop_reason='missing_trade_update_payload')
+        return NormalizationResult(
+            event=None, drop_reason="missing_trade_update_payload"
+        )
 
-    order = _as_mapping(data_payload.get('order'))
-    symbol = _coerce_text((order or {}).get('symbol'))
+    order = _as_mapping(data_payload.get("order"))
+    symbol = _coerce_text((order or {}).get("symbol"))
     if symbol is None and envelope is not None:
-        symbol = _coerce_text(envelope.get('symbol'))
+        symbol = _coerce_text(envelope.get("symbol"))
 
-    alpaca_order_id = _coerce_text((order or {}).get('id'))
-    client_order_id = _coerce_text((order or {}).get('client_order_id'))
+    alpaca_order_id = _coerce_text((order or {}).get("id"))
+    client_order_id = _coerce_text((order or {}).get("client_order_id"))
     if alpaca_order_id is None:
-        alpaca_order_id = _coerce_text((order or {}).get('order_id'))
+        alpaca_order_id = _coerce_text((order or {}).get("order_id"))
 
-    event_type = _coerce_text(data_payload.get('event')) or _coerce_text(data_payload.get('event_type'))
-    status = _coerce_text((order or {}).get('status')) or _coerce_text(data_payload.get('status'))
-    event_ts = _coerce_datetime(
-        data_payload.get('timestamp')
-        or data_payload.get('t')
-        or (order or {}).get('updated_at')
-        or (order or {}).get('submitted_at')
-        or (envelope.get('event_ts') if envelope else None)
+    event_type = _coerce_text(data_payload.get("event")) or _coerce_text(
+        data_payload.get("event_type")
     )
-    feed_seq = _coerce_int((envelope.get('seq') if envelope else None) or data_payload.get('seq'))
+    status = _coerce_text((order or {}).get("status")) or _coerce_text(
+        data_payload.get("status")
+    )
+    event_ts = _coerce_datetime(
+        data_payload.get("timestamp")
+        or data_payload.get("t")
+        or (order or {}).get("updated_at")
+        or (order or {}).get("submitted_at")
+        or (envelope.get("event_ts") if envelope else None)
+    )
+    feed_seq = _coerce_int(
+        (envelope.get("seq") if envelope else None) or data_payload.get("seq")
+    )
 
     if alpaca_order_id is None and client_order_id is None:
-        return NormalizationResult(event=None, drop_reason='missing_order_identity')
+        return NormalizationResult(event=None, drop_reason="missing_order_identity")
 
-    qty = _coerce_decimal((order or {}).get('qty'))
-    filled_qty = _coerce_decimal((order or {}).get('filled_qty'))
-    avg_fill_price = _coerce_decimal((order or {}).get('filled_avg_price') or (order or {}).get('avg_fill_price'))
+    qty = _coerce_decimal((order or {}).get("qty"))
+    filled_qty = _coerce_decimal((order or {}).get("filled_qty"))
+    avg_fill_price = _coerce_decimal(
+        (order or {}).get("filled_avg_price") or (order or {}).get("avg_fill_price")
+    )
 
-    source_topic = _coerce_text(getattr(record, 'topic', None)) or _coerce_text(envelope.get('topic') if envelope else None)
+    source_topic = _coerce_text(getattr(record, "topic", None)) or _coerce_text(
+        envelope.get("topic") if envelope else None
+    )
     if source_topic is None:
         source_topic = default_topic
     account_label = (
-        _coerce_text(data_payload.get('account_label'))
-        or _coerce_text(data_payload.get('accountLabel'))
-        or _coerce_text((order or {}).get('alpaca_account_label'))
-        or _coerce_text((order or {}).get('account_label'))
-        or _coerce_text((order or {}).get('accountLabel'))
-        or _coerce_text(envelope.get('account_label') if envelope else None)
-        or _coerce_text(envelope.get('accountLabel') if envelope else None)
+        _coerce_text(data_payload.get("account_label"))
+        or _coerce_text(data_payload.get("accountLabel"))
+        or _coerce_text((order or {}).get("alpaca_account_label"))
+        or _coerce_text((order or {}).get("account_label"))
+        or _coerce_text((order or {}).get("accountLabel"))
+        or _coerce_text(envelope.get("account_label") if envelope else None)
+        or _coerce_text(envelope.get("accountLabel") if envelope else None)
         or default_account_label
     )
 
     fingerprint_input = {
-        'alpaca_account_label': account_label,
-        'alpaca_order_id': alpaca_order_id,
-        'client_order_id': client_order_id,
-        'event_type': event_type,
-        'status': status,
-        'event_ts': event_ts.isoformat() if event_ts else None,
-        'feed_seq': feed_seq,
-        'qty': str(qty) if qty is not None else None,
-        'filled_qty': str(filled_qty) if filled_qty is not None else None,
-        'avg_fill_price': str(avg_fill_price) if avg_fill_price is not None else None,
+        "alpaca_account_label": account_label,
+        "alpaca_order_id": alpaca_order_id,
+        "client_order_id": client_order_id,
+        "event_type": event_type,
+        "status": status,
+        "event_ts": event_ts.isoformat() if event_ts else None,
+        "feed_seq": feed_seq,
+        "qty": str(qty) if qty is not None else None,
+        "filled_qty": str(filled_qty) if filled_qty is not None else None,
+        "avg_fill_price": str(avg_fill_price) if avg_fill_price is not None else None,
     }
-    fingerprint = hashlib.sha256(json.dumps(fingerprint_input, sort_keys=True).encode('utf-8')).hexdigest()
+    fingerprint = hashlib.sha256(
+        json.dumps(fingerprint_input, sort_keys=True).encode("utf-8")
+    ).hexdigest()
 
     event = NormalizedOrderEvent(
         event_fingerprint=fingerprint,
         source_topic=source_topic,
-        source_partition=_coerce_int(getattr(record, 'partition', None)),
-        source_offset=_coerce_int(getattr(record, 'offset', None)),
+        source_partition=_coerce_int(getattr(record, "partition", None)),
+        source_offset=_coerce_int(getattr(record, "offset", None)),
         alpaca_account_label=account_label,
         feed_seq=feed_seq,
         event_ts=event_ts,
@@ -313,11 +433,15 @@ def normalize_order_feed_record(
     return NormalizationResult(event=event, drop_reason=None)
 
 
-def persist_order_event(session: Session, event: NormalizedOrderEvent) -> tuple[ExecutionOrderEvent, bool]:
+def persist_order_event(
+    session: Session, event: NormalizedOrderEvent
+) -> tuple[ExecutionOrderEvent, bool]:
     """Persist a normalized event and link it to execution/trade_decision rows."""
 
     existing = session.execute(
-        select(ExecutionOrderEvent).where(ExecutionOrderEvent.event_fingerprint == event.event_fingerprint)
+        select(ExecutionOrderEvent).where(
+            ExecutionOrderEvent.event_fingerprint == event.event_fingerprint
+        )
     ).scalar_one_or_none()
     if existing is not None:
         return existing, True
@@ -362,7 +486,9 @@ def persist_order_event(session: Session, event: NormalizedOrderEvent) -> tuple[
             session.flush()
     except IntegrityError:
         existing = session.execute(
-            select(ExecutionOrderEvent).where(ExecutionOrderEvent.event_fingerprint == event.event_fingerprint)
+            select(ExecutionOrderEvent).where(
+                ExecutionOrderEvent.event_fingerprint == event.event_fingerprint
+            )
         ).scalar_one_or_none()
         if existing is None:
             raise
@@ -371,10 +497,16 @@ def persist_order_event(session: Session, event: NormalizedOrderEvent) -> tuple[
     return row, False
 
 
-def apply_order_event_to_execution(execution: Execution, event: ExecutionOrderEvent) -> tuple[bool, bool]:
+def apply_order_event_to_execution(
+    execution: Execution, event: ExecutionOrderEvent
+) -> tuple[bool, bool]:
     """Apply event evidence to execution if event ordering is not stale/out-of-order."""
 
-    if event.status is None and event.filled_qty is None and event.avg_fill_price is None:
+    if (
+        event.status is None
+        and event.filled_qty is None
+        and event.avg_fill_price is None
+    ):
         return False, False
 
     stale_by_seq = _is_stale_by_seq(execution, event)
@@ -389,7 +521,10 @@ def apply_order_event_to_execution(execution: Execution, event: ExecutionOrderEv
     if event.filled_qty is not None and execution.filled_qty != event.filled_qty:
         execution.filled_qty = event.filled_qty
         updated = True
-    if event.avg_fill_price is not None and execution.avg_fill_price != event.avg_fill_price:
+    if (
+        event.avg_fill_price is not None
+        and execution.avg_fill_price != event.avg_fill_price
+    ):
         execution.avg_fill_price = event.avg_fill_price
         updated = True
 
@@ -403,7 +538,9 @@ def apply_order_event_to_execution(execution: Execution, event: ExecutionOrderEv
     return updated, False
 
 
-def latest_order_event_for_execution(session: Session, execution: Execution) -> ExecutionOrderEvent | None:
+def latest_order_event_for_execution(
+    session: Session, execution: Execution
+) -> ExecutionOrderEvent | None:
     """Fetch newest persisted order event linked to an execution."""
 
     filters: list[ColumnElement[bool]] = [
@@ -428,7 +565,9 @@ def latest_order_event_for_execution(session: Session, execution: Execution) -> 
     return session.execute(stmt).scalar_one_or_none()
 
 
-def _resolve_execution(session: Session, event: NormalizedOrderEvent) -> Execution | None:
+def _resolve_execution(
+    session: Session, event: NormalizedOrderEvent
+) -> Execution | None:
     clauses: list[ColumnElement[bool]] = []
     if event.alpaca_order_id:
         clauses.append(
@@ -450,17 +589,17 @@ def _extract_trade_update_payload(payload: Any) -> Mapping[str, Any] | None:
     if root is None:
         return None
 
-    channel = _coerce_text(root.get('channel'))
-    inner_payload = _as_mapping(root.get('payload'))
-    if channel == 'trade_updates' and inner_payload is not None:
+    channel = _coerce_text(root.get("channel"))
+    inner_payload = _as_mapping(root.get("payload"))
+    if channel == "trade_updates" and inner_payload is not None:
         return inner_payload
 
-    stream = _coerce_text(root.get('stream'))
-    data_payload = _as_mapping(root.get('data'))
-    if stream == 'trade_updates' and data_payload is not None:
+    stream = _coerce_text(root.get("stream"))
+    data_payload = _as_mapping(root.get("data"))
+    if stream == "trade_updates" and data_payload is not None:
         return data_payload
 
-    if _as_mapping(root.get('order')) is not None:
+    if _as_mapping(root.get("order")) is not None:
         return root
 
     return None
@@ -473,7 +612,7 @@ def _decode_json_payload(raw: Any) -> dict[str, Any] | list[Any] | None:
         return _normalize_decoded_payload(raw)
     if isinstance(raw, bytes):
         try:
-            return _decode_json_text_payload(raw.decode('utf-8'))
+            return _decode_json_text_payload(raw.decode("utf-8"))
         except UnicodeDecodeError:
             return None
     if isinstance(raw, str):
@@ -512,6 +651,31 @@ def _flatten_poll_records(polled: Any) -> list[Any]:
     return []
 
 
+def _latest_persisted_source_offsets(session: Session) -> dict[tuple[str, int], int]:
+    rows = session.execute(
+        select(
+            ExecutionOrderEvent.source_topic,
+            ExecutionOrderEvent.source_partition,
+            func.max(ExecutionOrderEvent.source_offset),
+        )
+        .where(
+            ExecutionOrderEvent.source_topic.is_not(None),
+            ExecutionOrderEvent.source_partition.is_not(None),
+            ExecutionOrderEvent.source_offset.is_not(None),
+        )
+        .group_by(
+            ExecutionOrderEvent.source_topic,
+            ExecutionOrderEvent.source_partition,
+        )
+    ).all()
+    offsets: dict[tuple[str, int], int] = {}
+    for topic, partition, offset in rows:
+        if topic is None or partition is None or offset is None:
+            continue
+        offsets[(str(topic), int(partition))] = int(offset)
+    return offsets
+
+
 def _coerce_text(value: Any) -> str | None:
     if value is None:
         return None
@@ -525,7 +689,7 @@ def _coerce_datetime(value: Any) -> datetime | None:
     text = _coerce_text(value)
     if text is None:
         return None
-    normalized = text.replace('Z', '+00:00')
+    normalized = text.replace("Z", "+00:00")
     try:
         parsed = datetime.fromisoformat(normalized)
     except ValueError:
@@ -579,34 +743,36 @@ def _is_stale_by_ts(execution: Execution, event: ExecutionOrderEvent) -> bool:
     return candidate_ts < baseline
 
 
-def _update_trade_decision_from_execution(session: Session, execution: Execution) -> None:
+def _update_trade_decision_from_execution(
+    session: Session, execution: Execution
+) -> None:
     if execution.trade_decision_id is None:
         return
     decision = session.get(TradeDecision, execution.trade_decision_id)
     if decision is None:
         return
     decision.status = execution.status
-    if execution.status == 'filled' and decision.executed_at is None:
+    if execution.status == "filled" and decision.executed_at is None:
         decision.executed_at = execution.last_update_at or datetime.now(timezone.utc)
     session.add(decision)
 
 
 def _commit_consumer(consumer: Any) -> None:
-    run_commit = cast(Callable[[], Any] | None, getattr(consumer, 'commit', None))
+    run_commit = cast(Callable[[], Any] | None, getattr(consumer, "commit", None))
     if run_commit is None:
         return
     try:
         run_commit()
     except Exception as exc:  # pragma: no cover - external Kafka failure
-        logger.warning('Order-feed consumer commit failed: %s', exc)
+        logger.warning("Order-feed consumer commit failed: %s", exc)
 
 
 __all__ = [
-    'NormalizedOrderEvent',
-    'NormalizationResult',
-    'OrderFeedIngestor',
-    'normalize_order_feed_record',
-    'persist_order_event',
-    'apply_order_event_to_execution',
-    'latest_order_event_for_execution',
+    "NormalizedOrderEvent",
+    "NormalizationResult",
+    "OrderFeedIngestor",
+    "normalize_order_feed_record",
+    "persist_order_event",
+    "apply_order_event_to_execution",
+    "latest_order_event_for_execution",
 ]

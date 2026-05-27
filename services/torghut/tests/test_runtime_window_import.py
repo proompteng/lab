@@ -862,6 +862,47 @@ class TestRuntimeWindowImport(TestCase):
             {"2026-03-06": 3, "2026-03-09": 1},
         )
 
+    def test_runtime_ledger_daily_summary_emits_zero_drawdown_pct_with_equity(
+        self,
+    ) -> None:
+        buckets = build_observed_runtime_buckets(
+            bucket_ranges=[
+                (
+                    datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                    1,
+                ),
+            ],
+            decision_times=[],
+            execution_times=[],
+            tca_rows=[
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 45, tzinfo=timezone.utc),
+                    "post_cost_expectancy_basis": "realized_strategy_pnl_after_explicit_costs",
+                    "post_cost_promotion_eligible": True,
+                    "runtime_ledger_bucket": _runtime_ledger_bucket(
+                        net_strategy_pnl_after_costs="100",
+                        filled_notional="1000",
+                        closed_trade_count=2,
+                        account_equity="1000",
+                        symbol="AAPL",
+                    ),
+                },
+            ],
+            continuity_ok=True,
+            drift_ok=True,
+            dependency_quorum_decision="allow",
+        )
+
+        summary = _runtime_ledger_daily_summary_from_observed_buckets(buckets)
+
+        self.assertEqual(summary["runtime_ledger_max_intraday_drawdown"], "0")
+        self.assertEqual(summary["runtime_ledger_drawdown_pct_equity"], "0")
+        self.assertEqual(summary["runtime_ledger_max_drawdown_pct_equity"], "0")
+        self.assertEqual(
+            summary["runtime_ledger_drawdown_pct_equity_source"], "account_equity"
+        )
+
     def test_persist_observed_runtime_windows_blocks_missing_health_gate_evidence(
         self,
     ) -> None:
