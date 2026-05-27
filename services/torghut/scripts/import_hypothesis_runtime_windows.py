@@ -1002,11 +1002,17 @@ def _build_realized_strategy_pnl_rows(
             event_times.append(event_time)
     for row in execution_rows:
         computed_at = row.get("computed_at")
+        execution_event_at = row.get("execution_event_at")
         execution_created_at = row.get("execution_created_at")
         fill_event_at = (
             execution_created_at
             if isinstance(execution_created_at, datetime)
             else computed_at
+        )
+        if isinstance(execution_event_at, datetime):
+            fill_event_at = execution_event_at
+        ledger_computed_at = (
+            fill_event_at if isinstance(fill_event_at, datetime) else computed_at
         )
         price = _first_decimal(
             row,
@@ -1028,9 +1034,9 @@ def _build_realized_strategy_pnl_rows(
             ),
         )
         symbol = str(row.get("symbol") or "").strip().upper()
-        if not symbol or not isinstance(computed_at, datetime):
+        if not symbol or not isinstance(ledger_computed_at, datetime):
             continue
-        event_times.append(computed_at)
+        event_times.append(ledger_computed_at)
         if isinstance(fill_event_at, datetime):
             event_times.append(fill_event_at)
         decision_id = _first_text(
@@ -1044,7 +1050,7 @@ def _build_realized_strategy_pnl_rows(
             "execution_correlation_id",
         )
         common_ledger_fields = {
-            "executed_at": computed_at,
+            "executed_at": ledger_computed_at,
             "account_label": str(row.get("account_label") or "") or None,
             "strategy_id": str(row.get("strategy_id") or "") or None,
             "symbol": symbol,
@@ -1109,7 +1115,7 @@ def _build_realized_strategy_pnl_rows(
                 executed_at=(
                     fill_event_at
                     if isinstance(fill_event_at, datetime)
-                    else computed_at
+                    else ledger_computed_at
                 ),
                 event_type="fill",
                 decision_id=decision_id,
@@ -1926,6 +1932,12 @@ def _query_timestamps(
                 f"""
                 select
                     d.created_at,
+                    coalesce(
+                        e.order_feed_last_event_ts,
+                        e.last_update_at,
+                        e.updated_at,
+                        e.created_at
+                    ) as execution_event_at,
                     e.created_at,
                     e.symbol,
                     e.side,
@@ -1947,13 +1959,30 @@ def _query_timestamps(
                 left join execution_tca_metrics t on t.execution_id = e.id
                 where s.name = any(%s)
                   and d.alpaca_account_label = %s
-                  and d.created_at >= %s
-                  and d.created_at < %s
+                  and e.alpaca_account_label = %s
+                  and coalesce(
+                        e.order_feed_last_event_ts,
+                        e.last_update_at,
+                        e.updated_at,
+                        e.created_at
+                      ) >= %s
+                  and coalesce(
+                        e.order_feed_last_event_ts,
+                        e.last_update_at,
+                        e.updated_at,
+                        e.created_at
+                      ) < %s
                   {execution_symbol_clause}
-                order by d.created_at
+                order by coalesce(
+                    e.order_feed_last_event_ts,
+                    e.last_update_at,
+                    e.updated_at,
+                    e.created_at
+                )
                 """,
                 (
                     strategy_names,
+                    account_label,
                     account_label,
                     window_start,
                     window_end,
@@ -1962,25 +1991,27 @@ def _query_timestamps(
             )
             execution_rows = [
                 {
-                    "computed_at": row[0],
-                    "execution_created_at": row[1],
-                    "symbol": row[2],
-                    "side": row[3],
-                    "filled_qty": row[4],
-                    "avg_fill_price": row[5],
-                    "shortfall_notional": row[6],
-                    "execution_audit_json": row[7],
-                    "raw_order": row[8],
-                    "account_label": row[9],
-                    "strategy_id": row[10],
-                    "decision_hash": row[11],
-                    "decision_json": row[12],
-                    "alpaca_order_id": row[13],
-                    "client_order_id": row[14],
-                    "order_status": row[15],
+                    "decision_created_at": row[0],
+                    "computed_at": row[1],
+                    "execution_event_at": row[1],
+                    "execution_created_at": row[2],
+                    "symbol": row[3],
+                    "side": row[4],
+                    "filled_qty": row[5],
+                    "avg_fill_price": row[6],
+                    "shortfall_notional": row[7],
+                    "execution_audit_json": row[8],
+                    "raw_order": row[9],
+                    "account_label": row[10],
+                    "strategy_id": row[11],
+                    "decision_hash": row[12],
+                    "decision_json": row[13],
+                    "alpaca_order_id": row[14],
+                    "client_order_id": row[15],
+                    "order_status": row[16],
                 }
                 for row in cur.fetchall()
-                if row[0] is not None
+                if row[1] is not None
             ]
             execution_rows = [
                 row
@@ -1994,9 +2025,9 @@ def _query_timestamps(
             ]
             executions = []
             for row in execution_rows:
-                computed_at = row.get("computed_at")
-                if isinstance(computed_at, datetime):
-                    executions.append(computed_at)
+                execution_event_at = row.get("execution_event_at")
+                if isinstance(execution_event_at, datetime):
+                    executions.append(execution_event_at)
             cur.execute(
                 f"""
                 select
@@ -2022,13 +2053,15 @@ def _query_timestamps(
                 join strategies s on s.id = d.strategy_id
                 where s.name = any(%s)
                   and d.alpaca_account_label = %s
-                  and d.created_at >= %s
-                  and d.created_at < %s
+                  and oe.alpaca_account_label = %s
+                  and coalesce(oe.event_ts, oe.created_at) >= %s
+                  and coalesce(oe.event_ts, oe.created_at) < %s
                   {order_event_symbol_clause}
                 order by coalesce(oe.event_ts, oe.created_at), oe.created_at
                 """,
                 (
                     strategy_names,
+                    account_label,
                     account_label,
                     window_start,
                     window_end,
@@ -2069,7 +2102,7 @@ def _query_timestamps(
             cur.execute(
                 f"""
                 select
-                    d.created_at,
+                    t.computed_at,
                     abs(coalesce(t.realized_shortfall_bps, t.slippage_bps)) as abs_slippage_bps,
                     (-coalesce(t.realized_shortfall_bps, t.slippage_bps)) as post_cost_expectancy_bps,
                     d.decision_hash,
@@ -2080,13 +2113,15 @@ def _query_timestamps(
                 join strategies s on s.id = d.strategy_id
                 where s.name = any(%s)
                   and d.alpaca_account_label = %s
-                  and d.created_at >= %s
-                  and d.created_at < %s
+                  and coalesce(t.alpaca_account_label, e.alpaca_account_label, d.alpaca_account_label) = %s
+                  and t.computed_at >= %s
+                  and t.computed_at < %s
                   {execution_symbol_clause}
-                order by d.created_at
+                order by t.computed_at
                 """,
                 (
                     strategy_names,
+                    account_label,
                     account_label,
                     window_start,
                     window_end,
