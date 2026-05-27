@@ -755,10 +755,18 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 target_metadata={"paper_route_probe_symbols": ["AAPL"]},
             )
         )
-        self.assertFalse(
+        self.assertTrue(
             _source_kind_allows_runtime_ledger_materialization(
                 source_kind="paper_runtime_observed",
                 target_metadata={"evidence_scope": "evidence_collection_only"},
+            )
+        )
+        self.assertFalse(
+            _runtime_window_source_kind_is_informational(
+                source_kind="paper_route_probe_runtime_observed",
+                target_metadata={
+                    "paper_probation_authorization_scope": "evidence_collection_only"
+                },
             )
         )
 
@@ -1267,10 +1275,16 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                         "cost_model": {"source": "broker_reported"},
                     },
                 },
-            ]
+            ],
+            allow_authoritative_runtime_ledger_materialization=True,
         )
 
         self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["authoritative"], True)
+        self.assertEqual(
+            rows[0]["authority_reason"],
+            "source_execution_runtime_ledger_materialized",
+        )
         self.assertEqual(
             rows[0]["computed_at"], datetime(2026, 3, 6, 15, 55, tzinfo=timezone.utc)
         )
@@ -1283,10 +1297,8 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertNotIn("runtime_fills_missing", bucket["blockers"])
         self.assertNotIn("filled_notional_missing", bucket["blockers"])
         self.assertNotIn("explicit_cost_missing", bucket["blockers"])
-        self.assertEqual(
-            bucket["blockers"],
-            ["execution_reconstruction_not_runtime_ledger_proof"],
-        )
+        self.assertEqual(bucket["blockers"], [])
+        self.assertTrue(_runtime_ledger_bucket_profit_proof_present(bucket))
 
     def test_build_realized_strategy_pnl_rows_materializes_audit_only_runtime_metadata(
         self,
@@ -2506,6 +2518,12 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             dataset_snapshot_ref="source-runtime-ledger-snapshot",
             target_metadata_json=json.dumps(
                 {
+                    "paper_probation_authorized": True,
+                    "paper_probation_authorization_scope": ("evidence_collection_only"),
+                    "evidence_collection_stage": "paper",
+                    "promotion_allowed": False,
+                    "final_promotion_authorized": False,
+                    "final_promotion_allowed": False,
                     "runtime_ledger_target_metadata_blockers": [
                         "paper_route_runtime_ledger_import_pending"
                     ],

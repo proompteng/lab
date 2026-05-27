@@ -556,17 +556,7 @@ def _runtime_window_source_kind_is_informational(
         )
     ):
         return True
-    scope = (
-        str(
-            target_metadata.get("paper_probation_authorization_scope")
-            or target_metadata.get("evidence_scope")
-            or ""
-        )
-        .strip()
-        .lower()
-        .replace("-", "_")
-    )
-    return scope == "evidence_collection_only"
+    return False
 
 
 _AUTHORITATIVE_RUNTIME_LEDGER_MATERIALIZATION_SOURCE_KINDS = frozenset(
