@@ -19,13 +19,10 @@ spec:
       threadConfig:
         mcp_servers:
           alpaca:
-            command: /usr/bin/env
+            command: /usr/bin/python3
             args:
-              - FASTMCP_SHOW_SERVER_BANNER=false
-              - FASTMCP_LOG_LEVEL=ERROR
-              - /usr/local/bin/alpaca-mcp-server
-              - --transport
-              - stdio
+              - -u
+              - /root/alpaca-mcp-stdio-bridge.py
             env:
               FASTMCP_SHOW_SERVER_BANNER: "false"
               FASTMCP_LOG_LEVEL: "ERROR"
@@ -107,9 +104,89 @@ spec:
         trust_level = "trusted"
 
         [mcp_servers.alpaca]
-        command = "/usr/bin/env"
-        args = ["FASTMCP_SHOW_SERVER_BANNER=false", "FASTMCP_LOG_LEVEL=ERROR", "/usr/local/bin/alpaca-mcp-server", "--transport", "stdio"]
+        command = "/usr/bin/python3"
+        args = ["-u", "/root/alpaca-mcp-stdio-bridge.py"]
         env = { FASTMCP_SHOW_SERVER_BANNER = "false", FASTMCP_LOG_LEVEL = "ERROR" }
+    - path: /root/alpaca-mcp-stdio-bridge.py
+      content: |-
+        import os
+        import subprocess
+        import sys
+        import threading
+
+        child_env = dict(os.environ)
+        child_env["FASTMCP_SHOW_SERVER_BANNER"] = "false"
+        child_env["FASTMCP_LOG_LEVEL"] = "ERROR"
+
+        child = subprocess.Popen(
+            ["/usr/local/bin/alpaca-mcp-server", "--transport", "stdio"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=sys.stderr,
+            env=child_env,
+        )
+
+        mode_lock = threading.Lock()
+        output_mode = "line"
+
+        def set_output_mode(mode):
+            global output_mode
+            with mode_lock:
+                output_mode = mode
+
+        def get_output_mode():
+            with mode_lock:
+                return output_mode
+
+        def read_client_message():
+            line = sys.stdin.buffer.readline()
+            if not line:
+                return None
+            if line.lower().startswith(b"content-length:"):
+                set_output_mode("framed")
+                length = int(line.split(b":", 1)[1].strip())
+                while True:
+                    header = sys.stdin.buffer.readline()
+                    if header in (b"\r\n", b"\n", b""):
+                        break
+                return sys.stdin.buffer.read(length)
+            set_output_mode("line")
+            return line.rstrip(b"\r\n")
+
+        def client_to_child():
+            assert child.stdin is not None
+            while True:
+                message = read_client_message()
+                if message is None:
+                    break
+                if not message:
+                    continue
+                child.stdin.write(message + b"\n")
+                child.stdin.flush()
+            child.stdin.close()
+
+        def child_to_client():
+            assert child.stdout is not None
+            for line in child.stdout:
+                payload = line.rstrip(b"\r\n")
+                if not payload:
+                    continue
+                if get_output_mode() == "framed":
+                    sys.stdout.buffer.write(b"Content-Length: " + str(len(payload)).encode("ascii") + b"\r\n\r\n")
+                    sys.stdout.buffer.write(payload)
+                else:
+                    sys.stdout.buffer.write(payload + b"\n")
+                sys.stdout.buffer.flush()
+
+        threads = [
+            threading.Thread(target=client_to_child, daemon=True),
+            threading.Thread(target=child_to_client, daemon=True),
+        ]
+        for thread in threads:
+            thread.start()
+
+        exit_code = child.wait()
+        sys.exit(exit_code)
   outputArtifacts:
     - name: autonomous-trader-report
       path: /workspace/.agentrun/autonomous-trader/report.md
