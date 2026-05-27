@@ -46,7 +46,7 @@ spec:
                     --output-dir /tmp/torghut-empirical-renewal \
                     --strategy-spec-ref intraday_tsmom_v2@research \
                     --runtime-window-import \
-                    --runtime-window-target-plan-url http://torghut.torghut.svc.cluster.local/trading/paper-route-evidence \
+                    --runtime-window-target-plan-url http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-evidence \
                     --runtime-window-target-plan-exclusive \
                     --runtime-window-target-plan-required \
                     --runtime-window-target-plan-settlement-seconds 3600 \

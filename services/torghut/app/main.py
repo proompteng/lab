@@ -3898,7 +3898,7 @@ def _daily_runtime_ledger_portfolio_summary(
     account = account_label.strip()
     stmt = (
         select(StrategyRuntimeLedgerBucket)
-        .where(StrategyRuntimeLedgerBucket.bucket_started_at >= day_start)
+        .where(StrategyRuntimeLedgerBucket.bucket_ended_at >= day_start)
         .where(StrategyRuntimeLedgerBucket.bucket_ended_at <= observed)
         .where(StrategyRuntimeLedgerBucket.account_label == account)
         .order_by(

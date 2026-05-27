@@ -293,6 +293,9 @@ class TestEvidenceEpochs(TestCase):
         Base.metadata.create_all(engine)
         session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
         now = datetime.now(timezone.utc)
+        day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        bucket_started_at = day_start - timedelta(minutes=15)
+        bucket_ended_at = max(day_start, now - timedelta(seconds=1))
         with session_local() as session:
             for suffix, observed_stage, account_label, net_pnl in (
                 ("wrong-stage", "live", "paper", Decimal("999")),
@@ -305,8 +308,8 @@ class TestEvidenceEpochs(TestCase):
                         candidate_id=f"candidate-{suffix}",
                         hypothesis_id="H-PORTFOLIO-PROOF",
                         observed_stage=observed_stage,
-                        bucket_started_at=now - timedelta(hours=1),
-                        bucket_ended_at=now - timedelta(minutes=30),
+                        bucket_started_at=bucket_started_at,
+                        bucket_ended_at=bucket_ended_at,
                         account_label=account_label,
                         runtime_strategy_name="portfolio-proof-strategy",
                         strategy_family="portfolio_proof",
@@ -380,6 +383,7 @@ class TestEvidenceEpochs(TestCase):
         Base.metadata.create_all(engine)
         session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
         observed_at = datetime.now(timezone.utc)
+        day_start = observed_at.replace(hour=0, minute=0, second=0, microsecond=0)
         with session_local() as session:
             session.add(
                 StrategyRuntimeLedgerBucket(
@@ -387,8 +391,8 @@ class TestEvidenceEpochs(TestCase):
                     candidate_id="candidate-blocked",
                     hypothesis_id="H-PORTFOLIO-PROOF",
                     observed_stage="paper",
-                    bucket_started_at=observed_at - timedelta(hours=1),
-                    bucket_ended_at=observed_at - timedelta(minutes=30),
+                    bucket_started_at=day_start - timedelta(minutes=15),
+                    bucket_ended_at=max(day_start, observed_at - timedelta(seconds=1)),
                     account_label="paper",
                     runtime_strategy_name="portfolio-proof-strategy",
                     strategy_family="portfolio_proof",

@@ -22,7 +22,7 @@ The empirical workflow depends on the namespace-local sealed secret
 workflow submissions in `torghut` do not rely on manual secret copies from `argo-workflows`.
 
 The `torghut-empirical-promotion-renewal` CronJob is also the scheduled runtime-ledger proof packet conductor for the
-paper-route proof lane. It first runs `renew_latest_empirical_promotion_jobs.py` with the live
+paper-route proof lane. It first runs `renew_latest_empirical_promotion_jobs.py` with the sim
 `/trading/paper-route-evidence` target plan, then runs `assemble_runtime_ledger_proof_packet.py` and uploads the packet
 under `runtime-ledger-proof-packets/{run_id}`. When the paper-route window is import-ready, the packet now requires the
 live `runtime_window_import_audit` from `/trading/paper-route-evidence` and carries source-activity blockers such as
