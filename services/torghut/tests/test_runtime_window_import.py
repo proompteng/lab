@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from unittest import TestCase
 
@@ -1036,7 +1036,100 @@ class TestRuntimeWindowImport(TestCase):
             decision = session.execute(select(StrategyPromotionDecision)).scalar_one()
 
         self.assertEqual(
-            [window.capital_stage for window in windows], ["0.10x canary", "0.50x live"]
+            [window.capital_stage for window in windows], ["shadow", "shadow"]
+        )
+        self.assertEqual(decision.allowed, False)
+        assert decision.payload_json is not None
+        self.assertIn(
+            "runtime_ledger_observed_trading_day_count_below_authority_minimum",
+            decision.payload_json["promotion_blocking_reasons"],
+        )
+        self.assertIn(
+            "runtime_ledger_mean_daily_net_pnl_after_costs_below_target",
+            decision.payload_json["promotion_blocking_reasons"],
+        )
+        self.assertIn(
+            "runtime_ledger_avg_daily_filled_notional_below_target_implied_floor",
+            decision.payload_json["promotion_blocking_reasons"],
+        )
+        self.assertEqual(
+            decision.payload_json["runtime_ledger_promotion_gate_targets"][
+                "target_implied_avg_daily_filled_notional"
+            ],
+            "625000",
+        )
+
+    def test_persist_observed_runtime_windows_allows_authority_grade_live_ledger(
+        self,
+    ) -> None:
+        base_start = datetime(2026, 3, 2, 14, 30, tzinfo=timezone.utc)
+        bucket_ranges = []
+        tca_rows = []
+        decision_times = []
+        execution_times = []
+        for day_index in range(20):
+            window_start = base_start + timedelta(days=day_index)
+            window_end = window_start + timedelta(minutes=30)
+            computed_at = window_start + timedelta(minutes=5)
+            bucket_ranges.append((window_start, window_end, 40))
+            decision_times.append(computed_at)
+            execution_times.append(computed_at + timedelta(minutes=1))
+            tca_rows.append(
+                {
+                    "computed_at": computed_at,
+                    "abs_slippage_bps": Decimal("1"),
+                    "post_cost_expectancy_bps": Decimal("600"),
+                    "runtime_ledger_bucket": _runtime_ledger_bucket(
+                        filled_notional="10000",
+                        gross_strategy_pnl="601",
+                        cost_amount="1",
+                        net_strategy_pnl_after_costs="600",
+                        post_cost_expectancy_bps="600",
+                    ),
+                    **_runtime_pnl_basis(),
+                }
+            )
+        buckets = build_observed_runtime_buckets(
+            bucket_ranges=bucket_ranges,
+            decision_times=decision_times,
+            execution_times=execution_times,
+            tca_rows=tca_rows,
+            continuity_ok=True,
+            drift_ok=True,
+            dependency_quorum_decision="allow",
+        )
+
+        with self.session_local() as session:
+            summary = persist_observed_runtime_windows(
+                session=session,
+                run_id="import-live-authority-grade",
+                candidate_id="cand-authority-grade",
+                hypothesis_id="H-CONT-01",
+                observed_stage="live",
+                strategy_family="intraday_continuation",
+                source_manifest_ref="config/trading/hypotheses/h-cont-01.json",
+                buckets=buckets,
+            )
+            session.commit()
+            decision = session.execute(select(StrategyPromotionDecision)).scalar_one()
+
+        self.assertEqual(summary["promotion_allowed"], True)
+        self.assertEqual(summary["runtime_ledger_observed_trading_day_count"], 20)
+        self.assertEqual(
+            summary["runtime_ledger_mean_daily_net_pnl_after_costs"], "600"
+        )
+        self.assertEqual(
+            summary["runtime_ledger_median_daily_net_pnl_after_costs"], "600"
+        )
+        self.assertEqual(summary["runtime_ledger_p10_daily_net_pnl_after_costs"], "600")
+        self.assertEqual(summary["runtime_ledger_worst_day_net_pnl_after_costs"], "600")
+        self.assertEqual(summary["runtime_ledger_best_day_share"], "0.05")
+        self.assertEqual(summary["runtime_ledger_avg_daily_filled_notional"], "10000")
+        self.assertEqual(
+            summary["runtime_ledger_promotion_gate_targets"][
+                "target_implied_avg_daily_filled_notional"
+            ],
+            "8333.333333333333333333333333",
         )
         self.assertEqual(decision.allowed, True)
         self.assertEqual(
@@ -1507,14 +1600,24 @@ class TestRuntimeWindowImport(TestCase):
             decision = session.execute(select(StrategyPromotionDecision)).scalar_one()
 
         self.assertEqual(summary["promotion_allowed"], False)
-        self.assertEqual(
+        self.assertIn(
+            "paper_stage_evidence_collection_only",
             summary["promotion_blocking_reasons"],
-            ["paper_stage_evidence_collection_only"],
+        )
+        self.assertIn(
+            "runtime_ledger_observed_trading_day_count_below_authority_minimum",
+            summary["promotion_blocking_reasons"],
+        )
+        self.assertNotIn(
+            "delay_adjusted_depth_stress_missing",
+            summary["promotion_blocking_reasons"],
         )
         self.assertEqual(summary["proof_status"], "blocked")
-        self.assertEqual(
-            [item["blocker"] for item in summary["proof_blockers"]],
-            ["paper_stage_evidence_collection_only"],
+        proof_blockers = {item["blocker"] for item in summary["proof_blockers"]}
+        self.assertIn("paper_stage_evidence_collection_only", proof_blockers)
+        self.assertIn(
+            "runtime_ledger_mean_daily_net_pnl_after_costs_below_target",
+            proof_blockers,
         )
         self.assertEqual(
             summary["delay_adjusted_depth_stress"],

@@ -50,6 +50,7 @@ DEFAULT_TORGHUT_PAPER_ROUTE_SERVICE_BASE_URL = (
 RUNTIME_LEDGER_PROOF_PACKET_OUTPUT_FILE = "artifacts/runtime-ledger-proof-packet.json"
 RUNTIME_WINDOW_IMPORT_OUTPUT_FILE = "artifacts/runtime-window-import.json"
 RUNTIME_LEDGER_PROOF_PACKET_ARTIFACT_PREFIX = "runtime-ledger-proof-packets/{run_id}"
+RUNTIME_LEDGER_SUMMARY_ROW_LIMIT = 50
 MIN_RUNTIME_LEDGER_PROOF_NET_PNL = "500"
 MIN_RUNTIME_LEDGER_PROOF_DAILY_NET_PNL = "500"
 MIN_RUNTIME_LEDGER_PROOF_TRADING_DAYS = 1
@@ -1359,24 +1360,43 @@ def _runtime_ledger_summary(
         stmt = stmt.where(
             StrategyRuntimeLedgerBucket.strategy_family == strategy_family
         )
-    rows = list(session.execute(stmt.limit(50)).scalars())
-    filled_notional = sum((row.filled_notional for row in rows), Decimal("0"))
-    net_pnl = sum((row.net_strategy_pnl_after_costs for row in rows), Decimal("0"))
+    queried_rows = list(
+        session.execute(stmt.limit(RUNTIME_LEDGER_SUMMARY_ROW_LIMIT + 1)).scalars()
+    )
+    truncated = len(queried_rows) > RUNTIME_LEDGER_SUMMARY_ROW_LIMIT
+    rows = queried_rows[:RUNTIME_LEDGER_SUMMARY_ROW_LIMIT]
+    evidence_grade_rows = [
+        row for row in rows if _runtime_ledger_bucket_evidence_grade(row)
+    ]
+    filled_notional = sum(
+        (row.filled_notional for row in evidence_grade_rows), Decimal("0")
+    )
+    net_pnl = sum(
+        (row.net_strategy_pnl_after_costs for row in evidence_grade_rows),
+        Decimal("0"),
+    )
     return {
         "bucket_count": len(rows),
-        "evidence_grade_bucket_count": sum(
-            int(_runtime_ledger_bucket_evidence_grade(row)) for row in rows
+        "evidence_grade_bucket_count": len(evidence_grade_rows),
+        "non_evidence_grade_bucket_count": len(rows) - len(evidence_grade_rows),
+        "returned_bucket_count": len(rows),
+        "query_limit": RUNTIME_LEDGER_SUMMARY_ROW_LIMIT,
+        "truncated": truncated,
+        "proof_scope": "evidence_grade_runtime_ledger_buckets_only",
+        "fill_count": sum(
+            max(0, _safe_int(row.fill_count)) for row in evidence_grade_rows
         ),
-        "fill_count": sum(max(0, _safe_int(row.fill_count)) for row in rows),
-        "decision_count": sum(max(0, _safe_int(row.decision_count)) for row in rows),
+        "decision_count": sum(
+            max(0, _safe_int(row.decision_count)) for row in evidence_grade_rows
+        ),
         "submitted_order_count": sum(
-            max(0, _safe_int(row.submitted_order_count)) for row in rows
+            max(0, _safe_int(row.submitted_order_count)) for row in evidence_grade_rows
         ),
         "closed_trade_count": sum(
-            max(0, _safe_int(row.closed_trade_count)) for row in rows
+            max(0, _safe_int(row.closed_trade_count)) for row in evidence_grade_rows
         ),
         "open_position_count": sum(
-            max(0, _safe_int(row.open_position_count)) for row in rows
+            max(0, _safe_int(row.open_position_count)) for row in evidence_grade_rows
         ),
         "filled_notional": _decimal_text(filled_notional),
         "net_strategy_pnl_after_costs": _decimal_text(net_pnl),

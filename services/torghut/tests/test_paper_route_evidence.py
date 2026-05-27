@@ -1773,6 +1773,33 @@ class TestPaperRouteEvidenceAudit(TestCase):
                         lineage_hash_counts={"lineage-a": 1},
                         blockers_json=[],
                     ),
+                    StrategyRuntimeLedgerBucket(
+                        run_id="paper-route-run-2",
+                        candidate_id="candidate-active-route",
+                        hypothesis_id="H-ACTIVE-ROUTE",
+                        observed_stage="paper",
+                        bucket_started_at=window_start,
+                        bucket_ended_at=window_end,
+                        account_label="TORGHUT_SIM",
+                        runtime_strategy_name=strategy_name,
+                        strategy_family="microbar_pairs",
+                        fill_count=50,
+                        decision_count=25,
+                        submitted_order_count=25,
+                        closed_trade_count=0,
+                        open_position_count=1,
+                        filled_notional=Decimal("1000000"),
+                        gross_strategy_pnl=Decimal("110000"),
+                        cost_amount=Decimal("10000"),
+                        net_strategy_pnl_after_costs=Decimal("100000"),
+                        post_cost_expectancy_bps=Decimal("1000"),
+                        ledger_schema_version="torghut.runtime-ledger-bucket.v1",
+                        pnl_basis="realized_strategy_pnl_after_explicit_costs",
+                        execution_policy_hash_counts={"policy-a": 25},
+                        cost_model_hash_counts={"cost-a": 25},
+                        lineage_hash_counts={"lineage-a": 25},
+                        blockers_json=["open_position_count_nonzero"],
+                    ),
                     StrategyHypothesisMetricWindow(
                         run_id="paper-route-run-2",
                         candidate_id="candidate-active-route",
@@ -1866,7 +1893,15 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(audit["source_activity"]["execution_count"], 1)
         self.assertEqual(audit["source_activity"]["filled_execution_count"], 1)
         self.assertEqual(audit["source_activity"]["tca_sample_count"], 1)
+        self.assertEqual(audit["runtime_ledger"]["bucket_count"], 2)
         self.assertEqual(audit["runtime_ledger"]["evidence_grade_bucket_count"], 1)
+        self.assertEqual(audit["runtime_ledger"]["non_evidence_grade_bucket_count"], 1)
+        self.assertEqual(
+            audit["runtime_ledger"]["proof_scope"],
+            "evidence_grade_runtime_ledger_buckets_only",
+        )
+        self.assertEqual(audit["runtime_ledger"]["filled_notional"], "200")
+        self.assertEqual(audit["runtime_ledger"]["net_strategy_pnl_after_costs"], "10")
         self.assertEqual(audit["runtime_ledger"]["post_cost_expectancy_bps"], "500")
         self.assertEqual(
             audit["hypothesis_windows"]["evidence_provenance_counts"],
