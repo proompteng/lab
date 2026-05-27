@@ -917,6 +917,7 @@ class TestTradingPipeline(TestCase):
         *,
         alpaca_client: FakeAlpacaClient,
         now: datetime,
+        execution_adapter: Any | None = None,
         proof_floor: Mapping[str, object] | None = None,
         signals: list[SignalEnvelope] | None = None,
     ) -> FakeIngestor:
@@ -954,7 +955,7 @@ class TestTradingPipeline(TestCase):
             decision_engine=DecisionEngine(),
             risk_engine=RiskEngine(),
             executor=OrderExecutor(),
-            execution_adapter=alpaca_client,
+            execution_adapter=execution_adapter or alpaca_client,
             reconciler=Reconciler(),
             universe_resolver=UniverseResolver(),
             state=TradingState(),
@@ -3927,6 +3928,182 @@ class TestTradingPipeline(TestCase):
             self.assertEqual(len(decisions), 1)
             payload = cast(dict[str, Any], decisions[0].decision_json)
             self.assertEqual(payload.get("action"), "buy")
+
+    def test_simple_pipeline_restores_simulation_exit_position_from_db_open_qty(
+        self,
+    ) -> None:
+        self._seed_filled_paper_route_probe_entry()
+        alpaca_client = PositionedAlpacaClient([])
+        execution_adapter = SimulationExecutionAdapter(
+            bootstrap_servers=None,
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
+            topic="torghut.sim.trade-updates.v1",
+            account_label="paper",
+            simulation_run_id="paper-route-exit-test",
+            dataset_id="paper-route-exit-test",
+        )
+
+        self._run_simple_paper_pipeline(
+            alpaca_client=alpaca_client,
+            execution_adapter=execution_adapter,
+            now=datetime(2026, 3, 26, 15, 31, tzinfo=timezone.utc),
+        )
+
+        with self.session_local() as session:
+            decisions = (
+                session.execute(
+                    select(TradeDecision).order_by(TradeDecision.created_at.asc())
+                )
+                .scalars()
+                .all()
+            )
+            executions = (
+                session.execute(select(Execution).order_by(Execution.created_at.asc()))
+                .scalars()
+                .all()
+            )
+
+        self.assertEqual(
+            [
+                cast(dict[str, Any], row.decision_json).get("action")
+                for row in decisions
+            ],
+            ["buy", "sell"],
+        )
+        self.assertEqual([execution.side for execution in executions], ["buy", "sell"])
+        self.assertEqual(execution_adapter.list_positions(), [])
+
+        exit_payload = cast(dict[str, Any], decisions[-1].decision_json)
+        params = cast(dict[str, Any], exit_payload.get("params"))
+        exit_metadata = cast(dict[str, Any], params.get("paper_route_probe_exit"))
+        self.assertEqual(exit_metadata.get("broker_position_qty"), "0")
+        self.assertEqual(exit_metadata.get("db_position_qty_fallback"), True)
+        self.assertEqual(
+            exit_metadata.get("position_source"),
+            "source_execution_db_open_qty",
+        )
+        self.assertEqual(exit_metadata.get("effective_position_qty"), "2.00000000")
+
+    def test_simulation_seed_missing_position_snapshot_fail_closed_edges(
+        self,
+    ) -> None:
+        execution_adapter = SimulationExecutionAdapter(
+            bootstrap_servers=None,
+            security_protocol=None,
+            sasl_mechanism=None,
+            sasl_username=None,
+            sasl_password=None,
+            topic="torghut.sim.trade-updates.v1",
+            account_label="paper",
+            simulation_run_id="paper-route-exit-test",
+            dataset_id="paper-route-exit-test",
+        )
+
+        self.assertFalse(execution_adapter.seed_missing_position_snapshot({}))
+        self.assertFalse(
+            execution_adapter.seed_missing_position_snapshot({"symbol": "AAPL"})
+        )
+        self.assertFalse(
+            execution_adapter.seed_missing_position_snapshot(
+                {"symbol": "AAPL", "qty": "bad"}
+            )
+        )
+        self.assertFalse(
+            execution_adapter.seed_missing_position_snapshot(
+                {"symbol": "AAPL", "qty": "0"}
+            )
+        )
+        self.assertTrue(
+            execution_adapter.seed_missing_position_snapshot(
+                {"symbol": "AAPL", "qty": "2", "side": "long"}
+            )
+        )
+        self.assertFalse(
+            execution_adapter.seed_missing_position_snapshot(
+                {"symbol": "AAPL", "qty": "1", "side": "long"}
+            )
+        )
+
+    def test_restore_simulation_exit_position_fail_closed_edges(self) -> None:
+        decision = StrategyDecision(
+            strategy_id=str(uuid4()),
+            symbol="AAPL",
+            event_ts=datetime(2026, 3, 26, 14, 0, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="sell",
+            qty=Decimal("2"),
+            rationale="paper-route-exit-edge",
+            params={},
+        )
+
+        class NonCallableSeedAdapter:
+            name = "simulation"
+
+        class FalseSeedAdapter:
+            name = "simulation"
+
+            def seed_missing_position_snapshot(self, _position: object) -> bool:
+                return False
+
+        class RaisingSeedAdapter:
+            name = "simulation"
+
+            def seed_missing_position_snapshot(self, _position: object) -> bool:
+                raise RuntimeError("seed failed")
+
+        base_kwargs = {
+            "positions": [],
+            "decision": decision,
+            "metadata": {"db_open_qty": "2"},
+            "price": Decimal("100"),
+            "execution_adapter": FalseSeedAdapter(),
+        }
+
+        self.assertIsNone(
+            SimpleTradingPipeline._restore_simulation_paper_route_probe_exit_position(
+                **{**base_kwargs, "trading_mode": "live"}
+            )
+        )
+        self.assertIsNone(
+            SimpleTradingPipeline._restore_simulation_paper_route_probe_exit_position(
+                **{
+                    **base_kwargs,
+                    "trading_mode": "paper",
+                    "execution_adapter": FakeAlpacaClient(),
+                }
+            )
+        )
+        self.assertIsNone(
+            SimpleTradingPipeline._restore_simulation_paper_route_probe_exit_position(
+                **{**base_kwargs, "trading_mode": "paper", "metadata": {}}
+            )
+        )
+        self.assertIsNone(
+            SimpleTradingPipeline._restore_simulation_paper_route_probe_exit_position(
+                **{
+                    **base_kwargs,
+                    "trading_mode": "paper",
+                    "execution_adapter": NonCallableSeedAdapter(),
+                }
+            )
+        )
+        self.assertIsNone(
+            SimpleTradingPipeline._restore_simulation_paper_route_probe_exit_position(
+                **{**base_kwargs, "trading_mode": "paper"}
+            )
+        )
+        self.assertIsNone(
+            SimpleTradingPipeline._restore_simulation_paper_route_probe_exit_position(
+                **{
+                    **base_kwargs,
+                    "trading_mode": "paper",
+                    "execution_adapter": RaisingSeedAdapter(),
+                }
+            )
+        )
 
     def test_simple_pipeline_paper_route_exit_helpers_cover_filter_edges(
         self,

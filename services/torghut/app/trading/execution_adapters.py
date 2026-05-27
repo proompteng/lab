@@ -216,6 +216,32 @@ class SimulationExecutionAdapter:
         self._position_market_value_by_symbol = seeded_market_values
         self._seeded_from_snapshot = True
 
+    def seed_missing_position_snapshot(self, position: Mapping[str, Any]) -> bool:
+        """Restore a single missing simulation position from a durable runtime source."""
+
+        self._sync_runtime_context()
+        symbol = str(position.get('symbol') or '').strip().upper()
+        if not symbol:
+            return False
+        if self._positions_by_symbol.get(symbol, Decimal('0')) != 0:
+            return False
+        raw_qty = position.get('qty') or position.get('quantity')
+        if raw_qty is None:
+            return False
+        try:
+            qty = Decimal(str(raw_qty))
+        except Exception:
+            return False
+        if qty <= 0:
+            return False
+        side = str(position.get('side') or '').strip().lower()
+        signed_qty = -abs(qty) if side == 'short' else qty
+        self._positions_by_symbol[symbol] = signed_qty
+        signed_market_value = _signed_position_market_value(position, side=side)
+        if signed_market_value is not None:
+            self._position_market_value_by_symbol[symbol] = signed_market_value
+        return True
+
     def submit_order(
         self,
         symbol: str,

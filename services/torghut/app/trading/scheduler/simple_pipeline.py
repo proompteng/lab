@@ -815,9 +815,62 @@ class SimpleTradingPipeline(TradingPipeline):
         return False
 
     @staticmethod
+    def _restore_simulation_paper_route_probe_exit_position(
+        *,
+        positions: list[dict[str, Any]],
+        decision: StrategyDecision,
+        metadata: Mapping[str, Any],
+        price: Decimal | None,
+        execution_adapter: Any | None,
+        trading_mode: str | None,
+    ) -> Decimal | None:
+        if str(trading_mode or "").strip().lower() != "paper":
+            return None
+        if (
+            str(getattr(execution_adapter, "name", "") or "").strip().lower()
+            != "simulation"
+        ):
+            return None
+        db_open_qty = _optional_decimal(metadata.get("db_open_qty"))
+        if db_open_qty is None or db_open_qty <= 0:
+            return None
+        seed_missing = getattr(
+            execution_adapter, "seed_missing_position_snapshot", None
+        )
+        if not callable(seed_missing):
+            return None
+
+        restored_qty = (
+            min(db_open_qty, decision.qty) if decision.qty > 0 else db_open_qty
+        )
+        position: dict[str, Any] = {
+            "symbol": decision.symbol,
+            "qty": str(restored_qty),
+            "side": "long",
+        }
+        if price is not None and price > 0:
+            position["market_value"] = str(restored_qty * price)
+        try:
+            seeded = bool(seed_missing(position))
+        except Exception as exc:
+            logger.warning(
+                "Failed to restore simulation paper route probe exit position symbol=%s error=%s",
+                decision.symbol,
+                exc,
+            )
+            return None
+        if not seeded:
+            return None
+        positions.append(dict(position))
+        return restored_qty
+
+    @staticmethod
     def _prepare_paper_route_probe_exit_position(
         positions: list[dict[str, Any]],
         decision: StrategyDecision,
+        *,
+        execution_adapter: Any | None = None,
+        trading_mode: str | None = None,
     ) -> StrategyDecision | None:
         if SimpleTradingPipeline._paper_route_probe_exit_metadata(decision) is None:
             return decision
@@ -829,11 +882,30 @@ class SimpleTradingPipeline(TradingPipeline):
             cast(Mapping[str, Any], simple_lane.get("quantity_resolution") or {})
         )
         if current_qty <= 0:
-            return None
+            price = _optional_decimal(params.get("price"))
+            restored_qty = (
+                SimpleTradingPipeline._restore_simulation_paper_route_probe_exit_position(
+                    positions=positions,
+                    decision=decision,
+                    metadata=metadata,
+                    price=price,
+                    execution_adapter=execution_adapter,
+                    trading_mode=trading_mode,
+                )
+                if current_qty == 0
+                else None
+            )
+            if restored_qty is None:
+                return None
+            metadata["broker_position_qty"] = str(current_qty)
+            metadata["db_position_qty_fallback"] = True
+            metadata["position_source"] = "source_execution_db_open_qty"
+            current_qty = restored_qty
         if current_qty < decision.qty:
             decision = decision.model_copy(update={"qty": current_qty})
             metadata["qty_capped_to_position"] = True
-        metadata["broker_position_qty"] = str(current_qty)
+        metadata.setdefault("broker_position_qty", str(current_qty))
+        metadata["effective_position_qty"] = str(current_qty)
 
         quantity_resolution["position_qty"] = str(decision.qty)
         simple_lane["final_qty"] = str(decision.qty)
@@ -899,6 +971,8 @@ class SimpleTradingPipeline(TradingPipeline):
             prepared_decision = self._prepare_paper_route_probe_exit_position(
                 positions,
                 decision,
+                execution_adapter=self.execution_adapter,
+                trading_mode=settings.trading_mode,
             )
             if prepared_decision is None:
                 continue
