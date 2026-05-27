@@ -625,10 +625,10 @@ def _declared_target_probe_symbols(target: Mapping[str, object]) -> list[str]:
 
 
 def _target_uses_current_probe_scope(target: Mapping[str, object]) -> bool:
-    if (
-        _safe_text(target.get("paper_route_probe_scope_authority"))
-        == "external_target_plan"
-    ):
+    if _safe_text(target.get("paper_route_probe_scope_authority")) in {
+        "external_target_plan",
+        "strategy_universe",
+    }:
         return False
     source_kind = _safe_text(target.get("source_kind"))
     handoff = _safe_text(target.get("handoff"))
@@ -651,6 +651,33 @@ def _target_probe_symbols(
     if symbols:
         return symbols
     return _paper_route_probe_symbols(probe)
+
+
+def _strategy_universe_symbols(
+    session: Session,
+    *,
+    strategy_lookup_names: Sequence[str],
+) -> list[str]:
+    if not strategy_lookup_names:
+        return []
+    rows = session.execute(
+        select(Strategy.name, Strategy.universe_symbols).where(
+            Strategy.name.in_(list(strategy_lookup_names))
+        )
+    ).all()
+    universe_by_name = {
+        str(name): universe_symbols for name, universe_symbols in rows if name
+    }
+    for strategy_name in strategy_lookup_names:
+        raw_symbols = universe_by_name.get(strategy_name)
+        symbols: list[str] = []
+        for item in _as_sequence(raw_symbols):
+            symbol = str(item).strip().upper()
+            if symbol and symbol not in symbols:
+                symbols.append(symbol)
+        if symbols:
+            return symbols
+    return []
 
 
 def _next_session_probe_notional(probe: Mapping[str, object]) -> str:
@@ -892,6 +919,7 @@ def _runtime_window_import_health_gate_summary(
 
 def _next_paper_route_runtime_window_targets(
     *,
+    session: Session,
     targets: Sequence[Mapping[str, Any]],
     probe: Mapping[str, object],
     live_submission_gate: Mapping[str, Any],
@@ -943,12 +971,6 @@ def _next_paper_route_runtime_window_targets(
     skipped_targets: list[dict[str, object]] = []
     planned_keys: set[tuple[object, ...]] = set()
     for target in targets:
-        target_probe_symbols = _target_probe_symbols(target, probe)
-        target_probe_ready = (
-            bool(probe.get("configured_enabled"))
-            and _safe_decimal(next_notional) > 0
-            and bool(target_probe_symbols)
-        )
         hypothesis_id = _safe_text(target.get("hypothesis_id"))
         candidate_id = _safe_text(target.get("candidate_id"))
         strategy_family = _safe_text(target.get("strategy_family"))
@@ -962,6 +984,28 @@ def _next_paper_route_runtime_window_targets(
             runtime_strategy_name,
             strategy_name,
             _strategy_name_from_strategy_id(strategy_id),
+        )
+        raw_target_probe_symbols = _target_probe_symbols(target, probe)
+        strategy_universe_symbols = _strategy_universe_symbols(
+            session,
+            strategy_lookup_names=strategy_lookup_names,
+        )
+        target_probe_symbols = raw_target_probe_symbols
+        out_of_strategy_scope_symbols: list[str] = []
+        missing_strategy_universe_symbols: list[str] = []
+        if strategy_universe_symbols:
+            (
+                target_probe_symbols,
+                out_of_strategy_scope_symbols,
+                missing_strategy_universe_symbols,
+            ) = _scope_probe_symbols_to_target_plan(
+                raw_target_probe_symbols,
+                scope_symbols=strategy_universe_symbols,
+            )
+        target_probe_ready = (
+            bool(probe.get("configured_enabled"))
+            and _safe_decimal(next_notional) > 0
+            and bool(target_probe_symbols)
         )
         source_manifest_ref = _safe_text(target.get("source_manifest_ref"))
         missing = [
@@ -1008,6 +1052,8 @@ def _next_paper_route_runtime_window_targets(
         paper_route_probe_scope_authority = _safe_text(
             target.get("paper_route_probe_scope_authority")
         )
+        if strategy_universe_symbols:
+            paper_route_probe_scope_authority = "strategy_universe"
         planned_target: dict[str, object] = {
             "hypothesis_id": hypothesis_id,
             "candidate_id": candidate_id,
@@ -1038,6 +1084,15 @@ def _next_paper_route_runtime_window_targets(
             "window_end": _isoformat(window_end),
             "paper_route_probe_symbols": target_probe_symbols,
             "paper_route_probe_symbol_count": len(target_probe_symbols),
+            "paper_route_probe_raw_target_symbols": raw_target_probe_symbols,
+            "paper_route_probe_strategy_scope_applied": bool(strategy_universe_symbols),
+            "paper_route_probe_strategy_universe_symbols": (strategy_universe_symbols),
+            "paper_route_probe_out_of_strategy_scope_symbols": (
+                out_of_strategy_scope_symbols
+            ),
+            "paper_route_probe_missing_strategy_universe_symbols": (
+                missing_strategy_universe_symbols
+            ),
             "paper_route_probe_next_session_max_notional": next_notional,
             "paper_route_probe_window_start": _isoformat(window_start),
             "paper_route_probe_window_end": _isoformat(window_end),
@@ -2197,6 +2252,7 @@ def build_paper_route_evidence_audit(
         for target in targets
     ]
     next_targets = _next_paper_route_runtime_window_targets(
+        session=session,
         targets=targets,
         probe=probe,
         live_submission_gate=live_submission_gate,

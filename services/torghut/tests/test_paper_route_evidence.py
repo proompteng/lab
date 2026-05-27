@@ -1490,6 +1490,114 @@ class TestPaperRouteEvidenceAudit(TestCase):
         )
         self.assertNotIn("INTC", next_audit_target["paper_route_probe_symbols"])
 
+    def test_next_window_targets_are_scoped_to_strategy_universe(self) -> None:
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            session.add(
+                Strategy(
+                    name="microbar-cross-sectional-pairs-v1",
+                    description="pairs runtime strategy",
+                    enabled=True,
+                    base_timeframe="1Sec",
+                    universe_type="microbar_cross_sectional_pairs_v1",
+                    universe_symbols=["AAPL", "AMZN"],
+                )
+            )
+            session.commit()
+
+            payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate={
+                    "allowed": True,
+                    "reason": "non_live_mode",
+                    "blocked_reasons": [],
+                    "promotion_eligible_total": 0,
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": (
+                            "torghut.next-paper-route-runtime-window-targets.v1"
+                        ),
+                        "target_count": 1,
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-PAIRS-01",
+                                "candidate_id": "candidate-hpairs",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_pairs",
+                                "strategy_name": "microbar-cross-sectional-pairs-v1",
+                                "runtime_strategy_name": "candidate-runtime-name",
+                                "strategy_lookup_names": [
+                                    "candidate-runtime-name",
+                                    "microbar-cross-sectional-pairs-v1",
+                                ],
+                                "account_label": "TORGHUT_SIM",
+                                "source_kind": "paper_route_probe_runtime_observed",
+                                "source_manifest_ref": "config/trading/hypotheses/h-pairs.json",
+                                "window_start": window_start.isoformat(),
+                                "window_end": window_end.isoformat(),
+                                "paper_route_probe_symbols": [
+                                    "AAPL",
+                                    "AMZN",
+                                    "INTC",
+                                    "NVDA",
+                                ],
+                                "paper_route_target_plan_source": (
+                                    "external_target_plan_url"
+                                ),
+                                "paper_route_probe_scope_authority": (
+                                    "external_target_plan"
+                                ),
+                                "paper_probation_authorized": True,
+                                "promotion_allowed": False,
+                                "final_promotion_authorized": False,
+                                "max_notional": "0",
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": False,
+                        "next_session_max_notional": "63180",
+                        "eligible_symbol_count": 4,
+                        "eligible_symbols": ["AAPL", "AMZN", "INTC", "NVDA"],
+                        "active_symbols": [],
+                        "blocking_reasons": ["market_session_closed"],
+                    },
+                },
+                generated_at=window_start - timedelta(days=2),
+            )
+
+        target = payload["next_paper_route_runtime_window_targets"]["targets"][0]
+        self.assertEqual(target["paper_route_probe_symbols"], ["AAPL", "AMZN"])
+        self.assertEqual(
+            target["paper_route_probe_raw_target_symbols"],
+            ["AAPL", "AMZN", "INTC", "NVDA"],
+        )
+        self.assertTrue(target["paper_route_probe_strategy_scope_applied"])
+        self.assertEqual(
+            target["paper_route_probe_strategy_universe_symbols"],
+            ["AAPL", "AMZN"],
+        )
+        self.assertEqual(
+            target["paper_route_probe_out_of_strategy_scope_symbols"],
+            ["INTC", "NVDA"],
+        )
+        self.assertEqual(
+            target["paper_route_probe_missing_strategy_universe_symbols"], []
+        )
+        self.assertEqual(
+            target["paper_route_probe_scope_authority"], "strategy_universe"
+        )
+        next_audit_target = payload["next_runtime_window_target_audits"][0]["target"]
+        self.assertEqual(
+            next_audit_target["paper_route_probe_symbols"], ["AAPL", "AMZN"]
+        )
+        self.assertNotIn("INTC", next_audit_target["paper_route_probe_symbols"])
+
     def test_external_target_plan_probe_reports_missing_scope_and_plan_error(
         self,
     ) -> None:
