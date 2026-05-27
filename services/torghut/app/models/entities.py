@@ -24,6 +24,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base, GUID, JSONType
 
 
+MARKET_SYMBOL_MAX_LENGTH = 64
+
+
 class TimestampMixin:
     """Mixin providing created_at and updated_at timestamps."""
 
@@ -89,7 +92,9 @@ class TradeDecision(Base, CreatedAtMixin):
     alpaca_account_label: Mapped[str] = mapped_column(
         String(length=64), nullable=False, server_default=text("'paper'")
     )
-    symbol: Mapped[str] = mapped_column(String(length=16), nullable=False)
+    symbol: Mapped[str] = mapped_column(
+        String(length=MARKET_SYMBOL_MAX_LENGTH), nullable=False
+    )
     timeframe: Mapped[str] = mapped_column(String(length=16), nullable=False)
     decision_json: Mapped[Any] = mapped_column(JSONType, nullable=False)
     rationale: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -143,7 +148,9 @@ class Execution(Base, TimestampMixin):
     client_order_id: Mapped[Optional[str]] = mapped_column(
         String(length=128), nullable=True
     )
-    symbol: Mapped[str] = mapped_column(String(length=16), nullable=False)
+    symbol: Mapped[str] = mapped_column(
+        String(length=MARKET_SYMBOL_MAX_LENGTH), nullable=False
+    )
     side: Mapped[str] = mapped_column(String(length=8), nullable=False)
     order_type: Mapped[str] = mapped_column(String(length=32), nullable=False)
     time_in_force: Mapped[str] = mapped_column(String(length=16), nullable=False)
@@ -238,7 +245,9 @@ class ExecutionOrderEvent(Base, CreatedAtMixin):
     event_ts: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    symbol: Mapped[Optional[str]] = mapped_column(String(length=16), nullable=True)
+    symbol: Mapped[Optional[str]] = mapped_column(
+        String(length=MARKET_SYMBOL_MAX_LENGTH), nullable=True
+    )
     alpaca_order_id: Mapped[Optional[str]] = mapped_column(
         String(length=128), nullable=True
     )
@@ -1118,7 +1127,9 @@ class RejectedSignalOutcomeEvent(Base, TimestampMixin):
     paper_source: Mapped[str] = mapped_column(String(length=128), nullable=False)
     paper_claim_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
     account_label: Mapped[str] = mapped_column(String(length=64), nullable=False)
-    symbol: Mapped[str] = mapped_column(String(length=16), nullable=False)
+    symbol: Mapped[str] = mapped_column(
+        String(length=MARKET_SYMBOL_MAX_LENGTH), nullable=False
+    )
     event_ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     timeframe: Mapped[str] = mapped_column(String(length=16), nullable=False)
     seq: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
@@ -2710,7 +2721,9 @@ class ExecutionTCAMetric(Base, TimestampMixin):
     alpaca_account_label: Mapped[Optional[str]] = mapped_column(
         String(length=64), nullable=True
     )
-    symbol: Mapped[str] = mapped_column(String(length=16), nullable=False)
+    symbol: Mapped[str] = mapped_column(
+        String(length=MARKET_SYMBOL_MAX_LENGTH), nullable=False
+    )
     side: Mapped[str] = mapped_column(String(length=8), nullable=False)
     arrival_price: Mapped[Optional[Decimal]] = mapped_column(
         Numeric(20, 8), nullable=True

@@ -13,7 +13,15 @@ from unittest.mock import patch
 from kafka import TopicPartition
 
 from app.config import settings
-from app.models import Base, Execution, ExecutionOrderEvent, Strategy, TradeDecision
+from app.models import (
+    Base,
+    Execution,
+    ExecutionOrderEvent,
+    ExecutionTCAMetric,
+    RejectedSignalOutcomeEvent,
+    Strategy,
+    TradeDecision,
+)
 from app.trading.order_feed import (
     OrderFeedIngestor,
     apply_order_event_to_execution,
@@ -172,6 +180,47 @@ class TestOrderFeed(TestCase):
         session.commit()
         session.refresh(execution)
         return execution
+
+    def test_runtime_symbol_columns_allow_occ_option_contracts(self) -> None:
+        for model in (
+            TradeDecision,
+            Execution,
+            ExecutionOrderEvent,
+            RejectedSignalOutcomeEvent,
+            ExecutionTCAMetric,
+        ):
+            symbol_column = model.__table__.c.symbol
+            self.assertEqual(
+                symbol_column.type.length,
+                64,
+                f"{model.__tablename__}.symbol must support OCC option symbols",
+            )
+
+    def test_option_order_feed_symbol_persists_full_occ_symbol(self) -> None:
+        option_symbol = "AMZN260529P00270000"
+        self.assertGreater(len(option_symbol), 16)
+        payload = (
+            b'{"channel":"trade_updates","payload":{"event":"fill","timestamp":"2026-02-01T10:00:00Z",'
+            b'"order":{"id":"option-order-1","client_order_id":"option-client-1",'
+            b'"symbol":"AMZN260529P00270000","status":"filled","qty":"1","filled_qty":"1",'
+            b'"filled_avg_price":"2.15"}},"seq":10}'
+        )
+        record = FakeRecord(value=payload, offset=55)
+
+        with Session(self.engine) as session:
+            normalized = normalize_order_feed_record(
+                record,
+                default_topic="torghut.trade-updates.v1",
+                default_account_label="paper",
+            )
+            assert normalized.event is not None
+            self.assertEqual(normalized.event.symbol, option_symbol)
+
+            persisted, is_duplicate = persist_order_event(session, normalized.event)
+            session.commit()
+
+            self.assertFalse(is_duplicate)
+            self.assertEqual(persisted.symbol, option_symbol)
 
     def test_cross_account_order_feed_normalization_defaults_do_not_crosstalk(
         self,
