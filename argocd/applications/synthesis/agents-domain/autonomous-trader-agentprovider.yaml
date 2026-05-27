@@ -26,6 +26,7 @@ spec:
             env:
               FASTMCP_SHOW_SERVER_BANNER: "false"
               FASTMCP_LOG_LEVEL: "ERROR"
+            startup_timeout_sec: 60
         web_search: live
   argsTemplate: []
   secretEnv:
@@ -106,6 +107,7 @@ spec:
         [mcp_servers.alpaca]
         command = "/usr/bin/python3"
         args = ["-u", "/root/alpaca-mcp-stdio-bridge.py"]
+        startup_timeout_sec = 60.0
         env = { FASTMCP_SHOW_SERVER_BANNER = "false", FASTMCP_LOG_LEVEL = "ERROR" }
     - path: /root/alpaca-mcp-stdio-bridge.py
       content: |-
