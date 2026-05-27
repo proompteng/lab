@@ -1,0 +1,19 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: Agent
+metadata:
+  name: autonomous-trader-agent
+  namespace: synthesis
+  labels:
+    app.kubernetes.io/part-of: synthesis
+    app.kubernetes.io/component: autonomous-trader
+spec:
+  providerRef:
+    name: autonomous-trader-codex
+  security:
+    allowedSecrets:
+      - alpaca-mcp
+      - agents-artifacts
+      - codex-auth
+      - github-token
+    allowedServiceAccounts:
+      - agents-sa

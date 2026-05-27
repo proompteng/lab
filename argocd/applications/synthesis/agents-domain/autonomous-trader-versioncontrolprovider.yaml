@@ -1,0 +1,35 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: VersionControlProvider
+metadata:
+  name: github
+  namespace: synthesis
+  labels:
+    app.kubernetes.io/part-of: synthesis
+    app.kubernetes.io/component: autonomous-trader
+spec:
+  provider: github
+  apiBaseUrl: https://api.github.com
+  webBaseUrl: https://github.com
+  cloneBaseUrl: https://github.com
+  auth:
+    method: token
+    token:
+      secretRef:
+        name: github-token
+        key: token
+  repositoryPolicy:
+    allow:
+      - proompteng/lab
+  capabilities:
+    read: true
+    write: true
+    pullRequests: false
+  defaults:
+    baseBranch: main
+    branchTemplate: codex/{{agentRun.name}}
+    branchConflictSuffixTemplate: "{{agentRun.name}}"
+    commitAuthorName: Greg Konush
+    commitAuthorEmail: 12027037+gregkonush@users.noreply.github.com
+    pullRequest:
+      enabled: false
+      draft: false

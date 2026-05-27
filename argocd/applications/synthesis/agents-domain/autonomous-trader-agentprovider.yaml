@@ -1,0 +1,113 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentProvider
+metadata:
+  name: autonomous-trader-codex
+  namespace: synthesis
+  labels:
+    app.kubernetes.io/part-of: synthesis
+    app.kubernetes.io/component: autonomous-trader
+spec:
+  binary: /usr/local/bin/agent-runner
+  adapter:
+    type: codex-app-server
+    codex:
+      model: gpt-5.5
+      effort: xhigh
+      sandbox: danger-full-access
+      approval: never
+      cwd: /workspace/lab
+      threadConfig:
+        mcp_servers:
+          alpaca:
+            command: /usr/local/bin/alpaca-mcp-server
+        web_search: live
+  argsTemplate: []
+  secretEnv:
+    - name: APCA_API_KEY_ID
+      secretName: alpaca-mcp
+      key: APCA_API_KEY_ID
+    - name: APCA_API_SECRET_KEY
+      secretName: alpaca-mcp
+      key: APCA_API_SECRET_KEY
+    - name: APCA_API_BASE_URL
+      secretName: alpaca-mcp
+      key: APCA_API_BASE_URL
+    - name: ALPACA_API_KEY
+      secretName: alpaca-mcp
+      key: ALPACA_API_KEY
+    - name: ALPACA_API_KEY_ID
+      secretName: alpaca-mcp
+      key: ALPACA_API_KEY_ID
+    - name: ALPACA_SECRET_KEY
+      secretName: alpaca-mcp
+      key: ALPACA_SECRET_KEY
+    - name: AGENTS_ARTIFACTS_ACCESS_KEY_ID
+      secretName: agents-artifacts
+      key: AWS_ACCESS_KEY_ID
+    - name: AGENTS_ARTIFACTS_SECRET_ACCESS_KEY
+      secretName: agents-artifacts
+      key: AWS_SECRET_ACCESS_KEY
+  envTemplate:
+    AGENT_RUN_NAME: "{{agentRun.name}}"
+    AGENT_RUN_NAMESPACE: "{{agentRun.namespace}}"
+    AGENTS_ARTIFACTS_BUCKET: agents-artifacts
+    AGENTS_ARTIFACTS_ENDPOINT: http://rook-ceph-rgw-objectstore.rook-ceph.svc:80
+    AGENTS_ARTIFACTS_SECURE: "false"
+    ALPACA_PAPER_TRADE: "true"
+    CODEX_CONFIG: /root/.codex/config.toml
+    CODEX_LOG_LEVEL: info
+    CODEX_MARKET_CONTEXT_ATTEMPT_TIMEOUT_SECONDS: "900"
+    CODEX_MARKET_CONTEXT_OVERALL_TIMEOUT_SECONDS: "21600"
+    CODEX_MAX_SESSION_ATTEMPTS: "1"
+    CODEX_MODEL: gpt-5.5
+    HOME: /root
+  inputFiles:
+    - path: /root/.codex/config.toml
+      content: |-
+        model = "gpt-5.5"
+        model_reasoning_summary = "detailed"
+        model_reasoning_effort = "xhigh"
+        model_verbosity = "medium"
+        approval_policy = "never"
+        sandbox_mode = "danger-full-access"
+        web_search = "live"
+        suppress_unstable_features_warning = true
+
+        [features]
+        undo = true
+        enable_request_compression = true
+        apply_patch_freeform = true
+        unified_exec = true
+        shell_snapshot = true
+        steer = true
+        multi_agent = true
+        child_agents_md = true
+        collaboration_modes = true
+        responses_websockets = false
+        goals = true
+
+        [shell_environment_policy]
+        ignore_default_excludes = true
+
+        [projects."/workspace/lab"]
+        trust_level = "trusted"
+
+        [projects."/root"]
+        trust_level = "trusted"
+
+        [mcp_servers.alpaca]
+        command = "/usr/local/bin/alpaca-mcp-server"
+  outputArtifacts:
+    - name: autonomous-trader-report
+      path: /workspace/.agentrun/autonomous-trader/report.md
+      key: synthesis/autonomous-trader/{{ agentRun.name }}/report.md
+    - name: autonomous-trader-ledger
+      path: /workspace/.agentrun/autonomous-trader/decision-ledger.jsonl
+      key: synthesis/autonomous-trader/{{ agentRun.name }}/decision-ledger.jsonl
+    - name: autonomous-trader-preflight
+      path: /workspace/.agentrun/autonomous-trader/preflight.json
+      key: synthesis/autonomous-trader/{{ agentRun.name }}/preflight.json
+    - name: runner-log
+      path: /workspace/.agent/runner.log
+    - name: runner-status
+      path: /workspace/.agent/status.json

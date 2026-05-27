@@ -111,6 +111,7 @@ controller:
         ephemeral-storage: 16Gi
   namespaces:
     - agents
+    - synthesis
   concurrency:
     perNamespace: 14
     perAgent: 10
@@ -124,6 +125,14 @@ controller:
     name: codex-auth
     key: auth.json
     mountPath: /root/.codex
+orchestrationController:
+  namespaces:
+    - agents
+    - synthesis
+supportingController:
+  namespaces:
+    - agents
+    - synthesis
 rbac:
   clusterScoped: true
   extraRules:

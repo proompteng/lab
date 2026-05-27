@@ -2,6 +2,7 @@ apiVersion: agents.proompteng.ai/v1alpha1
 kind: ImplementationSpec
 metadata:
   name: synthesis-deep-alpha-options-v1
+  namespace: agents
 spec:
   summary: Scheduled deep-alpha options research for Synthesis
   source:
