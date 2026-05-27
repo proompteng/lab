@@ -1,15 +1,15 @@
 apiVersion: schedules.proompteng.ai/v1alpha1
 kind: Schedule
 metadata:
-  name: synthesis-deep-alpha-every-3h
-  namespace: agents
+  name: autonomous-trader-market-open
+  namespace: synthesis
   labels:
     app.kubernetes.io/part-of: synthesis
-    app.kubernetes.io/component: deep-alpha-agentrun
+    app.kubernetes.io/component: autonomous-trader
 spec:
-  cron: "0 */6 * * *"
-  timezone: America/Los_Angeles
+  cron: "30 9 * * 1-5"
+  timezone: America/New_York
   targetRef:
     apiVersion: agents.proompteng.ai/v1alpha1
     kind: AgentRun
-    name: synthesis-deep-alpha-template
+    name: autonomous-trader-template

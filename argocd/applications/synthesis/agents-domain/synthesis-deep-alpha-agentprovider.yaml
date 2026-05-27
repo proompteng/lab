@@ -2,6 +2,7 @@ apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentProvider
 metadata:
   name: synthesis-deep-alpha
+  namespace: agents
 spec:
   binary: /usr/local/bin/agent-runner
   adapter:

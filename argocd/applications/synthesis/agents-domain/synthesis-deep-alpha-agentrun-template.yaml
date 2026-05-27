@@ -2,6 +2,7 @@ apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
   name: synthesis-deep-alpha-template
+  namespace: agents
   annotations:
     agents.proompteng.ai/template: "true"
 spec:
