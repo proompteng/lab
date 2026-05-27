@@ -595,6 +595,24 @@ describe('scheduled AgentRun templates', () => {
 })
 
 describe('synthesis autonomous trader provider', () => {
+  it('keeps the trader prompt aligned with day-trading authority', () => {
+    const promptConfig = readYamlObjects(
+      'argocd/applications/synthesis/agents-domain/autonomous-trader-system-prompt-configmap.yaml',
+    ).find((manifest) => objectAt(manifest, 'kind') === 'ConfigMap')
+    const implSpec = readYamlObjects(
+      'argocd/applications/synthesis/agents-domain/autonomous-trader-implspec.yaml',
+    ).find((manifest) => objectAt(manifest, 'kind') === 'ImplementationSpec')
+    const prompt = objectAt(objectAt(promptConfig, 'data'), 'system-prompt.md')
+    const taskPrompt = objectAt(objectAt(implSpec, 'spec'), 'text')
+
+    expect(prompt).toContain('autonomous day-trading agent')
+    expect(prompt).toContain('closing, reducing, hedging, or reversing')
+    expect(prompt).not.toContain('Target the requested account value as actual paper account equity')
+    expect(prompt).not.toContain('Hold-time target is 2-3 weeks')
+    expect(taskPrompt).toContain('There is no 2-3 week hold-time requirement')
+    expect(taskPrompt).toContain('You may buy, sell, close, reduce, hedge, reverse, or stand down')
+  })
+
   it('bridges Codex framed MCP stdio to Alpaca newline stdio', () => {
     const provider = readYamlObjects(
       'argocd/applications/synthesis/agents-domain/autonomous-trader-agentprovider.yaml',
