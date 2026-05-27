@@ -456,6 +456,59 @@ class TestRuntimeLedgerProofPacket(TestCase):
             result["required_actions"],
         )
 
+    def test_packet_splits_post_cost_proof_from_paper_route_promotion_gate(
+        self,
+    ) -> None:
+        evidence = _paper_route_evidence()
+        plan = evidence["next_paper_route_runtime_window_targets"]
+        assert isinstance(plan, dict)
+        target = plan["targets"][0]
+        assert isinstance(target, dict)
+        target["drift_ok"] = "false"
+        target["drift_reason"] = "drift_live_promotion_ineligible"
+        target["runtime_window_import_health_gate"] = {
+            "schema_version": "torghut.runtime-window-import-health-gate.v1",
+            "dependency_quorum_decision": "allow",
+            "continuity_ok": "true",
+            "drift_ok": "false",
+            "drift_reason": "drift_live_promotion_ineligible",
+            "blockers": [],
+            "promotion_blockers": ["drift_checks_not_ok"],
+        }
+        target["runtime_window_import_health_gate_blockers"] = []
+
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            paper_route_evidence=evidence,
+            runtime_window_import=_runtime_import(),
+            completion_status=_completion(),
+            min_runtime_ledger_net_pnl=Decimal("500"),
+            min_runtime_ledger_daily_net_pnl=Decimal("500"),
+            min_runtime_ledger_trading_days=1,
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        self.assertTrue(result["post_cost_proof_authority"]["allowed"], result)
+        self.assertEqual(result["post_cost_proof_authority"]["blocking_reasons"], [])
+        self.assertEqual(
+            result["verdict"],
+            "post_cost_proof_authority_allowed_capital_promotion_blocked",
+        )
+        self.assertFalse(result["capital_promotion_authority"]["allowed"])
+        self.assertEqual(
+            result["capital_promotion_authority"]["blocking_reasons"],
+            ["drift_checks_not_ok"],
+        )
+        self.assertFalse(result["promotion_authority"]["allowed"])
+        self.assertEqual(
+            result["promotion_authority"]["failed_checks"],
+            ["paper_route_promotion_health_gate"],
+        )
+        self.assertIn(
+            "drift_checks_not_ok",
+            result["promotion_authority"]["blocking_reasons"],
+        )
+
     def test_cli_uploads_durable_proof_packet_artifact_with_runtime_run_id(
         self,
     ) -> None:

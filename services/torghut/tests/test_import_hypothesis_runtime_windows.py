@@ -115,6 +115,8 @@ class _FakeCursor:
                     datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
                     Decimal("1.25"),
                     Decimal("0.50"),
+                    "decision-sha",
+                    {},
                 )
             ],
         ]
@@ -1800,6 +1802,160 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertIn("upper(d.symbol) = any(%s)", tca_query)
         self.assertIn("upper(e.symbol) = any(%s)", tca_query)
         self.assertEqual(tca_params[-2:], (["AAPL"], ["AAPL"]))
+
+    def test_query_timestamps_requires_source_lineage_for_candidate_import(
+        self,
+    ) -> None:
+        cursor = _FakeCursor()
+        matched_json = {"candidate_id": "cand-a", "hypothesis_id": "H-A"}
+        unscoped_json: dict[str, object] = {}
+        cursor._results = [
+            [
+                (
+                    datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                    "AAPL",
+                    "TORGHUT_SIM",
+                    "microbar-cross-sectional-pairs-v1",
+                    "decision-matched",
+                    matched_json,
+                ),
+                (
+                    datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "AAPL",
+                    "TORGHUT_SIM",
+                    "microbar-cross-sectional-pairs-v1",
+                    "decision-unscoped",
+                    unscoped_json,
+                ),
+            ],
+            [
+                (
+                    datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 14, 35, 30, tzinfo=timezone.utc),
+                    "AAPL",
+                    "buy",
+                    Decimal("1"),
+                    Decimal("100"),
+                    Decimal("0.01"),
+                    {
+                        "cost_amount": "0.01",
+                        "cost_basis": "broker_reported_commission_and_fees",
+                    },
+                    {},
+                    "TORGHUT_SIM",
+                    "microbar-cross-sectional-pairs-v1",
+                    "decision-matched",
+                    matched_json,
+                    "alpaca-order-matched",
+                    "client-order-matched",
+                    "filled",
+                ),
+                (
+                    datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 14, 36, 30, tzinfo=timezone.utc),
+                    "AAPL",
+                    "buy",
+                    Decimal("1"),
+                    Decimal("100"),
+                    Decimal("0.01"),
+                    {},
+                    {},
+                    "TORGHUT_SIM",
+                    "microbar-cross-sectional-pairs-v1",
+                    "decision-unscoped",
+                    unscoped_json,
+                    "alpaca-order-unscoped",
+                    "client-order-unscoped",
+                    "filled",
+                ),
+            ],
+            [
+                (
+                    datetime(2026, 3, 6, 14, 35, 1, tzinfo=timezone.utc),
+                    "AAPL",
+                    "TORGHUT_SIM",
+                    "microbar-cross-sectional-pairs-v1",
+                    "decision-matched",
+                    matched_json,
+                    "alpaca-order-matched",
+                    "client-order-matched",
+                    "new",
+                    "new",
+                    "event-fingerprint-matched",
+                    "alpaca-trade-updates",
+                    0,
+                    1,
+                    {
+                        "execution_policy": {"selected_order_type": "market"},
+                        "cost_model": {"source": "broker_reported"},
+                    },
+                ),
+                (
+                    datetime(2026, 3, 6, 14, 36, 1, tzinfo=timezone.utc),
+                    "AAPL",
+                    "TORGHUT_SIM",
+                    "microbar-cross-sectional-pairs-v1",
+                    "decision-unscoped",
+                    unscoped_json,
+                    "alpaca-order-unscoped",
+                    "client-order-unscoped",
+                    "new",
+                    "new",
+                    "event-fingerprint-unscoped",
+                    "alpaca-trade-updates",
+                    0,
+                    2,
+                    {},
+                ),
+            ],
+            [
+                (
+                    datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                    Decimal("1.25"),
+                    Decimal("0.50"),
+                    "decision-matched",
+                    matched_json,
+                ),
+                (
+                    datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    Decimal("9.99"),
+                    Decimal("-9.99"),
+                    "decision-unscoped",
+                    unscoped_json,
+                ),
+            ],
+        ]
+        connection = _FakeConnection(cursor)
+        window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc)
+
+        with patch(
+            "scripts.import_hypothesis_runtime_windows.psycopg.connect",
+            return_value=connection,
+        ):
+            decisions, executions, tca_rows = _query_timestamps(
+                dsn="postgresql://example",
+                strategy_names=["microbar-cross-sectional-pairs-v1"],
+                account_label="TORGHUT_SIM",
+                window_start=window_start,
+                window_end=window_end,
+                candidate_id="cand-a",
+                hypothesis_id="H-A",
+                require_source_lineage=True,
+            )
+
+        self.assertEqual(decisions, [datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)])
+        self.assertEqual(
+            executions, [datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)]
+        )
+        proxy_rows = [
+            row
+            for row in tca_rows
+            if row.get("post_cost_expectancy_basis") == POST_COST_BASIS_TCA_PROXY
+        ]
+        self.assertEqual(len(proxy_rows), 1)
+        self.assertEqual(proxy_rows[0]["decision_hash"], "decision-matched")
+        self.assertEqual(proxy_rows[0]["post_cost_expectancy_bps"], Decimal("0.50"))
 
     def test_query_timestamps_requires_strategy_name_candidates(self) -> None:
         window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)

@@ -847,7 +847,12 @@ class TestPaperRouteEvidenceAudit(TestCase):
                 alpaca_account_label="TORGHUT_SIM",
                 symbol="AAPL",
                 timeframe="1Min",
-                decision_json={"action": "buy", "qty": "2"},
+                decision_json={
+                    "action": "buy",
+                    "qty": "2",
+                    "candidate_id": "candidate-ledger-audit",
+                    "hypothesis_id": "H-LEDGER-AUDIT",
+                },
                 rationale="paper route ledger audit fixture",
                 status="executed",
                 created_at=window_start + timedelta(minutes=10),
@@ -1135,7 +1140,12 @@ class TestPaperRouteEvidenceAudit(TestCase):
                 alpaca_account_label="TORGHUT_SIM",
                 symbol="AAPL",
                 timeframe="1Min",
-                decision_json={"action": "buy", "qty": "1"},
+                decision_json={
+                    "action": "buy",
+                    "qty": "1",
+                    "candidate_id": "candidate-post-window",
+                    "hypothesis_id": "H-POST-WINDOW",
+                },
                 rationale="post window fixture",
                 status="executed",
                 created_at=window_end + timedelta(minutes=5),
@@ -1278,7 +1288,12 @@ class TestPaperRouteEvidenceAudit(TestCase):
                 alpaca_account_label="TORGHUT_SIM",
                 symbol="INTC",
                 timeframe="1Min",
-                decision_json={"action": "buy", "qty": "1"},
+                decision_json={
+                    "action": "buy",
+                    "qty": "1",
+                    "candidate_id": "candidate-refreshed-probe",
+                    "hypothesis_id": "H-REFRESHED-PROBE",
+                },
                 rationale="refreshed probe symbol fixture",
                 status="executed",
                 created_at=window_start + timedelta(minutes=5),
@@ -1696,7 +1711,12 @@ class TestPaperRouteEvidenceAudit(TestCase):
                 alpaca_account_label="TORGHUT_SIM",
                 symbol="AAPL",
                 timeframe="1Min",
-                decision_json={"action": "buy", "qty": "2"},
+                decision_json={
+                    "action": "buy",
+                    "qty": "2",
+                    "candidate_id": "candidate-active-route",
+                    "hypothesis_id": "H-ACTIVE-ROUTE",
+                },
                 rationale="paper route fixture",
                 status="executed",
                 created_at=window_start + timedelta(minutes=10),
@@ -1964,6 +1984,143 @@ class TestPaperRouteEvidenceAudit(TestCase):
         )
         self.assertFalse(import_audit["promotion_authority"]["allowed"])
 
+    def test_paper_route_source_activity_requires_candidate_lineage(self) -> None:
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, tzinfo=timezone.utc)
+        now = datetime(2026, 5, 26, 21, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            strategy = Strategy(
+                name="microbar-cross-sectional-pairs-v1",
+                description="base strategy source activity",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+                created_at=window_start,
+                updated_at=window_start,
+            )
+            session.add(strategy)
+            session.flush()
+            decision = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="TORGHUT_SIM",
+                symbol="AAPL",
+                timeframe="1Min",
+                decision_json={"action": "sell", "qty": "1"},
+                rationale="unscoped base-strategy source activity",
+                status="executed",
+                created_at=window_start + timedelta(minutes=10),
+                executed_at=window_start + timedelta(minutes=11),
+            )
+            session.add(decision)
+            session.flush()
+            execution = Execution(
+                trade_decision_id=decision.id,
+                alpaca_account_label="TORGHUT_SIM",
+                alpaca_order_id="unscoped-paper-route-order",
+                client_order_id="unscoped-paper-route-client",
+                symbol="AAPL",
+                side="sell",
+                order_type="limit",
+                time_in_force="day",
+                submitted_qty=Decimal("1"),
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("100"),
+                status="filled",
+                raw_order={},
+                created_at=window_start + timedelta(minutes=12),
+                updated_at=window_start + timedelta(minutes=12),
+                last_update_at=window_start + timedelta(minutes=12),
+            )
+            session.add(execution)
+            session.flush()
+            session.add(
+                ExecutionTCAMetric(
+                    execution_id=execution.id,
+                    trade_decision_id=decision.id,
+                    strategy_id=strategy.id,
+                    alpaca_account_label="TORGHUT_SIM",
+                    symbol="AAPL",
+                    side="sell",
+                    arrival_price=Decimal("101"),
+                    avg_fill_price=Decimal("100"),
+                    filled_qty=Decimal("1"),
+                    signed_qty=Decimal("-1"),
+                    slippage_bps=Decimal("5"),
+                    shortfall_notional=Decimal("1"),
+                    realized_shortfall_bps=Decimal("5"),
+                    churn_qty=Decimal("0"),
+                    churn_ratio=Decimal("0"),
+                    computed_at=window_start + timedelta(minutes=13),
+                    created_at=window_start + timedelta(minutes=13),
+                    updated_at=window_start + timedelta(minutes=13),
+                )
+            )
+            session.commit()
+
+            payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "paper_route_probe_only",
+                    "blocked_reasons": [],
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "target_count": "1",
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-PAIRS-01",
+                                "candidate_id": "candidate-pairs-a",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_cross_sectional_pairs",
+                                "strategy_name": "69cf50e3-4815-47c2-b802-1efbaac09ecb",
+                                "strategy_id": "microbar_cross_sectional_pairs_v1@research",
+                                "account_label": "TORGHUT_SIM",
+                                "source_kind": "paper_route_probe_runtime_observed",
+                                "window_start": window_start.isoformat(),
+                                "window_end": window_end.isoformat(),
+                                "paper_probation_authorized": True,
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "summary": {
+                        "paper_route_probe_eligible_symbols": ["AAPL"],
+                        "paper_route_probe_active_symbols": ["AAPL"],
+                    },
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": True,
+                        "effective_max_notional": 25,
+                        "next_session_max_notional": 25,
+                    },
+                },
+                generated_at=now,
+            )
+
+        source_activity = payload["targets"][0]["source_activity"]
+        self.assertTrue(source_activity["lineage_required"])
+        self.assertEqual(source_activity["raw_decision_count"], 1)
+        self.assertEqual(source_activity["decision_count"], 0)
+        self.assertEqual(source_activity["execution_count"], 0)
+        self.assertEqual(source_activity["tca_sample_count"], 0)
+        self.assertEqual(
+            source_activity["lineage_blockers"],
+            ["source_candidate_lineage_missing", "source_hypothesis_lineage_missing"],
+        )
+        self.assertIn(
+            "source_candidate_lineage_missing",
+            payload["targets"][0]["readiness"]["evidence_collection_blockers"],
+        )
+        self.assertIn(
+            "source_hypothesis_lineage_missing",
+            payload["targets"][0]["readiness"]["evidence_collection_blockers"],
+        )
+        self.assertEqual(payload["summary"]["target_with_source_activity_count"], 0)
+
     def test_runtime_import_audit_counts_selected_targets_not_raw_plan_noise(
         self,
     ) -> None:
@@ -1989,7 +2146,12 @@ class TestPaperRouteEvidenceAudit(TestCase):
                 alpaca_account_label="TORGHUT_SIM",
                 symbol="AAPL",
                 timeframe="1Min",
-                decision_json={"action": "buy", "qty": "2"},
+                decision_json={
+                    "action": "buy",
+                    "qty": "2",
+                    "candidate_id": "candidate-selected-route",
+                    "hypothesis_id": "H-SELECTED-ROUTE",
+                },
                 rationale="selected paper route fixture",
                 status="executed",
                 created_at=window_start + timedelta(minutes=10),

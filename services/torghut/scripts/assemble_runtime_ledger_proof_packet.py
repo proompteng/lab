@@ -1701,7 +1701,7 @@ def build_runtime_ledger_proof_packet(
         "paper_route_session_settlement_pending",
         "paper_route_import_not_ready",
     }
-    if post_cost_proof_allowed and not capital_status_blockers:
+    if post_cost_proof_allowed and not promotion_prerequisite_blockers:
         verdict = "promotion_authority_allowed"
         reason = "runtime_ledger_live_paper_post_cost_proof_satisfied"
         promotion_reason = reason
