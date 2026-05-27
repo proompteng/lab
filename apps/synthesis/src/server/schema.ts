@@ -91,6 +91,7 @@ export const SubmitItemInputSchema = z
     attachments: z.array(AttachmentInputSchema).max(16).default([]),
     generatedAttachments: z.array(AttachmentInputSchema).max(8).default([]),
     dedupeKey: z.string().trim().min(1).max(240),
+    companySymbols: z.array(z.string().trim().min(1).max(20)).max(16).default([]),
     topicTags: z.array(TopicTagSchema).max(16).default([]),
     score: z.coerce.number().min(0).max(1),
     confidence: z.coerce.number().min(0).max(1),
@@ -170,6 +171,7 @@ export type SynthesisItem = {
   attachments: SynthesisAttachment[]
   generatedAttachments: SynthesisAttachment[]
   embedding: SynthesisEmbedding | null
+  companySymbols: string[]
   topicTags: string[]
   score: number
   confidence: number

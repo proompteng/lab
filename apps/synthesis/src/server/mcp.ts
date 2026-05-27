@@ -1,4 +1,5 @@
 import { isAuthorized } from './auth'
+import { CompanyProfileHintSchema } from './company'
 import { jsonResponse } from './http'
 import {
   ListFeedInputSchema,
@@ -40,6 +41,7 @@ const mutatingTools = new Set([
   'synthesis_start_run',
   'synthesis_submit_item',
   'synthesis_submit_batch',
+  'synthesis_prefill_company',
   'synthesis_record_feedback',
 ])
 
@@ -153,6 +155,13 @@ const toolsListResult = {
               additionalProperties: false,
             },
           },
+          companySymbols: {
+            type: 'array',
+            items: { type: 'string' },
+            maxItems: 16,
+            description:
+              'Optional normalized public-company tickers/cashtags to associate with the item. The server also derives known symbols from item text, tags, and source posts.',
+          },
           dedupeKey: { type: 'string' },
           topicTags: { type: 'array', items: { type: 'string' } },
           score: { type: 'number', minimum: 0, maximum: 1 },
@@ -172,6 +181,44 @@ const toolsListResult = {
           items: { type: 'array', items: { type: 'object' }, minItems: 1, maxItems: 50 },
         },
         required: ['items'],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: 'synthesis_prefill_company',
+      description:
+        'Populate or refresh a Synthesis-owned normalized public-company profile keyed by stock symbol. Prefers Webull-backed provider data when the runtime bridge is configured, can attach optional Alpaca quote context, and falls back to official-source/manual hints or local fixtures when available.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          symbol: { type: 'string', description: 'Ticker or cashtag such as NVDA or $AMD.' },
+          companyName: { type: 'string', description: 'Optional official company name for manual fallback.' },
+          exchange: { type: 'string' },
+          category: { type: 'string' },
+          sector: { type: 'string' },
+          industry: { type: 'string' },
+          ceo: { type: 'string' },
+          employees: { type: 'integer', minimum: 1 },
+          headquarters: { type: 'string' },
+          address: { type: 'string' },
+          establishedAt: { type: 'string' },
+          incorporatedAt: { type: 'string' },
+          description: { type: 'string' },
+          dataSources: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                name: { type: 'string' },
+                url: { type: 'string' },
+                fields: { type: 'array', items: { type: 'string' } },
+              },
+              required: ['name'],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ['symbol'],
         additionalProperties: false,
       },
     },
@@ -296,6 +343,11 @@ const buildConfigResource = (request: Request) => ({
           objectStorageBackedWhenConfigured: true,
           sourceMediaRequiresExtractedVisualNotes: true,
         },
+        companies: {
+          appOwnedProfiles: true,
+          primaryProfileSource: 'Webull when configured; local official-source fixtures/manual hints otherwise',
+          quoteContext: 'optional Alpaca market-data read only; never required for static prefill',
+        },
       },
       tools: toolsListResult.tools,
     },
@@ -337,6 +389,11 @@ const handleToolCall = async (
       const parsed = SubmitBatchInputSchema.safeParse(args)
       if (!parsed.success) return invalidParams(id, 'Invalid synthesis_submit_batch input')
       return asJsonRpcResponse(id, toTextToolResult({ ok: true, ...(await store.submitBatch(parsed.data)) }))
+    }
+    if (name === 'synthesis_prefill_company') {
+      const parsed = CompanyProfileHintSchema.safeParse(args)
+      if (!parsed.success) return invalidParams(id, 'Invalid synthesis_prefill_company input')
+      return asJsonRpcResponse(id, toTextToolResult({ ok: true, company: await store.prefillCompany(parsed.data) }))
     }
     if (name === 'synthesis_list_feed') {
       const parsed = ListFeedInputSchema.safeParse(args)
