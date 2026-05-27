@@ -24,6 +24,9 @@ spec:
               - -u
               - /root/alpaca-mcp-stdio-bridge.py
             env:
+              ALPACA_API_KEY: "{{ env.ALPACA_API_KEY }}"
+              ALPACA_SECRET_KEY: "{{ env.ALPACA_SECRET_KEY }}"
+              ALPACA_PAPER_TRADE: "{{ env.ALPACA_PAPER_TRADE }}"
               FASTMCP_SHOW_SERVER_BANNER: "false"
               FASTMCP_LOG_LEVEL: "ERROR"
             startup_timeout_sec: 60
