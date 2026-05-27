@@ -44,6 +44,7 @@ from scripts.import_hypothesis_runtime_windows import (
     _runtime_window_import_proof_hygiene_blockers,
     _runtime_window_source_kind_is_informational,
     _source_kind_allows_runtime_ledger_materialization,
+    _source_row_matches_lineage,
     _source_activity_missing_summary,
     _stable_payload_digest,
     _strategy_name_candidates,
@@ -359,6 +360,35 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             args.target_metadata_json, '{"paper_probation_authorized":true}'
         )
         self.assertEqual(args.json, True)
+
+    def test_source_row_lineage_accepts_plural_target_plan_ids(self) -> None:
+        row = {
+            "decision_json": {
+                "params": {
+                    "paper_route_probe": {
+                        "source_candidate_ids": ["candidate-pairs-a"],
+                        "source_hypothesis_ids": ["H-PAIRS-01"],
+                    }
+                }
+            }
+        }
+
+        self.assertTrue(
+            _source_row_matches_lineage(
+                row,
+                candidate_id="candidate-pairs-a",
+                hypothesis_id="H-PAIRS-01",
+                require_source_lineage=True,
+            )
+        )
+        self.assertFalse(
+            _source_row_matches_lineage(
+                row,
+                candidate_id="candidate-other",
+                hypothesis_id="H-PAIRS-01",
+                require_source_lineage=True,
+            )
+        )
 
     def test_runtime_ledger_profit_proof_rejects_malformed_bucket_payload(
         self,

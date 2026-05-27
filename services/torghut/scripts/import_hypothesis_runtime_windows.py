@@ -73,13 +73,19 @@ _RUNTIME_LEDGER_EQUITY_DENOMINATOR_KEYS = (
 )
 SOURCE_LINEAGE_CANDIDATE_KEYS = (
     "candidate_id",
+    "candidate_ids",
     "strategy_candidate_id",
+    "strategy_candidate_ids",
     "source_candidate_id",
+    "source_candidate_ids",
 )
 SOURCE_LINEAGE_HYPOTHESIS_KEYS = (
     "hypothesis_id",
+    "hypothesis_ids",
     "strategy_hypothesis_id",
+    "strategy_hypothesis_ids",
     "source_hypothesis_id",
+    "source_hypothesis_ids",
 )
 
 
@@ -225,9 +231,18 @@ def _text_values(row: Mapping[str, object], *keys: str) -> set[str]:
     values: set[str] = set()
     for payload in _row_payloads(row):
         for key in keys:
-            text = str(payload.get(key) or "").strip()
-            if text:
-                values.add(text)
+            raw_value = payload.get(key)
+            if isinstance(raw_value, Sequence) and not isinstance(
+                raw_value, (str, bytes, bytearray)
+            ):
+                for item in raw_value:
+                    text = str(item or "").strip()
+                    if text:
+                        values.add(text)
+            else:
+                text = str(raw_value or "").strip()
+                if text:
+                    values.add(text)
     return values
 
 

@@ -67,13 +67,19 @@ PROMOTION_ONLY_READINESS_BLOCKERS = frozenset(
 )
 SOURCE_LINEAGE_CANDIDATE_KEYS = (
     "candidate_id",
+    "candidate_ids",
     "strategy_candidate_id",
+    "strategy_candidate_ids",
     "source_candidate_id",
+    "source_candidate_ids",
 )
 SOURCE_LINEAGE_HYPOTHESIS_KEYS = (
     "hypothesis_id",
+    "hypothesis_ids",
     "strategy_hypothesis_id",
+    "strategy_hypothesis_ids",
     "source_hypothesis_id",
+    "source_hypothesis_ids",
 )
 
 
@@ -95,7 +101,9 @@ def _source_payloads(value: object) -> list[Mapping[str, Any]]:
     def append_payload(candidate: object, *, depth: int) -> None:
         if not isinstance(candidate, Mapping):
             return
-        payload = {str(key): item for key, item in cast(Mapping[str, Any], candidate).items()}
+        payload = {
+            str(key): item for key, item in cast(Mapping[str, Any], candidate).items()
+        }
         payloads.append(payload)
         if depth <= 0:
             return
@@ -110,7 +118,14 @@ def _source_lineage_values(value: object, keys: Sequence[str]) -> set[str]:
     values: set[str] = set()
     for payload in _source_payloads(value):
         for key in keys:
-            if text := _safe_text(payload.get(key)):
+            raw_value = payload.get(key)
+            if isinstance(raw_value, Sequence) and not isinstance(
+                raw_value, (str, bytes, bytearray)
+            ):
+                for item in cast(Sequence[object], raw_value):
+                    if text := _safe_text(item):
+                        values.add(text)
+            elif text := _safe_text(raw_value):
                 values.add(text)
     return values
 
@@ -156,7 +171,9 @@ def _source_lineage_blockers(
         hypothesis_values: set[str] = set()
         for row in rows:
             hypothesis_values.update(
-                _source_lineage_values(row.decision_json, SOURCE_LINEAGE_HYPOTHESIS_KEYS)
+                _source_lineage_values(
+                    row.decision_json, SOURCE_LINEAGE_HYPOTHESIS_KEYS
+                )
             )
         if not hypothesis_values:
             blockers.append("source_hypothesis_lineage_missing")
