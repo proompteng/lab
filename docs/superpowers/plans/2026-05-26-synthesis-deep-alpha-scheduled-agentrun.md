@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a GitOps-managed Synthesis AgentRun that runs every 3 hours, researches short-term 2-3 week options strategy candidates with technical-analysis entry timing, and posts strict synthesized items to Synthesis.
+**Goal:** Add a GitOps-managed Synthesis AgentRun that runs every 6 hours, researches short-term 2-3 week options strategy candidates with technical-analysis entry timing, and posts strict synthesized items to Synthesis.
 
 **Architecture:** Keep the resources owned by the Synthesis Argo CD app under `argocd/applications/synthesis`, but run the AgentRun primitives in the existing `agents` namespace where the controller, `agents-sa`, and `codex-auth` already work. Reflect the existing `synthesis/synthesis-env` secret into `agents`, inject `SYNTHESIS_API_TOKEN` into the Codex runner, mount the same secret at `/var/run/synthesis` so Codex MCP subprocesses can read a token file even when secret env is scrubbed, and connect Codex to the in-cluster Synthesis MCP endpoint through an input-file MCP proxy. Keyed reports upload to the existing `agents-artifacts` bucket.
 
@@ -19,7 +19,7 @@
 - Create `argocd/applications/synthesis/agents-domain/synthesis-deep-alpha-agent.yaml` for the Agent policy allowlist.
 - Create `argocd/applications/synthesis/agents-domain/synthesis-deep-alpha-implspec.yaml` for the research/posting prompt.
 - Create `argocd/applications/synthesis/agents-domain/synthesis-deep-alpha-agentrun-template.yaml` for the reusable schedule target.
-- Create `argocd/applications/synthesis/agents-domain/synthesis-deep-alpha-schedule.yaml` for the every-3-hour Cron schedule.
+- Create `argocd/applications/synthesis/agents-domain/synthesis-deep-alpha-schedule.yaml` for the every-6-hour Cron schedule.
 
 ## Task 1: Wire Synthesis App Ownership And Secret Reflection
 
@@ -459,7 +459,7 @@ spec:
       logRetentionSeconds: 604800
   ttlSecondsAfterFinished: 21600
   parameters:
-    cadence: three-hours
+    cadence: six-hours
     destination: synthesis
     holdingPeriod: two-to-three-weeks
     strategyScope: defined-risk-options
@@ -476,7 +476,7 @@ spec:
         ephemeral-storage: 8Gi
 ```
 
-- [ ] **Step 2: Create the every-3-hour Schedule**
+- [ ] **Step 2: Create the every-6-hour Schedule**
 
 Create `argocd/applications/synthesis/agents-domain/synthesis-deep-alpha-schedule.yaml`:
 
@@ -489,7 +489,7 @@ metadata:
     app.kubernetes.io/part-of: synthesis
     app.kubernetes.io/component: deep-alpha-agentrun
 spec:
-  cron: "0 */3 * * *"
+  cron: "0 */6 * * *"
   timezone: America/Los_Angeles
   targetRef:
     apiVersion: agents.proompteng.ai/v1alpha1
@@ -619,7 +619,7 @@ Fill `/tmp/synthesis-deep-alpha-agentrun-pr.md` with:
 
 - Adds Synthesis-owned Agents CRDs under `argocd/applications/synthesis/agents-domain`.
 - Reflects `synthesis-env` into `agents` so the scheduled runner can authenticate to Synthesis MCP.
-- Adds a reusable AgentRun template and Schedule that runs every 3 hours and posts strict Synthesis deep-alpha options research items.
+- Adds a reusable AgentRun template and Schedule that runs every 6 hours and posts strict Synthesis deep-alpha options research items.
 
 ## Testing
 
@@ -863,7 +863,7 @@ Expected after rollback: both commands return `NotFound`.
 
 ## Self-Review
 
-- Spec coverage: The plan adds Synthesis-owned GitOps resources, runs every 3 hours, posts to Synthesis MCP, requires short-term 2-3 week options strategy content, includes technical-analysis entry timing, and covers rollout plus smoke verification.
+- Spec coverage: The plan adds Synthesis-owned GitOps resources, runs every 6 hours, posts to Synthesis MCP, requires short-term 2-3 week options strategy content, includes technical-analysis entry timing, and covers rollout plus smoke verification.
 - Prompt precedence: The task prompt lives in `ImplementationSpec.spec.text`; the AgentRun template has no `spec.parameters.prompt`.
 - Secret model: The Synthesis API token remains in `synthesis-env`; reflector mirrors it to `agents` for the scheduled runner.
 - Safety: The plan does not add broker credentials or order-entry MCP tools.

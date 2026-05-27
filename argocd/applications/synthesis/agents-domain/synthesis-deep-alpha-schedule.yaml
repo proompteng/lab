@@ -6,7 +6,7 @@ metadata:
     app.kubernetes.io/part-of: synthesis
     app.kubernetes.io/component: deep-alpha-agentrun
 spec:
-  cron: "0 */3 * * *"
+  cron: "0 */6 * * *"
   timezone: America/Los_Angeles
   targetRef:
     apiVersion: agents.proompteng.ai/v1alpha1
