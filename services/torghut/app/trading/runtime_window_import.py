@@ -47,6 +47,13 @@ RUNTIME_LEDGER_BUCKET_SCHEMAS = frozenset(
         "torghut.runtime-ledger-bucket.v1",
     }
 )
+RUNTIME_LEDGER_AUTHORITY_MIN_TRADING_DAYS = 20
+RUNTIME_LEDGER_AUTHORITY_MIN_MEAN_DAILY_NET_PNL = Decimal("500")
+RUNTIME_LEDGER_AUTHORITY_MIN_MEDIAN_DAILY_NET_PNL = Decimal("250")
+RUNTIME_LEDGER_AUTHORITY_MIN_P10_DAILY_NET_PNL = Decimal("-250")
+RUNTIME_LEDGER_AUTHORITY_MIN_WORST_DAY_NET_PNL = Decimal("-750")
+RUNTIME_LEDGER_AUTHORITY_MAX_INTRADAY_DRAWDOWN = Decimal("1500")
+RUNTIME_LEDGER_AUTHORITY_MAX_BEST_DAY_SHARE = Decimal("0.25")
 
 
 @dataclass(frozen=True)
@@ -96,6 +103,13 @@ def _optional_decimal(value: Any) -> Decimal | None:
         return Decimal(text)
     except Exception:
         return None
+
+
+def _decimal_text(value: Decimal) -> str:
+    text = format(value, "f")
+    if "." not in text:
+        return text
+    return text.rstrip("0").rstrip(".") or "0"
 
 
 def _strategy_family_matches(
@@ -668,6 +682,53 @@ def _runtime_window_import_proof_blockers(
     return blockers
 
 
+def _runtime_ledger_authority_gate_targets(
+    *,
+    average_post_cost_bps: Decimal,
+) -> dict[str, Any]:
+    target_implied_notional = (
+        RUNTIME_LEDGER_AUTHORITY_MIN_MEAN_DAILY_NET_PNL
+        * Decimal("10000")
+        / average_post_cost_bps
+        if average_post_cost_bps > 0
+        else None
+    )
+    return {
+        "min_observed_trading_days": RUNTIME_LEDGER_AUTHORITY_MIN_TRADING_DAYS,
+        "min_mean_daily_net_pnl_after_costs": str(
+            RUNTIME_LEDGER_AUTHORITY_MIN_MEAN_DAILY_NET_PNL
+        ),
+        "min_median_daily_net_pnl_after_costs": str(
+            RUNTIME_LEDGER_AUTHORITY_MIN_MEDIAN_DAILY_NET_PNL
+        ),
+        "min_p10_daily_net_pnl_after_costs": str(
+            RUNTIME_LEDGER_AUTHORITY_MIN_P10_DAILY_NET_PNL
+        ),
+        "min_worst_day_net_pnl_after_costs": str(
+            RUNTIME_LEDGER_AUTHORITY_MIN_WORST_DAY_NET_PNL
+        ),
+        "max_intraday_drawdown": str(RUNTIME_LEDGER_AUTHORITY_MAX_INTRADAY_DRAWDOWN),
+        "max_best_day_share": str(RUNTIME_LEDGER_AUTHORITY_MAX_BEST_DAY_SHARE),
+        "target_implied_avg_daily_filled_notional": (
+            _decimal_text(target_implied_notional)
+            if target_implied_notional is not None
+            else None
+        ),
+        "target_implied_avg_daily_filled_notional_basis": (
+            "min_mean_daily_net_pnl_after_costs / observed_post_cost_expectancy_bps"
+            if target_implied_notional is not None
+            else None
+        ),
+    }
+
+
+def _runtime_summary_decimal(
+    runtime_ledger_daily_summary: Mapping[str, Any],
+    key: str,
+) -> Decimal:
+    return _optional_decimal(runtime_ledger_daily_summary.get(key)) or Decimal("0")
+
+
 def _runtime_promotion_blocking_reasons(
     *,
     observed_stage: str,
@@ -681,6 +742,7 @@ def _runtime_promotion_blocking_reasons(
     total_post_cost_basis_counts: Mapping[str, int],
     average_slippage: Decimal,
     average_post_cost: Decimal,
+    runtime_ledger_daily_summary: Mapping[str, Any],
     latest_three_budget_ok: bool,
     all_continuity_ok: bool,
     all_drift_ok: bool,
@@ -723,6 +785,69 @@ def _runtime_promotion_blocking_reasons(
         reasons.append("post_cost_expectancy_non_positive")
     elif average_post_cost < manifest.expected_gross_edge_bps:
         reasons.append("post_cost_expectancy_below_manifest_threshold")
+    observed_trading_days = int(
+        _runtime_summary_decimal(
+            runtime_ledger_daily_summary,
+            "runtime_ledger_observed_trading_day_count",
+        )
+    )
+    mean_daily_net_pnl = _runtime_summary_decimal(
+        runtime_ledger_daily_summary,
+        "runtime_ledger_mean_daily_net_pnl_after_costs",
+    )
+    median_daily_net_pnl = _runtime_summary_decimal(
+        runtime_ledger_daily_summary,
+        "runtime_ledger_median_daily_net_pnl_after_costs",
+    )
+    p10_daily_net_pnl = _runtime_summary_decimal(
+        runtime_ledger_daily_summary,
+        "runtime_ledger_p10_daily_net_pnl_after_costs",
+    )
+    worst_day_net_pnl = _runtime_summary_decimal(
+        runtime_ledger_daily_summary,
+        "runtime_ledger_worst_day_net_pnl_after_costs",
+    )
+    max_intraday_drawdown = _runtime_summary_decimal(
+        runtime_ledger_daily_summary,
+        "runtime_ledger_max_intraday_drawdown",
+    )
+    best_day_share = _optional_decimal(
+        runtime_ledger_daily_summary.get("runtime_ledger_best_day_share")
+    )
+    avg_daily_filled_notional = _runtime_summary_decimal(
+        runtime_ledger_daily_summary,
+        "runtime_ledger_avg_daily_filled_notional",
+    )
+
+    if observed_trading_days < RUNTIME_LEDGER_AUTHORITY_MIN_TRADING_DAYS:
+        reasons.append(
+            "runtime_ledger_observed_trading_day_count_below_authority_minimum"
+        )
+    if mean_daily_net_pnl < RUNTIME_LEDGER_AUTHORITY_MIN_MEAN_DAILY_NET_PNL:
+        reasons.append("runtime_ledger_mean_daily_net_pnl_after_costs_below_target")
+    if median_daily_net_pnl < RUNTIME_LEDGER_AUTHORITY_MIN_MEDIAN_DAILY_NET_PNL:
+        reasons.append("runtime_ledger_median_daily_net_pnl_after_costs_below_floor")
+    if p10_daily_net_pnl < RUNTIME_LEDGER_AUTHORITY_MIN_P10_DAILY_NET_PNL:
+        reasons.append("runtime_ledger_p10_daily_net_pnl_after_costs_below_floor")
+    if worst_day_net_pnl < RUNTIME_LEDGER_AUTHORITY_MIN_WORST_DAY_NET_PNL:
+        reasons.append("runtime_ledger_worst_day_net_pnl_after_costs_below_floor")
+    if max_intraday_drawdown > RUNTIME_LEDGER_AUTHORITY_MAX_INTRADAY_DRAWDOWN:
+        reasons.append("runtime_ledger_max_intraday_drawdown_above_limit")
+    if (
+        best_day_share is not None
+        and best_day_share > RUNTIME_LEDGER_AUTHORITY_MAX_BEST_DAY_SHARE
+    ):
+        reasons.append("runtime_ledger_best_day_share_above_limit")
+    if average_post_cost > 0:
+        target_implied_notional = (
+            RUNTIME_LEDGER_AUTHORITY_MIN_MEAN_DAILY_NET_PNL
+            * Decimal("10000")
+            / average_post_cost
+        )
+        if avg_daily_filled_notional < target_implied_notional:
+            reasons.append(
+                "runtime_ledger_avg_daily_filled_notional_below_target_implied_floor"
+            )
     return reasons
 
 
@@ -1386,6 +1511,13 @@ def persist_observed_runtime_windows(
     else:
         average_post_cost = Decimal("0")
         post_cost_expectancy_aggregation = "no_runtime_ledger_post_cost_rows"
+    runtime_ledger_promotion_gate_targets = _runtime_ledger_authority_gate_targets(
+        average_post_cost_bps=average_post_cost
+    )
+    runtime_ledger_daily_summary = {
+        **runtime_ledger_daily_summary,
+        "runtime_ledger_promotion_gate_targets": runtime_ledger_promotion_gate_targets,
+    }
     average_slippage = (
         sum(
             (
@@ -1410,6 +1542,7 @@ def persist_observed_runtime_windows(
         total_post_cost_basis_counts=total_post_cost_basis_counts,
         average_slippage=average_slippage,
         average_post_cost=average_post_cost,
+        runtime_ledger_daily_summary=runtime_ledger_daily_summary,
         latest_three_budget_ok=latest_three_budget_ok,
         all_continuity_ok=all_continuity_ok,
         all_drift_ok=all_drift_ok,
