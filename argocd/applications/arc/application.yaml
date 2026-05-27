@@ -150,6 +150,144 @@ spec:
                   emptyDir: {}
                 - name: dind-externals
                   emptyDir: {}
+    - repoURL: ghcr.io
+      chart: actions/actions-runner-controller-charts/gha-runner-scale-set
+      targetRevision: 0.14.1
+      helm:
+        releaseName: arc-runner-set-analysis
+        skipCrds: false
+        valuesObject:
+          controllerServiceAccount:
+            name: arc-controller-gha-rs-controller
+            namespace: arc
+          githubConfigUrl: https://github.com/gregkonush/analysis
+          githubConfigSecret: github-token
+          runnerScaleSetName: arc-arm64
+          scaleSetLabels:
+            - arc-arm64
+          minRunners: 1
+          maxRunners: 3
+          containerMode:
+            type: "kubernetes"
+            kubernetesModeWorkVolumeClaim:
+              accessModes: ["ReadWriteOnce"]
+              storageClassName: "rook-ceph-block"
+              resources:
+                requests:
+                  storage: 20Gi
+          listenerTemplate:
+            spec:
+              dnsConfig:
+                searches:
+                  - ide-newton.ts.net
+              containers:
+                - name: listener
+          template:
+            spec:
+              nodeSelector:
+                kubernetes.io/arch: arm64
+              dnsConfig:
+                searches:
+                  - ide-newton.ts.net
+              securityContext:
+                runAsNonRoot: false
+                # ARC runners need a writable tool cache under /home/runner/_work/_tool.
+                # With PVC-backed work dirs, the volume is root-owned by default; set an fsGroup so the
+                # non-root runner user can create directories before any workflow steps run.
+                fsGroup: 1001
+                fsGroupChangePolicy: OnRootMismatch
+              initContainers:
+                - name: init-dind-externals
+                  image: ghcr.io/actions/actions-runner:latest
+                  command: ["cp", "-r", "-v", "/home/runner/externals/.", "/home/runner/tmpDir/"]
+                  resources:
+                    requests:
+                      cpu: "100m"
+                      memory: "128Mi"
+                    limits:
+                      cpu: "200m"
+                      memory: "256Mi"
+              containers:
+                - name: runner
+                  image: ghcr.io/actions/actions-runner:latest
+                  command: ["/bin/bash", "-lc"]
+                  args:
+                    - |
+                      set -euo pipefail
+                      for attempt in $(seq 1 60); do
+                        if docker version >/dev/null 2>&1; then
+                          exec /home/runner/run.sh
+                        fi
+                        sleep 2
+                      done
+                      docker version
+                  resources:
+                    requests:
+                      cpu: "4"
+                      memory: "8Gi"
+                      ephemeral-storage: "40Gi"
+                    limits:
+                      cpu: "8"
+                      memory: "16Gi"
+                      ephemeral-storage: "80Gi"
+                  env:
+                    - name: ACTIONS_RUNNER_CONTAINER_HOOKS
+                      value: /home/runner/k8s/index.js
+                    - name: ACTIONS_RUNNER_POD_NAME
+                      valueFrom:
+                        fieldRef:
+                          fieldPath: metadata.name
+                    - name: DOCKER_HOST
+                      value: unix:///var/run/docker.sock
+                    - name: ACTIONS_RUNNER_REQUIRE_JOB_CONTAINER
+                      value: "false"
+                  volumeMounts:
+                    - name: work
+                      mountPath: /home/runner/_work
+                    - name: dind-sock
+                      mountPath: /var/run
+                - name: dind
+                  image: docker:dind
+                  args:
+                    - dockerd
+                    - --host=unix:///var/run/docker.sock
+                    - --group=$(DOCKER_GROUP_GID)
+                    - --max-concurrent-uploads=8
+                  resources:
+                    requests:
+                      cpu: "4"
+                      memory: "8Gi"
+                      ephemeral-storage: "30Gi"
+                    limits:
+                      cpu: "12"
+                      memory: "16Gi"
+                      ephemeral-storage: "50Gi"
+                  env:
+                    - name: DOCKER_GROUP_GID
+                      value: "123"
+                  securityContext:
+                    privileged: true
+                  volumeMounts:
+                    - name: work
+                      mountPath: /home/runner/_work
+                    - name: dind-sock
+                      mountPath: /var/run
+                    - name: dind-externals
+                      mountPath: /home/runner/externals
+              volumes:
+                - name: work
+                  ephemeral:
+                    volumeClaimTemplate:
+                      spec:
+                        accessModes: ["ReadWriteOnce"]
+                        storageClassName: "rook-ceph-block"
+                        resources:
+                          requests:
+                            storage: 20Gi
+                - name: dind-sock
+                  emptyDir: {}
+                - name: dind-externals
+                  emptyDir: {}
 
   destination:
     server: https://kubernetes.default.svc
