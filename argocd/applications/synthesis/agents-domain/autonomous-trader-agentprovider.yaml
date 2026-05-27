@@ -20,6 +20,12 @@ spec:
         mcp_servers:
           alpaca:
             command: /usr/local/bin/alpaca-mcp-server
+            args:
+              - --transport
+              - stdio
+            env:
+              FASTMCP_SHOW_SERVER_BANNER: "false"
+              FASTMCP_LOG_LEVEL: "ERROR"
         web_search: live
   argsTemplate: []
   secretEnv:
@@ -60,6 +66,8 @@ spec:
     CODEX_MARKET_CONTEXT_OVERALL_TIMEOUT_SECONDS: "21600"
     CODEX_MAX_SESSION_ATTEMPTS: "1"
     CODEX_MODEL: gpt-5.5
+    FASTMCP_LOG_LEVEL: "ERROR"
+    FASTMCP_SHOW_SERVER_BANNER: "false"
     HOME: /root
   inputFiles:
     - path: /root/.codex/config.toml
@@ -97,6 +105,8 @@ spec:
 
         [mcp_servers.alpaca]
         command = "/usr/local/bin/alpaca-mcp-server"
+        args = ["--transport", "stdio"]
+        env = { FASTMCP_SHOW_SERVER_BANNER = "false", FASTMCP_LOG_LEVEL = "ERROR" }
   outputArtifacts:
     - name: autonomous-trader-report
       path: /workspace/.agentrun/autonomous-trader/report.md
