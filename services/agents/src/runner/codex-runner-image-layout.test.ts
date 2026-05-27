@@ -63,6 +63,14 @@ describe('Agents Codex runner image layout', () => {
     expect(content).not.toContain('npm/bin/npx-cli.js')
   })
 
+  it('bundles the Alpaca MCP server for trading AgentRuns', () => {
+    const content = finalStage()
+
+    expect(content).toContain('uv tool install "alpaca-mcp-server==${ALPACA_MCP_SERVER_VERSION}"')
+    expect(content).toContain('ln -sf /root/.local/bin/alpaca-mcp-server /usr/local/bin/alpaca-mcp-server')
+    expect(content).toContain('test -x /usr/local/bin/alpaca-mcp-server')
+  })
+
   it('smoke-tests the bundled runner during the final image build', () => {
     const content = finalStage()
 
