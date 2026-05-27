@@ -403,30 +403,33 @@ class TestLiveConfigManifestContract(TestCase):
                     context=f"{name} universe",
                 )
             if str(strategy.get("strategy_type")) == "microbar_cross_sectional_long_v1":
-                expected_notional = (
-                    Decimal("31590")
-                    if name == "microbar-cross-sectional-pairs-v1"
-                    else Decimal("50000")
-                )
-                expected_position_pct = (
-                    Decimal("1.0")
-                    if name == "microbar-cross-sectional-pairs-v1"
-                    else Decimal("2.0")
-                )
                 self.assertEqual(
                     _strategy_decimal(strategy, "max_notional_per_trade"),
-                    expected_notional,
+                    Decimal("50000"),
                 )
                 self.assertEqual(
                     _strategy_decimal(strategy, "max_position_pct_equity"),
-                    expected_position_pct,
+                    Decimal("2.0"),
                 )
                 self.assertEqual(params.get("position_isolation_mode"), "per_strategy")
-                if name == "microbar-cross-sectional-pairs-v1":
-                    self.assertEqual(params.get("max_gross_exposure_pct_equity"), "2.0")
-                    self.assertEqual(params.get("max_pair_legs"), "2")
-                    self.assertEqual(params.get("entry_minute_after_open"), "60")
-                    self.assertEqual(params.get("exit_minute_after_open"), "120")
+            elif (
+                str(strategy.get("strategy_type"))
+                == "microbar_cross_sectional_pairs_v1"
+            ):
+                self.assertEqual(name, "microbar-cross-sectional-pairs-v1")
+                self.assertEqual(
+                    _strategy_decimal(strategy, "max_notional_per_trade"),
+                    Decimal("31590"),
+                )
+                self.assertEqual(
+                    _strategy_decimal(strategy, "max_position_pct_equity"),
+                    Decimal("1.0"),
+                )
+                self.assertEqual(params.get("position_isolation_mode"), "per_strategy")
+                self.assertEqual(params.get("max_gross_exposure_pct_equity"), "2.0")
+                self.assertEqual(params.get("max_pair_legs"), "2")
+                self.assertEqual(params.get("entry_minute_after_open"), "60")
+                self.assertEqual(params.get("exit_minute_after_open"), "120")
             elif str(strategy.get("strategy_type")) == "intraday_tsmom_v1":
                 self.assertEqual(name, "intraday-tsmom-profit-v3")
                 self.assertEqual(

@@ -186,6 +186,23 @@ def _microbar_rank_thresholds(
     return (low_threshold, high_threshold)
 
 
+def _microbar_pair_max_legs(params: dict[str, Any]) -> int:
+    raw_max_legs = _decimal(params.get("max_pair_legs"))
+    if raw_max_legs is None:
+        return 2
+    return int(raw_max_legs)
+
+
+def _microbar_pair_side_count(
+    *,
+    universe_size: int,
+    max_pair_legs: int,
+) -> int:
+    if universe_size < 2 or max_pair_legs < 2:
+        return 0
+    return max(1, min(universe_size // 2, max_pair_legs // 2))
+
+
 def _microbar_rank_universe_size(
     *,
     context: "StrategyContext",
@@ -212,12 +229,17 @@ def _microbar_required_features(params: dict[str, Any]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(required))
 
 
+def _opposite_action(action: Literal["buy", "sell"]) -> Literal["buy", "sell"]:
+    return "sell" if action == "buy" else "buy"
+
+
 def _evaluate_microbar_cross_sectional(
     *,
     context: "StrategyContext",
     features: FeatureVectorV3,
     entry_action: Literal["buy", "sell"],
     exit_action: Literal["buy", "sell"],
+    pair_mode: bool = False,
 ) -> PluginEvaluationResult:
     params = context.params
     minutes_elapsed = _microbar_minutes_elapsed(context=context, features=features)
@@ -240,7 +262,8 @@ def _evaluate_microbar_cross_sectional(
     entry_window_end = entry_minute + entry_window_minutes
     if exit_minute is not None:
         entry_window_end = min(entry_window_end, max(entry_minute, exit_minute - 1))
-    if exit_minute is not None and minutes_elapsed >= exit_minute:
+    is_exit = exit_minute is not None and minutes_elapsed >= exit_minute
+    if is_exit and not pair_mode:
         rationale = (
             "microbar_time_exit",
             str(params.get("signal_motif") or "").strip().lower(),
@@ -270,7 +293,9 @@ def _evaluate_microbar_cross_sectional(
             ),
         )
 
-    if minutes_elapsed < entry_minute or minutes_elapsed > entry_window_end:
+    if not is_exit and (
+        minutes_elapsed < entry_minute or minutes_elapsed > entry_window_end
+    ):
         return PluginEvaluationResult(
             intent=None,
             trace=_generic_plugin_trace(
@@ -290,7 +315,7 @@ def _evaluate_microbar_cross_sectional(
     gate_value = _decimal(features.values.get(gate_feature)) if gate_feature else None
     gate_min = _decimal(params.get("gate_min"))
     gate_max = _decimal(params.get("gate_max"))
-    if gate_feature:
+    if gate_feature and not is_exit:
         passed_min = gate_min is None or (
             gate_value is not None and gate_value >= gate_min
         )
@@ -374,10 +399,153 @@ def _evaluate_microbar_cross_sectional(
         features=features,
         rank_feature=rank_feature,
     )
+    max_pair_legs = _microbar_pair_max_legs(params)
+    pair_side_count = (
+        _microbar_pair_side_count(
+            universe_size=universe_size,
+            max_pair_legs=max_pair_legs,
+        )
+        if pair_mode
+        else 0
+    )
+    if pair_mode and pair_side_count <= 0:
+        return PluginEvaluationResult(
+            intent=None,
+            trace=_generic_plugin_trace(
+                context=context,
+                gate="pair_leg_selection",
+                passed=False,
+                gate_context={
+                    "reason": "invalid_pair_leg_count",
+                    "max_pair_legs": max_pair_legs,
+                    "universe_size": universe_size,
+                },
+            ),
+        )
     low_threshold, high_threshold = _microbar_rank_thresholds(
         universe_size=universe_size,
-        top_n=top_n,
+        top_n=pair_side_count if pair_mode else top_n,
     )
+    if pair_mode:
+        high_entry_action: Literal["buy", "sell"] = (
+            "sell" if selection_mode == "reversal" else "buy"
+        )
+        low_entry_action: Literal["buy", "sell"] = (
+            "buy" if selection_mode == "reversal" else "sell"
+        )
+        selected_entry_action: Literal["buy", "sell"] | None = None
+        pair_side: str | None = None
+        comparator = "gte"
+        threshold_value = high_threshold
+        if rank_value >= high_threshold:
+            selected_entry_action = high_entry_action
+            pair_side = "high_rank"
+            comparator = "gte"
+            threshold_value = high_threshold
+        elif rank_value <= low_threshold:
+            selected_entry_action = low_entry_action
+            pair_side = "low_rank"
+            comparator = "lte"
+            threshold_value = low_threshold
+        should_trade = selected_entry_action is not None
+        resolved_action = (
+            _opposite_action(selected_entry_action)
+            if is_exit and selected_entry_action is not None
+            else selected_entry_action
+        )
+        rationale = (
+            (
+                "microbar_cross_sectional_pair_exit"
+                if is_exit
+                else "microbar_cross_sectional_pair_entry"
+            ),
+            str(params.get("signal_motif") or "").strip().lower(),
+            f"selection_mode:{selection_mode}",
+            f"rank_feature:{rank_feature}",
+            f"pair_side:{pair_side or 'none'}",
+            f"pair_side_count:{pair_side_count}",
+            f"max_pair_legs:{max_pair_legs}",
+        )
+        failed_thresholds = (
+            ThresholdTrace(
+                metric=rank_feature,
+                comparator="min_gte",
+                value=rank_value,
+                threshold=high_threshold,
+                passed=False,
+                missing_policy="fail_closed",
+                distance_to_pass=max(Decimal("0"), high_threshold - rank_value),
+            ),
+            ThresholdTrace(
+                metric=rank_feature,
+                comparator="max_lte",
+                value=rank_value,
+                threshold=low_threshold,
+                passed=False,
+                missing_policy="fail_closed",
+                distance_to_pass=max(Decimal("0"), rank_value - low_threshold),
+            ),
+        )
+        trace = _generic_plugin_trace(
+            context=context,
+            gate="pair_time_exit" if is_exit else "pair_rank_selection",
+            passed=should_trade,
+            action=resolved_action if should_trade else None,
+            rationale=rationale if should_trade else (),
+            thresholds=(
+                (
+                    ThresholdTrace(
+                        metric=rank_feature,
+                        comparator=("min_gte" if comparator == "gte" else "max_lte"),
+                        value=rank_value,
+                        threshold=threshold_value,
+                        passed=should_trade,
+                        missing_policy="fail_closed",
+                        distance_to_pass=Decimal("0"),
+                    ),
+                )
+                if should_trade
+                else failed_thresholds
+            ),
+            gate_context={
+                "minutes_elapsed": minutes_elapsed,
+                "entry_minute_after_open": entry_minute,
+                "entry_window_minutes": entry_window_minutes,
+                "entry_window_end_minute_after_open": entry_window_end,
+                "exit_minute_after_open": exit_minute,
+                "selection_mode": selection_mode,
+                "top_n": top_n,
+                "universe_size": universe_size,
+                "pair_side_count": pair_side_count,
+                "max_pair_legs": max_pair_legs,
+                "pair_side": pair_side,
+            },
+        )
+        if not should_trade or resolved_action is None:
+            return PluginEvaluationResult(intent=None, trace=trace)
+        rank_distance = (
+            rank_value - threshold_value
+            if comparator == "gte"
+            else threshold_value - rank_value
+        )
+        confidence = min(
+            Decimal("0.95"), Decimal("0.55") + max(Decimal("0"), rank_distance)
+        )
+        return PluginEvaluationResult(
+            intent=StrategyIntent(
+                strategy_id=context.strategy_id,
+                symbol=context.symbol,
+                direction=resolved_action,
+                confidence=confidence,
+                target_notional=_resolved_target_notional(params),
+                horizon=context.timeframe,
+                explain=rationale,
+                feature_snapshot_hash=features.normalization_hash,
+                required_features=_microbar_required_features(params),
+            ),
+            trace=trace,
+        )
+
     should_trade = False
     comparator = "gte"
     threshold_value = high_threshold
@@ -681,6 +849,7 @@ class StrategyRegistry:
             "mean_reversion_exhaustion_short_v1": MeanReversionExhaustionShortPlugin(),
             "microbar_cross_sectional_long_v1": MicrobarCrossSectionalLongPlugin(),
             "microbar_cross_sectional_short_v1": MicrobarCrossSectionalShortPlugin(),
+            "microbar_cross_sectional_pairs_v1": MicrobarCrossSectionalPairsPlugin(),
             "washout_rebound_long_v1": WashoutReboundLongPlugin(),
             "late_day_continuation_long_v1": LateDayContinuationLongPlugin(),
             "end_of_day_reversal_long_v1": EndOfDayReversalLongPlugin(),
@@ -1625,6 +1794,32 @@ class MicrobarCrossSectionalShortPlugin:
             features=features,
             entry_action="sell",
             exit_action="buy",
+        )
+
+
+class MicrobarCrossSectionalPairsPlugin:
+    plugin_id = "microbar_cross_sectional_pairs"
+    version = "1.0.0"
+    required_features: tuple[str, ...] = (
+        "price",
+        "macd",
+        "macd_signal",
+        "rsi14",
+        "session_minutes_elapsed",
+        "cross_section_continuation_breadth",
+        "cross_section_session_open_rank",
+        "cross_section_vwap_w5m_rank",
+    )
+
+    def evaluate(
+        self, context: StrategyContext, features: FeatureVectorV3
+    ) -> PluginEvaluationResult:
+        return _evaluate_microbar_cross_sectional(
+            context=context,
+            features=features,
+            entry_action="buy",
+            exit_action="sell",
+            pair_mode=True,
         )
 
 

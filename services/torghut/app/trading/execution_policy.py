@@ -969,13 +969,20 @@ def _should_keep_market_order_for_high_conviction_entry(
     if {
         "microbar_cross_sectional_long_v1",
         "microbar_cross_sectional_short_v1",
+        "microbar_cross_sectional_pairs_v1",
     } & strategy_types:
         rationale_tokens = {
             token.strip().lower()
             for token in str(decision.rationale or "").split(",")
             if token.strip()
         }
-        return "microbar_cross_sectional_entry" in rationale_tokens
+        return bool(
+            {
+                "microbar_cross_sectional_entry",
+                "microbar_cross_sectional_pair_entry",
+            }
+            & rationale_tokens
+        )
 
     return False
 
