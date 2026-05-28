@@ -1741,6 +1741,35 @@ def _runtime_ledger_summary(
     }
 
 
+def _source_runtime_ledger_materialization_blockers(
+    audits: Sequence[Mapping[str, object]],
+) -> list[str]:
+    blockers: set[str] = set()
+    for audit in audits:
+        source_activity = _as_mapping(audit.get("source_activity"))
+        runtime_ledger = _as_mapping(audit.get("runtime_ledger"))
+        if bool(source_activity.get("missing")):
+            continue
+        if _safe_int(runtime_ledger.get("bucket_count")) > 0:
+            continue
+        blockers.add("source_activity_present_runtime_ledger_not_materialized")
+        blockers.add("runtime_ledger_source_bucket_missing")
+        if _safe_int(source_activity.get("decision_count")) <= 0:
+            blockers.add("source_decisions_missing")
+        if _safe_int(source_activity.get("execution_count")) <= 0:
+            blockers.add("source_executions_missing")
+        if _safe_int(source_activity.get("filled_execution_count")) <= 0:
+            blockers.add("source_filled_executions_missing")
+        if _safe_int(source_activity.get("tca_sample_count")) <= 0:
+            blockers.add("source_tca_missing")
+        blockers.update(
+            str(item).strip()
+            for item in _as_sequence(source_activity.get("lineage_blockers"))
+            if str(item).strip()
+        )
+    return sorted(blockers)
+
+
 def _hypothesis_window_summary(
     session: Session,
     *,
@@ -2030,6 +2059,9 @@ def _runtime_window_import_audit(
             if str(blocker).strip()
         }
     )
+    source_runtime_ledger_blockers = _source_runtime_ledger_materialization_blockers(
+        next_target_audits
+    )
     source_plan_target_count = len(target_audits)
     current_target_count = len(next_target_audits)
     raw_source_counts = _runtime_window_target_counts(target_audits)
@@ -2069,8 +2101,11 @@ def _runtime_window_import_audit(
         blockers = ["paper_route_source_activity_missing", *source_missing_reasons]
     elif targets_with_runtime_ledger < current_target_count:
         state = "import_due_runtime_ledger_missing"
-        next_action = "run_or_inspect_runtime_window_import"
-        blockers = ["runtime_ledger_bucket_missing"]
+        next_action = "run_runtime_window_import_or_repair_source_materialization"
+        blockers = [
+            "runtime_ledger_bucket_missing",
+            *source_runtime_ledger_blockers,
+        ]
     elif targets_with_evidence_grade_runtime_ledger < current_target_count:
         state = "runtime_ledger_imported_but_not_evidence_grade"
         next_action = "repair_runtime_ledger_bucket_authority_or_candidate"
@@ -2091,6 +2126,13 @@ def _runtime_window_import_audit(
         "settlement_ready_at": session_readiness.get("settlement_ready_at"),
         "import_ready": import_ready,
         "blockers": sorted(dict.fromkeys(blockers)),
+        "diagnostics": {
+            "source_activity_missing_reasons": source_missing_reasons,
+            "source_activity_to_runtime_ledger_blockers": (
+                source_runtime_ledger_blockers
+            ),
+            "runtime_ledger_blockers": runtime_ledger_blockers,
+        },
         "counts": {
             "source_plan_target_count": source_plan_target_count,
             "selected_target_count": current_target_count,

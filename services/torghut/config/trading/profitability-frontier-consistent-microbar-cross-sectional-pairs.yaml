@@ -44,9 +44,12 @@ parameters:
   signal_motif:
     - 'vwap_close_continuation'
     - 'open_window_continuation'
+    - 'factor_neutral_residual_continuation'
   rank_feature:
     - 'cross_section_vwap_w5m_rank'
     - 'cross_section_session_open_rank'
+    - 'cross_section_factor_neutral_residual_rank'
+    - 'cross_section_pair_relative_return_rank'
   selection_mode:
     - 'continuation'
   top_n:

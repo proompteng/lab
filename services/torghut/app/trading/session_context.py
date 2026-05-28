@@ -600,6 +600,58 @@ class SessionContextTracker:
             ]
         )
         cross_section_reversal_rank_universe_size = cross_section_continuation_rank_universe_size
+        cross_section_factor_neutral_residual_rank = _average_decimal(
+            [
+                effective_opening_window_return_rank,
+                vwap_w5m_rank,
+                recent_imbalance_rank,
+                (
+                    Decimal('1') - effective_session_drive_rank
+                    if effective_session_drive_rank is not None
+                    else None
+                ),
+            ]
+        )
+        cross_section_factor_neutral_residual_rank_universe_size = _rank_universe_size(
+            [
+                effective_opening_window_return_rank_universe_size,
+                vwap_w5m_rank_universe_size,
+                recent_imbalance_rank_universe_size,
+                effective_session_drive_rank_universe_size,
+            ]
+        )
+        cross_section_pair_relative_return_rank = _average_decimal(
+            [
+                effective_session_drive_rank,
+                effective_opening_window_return_rank,
+                recent_15m_return_rank,
+            ]
+        )
+        cross_section_pair_relative_return_rank_universe_size = _rank_universe_size(
+            [
+                effective_session_drive_rank_universe_size,
+                effective_opening_window_return_rank_universe_size,
+                recent_15m_return_rank_universe_size,
+            ]
+        )
+        cross_section_residual_spread_zscore_rank = _average_decimal(
+            [
+                cross_section_reversal_rank,
+                vwap_w5m_stretch_rank,
+                (
+                    Decimal('1') - recent_imbalance_rank
+                    if recent_imbalance_rank is not None
+                    else None
+                ),
+            ]
+        )
+        cross_section_residual_spread_zscore_rank_universe_size = _rank_universe_size(
+            [
+                cross_section_reversal_rank_universe_size,
+                vwap_w5m_stretch_rank_universe_size,
+                recent_imbalance_rank_universe_size,
+            ]
+        )
 
         payload.update(
             {
@@ -685,6 +737,12 @@ class SessionContextTracker:
                 'cross_section_continuation_rank_universe_size': cross_section_continuation_rank_universe_size,
                 'cross_section_reversal_rank': cross_section_reversal_rank,
                 'cross_section_reversal_rank_universe_size': cross_section_reversal_rank_universe_size,
+                'cross_section_factor_neutral_residual_rank': cross_section_factor_neutral_residual_rank,
+                'cross_section_factor_neutral_residual_rank_universe_size': cross_section_factor_neutral_residual_rank_universe_size,
+                'cross_section_pair_relative_return_rank': cross_section_pair_relative_return_rank,
+                'cross_section_pair_relative_return_rank_universe_size': cross_section_pair_relative_return_rank_universe_size,
+                'cross_section_residual_spread_zscore_rank': cross_section_residual_spread_zscore_rank,
+                'cross_section_residual_spread_zscore_rank_universe_size': cross_section_residual_spread_zscore_rank_universe_size,
                 'session_minutes_elapsed': minutes_elapsed,
             }
         )

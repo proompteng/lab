@@ -443,7 +443,23 @@ class TestSessionContextTracker(TestCase):
         self.assertEqual(leader_payload['cross_section_microbar_volume_rank'], Decimal('1'))
         self.assertEqual(leader_payload['cross_section_microbar_volume_rank_universe_size'], 2)
         self.assertEqual(leader_payload['cross_section_continuation_rank_universe_size'], 2)
+        self.assertEqual(
+            leader_payload['cross_section_factor_neutral_residual_rank_universe_size'],
+            2,
+        )
+        self.assertEqual(
+            leader_payload['cross_section_pair_relative_return_rank_universe_size'],
+            2,
+        )
+        self.assertEqual(
+            leader_payload['cross_section_residual_spread_zscore_rank_universe_size'],
+            2,
+        )
         self.assertGreater(cast(Decimal, leader_payload['recent_15m_return_bps']), Decimal('200'))
+        self.assertGreater(
+            cast(Decimal, leader_payload['cross_section_pair_relative_return_rank']),
+            cast(Decimal, loser_payload['cross_section_pair_relative_return_rank']),
+        )
         self.assertGreater(
             cast(Decimal, leader_payload['cross_section_vwap_w5m_stretch_rank']),
             cast(Decimal, loser_payload['cross_section_vwap_w5m_stretch_rank']),

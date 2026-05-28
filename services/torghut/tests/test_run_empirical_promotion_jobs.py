@@ -3279,6 +3279,75 @@ class TestRunEmpiricalPromotionJobs(TestCase):
             ],
         )
 
+    def test_runtime_window_import_payload_prefers_evidence_blockers(
+        self,
+    ) -> None:
+        target = renewal.RuntimeWindowImportTarget(
+            hypothesis_id="H-PAIRS-01",
+            candidate_id="cand-paper-route",
+            observed_stage="paper",
+            strategy_family="microbar_cross_sectional_pairs",
+            source_dsn_env="SIM_DB_DSN",
+            strategy_name="paper-route-candidate-v1",
+            account_label="TORGHUT_SIM",
+            dataset_snapshot_ref="",
+            source_manifest_ref="manifest.json",
+            source_kind="paper_route_probe_runtime_observed",
+            delay_adjusted_depth_stress_report_ref="",
+        )
+
+        blockers = renewal._runtime_window_import_payload_proof_blockers(
+            payload={
+                "promotion_allowed": False,
+                "evidence_blocking_reasons": [],
+                "promotion_blocking_reasons": [
+                    "paper_stage_evidence_collection_only",
+                    "drift_checks_not_ok",
+                ],
+                "runtime_observation": {
+                    "authoritative": True,
+                    "authority_reason": "runtime_ledger_profit_proof",
+                    "promotion_authority": "runtime_ledger",
+                    "runtime_ledger_profit_proof_present": True,
+                },
+            },
+            target=target,
+            candidate_id="cand-paper-route",
+            window_start=datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc),
+            window_end=datetime(2026, 5, 26, 20, 0, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(blockers, [])
+
+        blockers = renewal._runtime_window_import_payload_proof_blockers(
+            payload={
+                "promotion_allowed": False,
+                "evidence_blocking_reasons": [
+                    "runtime_ledger_pnl_basis_missing",
+                    "runtime_ledger_pnl_basis_missing",
+                ],
+                "promotion_blocking_reasons": ["drift_checks_not_ok"],
+                "runtime_observation": {
+                    "authoritative": False,
+                    "authority_reason": "runtime_without_runtime_ledger_profit_proof",
+                    "promotion_authority": "blocked",
+                    "runtime_ledger_profit_proof_present": False,
+                },
+            },
+            target=target,
+            candidate_id="cand-paper-route",
+            window_start=datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc),
+            window_end=datetime(2026, 5, 26, 20, 0, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(
+            [item["blocker"] for item in blockers],
+            [
+                "runtime_ledger_pnl_basis_missing",
+                "runtime_without_runtime_ledger_profit_proof",
+            ],
+        )
+
     def test_runtime_window_import_health_gate_args_do_not_synthesize_passes(
         self,
     ) -> None:
