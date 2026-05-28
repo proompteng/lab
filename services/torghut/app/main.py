@@ -7,6 +7,7 @@ import time
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from contextlib import asynccontextmanager
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from http.client import HTTPConnection, HTTPSConnection
@@ -200,6 +201,10 @@ LEAN_LANE_MANAGER = LeanLaneManager()
 WHITEPAPER_WORKFLOW = WhitepaperWorkflowService()
 _TRADING_DEPENDENCY_HEALTH_CACHE_LOCK = Lock()
 _TRADING_DEPENDENCY_HEALTH_CACHE: dict[str, dict[str, object]] = {}
+_OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK = Lock()
+_OPTIONS_CATALOG_FRESHNESS_CACHE: dict[
+    tuple[str, ...], tuple[datetime, dict[str, object]]
+] = {}
 _ALPACA_HEALTH_CACHE_LOCK = Lock()
 _ALPACA_HEALTH_STATE: dict[str, object] = {}
 
@@ -5341,6 +5346,54 @@ def _route_claim_symbols(profit_signal_quorum: Mapping[str, Any]) -> tuple[str, 
     return tuple(sorted(symbols))
 
 
+def _load_cached_options_catalog_freshness_summary(
+    cache_key: tuple[str, ...],
+) -> dict[str, object] | None:
+    ttl_seconds = max(0, settings.trading_options_catalog_freshness_cache_seconds)
+    if ttl_seconds <= 0:
+        return None
+    now = datetime.now(timezone.utc)
+    with _OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK:
+        cache_entry = _OPTIONS_CATALOG_FRESHNESS_CACHE.get(cache_key)
+        if cache_entry is None:
+            return None
+        cached_at, cached_payload = cache_entry
+        age_seconds = (now - cached_at).total_seconds()
+        if age_seconds >= ttl_seconds:
+            _OPTIONS_CATALOG_FRESHNESS_CACHE.pop(cache_key, None)
+            return None
+    payload = deepcopy(cached_payload)
+    payload["cache"] = {
+        "hit": True,
+        "cached_at": cached_at,
+        "age_seconds": age_seconds,
+        "ttl_seconds": ttl_seconds,
+    }
+    return payload
+
+
+def _store_options_catalog_freshness_summary(
+    cache_key: tuple[str, ...],
+    payload: dict[str, object],
+) -> dict[str, object]:
+    ttl_seconds = max(0, settings.trading_options_catalog_freshness_cache_seconds)
+    if ttl_seconds <= 0:
+        return payload
+    cached_at = datetime.now(timezone.utc)
+    cache_payload = deepcopy(payload)
+    cache_payload.pop("cache", None)
+    with _OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK:
+        _OPTIONS_CATALOG_FRESHNESS_CACHE[cache_key] = (cached_at, cache_payload)
+    payload = deepcopy(cache_payload)
+    payload["cache"] = {
+        "hit": False,
+        "cached_at": cached_at,
+        "age_seconds": 0.0,
+        "ttl_seconds": ttl_seconds,
+    }
+    return payload
+
+
 def _load_options_catalog_freshness_summary(
     session: Session, *, route_symbols: Sequence[str] | None = None
 ) -> dict[str, object]:
@@ -5353,6 +5406,9 @@ def _load_options_catalog_freshness_summary(
             }
         )
     )
+    cached_payload = _load_cached_options_catalog_freshness_summary(scoped_symbols)
+    if cached_payload is not None:
+        return cached_payload
     try:
         session.execute(text("SET LOCAL statement_timeout = 500"))
         if scoped_symbols:
@@ -5454,10 +5510,15 @@ WHERE status = 'active'
             zero_open_interest_count = int(row["zero_open_interest_count"] or 0)
     except SQLAlchemyError as exc:
         logger.warning("Options catalog freshness summary unavailable: %s", exc)
-        return {
-            "status": "unavailable",
-            "reason_codes": ["options_catalog_freshness_summary_unavailable"],
-        }
+        return _store_options_catalog_freshness_summary(
+            scoped_symbols,
+            {
+                "status": "unavailable",
+                "scope": "route_symbols" if scoped_symbols else "global",
+                "route_symbols": list(scoped_symbols),
+                "reason_codes": ["options_catalog_freshness_summary_unavailable"],
+            },
+        )
 
     route_symbol_freshness = {
         str(scoped_row["underlying_symbol"]).strip().upper(): {
@@ -5488,20 +5549,23 @@ WHERE status = 'active'
         }
         for scoped_row in scoped_rows
     }
-    return {
-        "status": "current" if active_contracts > 0 else "missing",
-        "scope": "route_symbols" if scoped_symbols else "global",
-        "active_contracts": active_contracts,
-        "newest_last_seen_ts": newest_last_seen_ts,
-        "missing_provider_updated_ts_count": missing_provider_updated_ts_count,
-        "provider_updated_ts_present": missing_provider_updated_ts_count == 0
-        and newest_provider_updated_ts is not None,
-        "newest_provider_updated_ts": newest_provider_updated_ts,
-        "missing_close_price_count": missing_close_price_count,
-        "zero_open_interest_count": zero_open_interest_count,
-        "route_symbols": list(scoped_symbols),
-        "route_symbol_freshness": route_symbol_freshness,
-    }
+    return _store_options_catalog_freshness_summary(
+        scoped_symbols,
+        {
+            "status": "current" if active_contracts > 0 else "missing",
+            "scope": "route_symbols" if scoped_symbols else "global",
+            "active_contracts": active_contracts,
+            "newest_last_seen_ts": newest_last_seen_ts,
+            "missing_provider_updated_ts_count": missing_provider_updated_ts_count,
+            "provider_updated_ts_present": missing_provider_updated_ts_count == 0
+            and newest_provider_updated_ts is not None,
+            "newest_provider_updated_ts": newest_provider_updated_ts,
+            "missing_close_price_count": missing_close_price_count,
+            "zero_open_interest_count": zero_open_interest_count,
+            "route_symbols": list(scoped_symbols),
+            "route_symbol_freshness": route_symbol_freshness,
+        },
+    )
 
 
 def _resolve_tca_scope_symbols(

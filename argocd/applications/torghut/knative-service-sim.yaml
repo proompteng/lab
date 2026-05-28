@@ -169,6 +169,12 @@ spec:
               value: iex
             - name: TRADING_ALPACA_QUOTE_MAX_AGE_SECONDS
               value: "20"
+            - name: TRADING_ALPACA_QUOTE_FALLBACK_MARKET_SESSION_REQUIRED
+              value: "true"
+            - name: TRADING_ALPACA_QUOTE_FALLBACK_BACKOFF_SECONDS
+              value: "60"
+            - name: TRADING_OPTIONS_CATALOG_FRESHNESS_CACHE_SECONDS
+              value: "30"
             - name: TRADING_SESSION_CONTEXT_WARMUP_MAX_SECONDS
               value: "300"
             - name: TRADING_SESSION_CONTEXT_WARMUP_MAX_SIGNALS
