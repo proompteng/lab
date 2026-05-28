@@ -389,7 +389,7 @@ def _order_lifecycle_blockers(
         blockers.append("order_decision_linkage_missing")
 
     fill_order_ids = {row.order_id for row in usable_fills if row.order_id is not None}
-    if usable_fills and len(fill_order_ids) < len(usable_fills):
+    if any(row.order_id is None for row in usable_fills):
         blockers.append("fill_order_linkage_missing")
     if fill_order_ids - submitted_order_ids:
         blockers.append("fill_order_submission_missing")

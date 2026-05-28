@@ -22,6 +22,7 @@ from scripts.import_hypothesis_runtime_windows import (
     POST_COST_BASIS_RUNTIME_LEDGER,
     POST_COST_BASIS_SIMULATION_REPORT,
     POST_COST_BASIS_TCA_PROXY,
+    _alpaca_2026_equity_fee_schedule_hash,
     _build_realized_strategy_pnl_rows,
     _first_bool,
     _first_lineage_digest,
@@ -615,6 +616,15 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(
             _source_decision_mode({"mode": "strategy_signal_paper"}),
             "strategy_signal_paper",
+        )
+        self.assertIsNone(
+            _source_decision_mode(
+                {
+                    "decision_json": {
+                        "params": {"strategy_runtime": {"mode": "scheduler_v3"}}
+                    }
+                }
+            )
         )
         self.assertEqual(
             _source_decision_mode_counts(
@@ -1892,6 +1902,62 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(ledger_row["execution_policy_hash"], "policy-sha")
         self.assertEqual(ledger_row["cost_model_hash"], "cost-sha")
         self.assertEqual(ledger_row["lineage_hash"], "lineage-sha")
+
+    def test_order_event_lifecycle_materializes_alpaca_fee_schedule_costs(self) -> None:
+        row = {
+            "event_ts": datetime(2026, 3, 6, 14, 35, 1, tzinfo=timezone.utc),
+            "event_type": "filled",
+            "symbol": "AAPL",
+            "account_label": "TORGHUT_SIM",
+            "strategy_id": "microbar-cross-sectional-pairs-v1",
+            "decision_hash": "decision-sell",
+            "alpaca_order_id": "order-sell",
+            "source_topic": "alpaca-trade-updates",
+            "raw_event": {
+                "event": "fill",
+                "feed": "alpaca",
+                "channel": "trade_updates",
+                "payload": {
+                    "qty": "10",
+                    "price": "100",
+                    "order": {
+                        "id": "order-sell",
+                        "asset_class": "us_equity",
+                        "side": "sell",
+                        "symbol": "AAPL",
+                        "status": "filled",
+                        "filled_qty": "10",
+                        "filled_avg_price": "100",
+                    },
+                },
+            },
+            "execution_audit_json": {
+                "execution_policy_hash": "policy-sha",
+                "lineage_hash": "lineage-sha",
+            },
+        }
+
+        ledger_row = _runtime_lifecycle_ledger_row(
+            row,
+            event_type="filled",
+            require_complete_fill=True,
+        )
+
+        self.assertIsNotNone(ledger_row)
+        assert ledger_row is not None
+        self.assertEqual(ledger_row["side"], "sell")
+        self.assertEqual(ledger_row["filled_qty"], Decimal("10"))
+        self.assertEqual(ledger_row["avg_fill_price"], Decimal("100"))
+        self.assertEqual(ledger_row["filled_notional"], Decimal("1000"))
+        self.assertEqual(ledger_row["cost_amount"], Decimal("0.04"))
+        self.assertEqual(
+            ledger_row["cost_basis"],
+            "alpaca_2026_equity_sec_taf_cat_fee_schedule",
+        )
+        self.assertEqual(
+            ledger_row["cost_model_hash"],
+            _alpaca_2026_equity_fee_schedule_hash(),
+        )
 
     def test_runtime_ledger_tca_materialization_metadata_separates_authority(
         self,
