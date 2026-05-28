@@ -158,8 +158,8 @@ def _parse_args() -> argparse.Namespace:
             "Repeatable comma-separated key=value runtime import target. "
             "Supported keys: hypothesis_id,candidate_id,strategy_family,"
             "strategy_name,account_label,source_account_label,observed_stage,"
-            "source_dsn_env,dataset_snapshot_ref,source_manifest_ref,source_kind,"
-            "delay_adjusted_depth_stress_report_ref."
+            "source_dsn_env,target_dsn_env,dataset_snapshot_ref,source_manifest_ref,"
+            "source_kind,delay_adjusted_depth_stress_report_ref."
         ),
     )
     parser.add_argument(
@@ -280,6 +280,7 @@ def _parse_args() -> argparse.Namespace:
         choices=("paper", "live"),
     )
     parser.add_argument("--runtime-window-source-dsn-env", default="DB_DSN")
+    parser.add_argument("--runtime-window-target-dsn-env", default="")
     parser.add_argument("--runtime-window-start", default="")
     parser.add_argument("--runtime-window-end", default="")
     parser.add_argument("--runtime-window-dataset-snapshot-ref", default="")
@@ -431,6 +432,7 @@ class RuntimeWindowImportTarget:
     artifact_refs: tuple[str, ...] = ()
     target_metadata: Mapping[str, Any] | None = None
     source_account_label: str = ""
+    target_dsn_env: str = ""
 
 
 def _parse_runtime_window_target_spec(spec: str) -> dict[str, str]:
@@ -704,6 +706,9 @@ def _registry_runtime_window_targets(
                     getattr(args, "runtime_window_source_dsn_env", "") or "DB_DSN"
                 ).strip()
                 or "DB_DSN",
+                target_dsn_env=str(
+                    getattr(args, "runtime_window_target_dsn_env", "") or ""
+                ).strip(),
                 strategy_name=strategy_name,
                 account_label=str(
                     getattr(args, "runtime_window_account_label", "") or "TORGHUT_SIM"
@@ -837,6 +842,7 @@ def _runtime_window_targets_from_plan(
             strategy_family=strategy_family,
             source_dsn_env=value("source_dsn_env", "runtime_window_source_dsn_env")
             or "DB_DSN",
+            target_dsn_env=value("target_dsn_env", "runtime_window_target_dsn_env"),
             strategy_name=strategy_name,
             account_label=value("account_label", "runtime_window_account_label")
             or "TORGHUT_SIM",
@@ -875,6 +881,7 @@ def _runtime_window_targets_from_plan(
             target.observed_stage,
             target.strategy_family,
             target.source_dsn_env,
+            target.target_dsn_env,
             target.strategy_name,
             target.account_label,
             target.source_account_label,
@@ -939,11 +946,12 @@ def _runtime_window_target_metadata(payload: Mapping[str, Any]) -> dict[str, Any
 
 def _runtime_window_target_identity(
     target: RuntimeWindowImportTarget,
-) -> tuple[str, str, str, str, str, str]:
+) -> tuple[str, str, str, str, str, str, str]:
     return (
         target.hypothesis_id,
         target.candidate_id,
         target.strategy_name,
+        target.target_dsn_env,
         target.source_account_label,
         target.window_start,
         target.window_end,
@@ -1066,6 +1074,7 @@ def _runtime_window_targets(
                 strategy_family=strategy_family,
                 source_dsn_env=value("source_dsn_env", "runtime_window_source_dsn_env")
                 or "DB_DSN",
+                target_dsn_env=value("target_dsn_env", "runtime_window_target_dsn_env"),
                 strategy_name=strategy_name,
                 account_label=value("account_label", "runtime_window_account_label")
                 or "TORGHUT_SIM",
@@ -2006,6 +2015,8 @@ def _run_runtime_window_import_target(
         drift_ok,
         "--json",
     ]
+    if target.target_dsn_env:
+        command.extend(["--target-dsn-env", target.target_dsn_env])
     audit_only = bool(getattr(args, "runtime_window_import_audit_only", False))
     if audit_only:
         command.append("--audit-only")
@@ -2082,6 +2093,8 @@ def _run_runtime_window_import_target(
         "strategy_name": target.strategy_name,
         "account_label": target.account_label,
         "source_account_label": target.source_account_label or target.account_label,
+        "source_dsn_env": target.source_dsn_env,
+        "target_dsn_env": target.target_dsn_env,
         "source_kind": target.source_kind,
         "artifact_refs": [str(manifest_path), *target.artifact_refs],
         "target_metadata": dict(target.target_metadata or {}),

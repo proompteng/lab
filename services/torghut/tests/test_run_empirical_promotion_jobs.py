@@ -837,6 +837,7 @@ class TestRunEmpiricalPromotionJobs(TestCase):
                             "strategy_family": "microbar_pairs",
                             "strategy_name": "paper-route-candidate-v1",
                             "source_dsn_env": "SIM_DB_DSN",
+                            "target_dsn_env": "SIM_DB_DSN",
                             "source_kind": "paper_route_probe_runtime_observed",
                             "source_manifest_ref": "config/trading/hypotheses/h-paper-route.json",
                             "dependency_quorum_decision": "missing",
@@ -882,6 +883,7 @@ class TestRunEmpiricalPromotionJobs(TestCase):
                                     "--runtime-window-target-plan-settlement-seconds",
                                 ],
                                 "source_dsn_env": "SIM_DB_DSN",
+                                "target_dsn_env": "SIM_DB_DSN",
                                 "account_label": "TORGHUT_SIM",
                                 "import_ready": False,
                                 "import_blockers": [
@@ -901,6 +903,7 @@ class TestRunEmpiricalPromotionJobs(TestCase):
                             "strategy_family": "microbar_pairs",
                             "strategy_name": "paper-route-candidate-v1",
                             "source_dsn_env": "SIM_DB_DSN",
+                            "target_dsn_env": "SIM_DB_DSN",
                             "source_kind": "paper_route_probe_runtime_observed",
                             "source_manifest_ref": "config/trading/hypotheses/h-paper-route.json",
                             "window_start": "2026-05-26T13:30:00+00:00",
@@ -929,6 +932,7 @@ class TestRunEmpiricalPromotionJobs(TestCase):
             runtime_window_observed_stage="paper",
             runtime_window_strategy_family="",
             runtime_window_source_dsn_env="DB_DSN",
+            runtime_window_target_dsn_env="",
             runtime_window_strategy_name="",
             runtime_window_account_label="TORGHUT_SIM",
             runtime_window_dataset_snapshot_ref="",
@@ -945,6 +949,7 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         self.assertEqual(len(targets), 1)
         self.assertEqual(targets[0].hypothesis_id, "H-PAPER-ROUTE")
         self.assertEqual(targets[0].source_dsn_env, "SIM_DB_DSN")
+        self.assertEqual(targets[0].target_dsn_env, "SIM_DB_DSN")
         self.assertEqual(targets[0].source_kind, "paper_route_probe_runtime_observed")
         self.assertEqual(targets[0].dependency_quorum_decision, "missing")
         self.assertEqual(targets[0].continuity_ok, "false")
@@ -1883,6 +1888,7 @@ class TestRunEmpiricalPromotionJobs(TestCase):
             runtime_window_observed_stage="paper",
             runtime_window_strategy_family="intraday_tsmom_consistent",
             runtime_window_source_dsn_env="SIM_DB_DSN",
+            runtime_window_target_dsn_env="SIM_DB_DSN",
             runtime_window_strategy_name="intraday-tsmom-profit-v3",
             runtime_window_account_label="TORGHUT_SIM",
             runtime_window_start="2026-05-18T13:30:00Z",
@@ -1919,6 +1925,8 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         self.assertIn("spec-83161ae16d17828eabcc58cc", command)
         self.assertNotIn("stale-empirical-candidate", command)
         self.assertIn("--source-dsn-env", command)
+        self.assertIn("SIM_DB_DSN", command)
+        self.assertIn("--target-dsn-env", command)
         self.assertIn("SIM_DB_DSN", command)
         self.assertIn("--dataset-snapshot-ref", command)
         self.assertIn("portfolio-profit-autoresearch-500-v1", command)

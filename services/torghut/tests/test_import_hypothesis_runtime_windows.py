@@ -51,12 +51,15 @@ from scripts.import_hypothesis_runtime_windows import (
     _source_kind_allows_runtime_ledger_materialization,
     _source_activity_diagnostics_blockers,
     _source_row_matches_lineage,
+    _persistence_session,
     _source_activity_missing_summary,
     _source_decision_mode,
     _source_decision_mode_counts,
     _source_decision_rows_profit_proof_eligible,
     _stable_payload_digest,
     _strategy_name_candidates,
+    _sqlalchemy_dsn,
+    _target_persistence_dsn,
     main,
 )
 
@@ -278,6 +281,73 @@ def _complete_runtime_ledger_bucket(**overrides: object) -> dict[str, object]:
 
 
 class TestImportHypothesisRuntimeWindows(TestCase):
+    def test_sqlalchemy_dsn_normalizes_postgres_urls(self) -> None:
+        self.assertEqual(
+            _sqlalchemy_dsn("postgresql://user:pass@postgres:5432/torghut_sim_default"),
+            "postgresql+psycopg://user:pass@postgres:5432/torghut_sim_default",
+        )
+        self.assertEqual(
+            _sqlalchemy_dsn("postgres://user:pass@postgres:5432/torghut"),
+            "postgresql+psycopg://user:pass@postgres:5432/torghut",
+        )
+
+    def test_target_persistence_dsn_requires_configured_env(self) -> None:
+        args = SimpleNamespace(target_dsn="", target_dsn_env="SIM_DB_DSN")
+
+        with patch.dict("os.environ", {}, clear=True):
+            with self.assertRaisesRegex(RuntimeError, "target_dsn_not_configured:SIM_DB_DSN"):
+                _target_persistence_dsn(args)
+
+    def test_persistence_session_uses_target_dsn_env(self) -> None:
+        class _FakeEngine:
+            def __init__(self) -> None:
+                self.disposed = False
+
+            def dispose(self) -> None:
+                self.disposed = True
+
+        fake_engine = _FakeEngine()
+        fake_session = _FakeSession()
+        sessionmaker_calls: list[dict[str, object]] = []
+
+        def fake_sessionmaker(**kwargs: object):
+            sessionmaker_calls.append(dict(kwargs))
+
+            def factory() -> _FakeSession:
+                return fake_session
+
+            return factory
+
+        args = SimpleNamespace(target_dsn="", target_dsn_env="SIM_DB_DSN")
+
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "SIM_DB_DSN": "postgresql://user:pass@postgres:5432/torghut_sim_default"
+                },
+                clear=True,
+            ),
+            patch(
+                "scripts.import_hypothesis_runtime_windows.create_engine",
+                return_value=fake_engine,
+            ) as create_engine_mock,
+            patch(
+                "scripts.import_hypothesis_runtime_windows.sessionmaker",
+                side_effect=fake_sessionmaker,
+            ),
+        ):
+            with _persistence_session(args) as session:
+                self.assertIs(session, fake_session)
+
+        create_engine_mock.assert_called_once_with(
+            "postgresql+psycopg://user:pass@postgres:5432/torghut_sim_default",
+            pool_pre_ping=True,
+            future=True,
+        )
+        self.assertEqual(sessionmaker_calls[0]["bind"], fake_engine)
+        self.assertTrue(fake_engine.disposed)
+
     def test_runtime_observation_authority_requires_runtime_ledger_profit_proof(
         self,
     ) -> None:

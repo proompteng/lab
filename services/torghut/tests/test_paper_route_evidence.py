@@ -308,10 +308,12 @@ class TestPaperRouteEvidenceAudit(TestCase):
         )
         self.assertFalse(handoff["promotion_allowed"])
         self.assertFalse(handoff["final_promotion_authorized"])
+        self.assertEqual(handoff["target_dsn_env"], "SIM_DB_DSN")
         target = plan["targets"][0]
         self.assertEqual(target["account_label"], "TORGHUT_SIM")
         self.assertEqual(target["source_account_label"], "TORGHUT_REPLAY")
         self.assertEqual(target["source_dsn_env"], "SIM_DB_DSN")
+        self.assertEqual(target["target_dsn_env"], "SIM_DB_DSN")
         self.assertEqual(target["source_kind"], "paper_route_probe_runtime_observed")
         self.assertEqual(target["dependency_quorum_decision"], "allow")
         self.assertEqual(target["continuity_ok"], "true")

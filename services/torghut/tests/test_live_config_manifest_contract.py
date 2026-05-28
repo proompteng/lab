@@ -973,6 +973,7 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("--runtime-window-account-label TORGHUT_SIM", args)
         self.assertIn("--runtime-window-observed-stage paper", args)
         self.assertIn("--runtime-window-source-dsn-env SIM_DB_DSN", args)
+        self.assertIn("--runtime-window-target-dsn-env SIM_DB_DSN", args)
         self.assertNotIn("--runtime-window-source-dsn-env DB_DSN", args)
         self.assertIn(
             "RENEWAL_OUTPUT=/tmp/torghut-empirical-renewal/runtime-window-renewal.json",

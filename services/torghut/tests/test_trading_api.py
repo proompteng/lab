@@ -7270,6 +7270,7 @@ class TestTradingApi(TestCase):
             self.assertEqual(next_plan["target_count"], 1)
             next_target = next_plan["targets"][0]
             self.assertEqual(next_target["source_dsn_env"], "SIM_DB_DSN")
+            self.assertEqual(next_target["target_dsn_env"], "SIM_DB_DSN")
             self.assertEqual(
                 next_target["source_kind"], "paper_route_probe_runtime_observed"
             )
@@ -7400,6 +7401,7 @@ class TestTradingApi(TestCase):
             self.assertEqual(next_target["hypothesis_id"], "H-PAIRS-01")
             self.assertEqual(next_target["candidate_id"], "c88421d619759b2cfaa6f4d0")
             self.assertEqual(next_target["source_dsn_env"], "SIM_DB_DSN")
+            self.assertEqual(next_target["target_dsn_env"], "SIM_DB_DSN")
             self.assertEqual(
                 next_target["source_kind"], "paper_route_probe_runtime_observed"
             )
