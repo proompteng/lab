@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import heapq
 import hashlib
 import itertools
 import json
@@ -1438,20 +1439,38 @@ def _prefetch_signal_rows(
 def _cached_iter_signal_rows_factory(
     rows: list[Any],
 ) -> Callable[[replay_mod.ReplayConfig], Iterator[Any]]:
+    rows_by_day: dict[date, list[tuple[int, Any]]] = {}
+    rows_by_day_symbol: dict[date, dict[str, list[tuple[int, Any]]]] = {}
+    for index, row in enumerate(rows):
+        signal_day = row.event_ts.date()
+        indexed_row = (index, row)
+        rows_by_day.setdefault(signal_day, []).append(indexed_row)
+        rows_by_day_symbol.setdefault(signal_day, {}).setdefault(
+            str(row.symbol).upper(), []
+        ).append(indexed_row)
+
     def _iter_signal_rows(config: replay_mod.ReplayConfig) -> Iterator[Any]:
         selected_symbols = (
             {symbol.upper() for symbol in config.symbols} if config.symbols else None
         )
-        for row in rows:
-            signal_day = row.event_ts.date()
-            if signal_day < config.start_date or signal_day > config.end_date:
+        if config.start_date > config.end_date:
+            return
+        for day_offset in range((config.end_date - config.start_date).days + 1):
+            signal_day = config.start_date + timedelta(days=day_offset)
+            if selected_symbols is None:
+                for _, row in rows_by_day.get(signal_day, ()):
+                    yield row
                 continue
-            if (
-                selected_symbols is not None
-                and row.symbol.upper() not in selected_symbols
-            ):
+            day_symbols = rows_by_day_symbol.get(signal_day)
+            if not day_symbols:
                 continue
-            yield row
+            symbol_rows = [
+                iter(day_symbols[symbol])
+                for symbol in selected_symbols
+                if symbol in day_symbols
+            ]
+            for _, row in heapq.merge(*symbol_rows, key=lambda item: item[0]):
+                yield row
 
     return _iter_signal_rows
 
