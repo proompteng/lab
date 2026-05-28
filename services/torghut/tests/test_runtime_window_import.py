@@ -589,6 +589,10 @@ class TestRuntimeWindowImport(TestCase):
         )
         self.assertEqual(summary["proof_status"], "blocked")
         self.assertIn(
+            "runtime_ledger_pnl_basis_missing",
+            [item["blocker"] for item in summary["proof_blockers"]],
+        )
+        self.assertNotIn(
             "sample_count_below_canary_minimum",
             [item["blocker"] for item in summary["proof_blockers"]],
         )
@@ -1612,13 +1616,17 @@ class TestRuntimeWindowImport(TestCase):
             "delay_adjusted_depth_stress_missing",
             summary["promotion_blocking_reasons"],
         )
-        self.assertEqual(summary["proof_status"], "blocked")
+        self.assertEqual(summary["proof_status"], "ok")
         proof_blockers = {item["blocker"] for item in summary["proof_blockers"]}
-        self.assertIn("paper_stage_evidence_collection_only", proof_blockers)
-        self.assertIn(
+        self.assertNotIn("paper_stage_evidence_collection_only", proof_blockers)
+        self.assertNotIn(
             "runtime_ledger_mean_daily_net_pnl_after_costs_below_target",
             proof_blockers,
         )
+        self.assertEqual(
+            summary["runtime_materialization_target"]["proof_status"], "ok"
+        )
+        self.assertTrue(summary["runtime_materialization_target"]["materialized"])
         self.assertEqual(
             summary["delay_adjusted_depth_stress"],
             {
@@ -1840,11 +1848,30 @@ class TestRuntimeWindowImport(TestCase):
         self.assertEqual(target["runtime_ledger_closed_trade_count"], 1)
         self.assertEqual(target["runtime_ledger_open_position_count"], 0)
         self.assertEqual(target["materialization_blockers"], [])
+        self.assertEqual(target["proof_status"], "ok")
+        self.assertEqual(target["proof_blockers"], [])
+        self.assertEqual(target["evidence_blocking_reasons"], [])
+        self.assertFalse(target["capital_promotion_allowed"])
+        self.assertIn(
+            "live_runtime_ledger_required",
+            target["capital_promotion_blocking_reasons"],
+        )
+        self.assertIn(
+            "paper_probation_evidence_collection_only",
+            target["capital_promotion_blocking_reasons"],
+        )
         self.assertEqual(len(target["metric_window_ids"]), 1)
         self.assertIsNotNone(target["promotion_decision_id"])
         self.assertEqual(len(target["runtime_ledger_bucket_ids"]), 1)
         self.assertEqual(len(target["evidence_grade_runtime_ledger_bucket_ids"]), 1)
-        self.assertFalse(target["materialized"])
+        self.assertTrue(target["materialized"])
+        self.assertFalse(summary["promotion_allowed"])
+        self.assertIn(
+            "live_runtime_ledger_required",
+            summary["promotion_blocking_reasons"],
+        )
+        self.assertEqual(summary["proof_status"], "ok")
+        self.assertEqual(summary["proof_blockers"], [])
 
     def test_persist_observed_runtime_windows_blocks_claimed_ledger_proof_without_rows(
         self,

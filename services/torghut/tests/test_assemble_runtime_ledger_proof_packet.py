@@ -1213,6 +1213,38 @@ class TestRuntimeLedgerProofPacket(TestCase):
         )
         self.assertTrue(materialization["materialized_targets"][0]["materialized"])
 
+    def test_packet_does_not_treat_promotion_only_import_metadata_as_unmaterialized(
+        self,
+    ) -> None:
+        runtime_import = _runtime_import()
+        observation = runtime_import["imports"][0]["summary"]["runtime_observation"]
+        assert isinstance(observation, dict)
+        observation["runtime_ledger_target_metadata_blockers"] = [
+            "paper_route_runtime_ledger_import_pending",
+            "live_runtime_ledger_required",
+            "paper_probation_evidence_collection_only",
+        ]
+
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=runtime_import,
+            completion_status=_completion(),
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        materialization = result["evidence"]["runtime_window_import"]["materialization"]
+        self.assertTrue(
+            result["checks"]["runtime_window_import_materialization"]["passed"]
+        )
+        self.assertEqual(materialization["materialized_target_count"], 1)
+        self.assertEqual(materialization["unmaterialized_target_count"], 0)
+        self.assertNotIn("live_runtime_ledger_required", materialization["blockers"])
+        self.assertNotIn(
+            "paper_probation_evidence_collection_only",
+            materialization["blockers"],
+        )
+
     def test_packet_blocks_when_any_runtime_import_target_lacks_materialization(
         self,
     ) -> None:
