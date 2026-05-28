@@ -2121,6 +2121,22 @@ class TestCandidateSpecs(TestCase):
                     Decimal("3"),
                 )
 
+    def test_microbar_pairs_profiles_include_residual_statarb_surfaces(self) -> None:
+        profiles = candidate_specs_module._FAMILY_EXECUTION_PROFILES[
+            "microbar_cross_sectional_pairs_v1"
+        ]
+        rank_features = {
+            str(profile["params"].get("rank_feature")) for profile in profiles
+        }
+        signal_motifs = {
+            str(profile["params"].get("signal_motif")) for profile in profiles
+        }
+
+        self.assertIn("cross_section_factor_neutral_residual_rank", rank_features)
+        self.assertIn("cross_section_residual_spread_zscore_rank", rank_features)
+        self.assertIn("factor_neutral_residual_continuation", signal_motifs)
+        self.assertIn("residual_spread_reversion", signal_motifs)
+
     def test_portfolio_profit_target_adds_capital_constrained_profiles(self) -> None:
         cards = build_hypothesis_cards(
             source_run_id="paper-capital-realistic",

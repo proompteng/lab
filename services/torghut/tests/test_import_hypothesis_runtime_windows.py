@@ -664,6 +664,9 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         window_end = datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc)
         artifact_metadata = {
             "runtime_ledger_artifact_refs": ["exact-ledger.json"],
+            "runtime_ledger_artifact_authority_class": (
+                "exact_replay_artifact_only_not_live"
+            ),
             "runtime_ledger_artifact_candidate_id": "cand-one",
             "runtime_ledger_artifact_row_count": 6,
             "runtime_ledger_artifact_fill_count": 2,
@@ -714,6 +717,23 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 "runtime_ledger_artifact_window_weekday_count_below_min",
             ],
         )
+        artifact_metadata_without_class = {
+            key: value
+            for key, value in artifact_metadata.items()
+            if key != "runtime_ledger_artifact_authority_class"
+        }
+        self.assertEqual(
+            _runtime_ledger_target_metadata_blockers(
+                target_metadata={
+                    "runtime_ledger_artifact_refs": ["exact-ledger.json"],
+                    "candidate_id": "cand-one",
+                },
+                runtime_ledger_artifact_metadata=artifact_metadata_without_class,
+                window_start=window_start,
+                window_end=window_end,
+            ),
+            ["runtime_ledger_artifact_authority_class_missing"],
+        )
 
     def test_runtime_ledger_target_metadata_blocks_missing_or_mixed_candidate_ids(
         self,
@@ -730,6 +750,9 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 target_metadata=target_metadata,
                 runtime_ledger_artifact_metadata={
                     "runtime_ledger_artifact_refs": ["exact-ledger.json"],
+                    "runtime_ledger_artifact_authority_class": (
+                        "exact_replay_artifact_only_not_live"
+                    ),
                     "runtime_ledger_artifact_row_count": 6,
                 },
                 window_start=window_start,
@@ -742,6 +765,9 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 target_metadata=target_metadata,
                 runtime_ledger_artifact_metadata={
                     "runtime_ledger_artifact_refs": ["exact-ledger.json"],
+                    "runtime_ledger_artifact_authority_class": (
+                        "exact_replay_artifact_only_not_live"
+                    ),
                     "runtime_ledger_artifact_candidate_ids": [
                         "cand-one",
                         "cand-two",
@@ -758,6 +784,9 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 target_metadata=target_metadata,
                 runtime_ledger_artifact_metadata={
                     "runtime_ledger_artifact_refs": ["exact-ledger.json"],
+                    "runtime_ledger_artifact_authority_class": (
+                        "exact_replay_artifact_only_not_live"
+                    ),
                     "runtime_ledger_artifact_candidate_ids": ["different-cand"],
                     "runtime_ledger_artifact_row_count": 6,
                 },
@@ -875,7 +904,9 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             ],
         )
         self.assertEqual(
-            summary["source_activity_diagnostics"]["decision_rows_before_lineage_filter"],
+            summary["source_activity_diagnostics"][
+                "decision_rows_before_lineage_filter"
+            ],
             2,
         )
         self.assertIn(
@@ -2448,7 +2479,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 window_end=window_end,
             )
 
-    def test_runtime_ledger_artifacts_build_promotion_grade_tca_rows(self) -> None:
+    def test_runtime_ledger_artifacts_build_non_authoritative_tca_rows(self) -> None:
         with TemporaryDirectory() as temp_dir:
             artifact_path = Path(temp_dir) / "exact-ledger.json"
             artifact_path.write_text(
@@ -2544,7 +2575,27 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             tca_rows[0]["post_cost_expectancy_basis"],
             POST_COST_BASIS_RUNTIME_LEDGER,
         )
-        self.assertEqual(tca_rows[0]["post_cost_promotion_eligible"], True)
+        self.assertEqual(tca_rows[0]["post_cost_promotion_eligible"], False)
+        self.assertEqual(tca_rows[0]["authoritative"], False)
+        self.assertEqual(
+            tca_rows[0]["authority_reason"],
+            "exact_replay_artifact_not_runtime_proof",
+        )
+        self.assertEqual(
+            tca_rows[0]["pnl_derivation"], "exact_replay_artifact_only_not_live"
+        )
+        self.assertIn(
+            "exact_replay_artifact_not_runtime_proof",
+            tca_rows[0]["runtime_ledger_blockers"],
+        )
+        self.assertIn(
+            "runtime_ledger_source_window_missing",
+            tca_rows[0]["runtime_ledger_blockers"],
+        )
+        self.assertIn(
+            "runtime_ledger_source_refs_missing",
+            tca_rows[0]["runtime_ledger_blockers"],
+        )
         ledger_bucket = tca_rows[0]["runtime_ledger_bucket"]
         assert isinstance(ledger_bucket, dict)
         self.assertEqual(
@@ -2554,9 +2605,23 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(ledger_bucket["decision_count"], 2)
         self.assertEqual(ledger_bucket["submitted_order_count"], 2)
         self.assertEqual(ledger_bucket["closed_trade_count"], 1)
-        self.assertEqual(ledger_bucket["blockers"], [])
+        self.assertIn(
+            "exact_replay_artifact_not_runtime_proof", ledger_bucket["blockers"]
+        )
         self.assertEqual(metadata["runtime_ledger_artifact_row_count"], 6)
         self.assertEqual(metadata["runtime_ledger_artifact_tca_row_count"], 1)
+        self.assertEqual(
+            metadata["runtime_ledger_artifact_authority_class"],
+            "exact_replay_artifact_only_not_live",
+        )
+        self.assertEqual(
+            metadata["runtime_ledger_artifact_authority_blockers"],
+            [
+                "exact_replay_artifact_not_runtime_proof",
+                "runtime_ledger_source_window_missing",
+                "runtime_ledger_source_refs_missing",
+            ],
+        )
         self.assertEqual(
             metadata["runtime_ledger_artifact_candidate_id"], "artifact-candidate-1"
         )
@@ -3231,7 +3296,15 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             tca_rows[0]["post_cost_expectancy_basis"],
             POST_COST_BASIS_RUNTIME_LEDGER,
         )
-        self.assertEqual(tca_rows[0]["post_cost_promotion_eligible"], True)
+        self.assertEqual(tca_rows[0]["post_cost_promotion_eligible"], False)
+        self.assertEqual(
+            tca_rows[0]["authority_reason"],
+            "exact_replay_artifact_not_runtime_proof",
+        )
+        self.assertIn(
+            "runtime_ledger_source_window_missing",
+            tca_rows[0]["runtime_ledger_blockers"],
+        )
         runtime_payload = persist_windows.call_args.kwargs[
             "runtime_observation_payload"
         ]
@@ -3246,11 +3319,28 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         )
         self.assertEqual(runtime_payload["runtime_ledger_target_metadata_blockers"], [])
         self.assertEqual(
-            runtime_payload["authority_reason"], "runtime_ledger_profit_proof"
+            runtime_payload["authority_reason"],
+            "exact_replay_artifact_not_runtime_proof",
         )
-        self.assertEqual(runtime_payload["promotion_authority"], "runtime_ledger")
-        self.assertEqual(runtime_payload["runtime_ledger_profit_proof_present"], True)
-        self.assertEqual(runtime_payload["authoritative"], True)
+        self.assertEqual(runtime_payload["promotion_authority"], "blocked")
+        self.assertEqual(runtime_payload["runtime_ledger_profit_proof_present"], False)
+        self.assertEqual(runtime_payload["authoritative"], False)
+        self.assertEqual(
+            runtime_payload["runtime_ledger_artifact_authority_class"],
+            "exact_replay_artifact_only_not_live",
+        )
+        self.assertEqual(
+            runtime_payload["runtime_ledger_artifact_authority_blockers"],
+            [
+                "exact_replay_artifact_not_runtime_proof",
+                "runtime_ledger_source_window_missing",
+                "runtime_ledger_source_refs_missing",
+            ],
+        )
+        self.assertIn(
+            "exact_replay_artifact_not_runtime_proof",
+            runtime_payload["runtime_ledger_materialization_blockers"],
+        )
 
     def test_main_imports_durable_runtime_ledger_bucket_without_source_dsn(
         self,

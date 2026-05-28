@@ -911,10 +911,24 @@ class TestPaperRouteEvidenceAudit(TestCase):
             )
             self.assertEqual(
                 missing_ledger_audit["next_action"],
-                "run_or_inspect_runtime_window_import",
+                "run_runtime_window_import_or_repair_source_materialization",
             )
             self.assertEqual(
-                missing_ledger_audit["blockers"], ["runtime_ledger_bucket_missing"]
+                missing_ledger_audit["blockers"],
+                [
+                    "runtime_ledger_bucket_missing",
+                    "runtime_ledger_source_bucket_missing",
+                    "source_activity_present_runtime_ledger_not_materialized",
+                ],
+            )
+            self.assertEqual(
+                missing_ledger_audit["diagnostics"][
+                    "source_activity_to_runtime_ledger_blockers"
+                ],
+                [
+                    "runtime_ledger_source_bucket_missing",
+                    "source_activity_present_runtime_ledger_not_materialized",
+                ],
             )
             self.assertEqual(
                 missing_ledger_audit["counts"]["targets_with_source_activity"], 1
@@ -2526,7 +2540,9 @@ class TestPaperRouteEvidenceAudit(TestCase):
         next_targets = payload["next_paper_route_runtime_window_targets"]
         self.assertEqual(next_targets["target_count"], 1)
         self.assertEqual(next_targets["skipped_target_count"], 1)
-        self.assertEqual(next_targets["targets"][0]["candidate_id"], "candidate-pairs-a")
+        self.assertEqual(
+            next_targets["targets"][0]["candidate_id"], "candidate-pairs-a"
+        )
         self.assertEqual(
             next_targets["targets"][0]["paper_route_execution_source_key"]["strategy"],
             "microbar-cross-sectional-pairs-v1",
@@ -2541,9 +2557,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
         )
         import_audit = payload["runtime_window_import_audit"]
         self.assertEqual(import_audit["counts"]["selected_target_count"], 1)
-        self.assertEqual(
-            import_audit["counts"]["next_runtime_window_target_count"], 1
-        )
+        self.assertEqual(import_audit["counts"]["next_runtime_window_target_count"], 1)
 
     def test_runtime_import_audit_counts_selected_targets_not_raw_plan_noise(
         self,

@@ -1650,10 +1650,15 @@ def _runtime_window_import_payload_proof_blockers(
             }
         )
 
-    if payload.get("promotion_allowed") is False:
-        reasons = _as_text_list(payload.get("promotion_blocking_reasons"))
-        for reason in reasons or ["runtime_window_import_not_promotion_allowed"]:
+    evidence_reasons = _as_text_list(payload.get("evidence_blocking_reasons"))
+    if evidence_reasons:
+        for reason in evidence_reasons:
             add_blocker(reason)
+    elif payload.get("promotion_allowed") is False:
+        if "evidence_blocking_reasons" not in payload:
+            reasons = _as_text_list(payload.get("promotion_blocking_reasons"))
+            for reason in reasons or ["runtime_window_import_not_promotion_allowed"]:
+                add_blocker(reason)
     elif "promotion_allowed" not in payload:
         legacy_decision = _as_text(payload.get("promotion_decision"))
         if legacy_decision is not None and legacy_decision.lower() != "allowed":

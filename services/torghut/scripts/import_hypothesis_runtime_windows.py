@@ -55,6 +55,12 @@ RUNTIME_LEDGER_BUCKET_SCHEMAS = frozenset(
         "torghut.runtime-ledger-bucket.v1",
     }
 )
+EXACT_REPLAY_ARTIFACT_AUTHORITY_CLASS = "exact_replay_artifact_only_not_live"
+EXACT_REPLAY_ARTIFACT_AUTHORITY_BLOCKERS = (
+    "exact_replay_artifact_not_runtime_proof",
+    "runtime_ledger_source_window_missing",
+    "runtime_ledger_source_refs_missing",
+)
 _RUNTIME_LEDGER_DECISION_EVENTS = frozenset(
     {"decision", "trade_decision", "signal_decision"}
 )
@@ -480,6 +486,36 @@ def _append_runtime_ledger_tca_row_blocker(
         row["post_cost_promotion_eligible"] = False
 
 
+def _mark_runtime_ledger_tca_rows_as_exact_replay_artifacts(
+    tca_rows: list[dict[str, object]],
+) -> None:
+    for row in tca_rows:
+        row["authoritative"] = False
+        row["authority_reason"] = "exact_replay_artifact_not_runtime_proof"
+        row["promotion_blocker"] = "exact_replay_artifact_not_runtime_proof"
+        row["pnl_derivation"] = EXACT_REPLAY_ARTIFACT_AUTHORITY_CLASS
+        row["post_cost_promotion_eligible"] = False
+        blockers = _metadata_text_list(row.get("runtime_ledger_blockers"))
+        for blocker in EXACT_REPLAY_ARTIFACT_AUTHORITY_BLOCKERS:
+            if blocker not in blockers:
+                blockers.append(blocker)
+        row["runtime_ledger_blockers"] = blockers
+        bucket = row.get("runtime_ledger_bucket")
+        if not isinstance(bucket, Mapping):
+            continue
+        bucket_payload = {str(key): item for key, item in bucket.items()}
+        bucket_blockers = _metadata_text_list(bucket_payload.get("blockers"))
+        for blocker in EXACT_REPLAY_ARTIFACT_AUTHORITY_BLOCKERS:
+            if blocker not in bucket_blockers:
+                bucket_blockers.append(blocker)
+        bucket_payload["blockers"] = bucket_blockers
+        bucket_payload["authoritative"] = False
+        bucket_payload["authority_reason"] = "exact_replay_artifact_not_runtime_proof"
+        bucket_payload["pnl_derivation"] = EXACT_REPLAY_ARTIFACT_AUTHORITY_CLASS
+        bucket_payload["source_materialization"] = "exact_replay_artifact"
+        row["runtime_ledger_bucket"] = bucket_payload
+
+
 def _nonnegative_int(value: Any) -> int:
     try:
         return max(0, int(Decimal(str(value))))
@@ -550,10 +586,14 @@ def _runtime_ledger_target_metadata_blockers(
 
     blockers: list[str] = []
     planned_refs = _runtime_ledger_target_metadata_artifact_refs(metadata)
+    loaded_refs = _metadata_text_list(
+        runtime_ledger_artifact_metadata.get("runtime_ledger_artifact_refs")
+    )
+    if loaded_refs and not _text_or_none(
+        runtime_ledger_artifact_metadata.get("runtime_ledger_artifact_authority_class")
+    ):
+        blockers.append("runtime_ledger_artifact_authority_class_missing")
     if planned_refs:
-        loaded_refs = _metadata_text_list(
-            runtime_ledger_artifact_metadata.get("runtime_ledger_artifact_refs")
-        )
         if set(planned_refs) != set(loaded_refs):
             blockers.append("runtime_ledger_artifact_refs_mismatch")
 
@@ -714,6 +754,12 @@ def _runtime_observation_authority_payload(
     tca_rows: list[dict[str, object]],
 ) -> dict[str, object]:
     has_runtime_ledger_profit_proof = _runtime_ledger_profit_proof_present(tca_rows)
+    exact_replay_artifact_only = any(
+        "exact_replay_artifact_not_runtime_proof"
+        in _metadata_text_list(row.get("runtime_ledger_blockers"))
+        or row.get("authority_reason") == "exact_replay_artifact_not_runtime_proof"
+        for row in tca_rows
+    )
     if source_kind.startswith("simulation_"):
         return {
             "authoritative": False,
@@ -727,6 +773,13 @@ def _runtime_observation_authority_payload(
             "authority_reason": "runtime_ledger_profit_proof",
             "promotion_authority": "runtime_ledger",
             "runtime_ledger_profit_proof_present": True,
+        }
+    if exact_replay_artifact_only:
+        return {
+            "authoritative": False,
+            "authority_reason": "exact_replay_artifact_not_runtime_proof",
+            "promotion_authority": "blocked",
+            "runtime_ledger_profit_proof_present": False,
         }
     return {
         "authoritative": False,
@@ -1161,14 +1214,18 @@ def _source_activity_diagnostics_blockers(
     order_query_count = _nonnegative_int(
         diagnostics.get("order_lifecycle_rows_before_lineage_filter")
     )
-    tca_query_count = _nonnegative_int(diagnostics.get("tca_rows_before_lineage_filter"))
+    tca_query_count = _nonnegative_int(
+        diagnostics.get("tca_rows_before_lineage_filter")
+    )
     decision_lineage_count = _nonnegative_int(
         diagnostics.get("decision_rows_after_lineage_filter")
     )
     execution_lineage_count = _nonnegative_int(
         diagnostics.get("execution_rows_after_lineage_filter")
     )
-    tca_lineage_count = _nonnegative_int(diagnostics.get("tca_rows_after_lineage_filter"))
+    tca_lineage_count = _nonnegative_int(
+        diagnostics.get("tca_rows_after_lineage_filter")
+    )
     source_bucket_count = _nonnegative_int(
         diagnostics.get("runtime_ledger_source_bucket_count")
     )
@@ -1723,10 +1780,13 @@ def _runtime_ledger_tca_rows_from_artifacts(
     ignored_refs: list[str] = []
     artifact_candidates: list[str] = []
     artifact_window_metadata: list[dict[str, Any]] = []
+    artifact_schema_versions: list[str] = []
     for ref in artifact_refs:
         payload = _load_json_artifact(ref)
         if not payload:
             continue
+        if schema_version := _runtime_ledger_artifact_schema(payload):
+            artifact_schema_versions.append(schema_version)
         rows = _runtime_ledger_artifact_rows(payload)
         if not rows:
             if _runtime_ledger_artifact_schema(payload) is not None:
@@ -1787,6 +1847,17 @@ def _runtime_ledger_tca_rows_from_artifacts(
         )
     if len(artifact_window_metadata) == 1:
         metadata.update(artifact_window_metadata[0])
+    if loaded_refs:
+        _mark_runtime_ledger_tca_rows_as_exact_replay_artifacts(tca_rows)
+        metadata["runtime_ledger_artifact_schema_versions"] = sorted(
+            dict.fromkeys(artifact_schema_versions)
+        )
+        metadata["runtime_ledger_artifact_authority_class"] = (
+            EXACT_REPLAY_ARTIFACT_AUTHORITY_CLASS
+        )
+        metadata["runtime_ledger_artifact_authority_blockers"] = list(
+            EXACT_REPLAY_ARTIFACT_AUTHORITY_BLOCKERS
+        )
     return decision_times, execution_times, tca_rows, metadata
 
 
@@ -2187,8 +2258,8 @@ def _query_timestamps(
                 if row[0] is not None
             ]
             if source_activity_diagnostics is not None:
-                source_activity_diagnostics["decision_rows_before_lineage_filter"] = len(
-                    decision_lifecycle_rows
+                source_activity_diagnostics["decision_rows_before_lineage_filter"] = (
+                    len(decision_lifecycle_rows)
                 )
             decision_lifecycle_rows = [
                 row
@@ -2295,8 +2366,8 @@ def _query_timestamps(
                 if row[1] is not None
             ]
             if source_activity_diagnostics is not None:
-                source_activity_diagnostics["execution_rows_before_lineage_filter"] = len(
-                    execution_rows
+                source_activity_diagnostics["execution_rows_before_lineage_filter"] = (
+                    len(execution_rows)
                 )
                 source_activity_diagnostics[
                     "fill_execution_rows_before_lineage_filter"
@@ -2312,8 +2383,8 @@ def _query_timestamps(
                 )
             ]
             if source_activity_diagnostics is not None:
-                source_activity_diagnostics["execution_rows_after_lineage_filter"] = len(
-                    execution_rows
+                source_activity_diagnostics["execution_rows_after_lineage_filter"] = (
+                    len(execution_rows)
                 )
                 source_activity_diagnostics[
                     "fill_execution_rows_after_lineage_filter"
