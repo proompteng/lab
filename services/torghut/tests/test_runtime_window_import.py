@@ -73,6 +73,8 @@ def _runtime_ledger_bucket(**overrides: object) -> dict[str, object]:
         "execution_policy_hash_counts": {"policy-sha": 2},
         "cost_model_hash_counts": {"cost-sha": 2},
         "lineage_hash_counts": {"lineage-sha": 2},
+        "source_decision_mode_counts": {"strategy_signal_paper": 2},
+        "profit_proof_eligible": True,
         "blockers": [],
     }
     payload.update(overrides)
@@ -365,6 +367,7 @@ class TestRuntimeWindowImport(TestCase):
         self.assertIn("runtime_ledger_execution_policy_hash_missing", invalid_blockers)
         self.assertIn("runtime_ledger_cost_model_hash_missing", invalid_blockers)
         self.assertIn("runtime_ledger_lineage_hash_missing", invalid_blockers)
+        self.assertIn("source_decision_mode_profit_proof_missing", invalid_blockers)
 
     def test_runtime_ledger_bucket_blockers_reject_non_promotion_grade_cost_basis(
         self,
@@ -387,6 +390,8 @@ class TestRuntimeWindowImport(TestCase):
                         "filled_notional": "200",
                         "cost_amount": "0.20",
                         "cost_basis_counts": {basis: 2},
+                        "source_decision_mode_counts": {"strategy_signal_paper": 2},
+                        "profit_proof_eligible": True,
                         "post_cost_expectancy_bps": "40",
                         "execution_policy_hash_counts": {"policy-sha": 2},
                         "cost_model_hash_counts": {"cost-sha": 2},
@@ -452,6 +457,18 @@ class TestRuntimeWindowImport(TestCase):
         )
 
         self.assertEqual(blockers, ["source_decision_mode_not_profit_proof_eligible"])
+
+    def test_runtime_ledger_bucket_blockers_reject_missing_source_decision_evidence(
+        self,
+    ) -> None:
+        blockers = _runtime_ledger_bucket_blockers(
+            _runtime_ledger_bucket(
+                source_decision_mode_counts={},
+                profit_proof_eligible=None,
+            )
+        )
+
+        self.assertEqual(blockers, ["source_decision_mode_profit_proof_missing"])
 
     def test_persisted_runtime_ledger_bucket_evidence_grade_rejects_modeled_cost_basis(
         self,

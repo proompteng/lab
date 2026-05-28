@@ -11,6 +11,9 @@ LIVE_STRATEGY_SIGNAL_SOURCE_DECISION_MODE = "live_strategy_signal"
 SOURCE_DECISION_MODE_NOT_PROFIT_PROOF_ELIGIBLE_BLOCKER = (
     "source_decision_mode_not_profit_proof_eligible"
 )
+SOURCE_DECISION_MODE_PROFIT_PROOF_MISSING_BLOCKER = (
+    "source_decision_mode_profit_proof_missing"
+)
 
 _ROUTE_ACQUISITION_ALIASES = frozenset(
     {
@@ -54,13 +57,28 @@ def source_decision_mode_counts_have_non_profit_proof_modes(value: Any) -> bool:
     return False
 
 
+def source_decision_mode_counts_have_profit_proof_modes(value: Any) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    for key, count in cast(Mapping[object, object], value).items():
+        try:
+            positive = int(str(count or "0")) > 0
+        except (TypeError, ValueError):
+            positive = False
+        if positive and source_decision_mode_is_profit_proof_eligible(key):
+            return True
+    return False
+
+
 __all__ = [
     "LIVE_STRATEGY_SIGNAL_SOURCE_DECISION_MODE",
     "PROFIT_PROOF_ELIGIBLE_SOURCE_DECISION_MODES",
     "ROUTE_ACQUISITION_SOURCE_DECISION_MODE",
     "SOURCE_DECISION_MODE_NOT_PROFIT_PROOF_ELIGIBLE_BLOCKER",
+    "SOURCE_DECISION_MODE_PROFIT_PROOF_MISSING_BLOCKER",
     "STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE",
     "normalize_source_decision_mode",
     "source_decision_mode_counts_have_non_profit_proof_modes",
+    "source_decision_mode_counts_have_profit_proof_modes",
     "source_decision_mode_is_profit_proof_eligible",
 ]

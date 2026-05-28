@@ -6,6 +6,7 @@ import json
 from types import SimpleNamespace
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Mapping, cast
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -32,6 +33,7 @@ from scripts.import_hypothesis_runtime_windows import (
     _parse_target_metadata,
     _query_timestamps,
     _row_payloads,
+    _runtime_ledger_bucket_profit_proof_blockers,
     _runtime_ledger_bucket_profit_proof_present,
     _runtime_ledger_event_type,
     _runtime_lifecycle_ledger_row,
@@ -199,6 +201,11 @@ class _SourceLedgerCursor:
                     [],
                     "torghut.exact_replay_ledger.v1",
                     POST_COST_BASIS_RUNTIME_LEDGER,
+                    {
+                        "cost_basis_counts": {"broker_reported_commission_and_fees": 2},
+                        "source_decision_mode_counts": {"strategy_signal_paper": 2},
+                        "profit_proof_eligible": True,
+                    },
                 )
             ]
         ]
@@ -261,6 +268,8 @@ def _complete_runtime_ledger_bucket(**overrides: object) -> dict[str, object]:
         "execution_policy_hash_counts": {"policy-sha": 2},
         "cost_model_hash_counts": {"cost-sha": 2},
         "lineage_hash_counts": {"lineage-sha": 2},
+        "source_decision_mode_counts": {"strategy_signal_paper": 2},
+        "profit_proof_eligible": True,
         "blockers": [],
     }
     payload.update(overrides)
@@ -499,6 +508,45 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     )
                 )
 
+    def test_runtime_ledger_profit_proof_blockers_name_missing_dimensions(
+        self,
+    ) -> None:
+        blockers = _runtime_ledger_bucket_profit_proof_blockers(
+            _complete_runtime_ledger_bucket(
+                fill_count=0,
+                submitted_order_count=0,
+                closed_trade_count=0,
+                open_position_count=1,
+                cost_amount=None,
+                cost_model_hash_counts={},
+                lineage_hash_counts={},
+                source_decision_mode_counts={"route_acquisition_probe": 2},
+            )
+        )
+
+        self.assertIn("runtime_fills_missing", blockers)
+        self.assertIn("submitted_order_lifecycle_missing", blockers)
+        self.assertIn("closed_round_trip_missing", blockers)
+        self.assertIn("unclosed_position", blockers)
+        self.assertIn("runtime_ledger_cost_amount_missing", blockers)
+        self.assertIn("runtime_ledger_cost_model_hash_missing", blockers)
+        self.assertIn("runtime_ledger_lineage_hash_missing", blockers)
+        self.assertIn("source_decision_mode_not_profit_proof_eligible", blockers)
+
+    def test_runtime_ledger_profit_proof_rejects_missing_source_decision_evidence(
+        self,
+    ) -> None:
+        bucket = _complete_runtime_ledger_bucket(
+            source_decision_mode_counts={},
+            profit_proof_eligible=None,
+        )
+
+        self.assertIn(
+            "source_decision_mode_profit_proof_missing",
+            _runtime_ledger_bucket_profit_proof_blockers(bucket),
+        )
+        self.assertFalse(_runtime_ledger_bucket_profit_proof_present(bucket))
+
     def test_runtime_ledger_profit_proof_rejects_modeled_cost_basis(
         self,
     ) -> None:
@@ -642,7 +690,10 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     cost_model_hash_counts={"cost-sha": 2},
                     lineage_hash_counts={"lineage-sha": 2},
                     blockers_json=[],
-                    payload_json={},
+                    payload_json={
+                        "source_decision_mode_counts": {"strategy_signal_paper": 2},
+                        "profit_proof_eligible": True,
+                    },
                 )
             )
             session.add(
@@ -731,6 +782,10 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(metadata["runtime_ledger_source_bucket_fill_count"], 2)
         self.assertEqual(metadata["runtime_ledger_source_bucket_profit_proof_count"], 1)
         self.assertEqual(
+            metadata["runtime_ledger_source_bucket_profit_proof_blockers"],
+            [],
+        )
+        self.assertEqual(
             metadata["runtime_ledger_source_bucket_candidate_id"],
             "H-TSMOM-LIQ-01",
         )
@@ -743,6 +798,13 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertIsInstance(bucket, dict)
         assert isinstance(bucket, dict)
         self.assertEqual(bucket["run_id"], "runtime-proof-source")
+        self.assertEqual(
+            bucket["cost_basis_counts"], {"broker_reported_commission_and_fees": 2}
+        )
+        self.assertEqual(
+            bucket["source_decision_mode_counts"], {"strategy_signal_paper": 2}
+        )
+        self.assertEqual(bucket["profit_proof_eligible"], True)
         self.assertEqual(bucket["bucket_started_at"], "2026-03-06T14:30:00+00:00")
         query, params = cursor.executed[0]
         self.assertIn("from strategy_runtime_ledger_buckets", query)
@@ -1393,6 +1455,8 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "strategy_id": "microbar-cross-sectional-pairs-v1",
                     "decision_hash": "decision-buy",
                     "decision_json": {"account": {"equity": "10000"}},
+                    "source_decision_mode": "strategy_signal_paper",
+                    "profit_proof_eligible": True,
                     "execution_policy_hash": "policy-sha",
                     "cost_model_hash": "cost-sha",
                     "lineage_hash": "lineage-sha",
@@ -1405,6 +1469,8 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "strategy_id": "microbar-cross-sectional-pairs-v1",
                     "decision_hash": "decision-sell",
                     "decision_json": {"account": {"equity": "10000"}},
+                    "source_decision_mode": "strategy_signal_paper",
+                    "profit_proof_eligible": True,
                     "execution_policy_hash": "policy-sha",
                     "cost_model_hash": "cost-sha",
                     "lineage_hash": "lineage-sha",
@@ -1536,6 +1602,8 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "strategy_id": "microbar-cross-sectional-pairs-v1",
                     "decision_hash": "decision-buy",
                     "decision_json": {"account": {"equity": "10000"}},
+                    "source_decision_mode": "strategy_signal_paper",
+                    "profit_proof_eligible": True,
                     "execution_policy_hash": "policy-sha",
                     "cost_model_hash": "cost-sha",
                     "lineage_hash": "lineage-sha",
@@ -1548,6 +1616,8 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "strategy_id": "microbar-cross-sectional-pairs-v1",
                     "decision_hash": "decision-sell",
                     "decision_json": {"account": {"equity": "10000"}},
+                    "source_decision_mode": "strategy_signal_paper",
+                    "profit_proof_eligible": True,
                     "execution_policy_hash": "policy-sha",
                     "cost_model_hash": "cost-sha",
                     "lineage_hash": "lineage-sha",
@@ -1673,6 +1743,8 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "strategy_id": "microbar-cross-sectional-pairs-v1",
                     "decision_hash": "decision-buy",
                     "decision_json": {"account": {"equity": "10000"}},
+                    "source_decision_mode": "strategy_signal_paper",
+                    "profit_proof_eligible": True,
                     "execution_policy_hash": "policy-sha",
                     "cost_model_hash": "cost-sha",
                     "lineage_hash": "lineage-sha",
@@ -1685,6 +1757,8 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "strategy_id": "microbar-cross-sectional-pairs-v1",
                     "decision_hash": "decision-sell",
                     "decision_json": {"account": {"equity": "10000"}},
+                    "source_decision_mode": "strategy_signal_paper",
+                    "profit_proof_eligible": True,
                     "execution_policy_hash": "policy-sha",
                     "cost_model_hash": "cost-sha",
                     "lineage_hash": "lineage-sha",
@@ -1864,7 +1938,17 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         )
         self.assertEqual(
             metadata["runtime_ledger_materialization_blockers"],
-            ["execution_reconstruction_not_runtime_ledger_proof"],
+            [
+                "execution_reconstruction_not_runtime_ledger_proof",
+                "runtime_ledger_pnl_basis_not_runtime_ledger",
+            ],
+        )
+        self.assertEqual(
+            metadata["runtime_ledger_profit_proof_blockers"],
+            [
+                "execution_reconstruction_not_runtime_ledger_proof",
+                "runtime_ledger_pnl_basis_not_runtime_ledger",
+            ],
         )
 
     def test_build_realized_strategy_pnl_rows_normalizes_nested_runtime_payloads(
@@ -2326,7 +2410,13 @@ class TestImportHypothesisRuntimeWindows(TestCase):
 
         self.assertIsNone(row["abs_slippage_bps"])
         self.assertEqual(row["explicit_cost_bps"], Decimal("12.50000"))
-        self.assertEqual(row["post_cost_promotion_eligible"], True)
+        self.assertEqual(row["post_cost_promotion_eligible"], False)
+        self.assertIn(
+            "source_decision_mode_profit_proof_missing",
+            _runtime_ledger_bucket_profit_proof_blockers(
+                cast(Mapping[str, object], row["runtime_ledger_bucket"])
+            ),
+        )
 
     def test_build_realized_strategy_pnl_rows_rejects_shortfall_only_costs(
         self,
@@ -2540,6 +2630,27 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             [
                 "execution_rows_missing_for_matched_decisions",
                 "runtime_ledger_source_bucket_missing",
+            ],
+        )
+        self.assertEqual(
+            _source_activity_diagnostics_blockers(
+                {
+                    "decision_rows_before_lineage_filter": 1,
+                    "decision_rows_after_lineage_filter": 1,
+                    "execution_rows_before_lineage_filter": 1,
+                    "execution_rows_after_lineage_filter": 1,
+                    "order_lifecycle_rows_before_lineage_filter": 1,
+                    "tca_rows_after_lineage_filter": 1,
+                    "runtime_ledger_source_bucket_count": 1,
+                    "runtime_ledger_source_bucket_profit_proof_count": 0,
+                    "runtime_ledger_source_bucket_profit_proof_blockers": [
+                        "runtime_ledger_lineage_hash_missing"
+                    ],
+                }
+            ),
+            [
+                "runtime_ledger_source_bucket_profit_proof_missing",
+                "runtime_ledger_lineage_hash_missing",
             ],
         )
 
