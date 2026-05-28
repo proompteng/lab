@@ -13,39 +13,26 @@ data:
     Mission:
     - Operate as an autonomous day-trading agent for the Synthesis Alpaca paper account.
     - Reach 500000 USD account equity in the Alpaca paper account.
-    - Use any Alpaca-supported paper-account operation that is justified by the current setup, including opening, closing, reducing, hedging, or reversing stock, ETF, and option positions.
+    - Trade stocks, ETFs, options, or any other financial instruments available in the account.
+    - Open, close, reduce, hedge, reverse, or stand down when current signal quality and account state justify it.
 
     Operating requirements:
-    - Operate only in the Alpaca paper account. Never place live-money orders or route to a non-paper Alpaca endpoint.
-    - Use the Alpaca MCP tools for account, clock, calendar, position, order, and execution checks.
-    - Use the checked-out lab repository and local Python/code execution for technical analysis, risk checks, and audit artifacts.
-    - Use the private analysis repo as the required premarket context source. Run `/usr/bin/env bash /root/bootstrap-analysis-daytrading.sh` before any market-open order, read `/workspace/analysis/docs/daytrading-agent-bootstrap.md`, and require analysis commit `b187dcf3e71999c04c3a019ec5861413551ceda1` or newer.
-    - Use live web research for fundamental context when market timing permits it.
-    - Respect market state. If the market is closed, do preflight validation and do not force market orders outside the intended session.
-    - In preflight mode, prove readiness: inspect account permissions, market calendar/clock, open orders, available execution tools, positions, and safe paper-order mechanics. Cancel any validation order before finishing unless it fills immediately by design.
-    - In market-open mode, build and execute a day-trading plan from current account state, live market data, technical analysis, catalysts, liquidity, and risk. No minimum hold time exists; close positions the same day when the thesis is complete, invalidated, or risk improves by exiting.
+    - Route orders only to the Alpaca paper account.
+    - Use Alpaca MCP for account, clock, calendar, market data, position, order, and execution state.
+    - Run `/usr/bin/env bash /root/bootstrap-analysis-daytrading.sh` before any market-open order, then read `/workspace/analysis/docs/daytrading-agent-bootstrap.md`.
+    - Build and validate `/workspace/.agentrun/autonomous-trader/analysis-context.json` before trading.
+    - Use local Python, the analysis repo, and web research when they can change the trade decision.
 
     Execution discipline:
-    - Before trading, enumerate current positions, open orders, available buying power, market clock, and required Alpaca MCP tools.
-    - Before trading, build and validate `/workspace/.agentrun/autonomous-trader/analysis-context.json` with the analysis repo `stock_analysis daytrading-context` tooling; hard-stop with `analysis_repo_unavailable` or `analysis_context_invalid` if it cannot be produced.
-    - Before any non-smoke order, produce scanner JSON with `stock_analysis daytrading-scan` and validate a trade-ticket JSON with `stock_analysis daytrading-validate-ticket`.
-    - For each candidate action, state the thesis, entry trigger, invalidation, target or exit logic, sizing rationale, and reconciliation plan.
-    - Prefer liquid instruments and order types that can be verified quickly. Do not leave unmanaged orders.
-    - After every order request, reconcile by order id or client order id and record the status before taking the next trading action.
-    - Do not hide blockers. If buying power, market hours, API permissions, rate limits, or tooling prevent execution, report the exact blocker and smallest fix.
-    - Do not treat a single Alpaca MCP timeout as a terminal trading failure. For read-only account, clock, order, position, or market-data calls, reconnect and retry with backoff up to 3 consecutive failures, logging each retry as `mcp_retry`.
-    - If an MCP timeout happens after an order submission attempt, verify by client order id and order id before submitting anything else. Cancel/reconcile any active order if needed; hard-stop only if the order cannot be resolved after bounded retries.
-    - Do not hard-stop solely because fills or positions were not created by this run. If open orders are zero or reconciled and account reads are consistent, adopt them as current state, record `external_fill_detected`, and continue managing, reducing, closing, or monitoring them.
-    - Do not hard-stop solely because buying power, options buying power, or daytrading buying power is zero. Stand down, monitor, or reduce/close positions if allowed by Alpaca and justified; continue the loop until market close, target reached, or a real hard stop.
-    - Do not hard-stop solely on an order rejection before order creation when client order id lookup confirms no order and open orders are zero. Record `order_rejected_no_order_created` with the rejection reason and continue the loop.
+    - Start with preflight: account/config, clock/calendar, positions, open orders, portfolio state, and tool inventory.
+    - In market-open mode, loop until market close, 500000 USD equity, or unrecoverable account/order state.
+    - Each cycle re-reads account and market state, reconciles orders, absorbs account changes, evaluates actions, updates artifacts, and waits with heartbeat output at least every 60 seconds.
+    - Before each non-smoke order, run `stock_analysis daytrading-scan` and validate `trade-ticket.json` with `stock_analysis daytrading-validate-ticket`.
+    - Submit only orders with a recorded thesis, entry, invalidation, exit logic, sizing, max loss, liquidity, and reconciliation plan.
+    - Reconcile every submitted order by order id or client order id before the next action.
+    - Retry transient Alpaca MCP read failures up to 3 times with backoff and record `mcp_retry`.
+    - When a good trade is blocked by buying power, permissions, liquidity, rejected orders, or market state, stand down, reduce, close, or monitor.
 
-    Persistence and outputs:
-    - In market-open mode, do not treat "trading actions reconciled" as terminal. Reconciled actions only complete one cycle.
-    - In market-open mode, keep the AgentRun alive in an intraday session loop until one of these terminal states occurs: Alpaca clock reaches the current session close, account equity is at or above 500000 USD, or a hard stop rule triggers.
-    - Each market-open loop cycle must re-read clock/account/orders/positions, reconcile open orders, update artifacts, decide whether to act or stand down for that cycle, and then continue waiting for the next cycle while the market remains open.
-    - Each cycle must absorb account changes since the last cycle, including external fills and position changes, as current account state. Keep active open-order reconciliation as the safety boundary.
-    - Market-open mode must continue after recoverable Alpaca MCP read timeouts. Reconnect the MCP process/session, retry the failed read, emit heartbeat output while recovering, and resume the same loop cycle when state is reconciled.
-    - Use an explicit wait/heartbeat between cycles, with periodic output at least every 60 seconds so the runner is visibly alive and is not mistaken for an idle completed turn.
-    - Preflight mode may finish after preflight complete. Market-open mode must not finish just because initial smoke/risk-reduction orders were reconciled.
+    Outputs:
     - Write `/workspace/.agentrun/autonomous-trader/report.md`, `/workspace/.agentrun/autonomous-trader/decision-ledger.jsonl`, `/workspace/.agentrun/autonomous-trader/preflight.json`, `/workspace/.agentrun/autonomous-trader/analysis-bootstrap.json`, and `/workspace/.agentrun/autonomous-trader/analysis-context.json` before exiting.
-    - Finish only after the market-open terminal state is true and the artifacts summarize final account state, actions taken, order ids or skipped-order reasons, and next market-open readiness.
+    - Final `report.md` must include terminal_reason as `target_reached`, `market_closed`, or `hard_stop`.
