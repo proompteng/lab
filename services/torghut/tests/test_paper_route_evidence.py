@@ -11,6 +11,7 @@ from sqlalchemy.pool import StaticPool
 from app.models import (
     Base,
     Execution,
+    ExecutionOrderEvent,
     ExecutionTCAMetric,
     RejectedSignalOutcomeEvent,
     Strategy,
@@ -1444,6 +1445,168 @@ class TestPaperRouteEvidenceAudit(TestCase):
         import_audit = payload["runtime_window_import_audit"]
         self.assertEqual(import_audit["counts"]["targets_with_source_activity"], 1)
         self.assertNotIn("source_executions_missing", import_audit["blockers"])
+
+    def test_source_activity_accepts_order_feed_fill_lifecycle_without_tca(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, tzinfo=timezone.utc)
+        event_at = window_start + timedelta(minutes=20)
+        strategy_name = "order-feed-source-activity"
+        with Session(self.engine) as session:
+            strategy = Strategy(
+                name=strategy_name,
+                description="paper route source activity from order-feed lifecycle",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+                created_at=window_start,
+                updated_at=window_start,
+            )
+            session.add(strategy)
+            session.flush()
+            decision = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="TORGHUT_SIM",
+                symbol="AAPL",
+                timeframe="1Min",
+                decision_json={
+                    "action": "buy",
+                    "qty": "1",
+                    "candidate_id": "candidate-order-feed",
+                    "hypothesis_id": "H-ORDER-FEED",
+                },
+                rationale="order-feed lifecycle fixture",
+                status="executed",
+                created_at=event_at - timedelta(minutes=1),
+                executed_at=event_at,
+            )
+            session.add(decision)
+            session.flush()
+            execution = Execution(
+                trade_decision_id=decision.id,
+                alpaca_account_label="TORGHUT_SIM",
+                alpaca_order_id="order-feed-order-1",
+                client_order_id="order-feed-client-1",
+                symbol="AAPL",
+                side="buy",
+                order_type="limit",
+                time_in_force="day",
+                submitted_qty=Decimal("1"),
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("100"),
+                status="filled",
+                raw_order={},
+                created_at=event_at,
+                updated_at=event_at,
+                last_update_at=event_at,
+                order_feed_last_event_ts=event_at,
+            )
+            session.add(execution)
+            session.flush()
+            session.add(
+                ExecutionOrderEvent(
+                    event_fingerprint="order-feed-fill-event",
+                    source_topic="trade_updates",
+                    source_partition=0,
+                    source_offset=1,
+                    alpaca_account_label="TORGHUT_SIM",
+                    feed_seq=10,
+                    event_ts=event_at,
+                    symbol="AAPL",
+                    alpaca_order_id="order-feed-order-1",
+                    client_order_id="order-feed-client-1",
+                    event_type="fill",
+                    status="filled",
+                    qty=Decimal("1"),
+                    filled_qty=Decimal("1"),
+                    avg_fill_price=Decimal("100"),
+                    raw_event={
+                        "event": "fill",
+                        "order": {
+                            "id": "order-feed-order-1",
+                            "client_order_id": "order-feed-client-1",
+                            "symbol": "AAPL",
+                            "status": "filled",
+                            "qty": "1",
+                            "filled_qty": "1",
+                            "filled_avg_price": "100",
+                        },
+                    },
+                    execution_id=execution.id,
+                    trade_decision_id=decision.id,
+                    created_at=event_at,
+                )
+            )
+            session.commit()
+
+            payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "paper_route_probe_only",
+                    "blocked_reasons": [],
+                    "promotion_eligible_total": 0,
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "target_count": 1,
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-ORDER-FEED",
+                                "candidate_id": "candidate-order-feed",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_pairs",
+                                "strategy_name": strategy_name,
+                                "source_kind": "paper_route_probe_runtime_observed",
+                                "account_label": "TORGHUT_SIM",
+                                "source_manifest_ref": "config/trading/hypotheses/h-order-feed.json",
+                                "window_start": window_start.isoformat(),
+                                "window_end": window_end.isoformat(),
+                                "paper_route_probe_symbols": ["AAPL"],
+                                "paper_probation_authorized": True,
+                                "promotion_allowed": False,
+                                "final_promotion_authorized": False,
+                                "max_notional": "0",
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "summary": {
+                        "paper_route_probe_eligible_symbols": ["AAPL"],
+                        "paper_route_probe_active_symbols": ["AAPL"],
+                    },
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": True,
+                        "next_session_max_notional": "25",
+                        "eligible_symbol_count": 1,
+                    },
+                },
+                generated_at=window_end + timedelta(hours=2),
+            )
+
+        source_activity = payload["targets"][0]["source_activity"]
+        self.assertFalse(source_activity["missing"])
+        self.assertEqual(source_activity["decision_count"], 1)
+        self.assertEqual(source_activity["execution_count"], 1)
+        self.assertEqual(source_activity["filled_execution_count"], 1)
+        self.assertEqual(source_activity["tca_sample_count"], 0)
+        self.assertEqual(source_activity["order_event_count"], 1)
+        self.assertEqual(source_activity["fill_order_event_count"], 1)
+        self.assertEqual(source_activity["complete_fill_order_event_count"], 1)
+        self.assertEqual(source_activity["last_order_event_at"], event_at.isoformat())
+        self.assertEqual(source_activity["missing_reasons"], [])
+        import_audit = payload["runtime_window_import_audit"]
+        self.assertEqual(import_audit["state"], "import_due_runtime_ledger_missing")
+        self.assertEqual(import_audit["counts"]["targets_with_source_activity"], 1)
+        self.assertNotIn(
+            "paper_route_source_activity_missing", import_audit["blockers"]
+        )
+        self.assertNotIn("source_tca_missing", import_audit["blockers"])
 
     def test_current_paper_route_probe_symbols_extend_next_window_target_scope(
         self,
