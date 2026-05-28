@@ -1983,6 +1983,11 @@ class TestStrategyAutoresearch(TestCase):
                 "idiosyncratic_trade_imbalance_2026",
                 "intraday_price_asymmetry_sp500_2026",
                 "market_depth_execution_delays_2026",
+                "alphacrafter_factor_execution_loop_2026",
+                "financial_multi_agent_cost_awareness_2026",
+                "live_market_agent_arena_2025",
+                "tradetrap_system_stress_2025",
+                "agentic_trading_evidence_ledger_2026",
             }.issubset(source_ids)
         )
         impact_source = next(

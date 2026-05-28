@@ -5110,6 +5110,11 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertIn("idiosyncratic_trade_imbalance_2026", source_ids)
         self.assertIn("intraday_price_asymmetry_sp500_2026", source_ids)
         self.assertIn("market_depth_execution_delays_2026", source_ids)
+        self.assertIn("alphacrafter_factor_execution_loop_2026", source_ids)
+        self.assertIn("financial_multi_agent_cost_awareness_2026", source_ids)
+        self.assertIn("live_market_agent_arena_2025", source_ids)
+        self.assertIn("tradetrap_system_stress_2025", source_ids)
+        self.assertIn("agentic_trading_evidence_ledger_2026", source_ids)
 
         weighted_microprice = next(
             source
@@ -5156,6 +5161,19 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         book_claim_types = {str(claim["claim_type"]) for claim in book_source.claims}
         self.assertIn("feature_recipe", book_claim_types)
         self.assertIn("validation_requirement", book_claim_types)
+
+        agentic_ledger_source = next(
+            source
+            for source in sources
+            if source.run_id == "agentic_trading_evidence_ledger_2026"
+        )
+        self.assertEqual(
+            {claim["claim_id"] for claim in agentic_ledger_source.claims},
+            {
+                "evidence_ledger_required_for_reproducibility",
+                "closed_loop_action_output_boundary",
+            },
+        )
 
         depth_delay_source = next(
             source

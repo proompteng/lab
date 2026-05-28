@@ -382,6 +382,61 @@ research_sources:
         asset_scope: us_equities_cross_section
         horizon_scope: statistical_arbitrage_validation
         expected_direction: neutral
+  - source_id: alphacrafter_factor_execution_loop_2026
+    title: 'AlphaCrafter: A Full-Stack Multi-Agent Framework for Cross-Sectional Quantitative Trading'
+    url: https://arxiv.org/abs/2605.05580
+    published_at: '2026-05-07'
+    claims:
+      - claim_id: adaptive_factor_to_execution_loop
+        summary: A profitable cross-sectional trading system should continuously couple factor discovery, regime-conditioned selection, and risk-constrained execution.
+        implication: 'Treat Torghut research candidates as a factor-to-execution loop: mine variants, screen by current regime, then route only bounded paper/live-paper probes with ledger proof.'
+      - claim_id: role_noise_less_useful_than_rational_pipeline
+        summary: The useful multi-agent split is systematic miner/screener/trader specialization, not noisy role-play committees.
+        implication: Keep AgentRuns focused on factor discovery, proof audit, and execution-readiness lanes with explicit artifacts rather than unbounded discussion swarms.
+  - source_id: financial_multi_agent_cost_awareness_2026
+    title: 'Toward Reliable Evaluation of LLM-Based Financial Multi-Agent Systems: Taxonomy, Coordination Primacy, and Cost Awareness'
+    url: https://arxiv.org/abs/2603.27539
+    published_at: '2026-03-29'
+    claims:
+      - claim_id: coordination_breakeven_spread
+        summary: Multi-agent coordination only adds value if it clears its own transaction-cost and coordination-overhead breakeven spread.
+        implication: Rank agent-discovered candidates by post-cost runtime-ledger edge after explicit route/TCA and coordination overhead, not by raw replay alpha.
+      - claim_id: evaluation_failures_reverse_returns
+        summary: Look-ahead bias, survivorship bias, overfitting, transaction-cost neglect, and regime-shift blindness can reverse apparent trading returns.
+        implication: Keep promotion blocked unless source data, replay split, transaction costs, regime stress, and runtime-ledger lineage are all present.
+  - source_id: live_market_agent_arena_2025
+    title: 'When Agents Trade: Live Multi-Market Trading Benchmark for LLM Agents'
+    url: https://arxiv.org/abs/2510.11695
+    published_at: '2025-10-13'
+    claims:
+      - claim_id: live_verified_agent_evaluation
+        summary: Live agent behavior differs materially across frameworks, and verified real-time data is needed to judge trading performance.
+        implication: Prefer live-paper route probes and runtime-ledger proof over static benchmark scores when deciding whether a candidate can advance.
+      - claim_id: framework_risk_style_matters
+        summary: Agent framework risk style can matter more than the model backbone for live trading behavior.
+        implication: Treat Torghut sleeves as risk-policy variants with separate drawdown, concentration, and order-lifecycle evidence rather than one generic model output.
+  - source_id: tradetrap_system_stress_2025
+    title: 'TradeTrap: Are LLM-based Trading Agents Truly Reliable and Faithful?'
+    url: https://arxiv.org/abs/2512.02261
+    published_at: '2025-12-01'
+    claims:
+      - claim_id: component_perturbations_cause_drawdown
+        summary: Small perturbations in market intelligence, strategy formulation, portfolio/ledger handling, or execution can cause concentration and runaway drawdowns.
+        implication: Keep source-activity, ledger, and execution-lifecycle blockers visible per target so a single weak component cannot pass as portfolio readiness.
+      - claim_id: ledger_handling_is_attack_surface
+        summary: Portfolio and ledger handling are first-class reliability surfaces for autonomous trading agents.
+        implication: Runtime-ledger materialization and post-cost proof must remain the promotion authority even for close paper-probation candidates.
+  - source_id: agentic_trading_evidence_ledger_2026
+    title: 'Agentic Trading: When LLM Agents Meet Financial Markets'
+    url: https://arxiv.org/abs/2605.19337
+    published_at: '2026-05-19'
+    claims:
+      - claim_id: evidence_ledger_required_for_reproducibility
+        summary: Current agentic-trading papers have weak reproducibility, sparse cost modeling, and inconsistent execution semantics.
+        implication: Require Torghut proof packets to preserve per-target source activity, runtime-ledger lineage, costs, and execution semantics before any promotion claim.
+      - claim_id: closed_loop_action_output_boundary
+        summary: Closed-loop action outputs and execution semantics are the minimum boundary for empirical trading-agent evidence.
+        implication: Research claims should become bounded executable sleeves and live-paper decisions before they can influence allocation.
   - source_id: asymmetric_ofi_hmm_regime_2025
     title: 'Asymmetric Hidden Markov Modeling of Order Flow Imbalances for Microstructure-Aware Market Regime Detection'
     url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=5315733

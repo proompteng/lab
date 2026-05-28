@@ -511,6 +511,16 @@ def _paper_route_runtime_window_import_audit_blockers(
     return _text_list(audit.get("blockers"))
 
 
+def _paper_route_runtime_window_import_target_blockers(
+    audit: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    return [
+        {str(key): value for key, value in item.items()}
+        for item in (_mapping(raw) for raw in _sequence(audit.get("target_blockers")))
+        if item
+    ]
+
+
 def _paper_route_source_activity_blockers(
     audit_blockers: Sequence[str],
 ) -> list[str]:
@@ -1263,6 +1273,9 @@ def build_runtime_ledger_proof_packet(
     import_audit_blockers = _paper_route_runtime_window_import_audit_blockers(
         import_audit
     )
+    import_audit_target_blockers = _paper_route_runtime_window_import_target_blockers(
+        import_audit
+    )
     source_activity_blockers = _paper_route_source_activity_blockers(
         import_audit_blockers
     )
@@ -1356,6 +1369,7 @@ def build_runtime_ledger_proof_packet(
             "next_action": _text(import_audit.get("next_action")),
             "import_ready": import_audit.get("import_ready"),
             "blockers": import_audit_blockers,
+            "target_blockers": import_audit_target_blockers,
         },
         expected="paper-route evidence includes runtime_window_import_audit when import is due",
         blockers=[]
@@ -1822,6 +1836,7 @@ def build_runtime_ledger_proof_packet(
                 "next_action": import_audit.get("next_action"),
                 "import_ready": import_audit.get("import_ready"),
                 "blockers": import_audit_blockers,
+                "target_blockers": import_audit_target_blockers,
                 "counts": dict(import_audit_counts),
             },
             "runtime_window_import": {

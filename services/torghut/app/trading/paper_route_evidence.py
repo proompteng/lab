@@ -2117,6 +2117,7 @@ def _runtime_window_import_audit(
         state = "runtime_ledger_ready_for_gate_review"
         next_action = "review_runtime_ledger_profit_gates"
         blockers = []
+    target_blockers = _runtime_window_target_blockers(next_target_audits)
     return {
         "schema_version": PAPER_ROUTE_RUNTIME_WINDOW_IMPORT_AUDIT_SCHEMA_VERSION,
         "state": state,
@@ -2132,7 +2133,9 @@ def _runtime_window_import_audit(
                 source_runtime_ledger_blockers
             ),
             "runtime_ledger_blockers": runtime_ledger_blockers,
+            "target_blockers_effective_when": "runtime_window_import_ready",
         },
+        "target_blockers": target_blockers,
         "counts": {
             "source_plan_target_count": source_plan_target_count,
             "selected_target_count": current_target_count,
@@ -2176,6 +2179,105 @@ def _runtime_window_import_audit(
             ],
         },
     }
+
+
+def _runtime_window_target_blockers(
+    target_audits: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    target_blockers: list[dict[str, object]] = []
+    for audit in target_audits:
+        target = _as_mapping(audit.get("target"))
+        source_activity = _as_mapping(audit.get("source_activity"))
+        rejected_signal_activity = _as_mapping(audit.get("rejected_signal_activity"))
+        runtime_ledger = _as_mapping(audit.get("runtime_ledger"))
+        promotion_decisions = _as_mapping(audit.get("promotion_decisions"))
+
+        blockers = _unique_text_items(
+            [
+                *(
+                    _unique_text_items(source_activity.get("missing_reasons"))
+                    if bool(source_activity.get("missing"))
+                    else []
+                ),
+                *_unique_text_items(rejected_signal_activity.get("blocking_reasons")),
+                *(
+                    ["runtime_ledger_bucket_missing"]
+                    if _safe_int(runtime_ledger.get("bucket_count")) <= 0
+                    else []
+                ),
+                *(
+                    ["runtime_ledger_evidence_grade_bucket_missing"]
+                    if _safe_int(runtime_ledger.get("evidence_grade_bucket_count")) <= 0
+                    else []
+                ),
+                *_unique_text_items(runtime_ledger.get("blockers")),
+                *(
+                    ["promotion_decision_missing"]
+                    if _safe_int(promotion_decisions.get("decision_count")) <= 0
+                    else []
+                ),
+            ]
+        )
+        if not blockers:
+            continue
+        target_blockers.append(
+            {
+                "hypothesis_id": _safe_text(target.get("hypothesis_id")),
+                "candidate_id": _safe_text(target.get("candidate_id")),
+                "strategy_name": _safe_text(target.get("strategy_name")),
+                "runtime_strategy_name": _safe_text(
+                    target.get("runtime_strategy_name")
+                ),
+                "account_label": _safe_text(target.get("account_label")),
+                "source_kind": _safe_text(target.get("source_kind")),
+                "window_start": _safe_text(target.get("window_start")),
+                "window_end": _safe_text(target.get("window_end")),
+                "paper_route_probe_symbols": [
+                    str(item).strip()
+                    for item in _as_sequence(target.get("paper_route_probe_symbols"))
+                    if str(item).strip()
+                ],
+                "source_activity": {
+                    "decision_count": _safe_int(source_activity.get("decision_count")),
+                    "execution_count": _safe_int(
+                        source_activity.get("execution_count")
+                    ),
+                    "filled_execution_count": _safe_int(
+                        source_activity.get("filled_execution_count")
+                    ),
+                    "tca_sample_count": _safe_int(
+                        source_activity.get("tca_sample_count")
+                    ),
+                    "last_decision_at": _safe_text(
+                        source_activity.get("last_decision_at")
+                    ),
+                    "last_execution_at": _safe_text(
+                        source_activity.get("last_execution_at")
+                    ),
+                    "last_tca_at": _safe_text(source_activity.get("last_tca_at")),
+                },
+                "runtime_ledger": {
+                    "bucket_count": _safe_int(runtime_ledger.get("bucket_count")),
+                    "evidence_grade_bucket_count": _safe_int(
+                        runtime_ledger.get("evidence_grade_bucket_count")
+                    ),
+                    "filled_notional": _safe_text(
+                        runtime_ledger.get("filled_notional")
+                    ),
+                    "closed_trade_count": _safe_int(
+                        runtime_ledger.get("closed_trade_count")
+                    ),
+                    "net_strategy_pnl_after_costs": _safe_text(
+                        runtime_ledger.get("net_strategy_pnl_after_costs")
+                    ),
+                },
+                "promotion_decision_count": _safe_int(
+                    promotion_decisions.get("decision_count")
+                ),
+                "blockers": blockers,
+            }
+        )
+    return target_blockers
 
 
 def _runtime_window_target_counts(

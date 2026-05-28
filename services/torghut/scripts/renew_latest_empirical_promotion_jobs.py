@@ -1651,8 +1651,19 @@ def _runtime_window_import_payload_proof_blockers(
         )
 
     evidence_reasons = _as_text_list(payload.get("evidence_blocking_reasons"))
+    runtime_observation = _as_dict(payload.get("runtime_observation"))
+    source_activity_diagnostic_blockers = _as_text_list(
+        payload.get("source_activity_diagnostic_blockers")
+    )
+    if not source_activity_diagnostic_blockers and runtime_observation:
+        source_activity_diagnostic_blockers = _as_text_list(
+            runtime_observation.get("source_activity_diagnostic_blockers")
+        )
     if evidence_reasons:
         for reason in evidence_reasons:
+            add_blocker(reason)
+    elif source_activity_diagnostic_blockers:
+        for reason in source_activity_diagnostic_blockers:
             add_blocker(reason)
     elif payload.get("promotion_allowed") is False:
         if "evidence_blocking_reasons" not in payload:
@@ -1666,7 +1677,6 @@ def _runtime_window_import_payload_proof_blockers(
         else:
             add_blocker("runtime_window_import_promotion_allowed_missing")
 
-    runtime_observation = _as_dict(payload.get("runtime_observation"))
     if not runtime_observation:
         add_blocker("runtime_observation_missing")
     elif runtime_observation.get("authoritative") is not True:

@@ -802,6 +802,17 @@ class TestRuntimeLedgerProofPacket(TestCase):
                         "source_executions_missing",
                         "source_tca_missing",
                     ],
+                    "target_blockers": [
+                        {
+                            "hypothesis_id": "H-PAIRS-01",
+                            "candidate_id": "c88421d619759b2cfaa6f4d0",
+                            "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                            "blockers": [
+                                "source_decisions_missing",
+                                "runtime_ledger_bucket_missing",
+                            ],
+                        }
+                    ],
                     "counts": {
                         "source_plan_target_count": 1,
                         "next_runtime_window_target_count": 1,
@@ -843,6 +854,18 @@ class TestRuntimeLedgerProofPacket(TestCase):
         self.assertEqual(
             result["evidence"]["paper_route_runtime_window_import_audit"]["state"],
             "import_due_source_activity_missing",
+        )
+        self.assertEqual(
+            result["evidence"]["paper_route_runtime_window_import_audit"][
+                "target_blockers"
+            ][0]["candidate_id"],
+            "c88421d619759b2cfaa6f4d0",
+        )
+        self.assertEqual(
+            result["checks"]["paper_route_runtime_window_import_audit"]["observed"][
+                "target_blockers"
+            ][0]["paper_route_probe_symbols"],
+            ["AAPL", "AMZN"],
         )
 
     def test_packet_requires_import_audit_when_paper_route_import_is_due(
