@@ -1264,6 +1264,149 @@ class TestPaperRouteEvidenceAudit(TestCase):
             payload["targets"][0]["readiness"]["evidence_collection_blockers"],
         )
 
+    def test_source_activity_uses_order_feed_event_time_for_execution_window(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, tzinfo=timezone.utc)
+        event_at = window_start + timedelta(minutes=20)
+        strategy_name = "event-time-paper-route"
+        with Session(self.engine) as session:
+            strategy = Strategy(
+                name=strategy_name,
+                description="paper route source activity from order-feed event time",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+                created_at=window_start,
+                updated_at=window_start,
+            )
+            session.add(strategy)
+            session.flush()
+            decision = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="TORGHUT_SIM",
+                symbol="AAPL",
+                timeframe="1Min",
+                decision_json={
+                    "action": "buy",
+                    "qty": "1",
+                    "candidate_id": "candidate-event-time",
+                    "hypothesis_id": "H-EVENT-TIME",
+                },
+                rationale="event time fixture",
+                status="executed",
+                created_at=event_at - timedelta(minutes=1),
+                executed_at=event_at,
+            )
+            session.add(decision)
+            session.flush()
+            execution = Execution(
+                trade_decision_id=decision.id,
+                alpaca_account_label="TORGHUT_SIM",
+                alpaca_order_id="event-time-order-1",
+                client_order_id="event-time-client-1",
+                symbol="AAPL",
+                side="buy",
+                order_type="limit",
+                time_in_force="day",
+                submitted_qty=Decimal("1"),
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("100"),
+                status="filled",
+                raw_order={},
+                created_at=window_end + timedelta(minutes=5),
+                updated_at=window_end + timedelta(minutes=5),
+                last_update_at=event_at,
+                order_feed_last_event_ts=event_at,
+            )
+            session.add(execution)
+            session.flush()
+            session.add(
+                ExecutionTCAMetric(
+                    execution_id=execution.id,
+                    trade_decision_id=decision.id,
+                    strategy_id=strategy.id,
+                    alpaca_account_label="TORGHUT_SIM",
+                    symbol="AAPL",
+                    side="buy",
+                    arrival_price=Decimal("99"),
+                    avg_fill_price=Decimal("100"),
+                    filled_qty=Decimal("1"),
+                    signed_qty=Decimal("1"),
+                    slippage_bps=Decimal("5"),
+                    shortfall_notional=Decimal("1"),
+                    realized_shortfall_bps=Decimal("5"),
+                    churn_qty=Decimal("0"),
+                    churn_ratio=Decimal("0"),
+                    computed_at=event_at + timedelta(minutes=1),
+                    created_at=event_at + timedelta(minutes=1),
+                    updated_at=event_at + timedelta(minutes=1),
+                )
+            )
+            session.commit()
+
+            payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "paper_route_probe_only",
+                    "blocked_reasons": [],
+                    "promotion_eligible_total": 0,
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "target_count": 1,
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-EVENT-TIME",
+                                "candidate_id": "candidate-event-time",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_pairs",
+                                "strategy_name": strategy_name,
+                                "source_kind": "paper_route_probe_runtime_observed",
+                                "account_label": "TORGHUT_SIM",
+                                "source_manifest_ref": "config/trading/hypotheses/h-event-time.json",
+                                "window_start": window_start.isoformat(),
+                                "window_end": window_end.isoformat(),
+                                "paper_route_probe_symbols": ["AAPL"],
+                                "paper_probation_authorized": True,
+                                "promotion_allowed": False,
+                                "final_promotion_authorized": False,
+                                "max_notional": "0",
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "summary": {
+                        "paper_route_probe_eligible_symbols": ["AAPL"],
+                        "paper_route_probe_active_symbols": ["AAPL"],
+                    },
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": True,
+                        "next_session_max_notional": "25",
+                        "eligible_symbol_count": 1,
+                    },
+                },
+                generated_at=window_start - timedelta(days=2),
+            )
+
+        source_activity = payload["targets"][0]["source_activity"]
+        self.assertFalse(source_activity["missing"])
+        self.assertEqual(source_activity["decision_count"], 1)
+        self.assertEqual(source_activity["execution_count"], 1)
+        self.assertEqual(source_activity["filled_execution_count"], 1)
+        self.assertEqual(source_activity["tca_sample_count"], 1)
+        self.assertEqual(source_activity["last_execution_at"], event_at.isoformat())
+        self.assertEqual(source_activity["missing_reasons"], [])
+        import_audit = payload["runtime_window_import_audit"]
+        self.assertEqual(import_audit["counts"]["targets_with_source_activity"], 1)
+        self.assertNotIn("source_executions_missing", import_audit["blockers"])
+
     def test_current_paper_route_probe_symbols_extend_next_window_target_scope(
         self,
     ) -> None:
