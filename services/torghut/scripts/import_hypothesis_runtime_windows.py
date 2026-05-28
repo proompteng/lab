@@ -146,6 +146,14 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--dependency-quorum-decision", default="")
     parser.add_argument("--continuity-ok", default="")
     parser.add_argument("--drift-ok", default="")
+    parser.add_argument(
+        "--audit-only",
+        action="store_true",
+        help=(
+            "Run source, execution, TCA, and runtime-ledger proof diagnostics "
+            "without writing imported governance rows."
+        ),
+    )
     parser.add_argument("--json", action="store_true")
     return parser.parse_args()
 
@@ -991,6 +999,116 @@ def _runtime_ledger_tca_materialization_metadata(
         "runtime_ledger_materialization_blockers": sorted(dict.fromkeys(blockers)),
         "runtime_ledger_profit_proof_blockers": sorted(
             dict.fromkeys(profit_proof_blockers)
+        ),
+    }
+
+
+def _runtime_window_import_audit_summary(
+    *,
+    run_id: str,
+    candidate_id: str | None,
+    hypothesis_id: str,
+    observed_stage: str,
+    strategy_name: str,
+    strategy_names: Sequence[str],
+    account_label: str,
+    source_account_label: str,
+    window_start: datetime,
+    window_end: datetime,
+    source_kind: str,
+    source_manifest_ref: str | None,
+    dataset_snapshot_ref: str | None,
+    decisions: Sequence[datetime],
+    executions: Sequence[datetime],
+    tca_rows: Sequence[Mapping[str, object]],
+    buckets: Sequence[object],
+    runtime_observation_payload: Mapping[str, Any],
+    runtime_ledger_target_metadata_blockers: Sequence[str],
+) -> dict[str, Any]:
+    ledger_payloads = [
+        payload
+        for row in tca_rows
+        if (payload := _as_mapping(row.get("runtime_ledger_bucket")))
+    ]
+    ledger_profit_proof_blockers = sorted(
+        {
+            blocker
+            for payload in ledger_payloads
+            for blocker in _runtime_ledger_bucket_profit_proof_blockers(payload)
+        }
+    )
+    observed_bucket_payloads = [
+        _as_mapping(getattr(bucket, "payload_json", {})) for bucket in buckets
+    ]
+    observed_bucket_blockers = sorted(
+        {
+            blocker
+            for payload in observed_bucket_payloads
+            for blocker in _metadata_text_list(
+                payload.get("runtime_ledger_profit_proof_blockers")
+                or payload.get("promotion_blocking_reasons")
+                or payload.get("blockers")
+            )
+        }
+    )
+    source_activity_diagnostics = _as_mapping(
+        runtime_observation_payload.get("source_activity_diagnostics")
+    )
+    return {
+        "schema_version": "torghut.runtime-window-import-source-audit.v1",
+        "audit_only": True,
+        "would_persist": False,
+        "verdict": (
+            "profit_proof_present"
+            if _runtime_ledger_profit_proof_present(tca_rows)
+            else "blocked"
+        ),
+        "run_id": run_id,
+        "candidate_id": candidate_id,
+        "hypothesis_id": hypothesis_id,
+        "observed_stage": observed_stage,
+        "strategy_name": strategy_name,
+        "strategy_name_candidates": list(strategy_names),
+        "account_label": account_label,
+        "source_account_label": source_account_label,
+        "window_start": window_start.isoformat(),
+        "window_end": window_end.isoformat(),
+        "source_kind": source_kind,
+        "source_manifest_ref": source_manifest_ref,
+        "dataset_snapshot_ref": dataset_snapshot_ref,
+        "decision_count": len(decisions),
+        "execution_count": len(executions),
+        "tca_row_count": len(tca_rows),
+        "runtime_ledger_bucket_row_count": len(ledger_payloads),
+        "observed_runtime_bucket_count": len(buckets),
+        "observed_runtime_bucket_blockers": observed_bucket_blockers,
+        "runtime_ledger_profit_proof_present": _runtime_ledger_profit_proof_present(
+            tca_rows
+        ),
+        "runtime_ledger_profit_proof_blockers": ledger_profit_proof_blockers,
+        "runtime_ledger_target_metadata_blockers": list(
+            dict.fromkeys(runtime_ledger_target_metadata_blockers)
+        ),
+        "source_activity_diagnostics": source_activity_diagnostics,
+        "source_activity_diagnostic_blockers": _metadata_text_list(
+            runtime_observation_payload.get("source_activity_diagnostic_blockers")
+        ),
+        "promotion_authority": runtime_observation_payload.get("promotion_authority"),
+        "authority_reason": runtime_observation_payload.get("authority_reason"),
+        "runtime_observation": {
+            "runtime_ledger_profit_proof_present": runtime_observation_payload.get(
+                "runtime_ledger_profit_proof_present"
+            ),
+            "evidence_provenance": runtime_observation_payload.get(
+                "evidence_provenance"
+            ),
+            "source_kind": runtime_observation_payload.get("source_kind"),
+            "source_activity_symbol_filter": runtime_observation_payload.get(
+                "source_activity_symbol_filter"
+            ),
+        },
+        "runtime_ledger_materialization": _runtime_ledger_tca_materialization_metadata(
+            tca_rows
         ),
     }
 
@@ -3169,6 +3287,8 @@ def main() -> int:
                 **runtime_ledger_source_metadata,
             },
         )
+        if getattr(args, "audit_only", False):
+            summary = {**summary, "audit_only": True, "would_persist": False}
         if args.json:
             print(json.dumps(summary, indent=2))
         else:
@@ -3290,6 +3410,33 @@ def main() -> int:
                 else None,
             }
         )
+    if getattr(args, "audit_only", False):
+        summary = _runtime_window_import_audit_summary(
+            run_id=args.run_id,
+            candidate_id=args.candidate_id.strip() or None,
+            hypothesis_id=args.hypothesis_id,
+            observed_stage=args.observed_stage,
+            strategy_name=args.strategy_name,
+            strategy_names=strategy_names,
+            account_label=args.account_label,
+            source_account_label=source_account_label,
+            window_start=window_start,
+            window_end=window_end,
+            source_kind=source_kind,
+            source_manifest_ref=args.source_manifest_ref.strip() or None,
+            dataset_snapshot_ref=dataset_snapshot_ref,
+            decisions=decisions,
+            executions=executions,
+            tca_rows=tca_rows,
+            buckets=buckets,
+            runtime_observation_payload=runtime_observation_payload,
+            runtime_ledger_target_metadata_blockers=runtime_ledger_target_metadata_blockers,
+        )
+        if args.json:
+            print(json.dumps(summary, indent=2))
+        else:
+            print(summary)
+        return 0
     with SessionLocal() as session:
         summary = persist_observed_runtime_windows(
             session=session,

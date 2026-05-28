@@ -2297,6 +2297,29 @@ class TestPaperRouteEvidenceAudit(TestCase):
                         created_at=now,
                         updated_at=now,
                     ),
+                    RejectedSignalOutcomeEvent(
+                        event_id="paper-route-reject-filled-aapl",
+                        source="quote_quality_gate",
+                        paper_source="paper-arxiv-2605.12151",
+                        paper_claim_id="rejection-event-outcome-labels",
+                        account_label="TORGHUT_SIM",
+                        symbol="AAPL",
+                        event_ts=window_start + timedelta(minutes=14),
+                        timeframe="1Sec",
+                        seq="reject-after-fill",
+                        reject_reason="missing_executable_quote",
+                        outcome_label_status="pending",
+                        counterfactual_required=True,
+                        required_outcome_fields_json=[
+                            "counterfactual_return",
+                            "route_tca",
+                            "post_cost_net_pnl",
+                            "executable_quote",
+                        ],
+                        event_payload_json={
+                            "event_id": "paper-route-reject-filled-aapl"
+                        },
+                    ),
                 ]
             )
             session.commit()
@@ -2365,6 +2388,14 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(audit["source_activity"]["execution_count"], 1)
         self.assertEqual(audit["source_activity"]["filled_execution_count"], 1)
         self.assertEqual(audit["source_activity"]["tca_sample_count"], 1)
+        self.assertEqual(audit["rejected_signal_activity"]["event_count"], 1)
+        self.assertEqual(
+            audit["rejected_signal_activity"]["blocking_reasons"],
+            [
+                "source_signal_rejected_by_quote_quality",
+                "source_reject_missing_executable_quote",
+            ],
+        )
         self.assertEqual(audit["runtime_ledger"]["bucket_count"], 2)
         self.assertEqual(audit["runtime_ledger"]["evidence_grade_bucket_count"], 1)
         self.assertEqual(audit["runtime_ledger"]["non_evidence_grade_bucket_count"], 1)
@@ -2427,6 +2458,14 @@ class TestPaperRouteEvidenceAudit(TestCase):
         )
         self.assertTrue(import_audit["import_ready"])
         self.assertEqual(import_audit["blockers"], [])
+        self.assertEqual(
+            import_audit["diagnostics"]["rejected_signal_diagnostic_reasons"], []
+        )
+        self.assertEqual(len(import_audit["target_blockers"]), 1)
+        self.assertEqual(
+            import_audit["target_blockers"][0]["blockers"],
+            ["open_position_count_nonzero"],
+        )
         self.assertEqual(import_audit["counts"]["source_plan_target_count"], 1)
         self.assertEqual(import_audit["counts"]["selected_target_count"], 1)
         self.assertEqual(import_audit["counts"]["targets_with_source_activity"], 1)

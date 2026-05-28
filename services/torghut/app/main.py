@@ -4612,52 +4612,85 @@ def _fetch_paper_route_target_plan_url(
     url: str,
     *,
     timeout_seconds: float,
+    attempts: int = 1,
+    retry_backoff_seconds: float = 0.25,
 ) -> dict[str, Any]:
-    parsed = urlsplit(url)
-    scheme = parsed.scheme.lower()
-    if scheme not in {"http", "https"}:
-        return {
-            "load_error": f"paper_route_target_plan_invalid_scheme:{scheme or 'missing'}"
-        }
-    if not parsed.hostname:
-        return {"load_error": "paper_route_target_plan_invalid_host"}
-
-    path = parsed.path or "/"
-    if parsed.query:
-        path = f"{path}?{parsed.query}"
-    connection_class = HTTPSConnection if scheme == "https" else HTTPConnection
-    connection = connection_class(
-        parsed.hostname,
-        parsed.port,
-        timeout=max(float(timeout_seconds), 0.1),
-    )
-    try:
-        connection.request("GET", path, headers={"Accept": "application/json"})
-        response = connection.getresponse()
-        if response.status < 200 or response.status >= 300:
+    max_attempts = max(int(attempts), 1)
+    result: dict[str, Any] = {}
+    for attempt in range(1, max_attempts + 1):
+        parsed = urlsplit(url)
+        scheme = parsed.scheme.lower()
+        if scheme not in {"http", "https"}:
             return {
-                "load_error": f"paper_route_target_plan_http_status:{response.status}"
+                "load_error": f"paper_route_target_plan_invalid_scheme:{scheme or 'missing'}"
             }
-        raw = response.read(5_000_001)
-    except Exception as exc:  # pragma: no cover - depends on network
-        return {"load_error": f"paper_route_target_plan_fetch_failed:{exc}"}
-    finally:
-        connection.close()
+        if not parsed.hostname:
+            return {"load_error": "paper_route_target_plan_invalid_host"}
 
-    if len(raw) > 5_000_000:
-        return {"load_error": "paper_route_target_plan_response_too_large"}
-    try:
-        payload = json.loads(raw.decode("utf-8"))
-    except Exception as exc:
-        return {"load_error": f"paper_route_target_plan_invalid_json:{exc}"}
-    if not isinstance(payload, Mapping):
-        return {"load_error": "paper_route_target_plan_invalid_payload"}
-    plan = _paper_route_target_plan_from_payload(cast(Mapping[str, Any], payload))
-    if not plan:
-        return {"load_error": "paper_route_target_plan_missing"}
-    plan = dict(plan)
-    plan.setdefault("source", "external_paper_route_target_plan")
-    return plan
+        path = parsed.path or "/"
+        if parsed.query:
+            path = f"{path}?{parsed.query}"
+        connection_class = HTTPSConnection if scheme == "https" else HTTPConnection
+        connection = connection_class(
+            parsed.hostname,
+            parsed.port,
+            timeout=max(float(timeout_seconds), 0.1),
+        )
+        try:
+            connection.request("GET", path, headers={"Accept": "application/json"})
+            response = connection.getresponse()
+            if response.status < 200 or response.status >= 300:
+                result = {
+                    "load_error": f"paper_route_target_plan_http_status:{response.status}"
+                }
+            else:
+                raw = response.read(5_000_001)
+                if len(raw) > 5_000_000:
+                    result = {
+                        "load_error": "paper_route_target_plan_response_too_large"
+                    }
+                else:
+                    try:
+                        payload = json.loads(raw.decode("utf-8"))
+                    except Exception as exc:
+                        result = {
+                            "load_error": f"paper_route_target_plan_invalid_json:{exc}"
+                        }
+                    else:
+                        if not isinstance(payload, Mapping):
+                            result = {
+                                "load_error": "paper_route_target_plan_invalid_payload"
+                            }
+                        else:
+                            plan = _paper_route_target_plan_from_payload(
+                                cast(Mapping[str, Any], payload)
+                            )
+                            if not plan:
+                                result = {
+                                    "load_error": "paper_route_target_plan_missing"
+                                }
+                            else:
+                                result = dict(plan)
+                                result.setdefault(
+                                    "source", "external_paper_route_target_plan"
+                                )
+        except Exception as exc:  # pragma: no cover - depends on network
+            result = {"load_error": f"paper_route_target_plan_fetch_failed:{exc}"}
+        finally:
+            connection.close()
+
+        if not str(result.get("load_error") or "").strip():
+            if attempt > 1:
+                result = dict(result)
+                result["fetch_attempts"] = attempt
+            return result
+        if attempt < max_attempts:
+            time.sleep(max(float(retry_backoff_seconds), 0.0))
+
+    if max_attempts > 1:
+        result = dict(result)
+        result["fetch_attempts"] = max_attempts
+    return result
 
 
 def _load_external_paper_route_target_plan() -> dict[str, Any]:
@@ -4667,6 +4700,8 @@ def _load_external_paper_route_target_plan() -> dict[str, Any]:
     return _fetch_paper_route_target_plan_url(
         url,
         timeout_seconds=settings.trading_paper_route_target_plan_timeout_seconds,
+        attempts=3,
+        retry_backoff_seconds=0.25,
     )
 
 
