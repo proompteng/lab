@@ -4,15 +4,16 @@ import json
 import os
 import subprocess
 import sys
+from argparse import Namespace
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from argparse import Namespace
+from typing import Any
 from unittest import TestCase
 from unittest.mock import patch
 
-from app.trading.costs import TransactionCostModel
+from app.trading.costs import CostModelConfig, TransactionCostModel
 from app.trading.evaluation_trace import (
     GateTrace,
     NearMissRecord,
@@ -35,6 +36,7 @@ from scripts.local_intraday_tsmom_replay import (
     _decision_market_order_spread_bps_max,
     _decision_position_owner,
     _decision_spread_bps,
+    _estimate_trade_cost,
     _fetch_chunk,
     _flatten_positions,
     _http_query,
@@ -646,6 +648,119 @@ class TestLocalIntradayTsmomReplay(TestCase):
         self.assertEqual(day_bucket["filled_count"], 1)
         self.assertEqual(day_bucket["filled_notional"], Decimal("5232.80"))
         self.assertLess(cash, Decimal("10000"))
+
+    def test_estimate_trade_cost_uses_observed_adv_for_square_root_impact(
+        self,
+    ) -> None:
+        signal = self._signal(bid="99.99", ask="100.01", price="100")
+        decision = StrategyDecision(
+            strategy_id="impact-aware",
+            symbol="META",
+            event_ts=signal.event_ts,
+            timeframe="1Sec",
+            action="buy",
+            qty=Decimal("100"),
+            order_type="limit",
+            time_in_force="day",
+            limit_price=Decimal("100"),
+            params={},
+        )
+        cost_model = TransactionCostModel(
+            CostModelConfig(
+                impact_bps_at_full_participation=Decimal("100"),
+                max_participation_rate=Decimal("1"),
+            )
+        )
+
+        cost_without_adv = _estimate_trade_cost(
+            model=cost_model,
+            decision=decision,
+            signal=signal,
+        )
+        cost_with_adv = _estimate_trade_cost(
+            model=cost_model,
+            decision=decision,
+            signal=signal,
+            symbol_bucket={"daily_adv_notional": Decimal("40000")},
+        )
+
+        self.assertEqual(cost_without_adv, Decimal("0"))
+        self.assertEqual(cost_with_adv, Decimal("50"))
+
+    def test_estimate_trade_cost_falls_back_to_signal_payload_adv(self) -> None:
+        signal = self._signal(bid="99.99", ask="100.01", price="100")
+        signal.payload["adv"] = "40000"
+        decision = StrategyDecision(
+            strategy_id="impact-aware",
+            symbol="META",
+            event_ts=signal.event_ts,
+            timeframe="1Sec",
+            action="buy",
+            qty=Decimal("100"),
+            order_type="limit",
+            time_in_force="day",
+            limit_price=Decimal("100"),
+            params={},
+        )
+
+        cost = _estimate_trade_cost(
+            model=TransactionCostModel(
+                CostModelConfig(
+                    impact_bps_at_full_participation=Decimal("100"),
+                    max_participation_rate=Decimal("1"),
+                )
+            ),
+            decision=decision,
+            signal=signal,
+            symbol_bucket={"daily_adv_notional": "not-a-number"},
+        )
+
+        self.assertEqual(cost, Decimal("50"))
+
+    def test_apply_filled_decision_prefers_symbol_adv_for_impact_cost(self) -> None:
+        signal = self._signal(bid="9.99", ask="10.01", price="10")
+        decision = StrategyDecision(
+            strategy_id="impact-aware",
+            symbol="META",
+            event_ts=signal.event_ts,
+            timeframe="1Sec",
+            action="buy",
+            qty=Decimal("100"),
+            order_type="limit",
+            time_in_force="day",
+            limit_price=Decimal("10"),
+            params={},
+        )
+        positions: dict[tuple[str, str], PositionState] = {}
+        day_bucket: dict[str, Any] = {
+            "daily_adv_notional": Decimal("1000000"),
+        }
+        symbol_bucket: dict[str, Any] = {
+            "daily_adv_notional": Decimal("4000"),
+        }
+
+        cash = _apply_filled_decision(
+            decision=decision,
+            signal=signal,
+            fill_price=Decimal("10"),
+            filled_at=signal.event_ts,
+            created_at=signal.event_ts,
+            positions=positions,
+            day_bucket=day_bucket,
+            symbol_bucket=symbol_bucket,
+            cost_model=TransactionCostModel(
+                CostModelConfig(
+                    impact_bps_at_full_participation=Decimal("100"),
+                    max_participation_rate=Decimal("1"),
+                )
+            ),
+            cash=Decimal("10000"),
+            all_closed_trades=[],
+        )
+
+        self.assertEqual(day_bucket["cost_total"], Decimal("5"))
+        self.assertEqual(symbol_bucket["cost_total"], Decimal("5"))
+        self.assertEqual(cash, Decimal("8995"))
 
     def test_apply_filled_decision_opens_short_position_on_sell_entry(self) -> None:
         signal = self._signal(bid="523.22", ask="523.28", price="523.25")

@@ -207,6 +207,9 @@ class ReplayFunnelBucket:
     gross_pnl: Decimal
     net_pnl: Decimal
     cost_total: Decimal
+    daily_adv_notional: Decimal = Decimal("0")
+    depth_notional: Decimal | None = None
+    liquidity_observation_count: int = 0
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -234,6 +237,11 @@ class ReplayFunnelBucket:
             "gross_pnl": str(self.gross_pnl),
             "net_pnl": str(self.net_pnl),
             "cost_total": str(self.cost_total),
+            "daily_adv_notional": str(self.daily_adv_notional),
+            "depth_notional": str(self.depth_notional)
+            if self.depth_notional is not None
+            else None,
+            "liquidity_observation_count": self.liquidity_observation_count,
         }
 
 
