@@ -77,6 +77,7 @@ _FILL_LATENCY_THRESHOLDS_MS = (50, 150, 250)
 _EXACT_REPLAY_LEDGER_ROWS_SCHEMA_VERSION = "torghut.exact_replay_ledger.rows.v1"
 _REPLAY_LEDGER_ACCOUNT_LABEL = "TORGHUT_REPLAY"
 _REPLAY_COST_BASIS = "local_replay_transaction_cost_model"
+_REPLAY_ADV_SOURCE = "observed_microbar_notional_by_symbol_day"
 _REPLAY_LEDGER_SOURCE = "local_intraday_tsmom_replay"
 
 
@@ -243,6 +244,19 @@ def _build_replay_ledger_context(
             "model": cost_model.__class__.__name__,
             "module": cost_model.__class__.__module__,
             "cost_basis": _REPLAY_COST_BASIS,
+            "adv_source": _REPLAY_ADV_SOURCE,
+            "config": {
+                "commission_bps": str(cost_model.config.commission_bps),
+                "commission_per_share": str(cost_model.config.commission_per_share),
+                "min_commission": str(cost_model.config.min_commission),
+                "max_participation_rate": str(cost_model.config.max_participation_rate),
+                "impact_bps_at_full_participation": str(
+                    cost_model.config.impact_bps_at_full_participation
+                ),
+                "impact_participation_exponent": str(
+                    cost_model.config.impact_participation_exponent
+                ),
+            },
         }
     )
     lineage_payload = {
@@ -1279,10 +1293,17 @@ def _estimate_trade_cost(
     model: TransactionCostModel,
     decision: StrategyDecision,
     signal: SignalEnvelope,
+    day_bucket: Mapping[str, Any] | None = None,
+    symbol_bucket: Mapping[str, Any] | None = None,
 ) -> Decimal:
     price = _extract_price(signal)
     spread = _extract_spread(signal)
     volatility = _extract_volatility(signal)
+    adv = _observed_adv_notional(
+        signal=signal,
+        day_bucket=day_bucket,
+        symbol_bucket=symbol_bucket,
+    )
     estimate = model.estimate_costs(
         order=OrderIntent(
             symbol=decision.symbol,
@@ -1296,9 +1317,45 @@ def _estimate_trade_cost(
             price=price,
             spread=spread,
             volatility=volatility,
+            adv=adv,
         ),
     )
     return estimate.total_cost
+
+
+def _positive_decimal_mapping_value(
+    bucket: Mapping[str, Any] | None, key: str
+) -> Decimal | None:
+    if bucket is None:
+        return None
+    raw = bucket.get(key)
+    if isinstance(raw, Decimal):
+        value = raw
+    elif raw is None:
+        return None
+    else:
+        try:
+            value = Decimal(str(raw))
+        except (ArithmeticError, ValueError):
+            return None
+    return value if value > 0 else None
+
+
+def _observed_adv_notional(
+    *,
+    signal: SignalEnvelope,
+    day_bucket: Mapping[str, Any] | None = None,
+    symbol_bucket: Mapping[str, Any] | None = None,
+) -> Decimal | None:
+    for bucket in (symbol_bucket, day_bucket):
+        value = _positive_decimal_mapping_value(bucket, "daily_adv_notional")
+        if value is not None:
+            return value
+    for key in ("daily_adv_notional", "adv_notional", "adv", "avg_dollar_volume"):
+        value = _positive_decimal_mapping_value(signal.payload, key)
+        if value is not None and value > 0:
+            return value
+    return None
 
 
 def _record_decision(stats: dict[str, Any], decision: StrategyDecision) -> None:
@@ -2363,7 +2420,13 @@ def _apply_filled_decision(
     )
     position_key = _position_key(decision.symbol, owner_strategy_id)
     existing = positions.get(position_key)
-    fill_cost = _estimate_trade_cost(model=cost_model, decision=decision, signal=signal)
+    fill_cost = _estimate_trade_cost(
+        model=cost_model,
+        decision=decision,
+        signal=signal,
+        day_bucket=day_bucket,
+        symbol_bucket=symbol_bucket,
+    )
     if decision.action == "buy":
         if existing is not None and existing.qty < 0:
             cover_qty = min(decision.qty, abs(existing.qty))
@@ -2722,6 +2785,7 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
             last_prices[signal.symbol] = price
             last_signals[signal.symbol] = signal
             _record_liquidity_observation(bucket=day_bucket, signal=signal)
+            _record_liquidity_observation(bucket=symbol_bucket, signal=signal)
             equity = _record_capital_snapshot(
                 bucket=day_bucket,
                 cash=cash,
@@ -3205,6 +3269,13 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                 gross_pnl=bucket["gross_pnl"],
                 net_pnl=bucket["net_pnl"],
                 cost_total=bucket["cost_total"],
+                daily_adv_notional=bucket.get("daily_adv_notional", Decimal("0")),
+                depth_notional=bucket.get("depth_notional")
+                if isinstance(bucket.get("depth_notional"), Decimal)
+                else None,
+                liquidity_observation_count=int(
+                    bucket.get("liquidity_observation_count") or 0
+                ),
             )
             for (trading_day, symbol), bucket in sorted(funnel_stats.items())
         ),
@@ -3424,6 +3495,9 @@ def _flatten_positions(
         last_signal = last_signals.get(symbol)
         if last_signal is None:
             continue
+        symbol_bucket = funnel_stats.setdefault(
+            (day.isoformat(), symbol), _init_funnel_stats()
+        )
         fill_price = last_prices.get(symbol, position.avg_entry_price)
         exit_action = "buy" if position.qty < 0 else "sell"
         exit_qty = abs(position.qty)
@@ -3443,6 +3517,8 @@ def _flatten_positions(
             model=cost_model,
             decision=synthetic_decision,
             signal=last_signal,
+            day_bucket=stats,
+            symbol_bucket=symbol_bucket,
         )
         exit_notional = fill_price * exit_qty
         if position.qty < 0:
@@ -3498,9 +3574,6 @@ def _flatten_positions(
         stats["filled_count"] += 1
         _record_fill_order_type(stats, "market")
         stats["filled_notional"] += exit_notional
-        symbol_bucket = funnel_stats.setdefault(
-            (day.isoformat(), symbol), _init_funnel_stats()
-        )
         symbol_bucket["gross_pnl"] += trade.gross_pnl
         symbol_bucket["net_pnl"] += trade.net_pnl
         symbol_bucket["cost_total"] += exit_cost
