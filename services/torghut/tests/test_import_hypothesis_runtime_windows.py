@@ -2463,6 +2463,47 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(diagnostics["execution_rows_after_lineage_filter"], 1)
         self.assertEqual(diagnostics["order_lifecycle_rows_before_lineage_filter"], 1)
         self.assertEqual(diagnostics["tca_rows_before_lineage_filter"], 1)
+
+    def test_query_timestamps_uses_source_account_but_materializes_target_account(
+        self,
+    ) -> None:
+        cursor = _FakeCursor()
+        cursor._results = [
+            [
+                tuple(
+                    "TORGHUT_REPLAY" if item == "TORGHUT_SIM" else item for item in row
+                )
+                for row in rows
+            ]
+            for rows in cursor._results
+        ]
+        connection = _FakeConnection(cursor)
+        window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc)
+        diagnostics: dict[str, object] = {}
+
+        with patch(
+            "scripts.import_hypothesis_runtime_windows.psycopg.connect",
+            return_value=connection,
+        ):
+            _, _, tca_rows = _query_timestamps(
+                dsn="postgresql://example",
+                strategy_names=["intraday_tsmom_v1@paper"],
+                account_label="TORGHUT_REPLAY",
+                target_account_label="TORGHUT_SIM",
+                window_start=window_start,
+                window_end=window_end,
+                source_activity_diagnostics=diagnostics,
+            )
+
+        for _, params in cursor.executed:
+            self.assertIn("TORGHUT_REPLAY", params)
+            self.assertNotIn("TORGHUT_SIM", params)
+        self.assertEqual(diagnostics["account_label"], "TORGHUT_SIM")
+        self.assertEqual(diagnostics["source_account_label"], "TORGHUT_REPLAY")
+        runtime_bucket = tca_rows[1]["runtime_ledger_bucket"]
+        self.assertEqual(runtime_bucket["account_label"], "TORGHUT_SIM")
+        self.assertEqual(runtime_bucket["source_account_label"], "TORGHUT_REPLAY")
         self.assertEqual(
             diagnostics["order_feed_fill_lifecycle_blockers"],
             ["order_feed_fill_lifecycle_missing"],

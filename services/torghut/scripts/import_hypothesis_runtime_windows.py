@@ -123,6 +123,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--source-dsn-env", default="DB_DSN")
     parser.add_argument("--strategy-name", required=True)
     parser.add_argument("--account-label", required=True)
+    parser.add_argument("--source-account-label", default="")
     parser.add_argument("--window-start", required=True)
     parser.add_argument("--window-end", required=True)
     parser.add_argument("--bucket-minutes", type=int, default=30)
@@ -1544,6 +1545,13 @@ def _build_realized_strategy_pnl_rows(
         *(decision_lifecycle_rows or []),
         *(order_lifecycle_rows or []),
     ]
+    source_account_labels = sorted(
+        {
+            str(row.get("source_account_label") or "").strip()
+            for row in source_decision_rows
+            if str(row.get("source_account_label") or "").strip()
+        }
+    )
     source_decision_mode_counts = _source_decision_mode_counts(source_decision_rows)
     source_decision_profit_proof_eligible = _source_decision_rows_profit_proof_eligible(
         source_decision_rows
@@ -1561,6 +1569,14 @@ def _build_realized_strategy_pnl_rows(
             computed_at=unique_times[-1],
         )
         bucket_payload = row.get("runtime_ledger_bucket")
+        if source_account_labels and isinstance(bucket_payload, Mapping):
+            bucket_payload = {
+                **dict(bucket_payload),
+                "source_account_labels": source_account_labels,
+            }
+            if len(source_account_labels) == 1:
+                bucket_payload["source_account_label"] = source_account_labels[0]
+            row["runtime_ledger_bucket"] = bucket_payload
         if source_decision_mode_counts:
             row["source_decision_mode_counts"] = source_decision_mode_counts
             row["profit_proof_eligible"] = source_decision_profit_proof_eligible
@@ -2210,6 +2226,7 @@ def _runtime_ledger_tca_rows_from_source_dsn(
     observed_stage: str,
     strategy_names: list[str],
     account_label: str,
+    target_account_label: str | None = None,
     window_start: datetime,
     window_end: datetime,
 ) -> tuple[list[dict[str, object]], dict[str, Any]]:
@@ -2262,6 +2279,13 @@ def _runtime_ledger_tca_rows_from_source_dsn(
     tca_rows = [
         _runtime_ledger_tca_row_from_payload(payload=payload) for payload in payloads
     ]
+    materialized_account_label = str(target_account_label or "").strip()
+    if materialized_account_label and materialized_account_label != account_label:
+        tca_rows = _retarget_runtime_ledger_tca_rows(
+            tca_rows,
+            target_account_label=materialized_account_label,
+            source_account_label=account_label,
+        )
     return tca_rows, _runtime_ledger_bucket_metadata(
         prefix="source",
         payloads=payloads,
@@ -2269,11 +2293,65 @@ def _runtime_ledger_tca_rows_from_source_dsn(
     )
 
 
+def _retarget_source_rows_for_materialization(
+    rows: Sequence[Mapping[str, object]],
+    *,
+    target_account_label: str,
+    source_account_label: str,
+) -> list[dict[str, object]]:
+    if not target_account_label or target_account_label == source_account_label:
+        return [dict(row) for row in rows]
+    retargeted: list[dict[str, object]] = []
+    for row in rows:
+        payload = dict(row)
+        payload.setdefault(
+            "source_account_label",
+            _first_text(payload, "account_label", "alpaca_account_label")
+            or source_account_label,
+        )
+        payload["account_label"] = target_account_label
+        retargeted.append(payload)
+    return retargeted
+
+
+def _retarget_runtime_ledger_tca_rows(
+    rows: Sequence[Mapping[str, object]],
+    *,
+    target_account_label: str,
+    source_account_label: str,
+) -> list[dict[str, object]]:
+    if not target_account_label or target_account_label == source_account_label:
+        return [dict(row) for row in rows]
+    retargeted: list[dict[str, object]] = []
+    for row in rows:
+        payload = dict(row)
+        payload.setdefault(
+            "source_account_label",
+            _first_text(payload, "account_label", "alpaca_account_label")
+            or source_account_label,
+        )
+        if "account_label" in payload:
+            payload["account_label"] = target_account_label
+        bucket = _as_mapping(payload.get("runtime_ledger_bucket"))
+        if bucket:
+            source_bucket_label = (
+                _text_or_none(bucket.get("account_label")) or source_account_label
+            )
+            payload["runtime_ledger_bucket"] = {
+                **bucket,
+                "account_label": target_account_label,
+                "source_account_label": source_bucket_label,
+            }
+        retargeted.append(payload)
+    return retargeted
+
+
 def _query_timestamps(
     *,
     dsn: str,
     strategy_names: list[str],
     account_label: str,
+    target_account_label: str | None = None,
     window_start: datetime,
     window_end: datetime,
     symbols: Sequence[str] | None = None,
@@ -2285,6 +2363,10 @@ def _query_timestamps(
 ) -> tuple[list[datetime], list[datetime], list[dict[str, object]]]:
     if not strategy_names:
         raise RuntimeError("strategy_name_not_configured")
+    source_account_label = account_label
+    materialized_account_label = (
+        str(target_account_label or "").strip() or source_account_label
+    )
     decisions: list[datetime] = []
     executions: list[datetime] = []
     tca_rows: list[dict[str, object]] = []
@@ -2296,7 +2378,8 @@ def _query_timestamps(
         source_activity_diagnostics.update(
             {
                 "strategy_name_candidates": strategy_names,
-                "account_label": account_label,
+                "account_label": materialized_account_label,
+                "source_account_label": source_account_label,
                 "window_start": window_start.isoformat(),
                 "window_end": window_end.isoformat(),
                 "source_activity_symbol_filter": symbol_filter,
@@ -2676,6 +2759,26 @@ def _query_timestamps(
                 source_activity_diagnostics["order_feed_fill_lifecycle_blockers"] = (
                     lifecycle_blockers
                 )
+    decision_lifecycle_rows = _retarget_source_rows_for_materialization(
+        decision_lifecycle_rows,
+        target_account_label=materialized_account_label,
+        source_account_label=source_account_label,
+    )
+    execution_rows = _retarget_source_rows_for_materialization(
+        execution_rows,
+        target_account_label=materialized_account_label,
+        source_account_label=source_account_label,
+    )
+    order_lifecycle_rows = _retarget_source_rows_for_materialization(
+        order_lifecycle_rows,
+        target_account_label=materialized_account_label,
+        source_account_label=source_account_label,
+    )
+    tca_rows = _retarget_runtime_ledger_tca_rows(
+        tca_rows,
+        target_account_label=materialized_account_label,
+        source_account_label=source_account_label,
+    )
     tca_rows.extend(
         _build_realized_strategy_pnl_rows(
             execution_rows,
@@ -2698,6 +2801,7 @@ def _source_activity_missing_summary(
     strategy_name: str,
     strategy_names: list[str],
     account_label: str,
+    source_account_label: str | None = None,
     window_start: datetime,
     window_end: datetime,
     source_manifest_ref: str,
@@ -2719,6 +2823,7 @@ def _source_activity_missing_summary(
         "strategy_name": strategy_name,
         "strategy_name_candidates": strategy_names,
         "account_label": account_label,
+        "source_account_label": source_account_label or account_label,
         "source_activity_symbol_filter": symbol_filter,
         "diagnostic_blockers": diagnostic_blockers,
         "source_activity_diagnostics": diagnostics,
@@ -2789,6 +2894,7 @@ def _source_activity_missing_summary(
             "strategy_name": strategy_name,
             "strategy_name_candidates": strategy_names,
             "account_label": account_label,
+            "source_account_label": source_account_label or account_label,
             "source_activity_symbol_filter": symbol_filter,
             "window_start": window_start.isoformat(),
             "window_end": window_end.isoformat(),
@@ -2804,6 +2910,10 @@ def _source_activity_missing_summary(
 def main() -> int:
     args = _parse_args()
     source_dsn = args.source_dsn.strip() or os.getenv(args.source_dsn_env, "").strip()
+    source_account_label = (
+        str(getattr(args, "source_account_label", "") or "").strip()
+        or args.account_label
+    )
     artifact_refs = [
         str(item).strip()
         for item in getattr(args, "artifact_ref", [])
@@ -2838,6 +2948,7 @@ def main() -> int:
     source_activity_diagnostics: dict[str, Any] = {
         "strategy_name_candidates": strategy_names,
         "account_label": args.account_label,
+        "source_account_label": source_account_label,
         "window_start": window_start.isoformat(),
         "window_end": window_end.isoformat(),
         "source_activity_symbol_filter": source_activity_symbols,
@@ -2849,7 +2960,8 @@ def main() -> int:
         decisions, executions, tca_rows = _query_timestamps(
             dsn=source_dsn,
             strategy_names=strategy_names,
-            account_label=args.account_label,
+            account_label=source_account_label,
+            target_account_label=args.account_label,
             window_start=window_start,
             window_end=window_end,
             symbols=source_activity_symbols,
@@ -2891,7 +3003,8 @@ def main() -> int:
                 hypothesis_id=args.hypothesis_id,
                 observed_stage=args.observed_stage,
                 strategy_names=strategy_names,
-                account_label=args.account_label,
+                account_label=source_account_label,
+                target_account_label=args.account_label,
                 window_start=window_start,
                 window_end=window_end,
             )
@@ -2972,6 +3085,7 @@ def main() -> int:
             strategy_name=args.strategy_name,
             strategy_names=strategy_names,
             account_label=args.account_label,
+            source_account_label=source_account_label,
             window_start=window_start,
             window_end=window_end,
             source_manifest_ref=args.source_manifest_ref.strip(),
@@ -3048,6 +3162,7 @@ def main() -> int:
         "strategy_name": args.strategy_name,
         "strategy_name_candidates": strategy_names,
         "account_label": args.account_label,
+        "source_account_label": source_account_label,
         "source_activity_symbol_filter": source_activity_symbols,
         "source_activity_diagnostics": {
             **source_activity_diagnostics,

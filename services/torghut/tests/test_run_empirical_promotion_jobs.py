@@ -3419,6 +3419,64 @@ class TestRunEmpiricalPromotionJobs(TestCase):
             ("", "", ""),
         )
 
+    def test_runtime_window_import_target_passes_source_account_label(
+        self,
+    ) -> None:
+        manifest_path = self.tmp_dir / "empirical-promotion-manifest.yaml"
+        manifest_path.write_text("run_id: renew-1\n", encoding="utf-8")
+        hypothesis_path = self.tmp_dir / "h-pairs-01.json"
+        hypothesis_path.write_text(
+            json.dumps({"candidate_id": "cand-paper-route"}),
+            encoding="utf-8",
+        )
+        target = renewal.RuntimeWindowImportTarget(
+            hypothesis_id="H-PAIRS-01",
+            candidate_id="cand-paper-route",
+            observed_stage="paper",
+            strategy_family="microbar_cross_sectional_pairs",
+            source_dsn_env="SIM_DB_DSN",
+            strategy_name="paper-route-candidate-v1",
+            account_label="TORGHUT_SIM",
+            dataset_snapshot_ref="",
+            source_manifest_ref=str(hypothesis_path),
+            source_kind="paper_route_probe_runtime_observed",
+            delay_adjusted_depth_stress_report_ref="",
+            source_account_label="TORGHUT_REPLAY",
+        )
+        args = SimpleNamespace(
+            runtime_window_bucket_minutes=30,
+            runtime_window_sample_minutes=5,
+            runtime_window_target_plan_settlement_seconds=0,
+        )
+        completed = SimpleNamespace(
+            stdout=json.dumps({"status": "skipped", "proof_status": "blocked"})
+        )
+
+        with patch.object(
+            renewal.subprocess,
+            "run",
+            return_value=completed,
+        ) as run_mock:
+            payload = renewal._run_runtime_window_import_target(
+                args=args,
+                target=target,
+                manifest={},
+                run_id="renew-1",
+                manifest_path=manifest_path,
+                window_start=datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc),
+                window_end=datetime(2026, 5, 26, 20, 0, tzinfo=timezone.utc),
+                now=datetime(2026, 5, 26, 21, 23, tzinfo=timezone.utc),
+            )
+
+        command = run_mock.call_args.args[0]
+        self.assertIn("--source-account-label", command)
+        self.assertEqual(
+            command[command.index("--source-account-label") + 1],
+            "TORGHUT_REPLAY",
+        )
+        self.assertEqual(payload["account_label"], "TORGHUT_SIM")
+        self.assertEqual(payload["source_account_label"], "TORGHUT_REPLAY")
+
     def test_runtime_window_import_rejects_non_mapping_import_payload(
         self,
     ) -> None:

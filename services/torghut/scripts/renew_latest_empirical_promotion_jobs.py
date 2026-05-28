@@ -148,9 +148,17 @@ def _parse_args() -> argparse.Namespace:
         help=(
             "Repeatable comma-separated key=value runtime import target. "
             "Supported keys: hypothesis_id,candidate_id,strategy_family,"
-            "strategy_name,account_label,observed_stage,source_dsn_env,"
-            "dataset_snapshot_ref,source_manifest_ref,source_kind,"
+            "strategy_name,account_label,source_account_label,observed_stage,"
+            "source_dsn_env,dataset_snapshot_ref,source_manifest_ref,source_kind,"
             "delay_adjusted_depth_stress_report_ref."
+        ),
+    )
+    parser.add_argument(
+        "--runtime-window-source-account-label",
+        default="",
+        help=(
+            "Optional source account label used only for source DB activity queries. "
+            "The target account_label remains the materialized runtime-ledger label."
         ),
     )
     parser.add_argument(
@@ -392,6 +400,7 @@ class RuntimeWindowImportTarget:
     window_end: str = ""
     artifact_refs: tuple[str, ...] = ()
     target_metadata: Mapping[str, Any] | None = None
+    source_account_label: str = ""
 
 
 def _parse_runtime_window_target_spec(spec: str) -> dict[str, str]:
@@ -603,6 +612,9 @@ def _registry_runtime_window_targets(
                 ).strip(),
                 window_start="",
                 window_end="",
+                source_account_label=str(
+                    getattr(args, "runtime_window_source_account_label", "") or ""
+                ).strip(),
             )
         )
     return targets
@@ -724,6 +736,10 @@ def _runtime_window_targets_from_plan(
             window_end=str(payload.get("window_end") or "").strip(),
             artifact_refs=_runtime_window_target_artifact_refs(payload),
             target_metadata=_runtime_window_target_metadata(payload),
+            source_account_label=value(
+                "source_account_label",
+                "runtime_window_source_account_label",
+            ),
         )
         target_key = (
             target.hypothesis_id,
@@ -733,6 +749,7 @@ def _runtime_window_targets_from_plan(
             target.source_dsn_env,
             target.strategy_name,
             target.account_label,
+            target.source_account_label,
             target.dataset_snapshot_ref,
             target.source_manifest_ref,
             target.source_kind,
@@ -794,11 +811,12 @@ def _runtime_window_target_metadata(payload: Mapping[str, Any]) -> dict[str, Any
 
 def _runtime_window_target_identity(
     target: RuntimeWindowImportTarget,
-) -> tuple[str, str, str, str, str]:
+) -> tuple[str, str, str, str, str, str]:
     return (
         target.hypothesis_id,
         target.candidate_id,
         target.strategy_name,
+        target.source_account_label,
         target.window_start,
         target.window_end,
     )
@@ -939,6 +957,10 @@ def _runtime_window_targets(
                 ),
                 window_start=value("window_start", "runtime_window_start"),
                 window_end=value("window_end", "runtime_window_end"),
+                source_account_label=value(
+                    "source_account_label",
+                    "runtime_window_source_account_label",
+                ),
             )
         )
     explicit_hypothesis_ids = {target.hypothesis_id for target in targets}
@@ -1785,6 +1807,7 @@ def _run_runtime_window_import_target(
             "candidate_id": candidate_id,
             "strategy_name": target.strategy_name,
             "account_label": target.account_label,
+            "source_account_label": target.source_account_label or target.account_label,
             "source_kind": target.source_kind,
             "artifact_refs": [str(manifest_path), *target.artifact_refs],
             "target_metadata": dict(target.target_metadata or {}),
@@ -1843,6 +1866,8 @@ def _run_runtime_window_import_target(
         target.source_manifest_ref,
         "--source-kind",
         target.source_kind,
+        "--source-account-label",
+        target.source_account_label or target.account_label,
         "--artifact-ref",
         str(manifest_path),
         "--dependency-quorum-decision",
@@ -1909,6 +1934,7 @@ def _run_runtime_window_import_target(
         "candidate_id": candidate_id,
         "strategy_name": target.strategy_name,
         "account_label": target.account_label,
+        "source_account_label": target.source_account_label or target.account_label,
         "source_kind": target.source_kind,
         "artifact_refs": [str(manifest_path), *target.artifact_refs],
         "target_metadata": dict(target.target_metadata or {}),
