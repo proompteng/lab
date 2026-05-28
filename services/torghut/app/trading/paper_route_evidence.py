@@ -26,6 +26,7 @@ from ..models import (
     StrategyRuntimeLedgerBucket,
     TradeDecision,
 )
+from .runtime_cost_authority import cost_basis_counts_have_non_promotion_grade_costs
 from .runtime_ledger import POST_COST_PNL_BASIS
 
 
@@ -1632,6 +1633,9 @@ def _runtime_ledger_bucket_evidence_grade(row: StrategyRuntimeLedgerBucket) -> b
         and _positive_hash_count(row.execution_policy_hash_counts)
         and _positive_hash_count(row.cost_model_hash_counts)
         and _positive_hash_count(row.lineage_hash_counts)
+        and not cost_basis_counts_have_non_promotion_grade_costs(
+            _as_mapping(row.payload_json).get("cost_basis_counts")
+        )
         and not blockers
     )
 

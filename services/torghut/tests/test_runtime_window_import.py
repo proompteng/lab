@@ -18,6 +18,12 @@ from app.models import (
     StrategyRuntimeLedgerBucket,
     VNextDatasetSnapshot,
 )
+from app.trading.runtime_cost_authority import (
+    cost_basis_counts_have_non_promotion_grade_costs,
+)
+from app.trading.runtime_decision_authority import (
+    source_decision_mode_counts_have_non_profit_proof_modes,
+)
 from app.trading.runtime_window_import import (
     _delay_adjusted_depth_stress_blocking_reasons,
     _observation_bool,
@@ -363,6 +369,44 @@ class TestRuntimeWindowImport(TestCase):
     def test_runtime_ledger_bucket_blockers_reject_non_promotion_grade_cost_basis(
         self,
     ) -> None:
+        for basis in (
+            "modeled_paper_cost_budget",
+            "paper_cost_model_estimate",
+            "decision_impact_assumptions_total_cost_bps",
+        ):
+            with self.subTest(basis=basis):
+                blockers = _runtime_ledger_bucket_blockers(
+                    {
+                        "ledger_schema_version": "torghut.runtime-ledger-bucket.v1",
+                        "pnl_basis": "realized_strategy_pnl_after_explicit_costs",
+                        "fill_count": 2,
+                        "decision_count": 2,
+                        "submitted_order_count": 2,
+                        "closed_trade_count": 1,
+                        "open_position_count": 0,
+                        "filled_notional": "200",
+                        "cost_amount": "0.20",
+                        "cost_basis_counts": {basis: 2},
+                        "post_cost_expectancy_bps": "40",
+                        "execution_policy_hash_counts": {"policy-sha": 2},
+                        "cost_model_hash_counts": {"cost-sha": 2},
+                        "lineage_hash_counts": {"lineage-sha": 2},
+                    }
+                )
+
+                self.assertEqual(
+                    blockers, ["runtime_ledger_cost_basis_non_promotion_grade"]
+                )
+
+        self.assertFalse(
+            cost_basis_counts_have_non_promotion_grade_costs(
+                {"modeled_paper_cost_budget": object()}
+            )
+        )
+
+    def test_runtime_ledger_bucket_blockers_reject_route_acquisition_profit_proof(
+        self,
+    ) -> None:
         blockers = _runtime_ledger_bucket_blockers(
             {
                 "ledger_schema_version": "torghut.runtime-ledger-bucket.v1",
@@ -374,7 +418,8 @@ class TestRuntimeWindowImport(TestCase):
                 "open_position_count": 0,
                 "filled_notional": "200",
                 "cost_amount": "0.20",
-                "cost_basis_counts": {"modeled_paper_cost_budget": 2},
+                "cost_basis_counts": {"broker_reported_commission_and_fees": 2},
+                "source_decision_mode_counts": {"route_acquisition_probe": 2},
                 "post_cost_expectancy_bps": "40",
                 "execution_policy_hash_counts": {"policy-sha": 2},
                 "cost_model_hash_counts": {"cost-sha": 2},
@@ -382,7 +427,31 @@ class TestRuntimeWindowImport(TestCase):
             }
         )
 
-        self.assertEqual(blockers, ["runtime_ledger_cost_basis_non_promotion_grade"])
+        self.assertEqual(blockers, ["source_decision_mode_not_profit_proof_eligible"])
+
+        self.assertFalse(
+            source_decision_mode_counts_have_non_profit_proof_modes(
+                {"route_acquisition_probe": object()}
+            )
+        )
+
+    def test_runtime_ledger_bucket_blockers_reject_direct_route_acquisition_mode(
+        self,
+    ) -> None:
+        blockers = _runtime_ledger_bucket_blockers(
+            _runtime_ledger_bucket(source_decision_mode="route-acquisition-probe")
+        )
+
+        self.assertEqual(blockers, ["source_decision_mode_not_profit_proof_eligible"])
+
+    def test_runtime_ledger_bucket_blockers_reject_false_profit_proof_flag(
+        self,
+    ) -> None:
+        blockers = _runtime_ledger_bucket_blockers(
+            _runtime_ledger_bucket(profit_proof_eligible="false")
+        )
+
+        self.assertEqual(blockers, ["source_decision_mode_not_profit_proof_eligible"])
 
     def test_persisted_runtime_ledger_bucket_evidence_grade_rejects_modeled_cost_basis(
         self,

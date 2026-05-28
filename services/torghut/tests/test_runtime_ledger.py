@@ -8,6 +8,8 @@ import pytest
 from app.trading.runtime_ledger import (
     EXACT_REPLAY_LEDGER_SCHEMA_VERSION,
     RuntimeLedgerFill,
+    _build_bucket,
+    _NormalizedFill,
     build_runtime_ledger_buckets,
 )
 
@@ -579,6 +581,133 @@ def test_exact_replay_ledger_requires_order_lifecycle_and_hash_lineage() -> None
     assert bucket.cost_model_hash_counts == {"cost-sha": 6}
     assert bucket.lineage_hash_counts == {"lineage-sha": 6}
     assert bucket.post_cost_expectancy_bps is not None
+
+
+def test_runtime_ledger_blocks_non_promotion_grade_cost_basis_at_builder() -> None:
+    common = {
+        "account_label": "paper",
+        "strategy_id": "strategy-1",
+        "symbol": "NVDA",
+        "execution_policy_hash": "policy-sha",
+        "cost_model_hash": "cost-sha",
+        "lineage_hash": "lineage-sha",
+    }
+    bucket = build_runtime_ledger_buckets(
+        [
+            {
+                **common,
+                "event_type": "decision",
+                "executed_at": _ts(1),
+                "decision_id": "decision-buy",
+            },
+            {
+                **common,
+                "event_type": "order_submitted",
+                "executed_at": _ts(2),
+                "decision_id": "decision-buy",
+                "order_id": "order-buy",
+            },
+            {
+                **common,
+                "event_type": "fill",
+                "executed_at": _ts(3),
+                "order_id": "order-buy",
+                "side": "buy",
+                "filled_qty": "10",
+                "avg_fill_price": "100",
+                "cost_amount": "1",
+                "cost_basis": "modeled_paper_cost_budget",
+            },
+            {
+                **common,
+                "event_type": "decision",
+                "executed_at": _ts(10),
+                "decision_id": "decision-sell",
+            },
+            {
+                **common,
+                "event_type": "order_submitted",
+                "executed_at": _ts(11),
+                "decision_id": "decision-sell",
+                "order_id": "order-sell",
+            },
+            {
+                **common,
+                "event_type": "fill",
+                "executed_at": _ts(12),
+                "order_id": "order-sell",
+                "side": "sell",
+                "filled_qty": "10",
+                "avg_fill_price": "110",
+                "cost_amount": "2",
+                "cost_basis": "modeled_paper_cost_budget",
+            },
+        ],
+        bucket_ranges=[(_ts(), _ts(60))],
+        require_order_lifecycle=True,
+    )[0]
+
+    assert bucket.fill_count == 0
+    assert bucket.net_strategy_pnl_after_costs == Decimal("0")
+    assert bucket.cost_basis_counts == {}
+    assert "runtime_ledger_cost_basis_non_promotion_grade" in bucket.blockers
+    assert bucket.post_cost_expectancy_bps is None
+
+
+def test_runtime_ledger_defensively_blocks_usable_non_promotion_grade_cost_basis() -> (
+    None
+):
+    rows = [
+        _NormalizedFill(
+            row_index=0,
+            executed_at=_ts(1),
+            account_label="paper",
+            strategy_id="strategy-1",
+            symbol="NVDA",
+            side="buy",
+            filled_qty=Decimal("10"),
+            avg_fill_price=Decimal("100"),
+            filled_notional=Decimal("1000"),
+            cost_amount=Decimal("1"),
+            cost_basis="modeled_paper_cost_budget",
+            event_type="fill",
+            decision_id="decision-buy",
+            order_id="order-buy",
+            execution_policy_hash="policy-sha",
+            cost_model_hash="cost-sha",
+            lineage_hash="lineage-sha",
+            replay_data_hash=None,
+            blockers=(),
+        ),
+        _NormalizedFill(
+            row_index=1,
+            executed_at=_ts(12),
+            account_label="paper",
+            strategy_id="strategy-1",
+            symbol="NVDA",
+            side="sell",
+            filled_qty=Decimal("10"),
+            avg_fill_price=Decimal("110"),
+            filled_notional=Decimal("1100"),
+            cost_amount=Decimal("2"),
+            cost_basis="modeled_paper_cost_budget",
+            event_type="fill",
+            decision_id="decision-sell",
+            order_id="order-sell",
+            execution_policy_hash="policy-sha",
+            cost_model_hash="cost-sha",
+            lineage_hash="lineage-sha",
+            replay_data_hash=None,
+            blockers=(),
+        ),
+    ]
+
+    bucket = _build_bucket(bucket_start=_ts(), bucket_end=_ts(60), rows=rows)
+
+    assert bucket.fill_count == 2
+    assert bucket.cost_basis_counts == {"modeled_paper_cost_budget": 2}
+    assert "runtime_ledger_cost_basis_non_promotion_grade" in bucket.blockers
+    assert bucket.post_cost_expectancy_bps is None
 
 
 def test_exact_replay_ledger_blocks_fill_only_profit_proof() -> None:

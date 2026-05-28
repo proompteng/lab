@@ -25,6 +25,16 @@ from app.trading.runtime_ledger import (
     RuntimeLedgerBucket,
     build_runtime_ledger_buckets,
 )
+from app.trading.runtime_cost_authority import (
+    cost_basis_counts_have_non_promotion_grade_costs,
+    is_non_promotion_grade_runtime_cost_basis,
+)
+from app.trading.runtime_decision_authority import (
+    SOURCE_DECISION_MODE_NOT_PROFIT_PROOF_ELIGIBLE_BLOCKER,
+    normalize_source_decision_mode,
+    source_decision_mode_counts_have_non_profit_proof_modes,
+    source_decision_mode_is_profit_proof_eligible,
+)
 from app.trading.runtime_window_import import (
     build_observed_runtime_buckets,
     build_regular_session_buckets,
@@ -53,13 +63,6 @@ RUNTIME_LEDGER_BUCKET_SCHEMAS = frozenset(
     {
         EXACT_REPLAY_LEDGER_SCHEMA_VERSION,
         "torghut.runtime-ledger-bucket.v1",
-    }
-)
-NON_PROMOTION_GRADE_RUNTIME_COST_BASES = frozenset(
-    {
-        "modeled_paper_cost_budget",
-        "paper_cost_model_estimate",
-        "decision_impact_assumptions_total_cost_bps",
     }
 )
 EXACT_REPLAY_ARTIFACT_AUTHORITY_CLASS = "exact_replay_artifact_only_not_live"
@@ -264,6 +267,61 @@ def _text_values(row: Mapping[str, object], *keys: str) -> set[str]:
     return values
 
 
+def _first_bool(row: Mapping[str, object], *keys: str) -> bool | None:
+    for payload in _row_payloads(row):
+        for key in keys:
+            value = payload.get(key)
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, int | float | Decimal):
+                return bool(value)
+            text = str(value or "").strip().lower()
+            if text in {"1", "true", "yes", "on", "pass", "passed", "ok"}:
+                return True
+            if text in {"0", "false", "no", "off", "fail", "failed", "blocked"}:
+                return False
+    return None
+
+
+def _source_decision_mode(row: Mapping[str, object]) -> str | None:
+    explicit = normalize_source_decision_mode(_first_text(row, "source_decision_mode"))
+    if explicit is not None:
+        return explicit
+    return normalize_source_decision_mode(_first_text(row, "mode"))
+
+
+def _source_decision_mode_counts(
+    rows: Sequence[Mapping[str, object]],
+) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        mode = _source_decision_mode(row)
+        if mode is None:
+            continue
+        counts[mode] = counts.get(mode, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _source_decision_rows_profit_proof_eligible(
+    rows: Sequence[Mapping[str, object]],
+) -> bool:
+    modes = _source_decision_mode_counts(rows)
+    if source_decision_mode_counts_have_non_profit_proof_modes(modes):
+        return False
+    explicit: list[bool] = []
+    for row in rows:
+        value = _first_bool(
+            row,
+            "profit_proof_eligible",
+            "post_cost_promotion_eligible",
+        )
+        if value is not None:
+            explicit.append(value)
+    if any(value is False for value in explicit):
+        return False
+    return True
+
+
 def _source_row_matches_lineage(
     row: Mapping[str, object],
     *,
@@ -403,16 +461,6 @@ def _mapping_hash_count(value: object) -> int:
     return sum(1 for key in value.keys() if str(key).strip())
 
 
-def _cost_basis_counts_have_non_promotion_grade_costs(value: object) -> bool:
-    if not isinstance(value, Mapping):
-        return False
-    return any(
-        str(key).strip() in NON_PROMOTION_GRADE_RUNTIME_COST_BASES
-        and _nonnegative_int(count) > 0
-        for key, count in cast(Mapping[object, object], value).items()
-    )
-
-
 def _runtime_ledger_bucket_profit_proof_present(
     bucket: Mapping[str, object],
 ) -> bool:
@@ -441,14 +489,24 @@ def _runtime_ledger_bucket_profit_proof_present(
         return False
     if cost_amount is None or cost_amount < 0:
         return False
-    if (
-        str(bucket.get("cost_basis") or "").strip()
-        in NON_PROMOTION_GRADE_RUNTIME_COST_BASES
-    ):
+    if is_non_promotion_grade_runtime_cost_basis(bucket.get("cost_basis")):
         return False
-    if _cost_basis_counts_have_non_promotion_grade_costs(
+    if cost_basis_counts_have_non_promotion_grade_costs(
         bucket.get("cost_basis_counts")
     ):
+        return False
+    source_decision_mode = normalize_source_decision_mode(
+        bucket.get("source_decision_mode")
+    )
+    if source_decision_mode and not source_decision_mode_is_profit_proof_eligible(
+        source_decision_mode
+    ):
+        return False
+    if source_decision_mode_counts_have_non_profit_proof_modes(
+        bucket.get("source_decision_mode_counts")
+    ):
+        return False
+    if _first_bool(bucket, "profit_proof_eligible") is False:
         return False
     if post_cost_expectancy is None:
         return False
@@ -1481,6 +1539,15 @@ def _build_realized_strategy_pnl_rows(
             *(order_lifecycle_rows or []),
         ]
     )
+    source_decision_rows = [
+        *execution_rows,
+        *(decision_lifecycle_rows or []),
+        *(order_lifecycle_rows or []),
+    ]
+    source_decision_mode_counts = _source_decision_mode_counts(source_decision_rows)
+    source_decision_profit_proof_eligible = _source_decision_rows_profit_proof_eligible(
+        source_decision_rows
+    )
     realized_rows: list[dict[str, object]] = []
     for bucket in build_runtime_ledger_buckets(
         ledger_rows,
@@ -1494,6 +1561,31 @@ def _build_realized_strategy_pnl_rows(
             computed_at=unique_times[-1],
         )
         bucket_payload = row.get("runtime_ledger_bucket")
+        if source_decision_mode_counts:
+            row["source_decision_mode_counts"] = source_decision_mode_counts
+            row["profit_proof_eligible"] = source_decision_profit_proof_eligible
+            if isinstance(bucket_payload, Mapping):
+                bucket_payload = {
+                    **dict(bucket_payload),
+                    "source_decision_mode_counts": source_decision_mode_counts,
+                    "profit_proof_eligible": source_decision_profit_proof_eligible,
+                }
+                if not source_decision_profit_proof_eligible:
+                    blockers = list(bucket_payload.get("blockers") or [])
+                    if (
+                        SOURCE_DECISION_MODE_NOT_PROFIT_PROOF_ELIGIBLE_BLOCKER
+                        not in blockers
+                    ):
+                        blockers.append(
+                            SOURCE_DECISION_MODE_NOT_PROFIT_PROOF_ELIGIBLE_BLOCKER
+                        )
+                    bucket_payload["blockers"] = blockers
+                    row["runtime_ledger_blockers"] = blockers
+                    row["post_cost_promotion_eligible"] = False
+                    row["promotion_blocker"] = (
+                        SOURCE_DECISION_MODE_NOT_PROFIT_PROOF_ELIGIBLE_BLOCKER
+                    )
+                row["runtime_ledger_bucket"] = bucket_payload
         event_sourced_runtime_ledger = (
             allow_authoritative_runtime_ledger_materialization
             and event_sourced_lifecycle_rows > 0

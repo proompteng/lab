@@ -131,6 +131,9 @@ from .trading.paper_route_target_plan import (
     paper_route_target_plan_from_payload as _shared_paper_route_target_plan_from_payload,
 )
 from .trading.paper_route_evidence import build_paper_route_evidence_audit
+from .trading.runtime_cost_authority import (
+    cost_basis_counts_have_non_promotion_grade_costs,
+)
 from .trading.proof_floor import build_profitability_proof_floor_receipt
 from .trading.quality_adjusted_profit_frontier import (
     build_quality_adjusted_profit_frontier,
@@ -3872,6 +3875,15 @@ def trading_autonomy() -> dict[str, object]:
 def _runtime_ledger_bucket_evidence_grade(row: StrategyRuntimeLedgerBucket) -> bool:
     raw_blockers = cast(Sequence[object], row.blockers_json or [])
     blockers = [str(item).strip() for item in raw_blockers if str(item).strip()]
+    raw_payload_json = cast(object, row.payload_json)
+    payload_json = (
+        {
+            str(key): item
+            for key, item in cast(Mapping[object, object], raw_payload_json).items()
+        }
+        if isinstance(raw_payload_json, Mapping)
+        else {}
+    )
     return (
         row.pnl_basis == "realized_strategy_pnl_after_explicit_costs"
         and int(row.fill_count or 0) > 0
@@ -3882,6 +3894,9 @@ def _runtime_ledger_bucket_evidence_grade(row: StrategyRuntimeLedgerBucket) -> b
         and bool(row.execution_policy_hash_counts)
         and bool(row.cost_model_hash_counts)
         and bool(row.lineage_hash_counts)
+        and not cost_basis_counts_have_non_promotion_grade_costs(
+            payload_json.get("cost_basis_counts")
+        )
         and not blockers
     )
 

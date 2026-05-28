@@ -19,6 +19,7 @@ from .trading.route_metadata import (
     coerce_route_int,
     normalize_route_provenance,
 )
+from .trading.runtime_cost_authority import is_non_promotion_grade_runtime_cost_basis
 from .trading.simulation import resolve_simulation_context
 
 logger = logging.getLogger(__name__)
@@ -516,6 +517,8 @@ def _runtime_cost_payload_from_mapping(
             continue
         resolved_basis = basis or _BROKER_COST_BASIS_BY_FIELD.get(amount_key)
         if resolved_basis is None:
+            continue
+        if is_non_promotion_grade_runtime_cost_basis(resolved_basis):
             continue
         return {
             "cost_amount": str(amount),

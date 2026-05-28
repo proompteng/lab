@@ -9,7 +9,11 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from app.models import Base
-from app.snapshots import snapshot_account_and_positions, sync_order_to_db
+from app.snapshots import (
+    _runtime_cost_payload_from_mapping,
+    snapshot_account_and_positions,
+    sync_order_to_db,
+)
 
 
 class DummyAlpacaClient:
@@ -48,6 +52,19 @@ class TestSnapshots(TestCase):
             self.assertEqual(snapshot.cash, Decimal("5000"))
             self.assertEqual(snapshot.buying_power, Decimal("20000"))
             self.assertEqual(len(snapshot.positions), 1)
+
+    def test_runtime_cost_payload_skips_non_promotion_grade_cost_basis(self) -> None:
+        self.assertIsNone(
+            _runtime_cost_payload_from_mapping(
+                {
+                    "cost_amount": "1.23",
+                    "cost_basis": "modeled_paper_cost_budget",
+                    "commission": "0.25",
+                },
+                source="audit",
+                source_field_prefix="audit.",
+            )
+        )
 
     def test_snapshot_account_and_positions_serializes_uuid_payloads(self) -> None:
         client = DummyAlpacaClient()
