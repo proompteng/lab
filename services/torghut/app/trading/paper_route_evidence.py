@@ -306,6 +306,24 @@ def _isoformat(value: datetime | None) -> str | None:
     return value.astimezone(timezone.utc).isoformat()
 
 
+def _execution_activity_timestamp() -> Any:
+    return func.coalesce(
+        Execution.order_feed_last_event_ts,
+        Execution.last_update_at,
+        Execution.updated_at,
+        Execution.created_at,
+    )
+
+
+def _execution_activity_at(row: Execution) -> datetime | None:
+    return (
+        row.order_feed_last_event_ts
+        or row.last_update_at
+        or row.updated_at
+        or row.created_at
+    )
+
+
 def _parse_datetime(value: object) -> datetime | None:
     if isinstance(value, datetime):
         parsed = value
@@ -1409,11 +1427,12 @@ def _strategy_source_activity(
     decision_ids = [row.id for row in decision_rows]
     execution_rows: list[Execution] = []
     if decision_ids:
+        execution_activity_ts = _execution_activity_timestamp()
         execution_stmt = (
             select(Execution)
             .where(Execution.trade_decision_id.in_(decision_ids))
-            .where(Execution.created_at >= window_start)
-            .where(Execution.created_at <= window_end)
+            .where(execution_activity_ts >= window_start)
+            .where(execution_activity_ts < window_end)
         )
         if account_label:
             execution_stmt = execution_stmt.where(
@@ -1425,7 +1444,7 @@ def _strategy_source_activity(
             )
         execution_rows = list(
             session.execute(
-                execution_stmt.order_by(Execution.created_at.desc()).limit(500)
+                execution_stmt.order_by(execution_activity_ts.desc()).limit(500)
             ).scalars()
         )
     tca_rows: list[ExecutionTCAMetric] = []
@@ -1486,7 +1505,7 @@ def _strategy_source_activity(
             decision_rows[0].created_at if decision_rows else None
         ),
         "last_execution_at": _isoformat(
-            execution_rows[0].created_at if execution_rows else None
+            _execution_activity_at(execution_rows[0]) if execution_rows else None
         ),
         "last_tca_at": _isoformat(tca_rows[0].computed_at if tca_rows else None),
         "missing": bool(missing_reasons),
