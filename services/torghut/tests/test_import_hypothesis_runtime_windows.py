@@ -3490,6 +3490,76 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertTrue(summary["runtime_ledger_profit_proof_present"])
         self.assertFalse(summary["would_persist"])
 
+        args_plain = SimpleNamespace(**vars(args))
+        args_plain.json = False
+        with (
+            patch(
+                "scripts.import_hypothesis_runtime_windows._parse_args",
+                return_value=args_plain,
+            ),
+            patch(
+                "scripts.import_hypothesis_runtime_windows.resolve_hypothesis_manifest",
+                return_value=(
+                    SimpleNamespace(path="config/trading/hypotheses/h-cont-01.json"),
+                    manifest,
+                ),
+            ),
+            patch(
+                "scripts.import_hypothesis_runtime_windows._query_timestamps",
+                return_value=(
+                    [datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)],
+                    [datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc)],
+                    [tca_row],
+                ),
+            ),
+            patch(
+                "scripts.import_hypothesis_runtime_windows._runtime_ledger_tca_rows_from_source_dsn",
+                return_value=(
+                    [],
+                    {
+                        "runtime_ledger_source_bucket_count": 0,
+                        "runtime_ledger_source_bucket_run_ids": [],
+                        "runtime_ledger_source_bucket_fill_count": 0,
+                        "runtime_ledger_source_bucket_tca_row_count": 0,
+                        "runtime_ledger_source_bucket_profit_proof_count": 0,
+                    },
+                ),
+            ),
+            patch(
+                "scripts.import_hypothesis_runtime_windows.build_regular_session_buckets",
+                return_value=[
+                    (
+                        datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                        datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                        6,
+                    )
+                ],
+            ),
+            patch(
+                "scripts.import_hypothesis_runtime_windows.build_observed_runtime_buckets",
+                return_value=[
+                    SimpleNamespace(
+                        payload_json={
+                            "runtime_ledger_profit_proof_present": True,
+                            "runtime_ledger_profit_proof_blockers": [],
+                        }
+                    )
+                ],
+            ),
+            patch(
+                "scripts.import_hypothesis_runtime_windows.persist_observed_runtime_windows",
+                return_value={"run_id": "run-audit"},
+            ) as plain_persist_windows,
+            patch("builtins.print") as print_plain,
+        ):
+            plain_exit_code = main()
+        self.assertEqual(plain_exit_code, 0)
+        plain_persist_windows.assert_not_called()
+        self.assertEqual(
+            print_plain.call_args.args[0]["schema_version"],
+            "torghut.runtime-window-import-source-audit.v1",
+        )
+
     def test_main_attaches_target_metadata_to_runtime_payload(self) -> None:
         args = SimpleNamespace(
             run_id="run-probation",
@@ -3610,6 +3680,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             dependency_quorum_decision="allow",
             continuity_ok="true",
             drift_ok="true",
+            audit_only=True,
             json=False,
         )
         manifest = SimpleNamespace(
@@ -3655,6 +3726,8 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(summary["status"], "skipped")
         self.assertEqual(summary["proof_status"], "blocked")
         self.assertEqual(summary["decision_count"], 0)
+        self.assertTrue(summary["audit_only"])
+        self.assertFalse(summary["would_persist"])
         self.assertEqual(
             summary["proof_blockers"][0]["blocker"],
             "runtime_window_source_activity_missing",

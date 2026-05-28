@@ -7542,6 +7542,27 @@ class TestTradingApi(TestCase):
         self.assertEqual(http_error_connection.instances[0].timeout, 0.1)
         self.assertTrue(http_error_connection.instances[0].closed)
 
+        retried_error_connection = connection_class(503, b"{}")
+        with (
+            patch("app.main.HTTPConnection", retried_error_connection),
+            patch("app.main.time.sleep") as sleep,
+        ):
+            failed_retry = _fetch_paper_route_target_plan_url(
+                "http://torghut.example",
+                timeout_seconds=1,
+                attempts=2,
+                retry_backoff_seconds=0,
+            )
+        self.assertEqual(
+            failed_retry,
+            {
+                "load_error": "paper_route_target_plan_http_status:503",
+                "fetch_attempts": 2,
+            },
+        )
+        sleep.assert_called_once_with(0.0)
+        self.assertEqual(len(retried_error_connection.instances), 2)
+
         class FlakyConnection:
             instances: list["FlakyConnection"] = []
             responses = [
@@ -7593,6 +7614,21 @@ class TestTradingApi(TestCase):
             def close(self) -> None:
                 self.closed = True
 
+        FlakyConnection.instances = []
+        with patch("app.main.HTTPConnection", FlakyConnection):
+            app_retried_plan = _fetch_paper_route_target_plan_url(
+                "http://torghut.example",
+                timeout_seconds=1,
+                attempts=2,
+                retry_backoff_seconds=0,
+            )
+        self.assertEqual(app_retried_plan["fetch_attempts"], 2)
+        self.assertEqual(
+            app_retried_plan["targets"][0]["candidate_id"], "retry-candidate"
+        )
+        self.assertEqual(len(FlakyConnection.instances), 2)
+
+        FlakyConnection.instances = []
         with patch(
             "app.trading.paper_route_target_plan.HTTPConnection",
             FlakyConnection,

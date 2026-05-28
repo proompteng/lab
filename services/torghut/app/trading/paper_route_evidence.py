@@ -1845,6 +1845,18 @@ def _source_runtime_ledger_materialization_blockers(
     return sorted(blockers)
 
 
+def _rejected_signal_reasons_actionable(
+    source_activity: Mapping[str, object],
+) -> bool:
+    if bool(source_activity.get("missing")):
+        return True
+    return (
+        _safe_int(source_activity.get("filled_execution_count")) <= 0
+        and _safe_int(source_activity.get("tca_sample_count")) <= 0
+        and _safe_int(source_activity.get("complete_fill_order_event_count")) <= 0
+    )
+
+
 def _hypothesis_window_summary(
     session: Session,
     *,
@@ -2111,17 +2123,25 @@ def _runtime_window_import_audit(
         {
             str(reason).strip()
             for audit in next_target_audits
-            for reason in (
-                *_as_sequence(
-                    _as_mapping(audit.get("source_activity")).get("missing_reasons")
-                ),
-                *_as_sequence(
-                    _as_mapping(audit.get("rejected_signal_activity")).get(
-                        "blocking_reasons"
-                    )
-                ),
+            for reason in _as_sequence(
+                _as_mapping(audit.get("source_activity")).get("missing_reasons")
             )
             if str(reason).strip()
+        }
+    )
+    rejected_signal_reasons = sorted(
+        {
+            str(reason).strip()
+            for audit in next_target_audits
+            for reason in _as_sequence(
+                _as_mapping(audit.get("rejected_signal_activity")).get(
+                    "blocking_reasons"
+                )
+            )
+            if str(reason).strip()
+            and _rejected_signal_reasons_actionable(
+                _as_mapping(audit.get("source_activity"))
+            )
         }
     )
     runtime_ledger_blockers = sorted(
@@ -2173,7 +2193,11 @@ def _runtime_window_import_audit(
     elif targets_with_source_activity < current_target_count:
         state = "import_due_source_activity_missing"
         next_action = "inspect_paper_route_source_activity_before_import"
-        blockers = ["paper_route_source_activity_missing", *source_missing_reasons]
+        blockers = [
+            "paper_route_source_activity_missing",
+            *source_missing_reasons,
+            *rejected_signal_reasons,
+        ]
     elif targets_with_runtime_ledger < current_target_count:
         state = "import_due_runtime_ledger_missing"
         next_action = "run_runtime_window_import_or_repair_source_materialization"
@@ -2204,6 +2228,7 @@ def _runtime_window_import_audit(
         "blockers": sorted(dict.fromkeys(blockers)),
         "diagnostics": {
             "source_activity_missing_reasons": source_missing_reasons,
+            "rejected_signal_diagnostic_reasons": rejected_signal_reasons,
             "source_activity_to_runtime_ledger_blockers": (
                 source_runtime_ledger_blockers
             ),
@@ -2274,7 +2299,11 @@ def _runtime_window_target_blockers(
                     if bool(source_activity.get("missing"))
                     else []
                 ),
-                *_unique_text_items(rejected_signal_activity.get("blocking_reasons")),
+                *(
+                    _unique_text_items(rejected_signal_activity.get("blocking_reasons"))
+                    if _rejected_signal_reasons_actionable(source_activity)
+                    else []
+                ),
                 *(
                     ["runtime_ledger_bucket_missing"]
                     if _safe_int(runtime_ledger.get("bucket_count")) <= 0
