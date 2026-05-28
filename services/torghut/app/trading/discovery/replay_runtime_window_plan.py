@@ -307,9 +307,24 @@ def _target_replay_window_metadata(
             "replay_avg_filled_notional_per_window_weekday",
         ),
         ("best_day_share", "replay_best_day_share"),
+        ("candidate_identity_hash", "replay_candidate_identity_hash"),
+        ("cost_lineage_hash", "replay_cost_lineage_hash"),
+        ("fills_with_adv_notional", "replay_fills_with_adv_notional"),
+        ("fills_with_participation_rate", "replay_fills_with_participation_rate"),
+        (
+            "fills_with_capacity_warning_contract",
+            "replay_fills_with_capacity_warning_contract",
+        ),
     ):
         if (value := best_candidate.get(source_key)) is not None:
             metadata[target_key] = value
+    for source_key, target_key in (
+        ("candidate_identity", "replay_candidate_identity"),
+        ("cost_lineage", "replay_cost_lineage"),
+        ("capacity_warning_counts", "replay_capacity_warning_counts"),
+    ):
+        if isinstance(value := best_candidate.get(source_key), Mapping):
+            metadata[target_key] = dict(cast(Mapping[str, Any], value))
     for source_key, target_key in (
         ("min_window_weekday_count", "replay_min_window_weekday_count"),
         ("target_net_pnl_per_day", "replay_target_net_pnl_per_day"),

@@ -37,6 +37,7 @@ from scripts.local_intraday_tsmom_replay import (
     _decision_position_owner,
     _decision_spread_bps,
     _estimate_trade_cost,
+    _estimate_trade_cost_lineage,
     _fetch_chunk,
     _flatten_positions,
     _http_query,
@@ -716,6 +717,41 @@ class TestLocalIntradayTsmomReplay(TestCase):
         )
 
         self.assertEqual(cost, Decimal("50"))
+
+    def test_estimate_trade_cost_lineage_exposes_adv_and_capacity_warnings(
+        self,
+    ) -> None:
+        signal = self._signal(bid="99.99", ask="100.01", price="100")
+        decision = StrategyDecision(
+            strategy_id="impact-aware",
+            symbol="META",
+            event_ts=signal.event_ts,
+            timeframe="1Sec",
+            action="buy",
+            qty=Decimal("100"),
+            order_type="limit",
+            time_in_force="day",
+            limit_price=Decimal("100"),
+            params={},
+        )
+
+        lineage = _estimate_trade_cost_lineage(
+            model=TransactionCostModel(
+                CostModelConfig(
+                    impact_bps_at_full_participation=Decimal("100"),
+                    max_participation_rate=Decimal("0.1"),
+                )
+            ),
+            decision=decision,
+            signal=signal,
+            symbol_bucket={"daily_adv_notional": Decimal("40000")},
+        )
+
+        self.assertEqual(lineage.adv_notional, Decimal("40000"))
+        self.assertEqual(lineage.adv_source, "symbol_bucket.daily_adv_notional")
+        self.assertEqual(lineage.participation_rate, Decimal("0.25"))
+        self.assertEqual(lineage.total_cost, Decimal("50"))
+        self.assertEqual(lineage.warnings, ("participation_exceeds_max",))
 
     def test_apply_filled_decision_prefers_symbol_adv_for_impact_cost(self) -> None:
         signal = self._signal(bid="9.99", ask="10.01", price="10")
@@ -2414,6 +2450,23 @@ class TestLocalIntradayTsmomReplay(TestCase):
         self.assertEqual(
             exact_ledger["promotion_authority"], "replay_artifact_only_not_live"
         )
+        self.assertTrue(str(exact_ledger["candidate_id"]).startswith("exact-replay-"))
+        self.assertEqual(
+            exact_ledger["candidate_identity"]["candidate_id"],
+            exact_ledger["candidate_id"],
+        )
+        self.assertEqual(
+            exact_ledger["candidate_identity"]["candidate_identity_hash"],
+            exact_ledger["candidate_identity_hash"],
+        )
+        self.assertEqual(
+            exact_ledger["cost_lineage"]["cost_lineage_hash"],
+            exact_ledger["cost_lineage_hash"],
+        )
+        self.assertEqual(
+            exact_ledger["cost_lineage"]["warning_contract"],
+            ["missing_adv", "participation_exceeds_max"],
+        )
         self.assertEqual(exact_ledger["decision_row_count"], 3)
         self.assertEqual(exact_ledger["submitted_order_row_count"], 3)
         self.assertEqual(exact_ledger["fill_row_count"], 2)
@@ -2431,6 +2484,23 @@ class TestLocalIntradayTsmomReplay(TestCase):
                 "order_submitted",
                 "fill",
             ],
+        )
+        fill_rows = [row for row in rows if row["event_type"] == "fill"]
+        self.assertEqual(
+            [row["candidate_identity_hash"] for row in fill_rows],
+            [exact_ledger["candidate_identity_hash"]] * 2,
+        )
+        self.assertEqual(
+            [row["cost_lineage_hash"] for row in fill_rows],
+            [exact_ledger["cost_lineage_hash"]] * 2,
+        )
+        self.assertEqual(
+            exact_ledger["cost_lineage"]["capacity_warning_counts"],
+            {"missing_adv": 2},
+        )
+        self.assertEqual(
+            [row["capacity_warning_codes"] for row in fill_rows],
+            [["missing_adv"], ["missing_adv"]],
         )
         ledger_bucket = build_runtime_ledger_buckets(
             rows,

@@ -176,10 +176,37 @@ class PendingOrder:
 @dataclass(frozen=True)
 class ReplayLedgerContext:
     account_label: str
+    candidate_id: str
+    candidate_identity: dict[str, Any]
+    candidate_identity_hash: str
     execution_policy_hash: str
     cost_model_hash: str
+    cost_lineage: dict[str, Any]
+    cost_lineage_hash: str
     lineage_hash: str
     replay_data_hash: str | None
+
+
+@dataclass(frozen=True)
+class ReplayCostLineage:
+    total_cost: Decimal
+    notional: Decimal
+    adv_notional: Decimal | None
+    adv_source: str | None
+    participation_rate: Decimal | None
+    spread: Decimal | None
+    volatility: Decimal | None
+    spread_cost_bps: Decimal
+    volatility_cost_bps: Decimal
+    impact_cost_bps: Decimal
+    commission_cost: Decimal
+    commission_cost_bps: Decimal
+    total_cost_bps: Decimal
+    capacity_ok: bool
+    warnings: tuple[str, ...]
+    max_participation_rate: Decimal
+    impact_bps_at_full_participation: Decimal
+    impact_participation_exponent: Decimal
 
 
 @dataclass
@@ -259,6 +286,29 @@ def _build_replay_ledger_context(
             },
         }
     )
+    cost_lineage_payload = {
+        "cost_basis": _REPLAY_COST_BASIS,
+        "model": cost_model.__class__.__name__,
+        "module": cost_model.__class__.__module__,
+        "adv_source": _REPLAY_ADV_SOURCE,
+        "fill_adv_notional_required": True,
+        "fill_participation_rate_required": True,
+        "fill_capacity_warning_contract_required": True,
+        "warning_contract": ["missing_adv", "participation_exceeds_max"],
+        "config": {
+            "commission_bps": str(cost_model.config.commission_bps),
+            "commission_per_share": str(cost_model.config.commission_per_share),
+            "min_commission": str(cost_model.config.min_commission),
+            "max_participation_rate": str(cost_model.config.max_participation_rate),
+            "impact_bps_at_full_participation": str(
+                cost_model.config.impact_bps_at_full_participation
+            ),
+            "impact_participation_exponent": str(
+                cost_model.config.impact_participation_exponent
+            ),
+        },
+    }
+    cost_lineage_hash = _stable_json_hash(cost_lineage_payload)
     lineage_payload = {
         "source": _REPLAY_LEDGER_SOURCE,
         "strategy_configmap_sha256": config_hash,
@@ -280,10 +330,38 @@ def _build_replay_ledger_context(
             "replay_tape_manifest_sha256": replay_manifest_hash,
         }
     )
+    candidate_identity_seed = {
+        "source": _REPLAY_LEDGER_SOURCE,
+        "strategy_configmap_sha256": config_hash,
+        "start_date": config.start_date.isoformat(),
+        "end_date": config.end_date.isoformat(),
+        "symbols": list(config.symbols),
+        "execution_policy_hash": execution_policy_hash,
+        "cost_model_hash": cost_model_hash,
+        "cost_lineage_hash": cost_lineage_hash,
+        "lineage_hash": _stable_json_hash(lineage_payload),
+        "replay_data_hash": replay_data_hash,
+    }
+    candidate_identity_hash = _stable_json_hash(candidate_identity_seed)
+    candidate_id = f"exact-replay-{candidate_identity_hash[:24]}"
+    candidate_identity = {
+        **candidate_identity_seed,
+        "candidate_id": candidate_id,
+        "candidate_id_source": (
+            "sha256(strategy_config,replay_window,symbols,execution_policy,"
+            "cost_lineage,lineage,replay_data)"
+        ),
+        "candidate_identity_hash": candidate_identity_hash,
+    }
     return ReplayLedgerContext(
         account_label=_REPLAY_LEDGER_ACCOUNT_LABEL,
+        candidate_id=candidate_id,
+        candidate_identity=candidate_identity,
+        candidate_identity_hash=candidate_identity_hash,
         execution_policy_hash=execution_policy_hash,
         cost_model_hash=cost_model_hash,
+        cost_lineage=cost_lineage_payload,
+        cost_lineage_hash=cost_lineage_hash,
         lineage_hash=_stable_json_hash(lineage_payload),
         replay_data_hash=replay_data_hash,
     )
@@ -303,6 +381,8 @@ def _base_ledger_row(
         "event_type": event_type,
         "executed_at": _utc_text(executed_at),
         "account_label": context.account_label,
+        "candidate_id": context.candidate_id,
+        "candidate_identity_hash": context.candidate_identity_hash,
         "strategy_id": strategy_id,
         "symbol": decision.symbol.upper(),
         "side": decision.action,
@@ -311,6 +391,7 @@ def _base_ledger_row(
         "source": _REPLAY_LEDGER_SOURCE,
         "execution_policy_hash": context.execution_policy_hash,
         "cost_model_hash": context.cost_model_hash,
+        "cost_lineage_hash": context.cost_lineage_hash,
         "lineage_hash": context.lineage_hash,
         "replay_data_hash": context.replay_data_hash,
         "order_type": decision.order_type,
@@ -432,6 +513,7 @@ def _append_ledger_fill(
     filled_qty: Decimal,
     avg_fill_price: Decimal,
     cost_amount: Decimal,
+    cost_lineage: ReplayCostLineage | None = None,
 ) -> None:
     if rows is None or context is None:
         return
@@ -467,6 +549,39 @@ def _append_ledger_fill(
             "fill_price_basis": "local_replay_resolved_fill_price",
         }
     )
+    if cost_lineage is not None:
+        row.update(
+            {
+                "adv_source": cost_lineage.adv_source,
+                "adv_notional": _decimal_text_or_none(cost_lineage.adv_notional),
+                "participation_rate": _decimal_text_or_none(
+                    cost_lineage.participation_rate
+                ),
+                "capacity_ok": cost_lineage.capacity_ok,
+                "capacity_warning_codes": list(cost_lineage.warnings),
+                "spread": _decimal_text_or_none(cost_lineage.spread),
+                "volatility": _decimal_text_or_none(cost_lineage.volatility),
+                "spread_cost_bps": _decimal_text(cost_lineage.spread_cost_bps),
+                "volatility_cost_bps": _decimal_text(
+                    cost_lineage.volatility_cost_bps
+                ),
+                "impact_cost_bps": _decimal_text(cost_lineage.impact_cost_bps),
+                "commission_cost": _decimal_text(cost_lineage.commission_cost),
+                "commission_cost_bps": _decimal_text(
+                    cost_lineage.commission_cost_bps
+                ),
+                "total_cost_bps": _decimal_text(cost_lineage.total_cost_bps),
+                "max_participation_rate": _decimal_text(
+                    cost_lineage.max_participation_rate
+                ),
+                "impact_bps_at_full_participation": _decimal_text(
+                    cost_lineage.impact_bps_at_full_participation
+                ),
+                "impact_participation_exponent": _decimal_text(
+                    cost_lineage.impact_participation_exponent
+                ),
+            }
+        )
     rows.append(row)
 
 
@@ -479,16 +594,47 @@ def _exact_replay_ledger_payload(
     event_type_counts: defaultdict[str, int] = defaultdict(int)
     for row in rows:
         event_type_counts[str(row.get("event_type") or "diagnostic")] += 1
+    fill_rows = [row for row in rows if row.get("event_type") == "fill"]
+    capacity_warning_counts: defaultdict[str, int] = defaultdict(int)
+    fills_with_capacity_warning_contract = 0
+    for row in fill_rows:
+        warnings = row.get("capacity_warning_codes")
+        if isinstance(warnings, list):
+            fills_with_capacity_warning_contract += 1
+            for warning in warnings:
+                if isinstance(warning, str) and warning:
+                    capacity_warning_counts[warning] += 1
     return {
         "schema_version": _EXACT_REPLAY_LEDGER_ROWS_SCHEMA_VERSION,
         "source": _REPLAY_LEDGER_SOURCE,
         "account_label": context.account_label,
+        "candidate_id": context.candidate_id,
+        "candidate_identity": context.candidate_identity,
+        "candidate_identity_hash": context.candidate_identity_hash,
         "stage": "replay",
         "promotion_authority": "replay_artifact_only_not_live",
         "window_start": config.start_date.isoformat(),
         "window_end": config.end_date.isoformat(),
         "execution_policy_hash": context.execution_policy_hash,
         "cost_model_hash": context.cost_model_hash,
+        "cost_lineage": {
+            **context.cost_lineage,
+            "cost_lineage_hash": context.cost_lineage_hash,
+            "fill_count": len(fill_rows),
+            "fills_with_adv_notional": sum(
+                1 for row in fill_rows if row.get("adv_notional") not in (None, "")
+            ),
+            "fills_with_participation_rate": sum(
+                1
+                for row in fill_rows
+                if row.get("participation_rate") not in (None, "")
+            ),
+            "fills_with_capacity_warning_contract": (
+                fills_with_capacity_warning_contract
+            ),
+            "capacity_warning_counts": dict(sorted(capacity_warning_counts.items())),
+        },
+        "cost_lineage_hash": context.cost_lineage_hash,
         "lineage_hash": context.lineage_hash,
         "replay_data_hash": context.replay_data_hash,
         "cost_basis": _REPLAY_COST_BASIS,
@@ -1296,10 +1442,27 @@ def _estimate_trade_cost(
     day_bucket: Mapping[str, Any] | None = None,
     symbol_bucket: Mapping[str, Any] | None = None,
 ) -> Decimal:
+    return _estimate_trade_cost_lineage(
+        model=model,
+        decision=decision,
+        signal=signal,
+        day_bucket=day_bucket,
+        symbol_bucket=symbol_bucket,
+    ).total_cost
+
+
+def _estimate_trade_cost_lineage(
+    *,
+    model: TransactionCostModel,
+    decision: StrategyDecision,
+    signal: SignalEnvelope,
+    day_bucket: Mapping[str, Any] | None = None,
+    symbol_bucket: Mapping[str, Any] | None = None,
+) -> ReplayCostLineage:
     price = _extract_price(signal)
     spread = _extract_spread(signal)
     volatility = _extract_volatility(signal)
-    adv = _observed_adv_notional(
+    adv, adv_source = _observed_adv_notional_with_source(
         signal=signal,
         day_bucket=day_bucket,
         symbol_bucket=symbol_bucket,
@@ -1320,7 +1483,26 @@ def _estimate_trade_cost(
             adv=adv,
         ),
     )
-    return estimate.total_cost
+    return ReplayCostLineage(
+        total_cost=estimate.total_cost,
+        notional=estimate.notional,
+        adv_notional=adv,
+        adv_source=adv_source,
+        participation_rate=estimate.participation_rate,
+        spread=spread,
+        volatility=volatility,
+        spread_cost_bps=estimate.spread_cost_bps,
+        volatility_cost_bps=estimate.volatility_cost_bps,
+        impact_cost_bps=estimate.impact_cost_bps,
+        commission_cost=estimate.commission_cost,
+        commission_cost_bps=estimate.commission_cost_bps,
+        total_cost_bps=estimate.total_cost_bps,
+        capacity_ok=estimate.capacity_ok,
+        warnings=tuple(estimate.warnings),
+        max_participation_rate=model.config.max_participation_rate,
+        impact_bps_at_full_participation=model.config.impact_bps_at_full_participation,
+        impact_participation_exponent=model.config.impact_participation_exponent,
+    )
 
 
 def _positive_decimal_mapping_value(
@@ -1347,15 +1529,31 @@ def _observed_adv_notional(
     day_bucket: Mapping[str, Any] | None = None,
     symbol_bucket: Mapping[str, Any] | None = None,
 ) -> Decimal | None:
-    for bucket in (symbol_bucket, day_bucket):
+    return _observed_adv_notional_with_source(
+        signal=signal,
+        day_bucket=day_bucket,
+        symbol_bucket=symbol_bucket,
+    )[0]
+
+
+def _observed_adv_notional_with_source(
+    *,
+    signal: SignalEnvelope,
+    day_bucket: Mapping[str, Any] | None = None,
+    symbol_bucket: Mapping[str, Any] | None = None,
+) -> tuple[Decimal | None, str | None]:
+    for source, bucket in (
+        ("symbol_bucket.daily_adv_notional", symbol_bucket),
+        ("day_bucket.daily_adv_notional", day_bucket),
+    ):
         value = _positive_decimal_mapping_value(bucket, "daily_adv_notional")
         if value is not None:
-            return value
+            return value, source
     for key in ("daily_adv_notional", "adv_notional", "adv", "avg_dollar_volume"):
         value = _positive_decimal_mapping_value(signal.payload, key)
         if value is not None and value > 0:
-            return value
-    return None
+            return value, f"signal_payload.{key}"
+    return None, None
 
 
 def _record_decision(stats: dict[str, Any], decision: StrategyDecision) -> None:
@@ -2392,6 +2590,7 @@ def _apply_filled_decision(
         fill_qty: Decimal,
         fill_notional: Decimal,
         fill_cost: Decimal,
+        cost_lineage: ReplayCostLineage,
     ) -> None:
         day_bucket["cost_total"] += fill_cost
         day_bucket["filled_count"] += 1
@@ -2412,6 +2611,7 @@ def _apply_filled_decision(
             filled_qty=fill_qty,
             avg_fill_price=fill_price,
             cost_amount=fill_cost,
+            cost_lineage=cost_lineage,
         )
 
     owner_strategy_id = _decision_position_owner(
@@ -2420,19 +2620,23 @@ def _apply_filled_decision(
     )
     position_key = _position_key(decision.symbol, owner_strategy_id)
     existing = positions.get(position_key)
-    fill_cost = _estimate_trade_cost(
+    cost_lineage = _estimate_trade_cost_lineage(
         model=cost_model,
         decision=decision,
         signal=signal,
         day_bucket=day_bucket,
         symbol_bucket=symbol_bucket,
     )
+    fill_cost = cost_lineage.total_cost
     if decision.action == "buy":
         if existing is not None and existing.qty < 0:
             cover_qty = min(decision.qty, abs(existing.qty))
             fill_notional = fill_price * cover_qty
             _record_fill(
-                fill_qty=cover_qty, fill_notional=fill_notional, fill_cost=fill_cost
+                fill_qty=cover_qty,
+                fill_notional=fill_notional,
+                fill_cost=fill_cost,
+                cost_lineage=cost_lineage,
             )
             cash -= fill_notional + fill_cost
             entry_cost_allocated = existing.entry_cost_total * (
@@ -2469,7 +2673,10 @@ def _apply_filled_decision(
 
         fill_notional = fill_price * decision.qty
         _record_fill(
-            fill_qty=decision.qty, fill_notional=fill_notional, fill_cost=fill_cost
+            fill_qty=decision.qty,
+            fill_notional=fill_notional,
+            fill_cost=fill_cost,
+            cost_lineage=cost_lineage,
         )
         cash -= fill_notional + fill_cost
         if existing is None:
@@ -2501,7 +2708,10 @@ def _apply_filled_decision(
     if existing is None:
         fill_notional = fill_price * decision.qty
         _record_fill(
-            fill_qty=decision.qty, fill_notional=fill_notional, fill_cost=fill_cost
+            fill_qty=decision.qty,
+            fill_notional=fill_notional,
+            fill_cost=fill_cost,
+            cost_lineage=cost_lineage,
         )
         cash += fill_notional - fill_cost
         positions[position_key] = PositionState(
@@ -2518,7 +2728,10 @@ def _apply_filled_decision(
     if existing.qty < 0:
         fill_notional = fill_price * decision.qty
         _record_fill(
-            fill_qty=decision.qty, fill_notional=fill_notional, fill_cost=fill_cost
+            fill_qty=decision.qty,
+            fill_notional=fill_notional,
+            fill_cost=fill_cost,
+            cost_lineage=cost_lineage,
         )
         cash += fill_notional - fill_cost
         new_abs_qty = abs(existing.qty) + decision.qty
@@ -2538,7 +2751,12 @@ def _apply_filled_decision(
 
     sell_qty = min(decision.qty, existing.qty)
     fill_notional = fill_price * sell_qty
-    _record_fill(fill_qty=sell_qty, fill_notional=fill_notional, fill_cost=fill_cost)
+    _record_fill(
+        fill_qty=sell_qty,
+        fill_notional=fill_notional,
+        fill_cost=fill_cost,
+        cost_lineage=cost_lineage,
+    )
     cash += fill_notional - fill_cost
     entry_cost_allocated = existing.entry_cost_total * (sell_qty / existing.qty)
     remaining, trade = _close_position(
@@ -3513,13 +3731,14 @@ def _flatten_positions(
             time_in_force="day",
             params={},
         )
-        exit_cost = _estimate_trade_cost(
+        exit_cost_lineage = _estimate_trade_cost_lineage(
             model=cost_model,
             decision=synthetic_decision,
             signal=last_signal,
             day_bucket=stats,
             symbol_bucket=symbol_bucket,
         )
+        exit_cost = exit_cost_lineage.total_cost
         exit_notional = fill_price * exit_qty
         if position.qty < 0:
             current_cash -= exit_notional + exit_cost
@@ -3542,6 +3761,7 @@ def _flatten_positions(
             filled_qty=exit_qty,
             avg_fill_price=fill_price,
             cost_amount=exit_cost,
+            cost_lineage=exit_cost_lineage,
         )
         trade = ClosedTrade(
             symbol=symbol,

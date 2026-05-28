@@ -99,23 +99,56 @@ def _frontier_payload() -> dict[str, object]:
     }
 
 
-def _write_replay_ledger(path: Path, *, candidate_id: str) -> Path:
+def _write_replay_ledger(
+    path: Path,
+    *,
+    candidate_id: str,
+    include_lineage: bool = True,
+) -> Path:
+    rows = _round_trip(21)
+    if include_lineage:
+        for row in rows:
+            if row.get("event_type") == "fill":
+                row["adv_source"] = "observed_microbar_notional_by_symbol_day"
+                row["adv_notional"] = "10000000"
+                row["participation_rate"] = "0.001"
+                row["capacity_warning_codes"] = []
+    payload: dict[str, object] = {
+        "schema_version": "torghut.exact_replay_ledger.rows.v1",
+        "candidate_id": candidate_id,
+        "candidate_identity": {
+            "candidate_id": candidate_id,
+            "candidate_identity_hash": f"identity-{candidate_id}",
+            "source_manifest_ref": f"manifests/{candidate_id}.json",
+        },
+        "candidate_identity_hash": f"identity-{candidate_id}",
+        "window_start": "2026-05-18",
+        "window_end": "2026-05-22",
+        "account_label": "TORGHUT_REPLAY",
+        "execution_policy_hash": "policy-sha",
+        "cost_model_hash": "cost-sha",
+        "cost_lineage": {
+            "cost_lineage_hash": f"cost-lineage-{candidate_id}",
+            "adv_source": "observed_microbar_notional_by_symbol_day",
+            "warning_contract": ["missing_adv", "participation_exceeds_max"],
+        },
+        "cost_lineage_hash": f"cost-lineage-{candidate_id}",
+        "lineage_hash": "lineage-sha",
+        "promotion_authority": "replay_artifact_only_not_live",
+        "stage": "replay",
+        "runtime_ledger_rows": rows,
+    }
+    if not include_lineage:
+        for key in (
+            "candidate_id",
+            "candidate_identity",
+            "candidate_identity_hash",
+            "cost_lineage",
+            "cost_lineage_hash",
+        ):
+            payload.pop(key, None)
     path.write_text(
-        json.dumps(
-            {
-                "schema_version": "torghut.exact_replay_ledger.rows.v1",
-                "candidate_id": candidate_id,
-                "window_start": "2026-05-18",
-                "window_end": "2026-05-22",
-                "account_label": "TORGHUT_REPLAY",
-                "execution_policy_hash": "policy-sha",
-                "cost_model_hash": "cost-sha",
-                "lineage_hash": "lineage-sha",
-                "promotion_authority": "replay_artifact_only_not_live",
-                "stage": "replay",
-                "runtime_ledger_rows": _round_trip(21),
-            }
-        ),
+        json.dumps(payload),
         encoding="utf-8",
     )
     return path
@@ -144,6 +177,15 @@ def test_handoff_builds_non_promotional_runtime_window_target(
     assert len(plan["targets"]) == 1
     target = plan["targets"][0]
     assert target["candidate_id"] == "candidate-strong-one-day"
+    assert (
+        target["replay_candidate_identity_hash"]
+        == "identity-candidate-strong-one-day"
+    )
+    assert target["replay_cost_lineage_hash"] == "cost-lineage-candidate-strong-one-day"
+    assert target["replay_fills_with_adv_notional"] == 2
+    assert target["replay_fills_with_participation_rate"] == 2
+    assert target["replay_fills_with_capacity_warning_contract"] == 2
+    assert target["replay_capacity_warning_counts"] == {}
     assert target["hypothesis_id"] == "H-PAIRS-01"
     assert target["strategy_family"] == "microbar_cross_sectional_pairs"
     assert target["strategy_name"] == "microbar-cross-sectional-pairs-v1"
@@ -193,6 +235,43 @@ def test_handoff_blocks_target_when_runtime_metadata_is_missing(
         "strategy_family",
         "strategy_name",
     ]
+
+
+def test_handoff_blocks_probation_when_replay_lineage_is_missing(
+    tmp_path: Path,
+) -> None:
+    artifact_path = _write_replay_ledger(
+        tmp_path / "candidate-missing-lineage.json",
+        candidate_id="candidate-missing-lineage",
+        include_lineage=False,
+    )
+
+    handoff = build_replay_runtime_window_handoff(
+        ledger_paths=[artifact_path],
+        policy=ReplayLedgerRankingPolicy(
+            target_net_pnl_per_day=Decimal("1"),
+            min_window_weekday_count=1,
+            min_avg_filled_notional_per_day=Decimal("1"),
+            max_best_day_share=Decimal("1.0"),
+            max_gross_exposure_pct_equity=Decimal("10.0"),
+            start_equity=Decimal("100000"),
+        ),
+        hypothesis_id="H-PAIRS-01",
+        source_manifest_ref="config/trading/hypotheses/h-pairs-01.json",
+        frontier_payload=_frontier_payload(),
+    )
+
+    plan = handoff["runtime_window_import_plan"]
+    target = plan["targets"][0]
+    assert target["paper_probation_authorized"] is False
+    assert target["probation_allowed"] is False
+    assert "candidate_id_missing" in target["final_promotion_blockers"]
+    assert "exact_replay_cost_lineage_missing" in target["final_promotion_blockers"]
+    assert any(
+        item["blocker"] == "exact_replay_search_blockers_remaining"
+        and "fill_adv_notional_missing" in item["blocking_reasons"]
+        for item in plan["blockers"]
+    )
 
 
 def test_handoff_blocks_target_when_no_ledger_candidate_exists() -> None:
