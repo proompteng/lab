@@ -29,6 +29,7 @@ from ..paper_route_target_plan import (
 )
 from ..prices import MarketSnapshot
 from ..proof_floor import build_profitability_proof_floor_receipt
+from ..runtime_decision_authority import ROUTE_ACQUISITION_SOURCE_DECISION_MODE
 from ..session_context import REGULAR_OPEN_UTC
 from ..simple_risk import (
     position_qty_for_symbol,
@@ -1947,6 +1948,8 @@ class SimpleTradingPipeline(TradingPipeline):
             "paper_route_probe_next_session_max_notional": str(max_notional),
             "paper_route_target_plan_source": "external_target_plan_url",
             "paper_route_probe_scope_authority": "external_target_plan",
+            "source_decision_mode": ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
+            "profit_proof_eligible": False,
             "source_kind": _safe_text(target.get("source_kind")),
             "source_manifest_ref": _safe_text(target.get("source_manifest_ref")),
             "paper_probation_authorized": bool(
@@ -2070,6 +2073,8 @@ class SimpleTradingPipeline(TradingPipeline):
                     "paper_route_target_plan": metadata,
                     "paper_route_target_plan_source_decision": metadata,
                     "simple_lane": simple_lane,
+                    "source_decision_mode": ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
+                    "profit_proof_eligible": False,
                     "promotion_allowed": False,
                     "final_promotion_authorized": False,
                     "final_promotion_allowed": False,
@@ -2250,6 +2255,8 @@ class SimpleTradingPipeline(TradingPipeline):
         return {
             "enabled": True,
             "mode": "paper_route_acquisition",
+            "source_decision_mode": ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
+            "profit_proof_eligible": False,
             "max_notional": str(cap),
             "symbol": symbol,
             "side": decision.action,

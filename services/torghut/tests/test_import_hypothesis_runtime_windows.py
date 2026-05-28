@@ -22,6 +22,7 @@ from scripts.import_hypothesis_runtime_windows import (
     POST_COST_BASIS_SIMULATION_REPORT,
     POST_COST_BASIS_TCA_PROXY,
     _build_realized_strategy_pnl_rows,
+    _first_bool,
     _first_lineage_digest,
     _load_json_artifact,
     _load_report_post_cost_expectancy_bps,
@@ -48,6 +49,9 @@ from scripts.import_hypothesis_runtime_windows import (
     _source_activity_diagnostics_blockers,
     _source_row_matches_lineage,
     _source_activity_missing_summary,
+    _source_decision_mode,
+    _source_decision_mode_counts,
+    _source_decision_rows_profit_proof_eligible,
     _stable_payload_digest,
     _strategy_name_candidates,
     main,
@@ -509,6 +513,91 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                         _complete_runtime_ledger_bucket(**overrides)
                     )
                 )
+
+    def test_runtime_ledger_profit_proof_rejects_route_acquisition_source_mode(
+        self,
+    ) -> None:
+        self.assertFalse(
+            _runtime_ledger_bucket_profit_proof_present(
+                _complete_runtime_ledger_bucket(
+                    source_decision_mode_counts={"route_acquisition_probe": 2}
+                )
+            )
+        )
+        self.assertFalse(
+            _runtime_ledger_bucket_profit_proof_present(
+                _complete_runtime_ledger_bucket(
+                    source_decision_mode="route_acquisition_probe"
+                )
+            )
+        )
+        self.assertFalse(
+            _runtime_ledger_bucket_profit_proof_present(
+                _complete_runtime_ledger_bucket(profit_proof_eligible=False)
+            )
+        )
+        self.assertTrue(
+            _runtime_ledger_bucket_profit_proof_present(
+                _complete_runtime_ledger_bucket(
+                    source_decision_mode_counts={"strategy_signal_paper": 2}
+                )
+            )
+        )
+
+    def test_source_decision_helpers_normalize_counts_and_profit_proof_flags(
+        self,
+    ) -> None:
+        self.assertTrue(
+            _first_bool(
+                {"profit_proof_eligible": Decimal("1")}, "profit_proof_eligible"
+            )
+        )
+        self.assertTrue(
+            _first_bool({"profit_proof_eligible": "yes"}, "profit_proof_eligible")
+        )
+        self.assertFalse(
+            _first_bool({"profit_proof_eligible": "blocked"}, "profit_proof_eligible")
+        )
+        self.assertEqual(
+            _source_decision_mode(
+                {"source_decision_mode": "paper-route-target-plan-source-decision"}
+            ),
+            "route_acquisition_probe",
+        )
+        self.assertEqual(
+            _source_decision_mode({"mode": "strategy_signal_paper"}),
+            "strategy_signal_paper",
+        )
+        self.assertEqual(
+            _source_decision_mode_counts(
+                [
+                    {"source_decision_mode": "route_acquisition_probe"},
+                    {"mode": "strategy_signal_paper"},
+                    {"source_decision_mode": ""},
+                ]
+            ),
+            {"route_acquisition_probe": 1, "strategy_signal_paper": 1},
+        )
+        self.assertFalse(
+            _source_decision_rows_profit_proof_eligible(
+                [{"source_decision_mode": "route_acquisition_probe"}]
+            )
+        )
+        self.assertFalse(
+            _source_decision_rows_profit_proof_eligible(
+                [{"profit_proof_eligible": "failed"}]
+            )
+        )
+        self.assertTrue(
+            _source_decision_rows_profit_proof_eligible(
+                [
+                    {
+                        "source_decision_mode": "strategy_signal_paper",
+                        "profit_proof_eligible": True,
+                    }
+                ]
+            )
+        )
 
     def test_runtime_ledger_tca_rows_from_durable_buckets_queries_matching_proof(
         self,
@@ -2121,19 +2210,87 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         bucket = rows[0]["runtime_ledger_bucket"]
         self.assertIsInstance(bucket, dict)
         assert isinstance(bucket, dict)
+        self.assertIn(
+            "runtime_ledger_cost_basis_non_promotion_grade", bucket["blockers"]
+        )
+        self.assertIn("runtime_fills_missing", bucket["blockers"])
         self.assertIn("runtime_decision_lifecycle_missing", bucket["blockers"])
         self.assertIn("submitted_order_lifecycle_missing", bucket["blockers"])
-        self.assertIn("fill_order_submission_missing", bucket["blockers"])
         self.assertIn(
             "execution_reconstruction_not_runtime_ledger_proof",
             bucket["blockers"],
         )
         self.assertEqual(
             bucket["cost_basis_counts"],
-            {"decision_impact_assumptions_total_cost_bps": 2},
+            {},
         )
-        self.assertEqual(bucket["cost_amount"], "0.201")
-        self.assertEqual(rows[0]["realized_net_pnl"], Decimal("0.799"))
+        self.assertEqual(bucket["cost_amount"], "0")
+        self.assertEqual(rows[0]["realized_net_pnl"], Decimal("0"))
+
+    def test_build_realized_strategy_pnl_rows_marks_route_acquisition_not_profit_proof(
+        self,
+    ) -> None:
+        rows = _build_realized_strategy_pnl_rows(
+            [
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                    "symbol": "AAPL",
+                    "side": "buy",
+                    "filled_qty": Decimal("1"),
+                    "avg_fill_price": Decimal("100"),
+                    "cost_amount": Decimal("0.20"),
+                    "cost_basis": "broker_reported_commission_and_fees",
+                    "decision_hash": "decision-buy",
+                    "alpaca_order_id": "order-buy",
+                    "execution_policy_hash": "policy-sha",
+                    "cost_model_hash": "cost-sha",
+                    "lineage_hash": "lineage-sha",
+                    "source_decision_mode": "route_acquisition_probe",
+                },
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
+                    "symbol": "AAPL",
+                    "side": "sell",
+                    "filled_qty": Decimal("1"),
+                    "avg_fill_price": Decimal("101"),
+                    "cost_amount": Decimal("0.10"),
+                    "cost_basis": "broker_reported_commission_and_fees",
+                    "decision_hash": "decision-sell",
+                    "alpaca_order_id": "order-sell",
+                    "execution_policy_hash": "policy-sha",
+                    "cost_model_hash": "cost-sha",
+                    "lineage_hash": "lineage-sha",
+                    "source_decision_mode": "route_acquisition_probe",
+                },
+            ],
+            allow_authoritative_runtime_ledger_materialization=True,
+        )
+
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(
+            row["source_decision_mode_counts"], {"route_acquisition_probe": 2}
+        )
+        self.assertFalse(row["profit_proof_eligible"])
+        self.assertFalse(row["post_cost_promotion_eligible"])
+        self.assertIn(
+            "source_decision_mode_not_profit_proof_eligible",
+            row["runtime_ledger_blockers"],
+        )
+        self.assertEqual(
+            row["promotion_blocker"],
+            "execution_reconstruction_not_runtime_ledger_proof",
+        )
+        bucket = row["runtime_ledger_bucket"]
+        self.assertIsInstance(bucket, dict)
+        assert isinstance(bucket, dict)
+        self.assertEqual(
+            bucket["source_decision_mode_counts"], {"route_acquisition_probe": 2}
+        )
+        self.assertFalse(bucket["profit_proof_eligible"])
+        self.assertIn(
+            "source_decision_mode_not_profit_proof_eligible", bucket["blockers"]
+        )
         self.assertFalse(_runtime_ledger_bucket_profit_proof_present(bucket))
 
     def test_runtime_ledger_tca_row_separates_explicit_cost_from_slippage(

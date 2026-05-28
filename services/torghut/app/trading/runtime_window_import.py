@@ -27,6 +27,16 @@ from .hypotheses import (
     load_hypothesis_registry,
 )
 from .runtime_ledger import EXACT_REPLAY_LEDGER_SCHEMA_VERSION, POST_COST_PNL_BASIS
+from .runtime_cost_authority import (
+    cost_basis_counts_have_non_promotion_grade_costs,
+    is_non_promotion_grade_runtime_cost_basis,
+)
+from .runtime_decision_authority import (
+    SOURCE_DECISION_MODE_NOT_PROFIT_PROOF_ELIGIBLE_BLOCKER,
+    normalize_source_decision_mode,
+    source_decision_mode_counts_have_non_profit_proof_modes,
+    source_decision_mode_is_profit_proof_eligible,
+)
 
 US_EQUITIES_REGULAR_TIMEZONE = "America/New_York"
 US_EQUITIES_REGULAR_OPEN = time(hour=9, minute=30)
@@ -34,13 +44,6 @@ US_EQUITIES_REGULAR_CLOSE = time(hour=16, minute=0)
 PROMOTION_GRADE_POST_COST_BASES = frozenset(
     {
         "realized_strategy_pnl_after_explicit_costs",
-    }
-)
-NON_PROMOTION_GRADE_RUNTIME_COST_BASES = frozenset(
-    {
-        "modeled_paper_cost_budget",
-        "paper_cost_model_estimate",
-        "decision_impact_assumptions_total_cost_bps",
     }
 )
 _RUNTIME_LEDGER_PROOF_SATISFIED_METADATA_BLOCKERS = frozenset(
@@ -115,6 +118,7 @@ class _NormalizedTcaRow:
     post_cost_expectancy_basis: str
     post_cost_promotion_eligible: bool
     runtime_ledger_bucket: dict[str, Any]
+    source_decision_mode: str | None = None
 
 
 def _utc(dt: datetime) -> datetime:
@@ -257,16 +261,6 @@ def _hash_count(value: Any) -> int:
     return sum(1 for key in mapping.keys() if str(key).strip())
 
 
-def _cost_basis_counts_have_non_promotion_grade_costs(value: Any) -> bool:
-    if not isinstance(value, Mapping):
-        return False
-    return any(
-        str(key).strip() in NON_PROMOTION_GRADE_RUNTIME_COST_BASES
-        and _observation_int(count) > 0
-        for key, count in cast(Mapping[object, object], value).items()
-    )
-
-
 def _persisted_runtime_ledger_bucket_evidence_grade(
     row: StrategyRuntimeLedgerBucket,
 ) -> bool:
@@ -282,7 +276,7 @@ def _persisted_runtime_ledger_bucket_evidence_grade(
         and _hash_count(row.execution_policy_hash_counts) > 0
         and _hash_count(row.cost_model_hash_counts) > 0
         and _hash_count(row.lineage_hash_counts) > 0
-        and not _cost_basis_counts_have_non_promotion_grade_costs(
+        and not cost_basis_counts_have_non_promotion_grade_costs(
             _mapping(row.payload_json).get("cost_basis_counts")
         )
         and not blockers
@@ -321,14 +315,26 @@ def _runtime_ledger_bucket_blockers(bucket: Mapping[str, Any]) -> list[str]:
         blockers.append("filled_notional_missing")
     if cost_amount is None or cost_amount < 0:
         blockers.append("explicit_cost_missing")
-    non_promotion_grade_cost_basis = (
-        str(bucket.get("cost_basis") or "").strip()
-        in NON_PROMOTION_GRADE_RUNTIME_COST_BASES
-    ) or _cost_basis_counts_have_non_promotion_grade_costs(
+    non_promotion_grade_cost_basis = is_non_promotion_grade_runtime_cost_basis(
+        bucket.get("cost_basis")
+    ) or cost_basis_counts_have_non_promotion_grade_costs(
         bucket.get("cost_basis_counts")
     )
     if non_promotion_grade_cost_basis:
         blockers.append("runtime_ledger_cost_basis_non_promotion_grade")
+    source_decision_mode = normalize_source_decision_mode(
+        bucket.get("source_decision_mode")
+    )
+    if source_decision_mode and not source_decision_mode_is_profit_proof_eligible(
+        source_decision_mode
+    ):
+        blockers.append(SOURCE_DECISION_MODE_NOT_PROFIT_PROOF_ELIGIBLE_BLOCKER)
+    if source_decision_mode_counts_have_non_profit_proof_modes(
+        bucket.get("source_decision_mode_counts")
+    ):
+        blockers.append(SOURCE_DECISION_MODE_NOT_PROFIT_PROOF_ELIGIBLE_BLOCKER)
+    if _observation_bool(bucket.get("profit_proof_eligible")) is False:
+        blockers.append(SOURCE_DECISION_MODE_NOT_PROFIT_PROOF_ELIGIBLE_BLOCKER)
     if post_cost_expectancy is None:
         blockers.append("runtime_ledger_expectancy_missing")
     if _hash_count(bucket.get("execution_policy_hash_counts")) <= 0:
@@ -351,6 +357,10 @@ def _runtime_ledger_row_is_promotion_grade(row: _NormalizedTcaRow) -> bool:
     return (
         row.post_cost_expectancy_bps is not None
         and row.post_cost_promotion_eligible
+        and (
+            row.source_decision_mode is None
+            or source_decision_mode_is_profit_proof_eligible(row.source_decision_mode)
+        )
         and row.post_cost_expectancy_basis == POST_COST_PNL_BASIS
         and bool(row.runtime_ledger_bucket)
         and not _runtime_ledger_bucket_blockers(row.runtime_ledger_bucket)
@@ -1000,6 +1010,17 @@ def build_observed_runtime_buckets(
         basis = _post_cost_expectancy_basis(
             row.get("post_cost_expectancy_basis") or row.get("post_cost_basis")
         )
+        runtime_ledger_bucket = _runtime_ledger_bucket_payload(
+            row.get("runtime_ledger_bucket")
+        )
+        source_decision_mode = normalize_source_decision_mode(
+            row.get("source_decision_mode")
+            or runtime_ledger_bucket.get("source_decision_mode")
+        )
+        source_decision_mode_eligible = (
+            source_decision_mode is None
+            or source_decision_mode_is_profit_proof_eligible(source_decision_mode)
+        )
         normalized_tca_rows.append(
             _NormalizedTcaRow(
                 computed_at=_utc(computed_at_raw),
@@ -1011,10 +1032,10 @@ def build_observed_runtime_buckets(
                 post_cost_promotion_eligible=_post_cost_basis_is_promotion_grade(
                     basis=basis,
                     explicit_value=row.get("post_cost_promotion_eligible"),
-                ),
-                runtime_ledger_bucket=_runtime_ledger_bucket_payload(
-                    row.get("runtime_ledger_bucket")
-                ),
+                )
+                and source_decision_mode_eligible,
+                runtime_ledger_bucket=runtime_ledger_bucket,
+                source_decision_mode=source_decision_mode,
             )
         )
 

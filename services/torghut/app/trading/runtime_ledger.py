@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 
+from .runtime_cost_authority import is_non_promotion_grade_runtime_cost_basis
+
 POST_COST_PNL_BASIS = "realized_strategy_pnl_after_explicit_costs"
 EXACT_REPLAY_LEDGER_SCHEMA_VERSION = "torghut.exact_replay_ledger.v1"
 
@@ -19,9 +21,13 @@ _SUBMITTED_ORDER_EVENTS = frozenset(
     {"order_submitted", "submitted_order", "submitted", "accepted", "new"}
 )
 _FILL_EVENTS = frozenset({"fill", "filled", "partial_fill", "partially_filled"})
-_CANCELLED_ORDER_EVENTS = frozenset({"order_cancelled", "order_canceled", "cancelled", "canceled"})
+_CANCELLED_ORDER_EVENTS = frozenset(
+    {"order_cancelled", "order_canceled", "cancelled", "canceled"}
+)
 _REJECTED_ORDER_EVENTS = frozenset({"order_rejected", "rejected"})
-_UNFILLED_ORDER_EVENTS = frozenset({"order_unfilled", "unfilled", "expired", "order_expired"})
+_UNFILLED_ORDER_EVENTS = frozenset(
+    {"order_unfilled", "unfilled", "expired", "order_expired"}
+)
 _LIFECYCLE_EVENTS = (
     _DECISION_EVENTS
     | _SUBMITTED_ORDER_EVENTS
@@ -281,6 +287,8 @@ def _build_bucket(
         assert fill.cost_basis is not None
 
         cost_basis_counter[fill.cost_basis] += 1
+        if is_non_promotion_grade_runtime_cost_basis(fill.cost_basis):
+            blockers.append("runtime_ledger_cost_basis_non_promotion_grade")
         position_key = (fill.account_label, fill.strategy_id, fill.symbol)
         state = positions.setdefault(position_key, _PositionState())
         _apply_fill_to_position(state=state, fill=fill, accumulator=accumulator)
@@ -336,7 +344,9 @@ def _build_bucket(
         net_strategy_pnl_after_costs=accumulator.net_strategy_pnl_after_costs,
         post_cost_expectancy_bps=post_cost_expectancy_bps,
         cost_basis_counts=dict(sorted(cost_basis_counter.items())),
-        execution_policy_hash_counts=dict(sorted(execution_policy_hash_counter.items())),
+        execution_policy_hash_counts=dict(
+            sorted(execution_policy_hash_counter.items())
+        ),
         cost_model_hash_counts=dict(sorted(cost_model_hash_counter.items())),
         lineage_hash_counts=dict(sorted(lineage_hash_counter.items())),
         blockers=unique_blockers,
@@ -378,9 +388,7 @@ def _order_lifecycle_blockers(
     if submitted_without_decision:
         blockers.append("order_decision_linkage_missing")
 
-    fill_order_ids = {
-        row.order_id for row in usable_fills if row.order_id is not None
-    }
+    fill_order_ids = {row.order_id for row in usable_fills if row.order_id is not None}
     if usable_fills and len(fill_order_ids) < len(usable_fills):
         blockers.append("fill_order_linkage_missing")
     if fill_order_ids - submitted_order_ids:
@@ -396,7 +404,10 @@ def _order_lifecycle_blockers(
         blockers.append("execution_policy_hash_missing")
     if any(row.cost_model_hash is None for row in lifecycle_rows):
         blockers.append("cost_model_hash_missing")
-    if any(row.lineage_hash is None and row.replay_data_hash is None for row in lifecycle_rows):
+    if any(
+        row.lineage_hash is None and row.replay_data_hash is None
+        for row in lifecycle_rows
+    ):
         blockers.append("proof_lineage_hash_missing")
     if len(execution_policy_hash_counter) > 1:
         blockers.append("execution_policy_hash_ambiguous")
@@ -603,6 +614,8 @@ def _normalize_fill_row(
             blockers.append("explicit_cost_missing")
         if cost_basis is None:
             blockers.append("cost_basis_missing")
+        elif is_non_promotion_grade_runtime_cost_basis(cost_basis):
+            blockers.append("runtime_ledger_cost_basis_non_promotion_grade")
 
     return _NormalizedFill(
         row_index=row_index,
@@ -661,7 +674,10 @@ def _coerce_event_type(row: RuntimeLedgerFill | Mapping[str, object]) -> str:
         if candidate in _LIFECYCLE_EVENTS:
             return candidate
 
-    if _row_value(row, "filled_qty", "qty", "quantity", "avg_fill_price", "fill_price") is not None:
+    if (
+        _row_value(row, "filled_qty", "qty", "quantity", "avg_fill_price", "fill_price")
+        is not None
+    ):
         return "fill"
     if _row_value(row, "alpaca_order_id", "client_order_id", "order_id") is not None:
         return "order_submitted"

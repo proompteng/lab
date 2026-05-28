@@ -4718,14 +4718,24 @@ class TestTradingPipeline(TestCase):
             )
             self.assertEqual(source_decision["candidate_id"], "cand-paper-route")
             self.assertEqual(source_decision["hypothesis_id"], "H-PAPER-ROUTE")
+            self.assertEqual(
+                source_decision["source_decision_mode"], "route_acquisition_probe"
+            )
+            self.assertFalse(source_decision["profit_proof_eligible"])
             self.assertEqual(source_decision["exit_minute_after_open"], 120)
             self.assertEqual(params["exit_minute_after_open"], 120)
             self.assertEqual(params["source_candidate_ids"], ["cand-paper-route"])
             self.assertEqual(params["source_hypothesis_ids"], ["H-PAPER-ROUTE"])
+            self.assertEqual(params["source_decision_mode"], "route_acquisition_probe")
+            self.assertFalse(params["profit_proof_eligible"])
             self.assertFalse(params["promotion_allowed"])
             self.assertFalse(params["final_promotion_authorized"])
             self.assertEqual(paper_route_probe["max_notional"], "25")
             self.assertTrue(paper_route_probe["target_source_authorized"])
+            self.assertEqual(
+                paper_route_probe["source_decision_mode"], "route_acquisition_probe"
+            )
+            self.assertFalse(paper_route_probe["profit_proof_eligible"])
             self.assertEqual(paper_route_probe["exit_minute_after_open"], 120)
             self.assertEqual(
                 paper_route_probe["exit_due_at"],
@@ -4876,9 +4886,19 @@ class TestTradingPipeline(TestCase):
 
             self.assertEqual(decision.status, "submitted")
             self.assertEqual(source_decision["candidate_id"], "cand-paper-route")
+            self.assertEqual(
+                source_decision["source_decision_mode"], "route_acquisition_probe"
+            )
+            self.assertFalse(source_decision["profit_proof_eligible"])
             self.assertEqual(source_decision["exit_minute_after_open"], 120)
             self.assertEqual(params["source_hypothesis_ids"], ["H-PAPER-ROUTE"])
+            self.assertEqual(params["source_decision_mode"], "route_acquisition_probe")
+            self.assertFalse(params["profit_proof_eligible"])
             self.assertTrue(paper_route_probe["target_source_authorized"])
+            self.assertEqual(
+                paper_route_probe["source_decision_mode"], "route_acquisition_probe"
+            )
+            self.assertFalse(paper_route_probe["profit_proof_eligible"])
             self.assertEqual(paper_route_probe["exit_minute_after_open"], 120)
 
     def test_simple_pipeline_target_plan_source_decision_requires_open_window(
