@@ -38,6 +38,13 @@ _RUNTIME_COST_BASIS_FIELDS = (
     "commission_basis",
     "broker_fee_basis",
 )
+_RUNTIME_COST_MODEL_PAYLOAD_FIELDS = (
+    "cost_model",
+    "cost_model_config",
+    "transaction_cost_model",
+    "fee_model",
+    "market_impact_cost_model",
+)
 _BROKER_COST_BASIS_BY_FIELD = {
     "commission": "broker_reported_commission",
     "fees": "broker_reported_fees",
@@ -328,6 +335,19 @@ def _attach_runtime_ledger_cost_payload(
 ) -> None:
     cost_payload = _runtime_ledger_cost_payload_from_order(order_response)
     if cost_payload is None:
+        cost_payload = _runtime_ledger_cost_payload_from_existing_metadata(
+            audit_payload,
+            raw_order_payload,
+        )
+    if cost_payload is None and _modeled_paper_cost_allowed(
+        order_response=order_response,
+        audit_payload=audit_payload,
+    ):
+        cost_payload = _runtime_ledger_cost_payload_from_cost_model(
+            order_response=order_response,
+            audit_payload=audit_payload,
+        )
+    if cost_payload is None:
         return
 
     audit_payload.setdefault("runtime_ledger_cost", cost_payload)
@@ -338,7 +358,7 @@ def _attach_runtime_ledger_cost_payload(
     raw_order_payload.setdefault("cost_basis", cost_payload["cost_basis"])
 
     fee_model = {
-        "source": "broker_order_response",
+        "source": cost_payload.get("source", "broker_order_response"),
         "source_field": cost_payload["source_field"],
         "cost_basis": cost_payload["cost_basis"],
     }
@@ -349,9 +369,90 @@ def _attach_runtime_ledger_cost_payload(
 def _runtime_ledger_cost_payload_from_order(
     order_response: Mapping[str, Any],
 ) -> dict[str, str] | None:
-    basis = _first_text(order_response, *_RUNTIME_COST_BASIS_FIELDS)
+    return _runtime_cost_payload_from_mapping(
+        order_response,
+        source="broker_order_response",
+        source_field_prefix="",
+    )
+
+
+def _runtime_ledger_cost_payload_from_existing_metadata(
+    *payloads: Mapping[str, Any],
+) -> dict[str, str] | None:
+    for payload in _iter_nested_mappings(*payloads):
+        for key in ("runtime_ledger_cost", "execution_cost", "explicit_execution_cost"):
+            nested = payload.get(key)
+            if not isinstance(nested, Mapping):
+                continue
+            nested_payload = {
+                str(item_key): item
+                for item_key, item in cast(Mapping[object, Any], nested).items()
+            }
+            cost_payload = _runtime_cost_payload_from_mapping(
+                nested_payload,
+                source="execution_audit_cost_payload",
+                source_field_prefix=f"{key}.",
+            )
+            if cost_payload is not None:
+                return cost_payload
+    return None
+
+
+def _runtime_ledger_cost_payload_from_cost_model(
+    *,
+    order_response: Mapping[str, Any],
+    audit_payload: Mapping[str, Any],
+) -> dict[str, str] | None:
+    for model_key, payload in _iter_cost_model_payloads(audit_payload, order_response):
+        estimate = payload.get("estimate")
+        if not isinstance(estimate, Mapping):
+            continue
+        estimate_payload = {
+            str(key): value
+            for key, value in cast(Mapping[object, Any], estimate).items()
+        }
+        total_cost = _optional_decimal(
+            estimate_payload.get("total_cost")
+            or estimate_payload.get("estimated_total_cost")
+            or estimate_payload.get("modeled_total_cost")
+        )
+        source_field = f"{model_key}.estimate.total_cost"
+        if total_cost is None:
+            total_cost_bps = _optional_decimal(
+                estimate_payload.get("total_cost_bps")
+                or estimate_payload.get("estimated_total_cost_bps")
+            )
+            notional = _optional_decimal(
+                estimate_payload.get("notional") or payload.get("notional")
+            )
+            if (
+                total_cost_bps is not None
+                and total_cost_bps >= 0
+                and notional is not None
+                and notional > 0
+            ):
+                total_cost = notional * total_cost_bps / Decimal("10000")
+                source_field = f"{model_key}.estimate.total_cost_bps"
+        if total_cost is None or total_cost < 0:
+            continue
+        return {
+            "cost_amount": str(total_cost),
+            "cost_basis": "modeled_paper_cost_budget",
+            "source_field": source_field,
+            "source": "paper_cost_model_estimate",
+        }
+    return None
+
+
+def _runtime_cost_payload_from_mapping(
+    payload: Mapping[str, Any],
+    *,
+    source: str,
+    source_field_prefix: str,
+) -> dict[str, str] | None:
+    basis = _first_text(payload, *_RUNTIME_COST_BASIS_FIELDS)
     for amount_key in _RUNTIME_COST_AMOUNT_FIELDS:
-        amount = _optional_decimal(order_response.get(amount_key))
+        amount = _optional_decimal(payload.get(amount_key))
         if amount is None or amount < 0:
             continue
         resolved_basis = basis or _BROKER_COST_BASIS_BY_FIELD.get(amount_key)
@@ -360,9 +461,86 @@ def _runtime_ledger_cost_payload_from_order(
         return {
             "cost_amount": str(amount),
             "cost_basis": resolved_basis,
-            "source_field": amount_key,
+            "source_field": f"{source_field_prefix}{amount_key}",
+            "source": source,
         }
     return None
+
+
+def _modeled_paper_cost_allowed(
+    *,
+    order_response: Mapping[str, Any],
+    audit_payload: Mapping[str, Any],
+) -> bool:
+    markers: list[str] = []
+    for payload in _iter_nested_mappings(order_response, audit_payload, max_depth=2):
+        for key in (
+            "alpaca_account_label",
+            "account_label",
+            "execution_lane",
+            "submit_path",
+            "adapter",
+            "execution_adapter",
+            "_execution_adapter",
+            "_execution_route_actual",
+        ):
+            text = _coerce_text(payload.get(key))
+            if text is not None:
+                markers.append(text.lower())
+
+    if any("live" in marker and "paper" not in marker for marker in markers):
+        return False
+    if any(
+        token in marker
+        for marker in markers
+        for token in ("paper", "sim", "simulation", "route_probe", "dry_run", "shadow")
+    ):
+        return True
+    return False
+
+
+def _iter_cost_model_payloads(
+    *values: object,
+) -> list[tuple[str, dict[str, Any]]]:
+    payloads: list[tuple[str, dict[str, Any]]] = []
+    for payload in _iter_nested_mappings(*values, max_depth=3):
+        for key in _RUNTIME_COST_MODEL_PAYLOAD_FIELDS:
+            nested = payload.get(key)
+            if not isinstance(nested, Mapping):
+                continue
+            payloads.append(
+                (
+                    key,
+                    {
+                        str(item_key): item
+                        for item_key, item in cast(Mapping[object, Any], nested).items()
+                    },
+                )
+            )
+    return payloads
+
+
+def _iter_nested_mappings(
+    *values: object,
+    max_depth: int = 4,
+) -> list[dict[str, Any]]:
+    mappings: list[dict[str, Any]] = []
+
+    def append(value: object, *, depth: int) -> None:
+        if not isinstance(value, Mapping):
+            return
+        payload = {
+            str(key): item for key, item in cast(Mapping[object, Any], value).items()
+        }
+        mappings.append(payload)
+        if depth <= 0:
+            return
+        for child in payload.values():
+            append(child, depth=depth - 1)
+
+    for value in values:
+        append(value, depth=max_depth)
+    return mappings
 
 
 def _preserve_existing_execution_audit(
