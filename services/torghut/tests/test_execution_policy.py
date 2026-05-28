@@ -126,6 +126,42 @@ class TestExecutionPolicy(TestCase):
         self.assertFalse(outcome.approved)
         self.assertIn("max_notional_exceeded", outcome.reasons)
 
+    def test_max_notional_does_not_block_position_reducing_sell(self) -> None:
+        policy = ExecutionPolicy(config=_config(max_notional=Decimal("100")))
+        outcome = policy.evaluate(
+            _decision(action="sell", qty=Decimal("184"), price=Decimal("272.3")),
+            strategy=None,
+            positions=[{"symbol": "AAPL", "qty": "184", "side": "long"}],
+            market_snapshot=None,
+        )
+
+        self.assertTrue(outcome.approved)
+        self.assertNotIn("max_notional_exceeded", outcome.reasons)
+
+    def test_max_notional_does_not_block_short_cover(self) -> None:
+        policy = ExecutionPolicy(config=_config(max_notional=Decimal("100")))
+        outcome = policy.evaluate(
+            _decision(action="buy", qty=Decimal("184"), price=Decimal("272.3")),
+            strategy=None,
+            positions=[{"symbol": "AAPL", "qty": "184", "side": "short"}],
+            market_snapshot=None,
+        )
+
+        self.assertTrue(outcome.approved)
+        self.assertNotIn("max_notional_exceeded", outcome.reasons)
+
+    def test_max_notional_still_blocks_position_increasing_sell(self) -> None:
+        policy = ExecutionPolicy(config=_config(max_notional=Decimal("100")))
+        outcome = policy.evaluate(
+            _decision(action="sell", qty=Decimal("185"), price=Decimal("272.3")),
+            strategy=None,
+            positions=[{"symbol": "AAPL", "qty": "184", "side": "long"}],
+            market_snapshot=None,
+        )
+
+        self.assertFalse(outcome.approved)
+        self.assertIn("max_notional_exceeded", outcome.reasons)
+
     def test_price_snapshot_drives_notional_when_signal_price_is_stale(self) -> None:
         policy = ExecutionPolicy(config=_config(max_notional=Decimal("1000")))
         decision = _decision(qty=Decimal("3"), price=Decimal("412.6704331378219"))

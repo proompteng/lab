@@ -1155,8 +1155,97 @@ class SimpleTradingPipeline(TradingPipeline):
             if str(metadata.get("exit_due_at") or "") != exit_due_at_text:
                 continue
             if row.status in {"planned", "submitted", "filled", "rejected"}:
+                if row.status == "rejected" and not self.executor.execution_exists(
+                    session, row
+                ):
+                    continue
                 return True
         return False
+
+    def _reopen_rejected_paper_route_probe_exit_decision(
+        self,
+        *,
+        session: Session,
+        decision: StrategyDecision,
+        decision_row: TradeDecision,
+    ) -> TradeDecision | None:
+        if decision_row.status != "rejected":
+            return None
+        exit_metadata = self._paper_route_probe_exit_metadata(decision)
+        if exit_metadata is None:
+            return None
+        if self.executor.execution_exists(session, decision_row):
+            return None
+        retry_limit = max(
+            _safe_int(settings.trading_simple_paper_route_probe_retry_attempt_limit),
+            0,
+        )
+        raw_decision_json: object = decision_row.decision_json
+        decision_json: dict[str, Any] = (
+            dict(cast(Mapping[str, Any], raw_decision_json))
+            if isinstance(raw_decision_json, Mapping)
+            else {}
+        )
+        retry_attempts = _safe_int(
+            decision_json.get("paper_route_probe_exit_retry_attempts")
+        )
+        if retry_limit > 0 and retry_attempts >= retry_limit:
+            return None
+        previous_stage = str(decision_json.get("submission_stage") or "rejected")
+        raw_previous_risk_reasons = decision_json.get("risk_reasons")
+        previous_risk_reason_items: Sequence[object] = []
+        if isinstance(raw_previous_risk_reasons, Sequence) and not isinstance(
+            raw_previous_risk_reasons,
+            (str, bytes, bytearray),
+        ):
+            previous_risk_reason_items = cast(
+                Sequence[object], raw_previous_risk_reasons
+            )
+        previous_risk_reasons = [
+            str(item)
+            for item in previous_risk_reason_items
+            if str(item).strip()
+        ]
+        self.executor.sync_decision_state(session, decision_row, decision)
+        raw_decision_json = decision_row.decision_json
+        decision_json = (
+            dict(cast(Mapping[str, Any], raw_decision_json))
+            if isinstance(raw_decision_json, Mapping)
+            else {}
+        )
+        decision_json["submission_stage"] = "paper_route_probe_exit_retry_pending"
+        decision_json["paper_route_probe_exit_retry_attempts"] = retry_attempts + 1
+        decision_json["paper_route_probe_exit_retry"] = {
+            "previous_decision_status": "rejected",
+            "previous_submission_stage": previous_stage,
+            "previous_risk_reasons": previous_risk_reasons,
+            "submission_stage": "paper_route_probe_exit_retry_pending",
+            "symbol": decision.symbol.strip().upper(),
+            "strategy_id": decision.strategy_id,
+            "exit_due_at": str(exit_metadata.get("exit_due_at") or ""),
+        }
+        for key in (
+            "risk_reasons",
+            "reject_reason_atomic",
+            "reject_class",
+            "reject_origin",
+            "broker_precheck",
+        ):
+            decision_json.pop(key, None)
+        decision_row.status = "planned"
+        decision_row.decision_json = decision_json
+        session.add(decision_row)
+        session.commit()
+        session.refresh(decision_row)
+        logger.warning(
+            "Reopening rejected paper route probe exit strategy_id=%s decision_id=%s symbol=%s previous_stage=%s reasons=%s",
+            decision.strategy_id,
+            decision_row.id,
+            decision.symbol,
+            previous_stage,
+            ",".join(previous_risk_reasons),
+        )
+        return decision_row
 
     @staticmethod
     def _restore_simulation_paper_route_probe_exit_position(
@@ -2496,6 +2585,13 @@ class SimpleTradingPipeline(TradingPipeline):
         if "paper_route_target_plan" in decision.params:
             self.executor.update_decision_params(session, decision_row, decision.params)
             self.executor.sync_decision_state(session, decision_row, decision)
+        reopened_exit = self._reopen_rejected_paper_route_probe_exit_decision(
+            session=session,
+            decision=decision,
+            decision_row=decision_row,
+        )
+        if reopened_exit is not None:
+            return reopened_exit
         if (
             decision_row.status == "planned"
             and self._paper_route_target_source_cap(decision.params) is not None
