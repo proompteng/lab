@@ -365,6 +365,30 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(import_audit["counts"]["source_plan_target_count"], 2)
         self.assertEqual(import_audit["counts"]["selected_target_count"], 1)
         self.assertEqual(import_audit["counts"]["next_runtime_window_target_count"], 1)
+        self.assertEqual(
+            import_audit["diagnostics"]["target_blockers_effective_when"],
+            "runtime_window_import_ready",
+        )
+        self.assertEqual(len(import_audit["target_blockers"]), 1)
+        target_blocker = import_audit["target_blockers"][0]
+        self.assertEqual(target_blocker["candidate_id"], "candidate-paper-route")
+        self.assertEqual(target_blocker["hypothesis_id"], "H-PAPER-ROUTE")
+        self.assertEqual(target_blocker["paper_route_probe_symbols"], ["AAPL"])
+        self.assertEqual(
+            target_blocker["source_activity"],
+            {
+                "decision_count": 0,
+                "execution_count": 0,
+                "filled_execution_count": 0,
+                "tca_sample_count": 0,
+                "last_decision_at": None,
+                "last_execution_at": None,
+                "last_tca_at": None,
+            },
+        )
+        self.assertIn("source_decisions_missing", target_blocker["blockers"])
+        self.assertIn("runtime_ledger_bucket_missing", target_blocker["blockers"])
+        self.assertIn("promotion_decision_missing", target_blocker["blockers"])
         self.assertFalse(import_audit["promotion_authority"]["allowed"])
         proof_handoff = payload["runtime_ledger_proof_packet_handoff"]
         self.assertEqual(

@@ -2411,7 +2411,9 @@ def _query_timestamps(
                     oe.source_topic,
                     oe.source_partition,
                     oe.source_offset,
-                    oe.raw_event
+                    oe.raw_event,
+                    e.execution_audit_json,
+                    e.raw_order
                 from execution_order_events oe
                 left join executions e on e.id = oe.execution_id
                 join trade_decisions d
@@ -2451,6 +2453,8 @@ def _query_timestamps(
                     "source_partition": row[12],
                     "source_offset": row[13],
                     "raw_event": row[14],
+                    "execution_audit_json": row[15],
+                    "raw_order": row[16],
                 }
                 for row in cur.fetchall()
                 if row[0] is not None

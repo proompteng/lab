@@ -9,9 +9,13 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import Execution, TradeDecision, coerce_json_payload
+from ..models import Execution, TradeDecision
 from ..snapshots import sync_order_to_db
-from .order_feed import apply_order_event_to_execution, latest_order_event_for_execution
+from .order_feed import (
+    apply_order_event_to_execution,
+    latest_order_event_for_execution,
+    merge_execution_raw_order_update,
+)
 from .route_metadata import coerce_route_text, resolve_order_route_metadata
 from .risk import FINAL_STATUSES
 from .tca import upsert_execution_tca_metric
@@ -61,10 +65,12 @@ class Reconciler:
                 continue
 
             expected_adapter = coerce_route_text(execution.execution_expected_adapter)
-            route_expected, route_actual, fallback_reason, fallback_count = resolve_order_route_metadata(
-                expected_adapter=expected_adapter,
-                execution_client=client,
-                order_response=order,
+            route_expected, route_actual, fallback_reason, fallback_count = (
+                resolve_order_route_metadata(
+                    expected_adapter=expected_adapter,
+                    execution_client=client,
+                    order_response=order,
+                )
             )
             updated = _apply_order_update(
                 execution,
@@ -83,7 +89,9 @@ class Reconciler:
     def _backfill_missing_executions(self, session: Session, client: Any) -> int:
         # Avoid scanning broker history unboundedly; reconcile only local decisions that are
         # missing an Execution and ask the broker for those specific client_order_ids.
-        cutoff = datetime.now(timezone.utc) - timedelta(days=BACKFILL_DECISION_LOOKBACK_DAYS)
+        cutoff = datetime.now(timezone.utc) - timedelta(
+            days=BACKFILL_DECISION_LOOKBACK_DAYS
+        )
         decision_stmt = (
             select(TradeDecision)
             .where(
@@ -108,17 +116,11 @@ class Reconciler:
             existing_stmt = select(Execution).where(
                 (
                     (Execution.trade_decision_id == decision.id)
-                    & (
-                        Execution.alpaca_account_label
-                        == decision.alpaca_account_label
-                    )
+                    & (Execution.alpaca_account_label == decision.alpaca_account_label)
                 )
                 | (
                     (Execution.client_order_id == decision.decision_hash)
-                    & (
-                        Execution.alpaca_account_label
-                        == decision.alpaca_account_label
-                    )
+                    & (Execution.alpaca_account_label == decision.alpaca_account_label)
                 )
             )
             existing = session.execute(existing_stmt).scalar_one_or_none()
@@ -141,10 +143,12 @@ class Reconciler:
             expected_route = coerce_route_text(order.get("_execution_route_expected"))
             if expected_route is None:
                 expected_route = coerce_route_text(order.get("_execution_route_actual"))
-            route_expected, route_actual, fallback_reason, fallback_count = resolve_order_route_metadata(
-                expected_adapter=expected_route,
-                execution_client=client,
-                order_response=order,
+            route_expected, route_actual, fallback_reason, fallback_count = (
+                resolve_order_route_metadata(
+                    expected_adapter=expected_route,
+                    execution_client=client,
+                    order_response=order,
+                )
             )
             execution = sync_order_to_db(
                 session,
@@ -157,7 +161,9 @@ class Reconciler:
             execution.execution_fallback_reason = fallback_reason
             execution.execution_fallback_count = fallback_count
             execution.execution_actual_adapter = route_actual
-            execution.execution_expected_adapter = route_expected or execution.execution_expected_adapter
+            execution.execution_expected_adapter = (
+                route_expected or execution.execution_expected_adapter
+            )
             upsert_execution_tca_metric(session, execution)
             _update_trade_decision(session, execution)
             updates += 1
@@ -189,10 +195,13 @@ def _apply_order_update(
     if execution_fallback_count is not None:
         execution.execution_fallback_count = execution_fallback_count
     execution.execution_fallback_reason = execution_fallback_reason
-    execution.raw_order = coerce_json_payload(order)
+    execution.raw_order = merge_execution_raw_order_update(
+        execution.raw_order,
+        order,
+        update_key="_broker_reconcile_last_order",
+    )
     execution.last_update_at = datetime.now(timezone.utc)
     return True
-
 
 
 def _update_trade_decision(session: Session, execution: Execution) -> None:

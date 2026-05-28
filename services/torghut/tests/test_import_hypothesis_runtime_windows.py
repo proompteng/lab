@@ -33,6 +33,7 @@ from scripts.import_hypothesis_runtime_windows import (
     _row_payloads,
     _runtime_ledger_bucket_profit_proof_present,
     _runtime_ledger_event_type,
+    _runtime_lifecycle_ledger_row,
     _runtime_ledger_profit_proof_present,
     _runtime_observation_authority_payload,
     _runtime_ledger_target_metadata_blockers,
@@ -110,6 +111,15 @@ class _FakeCursor:
                     {
                         "execution_policy": {"selected_order_type": "market"},
                         "cost_model": {"source": "broker_reported"},
+                    },
+                    {
+                        "cost_amount": "0.01",
+                        "cost_basis": "broker_reported_commission_and_fees",
+                    },
+                    {
+                        "execution_policy_hash": "policy-sha",
+                        "cost_model_hash": "cost-sha",
+                        "lineage_hash": "lineage-sha",
                     },
                 )
             ],
@@ -1656,6 +1666,55 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(bucket["blockers"], [])
         self.assertEqual(bucket["source_materialization"], "execution_order_events")
 
+    def test_order_event_lifecycle_uses_execution_raw_order_metadata(self) -> None:
+        row = {
+            "event_ts": datetime(2026, 3, 6, 14, 35, 1, tzinfo=timezone.utc),
+            "event_type": "filled",
+            "symbol": "AAPL",
+            "account_label": "TORGHUT_SIM",
+            "strategy_id": "microbar-cross-sectional-pairs-v1",
+            "decision_hash": "decision-buy",
+            "alpaca_order_id": "order-buy",
+            "raw_event": {
+                "event": "fill",
+                "order": {
+                    "id": "order-buy",
+                    "status": "filled",
+                    "filled_qty": "1",
+                    "filled_avg_price": "100",
+                },
+            },
+            "execution_audit_json": {
+                "execution_policy_hash": "policy-sha",
+                "cost_model_hash": "cost-sha",
+                "lineage_hash": "lineage-sha",
+            },
+            "raw_order": {
+                "side": "buy",
+                "runtime_ledger_cost": {
+                    "cost_amount": "0.20",
+                    "cost_basis": "modeled_paper_cost_budget",
+                },
+            },
+        }
+
+        ledger_row = _runtime_lifecycle_ledger_row(
+            row,
+            event_type="filled",
+            require_complete_fill=True,
+        )
+
+        self.assertIsNotNone(ledger_row)
+        assert ledger_row is not None
+        self.assertEqual(ledger_row["side"], "buy")
+        self.assertEqual(ledger_row["filled_qty"], Decimal("1"))
+        self.assertEqual(ledger_row["avg_fill_price"], Decimal("100"))
+        self.assertEqual(ledger_row["cost_amount"], Decimal("0.20"))
+        self.assertEqual(ledger_row["cost_basis"], "modeled_paper_cost_budget")
+        self.assertEqual(ledger_row["execution_policy_hash"], "policy-sha")
+        self.assertEqual(ledger_row["cost_model_hash"], "cost-sha")
+        self.assertEqual(ledger_row["lineage_hash"], "lineage-sha")
+
     def test_runtime_ledger_tca_materialization_metadata_separates_authority(
         self,
     ) -> None:
@@ -2211,6 +2270,8 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertNotIn("and d.created_at < %s", execution_query)
         self.assertIn("from execution_order_events oe", order_event_query)
         self.assertIn("oe.alpaca_account_label = %s", order_event_query)
+        self.assertIn("e.execution_audit_json", order_event_query)
+        self.assertIn("e.raw_order", order_event_query)
         self.assertIn("coalesce(oe.event_ts, oe.created_at) >= %s", order_event_query)
         self.assertIn("coalesce(oe.event_ts, oe.created_at) < %s", order_event_query)
         self.assertNotIn("and d.created_at >= %s", order_event_query)
@@ -2398,6 +2459,15 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                         "execution_policy": {"selected_order_type": "market"},
                         "cost_model": {"source": "broker_reported"},
                     },
+                    {
+                        "execution_policy_hash": "policy-sha",
+                        "cost_model_hash": "cost-sha",
+                        "lineage_hash": "lineage-sha",
+                    },
+                    {
+                        "cost_amount": "0.01",
+                        "cost_basis": "broker_reported_commission_and_fees",
+                    },
                 ),
                 (
                     datetime(2026, 3, 6, 14, 36, 1, tzinfo=timezone.utc),
@@ -2414,6 +2484,8 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "alpaca-trade-updates",
                     0,
                     2,
+                    {},
+                    {},
                     {},
                 ),
             ],

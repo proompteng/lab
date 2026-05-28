@@ -26,6 +26,7 @@ from app.models import (
 from app.trading.order_feed import (
     OrderFeedIngestor,
     apply_order_event_to_execution,
+    merge_execution_raw_order_update,
     normalize_order_feed_record,
     persist_order_event,
 )
@@ -407,6 +408,113 @@ class TestOrderFeed(TestCase):
             self.assertTrue(out_of_order)
             self.assertEqual(execution.status, "filled")
             self.assertEqual(execution.filled_qty, Decimal("1"))
+
+    def test_order_feed_update_preserves_submit_audit_and_cost_metadata(self) -> None:
+        with Session(self.engine) as session:
+            execution = self._seed_execution(session)
+            execution.raw_order = {
+                "id": "order-1",
+                "status": "accepted",
+                "_execution_audit": {
+                    "execution_policy_hash": "policy-sha",
+                    "lineage_hash": "lineage-sha",
+                },
+                "runtime_ledger_cost": {
+                    "cost_amount": "0.20",
+                    "cost_basis": "modeled_paper_cost_budget",
+                },
+                "cost_amount": "0.20",
+                "cost_basis": "modeled_paper_cost_budget",
+                "execution_policy": {"max_order_notional": "1000"},
+            }
+            event = ExecutionOrderEvent(
+                event_fingerprint="fill-event",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=101,
+                alpaca_account_label="paper",
+                feed_seq=31,
+                event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+                symbol="AAPL",
+                alpaca_order_id="order-1",
+                client_order_id="client-1",
+                event_type="fill",
+                status="filled",
+                qty=Decimal("1"),
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("190.2"),
+                raw_event={
+                    "event": "fill",
+                    "order": {
+                        "id": "order-1",
+                        "status": "filled",
+                        "filled_qty": "1",
+                        "filled_avg_price": "190.2",
+                    },
+                },
+                execution_id=execution.id,
+            )
+            session.add(event)
+            session.flush()
+
+            updated, out_of_order = apply_order_event_to_execution(execution, event)
+
+            self.assertTrue(updated)
+            self.assertFalse(out_of_order)
+            assert isinstance(execution.raw_order, dict)
+            self.assertEqual(
+                execution.raw_order["_execution_audit"]["execution_policy_hash"],
+                "policy-sha",
+            )
+            self.assertEqual(
+                execution.raw_order["runtime_ledger_cost"]["cost_basis"],
+                "modeled_paper_cost_budget",
+            )
+            self.assertEqual(execution.raw_order["cost_amount"], "0.20")
+            self.assertEqual(execution.raw_order["status"], "accepted")
+            self.assertEqual(
+                execution.raw_order["_order_feed_last_event"]["order"]["status"],
+                "filled",
+            )
+
+    def test_merge_execution_raw_order_update_preserves_existing_keys(self) -> None:
+        merged = merge_execution_raw_order_update(
+            {
+                "id": "order-1",
+                "status": "accepted",
+                "cost_amount": "0.20",
+            },
+            {"status": "filled", "filled_qty": "1"},
+            update_key="_broker_reconcile_last_order",
+        )
+
+        self.assertIsInstance(merged, dict)
+        assert isinstance(merged, dict)
+        self.assertEqual(merged["status"], "accepted")
+        self.assertEqual(merged["cost_amount"], "0.20")
+        self.assertEqual(merged["filled_qty"], "1")
+        self.assertEqual(merged["_broker_reconcile_last_order"]["status"], "filled")
+
+    def test_ingestor_refreshes_tca_after_order_feed_fill_update(self) -> None:
+        payload = (
+            b'{"channel":"trade_updates","payload":{"event":"fill","timestamp":"2026-02-01T10:00:00Z",'
+            b'"order":{"id":"order-1","client_order_id":"client-1","symbol":"AAPL","status":"filled",'
+            b'"qty":"1","filled_qty":"1","filled_avg_price":"190.2"}},"seq":31}'
+        )
+        consumer = FakeConsumer([FakeRecord(value=payload, offset=101)])
+        ingestor = OrderFeedIngestor(consumer_factory=lambda: consumer)
+
+        with Session(self.engine) as session:
+            execution = self._seed_execution(session)
+
+            with patch("app.trading.order_feed.upsert_execution_tca_metric") as upsert:
+                counters = ingestor.ingest_once(session)
+                session.refresh(execution)
+
+            self.assertEqual(counters["events_persisted_total"], 1)
+            self.assertEqual(counters["apply_updates_total"], 1)
+            self.assertEqual(execution.status, "filled")
+            upsert.assert_called_once()
 
     def test_ingestor_counts_out_of_order_updates(self) -> None:
         payload = (

@@ -23,6 +23,7 @@ from ..models import (
     TradeDecision,
     coerce_json_payload,
 )
+from .tca import upsert_execution_tca_metric
 
 logger = logging.getLogger(__name__)
 
@@ -192,6 +193,7 @@ class OrderFeedIngestor:
         counters["apply_updates_total"] += 1
         if execution.trade_decision_id is not None:
             _update_trade_decision_from_execution(session, execution)
+        upsert_execution_tca_metric(session, execution)
         session.add(execution)
         return True
 
@@ -548,8 +550,46 @@ def apply_order_event_to_execution(
     if event.feed_seq is not None:
         execution.order_feed_last_seq = event.feed_seq
 
-    execution.raw_order = coerce_json_payload(event.raw_event)
+    execution.raw_order = merge_execution_raw_order_update(
+        execution.raw_order,
+        event.raw_event,
+        update_key="_order_feed_last_event",
+    )
     return updated, False
+
+
+def merge_execution_raw_order_update(
+    existing_raw_order: Any,
+    update_payload: Any,
+    *,
+    update_key: str,
+) -> dict[str, Any] | None:
+    """Preserve submit-time proof metadata while recording the latest update payload."""
+
+    coerced_existing = coerce_json_payload(existing_raw_order)
+    coerced_update = coerce_json_payload(update_payload)
+    existing: dict[str, Any] = {}
+    if isinstance(coerced_existing, Mapping):
+        existing = {
+            str(key): value
+            for key, value in cast(Mapping[object, Any], coerced_existing).items()
+        }
+    update: dict[str, Any] = {}
+    if isinstance(coerced_update, Mapping):
+        update = {
+            str(key): value
+            for key, value in cast(Mapping[object, Any], coerced_update).items()
+        }
+
+    if not existing and not update:
+        return None
+
+    merged = dict(existing)
+    for key, value in update.items():
+        merged.setdefault(key, value)
+    if update:
+        merged[update_key] = update
+    return coerce_json_payload(merged)
 
 
 def latest_order_event_for_execution(
