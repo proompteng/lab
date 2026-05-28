@@ -4102,6 +4102,138 @@ class TestTradingPipeline(TestCase):
                 1,
             )
 
+    def test_simple_pipeline_allows_large_position_reducing_probe_exit(
+        self,
+    ) -> None:
+        self._seed_filled_paper_route_probe_entry(qty=Decimal("20"))
+        alpaca_client = PositionedAlpacaClient(
+            [{"symbol": "AAPL", "qty": "20", "side": "long"}]
+        )
+
+        self._run_simple_paper_pipeline(
+            alpaca_client=alpaca_client,
+            now=datetime(2026, 3, 26, 15, 31, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(len(alpaca_client.submitted), 1)
+        self.assertEqual(alpaca_client.submitted[0]["side"], "sell")
+        self.assertEqual(alpaca_client.submitted[0]["qty"], "20.0")
+        with self.session_local() as session:
+            exit_row = (
+                session.execute(
+                    select(TradeDecision)
+                    .where(TradeDecision.symbol == "AAPL")
+                    .order_by(TradeDecision.created_at.desc())
+                )
+                .scalars()
+                .first()
+            )
+            assert exit_row is not None
+            self.assertEqual(exit_row.status, "submitted")
+            payload = cast(dict[str, Any], exit_row.decision_json)
+            self.assertNotIn("max_notional_exceeded", payload.get("risk_reasons", []))
+
+    def test_simple_pipeline_reopens_rejected_paper_route_probe_exit(
+        self,
+    ) -> None:
+        from app import config
+
+        config.settings.trading_mode = "paper"
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_simple_paper_route_probe_retry_attempt_limit = 2
+        self._seed_filled_paper_route_probe_entry()
+        now = datetime(2026, 3, 26, 15, 31, tzinfo=timezone.utc)
+        executor = OrderExecutor()
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=executor,
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+        with (
+            patch(
+                "app.trading.scheduler.simple_pipeline.trading_now",
+                return_value=now,
+            ),
+            self.session_local() as session,
+        ):
+            exit_decisions = pipeline._paper_route_probe_exit_decisions(
+                session=session
+            )
+            self.assertEqual(len(exit_decisions), 1)
+            exit_decision = exit_decisions[0]
+            strategy = (
+                session.execute(
+                    select(Strategy).where(Strategy.id == exit_decision.strategy_id)
+                )
+                .scalars()
+                .one()
+            )
+            exit_row = executor.ensure_decision(
+                session,
+                exit_decision,
+                strategy,
+                "paper",
+            )
+            exit_payload = dict(cast(Mapping[str, Any], exit_row.decision_json))
+            exit_payload["submission_stage"] = "rejected_pre_submit"
+            exit_payload["risk_reasons"] = ["max_notional_exceeded"]
+            exit_payload["reject_reason_atomic"] = ["max_notional_exceeded"]
+            exit_row.status = "rejected"
+            exit_row.decision_json = exit_payload
+            session.add(exit_row)
+            session.commit()
+
+        alpaca_client = PositionedAlpacaClient(
+            [{"symbol": "AAPL", "qty": "2", "side": "long"}]
+        )
+
+        self._run_simple_paper_pipeline(
+            alpaca_client=alpaca_client,
+            now=now,
+        )
+
+        self.assertEqual(len(alpaca_client.submitted), 1)
+        self.assertEqual(alpaca_client.submitted[0]["side"], "sell")
+        with self.session_local() as session:
+            decisions = (
+                session.execute(
+                    select(TradeDecision).order_by(TradeDecision.created_at.asc())
+                )
+                .scalars()
+                .all()
+            )
+            self.assertEqual(len(decisions), 2)
+            exit_row = decisions[-1]
+            self.assertEqual(exit_row.status, "submitted")
+            exit_payload = cast(dict[str, Any], exit_row.decision_json)
+            self.assertEqual(
+                exit_payload.get("submission_stage"),
+                "submitted",
+            )
+            retry = cast(
+                dict[str, Any],
+                exit_payload.get("paper_route_probe_exit_retry"),
+            )
+            self.assertEqual(retry.get("previous_decision_status"), "rejected")
+            self.assertEqual(
+                retry.get("previous_submission_stage"), "rejected_pre_submit"
+            )
+            self.assertEqual(
+                exit_payload.get("paper_route_probe_exit_retry_attempts"), 1
+            )
+            self.assertNotIn("risk_reasons", exit_payload)
+            self.assertNotIn("reject_reason_atomic", exit_payload)
+
     def test_simple_pipeline_does_not_exit_without_broker_inventory(
         self,
     ) -> None:

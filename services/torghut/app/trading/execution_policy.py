@@ -203,6 +203,7 @@ class ExecutionPolicy:
         price = _resolve_price(decision, market_snapshot)
         position_qty = _position_summary(decision.symbol, positions)
         short_increasing = _is_short_increasing(decision, positions)
+        position_reducing = _is_position_reducing(decision, position_qty)
         qty, notional = self._resolve_qty_and_notional(
             decision=decision,
             position_qty=position_qty,
@@ -225,6 +226,7 @@ class ExecutionPolicy:
             max_notional is not None
             and notional is not None
             and notional > max_notional
+            and not position_reducing
         ):
             reasons.append("max_notional_exceeded")
 
@@ -1258,6 +1260,20 @@ def _is_short_increasing(
     if position_qty <= 0:
         return True
     return qty > position_qty
+
+
+def _is_position_reducing(
+    decision: StrategyDecision,
+    position_qty: Decimal,
+) -> bool:
+    qty = _optional_decimal(decision.qty)
+    if qty is None or qty <= 0:
+        return False
+    if decision.action == "sell" and position_qty > 0:
+        return qty <= position_qty
+    if decision.action == "buy" and position_qty < 0:
+        return qty <= abs(position_qty)
+    return False
 
 
 def _optional_decimal(value: Any) -> Optional[Decimal]:
