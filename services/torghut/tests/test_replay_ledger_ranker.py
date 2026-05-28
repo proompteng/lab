@@ -89,22 +89,52 @@ def _payload(
     rows: list[dict[str, object]],
     *,
     promotion_authority: str = "replay_artifact_only_not_live",
+    include_lineage: bool = True,
 ) -> dict[str, object]:
-    return {
+    if include_lineage:
+        for row in rows:
+            if row.get("event_type") == "fill":
+                row["adv_source"] = "observed_microbar_notional_by_symbol_day"
+                row["adv_notional"] = "10000000"
+                row["participation_rate"] = "0.0001"
+                row["capacity_warning_codes"] = []
+    payload: dict[str, object] = {
         "schema_version": "torghut.exact_replay_ledger.rows.v1",
         "candidate_id": candidate_id,
+        "candidate_identity": {
+            "candidate_id": candidate_id,
+            "candidate_identity_hash": f"identity-{candidate_id}",
+            "source_manifest_ref": f"manifests/{candidate_id}.json",
+        },
+        "candidate_identity_hash": f"identity-{candidate_id}",
         "window_start": "2026-05-18",
         "window_end": "2026-05-22",
         "account_label": "TORGHUT_REPLAY",
         "cost_basis": "local_replay_transaction_cost_model",
         "execution_policy_hash": "policy-sha",
         "cost_model_hash": "cost-sha",
+        "cost_lineage": {
+            "cost_lineage_hash": f"cost-lineage-{candidate_id}",
+            "adv_source": "observed_microbar_notional_by_symbol_day",
+            "warning_contract": ["missing_adv", "participation_exceeds_max"],
+        },
+        "cost_lineage_hash": f"cost-lineage-{candidate_id}",
         "lineage_hash": "lineage-sha",
         "promotion_authority": promotion_authority,
         "stage": "replay",
         "source": "local_intraday_tsmom_replay",
         "runtime_ledger_rows": rows,
     }
+    if not include_lineage:
+        for key in (
+            "candidate_id",
+            "candidate_identity",
+            "candidate_identity_hash",
+            "cost_lineage",
+            "cost_lineage_hash",
+        ):
+            payload.pop(key, None)
+    return payload
 
 
 def _policy() -> ReplayLedgerRankingPolicy:
@@ -199,6 +229,76 @@ def test_ranker_blocks_replay_only_and_over_equity_artifacts() -> None:
     assert "replay_artifact_only_not_live" in ranking.promotion_blockers
     assert "max_single_fill_notional_pct_equity_above_max" in ranking.promotion_blockers
     assert ranking.promotion_status == "blocked_pending_runtime_promotion_proof"
+
+
+def test_ranker_blocks_missing_candidate_identity_and_cost_lineage() -> None:
+    ranking = rank_replay_ledger_payload(
+        _payload(
+            "missing-lineage",
+            _round_trip(
+                day=18,
+                symbol="NVDA",
+                qty="20",
+                buy_price="100",
+                sell_price="160",
+                prefix="missing-lineage",
+            ),
+            promotion_authority="live_paper_runtime_ledger",
+            include_lineage=False,
+        ),
+        artifact_ref="/tmp/missing-lineage.json",
+        policy=ReplayLedgerRankingPolicy(
+            target_net_pnl_per_day=Decimal("1"),
+            min_window_weekday_count=1,
+            min_avg_filled_notional_per_day=Decimal("1"),
+            max_best_day_share=Decimal("1.0"),
+            max_gross_exposure_pct_equity=Decimal("10.0"),
+            start_equity=Decimal("100000"),
+        ),
+    )
+
+    assert ranking.candidate_id == "missing-lineage"
+    assert "candidate_id_missing" in ranking.promotion_blockers
+    assert "candidate_identity_missing" in ranking.promotion_blockers
+    assert "exact_replay_cost_lineage_missing" in ranking.promotion_blockers
+    assert "adv_capacity_lineage_missing" in ranking.promotion_blockers
+    assert "fill_adv_notional_missing" in ranking.promotion_blockers
+    assert ranking.promotion_status == "blocked_pending_runtime_promotion_proof"
+
+
+def test_ranker_exposes_candidate_and_cost_lineage_when_present() -> None:
+    ranking = rank_replay_ledger_payload(
+        _payload(
+            "lineaged-candidate",
+            _round_trip(
+                day=18,
+                symbol="NVDA",
+                qty="20",
+                buy_price="100",
+                sell_price="160",
+                prefix="lineaged",
+            ),
+            promotion_authority="live_paper_runtime_ledger",
+        ),
+        artifact_ref="/tmp/lineaged.json",
+        policy=ReplayLedgerRankingPolicy(
+            target_net_pnl_per_day=Decimal("1"),
+            min_window_weekday_count=1,
+            min_avg_filled_notional_per_day=Decimal("1"),
+            max_best_day_share=Decimal("1.0"),
+            max_gross_exposure_pct_equity=Decimal("10.0"),
+            start_equity=Decimal("100000"),
+        ),
+    )
+
+    payload = ranking.to_payload()
+    assert payload["candidate_identity_hash"] == "identity-lineaged-candidate"
+    assert payload["cost_lineage_hash"] == "cost-lineage-lineaged-candidate"
+    assert payload["fills_with_adv_notional"] == 2
+    assert payload["fills_with_participation_rate"] == 2
+    assert payload["fills_with_capacity_warning_contract"] == 2
+    assert "candidate_id_missing" not in ranking.promotion_blockers
+    assert "fill_adv_notional_missing" not in ranking.promotion_blockers
 
 
 def test_default_policy_tracks_oracle_promotion_gates() -> None:

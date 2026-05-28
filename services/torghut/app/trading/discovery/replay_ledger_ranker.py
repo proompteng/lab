@@ -53,6 +53,8 @@ class ReplayLedgerRankingPolicy:
 class ReplayLedgerCandidateRanking:
     artifact_ref: str
     candidate_id: str
+    candidate_identity_hash: str
+    cost_lineage_hash: str
     promotion_status: str
     promotion_blockers: tuple[str, ...]
     runtime_ledger_blockers: tuple[str, ...]
@@ -87,11 +89,19 @@ class ReplayLedgerCandidateRanking:
     source: str
     promotion_authority: str
     cost_basis_counts: Mapping[str, int]
+    candidate_identity: Mapping[str, object]
+    cost_lineage: Mapping[str, object]
+    fills_with_adv_notional: int
+    fills_with_participation_rate: int
+    fills_with_capacity_warning_contract: int
+    capacity_warning_counts: Mapping[str, int]
 
     def to_payload(self) -> dict[str, object]:
         return {
             "artifact_ref": self.artifact_ref,
             "candidate_id": self.candidate_id,
+            "candidate_identity_hash": self.candidate_identity_hash,
+            "cost_lineage_hash": self.cost_lineage_hash,
             "promotion_status": self.promotion_status,
             "promotion_blockers": list(self.promotion_blockers),
             "runtime_ledger_blockers": list(self.runtime_ledger_blockers),
@@ -139,6 +149,16 @@ class ReplayLedgerCandidateRanking:
             "source": self.source,
             "promotion_authority": self.promotion_authority,
             "cost_basis_counts": dict(sorted(self.cost_basis_counts.items())),
+            "candidate_identity": dict(sorted(self.candidate_identity.items())),
+            "cost_lineage": dict(sorted(self.cost_lineage.items())),
+            "fills_with_adv_notional": self.fills_with_adv_notional,
+            "fills_with_participation_rate": self.fills_with_participation_rate,
+            "fills_with_capacity_warning_contract": (
+                self.fills_with_capacity_warning_contract
+            ),
+            "capacity_warning_counts": dict(
+                sorted(self.capacity_warning_counts.items())
+            ),
         }
 
 
@@ -216,8 +236,13 @@ def rank_replay_ledger_payload(
         if policy.start_equity is not None and policy.start_equity > 0
         else None
     )
+    candidate_id = _candidate_id(payload=payload, artifact_ref=artifact_ref)
+    candidate_identity = _mapping(payload.get("candidate_identity"))
+    cost_lineage = _mapping(payload.get("cost_lineage"))
+    capacity_summary = _capacity_lineage_summary(rows)
     blockers = _promotion_blockers(
         payload=payload,
+        rows=rows,
         full_bucket=full_bucket,
         total_net=total_net,
         daily_net=daily_net,
@@ -232,7 +257,14 @@ def rank_replay_ledger_payload(
 
     return ReplayLedgerCandidateRanking(
         artifact_ref=artifact_ref,
-        candidate_id=str(payload.get("candidate_id") or Path(artifact_ref).stem),
+        candidate_id=candidate_id,
+        candidate_identity_hash=_text(
+            payload.get("candidate_identity_hash")
+            or candidate_identity.get("candidate_identity_hash")
+        ),
+        cost_lineage_hash=_text(
+            payload.get("cost_lineage_hash") or cost_lineage.get("cost_lineage_hash")
+        ),
         promotion_status="blocked_pending_runtime_promotion_proof"
         if blockers
         else "candidate_replay_evidence_only",
@@ -281,6 +313,16 @@ def rank_replay_ledger_payload(
         source=str(payload.get("source") or ""),
         promotion_authority=str(payload.get("promotion_authority") or ""),
         cost_basis_counts=full_bucket.cost_basis_counts,
+        candidate_identity=candidate_identity,
+        cost_lineage=cost_lineage,
+        fills_with_adv_notional=capacity_summary["fills_with_adv_notional"],
+        fills_with_participation_rate=capacity_summary[
+            "fills_with_participation_rate"
+        ],
+        fills_with_capacity_warning_contract=capacity_summary[
+            "fills_with_capacity_warning_contract"
+        ],
+        capacity_warning_counts=capacity_summary["capacity_warning_counts"],
     )
 
 
@@ -374,6 +416,9 @@ def _runtime_rows_with_defaults(
             "source",
             "execution_policy_hash",
             "cost_model_hash",
+            "cost_lineage_hash",
+            "candidate_id",
+            "candidate_identity_hash",
             "lineage_hash",
             "replay_data_hash",
             "cost_basis",
@@ -410,6 +455,7 @@ def _full_window_bucket(
 def _promotion_blockers(
     *,
     payload: Mapping[str, Any],
+    rows: Sequence[Mapping[str, object]],
     full_bucket: RuntimeLedgerBucket,
     total_net: Decimal,
     daily_net: Mapping[str, Decimal],
@@ -419,6 +465,8 @@ def _promotion_blockers(
     policy: ReplayLedgerRankingPolicy,
 ) -> list[str]:
     blockers = list(full_bucket.blockers)
+    blockers.extend(_candidate_identity_blockers(payload))
+    blockers.extend(_cost_lineage_blockers(payload=payload, rows=rows))
     stage = str(payload.get("stage") or "").lower()
     promotion_authority = str(payload.get("promotion_authority") or "").lower()
     if (
@@ -442,6 +490,91 @@ def _promotion_blockers(
     elif max_single_fill_notional_pct_equity > policy.max_gross_exposure_pct_equity:
         blockers.append("max_single_fill_notional_pct_equity_above_max")
     return _dedupe(blockers)
+
+
+def _candidate_id(*, payload: Mapping[str, Any], artifact_ref: str) -> str:
+    return _text(payload.get("candidate_id")) or Path(artifact_ref).stem
+
+
+def _candidate_identity_blockers(payload: Mapping[str, Any]) -> list[str]:
+    blockers: list[str] = []
+    candidate_id = _text(payload.get("candidate_id"))
+    identity = _mapping(payload.get("candidate_identity"))
+    identity_candidate_id = _text(identity.get("candidate_id"))
+    identity_hash = _text(
+        payload.get("candidate_identity_hash") or identity.get("candidate_identity_hash")
+    )
+    if not candidate_id:
+        blockers.append("candidate_id_missing")
+    if not identity:
+        blockers.append("candidate_identity_missing")
+    if not identity_hash:
+        blockers.append("candidate_identity_hash_missing")
+    if identity_candidate_id and candidate_id and identity_candidate_id != candidate_id:
+        blockers.append("candidate_identity_candidate_id_mismatch")
+    return blockers
+
+
+def _cost_lineage_blockers(
+    *,
+    payload: Mapping[str, Any],
+    rows: Sequence[Mapping[str, object]],
+) -> list[str]:
+    blockers: list[str] = []
+    cost_lineage = _mapping(payload.get("cost_lineage"))
+    cost_lineage_hash = _text(
+        payload.get("cost_lineage_hash") or cost_lineage.get("cost_lineage_hash")
+    )
+    warning_contract = _string_list(cost_lineage.get("warning_contract"))
+    capacity_summary = _capacity_lineage_summary(rows)
+    fill_count = capacity_summary["fill_count"]
+    if not cost_lineage:
+        blockers.append("exact_replay_cost_lineage_missing")
+    if not cost_lineage_hash:
+        blockers.append("exact_replay_cost_lineage_hash_missing")
+    if not _text(cost_lineage.get("adv_source")):
+        blockers.append("adv_capacity_lineage_missing")
+    if not warning_contract:
+        blockers.append("adv_capacity_warning_contract_missing")
+    if fill_count > 0:
+        if capacity_summary["fills_with_adv_notional"] < fill_count:
+            blockers.append("fill_adv_notional_missing")
+        if capacity_summary["fills_with_participation_rate"] < fill_count:
+            blockers.append("fill_capacity_participation_missing")
+        if capacity_summary["fills_with_capacity_warning_contract"] < fill_count:
+            blockers.append("fill_capacity_warning_contract_missing")
+    if capacity_summary["capacity_warning_counts"].get("participation_exceeds_max", 0):
+        blockers.append("adv_capacity_limit_breached")
+    return blockers
+
+
+def _capacity_lineage_summary(
+    rows: Sequence[Mapping[str, object]],
+) -> dict[str, Any]:
+    fill_rows = [row for row in rows if _event_type(row) == "fill"]
+    warning_counts: dict[str, int] = {}
+    fills_with_capacity_warning_contract = 0
+    for row in fill_rows:
+        warnings = row.get("capacity_warning_codes")
+        if isinstance(warnings, Sequence) and not isinstance(
+            warnings, (str, bytes, bytearray)
+        ):
+            fills_with_capacity_warning_contract += 1
+            for warning in cast(Sequence[object], warnings):
+                text = _text(warning)
+                if text:
+                    warning_counts[text] = warning_counts.get(text, 0) + 1
+    return {
+        "fill_count": len(fill_rows),
+        "fills_with_adv_notional": sum(
+            1 for row in fill_rows if _positive_decimal(row.get("adv_notional"))
+        ),
+        "fills_with_participation_rate": sum(
+            1 for row in fill_rows if _positive_decimal(row.get("participation_rate"))
+        ),
+        "fills_with_capacity_warning_contract": fills_with_capacity_warning_contract,
+        "capacity_warning_counts": warning_counts,
+    }
 
 
 def _daily_bucket_ranges(
@@ -483,6 +616,21 @@ def _parse_window_datetime(value: object, *, date_end: bool = False) -> datetime
 
 def _mapping(value: object) -> Mapping[str, Any]:
     return cast(Mapping[str, Any], value) if isinstance(value, Mapping) else {}
+
+
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        return []
+    result: list[str] = []
+    for item in cast(Sequence[object], value):
+        text = _text(item)
+        if text:
+            result.append(text)
+    return result
+
+
+def _text(value: object) -> str:
+    return str(value or "").strip()
 
 
 def _utc(value: datetime) -> datetime:
