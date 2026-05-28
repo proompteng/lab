@@ -31,8 +31,10 @@ from app.trading.runtime_cost_authority import (
 )
 from app.trading.runtime_decision_authority import (
     SOURCE_DECISION_MODE_NOT_PROFIT_PROOF_ELIGIBLE_BLOCKER,
+    SOURCE_DECISION_MODE_PROFIT_PROOF_MISSING_BLOCKER,
     normalize_source_decision_mode,
     source_decision_mode_counts_have_non_profit_proof_modes,
+    source_decision_mode_counts_have_profit_proof_modes,
     source_decision_mode_is_profit_proof_eligible,
 )
 from app.trading.runtime_window_import import (
@@ -320,7 +322,9 @@ def _source_decision_rows_profit_proof_eligible(
             explicit.append(value)
     if any(value is False for value in explicit):
         return False
-    return True
+    return source_decision_mode_counts_have_profit_proof_modes(modes) or any(
+        value is True for value in explicit
+    )
 
 
 def _source_row_matches_lineage(
@@ -462,62 +466,91 @@ def _mapping_hash_count(value: object) -> int:
     return sum(1 for key in value.keys() if str(key).strip())
 
 
-def _runtime_ledger_bucket_profit_proof_present(
+def _runtime_ledger_bucket_profit_proof_blockers(
     bucket: Mapping[str, object],
-) -> bool:
+) -> list[str]:
+    blockers: list[str] = []
+
+    def add(blocker: str) -> None:
+        if blocker not in blockers:
+            blockers.append(blocker)
+
     filled_notional = _decimal_or_none(bucket.get("filled_notional"))
     cost_amount = _decimal_or_none(bucket.get("cost_amount"))
     post_cost_expectancy = _decimal_or_none(bucket.get("post_cost_expectancy_bps"))
     if bucket.get("pnl_basis") != POST_COST_BASIS_RUNTIME_LEDGER:
-        return False
+        add("runtime_ledger_pnl_basis_not_runtime_ledger")
     if bucket.get("ledger_schema_version") not in RUNTIME_LEDGER_BUCKET_SCHEMAS:
-        return False
-    if bucket.get("blockers"):
-        return False
+        add("runtime_ledger_schema_not_supported")
+    for blocker in _metadata_text_list(bucket.get("blockers")):
+        add(blocker)
     if _nonnegative_int(bucket.get("fill_count")) <= 0:
-        return False
+        add("runtime_fills_missing")
     if _nonnegative_int(bucket.get("decision_count")) <= 0:
-        return False
+        add("runtime_decision_lifecycle_missing")
     if _nonnegative_int(bucket.get("submitted_order_count")) <= 0:
-        return False
+        add("submitted_order_lifecycle_missing")
     if _nonnegative_int(bucket.get("closed_trade_count")) <= 0:
-        return False
+        add("closed_round_trip_missing")
     if bucket.get("open_position_count") is None:
-        return False
+        add("runtime_ledger_open_position_count_missing")
     if _nonnegative_int(bucket.get("open_position_count")) > 0:
-        return False
+        add("unclosed_position")
     if filled_notional is None or filled_notional <= 0:
-        return False
+        add("filled_notional_missing")
     if cost_amount is None or cost_amount < 0:
-        return False
+        add(
+            "runtime_ledger_cost_amount_missing"
+            if cost_amount is None
+            else "runtime_ledger_cost_amount_negative"
+        )
     if is_non_promotion_grade_runtime_cost_basis(bucket.get("cost_basis")):
-        return False
+        add("runtime_ledger_cost_basis_non_promotion_grade")
     if cost_basis_counts_have_non_promotion_grade_costs(
         bucket.get("cost_basis_counts")
     ):
-        return False
+        add("runtime_ledger_cost_basis_non_promotion_grade")
     source_decision_mode = normalize_source_decision_mode(
         bucket.get("source_decision_mode")
     )
+    profit_proof_eligible = _first_bool(bucket, "profit_proof_eligible")
+    source_decision_mode_counts = bucket.get("source_decision_mode_counts")
+    if (
+        source_decision_mode is None
+        and not source_decision_mode_counts_have_profit_proof_modes(
+            source_decision_mode_counts
+        )
+        and not source_decision_mode_counts_have_non_profit_proof_modes(
+            source_decision_mode_counts
+        )
+        and profit_proof_eligible is not True
+    ):
+        add(SOURCE_DECISION_MODE_PROFIT_PROOF_MISSING_BLOCKER)
     if source_decision_mode and not source_decision_mode_is_profit_proof_eligible(
         source_decision_mode
     ):
-        return False
+        add(SOURCE_DECISION_MODE_NOT_PROFIT_PROOF_ELIGIBLE_BLOCKER)
     if source_decision_mode_counts_have_non_profit_proof_modes(
-        bucket.get("source_decision_mode_counts")
+        source_decision_mode_counts
     ):
-        return False
-    if _first_bool(bucket, "profit_proof_eligible") is False:
-        return False
+        add(SOURCE_DECISION_MODE_NOT_PROFIT_PROOF_ELIGIBLE_BLOCKER)
+    if profit_proof_eligible is False:
+        add(SOURCE_DECISION_MODE_NOT_PROFIT_PROOF_ELIGIBLE_BLOCKER)
     if post_cost_expectancy is None:
-        return False
+        add("runtime_ledger_post_cost_expectancy_missing")
     if _mapping_hash_count(bucket.get("execution_policy_hash_counts")) <= 0:
-        return False
+        add("runtime_ledger_execution_policy_hash_missing")
     if _mapping_hash_count(bucket.get("cost_model_hash_counts")) <= 0:
-        return False
+        add("runtime_ledger_cost_model_hash_missing")
     if _mapping_hash_count(bucket.get("lineage_hash_counts")) <= 0:
-        return False
-    return True
+        add("runtime_ledger_lineage_hash_missing")
+    return blockers
+
+
+def _runtime_ledger_bucket_profit_proof_present(
+    bucket: Mapping[str, object],
+) -> bool:
+    return not _runtime_ledger_bucket_profit_proof_blockers(bucket)
 
 
 def _runtime_ledger_tca_row_from_bucket(
@@ -886,6 +919,7 @@ def _runtime_ledger_tca_materialization_metadata(
     pnl_derivations: list[str] = []
     source_materializations: list[str] = []
     blockers: list[str] = []
+    profit_proof_blockers: list[str] = []
     for row in tca_rows:
         bucket = row.get("runtime_ledger_bucket")
         if not isinstance(bucket, Mapping):
@@ -894,6 +928,10 @@ def _runtime_ledger_tca_materialization_metadata(
         bucket_row_count += 1
         if _runtime_ledger_bucket_profit_proof_present(bucket_payload):
             profit_proof_count += 1
+        else:
+            profit_proof_blockers.extend(
+                _runtime_ledger_bucket_profit_proof_blockers(bucket_payload)
+            )
         if bool(row.get("authoritative")) or bool(bucket_payload.get("authoritative")):
             authoritative_bucket_count += 1
         authority_reason = _text_or_none(
@@ -929,6 +967,7 @@ def _runtime_ledger_tca_materialization_metadata(
             bucket_payload.get("blockers"),
         ):
             blockers.extend(_metadata_text_list(blocker_source))
+    blockers.extend(profit_proof_blockers)
     return {
         "runtime_ledger_tca_row_count": len(tca_rows),
         "runtime_ledger_tca_runtime_bucket_row_count": bucket_row_count,
@@ -950,6 +989,9 @@ def _runtime_ledger_tca_materialization_metadata(
             dict.fromkeys(source_materializations)
         ),
         "runtime_ledger_materialization_blockers": sorted(dict.fromkeys(blockers)),
+        "runtime_ledger_profit_proof_blockers": sorted(
+            dict.fromkeys(profit_proof_blockers)
+        ),
     }
 
 
@@ -1314,6 +1356,9 @@ def _source_activity_diagnostics_blockers(
     source_bucket_count = _nonnegative_int(
         diagnostics.get("runtime_ledger_source_bucket_count")
     )
+    source_bucket_profit_proof_count = _nonnegative_int(
+        diagnostics.get("runtime_ledger_source_bucket_profit_proof_count")
+    )
 
     if (
         decision_query_count
@@ -1339,6 +1384,13 @@ def _source_activity_diagnostics_blockers(
         add("execution_tca_rows_missing")
     if source_bucket_count <= 0:
         add("runtime_ledger_source_bucket_missing")
+    elif source_bucket_profit_proof_count <= 0:
+        add("runtime_ledger_source_bucket_profit_proof_missing")
+
+    for blocker in _metadata_text_list(
+        diagnostics.get("runtime_ledger_source_bucket_profit_proof_blockers")
+    ):
+        add(blocker)
 
     for blocker in _metadata_text_list(
         diagnostics.get("order_feed_fill_lifecycle_blockers")
@@ -1613,6 +1665,9 @@ def _build_realized_strategy_pnl_rows(
             row["authoritative"] = True
             row["authority_reason"] = "event_sourced_runtime_ledger_profit_proof"
             row["pnl_derivation"] = "execution_order_events_runtime_ledger"
+            row["post_cost_promotion_eligible"] = True
+            row["runtime_ledger_blockers"] = []
+            row.pop("promotion_blocker", None)
             if isinstance(bucket_payload, Mapping):
                 runtime_bucket = {
                     **dict(bucket_payload),
@@ -1998,7 +2053,8 @@ def _runtime_ledger_tca_rows_from_artifacts(
 def _runtime_ledger_bucket_payload_from_row(
     row: StrategyRuntimeLedgerBucket,
 ) -> dict[str, object]:
-    return {
+    payload_json = _as_mapping(row.payload_json)
+    payload = {
         "run_id": row.run_id,
         "candidate_id": row.candidate_id,
         "hypothesis_id": row.hypothesis_id,
@@ -2033,6 +2089,7 @@ def _runtime_ledger_bucket_payload_from_row(
         "ledger_schema_version": row.ledger_schema_version,
         "pnl_basis": row.pnl_basis,
     }
+    return {**payload_json, **payload}
 
 
 def _runtime_ledger_tca_row_from_payload(
@@ -2089,6 +2146,13 @@ def _runtime_ledger_bucket_metadata(
             if (candidate_id := _text_or_none(payload.get("candidate_id"))) is not None
         }
     )
+    proof_blockers = sorted(
+        dict.fromkeys(
+            blocker
+            for payload in payloads
+            for blocker in _runtime_ledger_bucket_profit_proof_blockers(payload)
+        )
+    )
     metadata: dict[str, Any] = {
         f"runtime_ledger_{prefix}_bucket_count": len(payloads),
         f"runtime_ledger_{prefix}_bucket_run_ids": sorted(
@@ -2107,6 +2171,7 @@ def _runtime_ledger_bucket_metadata(
             for payload in payloads
             if _runtime_ledger_bucket_profit_proof_present(payload)
         ),
+        f"runtime_ledger_{prefix}_bucket_profit_proof_blockers": proof_blockers,
     }
     if candidate_ids:
         metadata[f"runtime_ledger_{prefix}_bucket_candidate_ids"] = candidate_ids
@@ -2191,6 +2256,7 @@ _SOURCE_RUNTIME_LEDGER_COLUMNS = (
     "blockers_json",
     "ledger_schema_version",
     "pnl_basis",
+    "payload_json",
 )
 
 
@@ -2198,9 +2264,11 @@ def _source_runtime_ledger_payload_from_row(
     row: Sequence[object],
 ) -> dict[str, object]:
     payload = dict(zip(_SOURCE_RUNTIME_LEDGER_COLUMNS, row, strict=True))
+    payload_json = _as_mapping(payload.get("payload_json"))
     started_at = _parse_dt_or_none(payload.get("bucket_started_at"))
     ended_at = _parse_dt_or_none(payload.get("bucket_ended_at"))
     return {
+        **payload_json,
         **payload,
         "bucket_started_at": started_at.isoformat()
         if started_at is not None

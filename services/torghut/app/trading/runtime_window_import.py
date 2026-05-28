@@ -33,8 +33,10 @@ from .runtime_cost_authority import (
 )
 from .runtime_decision_authority import (
     SOURCE_DECISION_MODE_NOT_PROFIT_PROOF_ELIGIBLE_BLOCKER,
+    SOURCE_DECISION_MODE_PROFIT_PROOF_MISSING_BLOCKER,
     normalize_source_decision_mode,
     source_decision_mode_counts_have_non_profit_proof_modes,
+    source_decision_mode_counts_have_profit_proof_modes,
     source_decision_mode_is_profit_proof_eligible,
 )
 
@@ -325,15 +327,28 @@ def _runtime_ledger_bucket_blockers(bucket: Mapping[str, Any]) -> list[str]:
     source_decision_mode = normalize_source_decision_mode(
         bucket.get("source_decision_mode")
     )
+    profit_proof_eligible = _observation_bool(bucket.get("profit_proof_eligible"))
+    source_decision_mode_counts = bucket.get("source_decision_mode_counts")
+    if (
+        source_decision_mode is None
+        and not source_decision_mode_counts_have_profit_proof_modes(
+            source_decision_mode_counts
+        )
+        and not source_decision_mode_counts_have_non_profit_proof_modes(
+            source_decision_mode_counts
+        )
+        and profit_proof_eligible is not True
+    ):
+        blockers.append(SOURCE_DECISION_MODE_PROFIT_PROOF_MISSING_BLOCKER)
     if source_decision_mode and not source_decision_mode_is_profit_proof_eligible(
         source_decision_mode
     ):
         blockers.append(SOURCE_DECISION_MODE_NOT_PROFIT_PROOF_ELIGIBLE_BLOCKER)
     if source_decision_mode_counts_have_non_profit_proof_modes(
-        bucket.get("source_decision_mode_counts")
+        source_decision_mode_counts
     ):
         blockers.append(SOURCE_DECISION_MODE_NOT_PROFIT_PROOF_ELIGIBLE_BLOCKER)
-    if _observation_bool(bucket.get("profit_proof_eligible")) is False:
+    if profit_proof_eligible is False:
         blockers.append(SOURCE_DECISION_MODE_NOT_PROFIT_PROOF_ELIGIBLE_BLOCKER)
     if post_cost_expectancy is None:
         blockers.append("runtime_ledger_expectancy_missing")
