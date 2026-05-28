@@ -45,6 +45,15 @@ _RUNTIME_COST_MODEL_PAYLOAD_FIELDS = (
     "fee_model",
     "market_impact_cost_model",
 )
+_AUTHORITATIVE_EXISTING_COST_SOURCES = frozenset(
+    {
+        "broker_order_response",
+        "broker_reported_order_response",
+        "alpaca_broker_order_response",
+        "runtime_order_feed",
+        "broker_reconciliation",
+    }
+)
 _BROKER_COST_BASIS_BY_FIELD = {
     "commission": "broker_reported_commission",
     "fees": "broker_reported_fees",
@@ -109,6 +118,10 @@ def sync_order_to_db(
         alpaca_account_label=alpaca_account_label,
         order_response=order_response,
     )
+    account_label_explicit = _account_label_explicit(
+        alpaca_account_label=alpaca_account_label,
+        order_response=order_response,
+    )
     client_order_id = order_response.get("client_order_id")
     existing = _find_existing_execution(
         session=session,
@@ -122,6 +135,7 @@ def sync_order_to_db(
         order_response=order_response,
         trade_decision_id=trade_decision_id,
         account_label=account_label,
+        account_label_explicit=account_label_explicit,
         alpaca_order_id=alpaca_order_id,
         resolved_expected_adapter=resolved_expected_adapter,
         resolved_actual_adapter=resolved_actual_adapter,
@@ -201,10 +215,29 @@ def _resolve_account_label(
     alpaca_account_label: str | None,
     order_response: dict[str, Any],
 ) -> str:
-    account_label = alpaca_account_label or order_response.get("alpaca_account_label")
+    account_label = (
+        alpaca_account_label
+        or order_response.get("alpaca_account_label")
+        or order_response.get("account_label")
+    )
     if not account_label:
         return "paper"
     return str(account_label)
+
+
+def _account_label_explicit(
+    *,
+    alpaca_account_label: str | None,
+    order_response: Mapping[str, Any],
+) -> bool:
+    return any(
+        _coerce_text(value) is not None
+        for value in (
+            alpaca_account_label,
+            order_response.get("alpaca_account_label"),
+            order_response.get("account_label"),
+        )
+    )
 
 
 def _find_existing_execution(
@@ -242,6 +275,7 @@ def _build_execution_payload(
     order_response: dict[str, Any],
     trade_decision_id: str | None,
     account_label: str,
+    account_label_explicit: bool,
     alpaca_order_id: Any,
     resolved_expected_adapter: str,
     resolved_actual_adapter: str,
@@ -279,6 +313,8 @@ def _build_execution_payload(
         raw_order_payload["simulation_context"] = simulation_context
     _attach_runtime_ledger_cost_payload(
         order_response=order_response,
+        account_label=account_label,
+        account_label_explicit=account_label_explicit,
         audit_payload=audit_payload,
         raw_order_payload=raw_order_payload,
     )
@@ -330,6 +366,8 @@ def _persist_existing_execution(
 def _attach_runtime_ledger_cost_payload(
     *,
     order_response: Mapping[str, Any],
+    account_label: str,
+    account_label_explicit: bool,
     audit_payload: dict[str, Any],
     raw_order_payload: dict[str, Any],
 ) -> None:
@@ -341,21 +379,39 @@ def _attach_runtime_ledger_cost_payload(
         )
     if cost_payload is None and _modeled_paper_cost_allowed(
         order_response=order_response,
+        account_label=account_label,
+        account_label_explicit=account_label_explicit,
         audit_payload=audit_payload,
     ):
-        cost_payload = _runtime_ledger_cost_payload_from_cost_model(
+        modeled_cost_payload = _runtime_ledger_cost_payload_from_cost_model(
             order_response=order_response,
             audit_payload=audit_payload,
         )
+        if modeled_cost_payload is not None:
+            audit_payload.setdefault(
+                "modeled_paper_cost_estimate", modeled_cost_payload
+            )
+            raw_order_payload.setdefault(
+                "modeled_paper_cost_estimate", modeled_cost_payload
+            )
+        return
     if cost_payload is None:
         return
 
-    audit_payload.setdefault("runtime_ledger_cost", cost_payload)
-    raw_order_payload.setdefault("runtime_ledger_cost", cost_payload)
-    audit_payload.setdefault("cost_amount", cost_payload["cost_amount"])
-    audit_payload.setdefault("cost_basis", cost_payload["cost_basis"])
-    raw_order_payload.setdefault("cost_amount", cost_payload["cost_amount"])
-    raw_order_payload.setdefault("cost_basis", cost_payload["cost_basis"])
+    if cost_payload.get("source") == "broker_order_response":
+        audit_payload["runtime_ledger_cost"] = cost_payload
+        raw_order_payload["runtime_ledger_cost"] = cost_payload
+        audit_payload["cost_amount"] = cost_payload["cost_amount"]
+        audit_payload["cost_basis"] = cost_payload["cost_basis"]
+        raw_order_payload["cost_amount"] = cost_payload["cost_amount"]
+        raw_order_payload["cost_basis"] = cost_payload["cost_basis"]
+    else:
+        audit_payload.setdefault("runtime_ledger_cost", cost_payload)
+        raw_order_payload.setdefault("runtime_ledger_cost", cost_payload)
+        audit_payload.setdefault("cost_amount", cost_payload["cost_amount"])
+        audit_payload.setdefault("cost_basis", cost_payload["cost_basis"])
+        raw_order_payload.setdefault("cost_amount", cost_payload["cost_amount"])
+        raw_order_payload.setdefault("cost_basis", cost_payload["cost_basis"])
 
     fee_model = {
         "source": cost_payload.get("source", "broker_order_response"),
@@ -379,7 +435,7 @@ def _runtime_ledger_cost_payload_from_order(
 def _runtime_ledger_cost_payload_from_existing_metadata(
     *payloads: Mapping[str, Any],
 ) -> dict[str, str] | None:
-    for payload in _iter_nested_mappings(*payloads):
+    for payload in payloads:
         for key in ("runtime_ledger_cost", "execution_cost", "explicit_execution_cost"):
             nested = payload.get(key)
             if not isinstance(nested, Mapping):
@@ -390,10 +446,13 @@ def _runtime_ledger_cost_payload_from_existing_metadata(
             }
             cost_payload = _runtime_cost_payload_from_mapping(
                 nested_payload,
-                source="execution_audit_cost_payload",
+                source=str(nested_payload.get("source") or ""),
                 source_field_prefix=f"{key}.",
             )
-            if cost_payload is not None:
+            if (
+                cost_payload is not None
+                and cost_payload["source"] in _AUTHORITATIVE_EXISTING_COST_SOURCES
+            ):
                 return cost_payload
     return None
 
@@ -470,8 +529,20 @@ def _runtime_cost_payload_from_mapping(
 def _modeled_paper_cost_allowed(
     *,
     order_response: Mapping[str, Any],
+    account_label: str,
+    account_label_explicit: bool,
     audit_payload: Mapping[str, Any],
 ) -> bool:
+    resolved_label = account_label.strip().lower()
+    if not account_label_explicit:
+        return False
+    if "live" in resolved_label:
+        return False
+    if resolved_label == "paper":
+        return False
+    if not any(token in resolved_label for token in ("paper", "sim", "simulation")):
+        return False
+
     markers: list[str] = []
     for payload in _iter_nested_mappings(order_response, audit_payload, max_depth=2):
         for key in (

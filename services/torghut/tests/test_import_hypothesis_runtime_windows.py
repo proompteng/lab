@@ -495,6 +495,21 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     )
                 )
 
+    def test_runtime_ledger_profit_proof_rejects_modeled_cost_basis(
+        self,
+    ) -> None:
+        for overrides in (
+            {"cost_basis": "modeled_paper_cost_budget"},
+            {"cost_basis_counts": {"modeled_paper_cost_budget": 1}},
+            {"cost_basis_counts": {"decision_impact_assumptions_total_cost_bps": 2}},
+        ):
+            with self.subTest(overrides=overrides):
+                self.assertFalse(
+                    _runtime_ledger_bucket_profit_proof_present(
+                        _complete_runtime_ledger_bucket(**overrides)
+                    )
+                )
+
     def test_runtime_ledger_tca_rows_from_durable_buckets_queries_matching_proof(
         self,
     ) -> None:

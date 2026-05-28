@@ -349,6 +349,7 @@ class TestSnapshots(TestCase):
                         "runtime_ledger_cost": {
                             "fee_amount": "0.07",
                             "fee_basis": "broker_reported_fees",
+                            "source": "broker_reconciliation",
                         },
                     },
                 },
@@ -367,7 +368,7 @@ class TestSnapshots(TestCase):
             fee_model = audit.get("fee_model")
             self.assertIsInstance(fee_model, dict)
             assert isinstance(fee_model, dict)
-            self.assertEqual(fee_model.get("source"), "execution_audit_cost_payload")
+            self.assertEqual(fee_model.get("source"), "broker_reconciliation")
 
     def test_sync_order_to_db_models_paper_cost_when_broker_omits_fees(self) -> None:
         with Session(self.engine) as session:
@@ -403,7 +404,7 @@ class TestSnapshots(TestCase):
             self.assertIsInstance(raw_order, dict)
             assert isinstance(audit, dict)
             assert isinstance(raw_order, dict)
-            cost = audit.get("runtime_ledger_cost")
+            cost = audit.get("modeled_paper_cost_estimate")
             self.assertIsInstance(cost, dict)
             assert isinstance(cost, dict)
             self.assertEqual(cost.get("cost_amount"), "0.15")
@@ -412,12 +413,11 @@ class TestSnapshots(TestCase):
             self.assertEqual(
                 cost.get("source_field"), "cost_model.estimate.total_cost_bps"
             )
-            self.assertEqual(audit.get("cost_amount"), "0.15")
-            self.assertEqual(raw_order.get("cost_amount"), "0.15")
-            fee_model = audit.get("fee_model")
-            self.assertIsInstance(fee_model, dict)
-            assert isinstance(fee_model, dict)
-            self.assertEqual(fee_model.get("source"), "paper_cost_model_estimate")
+            self.assertEqual(raw_order.get("modeled_paper_cost_estimate"), cost)
+            self.assertNotIn("runtime_ledger_cost", audit)
+            self.assertNotIn("cost_amount", audit)
+            self.assertNotIn("cost_amount", raw_order)
+            self.assertNotIn("fee_model", audit)
 
     def test_sync_order_to_db_does_not_model_live_cost_when_broker_omits_fees(
         self,
@@ -457,6 +457,171 @@ class TestSnapshots(TestCase):
             self.assertNotIn("runtime_ledger_cost", audit)
             self.assertNotIn("cost_amount", audit)
             self.assertNotIn("cost_amount", raw_order)
+
+    def test_sync_order_to_db_does_not_trust_payload_paper_marker_for_live_label(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            execution = sync_order_to_db(
+                session,
+                {
+                    "id": "order-live-arg-no-modeled-cost",
+                    "alpaca_account_label": "TORGHUT_PAPER",
+                    "symbol": "AAPL",
+                    "side": "buy",
+                    "type": "market",
+                    "time_in_force": "day",
+                    "qty": "2",
+                    "filled_qty": "2",
+                    "filled_avg_price": "100",
+                    "status": "filled",
+                    "_execution_audit": {
+                        "execution_lane": "paper_route_probe",
+                        "cost_model": {
+                            "estimate": {
+                                "notional": "200",
+                                "total_cost_bps": "7.5",
+                            },
+                        },
+                    },
+                },
+                alpaca_account_label="TORGHUT_LIVE",
+            )
+
+            audit = execution.execution_audit_json
+            raw_order = execution.raw_order
+            self.assertIsInstance(audit, dict)
+            self.assertIsInstance(raw_order, dict)
+            assert isinstance(audit, dict)
+            assert isinstance(raw_order, dict)
+            self.assertEqual(execution.alpaca_account_label, "TORGHUT_LIVE")
+            self.assertNotIn("modeled_paper_cost_estimate", audit)
+            self.assertNotIn("runtime_ledger_cost", audit)
+            self.assertNotIn("cost_amount", audit)
+            self.assertNotIn("cost_amount", raw_order)
+
+    def test_sync_order_to_db_does_not_model_cost_when_label_has_live_marker(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            execution = sync_order_to_db(
+                session,
+                {
+                    "id": "order-live-paper-label-no-modeled-cost",
+                    "alpaca_account_label": "TORGHUT_LIVE_PAPER",
+                    "symbol": "AAPL",
+                    "side": "buy",
+                    "type": "market",
+                    "time_in_force": "day",
+                    "qty": "2",
+                    "filled_qty": "2",
+                    "filled_avg_price": "100",
+                    "status": "filled",
+                    "_execution_audit": {
+                        "execution_lane": "paper_route_probe",
+                        "cost_model": {
+                            "estimate": {
+                                "notional": "200",
+                                "total_cost_bps": "7.5",
+                            },
+                        },
+                    },
+                },
+            )
+
+            audit = execution.execution_audit_json
+            raw_order = execution.raw_order
+            self.assertIsInstance(audit, dict)
+            self.assertIsInstance(raw_order, dict)
+            assert isinstance(audit, dict)
+            assert isinstance(raw_order, dict)
+            self.assertNotIn("modeled_paper_cost_estimate", audit)
+            self.assertNotIn("runtime_ledger_cost", audit)
+            self.assertNotIn("cost_amount", audit)
+            self.assertNotIn("cost_amount", raw_order)
+
+    def test_sync_order_to_db_ignores_nested_spoofed_runtime_cost_metadata(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            execution = sync_order_to_db(
+                session,
+                {
+                    "id": "order-nested-runtime-cost-spoof",
+                    "alpaca_account_label": "TORGHUT_PAPER",
+                    "symbol": "AAPL",
+                    "side": "buy",
+                    "type": "market",
+                    "time_in_force": "day",
+                    "qty": "1",
+                    "filled_qty": "1",
+                    "filled_avg_price": "100",
+                    "status": "filled",
+                    "_execution_audit": {
+                        "analytics": {
+                            "runtime_ledger_cost": {
+                                "cost_amount": "0.01",
+                                "cost_basis": "broker_reported_commission",
+                                "source": "broker_reconciliation",
+                            }
+                        }
+                    },
+                },
+            )
+
+            audit = execution.execution_audit_json
+            raw_order = execution.raw_order
+            self.assertIsInstance(audit, dict)
+            self.assertIsInstance(raw_order, dict)
+            assert isinstance(audit, dict)
+            assert isinstance(raw_order, dict)
+            self.assertNotIn("runtime_ledger_cost", audit)
+            self.assertNotIn("cost_amount", audit)
+            self.assertNotIn("cost_amount", raw_order)
+
+    def test_sync_order_to_db_prefers_broker_response_cost_over_audit_cost(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            execution = sync_order_to_db(
+                session,
+                {
+                    "id": "order-broker-cost-wins",
+                    "alpaca_account_label": "TORGHUT_PAPER",
+                    "symbol": "AAPL",
+                    "side": "buy",
+                    "type": "market",
+                    "time_in_force": "day",
+                    "qty": "1",
+                    "filled_qty": "1",
+                    "filled_avg_price": "100",
+                    "status": "filled",
+                    "commission": "0.25",
+                    "_execution_audit": {
+                        "cost_amount": "0",
+                        "cost_basis": "broker_reported_commission",
+                        "runtime_ledger_cost": {
+                            "cost_amount": "0",
+                            "cost_basis": "broker_reported_commission",
+                            "source": "broker_reconciliation",
+                        },
+                    },
+                },
+            )
+
+            audit = execution.execution_audit_json
+            raw_order = execution.raw_order
+            self.assertIsInstance(audit, dict)
+            self.assertIsInstance(raw_order, dict)
+            assert isinstance(audit, dict)
+            assert isinstance(raw_order, dict)
+            cost = audit.get("runtime_ledger_cost")
+            self.assertIsInstance(cost, dict)
+            assert isinstance(cost, dict)
+            self.assertEqual(cost.get("cost_amount"), "0.25")
+            self.assertEqual(cost.get("source"), "broker_order_response")
+            self.assertEqual(audit.get("cost_amount"), "0.25")
+            self.assertEqual(raw_order.get("cost_amount"), "0.25")
 
     def test_sync_order_to_db_requires_paper_marker_before_modeling_costs(self) -> None:
         with Session(self.engine) as session:
