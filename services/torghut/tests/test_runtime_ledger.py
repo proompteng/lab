@@ -747,6 +747,121 @@ def test_exact_replay_ledger_blocks_fill_only_profit_proof() -> None:
     assert "fill_order_linkage_missing" in bucket.blockers
 
 
+def test_exact_replay_ledger_accepts_multiple_partial_fills_for_one_order() -> None:
+    rows: list[dict[str, object]] = [
+        {
+            "event_type": "decision",
+            "executed_at": _ts(1),
+            "decision_id": "decision-buy",
+            "account_label": "paper",
+            "strategy_id": "strategy-1",
+            "symbol": "NVDA",
+            "execution_policy_hash": "policy-sha",
+            "cost_model_hash": "cost-sha",
+            "lineage_hash": "lineage-sha",
+        },
+        {
+            "event_type": "order_submitted",
+            "executed_at": _ts(2),
+            "decision_id": "decision-buy",
+            "order_id": "order-buy",
+            "account_label": "paper",
+            "strategy_id": "strategy-1",
+            "symbol": "NVDA",
+            "execution_policy_hash": "policy-sha",
+            "cost_model_hash": "cost-sha",
+            "lineage_hash": "lineage-sha",
+        },
+        {
+            "event_type": "partial_fill",
+            "executed_at": _ts(3),
+            "decision_id": "decision-buy",
+            "order_id": "order-buy",
+            "account_label": "paper",
+            "strategy_id": "strategy-1",
+            "symbol": "NVDA",
+            "side": "buy",
+            "filled_qty": Decimal("0.4"),
+            "avg_fill_price": Decimal("100"),
+            "cost_amount": Decimal("0.01"),
+            "cost_basis": "broker_reported_commission_and_fees",
+            "execution_policy_hash": "policy-sha",
+            "cost_model_hash": "cost-sha",
+            "lineage_hash": "lineage-sha",
+        },
+        {
+            "event_type": "fill",
+            "executed_at": _ts(4),
+            "decision_id": "decision-buy",
+            "order_id": "order-buy",
+            "account_label": "paper",
+            "strategy_id": "strategy-1",
+            "symbol": "NVDA",
+            "side": "buy",
+            "filled_qty": Decimal("0.6"),
+            "avg_fill_price": Decimal("100"),
+            "cost_amount": Decimal("0.01"),
+            "cost_basis": "broker_reported_commission_and_fees",
+            "execution_policy_hash": "policy-sha",
+            "cost_model_hash": "cost-sha",
+            "lineage_hash": "lineage-sha",
+        },
+        {
+            "event_type": "decision",
+            "executed_at": _ts(10),
+            "decision_id": "decision-sell",
+            "account_label": "paper",
+            "strategy_id": "strategy-1",
+            "symbol": "NVDA",
+            "execution_policy_hash": "policy-sha",
+            "cost_model_hash": "cost-sha",
+            "lineage_hash": "lineage-sha",
+        },
+        {
+            "event_type": "order_submitted",
+            "executed_at": _ts(11),
+            "decision_id": "decision-sell",
+            "order_id": "order-sell",
+            "account_label": "paper",
+            "strategy_id": "strategy-1",
+            "symbol": "NVDA",
+            "execution_policy_hash": "policy-sha",
+            "cost_model_hash": "cost-sha",
+            "lineage_hash": "lineage-sha",
+        },
+        {
+            "event_type": "fill",
+            "executed_at": _ts(12),
+            "decision_id": "decision-sell",
+            "order_id": "order-sell",
+            "account_label": "paper",
+            "strategy_id": "strategy-1",
+            "symbol": "NVDA",
+            "side": "sell",
+            "filled_qty": Decimal("1"),
+            "avg_fill_price": Decimal("101"),
+            "cost_amount": Decimal("0.02"),
+            "cost_basis": "broker_reported_commission_and_fees",
+            "execution_policy_hash": "policy-sha",
+            "cost_model_hash": "cost-sha",
+            "lineage_hash": "lineage-sha",
+        },
+    ]
+
+    bucket = build_runtime_ledger_buckets(
+        rows,
+        bucket_ranges=[(_ts(), _ts(60))],
+        require_order_lifecycle=True,
+    )[0]
+
+    assert bucket.blockers == []
+    assert bucket.fill_count == 3
+    assert bucket.submitted_order_count == 2
+    assert bucket.closed_trade_count == 1
+    assert bucket.open_position_count == 0
+    assert bucket.net_strategy_pnl_after_costs == Decimal("0.96")
+
+
 def test_exact_replay_ledger_blocks_unfilled_or_unhashed_order_lifecycle() -> None:
     bucket = build_runtime_ledger_buckets(
         [

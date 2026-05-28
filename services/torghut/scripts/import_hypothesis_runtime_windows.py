@@ -8,7 +8,7 @@ import hashlib
 import json
 import os
 from datetime import date, datetime, time, timedelta, timezone
-from decimal import Decimal
+from decimal import ROUND_CEILING, Decimal
 from pathlib import Path
 from typing import Any, Mapping, Sequence, cast
 
@@ -84,6 +84,11 @@ ORDER_FEED_FILL_LIFECYCLE_INCOMPLETE_BLOCKER = "order_feed_fill_lifecycle_incomp
 ORDER_FEED_FILL_LIFECYCLE_ORDER_ID_MISSING_BLOCKER = (
     "order_feed_fill_lifecycle_order_id_missing"
 )
+ALPACA_2026_EQUITY_SEC_FEE_RATE = Decimal("20.60") / Decimal("1000000")
+ALPACA_2026_EQUITY_TAF_RATE_PER_SHARE = Decimal("0.000195")
+ALPACA_2026_EQUITY_TAF_CAP = Decimal("9.79")
+ALPACA_2026_FEE_SCHEDULE_REVISED_ON = "2026-04-01"
+_CENT = Decimal("0.01")
 _RUNTIME_LEDGER_EQUITY_DENOMINATOR_KEYS = (
     "account_equity",
     "portfolio_equity",
@@ -298,7 +303,7 @@ def _source_decision_mode(row: Mapping[str, object]) -> str | None:
     explicit = normalize_source_decision_mode(_first_text(row, "source_decision_mode"))
     if explicit is not None:
         return explicit
-    return normalize_source_decision_mode(_first_text(row, "mode"))
+    return normalize_source_decision_mode(row.get("mode"))
 
 
 def _source_decision_mode_counts(
@@ -391,6 +396,126 @@ def _stable_payload_digest(value: object) -> str | None:
         default=_json_default,
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _runtime_source_lineage_hash(
+    *,
+    candidate_id: str | None,
+    hypothesis_id: str | None,
+) -> str | None:
+    payload = {
+        key: value
+        for key, value in {
+            "candidate_id": candidate_id,
+            "hypothesis_id": hypothesis_id,
+            "source": "runtime_window_lineage_filter",
+        }.items()
+        if value
+    }
+    return _stable_payload_digest(payload)
+
+
+def _attach_source_lineage_context(
+    rows: Sequence[Mapping[str, object]],
+    *,
+    candidate_id: str | None,
+    hypothesis_id: str | None,
+) -> list[dict[str, object]]:
+    lineage_hash = _runtime_source_lineage_hash(
+        candidate_id=candidate_id,
+        hypothesis_id=hypothesis_id,
+    )
+    contextualized: list[dict[str, object]] = []
+    for row in rows:
+        payload = dict(row)
+        if candidate_id:
+            payload.setdefault("source_candidate_id", candidate_id)
+        if hypothesis_id:
+            payload.setdefault("source_hypothesis_id", hypothesis_id)
+        if lineage_hash:
+            payload["lineage_hash"] = lineage_hash
+        contextualized.append(payload)
+    return contextualized
+
+
+def _decimal_ceil_cent(value: Decimal) -> Decimal:
+    if value <= 0:
+        return Decimal("0")
+    return value.quantize(_CENT, rounding=ROUND_CEILING)
+
+
+def _row_has_alpaca_us_equity_order_source(row: Mapping[str, object]) -> bool:
+    alpaca_markers = {
+        str(item or "").strip().lower()
+        for item in (
+            *_text_values(row, "feed", "source_topic", "channel", "submit_path"),
+            *_text_values(row, "source"),
+        )
+    }
+    if not any(
+        "alpaca" in marker or marker == "trade_updates" for marker in alpaca_markers
+    ):
+        return False
+    asset_classes = {
+        value.strip().lower().replace("-", "_")
+        for value in _text_values(row, "asset_class")
+    }
+    return not asset_classes or any(
+        item in {"us_equity", "us_equities", "equity", "equities"}
+        for item in asset_classes
+    )
+
+
+def _alpaca_2026_equity_fee_schedule_cost(
+    row: Mapping[str, object],
+    *,
+    side: Any,
+    filled_qty: Decimal | None,
+    filled_notional: Decimal,
+) -> tuple[Decimal, str] | None:
+    if (
+        filled_qty is None
+        or filled_qty <= 0
+        or filled_notional <= 0
+        or not _row_has_alpaca_us_equity_order_source(row)
+    ):
+        return None
+    normalized_side = str(side or "").strip().lower().replace("-", "_")
+    if normalized_side in {"buy", "buy_to_cover", "cover"}:
+        return Decimal("0"), "alpaca_2026_equity_zero_commission_and_cat_fee_schedule"
+    if normalized_side not in {"sell", "sell_short", "short"}:
+        return None
+    sec_fee = _decimal_ceil_cent(filled_notional * ALPACA_2026_EQUITY_SEC_FEE_RATE)
+    taf_fee = min(
+        _decimal_ceil_cent(filled_qty * ALPACA_2026_EQUITY_TAF_RATE_PER_SHARE),
+        ALPACA_2026_EQUITY_TAF_CAP,
+    )
+    return (
+        sec_fee + taf_fee,
+        "alpaca_2026_equity_sec_taf_cat_fee_schedule",
+    )
+
+
+def _alpaca_2026_equity_fee_schedule_hash() -> str:
+    digest = _stable_payload_digest(
+        {
+            "broker": "alpaca",
+            "asset_class": "us_equity",
+            "schedule": "alpaca_brokerage_fee_schedule",
+            "revised_on": ALPACA_2026_FEE_SCHEDULE_REVISED_ON,
+            "sec_fee_rate_per_notional": str(ALPACA_2026_EQUITY_SEC_FEE_RATE),
+            "taf_rate_per_share": str(ALPACA_2026_EQUITY_TAF_RATE_PER_SHARE),
+            "taf_cap": str(ALPACA_2026_EQUITY_TAF_CAP),
+            "cat_fee_equities": "0",
+            "commission": "0",
+        }
+    )
+    assert digest is not None
+    return digest
+
+
+def _cost_basis_is_alpaca_fee_schedule(value: object) -> bool:
+    return str(value or "").strip().startswith("alpaca_2026_equity_")
 
 
 def _first_payload_digest(row: Mapping[str, object], *keys: str) -> str | None:
@@ -1148,6 +1273,8 @@ def _runtime_execution_cost_amount(
     row: Mapping[str, object],
     *,
     filled_notional: Decimal,
+    side: Any = None,
+    filled_qty: Decimal | None = None,
 ) -> Decimal | None:
     explicit_cost = _first_decimal(
         row,
@@ -1160,6 +1287,14 @@ def _runtime_execution_cost_amount(
     )
     if explicit_cost is not None:
         return explicit_cost
+    fee_schedule_cost = _alpaca_2026_equity_fee_schedule_cost(
+        row,
+        side=side,
+        filled_qty=filled_qty,
+        filled_notional=filled_notional,
+    )
+    if fee_schedule_cost is not None:
+        return fee_schedule_cost[0]
     total_cost_bps = _first_decimal(
         row,
         "total_cost_bps",
@@ -1176,6 +1311,9 @@ def _runtime_execution_cost_basis(
     row: Mapping[str, object],
     *,
     cost_amount: Decimal | None,
+    side: Any = None,
+    filled_qty: Decimal | None = None,
+    filled_notional: Decimal | None = None,
 ) -> str | None:
     cost_basis = _first_text(
         row,
@@ -1187,6 +1325,15 @@ def _runtime_execution_cost_basis(
     )
     if cost_basis is not None:
         return cost_basis
+    if filled_notional is not None:
+        fee_schedule_cost = _alpaca_2026_equity_fee_schedule_cost(
+            row,
+            side=side,
+            filled_qty=filled_qty,
+            filled_notional=filled_notional,
+        )
+        if fee_schedule_cost is not None and cost_amount == fee_schedule_cost[0]:
+            return fee_schedule_cost[1]
     if (
         cost_amount is not None
         and _first_decimal(
@@ -1316,11 +1463,22 @@ def _runtime_lifecycle_ledger_row(
         ):
             filled_notional = filled_qty * avg_fill_price
         cost_amount = (
-            _runtime_execution_cost_amount(row, filled_notional=filled_notional)
+            _runtime_execution_cost_amount(
+                row,
+                filled_notional=filled_notional,
+                side=side,
+                filled_qty=filled_qty,
+            )
             if filled_notional is not None
             else None
         )
-        cost_basis = _runtime_execution_cost_basis(row, cost_amount=cost_amount)
+        cost_basis = _runtime_execution_cost_basis(
+            row,
+            cost_amount=cost_amount,
+            side=side,
+            filled_qty=filled_qty,
+            filled_notional=filled_notional,
+        )
         if require_complete_fill and (
             side is None
             or filled_qty is None
@@ -1346,6 +1504,8 @@ def _runtime_lifecycle_ledger_row(
             ledger_row["cost_amount"] = cost_amount
         if cost_basis is not None:
             ledger_row["cost_basis"] = cost_basis
+        if _cost_basis_is_alpaca_fee_schedule(cost_basis):
+            ledger_row["cost_model_hash"] = _alpaca_2026_equity_fee_schedule_hash()
         ledger_row["source"] = "execution_order_event"
     return ledger_row
 
@@ -1585,8 +1745,9 @@ def _build_realized_strategy_pnl_rows(
             "fill_price",
             "filled_price",
         )
+        side = _first_text(row, "side", "order_side") or ""
         signed_qty = _execution_signed_qty(
-            side=_first_text(row, "side", "order_side"),
+            side=side,
             qty=_first_decimal(
                 row,
                 "filled_qty",
@@ -1669,11 +1830,20 @@ def _build_realized_strategy_pnl_rows(
         cost_amount = _runtime_execution_cost_amount(
             row,
             filled_notional=filled_notional,
+            side=side,
+            filled_qty=filled_qty,
         )
         cost_basis = _runtime_execution_cost_basis(
             row,
             cost_amount=cost_amount,
+            side=side,
+            filled_qty=filled_qty,
+            filled_notional=filled_notional,
         )
+        if _cost_basis_is_alpaca_fee_schedule(cost_basis):
+            common_ledger_fields["cost_model_hash"] = (
+                _alpaca_2026_equity_fee_schedule_hash()
+            )
         ledger_rows.append(
             RuntimeLedgerFill(
                 executed_at=(
@@ -1688,7 +1858,7 @@ def _build_realized_strategy_pnl_rows(
                 cost_model_hash=common_ledger_fields["cost_model_hash"],
                 lineage_hash=common_ledger_fields["lineage_hash"],
                 replay_data_hash=common_ledger_fields["replay_data_hash"],
-                side=_first_text(row, "side", "order_side") or "",
+                side=side,
                 filled_qty=filled_qty,
                 avg_fill_price=price,
                 filled_notional=filled_notional,
@@ -1730,6 +1900,7 @@ def _build_realized_strategy_pnl_rows(
     for bucket in build_runtime_ledger_buckets(
         ledger_rows,
         bucket_ranges=bucket_ranges,
+        group_by=("symbol",),
         require_order_lifecycle=True,
     ):
         if bucket.closed_trade_count <= 0 and not bucket.blockers:
@@ -2662,6 +2833,11 @@ def _query_timestamps(
                 source_activity_diagnostics["decision_rows_after_lineage_filter"] = len(
                     decision_lifecycle_rows
                 )
+            decision_lifecycle_rows = _attach_source_lineage_context(
+                decision_lifecycle_rows,
+                candidate_id=candidate_id,
+                hypothesis_id=hypothesis_id,
+            )
             decisions = []
             for row in decision_lifecycle_rows:
                 computed_at = row.get("computed_at")
@@ -2776,6 +2952,11 @@ def _query_timestamps(
                 source_activity_diagnostics[
                     "fill_execution_rows_after_lineage_filter"
                 ] = sum(1 for row in execution_rows if _execution_row_has_fill(row))
+            execution_rows = _attach_source_lineage_context(
+                execution_rows,
+                candidate_id=candidate_id,
+                hypothesis_id=hypothesis_id,
+            )
             executions = []
             for row in execution_rows:
                 execution_event_at = row.get("execution_event_at")
@@ -2878,6 +3059,11 @@ def _query_timestamps(
                     for row in order_lifecycle_rows
                     if _runtime_ledger_event_type(row) in _RUNTIME_LEDGER_FILL_EVENTS
                 )
+            order_lifecycle_rows = _attach_source_lineage_context(
+                order_lifecycle_rows,
+                candidate_id=candidate_id,
+                hypothesis_id=hypothesis_id,
+            )
             cur.execute(
                 f"""
                 select
