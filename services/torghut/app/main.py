@@ -5394,6 +5394,135 @@ def _store_options_catalog_freshness_summary(
     return payload
 
 
+def _decimal_or_none(value: object) -> Decimal | None:
+    if value is None:
+        return None
+    try:
+        return Decimal(str(value))
+    except Exception:
+        return None
+
+
+def _load_bounded_options_catalog_freshness_summary(
+    session: Session,
+    scoped_symbols: tuple[str, ...],
+    *,
+    reason: str,
+) -> dict[str, object] | None:
+    if not scoped_symbols:
+        return None
+    rows: list[Mapping[str, object]] = []
+    bounded_query = text(
+        """
+SELECT
+  underlying_symbol,
+  last_seen_ts,
+  provider_updated_ts,
+  close_price,
+  open_interest
+FROM torghut_options_contract_catalog
+WHERE underlying_symbol = :route_symbol
+  AND status = 'active'
+LIMIT 1
+"""
+    )
+    try:
+        for symbol in scoped_symbols:
+            row = (
+                session.execute(
+                    bounded_query,
+                    {"route_symbol": symbol},
+                )
+                .mappings()
+                .first()
+            )
+            if row is not None:
+                rows.append(cast(Mapping[str, object], row))
+    except SQLAlchemyError as bounded_exc:
+        logger.warning(
+            "Options catalog bounded freshness fallback unavailable: %s",
+            bounded_exc,
+        )
+        return None
+
+    route_symbol_freshness: dict[str, dict[str, object]] = {}
+    for row in rows:
+        symbol = str(row.get("underlying_symbol") or "").strip().upper()
+        if not symbol:
+            continue
+        route_symbol_freshness[symbol] = {
+            "status": "current",
+            "active_contracts": 1,
+            "active_contracts_exact": False,
+            "coverage_exact": False,
+            "bounded": True,
+            "newest_last_seen_ts": _ensure_utc_datetime(
+                cast(datetime | None, row.get("last_seen_ts"))
+            ),
+            "missing_provider_updated_ts_count": 1,
+            "provider_updated_ts_present": False,
+            "newest_provider_updated_ts": _ensure_utc_datetime(
+                cast(datetime | None, row.get("provider_updated_ts"))
+            ),
+            "missing_close_price_count": 1 if row.get("close_price") is None else 0,
+            "zero_open_interest_count": 1
+            if (_decimal_or_none(row.get("open_interest")) or Decimal("0")) <= 0
+            else 0,
+            "reason_codes": [
+                "options_catalog_freshness_bounded_route_scope",
+                reason,
+            ],
+        }
+
+    newest_last_seen_values = [
+        value
+        for value in (
+            _ensure_utc_datetime(cast(datetime | None, row.get("last_seen_ts")))
+            for row in rows
+        )
+        if value is not None
+    ]
+    newest_provider_updated_values = [
+        value
+        for value in (
+            _ensure_utc_datetime(cast(datetime | None, row.get("provider_updated_ts")))
+            for row in rows
+        )
+        if value is not None
+    ]
+    active_contracts = len(rows)
+    return {
+        "status": "current" if active_contracts > 0 else "missing",
+        "scope": "route_symbols",
+        "bounded": True,
+        "coverage_exact": False,
+        "active_contracts_exact": False,
+        "active_contracts": active_contracts,
+        "newest_last_seen_ts": max(newest_last_seen_values)
+        if newest_last_seen_values
+        else None,
+        "missing_provider_updated_ts_count": active_contracts,
+        "provider_updated_ts_present": False,
+        "newest_provider_updated_ts": max(newest_provider_updated_values)
+        if newest_provider_updated_values
+        else None,
+        "missing_close_price_count": sum(
+            1 for row in rows if row.get("close_price") is None
+        ),
+        "zero_open_interest_count": sum(
+            1
+            for row in rows
+            if (_decimal_or_none(row.get("open_interest")) or Decimal("0")) <= 0
+        ),
+        "route_symbols": list(scoped_symbols),
+        "route_symbol_freshness": route_symbol_freshness,
+        "reason_codes": [
+            "options_catalog_freshness_bounded_route_scope",
+            reason,
+        ],
+    }
+
+
 def _load_options_catalog_freshness_summary(
     session: Session, *, route_symbols: Sequence[str] | None = None
 ) -> dict[str, object]:
@@ -5510,6 +5639,16 @@ WHERE status = 'active'
             zero_open_interest_count = int(row["zero_open_interest_count"] or 0)
     except SQLAlchemyError as exc:
         logger.warning("Options catalog freshness summary unavailable: %s", exc)
+        bounded_payload = _load_bounded_options_catalog_freshness_summary(
+            session,
+            scoped_symbols,
+            reason="options_catalog_freshness_summary_unavailable",
+        )
+        if bounded_payload is not None:
+            return _store_options_catalog_freshness_summary(
+                scoped_symbols,
+                bounded_payload,
+            )
         return _store_options_catalog_freshness_summary(
             scoped_symbols,
             {
