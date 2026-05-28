@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.db import get_session
 from app.main import (
     _ALPACA_HEALTH_STATE,
+    _OPTIONS_CATALOG_FRESHNESS_CACHE,
     _TRADING_DEPENDENCY_HEALTH_CACHE,
     _build_hypothesis_runtime_payload,
     _assert_dspy_cutover_migration_guard,
@@ -239,10 +240,22 @@ class _OptionsFreshnessSession:
         )
 
 
+class _FailingOptionsFreshnessSession:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, object | None]] = []
+
+    def execute(
+        self, statement: object, params: object | None = None
+    ) -> _ExecuteResult:
+        self.calls.append((str(statement), params))
+        raise SQLAlchemyError("statement timeout")
+
+
 class TestTradingApi(TestCase):
     def setUp(self) -> None:
         _TRADING_DEPENDENCY_HEALTH_CACHE.clear()
         _ALPACA_HEALTH_STATE.clear()
+        _OPTIONS_CATALOG_FRESHNESS_CACHE.clear()
         engine = create_engine(
             "sqlite+pysqlite:///:memory:",
             future=True,
@@ -481,6 +494,84 @@ class TestTradingApi(TestCase):
             ),
             1,
         )
+
+    def test_options_catalog_freshness_summary_caches_unavailable_route_scope(
+        self,
+    ) -> None:
+        original_cache_seconds = settings.trading_options_catalog_freshness_cache_seconds
+        settings.trading_options_catalog_freshness_cache_seconds = 30
+        self.addCleanup(
+            setattr,
+            settings,
+            "trading_options_catalog_freshness_cache_seconds",
+            original_cache_seconds,
+        )
+        fake_session = _FailingOptionsFreshnessSession()
+
+        first = _load_options_catalog_freshness_summary(
+            fake_session,  # type: ignore[arg-type]
+            route_symbols=["AAPL"],
+        )
+        second = _load_options_catalog_freshness_summary(
+            fake_session,  # type: ignore[arg-type]
+            route_symbols=["AAPL"],
+        )
+
+        self.assertEqual(first["status"], "unavailable")
+        self.assertEqual(second["status"], "unavailable")
+        self.assertEqual(first["route_symbols"], ["AAPL"])
+        self.assertEqual(second["route_symbols"], ["AAPL"])
+        self.assertEqual(len(fake_session.calls), 1)
+        first_cache = first.get("cache")
+        second_cache = second.get("cache")
+        self.assertIsInstance(first_cache, dict)
+        self.assertIsInstance(second_cache, dict)
+        assert isinstance(first_cache, dict)
+        assert isinstance(second_cache, dict)
+        self.assertEqual(first_cache["hit"], False)
+        self.assertEqual(second_cache["hit"], True)
+
+    def test_options_catalog_freshness_summary_expires_cached_route_scope(
+        self,
+    ) -> None:
+        original_cache_seconds = settings.trading_options_catalog_freshness_cache_seconds
+        settings.trading_options_catalog_freshness_cache_seconds = 1
+        self.addCleanup(
+            setattr,
+            settings,
+            "trading_options_catalog_freshness_cache_seconds",
+            original_cache_seconds,
+        )
+        _OPTIONS_CATALOG_FRESHNESS_CACHE[(("AAPL",),)] = (
+            datetime.now(timezone.utc) - timedelta(seconds=2),
+            {
+                "status": "unavailable",
+                "scope": "route_symbols",
+                "route_symbols": ["AAPL"],
+                "reason": "old",
+            },
+        )
+        fake_session = _OptionsFreshnessSession()
+
+        payload = _load_options_catalog_freshness_summary(
+            fake_session,  # type: ignore[arg-type]
+            route_symbols=["AAPL"],
+        )
+
+        self.assertEqual(payload["status"], "current")
+        self.assertEqual(payload["scope"], "route_symbols")
+        self.assertEqual(payload["route_symbols"], ["AAPL"])
+        self.assertEqual(
+            sum(
+                "FROM torghut_options_contract_catalog" in sql
+                for sql, _params in fake_session.calls
+            ),
+            1,
+        )
+        cache = payload.get("cache")
+        self.assertIsInstance(cache, dict)
+        assert isinstance(cache, dict)
+        self.assertEqual(cache["hit"], False)
 
     def test_route_image_proof_summary_preserves_route_workload_status(self) -> None:
         payload = _build_route_image_proof_summary(

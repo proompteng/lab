@@ -80,6 +80,11 @@ flags:
     description: Enables paper-safe Alpaca latest-quote fallback when executable signal quotes are missing.
     type: BOOLEAN_FLAG_TYPE
     enabled: false
+  - key: torghut_trading_alpaca_quote_fallback_market_session_required
+    name: Torghut Trading Alpaca Quote Fallback Market Session Required
+    description: Suppresses Alpaca latest-quote fallback outside regular market hours.
+    type: BOOLEAN_FLAG_TYPE
+    enabled: true
   - key: torghut_trading_autonomy_enabled
     name: Torghut Trading Autonomy Enabled
     description: Enables autonomous lane orchestration in Torghut.

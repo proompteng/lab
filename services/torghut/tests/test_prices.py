@@ -41,7 +41,12 @@ class RoutingClickHousePriceFetcher(ClickHousePriceFetcher):
         quote_forward_seconds: int = 0,
         alpaca_quote: dict[str, object] | None = None,
         alpaca_quote_fallback_enabled: bool | None = None,
+        alpaca_quote_fallback_market_session_required: bool = False,
+        alpaca_quote_fallback_backoff_seconds: int = 60,
     ) -> None:
+        alpaca_credentials_enabled = (
+            alpaca_quote is not None or alpaca_quote_fallback_enabled is True
+        )
         super().__init__(
             url="http://example",
             table="torghut.ta_microbars",
@@ -54,14 +59,21 @@ class RoutingClickHousePriceFetcher(ClickHousePriceFetcher):
                 else alpaca_quote_fallback_enabled
             ),
             alpaca_data_api_base_url="https://data.example",
-            alpaca_api_key_id="key" if alpaca_quote is not None else None,
-            alpaca_api_secret_key="secret" if alpaca_quote is not None else None,
+            alpaca_api_key_id="key" if alpaca_credentials_enabled else None,
+            alpaca_api_secret_key="secret" if alpaca_credentials_enabled else None,
             alpaca_quote_max_age_seconds=120,
+            alpaca_quote_fallback_market_session_required=(
+                alpaca_quote_fallback_market_session_required
+            ),
+            alpaca_quote_fallback_backoff_seconds=(
+                alpaca_quote_fallback_backoff_seconds
+            ),
         )
         self.price_rows = price_rows
         self.quote_rows = quote_rows
         self.fail_quote_query = fail_quote_query
         self.alpaca_quote = alpaca_quote
+        self.alpaca_quote_calls = 0
         self.queries: list[str] = []
 
     def _resolve_columns(self) -> set[str] | None:
@@ -77,6 +89,7 @@ class RoutingClickHousePriceFetcher(ClickHousePriceFetcher):
 
     def _fetch_alpaca_latest_quote(self, *, symbol: str) -> dict[str, object] | None:
         _ = symbol
+        self.alpaca_quote_calls += 1
         return self.alpaca_quote
 
 
@@ -326,6 +339,23 @@ class TestClickHousePriceFetcher(TestCase):
 
         self.assertIsNone(quote)
 
+    def test_fetch_market_snapshot_backs_off_missing_alpaca_credentials(
+        self,
+    ) -> None:
+        fetcher = ClickHousePriceFetcher(
+            url="http://example",
+            table="torghut.ta_microbars",
+            alpaca_quote_fallback_enabled=True,
+            alpaca_quote_fallback_backoff_seconds=60,
+        )
+        fetcher.alpaca_api_key_id = None
+        fetcher.alpaca_api_secret_key = None
+
+        quote = fetcher._fetch_alpaca_latest_quote_row(symbol="AMZN")
+
+        self.assertIsNone(quote)
+        self.assertTrue(fetcher._alpaca_quote_fallback_backoff_active(symbol="AMZN"))
+
     def test_fetch_market_snapshot_ignores_empty_alpaca_latest_quote(
         self,
     ) -> None:
@@ -344,6 +374,79 @@ class TestClickHousePriceFetcher(TestCase):
         snapshot = fetcher.fetch_market_snapshot(signal)
 
         self.assertIsNone(snapshot)
+        self.assertEqual(fetcher.alpaca_quote_calls, 1)
+
+    def test_fetch_market_snapshot_backs_off_empty_alpaca_latest_quote(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 12, 0, 30, tzinfo=timezone.utc),
+            symbol="AMZN",
+            payload={},
+        )
+        fetcher = RoutingClickHousePriceFetcher(
+            price_rows=[],
+            quote_rows=[],
+            alpaca_quote=None,
+            alpaca_quote_fallback_enabled=True,
+            alpaca_quote_fallback_backoff_seconds=60,
+        )
+
+        self.assertIsNone(fetcher.fetch_market_snapshot(signal))
+        self.assertIsNone(fetcher.fetch_market_snapshot(signal))
+
+        self.assertEqual(fetcher.alpaca_quote_calls, 1)
+
+    def test_fetch_market_snapshot_skips_alpaca_latest_quote_when_market_closed(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 12, 0, 30, tzinfo=timezone.utc),
+            symbol="AMZN",
+            payload={},
+        )
+        fetcher = RoutingClickHousePriceFetcher(
+            price_rows=[],
+            quote_rows=[],
+            alpaca_quote={
+                "t": datetime.now(timezone.utc).isoformat(),
+                "bp": "185.10",
+                "ap": "185.14",
+            },
+            alpaca_quote_fallback_market_session_required=True,
+        )
+
+        with patch("app.trading.prices.market_session_is_open", return_value=False):
+            snapshot = fetcher.fetch_market_snapshot(signal)
+
+        self.assertIsNone(snapshot)
+        self.assertEqual(fetcher.alpaca_quote_calls, 0)
+
+    def test_fetch_market_snapshot_reuses_active_market_closed_backoff(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 12, 0, 30, tzinfo=timezone.utc),
+            symbol="AMZN",
+            payload={},
+        )
+        fetcher = RoutingClickHousePriceFetcher(
+            price_rows=[],
+            quote_rows=[],
+            alpaca_quote={
+                "t": datetime.now(timezone.utc).isoformat(),
+                "bp": "185.10",
+                "ap": "185.14",
+            },
+            alpaca_quote_fallback_market_session_required=True,
+        )
+
+        with patch("app.trading.prices.market_session_is_open", return_value=False):
+            self.assertIsNone(fetcher.fetch_market_snapshot(signal))
+            self.assertIsNone(fetcher.fetch_market_snapshot(signal))
+
+        self.assertEqual(fetcher.alpaca_quote_calls, 0)
+        self.assertTrue(fetcher._alpaca_quote_fallback_backoff_active(symbol="AMZN"))
 
     def test_fetch_market_snapshot_rejects_invalid_alpaca_latest_quote(
         self,
@@ -366,6 +469,86 @@ class TestClickHousePriceFetcher(TestCase):
         snapshot = fetcher.fetch_market_snapshot(signal)
 
         self.assertIsNone(snapshot)
+
+    def test_fetch_market_snapshot_rejects_invalid_alpaca_quote_spread(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 12, 0, 30, tzinfo=timezone.utc),
+            symbol="AMZN",
+            payload={},
+        )
+        fetcher = RoutingClickHousePriceFetcher(
+            price_rows=[],
+            quote_rows=[],
+            alpaca_quote={
+                "t": datetime.now(timezone.utc).isoformat(),
+                "bp": "185.10",
+                "ap": "185.14",
+            },
+        )
+
+        with patch("app.trading.prices._quote_spread_bps", return_value=None):
+            snapshot = fetcher.fetch_market_snapshot(signal)
+
+        self.assertIsNone(snapshot)
+        self.assertTrue(fetcher._alpaca_quote_fallback_backoff_active(symbol="AMZN"))
+
+    def test_alpaca_quote_fallback_backoff_expires_and_can_be_disabled(
+        self,
+    ) -> None:
+        fetcher = RoutingClickHousePriceFetcher(
+            price_rows=[],
+            quote_rows=[],
+            alpaca_quote=None,
+            alpaca_quote_fallback_enabled=True,
+            alpaca_quote_fallback_backoff_seconds=60,
+        )
+        fetcher._alpaca_quote_fallback_backoff["AMZN"] = (0.0, "expired")
+
+        self.assertFalse(fetcher._alpaca_quote_fallback_backoff_active(symbol="AMZN"))
+        self.assertNotIn("AMZN", fetcher._alpaca_quote_fallback_backoff)
+
+        disabled_fetcher = RoutingClickHousePriceFetcher(
+            price_rows=[],
+            quote_rows=[],
+            alpaca_quote=None,
+            alpaca_quote_fallback_enabled=True,
+            alpaca_quote_fallback_backoff_seconds=0,
+        )
+        disabled_fetcher._backoff_alpaca_quote_fallback(
+            symbol="AMZN",
+            reason="quote_unavailable",
+        )
+
+        self.assertNotIn("AMZN", disabled_fetcher._alpaca_quote_fallback_backoff)
+
+    def test_alpaca_quote_fallback_backoff_refreshes_active_entry_quietly(
+        self,
+    ) -> None:
+        fetcher = RoutingClickHousePriceFetcher(
+            price_rows=[],
+            quote_rows=[],
+            alpaca_quote=None,
+            alpaca_quote_fallback_enabled=True,
+            alpaca_quote_fallback_backoff_seconds=60,
+        )
+
+        fetcher._backoff_alpaca_quote_fallback(
+            symbol="AMZN",
+            reason="quote_unavailable",
+        )
+        first_expires_at, _first_reason = fetcher._alpaca_quote_fallback_backoff["AMZN"]
+        fetcher._backoff_alpaca_quote_fallback(
+            symbol="AMZN",
+            reason="wide_quote",
+        )
+        second_expires_at, second_reason = fetcher._alpaca_quote_fallback_backoff[
+            "AMZN"
+        ]
+
+        self.assertGreaterEqual(second_expires_at, first_expires_at)
+        self.assertEqual(second_reason, "wide_quote")
 
     def test_fetch_market_snapshot_rejects_alpaca_latest_quote_without_timestamp(
         self,

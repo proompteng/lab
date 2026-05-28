@@ -10,11 +10,13 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from http.client import HTTPConnection, HTTPSConnection
+from time import monotonic
 from typing import Any, Optional, cast
 from urllib.parse import urlencode, urlsplit
 
 from ..config import settings
 from .clickhouse import normalize_symbol, to_datetime64
+from .market_session import market_session_is_open
 from .models import SignalEnvelope
 
 logger = logging.getLogger(__name__)
@@ -112,6 +114,8 @@ class ClickHousePriceFetcher(PriceFetcher):
         alpaca_quote_feed: Optional[str] = None,
         alpaca_quote_timeout_seconds: Optional[float] = None,
         alpaca_quote_max_age_seconds: Optional[int] = None,
+        alpaca_quote_fallback_market_session_required: Optional[bool] = None,
+        alpaca_quote_fallback_backoff_seconds: Optional[int] = None,
     ) -> None:
         self.url = (url or settings.trading_clickhouse_url or "").rstrip("/")
         self.username = username or settings.trading_clickhouse_username
@@ -164,7 +168,19 @@ class ClickHousePriceFetcher(PriceFetcher):
             if alpaca_quote_max_age_seconds is not None
             else settings.trading_alpaca_quote_max_age_seconds,
         )
+        self.alpaca_quote_fallback_market_session_required = (
+            settings.trading_alpaca_quote_fallback_market_session_required
+            if alpaca_quote_fallback_market_session_required is None
+            else alpaca_quote_fallback_market_session_required
+        )
+        self.alpaca_quote_fallback_backoff_seconds = max(
+            0,
+            alpaca_quote_fallback_backoff_seconds
+            if alpaca_quote_fallback_backoff_seconds is not None
+            else settings.trading_alpaca_quote_fallback_backoff_seconds,
+        )
         self._columns: Optional[set[str]] = None
+        self._alpaca_quote_fallback_backoff: dict[str, tuple[float, str]] = {}
 
     def fetch_price(self, signal: SignalEnvelope) -> Optional[Decimal]:
         if not self.url:
@@ -322,14 +338,33 @@ class ClickHousePriceFetcher(PriceFetcher):
     def _fetch_alpaca_latest_quote_row(self, *, symbol: str) -> dict[str, Any] | None:
         if not self.alpaca_quote_fallback_enabled:
             return None
+        if self._alpaca_quote_fallback_backoff_active(symbol=symbol):
+            return None
+        if (
+            self.alpaca_quote_fallback_market_session_required
+            and not market_session_is_open(None)
+        ):
+            self._backoff_alpaca_quote_fallback(
+                symbol=symbol,
+                reason="market_session_closed",
+            )
+            return None
         if not self.alpaca_api_key_id or not self.alpaca_api_secret_key:
             logger.warning(
                 "Alpaca latest quote fallback disabled by missing credentials symbol=%s",
                 symbol,
             )
+            self._backoff_alpaca_quote_fallback(
+                symbol=symbol,
+                reason="missing_credentials",
+            )
             return None
         quote = self._fetch_alpaca_latest_quote(symbol=symbol)
         if quote is None:
+            self._backoff_alpaca_quote_fallback(
+                symbol=symbol,
+                reason="quote_unavailable",
+            )
             return None
         bid = _optional_decimal(quote.get("bp") or quote.get("bid_price"))
         ask = _optional_decimal(quote.get("ap") or quote.get("ask_price"))
@@ -337,9 +372,17 @@ class ClickHousePriceFetcher(PriceFetcher):
             logger.info(
                 "Alpaca latest quote fallback rejected invalid quote symbol=%s", symbol
             )
+            self._backoff_alpaca_quote_fallback(
+                symbol=symbol,
+                reason="invalid_quote",
+            )
             return None
         spread_bps = _quote_spread_bps(bid=bid, ask=ask)
         if spread_bps is None:
+            self._backoff_alpaca_quote_fallback(
+                symbol=symbol,
+                reason="invalid_spread",
+            )
             return None
         if spread_bps > settings.trading_signal_max_executable_spread_bps:
             logger.info(
@@ -347,12 +390,17 @@ class ClickHousePriceFetcher(PriceFetcher):
                 symbol,
                 spread_bps,
             )
+            self._backoff_alpaca_quote_fallback(symbol=symbol, reason="wide_quote")
             return None
         quote_ts = _parse_ts(quote.get("t") or quote.get("timestamp"))
         if quote_ts is None:
             logger.info(
                 "Alpaca latest quote fallback rejected missing timestamp symbol=%s",
                 symbol,
+            )
+            self._backoff_alpaca_quote_fallback(
+                symbol=symbol,
+                reason="missing_timestamp",
             )
             return None
         if quote_ts.tzinfo is None:
@@ -369,6 +417,7 @@ class ClickHousePriceFetcher(PriceFetcher):
                 symbol,
                 quote_age,
             )
+            self._backoff_alpaca_quote_fallback(symbol=symbol, reason="stale_quote")
             return None
         return {
             "event_ts": quote_ts.isoformat(),
@@ -376,6 +425,34 @@ class ClickHousePriceFetcher(PriceFetcher):
             "imbalance_ask_px": ask,
             "imbalance_spread": ask - bid,
         }
+
+    def _alpaca_quote_fallback_backoff_active(self, *, symbol: str) -> bool:
+        backoff = self._alpaca_quote_fallback_backoff.get(symbol)
+        if backoff is None:
+            return False
+        expires_at, _reason = backoff
+        if monotonic() < expires_at:
+            return True
+        self._alpaca_quote_fallback_backoff.pop(symbol, None)
+        return False
+
+    def _backoff_alpaca_quote_fallback(self, *, symbol: str, reason: str) -> None:
+        if self.alpaca_quote_fallback_backoff_seconds <= 0:
+            return
+        now = monotonic()
+        previous = self._alpaca_quote_fallback_backoff.get(symbol)
+        self._alpaca_quote_fallback_backoff[symbol] = (
+            now + self.alpaca_quote_fallback_backoff_seconds,
+            reason,
+        )
+        if previous is not None and previous[0] > now:
+            return
+        logger.info(
+            "Alpaca latest quote fallback backoff symbol=%s reason=%s seconds=%s",
+            symbol,
+            reason,
+            self.alpaca_quote_fallback_backoff_seconds,
+        )
 
     def _fetch_alpaca_latest_quote(self, *, symbol: str) -> Mapping[str, Any] | None:
         params: dict[str, str] = {}

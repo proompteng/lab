@@ -50,6 +50,9 @@ FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD: dict[str, str] = {
     "trading_execution_advisor_enabled": "torghut_trading_execution_advisor_enabled",
     "trading_execution_advisor_live_apply_enabled": "torghut_trading_execution_advisor_live_apply_enabled",
     "trading_alpaca_quote_fallback_enabled": "torghut_trading_alpaca_quote_fallback_enabled",
+    "trading_alpaca_quote_fallback_market_session_required": (
+        "torghut_trading_alpaca_quote_fallback_market_session_required"
+    ),
     "trading_simulation_enabled": "torghut_trading_simulation_enabled",
     "trading_allow_shorts": "torghut_trading_allow_shorts",
     "trading_fractional_equities_enabled": "torghut_trading_fractional_equities_enabled",
@@ -459,6 +462,32 @@ class Settings(BaseSettings):
         default=20,
         alias="TRADING_ALPACA_QUOTE_MAX_AGE_SECONDS",
         description="Reject Alpaca fallback quotes older than this many seconds.",
+    )
+    trading_alpaca_quote_fallback_market_session_required: bool = Field(
+        default=True,
+        alias="TRADING_ALPACA_QUOTE_FALLBACK_MARKET_SESSION_REQUIRED",
+        description=(
+            "Suppress Alpaca latest-quote executable backfill outside the regular "
+            "equity market session. This keeps proof lanes fail-closed and avoids "
+            "provider churn when closed-market quotes are not executable."
+        ),
+    )
+    trading_alpaca_quote_fallback_backoff_seconds: int = Field(
+        default=60,
+        alias="TRADING_ALPACA_QUOTE_FALLBACK_BACKOFF_SECONDS",
+        description=(
+            "Per-symbol cooldown after Alpaca latest-quote fallback is unavailable "
+            "or rejected, so repeated scheduler probes do not hammer the provider."
+        ),
+    )
+    trading_options_catalog_freshness_cache_seconds: int = Field(
+        default=0,
+        alias="TRADING_OPTIONS_CATALOG_FRESHNESS_CACHE_SECONDS",
+        description=(
+            "Short in-process cache TTL for options catalog freshness summaries. "
+            "Caching unavailable summaries keeps status probes bounded while "
+            "preserving fail-closed evidence semantics."
+        ),
     )
     trading_poll_ms: int = Field(default=5000, alias="TRADING_POLL_MS")
     trading_reconcile_ms: int = Field(default=15000, alias="TRADING_RECONCILE_MS")
