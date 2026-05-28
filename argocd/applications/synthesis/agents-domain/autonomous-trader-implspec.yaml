@@ -23,6 +23,8 @@ spec:
     - Treat the run as a day-trading session with no 2-3 week hold-time requirement.
     - Report account equity, buying power, margin fields, and exposure separately so progress and execution capacity stay clear.
     - Write preflight, decision ledger, and final report artifacts for every run.
+    - Bootstrap the private analysis repo at /workspace/analysis, require commit b187dcf3e71999c04c3a019ec5861413551ceda1 or newer, and build/validate analysis-context.json before any market-open order.
+    - Use the analysis repo daytrading scanner and trade-ticket validators before every non-smoke order.
     - On market-open runs, place and verify the smallest valid paper order only after all preflights pass.
     - Keep market-open runs alive until the trading session closes, the 500000 USD equity goal is reached, or a hard stop triggers.
     - Treat transient Alpaca MCP read timeouts as recoverable by reconnecting and retrying before hard-stopping.
@@ -50,6 +52,8 @@ spec:
     - Do not hard-stop solely on an order rejection before order creation when client_order_id lookup confirms no order and open orders are zero. Record order_rejected_no_order_created with the rejection reason and continue the loop.
 
     Required preflight:
+    - Run `/usr/bin/env bash /root/bootstrap-analysis-daytrading.sh` before any market-open order. This clones or updates https://github.com/gregkonush/analysis.git at /workspace/analysis, checks out origin/main, verifies commit b187dcf3e71999c04c3a019ec5861413551ceda1 or newer, installs the analysis `.[daytrading]` tooling in the run artifact venv, runs `stock_analysis audit`, runs `stock_analysis daytrading-import-smoke`, builds `/workspace/.agentrun/autonomous-trader/analysis-context.json`, validates it, and writes `/workspace/.agentrun/autonomous-trader/analysis-bootstrap.json`.
+    - Read `/workspace/analysis/docs/daytrading-agent-bootstrap.md` after the bootstrap succeeds and follow its exact command contract for context, scanner, and trade-ticket artifacts. If the repo cannot be cloned, the required commit is missing, dependencies cannot be installed, audit/import smoke fails, or context validation fails, stop before order submission with terminal reason `hard_stop` and reason code `analysis_context_invalid` or `analysis_repo_unavailable`.
     - Use Alpaca MCP to read account info, account config, clock, calendar for the current trading day, open orders, positions, and recent portfolio history.
     - Confirm the MCP tool surface includes get_account_info, get_account_config, get_clock, get_calendar, get_all_positions, get_orders, get_stock_snapshot, get_option_chain, place_stock_order, place_option_order, get_order_by_client_id, get_order_by_id, cancel_order_by_id, and cancel_all_orders.
     - Save a JSON preflight file at /workspace/.agentrun/autonomous-trader/preflight.json. Redact secrets. Include account equity, cash, buying power, margin fields if present, paper/base-url evidence, clock state, tool inventory, positions summary, and open-order count.
@@ -66,6 +70,8 @@ spec:
     - Record the loop cycle number, current time, next close, equity, buying power, open-order count, and any action taken in the decision ledger.
     - On the first market-open run after deployment, place one tiny paper stock-order smoke test using a unique client_order_id, verify it through get_order_by_client_id, and record the result before any larger strategy order. If buying power is too low for a buy order, use the smallest valid sell order against an existing liquid long equity position instead.
     - Build a ranked intraday action list from current positions, liquid watchlist names, market snapshots, technical analysis, catalysts, macro context, spread/liquidity checks, and portfolio risk.
+    - Before each non-smoke order decision, write scanner input from current bars, snapshots, quotes, option chain fields, positions, and account constraints; run `PYTHONPATH=/workspace/analysis/src /workspace/.agentrun/autonomous-trader/analysis-venv/bin/python -m stock_analysis daytrading-scan --input /workspace/.agentrun/autonomous-trader/live-scan-input.json --output /workspace/.agentrun/autonomous-trader/live-scan.json`; then use that scanner output in the ranked action list.
+    - Before each non-smoke order request, write `/workspace/.agentrun/autonomous-trader/trade-ticket.json` with thesis, gates, structure, max loss, liquidity, invalidation, and review time; validate it with `PYTHONPATH=/workspace/analysis/src /workspace/.agentrun/autonomous-trader/analysis-venv/bin/python -m stock_analysis daytrading-validate-ticket /workspace/.agentrun/autonomous-trader/trade-ticket.json`. If validation fails, do not submit the order.
     - Use Python and any needed installed packages or temporary scripts for scans, indicators, options-chain scoring, position sizing, and risk/reward math.
     - Use web search for current market, news, catalysts, macro, and fundamental analysis when it can change the trade decision.
     - Prefer liquid instruments and orders whose status can be reconciled quickly. You may buy, sell, close, reduce, hedge, reverse, or stand down.
@@ -73,6 +79,6 @@ spec:
 
     Reporting:
     - Append every decision, tool preflight result, order intent, order request summary, order status, and account-equity update to /workspace/.agentrun/autonomous-trader/decision-ledger.jsonl.
-    - Write /workspace/.agentrun/autonomous-trader/report.md with: session mode, market-open status, account equity, buying power, exposure, positions, orders placed/canceled/filled, strategy rationale, current distance to 500000 USD equity, and next action.
+    - Write /workspace/.agentrun/autonomous-trader/report.md with: session mode, market-open status, account equity, buying power, exposure, positions, orders placed/canceled/filled, strategy rationale, analysis repo head, analysis context status, scanner status, trade-ticket status, current distance to 500000 USD equity, and next action.
     - Report explicitly whether the run placed an order, canceled an order, filled an order, or skipped trading because a stop rule triggered.
     - In market-open mode, the final report must state the terminal reason as exactly one of: target_reached, market_closed, or hard_stop. Do not use market_open_actions_reconciled as a terminal reason.

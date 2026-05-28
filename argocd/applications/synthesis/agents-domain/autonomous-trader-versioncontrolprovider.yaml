@@ -20,6 +20,7 @@ spec:
   repositoryPolicy:
     allow:
       - proompteng/lab
+      - gregkonush/analysis
   capabilities:
     read: true
     write: true

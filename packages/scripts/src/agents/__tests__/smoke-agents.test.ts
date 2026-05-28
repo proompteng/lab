@@ -635,6 +635,11 @@ describe('synthesis autonomous trader provider', () => {
     expect(taskPrompt).toContain('adopt them as current state, record external_fill_detected')
     expect(taskPrompt).toContain('daytrading_buying_power is zero')
     expect(taskPrompt).toContain('Record order_rejected_no_order_created')
+    expect(taskPrompt).toContain('/root/bootstrap-analysis-daytrading.sh')
+    expect(taskPrompt).toContain('b187dcf3e71999c04c3a019ec5861413551ceda1')
+    expect(taskPrompt).toContain('daytrading-import-smoke')
+    expect(taskPrompt).toContain('daytrading-scan')
+    expect(taskPrompt).toContain('daytrading-validate-ticket')
     expect(prompt).toContain('do not treat "trading actions reconciled" as terminal')
     expect(prompt).toContain('Use an explicit wait/heartbeat between cycles')
     expect(prompt).toContain('Do not treat a single Alpaca MCP timeout as a terminal trading failure')
@@ -642,6 +647,41 @@ describe('synthesis autonomous trader provider', () => {
     expect(prompt).toContain('adopt them as current state, record `external_fill_detected`')
     expect(prompt).toContain('daytrading buying power is zero')
     expect(prompt).toContain('Record `order_rejected_no_order_created`')
+    expect(prompt).toContain('/root/bootstrap-analysis-daytrading.sh')
+    expect(prompt).toContain('analysis-context.json')
+    expect(prompt).toContain('daytrading-validate-ticket')
+  })
+
+  it('wires the analysis daytrading bootstrap into the trader provider', () => {
+    const provider = readYamlObjects(
+      'argocd/applications/synthesis/agents-domain/autonomous-trader-agentprovider.yaml',
+    ).find((manifest) => objectAt(manifest, 'kind') === 'AgentProvider')
+    const vcsProvider = readYamlObjects(
+      'argocd/applications/synthesis/agents-domain/autonomous-trader-versioncontrolprovider.yaml',
+    ).find((manifest) => objectAt(manifest, 'kind') === 'VersionControlProvider')
+    const providerSpec = objectAt(provider, 'spec')
+    const envTemplate = objectAt(providerSpec, 'envTemplate')
+    const inputFiles = objectAt(providerSpec, 'inputFiles') as Record<string, unknown>[] | undefined
+    const outputArtifacts = objectAt(providerSpec, 'outputArtifacts') as Record<string, unknown>[] | undefined
+    const bootstrap = (inputFiles ?? []).find(
+      (inputFile) => objectAt(inputFile, 'path') === '/root/bootstrap-analysis-daytrading.sh',
+    )
+    const codexConfig = (inputFiles ?? []).find(
+      (inputFile) => objectAt(inputFile, 'path') === '/root/.codex/config.toml',
+    )
+    const artifactNames = (outputArtifacts ?? []).map((artifact) => objectAt(artifact, 'name'))
+
+    expect(objectAt(envTemplate, 'ANALYSIS_REPO_URL')).toBe('https://github.com/gregkonush/analysis.git')
+    expect(objectAt(envTemplate, 'ANALYSIS_REQUIRED_COMMIT')).toBe('b187dcf3e71999c04c3a019ec5861413551ceda1')
+    expect(objectAt(codexConfig, 'content')).toContain('[projects."/workspace/analysis"]')
+    expect(objectAt(bootstrap, 'content')).toContain('daytrading-context')
+    expect(objectAt(bootstrap, 'content')).toContain('daytrading-validate-context')
+    expect(objectAt(bootstrap, 'content')).toContain('analysis-bootstrap.json')
+    expect(artifactNames).toContain('autonomous-trader-analysis-bootstrap')
+    expect(artifactNames).toContain('autonomous-trader-analysis-context')
+    expect(objectAt(objectAt(objectAt(vcsProvider, 'spec'), 'repositoryPolicy'), 'allow')).toContain(
+      'gregkonush/analysis',
+    )
   })
 
   it('bridges Codex framed MCP stdio to Alpaca newline stdio', () => {

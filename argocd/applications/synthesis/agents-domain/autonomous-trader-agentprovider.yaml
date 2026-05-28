@@ -64,6 +64,9 @@ spec:
     AGENTS_ARTIFACTS_ENDPOINT: http://rook-ceph-rgw-objectstore.rook-ceph.svc:80
     AGENTS_ARTIFACTS_SECURE: "false"
     ALPACA_PAPER_TRADE: "true"
+    ANALYSIS_REPO_URL: https://github.com/gregkonush/analysis.git
+    ANALYSIS_REQUIRED_COMMIT: b187dcf3e71999c04c3a019ec5861413551ceda1
+    AUTONOMOUS_TRADER_ARTIFACT_DIR: /workspace/.agentrun/autonomous-trader
     CODEX_CONFIG: /root/.codex/config.toml
     CODEX_LOG_LEVEL: info
     CODEX_MARKET_CONTEXT_ATTEMPT_TIMEOUT_SECONDS: "900"
@@ -104,6 +107,9 @@ spec:
         [projects."/workspace/lab"]
         trust_level = "trusted"
 
+        [projects."/workspace/analysis"]
+        trust_level = "trusted"
+
         [projects."/root"]
         trust_level = "trusted"
 
@@ -112,6 +118,74 @@ spec:
         args = ["-u", "/root/alpaca-mcp-stdio-bridge.py"]
         startup_timeout_sec = 60.0
         env = { FASTMCP_SHOW_SERVER_BANNER = "false", FASTMCP_LOG_LEVEL = "ERROR" }
+    - path: /root/bootstrap-analysis-daytrading.sh
+      content: |-
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        artifact_dir="${AUTONOMOUS_TRADER_ARTIFACT_DIR:-/workspace/.agentrun/autonomous-trader}"
+        analysis_dir="${ANALYSIS_REPO_DIR:-/workspace/analysis}"
+        analysis_repo_url="${ANALYSIS_REPO_URL:-https://github.com/gregkonush/analysis.git}"
+        required_commit="${ANALYSIS_REQUIRED_COMMIT:-b187dcf3e71999c04c3a019ec5861413551ceda1}"
+        python_bin="${PYTHON_BIN:-python3}"
+
+        mkdir -p "${artifact_dir}"
+
+        git_auth=()
+        git_token="${GITHUB_TOKEN:-}"
+        if [ -z "${git_token}" ]; then
+          git_token="${GH_TOKEN:-}"
+        fi
+        if [ -n "${git_token}" ]; then
+          git_auth=(-c "http.https://github.com/.extraheader=Authorization: Bearer ${git_token}")
+        fi
+
+        git_with_auth() {
+          if [ "${#git_auth[@]}" -gt 0 ]; then
+            git "${git_auth[@]}" "$@"
+          else
+            git "$@"
+          fi
+        }
+
+        if [ -d "${analysis_dir}/.git" ]; then
+          git_with_auth -C "${analysis_dir}" fetch origin main
+        else
+          rm -rf "${analysis_dir}"
+          git_with_auth clone "${analysis_repo_url}" "${analysis_dir}"
+        fi
+
+        git_with_auth -C "${analysis_dir}" fetch origin main
+        git -C "${analysis_dir}" checkout --detach origin/main
+        git -C "${analysis_dir}" remote set-url origin "${analysis_repo_url}"
+
+        analysis_head="$(git -C "${analysis_dir}" rev-parse HEAD)"
+        if ! git -C "${analysis_dir}" merge-base --is-ancestor "${required_commit}" HEAD; then
+          printf '{"ok":false,"reason":"analysis_repo_stale","analysis_head":"%s","required_commit":"%s"}\n' \
+            "${analysis_head}" "${required_commit}" > "${artifact_dir}/analysis-bootstrap.json"
+          exit 42
+        fi
+
+        "${python_bin}" -m venv "${artifact_dir}/analysis-venv"
+        # shellcheck disable=SC1091
+        source "${artifact_dir}/analysis-venv/bin/activate"
+        python -m pip install --upgrade pip
+        python -m pip install -e "${analysis_dir}[daytrading]"
+
+        (
+          cd "${analysis_dir}"
+          PYTHONPATH=src python -m stock_analysis audit
+        )
+        PYTHONPATH="${analysis_dir}/src" python -m stock_analysis daytrading-import-smoke
+        PYTHONPATH="${analysis_dir}/src" python -m stock_analysis daytrading-context \
+          --repo-root "${analysis_dir}" \
+          --output "${artifact_dir}/analysis-context.json"
+        PYTHONPATH="${analysis_dir}/src" python -m stock_analysis daytrading-validate-context \
+          "${artifact_dir}/analysis-context.json"
+
+        printf '{"ok":true,"analysis_head":"%s","required_commit":"%s","context_path":"%s"}\n' \
+          "${analysis_head}" "${required_commit}" "${artifact_dir}/analysis-context.json" \
+          > "${artifact_dir}/analysis-bootstrap.json"
     - path: /root/alpaca-mcp-stdio-bridge.py
       content: |-
         import os
@@ -202,6 +276,12 @@ spec:
     - name: autonomous-trader-preflight
       path: /workspace/.agentrun/autonomous-trader/preflight.json
       key: synthesis/autonomous-trader/{{ agentRun.name }}/preflight.json
+    - name: autonomous-trader-analysis-bootstrap
+      path: /workspace/.agentrun/autonomous-trader/analysis-bootstrap.json
+      key: synthesis/autonomous-trader/{{ agentRun.name }}/analysis-bootstrap.json
+    - name: autonomous-trader-analysis-context
+      path: /workspace/.agentrun/autonomous-trader/analysis-context.json
+      key: synthesis/autonomous-trader/{{ agentRun.name }}/analysis-context.json
     - name: runner-log
       path: /workspace/.agent/runner.log
     - name: runner-status
