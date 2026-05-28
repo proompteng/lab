@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from ..models import (
     Execution,
+    ExecutionOrderEvent,
     ExecutionTCAMetric,
     RejectedSignalOutcomeEvent,
     Strategy,
@@ -322,6 +323,34 @@ def _execution_activity_at(row: Execution) -> datetime | None:
         or row.last_update_at
         or row.updated_at
         or row.created_at
+    )
+
+
+def _order_event_activity_timestamp() -> Any:
+    return func.coalesce(ExecutionOrderEvent.event_ts, ExecutionOrderEvent.created_at)
+
+
+def _order_event_activity_at(row: ExecutionOrderEvent) -> datetime | None:
+    return row.event_ts or row.created_at
+
+
+def _order_event_is_fill(row: ExecutionOrderEvent) -> bool:
+    event_type = str(row.event_type or "").strip().lower()
+    status = str(row.status or "").strip().lower()
+    return event_type in {"fill", "partial_fill"} or status in {
+        "filled",
+        "partially_filled",
+    }
+
+
+def _order_event_has_complete_fill_lifecycle(row: ExecutionOrderEvent) -> bool:
+    if not _order_event_is_fill(row):
+        return False
+    order_id = _safe_text(row.alpaca_order_id) or _safe_text(row.client_order_id)
+    return (
+        order_id is not None
+        and _safe_decimal(row.filled_qty) > 0
+        and _safe_decimal(row.avg_fill_price) > 0
     )
 
 
@@ -1377,9 +1406,13 @@ def _strategy_source_activity(
             "decision_count": 0,
             "execution_count": 0,
             "filled_execution_count": 0,
+            "order_event_count": 0,
+            "fill_order_event_count": 0,
+            "complete_fill_order_event_count": 0,
             "tca_sample_count": 0,
             "last_decision_at": None,
             "last_execution_at": None,
+            "last_order_event_at": None,
             "last_tca_at": None,
             "missing": True,
             "missing_reasons": ["strategy_name_missing"],
@@ -1448,6 +1481,28 @@ def _strategy_source_activity(
                 execution_stmt.order_by(execution_activity_ts.desc()).limit(500)
             ).scalars()
         )
+    order_event_rows: list[ExecutionOrderEvent] = []
+    if decision_ids:
+        order_event_activity_ts = _order_event_activity_timestamp()
+        order_event_stmt = (
+            select(ExecutionOrderEvent)
+            .where(ExecutionOrderEvent.trade_decision_id.in_(decision_ids))
+            .where(order_event_activity_ts >= window_start)
+            .where(order_event_activity_ts < window_end)
+        )
+        if account_label:
+            order_event_stmt = order_event_stmt.where(
+                ExecutionOrderEvent.alpaca_account_label == account_label
+            )
+        if symbol_filters:
+            order_event_stmt = order_event_stmt.where(
+                func.upper(ExecutionOrderEvent.symbol).in_(symbol_filters)
+            )
+        order_event_rows = list(
+            session.execute(
+                order_event_stmt.order_by(order_event_activity_ts.desc()).limit(500)
+            ).scalars()
+        )
     tca_rows: list[ExecutionTCAMetric] = []
     if decision_ids:
         tca_stmt = (
@@ -1479,12 +1534,19 @@ def _strategy_source_activity(
     filled_execution_count = sum(
         int(_safe_decimal(row.filled_qty) > 0) for row in execution_rows
     )
+    order_event_count = len(order_event_rows)
+    fill_order_event_count = sum(
+        int(_order_event_is_fill(row)) for row in order_event_rows
+    )
+    complete_fill_order_event_count = sum(
+        int(_order_event_has_complete_fill_lifecycle(row)) for row in order_event_rows
+    )
     missing_reasons: list[str] = []
     if decision_count <= 0:
         missing_reasons.append("source_decisions_missing")
     if execution_count <= 0:
         missing_reasons.append("source_executions_missing")
-    if tca_sample_count <= 0:
+    if tca_sample_count <= 0 and complete_fill_order_event_count <= 0:
         missing_reasons.append("source_tca_missing")
     missing_reasons.extend(lineage_blockers)
     return {
@@ -1501,12 +1563,18 @@ def _strategy_source_activity(
         "decision_count": decision_count,
         "execution_count": execution_count,
         "filled_execution_count": filled_execution_count,
+        "order_event_count": order_event_count,
+        "fill_order_event_count": fill_order_event_count,
+        "complete_fill_order_event_count": complete_fill_order_event_count,
         "tca_sample_count": tca_sample_count,
         "last_decision_at": _isoformat(
             decision_rows[0].created_at if decision_rows else None
         ),
         "last_execution_at": _isoformat(
             _execution_activity_at(execution_rows[0]) if execution_rows else None
+        ),
+        "last_order_event_at": _isoformat(
+            _order_event_activity_at(order_event_rows[0]) if order_event_rows else None
         ),
         "last_tca_at": _isoformat(tca_rows[0].computed_at if tca_rows else None),
         "missing": bool(missing_reasons),
@@ -1764,7 +1832,10 @@ def _source_runtime_ledger_materialization_blockers(
             blockers.add("source_executions_missing")
         if _safe_int(source_activity.get("filled_execution_count")) <= 0:
             blockers.add("source_filled_executions_missing")
-        if _safe_int(source_activity.get("tca_sample_count")) <= 0:
+        if (
+            _safe_int(source_activity.get("tca_sample_count")) <= 0
+            and _safe_int(source_activity.get("complete_fill_order_event_count")) <= 0
+        ):
             blockers.add("source_tca_missing")
         blockers.update(
             str(item).strip()
