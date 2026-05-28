@@ -7,7 +7,7 @@ import logging
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_DOWN
-from typing import Any, Optional, cast
+from typing import Any, Literal, Optional, cast
 from uuid import UUID
 
 from sqlalchemy import select
@@ -69,6 +69,7 @@ _PROFITABILITY_PROOF_FLOOR_TCA_MAX_AGE_SECONDS = 86_400
 _SIMPLE_MARKET_CONTEXT_RETRY_INTERVAL = timedelta(seconds=30)
 _PAPER_ROUTE_PROBE_QTY_STEP = Decimal("0.0001")
 _REGULAR_SESSION_MINUTES = 390
+_PAPER_ROUTE_TARGET_PLAN_CACHE_SECONDS = 5
 
 
 def _safe_int(value: object) -> int:
@@ -296,6 +297,16 @@ def _merge_paper_route_probe_lineage(
 
 class SimpleTradingPipeline(TradingPipeline):
     """Minimal signal -> hard-risk -> direct execution lane."""
+
+    _paper_route_target_plan_cache: (
+        tuple[
+            set[str],
+            str | None,
+            list[dict[str, Any]],
+            datetime,
+        ]
+        | None
+    ) = None
 
     def run_once(self) -> None:
         self._label_mature_rejected_signal_outcome_events()
@@ -694,7 +705,7 @@ class SimpleTradingPipeline(TradingPipeline):
         decision: StrategyDecision,
         strategy: Strategy | None = None,
     ) -> bool:
-        if decision.action != "buy":
+        if decision.action not in {"buy", "sell"}:
             return False
         exit_minute = self._paper_route_probe_exit_minute_after_open(
             decision=decision,
@@ -878,6 +889,8 @@ class SimpleTradingPipeline(TradingPipeline):
                     "net_qty": Decimal("0"),
                     "buy_qty": Decimal("0"),
                     "buy_notional": Decimal("0"),
+                    "sell_qty": Decimal("0"),
+                    "sell_notional": Decimal("0"),
                     "latest_entry_at": None,
                     "exit_minute_after_open": None,
                     "paper_route_probe_lineage": {},
@@ -907,21 +920,37 @@ class SimpleTradingPipeline(TradingPipeline):
                         Decimal,
                         exposure["buy_notional"],
                     ) + (filled_qty * avg_fill_price)
-                latest_entry_at = exposure.get("latest_entry_at")
-                execution_created_at = (
-                    execution.created_at
-                    if execution.created_at.tzinfo is not None
-                    else execution.created_at.replace(tzinfo=timezone.utc)
-                ).astimezone(timezone.utc)
-                if not isinstance(latest_entry_at, datetime) or (
-                    execution_created_at > latest_entry_at
-                ):
-                    exposure["latest_entry_at"] = execution_created_at
+            elif side == "sell":
+                exit_minute = self._paper_route_probe_exit_minute_after_open(
+                    decision=decision,
+                    strategy=strategy,
+                )
+                if exit_minute is not None:
+                    exposure["exit_minute_after_open"] = exit_minute
+                avg_fill_price = _optional_decimal(execution.avg_fill_price)
+                if avg_fill_price is not None and avg_fill_price > 0:
+                    exposure["sell_qty"] = (
+                        cast(Decimal, exposure["sell_qty"]) + filled_qty
+                    )
+                    exposure["sell_notional"] = cast(
+                        Decimal,
+                        exposure["sell_notional"],
+                    ) + (filled_qty * avg_fill_price)
+            latest_entry_at = exposure.get("latest_entry_at")
+            execution_created_at = (
+                execution.created_at
+                if execution.created_at.tzinfo is not None
+                else execution.created_at.replace(tzinfo=timezone.utc)
+            ).astimezone(timezone.utc)
+            if not isinstance(latest_entry_at, datetime) or (
+                execution_created_at > latest_entry_at
+            ):
+                exposure["latest_entry_at"] = execution_created_at
 
         decisions: list[StrategyDecision] = []
         for exposure in exposures.values():
             net_qty = cast(Decimal, exposure["net_qty"])
-            if net_qty <= 0:
+            if net_qty == 0:
                 continue
             raw_exit_minute = exposure.get("exit_minute_after_open")
             exit_minute = raw_exit_minute if isinstance(raw_exit_minute, int) else None
@@ -944,14 +973,24 @@ class SimpleTradingPipeline(TradingPipeline):
                 continue
             buy_qty = cast(Decimal, exposure["buy_qty"])
             buy_notional = cast(Decimal, exposure["buy_notional"])
-            avg_entry_price = buy_notional / buy_qty if buy_qty > 0 else None
+            sell_qty = cast(Decimal, exposure["sell_qty"])
+            sell_notional = cast(Decimal, exposure["sell_notional"])
+            exit_action: Literal["buy", "sell"] = "sell" if net_qty > 0 else "buy"
+            exit_qty = abs(net_qty)
+            avg_entry_price = None
+            if net_qty > 0 and buy_qty > 0:
+                avg_entry_price = buy_notional / buy_qty
+            elif net_qty < 0 and sell_qty > 0:
+                avg_entry_price = sell_notional / sell_qty
             params: dict[str, Any] = {
                 "paper_route_probe_exit": {
                     "mode": "paper_route_exit",
                     "source": "filled_paper_route_probe_executions",
                     "symbol": symbol,
                     "strategy_id": str(strategy.id),
-                    "db_open_qty": str(net_qty),
+                    "db_open_qty": str(exit_qty),
+                    "db_open_signed_qty": str(net_qty),
+                    "db_open_side": "long" if net_qty > 0 else "short",
                     "exit_minute_after_open": exit_minute,
                     "effective_exit_minute_after_open": effective_exit_minute,
                     "exit_due_at": exit_due_at.isoformat(),
@@ -968,12 +1007,16 @@ class SimpleTradingPipeline(TradingPipeline):
                     ),
                 },
                 "simple_lane": {
-                    "final_qty": str(net_qty),
-                    "notional": str(net_qty * avg_entry_price)
+                    "final_qty": str(exit_qty),
+                    "notional": str(exit_qty * avg_entry_price)
                     if avg_entry_price is not None
                     else None,
                     "quantity_resolution": {
-                        "reason": "sell_reducing_paper_route_probe_exit",
+                        "reason": (
+                            "sell_reducing_paper_route_probe_exit"
+                            if exit_action == "sell"
+                            else "buy_reducing_paper_route_probe_short_exit"
+                        ),
                         "short_increasing": False,
                         "position_qty": str(net_qty),
                     },
@@ -987,8 +1030,8 @@ class SimpleTradingPipeline(TradingPipeline):
                     symbol=symbol,
                     event_ts=exit_due_at,
                     timeframe=str(exposure["timeframe"] or strategy.base_timeframe),
-                    action="sell",
-                    qty=net_qty,
+                    action=exit_action,
+                    qty=exit_qty,
                     rationale="paper-route-probe-exit",
                     params=params,
                 )
@@ -1021,7 +1064,7 @@ class SimpleTradingPipeline(TradingPipeline):
         exit_due_at_text = exit_due_at.isoformat()
         for row in rows:
             decision = self._trade_decision_from_retry_row(row)
-            if decision is None or decision.action != "sell":
+            if decision is None:
                 continue
             metadata = self._paper_route_probe_exit_metadata(decision)
             if metadata is None:
@@ -1052,6 +1095,9 @@ class SimpleTradingPipeline(TradingPipeline):
         db_open_qty = _optional_decimal(metadata.get("db_open_qty"))
         if db_open_qty is None or db_open_qty <= 0:
             return None
+        open_side = str(metadata.get("db_open_side") or "long").strip().lower()
+        if open_side not in {"long", "short"}:
+            open_side = "long"
         seed_missing = getattr(
             execution_adapter, "seed_missing_position_snapshot", None
         )
@@ -1064,7 +1110,7 @@ class SimpleTradingPipeline(TradingPipeline):
         position: dict[str, Any] = {
             "symbol": decision.symbol,
             "qty": str(restored_qty),
-            "side": "long",
+            "side": open_side,
         }
         if price is not None and price > 0:
             position["market_value"] = str(restored_qty * price)
@@ -1099,7 +1145,10 @@ class SimpleTradingPipeline(TradingPipeline):
         quantity_resolution = dict(
             cast(Mapping[str, Any], simple_lane.get("quantity_resolution") or {})
         )
-        if current_qty <= 0:
+        is_short_exit = decision.action == "buy"
+        effective_position_qty = abs(current_qty)
+        position_missing = current_qty >= 0 if is_short_exit else current_qty <= 0
+        if position_missing:
             price = _optional_decimal(params.get("price"))
             restored_qty = (
                 SimpleTradingPipeline._restore_simulation_paper_route_probe_exit_position(
@@ -1118,12 +1167,15 @@ class SimpleTradingPipeline(TradingPipeline):
             metadata["broker_position_qty"] = str(current_qty)
             metadata["db_position_qty_fallback"] = True
             metadata["position_source"] = "source_execution_db_open_qty"
-            current_qty = restored_qty
-        if current_qty < decision.qty:
-            decision = decision.model_copy(update={"qty": current_qty})
+            current_qty = -restored_qty if is_short_exit else restored_qty
+            effective_position_qty = restored_qty
+        else:
+            effective_position_qty = abs(current_qty)
+        if effective_position_qty < decision.qty:
+            decision = decision.model_copy(update={"qty": effective_position_qty})
             metadata["qty_capped_to_position"] = True
         metadata.setdefault("broker_position_qty", str(current_qty))
-        metadata["effective_position_qty"] = str(current_qty)
+        metadata["effective_position_qty"] = str(effective_position_qty)
 
         quantity_resolution["position_qty"] = str(decision.qty)
         simple_lane["final_qty"] = str(decision.qty)
@@ -1711,6 +1763,80 @@ class SimpleTradingPipeline(TradingPipeline):
             return set(), "paper_route_target_plan_probe_symbols_missing", []
         return symbols, None, paper_route_target_plan_targets(plan)
 
+    def _external_paper_route_target_probe_symbols_cached(
+        self,
+    ) -> tuple[set[str], str | None, list[dict[str, Any]]]:
+        now = trading_now(account_label=self.account_label).astimezone(timezone.utc)
+        cached = self._paper_route_target_plan_cache
+        if cached is not None:
+            symbols, load_error, targets, cached_at = cached
+            if (
+                now - cached_at.astimezone(timezone.utc)
+            ).total_seconds() < _PAPER_ROUTE_TARGET_PLAN_CACHE_SECONDS:
+                return set(symbols), load_error, [dict(target) for target in targets]
+        symbols, load_error, targets = self._external_paper_route_target_probe_symbols()
+        self._paper_route_target_plan_cache = (
+            set(symbols),
+            load_error,
+            [dict(target) for target in targets],
+            now,
+        )
+        return symbols, load_error, targets
+
+    def _paper_route_target_lineage_for_decision(
+        self,
+        decision: StrategyDecision,
+    ) -> dict[str, Any]:
+        if settings.trading_mode != "paper":
+            return {}
+        if not settings.trading_simple_paper_route_probe_enabled:
+            return {}
+        symbol = decision.symbol.strip().upper()
+        if not symbol:
+            return {}
+        target_plan_symbols, target_plan_error, target_plan_targets = (
+            self._external_paper_route_target_probe_symbols_cached()
+        )
+        if target_plan_error or symbol not in target_plan_symbols:
+            return {}
+        lineage = _target_plan_lineage(target_plan_targets, symbol)
+        if not any(
+            lineage.get(key)
+            for key in (
+                "source_candidate_ids",
+                "source_hypothesis_ids",
+                "paper_route_probe_lineage_targets",
+            )
+        ):
+            return {}
+        return {
+            "mode": "paper_route_target_lineage",
+            "source": "external_target_plan_url",
+            "symbol": symbol,
+            "paper_route_target_plan_symbols": sorted(target_plan_symbols),
+            **lineage,
+        }
+
+    def _with_paper_route_target_lineage(
+        self,
+        decision: StrategyDecision,
+    ) -> StrategyDecision:
+        lineage = self._paper_route_target_lineage_for_decision(decision)
+        if not lineage:
+            return decision
+        params = dict(decision.params)
+        existing = params.get("paper_route_target_plan")
+        if isinstance(existing, Mapping):
+            merged_target_plan = dict(cast(Mapping[str, Any], existing))
+            _merge_paper_route_probe_lineage(merged_target_plan, lineage)
+            for key, value in lineage.items():
+                merged_target_plan.setdefault(key, value)
+            params["paper_route_target_plan"] = merged_target_plan
+        else:
+            params["paper_route_target_plan"] = lineage
+        _merge_paper_route_probe_lineage(params, lineage)
+        return decision.model_copy(update={"params": params})
+
     def _paper_route_probe_context(
         self,
         *,
@@ -1858,9 +1984,13 @@ class SimpleTradingPipeline(TradingPipeline):
         decision: StrategyDecision,
         strategy: Strategy,
     ) -> TradeDecision | None:
+        decision = self._with_paper_route_target_lineage(decision)
         decision_row = self.executor.ensure_decision(
             session, decision, strategy, self.account_label
         )
+        if "paper_route_target_plan" in decision.params:
+            self.executor.update_decision_params(session, decision_row, decision.params)
+            self.executor.sync_decision_state(session, decision_row, decision)
         retry_metadata = self._paper_route_probe_retry_metadata(decision_row)
         if retry_metadata is None:
             return super()._ensure_pending_decision_row(
