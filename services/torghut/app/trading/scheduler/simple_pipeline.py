@@ -440,6 +440,13 @@ class SimpleTradingPipeline(TradingPipeline):
                 positions=positions,
                 allowed_symbols=allowed_symbols,
             )
+            self._process_paper_route_target_source_decisions(
+                session=session,
+                strategies=strategies,
+                account=account,
+                positions=positions,
+                allowed_symbols=allowed_symbols,
+            )
             self._process_paper_route_probe_retry_decisions(
                 session=session,
                 strategies=strategies,
@@ -1950,6 +1957,17 @@ class SimpleTradingPipeline(TradingPipeline):
             "final_promotion_allowed": False,
             **lineage,
         }
+        exit_minute = SimpleTradingPipeline._paper_route_probe_exit_minute_value(
+            target.get("exit_minute_after_open")
+            or target.get("paper_route_probe_exit_minute_after_open")
+        )
+        if exit_minute is not None:
+            effective_exit_minute = min(exit_minute, _REGULAR_SESSION_MINUTES - 1)
+            metadata["exit_minute_after_open"] = exit_minute
+            metadata["effective_exit_minute_after_open"] = effective_exit_minute
+            metadata["exit_due_at"] = (
+                window_start + timedelta(minutes=effective_exit_minute)
+            ).isoformat()
         for key in (
             "candidate_id",
             "hypothesis_id",
@@ -2057,6 +2075,10 @@ class SimpleTradingPipeline(TradingPipeline):
                     "final_promotion_allowed": False,
                     **_target_plan_lineage([dict(target)], symbol),
                 }
+                if "exit_minute_after_open" in metadata:
+                    params["exit_minute_after_open"] = metadata[
+                        "exit_minute_after_open"
+                    ]
                 timeframe = (
                     _safe_text(target.get("timeframe"))
                     or _safe_text(target.get("base_timeframe"))
