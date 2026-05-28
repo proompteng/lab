@@ -1140,6 +1140,72 @@ def _order_feed_fill_lifecycle_blockers(
     return blockers
 
 
+def _source_activity_diagnostics_blockers(
+    diagnostics: Mapping[str, object],
+) -> list[str]:
+    blockers: list[str] = []
+
+    def add(blocker: str) -> None:
+        if blocker not in blockers:
+            blockers.append(blocker)
+
+    if _text_or_none(diagnostics.get("runtime_ledger_source_bucket_unavailable")):
+        add("runtime_ledger_source_bucket_unavailable")
+
+    decision_query_count = _nonnegative_int(
+        diagnostics.get("decision_rows_before_lineage_filter")
+    )
+    execution_query_count = _nonnegative_int(
+        diagnostics.get("execution_rows_before_lineage_filter")
+    )
+    order_query_count = _nonnegative_int(
+        diagnostics.get("order_lifecycle_rows_before_lineage_filter")
+    )
+    tca_query_count = _nonnegative_int(diagnostics.get("tca_rows_before_lineage_filter"))
+    decision_lineage_count = _nonnegative_int(
+        diagnostics.get("decision_rows_after_lineage_filter")
+    )
+    execution_lineage_count = _nonnegative_int(
+        diagnostics.get("execution_rows_after_lineage_filter")
+    )
+    tca_lineage_count = _nonnegative_int(diagnostics.get("tca_rows_after_lineage_filter"))
+    source_bucket_count = _nonnegative_int(
+        diagnostics.get("runtime_ledger_source_bucket_count")
+    )
+
+    if (
+        decision_query_count
+        or execution_query_count
+        or order_query_count
+        or tca_query_count
+    ) and not (decision_lineage_count or execution_lineage_count or tca_lineage_count):
+        add("source_lineage_filter_excluded_activity")
+    elif not (
+        decision_query_count
+        or execution_query_count
+        or order_query_count
+        or tca_query_count
+        or source_bucket_count
+    ):
+        add("strategy_account_symbol_window_source_activity_missing")
+
+    if decision_lineage_count > 0 and execution_lineage_count <= 0:
+        add("execution_rows_missing_for_matched_decisions")
+    if execution_lineage_count > 0 and order_query_count <= 0:
+        add(ORDER_FEED_FILL_LIFECYCLE_MISSING_BLOCKER)
+    if execution_lineage_count > 0 and tca_lineage_count <= 0:
+        add("execution_tca_rows_missing")
+    if source_bucket_count <= 0:
+        add("runtime_ledger_source_bucket_missing")
+
+    for blocker in _metadata_text_list(
+        diagnostics.get("order_feed_fill_lifecycle_blockers")
+    ):
+        add(blocker)
+
+    return blockers
+
+
 def _build_realized_strategy_pnl_rows(
     execution_rows: list[dict[str, object]],
     *,
@@ -2026,6 +2092,7 @@ def _query_timestamps(
     hypothesis_id: str | None = None,
     require_source_lineage: bool = False,
     allow_authoritative_runtime_ledger_materialization: bool = False,
+    source_activity_diagnostics: dict[str, Any] | None = None,
 ) -> tuple[list[datetime], list[datetime], list[dict[str, object]]]:
     if not strategy_names:
         raise RuntimeError("strategy_name_not_configured")
@@ -2036,6 +2103,22 @@ def _query_timestamps(
     decision_lifecycle_rows: list[dict[str, object]] = []
     order_lifecycle_rows: list[dict[str, object]] = []
     symbol_filter = _metadata_symbol_list(symbols or ())
+    if source_activity_diagnostics is not None:
+        source_activity_diagnostics.update(
+            {
+                "strategy_name_candidates": strategy_names,
+                "account_label": account_label,
+                "window_start": window_start.isoformat(),
+                "window_end": window_end.isoformat(),
+                "source_activity_symbol_filter": symbol_filter,
+                "candidate_id": candidate_id,
+                "hypothesis_id": hypothesis_id,
+                "source_lineage_required": require_source_lineage,
+                "authoritative_runtime_ledger_materialization_allowed": (
+                    allow_authoritative_runtime_ledger_materialization
+                ),
+            }
+        )
     decision_symbol_clause = (
         "\n                  and upper(d.symbol) = any(%s)" if symbol_filter else ""
     )
@@ -2103,6 +2186,10 @@ def _query_timestamps(
                 for row in cur.fetchall()
                 if row[0] is not None
             ]
+            if source_activity_diagnostics is not None:
+                source_activity_diagnostics["decision_rows_before_lineage_filter"] = len(
+                    decision_lifecycle_rows
+                )
             decision_lifecycle_rows = [
                 row
                 for row in decision_lifecycle_rows
@@ -2113,6 +2200,10 @@ def _query_timestamps(
                     require_source_lineage=require_source_lineage,
                 )
             ]
+            if source_activity_diagnostics is not None:
+                source_activity_diagnostics["decision_rows_after_lineage_filter"] = len(
+                    decision_lifecycle_rows
+                )
             decisions = []
             for row in decision_lifecycle_rows:
                 computed_at = row.get("computed_at")
@@ -2203,6 +2294,13 @@ def _query_timestamps(
                 for row in cur.fetchall()
                 if row[1] is not None
             ]
+            if source_activity_diagnostics is not None:
+                source_activity_diagnostics["execution_rows_before_lineage_filter"] = len(
+                    execution_rows
+                )
+                source_activity_diagnostics[
+                    "fill_execution_rows_before_lineage_filter"
+                ] = sum(1 for row in execution_rows if _execution_row_has_fill(row))
             execution_rows = [
                 row
                 for row in execution_rows
@@ -2213,6 +2311,13 @@ def _query_timestamps(
                     require_source_lineage=require_source_lineage,
                 )
             ]
+            if source_activity_diagnostics is not None:
+                source_activity_diagnostics["execution_rows_after_lineage_filter"] = len(
+                    execution_rows
+                )
+                source_activity_diagnostics[
+                    "fill_execution_rows_after_lineage_filter"
+                ] = sum(1 for row in execution_rows if _execution_row_has_fill(row))
             executions = []
             for row in execution_rows:
                 execution_event_at = row.get("execution_event_at")
@@ -2279,6 +2384,17 @@ def _query_timestamps(
                 for row in cur.fetchall()
                 if row[0] is not None
             ]
+            if source_activity_diagnostics is not None:
+                source_activity_diagnostics[
+                    "order_lifecycle_rows_before_lineage_filter"
+                ] = len(order_lifecycle_rows)
+                source_activity_diagnostics[
+                    "fill_order_lifecycle_rows_before_lineage_filter"
+                ] = sum(
+                    1
+                    for row in order_lifecycle_rows
+                    if _runtime_ledger_event_type(row) in _RUNTIME_LEDGER_FILL_EVENTS
+                )
             order_lifecycle_rows = [
                 row
                 for row in order_lifecycle_rows
@@ -2289,6 +2405,17 @@ def _query_timestamps(
                     require_source_lineage=require_source_lineage,
                 )
             ]
+            if source_activity_diagnostics is not None:
+                source_activity_diagnostics[
+                    "order_lifecycle_rows_after_lineage_filter"
+                ] = len(order_lifecycle_rows)
+                source_activity_diagnostics[
+                    "fill_order_lifecycle_rows_after_lineage_filter"
+                ] = sum(
+                    1
+                    for row in order_lifecycle_rows
+                    if _runtime_ledger_event_type(row) in _RUNTIME_LEDGER_FILL_EVENTS
+                )
             cur.execute(
                 f"""
                 select
@@ -2331,6 +2458,10 @@ def _query_timestamps(
                 for row in cur.fetchall()
                 if row[0] is not None
             ]
+            if source_activity_diagnostics is not None:
+                source_activity_diagnostics["tca_rows_before_lineage_filter"] = len(
+                    tca_rows
+                )
             tca_rows = [
                 row
                 for row in tca_rows
@@ -2341,6 +2472,17 @@ def _query_timestamps(
                     require_source_lineage=require_source_lineage,
                 )
             ]
+            if source_activity_diagnostics is not None:
+                source_activity_diagnostics["tca_rows_after_lineage_filter"] = len(
+                    tca_rows
+                )
+                lifecycle_blockers = _order_feed_fill_lifecycle_blockers(
+                    execution_rows=execution_rows,
+                    order_lifecycle_rows=order_lifecycle_rows,
+                )
+                source_activity_diagnostics["order_feed_fill_lifecycle_blockers"] = (
+                    lifecycle_blockers
+                )
     tca_rows.extend(
         _build_realized_strategy_pnl_rows(
             execution_rows,
@@ -2371,9 +2513,12 @@ def _source_activity_missing_summary(
     source_activity_symbols: Sequence[str] | None = None,
     target_metadata: Mapping[str, Any] | None = None,
     proof_hygiene_blockers: Sequence[str] = (),
+    source_activity_diagnostics: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     metadata = _as_mapping(target_metadata)
     symbol_filter = _metadata_symbol_list(source_activity_symbols or ())
+    diagnostics = _as_mapping(source_activity_diagnostics)
+    diagnostic_blockers = _source_activity_diagnostics_blockers(diagnostics)
     blocker = {
         "blocker": "runtime_window_source_activity_missing",
         "hypothesis_id": hypothesis_id,
@@ -2382,6 +2527,8 @@ def _source_activity_missing_summary(
         "strategy_name_candidates": strategy_names,
         "account_label": account_label,
         "source_activity_symbol_filter": symbol_filter,
+        "diagnostic_blockers": diagnostic_blockers,
+        "source_activity_diagnostics": diagnostics,
         "window_start": window_start.isoformat(),
         "window_end": window_end.isoformat(),
         "remediation": (
@@ -2422,7 +2569,15 @@ def _source_activity_missing_summary(
         "avg_abs_slippage_bps": "0",
         "avg_post_cost_expectancy_bps": "0",
         "promotion_allowed": False,
-        "promotion_blocking_reasons": ["runtime_window_source_activity_missing"],
+        "promotion_blocking_reasons": list(
+            dict.fromkeys(
+                [
+                    "runtime_window_source_activity_missing",
+                    *diagnostic_blockers,
+                ]
+            )
+        ),
+        "source_activity_diagnostics": diagnostics,
         "runtime_observation": {
             "authoritative": False,
             "observed_stage": observed_stage,
@@ -2446,6 +2601,8 @@ def _source_activity_missing_summary(
             "window_end": window_end.isoformat(),
             "dataset_snapshot_ref": dataset_snapshot_ref,
             "target_metadata": metadata,
+            "source_activity_diagnostics": diagnostics,
+            "source_activity_diagnostic_blockers": diagnostic_blockers,
             "skip_reason": "runtime_window_source_activity_missing",
         },
     }
@@ -2485,6 +2642,16 @@ def main() -> int:
     decisions: list[datetime] = []
     executions: list[datetime] = []
     tca_rows: list[dict[str, object]] = []
+    source_activity_diagnostics: dict[str, Any] = {
+        "strategy_name_candidates": strategy_names,
+        "account_label": args.account_label,
+        "window_start": window_start.isoformat(),
+        "window_end": window_end.isoformat(),
+        "source_activity_symbol_filter": source_activity_symbols,
+        "candidate_id": args.candidate_id.strip() or None,
+        "hypothesis_id": args.hypothesis_id,
+        "source_kind": source_kind,
+    }
     if source_dsn:
         decisions, executions, tca_rows = _query_timestamps(
             dsn=source_dsn,
@@ -2499,6 +2666,7 @@ def main() -> int:
             allow_authoritative_runtime_ledger_materialization=(
                 allow_authoritative_runtime_ledger_materialization
             ),
+            source_activity_diagnostics=source_activity_diagnostics,
         )
     bucket_ranges: list[tuple[datetime, datetime, int]] = []
     runtime_ledger_artifact_metadata: dict[str, Any] = {
@@ -2536,6 +2704,7 @@ def main() -> int:
             )
         )
         tca_rows.extend(source_runtime_ledger_tca_rows)
+        source_activity_diagnostics.update(runtime_ledger_source_metadata)
     if artifact_refs:
         bucket_ranges = build_regular_session_buckets(
             window_start=window_start,
@@ -2618,6 +2787,12 @@ def main() -> int:
             source_activity_symbols=source_activity_symbols,
             target_metadata=target_metadata,
             proof_hygiene_blockers=runtime_ledger_target_metadata_blockers,
+            source_activity_diagnostics={
+                **source_activity_diagnostics,
+                **runtime_ledger_artifact_metadata,
+                **runtime_ledger_durable_metadata,
+                **runtime_ledger_source_metadata,
+            },
         )
         if args.json:
             print(json.dumps(summary, indent=2))
@@ -2681,6 +2856,20 @@ def main() -> int:
         "strategy_name_candidates": strategy_names,
         "account_label": args.account_label,
         "source_activity_symbol_filter": source_activity_symbols,
+        "source_activity_diagnostics": {
+            **source_activity_diagnostics,
+            **runtime_ledger_artifact_metadata,
+            **runtime_ledger_durable_metadata,
+            **runtime_ledger_source_metadata,
+        },
+        "source_activity_diagnostic_blockers": _source_activity_diagnostics_blockers(
+            {
+                **source_activity_diagnostics,
+                **runtime_ledger_artifact_metadata,
+                **runtime_ledger_durable_metadata,
+                **runtime_ledger_source_metadata,
+            }
+        ),
         "window_start": window_start.isoformat(),
         "window_end": window_end.isoformat(),
         "artifact_refs": artifact_refs,
