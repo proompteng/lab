@@ -2088,6 +2088,56 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertEqual([item.symbol for item in filtered], ["NVDA", "AMAT", "NVDA"])
         self.assertEqual([item.seq for item in filtered], [1, 2, 4])
 
+    def test_cached_iter_signal_rows_factory_returns_all_symbols_without_filter(
+        self,
+    ) -> None:
+        rows = [
+            SimpleNamespace(
+                symbol="NVDA",
+                event_ts=datetime(2026, 3, 23, 14, 0, tzinfo=timezone.utc),
+                seq=1,
+            ),
+            SimpleNamespace(
+                symbol="AMAT",
+                event_ts=datetime(2026, 3, 23, 14, 0, 1, tzinfo=timezone.utc),
+                seq=2,
+            ),
+            SimpleNamespace(
+                symbol="META",
+                event_ts=datetime(2026, 3, 24, 14, 0, tzinfo=timezone.utc),
+                seq=3,
+            ),
+        ]
+        iterator = frontier._cached_iter_signal_rows_factory(rows)
+        config = SimpleNamespace(
+            symbols=(),
+            start_date=date(2026, 3, 23),
+            end_date=date(2026, 3, 24),
+        )
+
+        filtered = list(iterator(config))
+
+        self.assertEqual([item.seq for item in filtered], [1, 2, 3])
+
+    def test_cached_iter_signal_rows_factory_returns_empty_for_inverted_dates(
+        self,
+    ) -> None:
+        rows = [
+            SimpleNamespace(
+                symbol="NVDA",
+                event_ts=datetime(2026, 3, 23, 14, 0, tzinfo=timezone.utc),
+                seq=1,
+            )
+        ]
+        iterator = frontier._cached_iter_signal_rows_factory(rows)
+        config = SimpleNamespace(
+            symbols=(),
+            start_date=date(2026, 3, 24),
+            end_date=date(2026, 3, 23),
+        )
+
+        self.assertEqual(list(iterator(config)), [])
+
     def test_cached_iter_signal_rows_factory_uses_index_after_factory(
         self,
     ) -> None:
