@@ -617,7 +617,7 @@ class TestLiveConfigManifestContract(TestCase):
         )
         self.assertEqual(
             sim_env.get("TRADING_PAPER_ROUTE_TARGET_PLAN_TIMEOUT_SECONDS"),
-            "5",
+            "10",
         )
         self.assertFalse(_manifest_bool(sim_env, "TRADING_SIMULATION_ENABLED"))
         self.assertEqual(sim_env.get("TRADING_UNIVERSE_SOURCE"), "static")
@@ -937,6 +937,12 @@ class TestLiveConfigManifestContract(TestCase):
             "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-evidence",
             args,
         )
+        self.assertIn("--runtime-window-target-plan-url-timeout-seconds 45", args)
+        self.assertIn("--runtime-window-target-plan-url-attempts 3", args)
+        self.assertIn(
+            "--runtime-window-target-plan-url-retry-backoff-seconds 5",
+            args,
+        )
         self.assertNotIn(
             "--runtime-window-target-plan-url "
             "http://torghut.torghut.svc.cluster.local/trading/paper-route-evidence",
@@ -1201,7 +1207,9 @@ class TestLiveConfigManifestContract(TestCase):
             _manifest_bool(env, "TRADING_ALPACA_QUOTE_FALLBACK_MARKET_SESSION_REQUIRED")
         )
         self.assertEqual(env.get("TRADING_ALPACA_QUOTE_FALLBACK_BACKOFF_SECONDS"), "60")
-        self.assertEqual(env.get("TRADING_OPTIONS_CATALOG_FRESHNESS_CACHE_SECONDS"), "30")
+        self.assertEqual(
+            env.get("TRADING_OPTIONS_CATALOG_FRESHNESS_CACHE_SECONDS"), "30"
+        )
         self.assertFalse(_manifest_bool(env, "TRADING_AUTONOMY_ENABLED"))
         self.assertFalse(_manifest_bool(env, "TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION"))
         self.assertFalse(_manifest_bool(env, "TRADING_KILL_SWITCH_ENABLED"))

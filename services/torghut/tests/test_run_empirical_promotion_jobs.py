@@ -1059,6 +1059,177 @@ class TestRunEmpiricalPromotionJobs(TestCase):
                 timeout_seconds=1.0,
             )
 
+    def test_runtime_window_target_plan_url_retries_transport_failure(self) -> None:
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps(
+            {
+                "runtime_window_import_plan": {
+                    "targets": [
+                        {
+                            "candidate_id": "cand-retry",
+                            "hypothesis_id": "H-RETRY",
+                        }
+                    ]
+                }
+            }
+        ).encode("utf-8")
+
+        with (
+            patch.object(
+                renewal.urllib.request,
+                "urlopen",
+                side_effect=[
+                    renewal.urllib.error.URLError("connection refused"),
+                    response,
+                ],
+            ) as urlopen,
+            patch.object(renewal.wall_time, "sleep") as sleep,
+        ):
+            plan = renewal._read_runtime_window_target_plan_url(
+                "http://torghut.invalid/status",
+                timeout_seconds=1.0,
+                attempts=2,
+                retry_backoff_seconds=0.0,
+            )
+
+        self.assertEqual(urlopen.call_count, 2)
+        sleep.assert_called_once_with(0.0)
+        self.assertEqual(plan["targets"][0]["candidate_id"], "cand-retry")
+
+    def test_runtime_window_target_plan_url_retries_transient_empty_paper_route(
+        self,
+    ) -> None:
+        transient = MagicMock()
+        transient.__enter__.return_value.read.return_value = json.dumps(
+            {
+                "schema_version": "torghut.paper-route-evidence.v1",
+                "summary": {"blockers": ["paper_probation_import_plan_missing"]},
+                "runtime_window_import_audit": {
+                    "state": "paper_probation_import_plan_missing",
+                    "blockers": ["paper_probation_import_plan_missing"],
+                },
+                "live_submission_gate": {
+                    "paper_route_target_plan_error": (
+                        "paper_route_target_plan_fetch_failed:timed out"
+                    ),
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "targets": [],
+                        "skipped_targets": [
+                            {
+                                "reason": "external_paper_route_target_plan_unavailable",
+                                "missing_or_blocking_fields": [
+                                    "paper_route_target_plan_fetch_failed:timed out"
+                                ],
+                            }
+                        ],
+                    },
+                },
+                "next_paper_route_runtime_window_targets": {
+                    "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                    "target_count": 0,
+                    "targets": [],
+                },
+            }
+        ).encode("utf-8")
+        success = MagicMock()
+        success.__enter__.return_value.read.return_value = json.dumps(
+            {
+                "schema_version": "torghut.paper-route-evidence.v1",
+                "next_paper_route_runtime_window_targets": {
+                    "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                    "target_count": 1,
+                    "targets": [
+                        {
+                            "candidate_id": "cand-paper-route",
+                            "hypothesis_id": "H-PAPER-ROUTE",
+                            "strategy_family": "microbar_pairs",
+                            "strategy_name": "paper-route-candidate-v1",
+                        }
+                    ],
+                },
+            }
+        ).encode("utf-8")
+
+        with (
+            patch.object(
+                renewal.urllib.request,
+                "urlopen",
+                side_effect=[transient, success],
+            ) as urlopen,
+            patch.object(renewal.wall_time, "sleep") as sleep,
+        ):
+            plan = renewal._read_runtime_window_target_plan_url(
+                "http://torghut.invalid/status",
+                timeout_seconds=1.0,
+                attempts=2,
+                retry_backoff_seconds=0.0,
+            )
+
+        self.assertEqual(urlopen.call_count, 2)
+        sleep.assert_called_once_with(0.0)
+        self.assertEqual(
+            plan["schema_version"],
+            "torghut.next-paper-route-runtime-window-targets.v1",
+        )
+        self.assertEqual(plan["targets"][0]["candidate_id"], "cand-paper-route")
+
+    def test_runtime_window_target_plan_required_stays_fail_closed_after_retries(
+        self,
+    ) -> None:
+        transient = MagicMock()
+        transient.__enter__.return_value.read.return_value = json.dumps(
+            {
+                "schema_version": "torghut.paper-route-evidence.v1",
+                "summary": {"blockers": ["paper_probation_import_plan_missing"]},
+                "live_submission_gate": {
+                    "paper_route_target_plan_error": (
+                        "paper_route_target_plan_fetch_failed:timed out"
+                    )
+                },
+                "next_paper_route_runtime_window_targets": {
+                    "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                    "target_count": 0,
+                    "targets": [],
+                },
+            }
+        ).encode("utf-8")
+        args = SimpleNamespace(
+            runtime_window_target=[],
+            runtime_window_target_plan_ref=[],
+            runtime_window_target_plan_url=["http://torghut.invalid/status"],
+            runtime_window_target_plan_url_timeout_seconds=1.0,
+            runtime_window_target_plan_url_attempts=2,
+            runtime_window_target_plan_url_retry_backoff_seconds=0.0,
+            runtime_window_target_plan_required=True,
+            runtime_window_target_plan_exclusive=True,
+            runtime_window_targets_from_latest_autoresearch=True,
+            runtime_window_targets_from_registry=True,
+        )
+
+        with (
+            patch.object(
+                renewal.urllib.request,
+                "urlopen",
+                side_effect=[transient, transient],
+            ) as urlopen,
+            patch.object(renewal.wall_time, "sleep") as sleep,
+            patch.object(
+                renewal,
+                "_latest_autoresearch_runtime_window_targets",
+            ) as latest,
+            patch.object(renewal, "_registry_runtime_window_targets") as registry,
+            self.assertRaisesRegex(
+                RuntimeError,
+                "runtime_window_target_plan_required_but_empty",
+            ),
+        ):
+            renewal._runtime_window_targets(args)
+
+        self.assertEqual(urlopen.call_count, 2)
+        sleep.assert_called_once_with(0.0)
+        latest.assert_not_called()
+        registry.assert_not_called()
+
     def test_runtime_window_targets_from_candidate_board_plan_preserve_probation_handoff(
         self,
     ) -> None:
