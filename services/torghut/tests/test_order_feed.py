@@ -18,6 +18,7 @@ from app.models import (
     Execution,
     ExecutionOrderEvent,
     ExecutionTCAMetric,
+    OrderFeedConsumerCursor,
     RejectedSignalOutcomeEvent,
     Strategy,
     TradeDecision,
@@ -113,6 +114,8 @@ class TestOrderFeed(TestCase):
         self._orig_bootstrap = settings.trading_order_feed_bootstrap_servers
         self._orig_topic = settings.trading_order_feed_topic
         self._orig_topic_v2 = settings.trading_order_feed_topic_v2
+        self._orig_group_id = settings.trading_order_feed_group_id
+        self._orig_client_id = settings.trading_order_feed_client_id
         self._orig_assignment_mode = settings.trading_order_feed_assignment_mode
         self._orig_auto_offset_reset = settings.trading_order_feed_auto_offset_reset
         settings.trading_order_feed_enabled = True
@@ -127,6 +130,8 @@ class TestOrderFeed(TestCase):
         settings.trading_order_feed_bootstrap_servers = self._orig_bootstrap
         settings.trading_order_feed_topic = self._orig_topic
         settings.trading_order_feed_topic_v2 = self._orig_topic_v2
+        settings.trading_order_feed_group_id = self._orig_group_id
+        settings.trading_order_feed_client_id = self._orig_client_id
         settings.trading_order_feed_assignment_mode = self._orig_assignment_mode
         settings.trading_order_feed_auto_offset_reset = self._orig_auto_offset_reset
 
@@ -634,6 +639,185 @@ class TestOrderFeed(TestCase):
             [(TopicPartition("torghut.trade-updates.v1", 1),)],
         )
         self.assertEqual(consumer.seek_to_end_calls, [])
+
+    def test_manual_assignment_prefers_consumer_cursor_over_event_rows(self) -> None:
+        settings.trading_order_feed_assignment_mode = "manual"
+        settings.trading_order_feed_auto_offset_reset = "earliest"
+        settings.trading_order_feed_group_id = "torghut-order-feed-v1"
+        consumer = FakeManualConsumer(
+            [],
+            partitions={"torghut.trade-updates.v1": {0}},
+        )
+
+        with Session(self.engine) as session:
+            session.add(
+                ExecutionOrderEvent(
+                    event_fingerprint="legacy-event",
+                    source_topic="torghut.trade-updates.v1",
+                    source_partition=0,
+                    source_offset=41,
+                    alpaca_account_label="paper",
+                    symbol="AAPL",
+                    raw_event={"event": "fill"},
+                )
+            )
+            session.add(
+                OrderFeedConsumerCursor(
+                    consumer_group="torghut-order-feed-v1",
+                    source_topic="torghut.trade-updates.v1",
+                    source_partition=0,
+                    high_watermark_offset=57,
+                    processed_event_count=9,
+                )
+            )
+            session.commit()
+
+            ingestor = OrderFeedIngestor(consumer_factory=lambda: consumer)
+            counters = ingestor.ingest_once(session)
+
+        self.assertEqual(counters["messages_total"], 0)
+        self.assertEqual(
+            consumer.seek_calls,
+            [(TopicPartition("torghut.trade-updates.v1", 0), 58)],
+        )
+        self.assertEqual(consumer.seek_to_beginning_calls, [])
+
+    def test_ingest_persists_durable_consumer_cursor_for_valid_event(self) -> None:
+        record = FakeRecord(
+            value=(
+                b'{"channel":"trade_updates","payload":{"event":"fill","timestamp":"2026-02-01T10:00:00Z",'
+                b'"order":{"id":"order-1","client_order_id":"client-1","symbol":"AAPL","status":"filled",'
+                b'"qty":"1","filled_qty":"1","filled_avg_price":"190.2"}},"seq":10}'
+            ),
+            offset=7,
+        )
+        consumer = FakeConsumer([record])
+        ingestor = OrderFeedIngestor(consumer_factory=lambda: consumer)
+
+        with Session(self.engine) as session:
+            self._seed_execution(session)
+            counters = ingestor.ingest_once(session)
+            cursor = session.execute(select(OrderFeedConsumerCursor)).scalar_one()
+
+        self.assertEqual(counters["events_persisted_total"], 1)
+        self.assertEqual(counters["cursor_updates_total"], 1)
+        self.assertEqual(consumer.commit_calls, 1)
+        self.assertEqual(cursor.consumer_group, settings.trading_order_feed_group_id)
+        self.assertEqual(cursor.source_topic, "torghut.trade-updates.v1")
+        self.assertEqual(cursor.source_partition, 0)
+        self.assertEqual(cursor.high_watermark_offset, 7)
+        self.assertEqual(cursor.processed_event_count, 1)
+        self.assertEqual(cursor.duplicate_event_count, 0)
+
+    def test_cursor_consumer_group_falls_back_to_client_id(self) -> None:
+        settings.trading_order_feed_group_id = " "
+        settings.trading_order_feed_client_id = "paper-route-client"
+        record = FakeRecord(
+            value=(
+                b'{"channel":"trade_updates","payload":{"event":"fill","timestamp":"2026-02-01T10:00:00Z",'
+                b'"order":{"id":"order-1","client_order_id":"client-1","symbol":"AAPL","status":"filled",'
+                b'"qty":"1","filled_qty":"1","filled_avg_price":"190.2"}},"seq":10}'
+            ),
+            offset=7,
+        )
+        consumer = FakeConsumer([record])
+        ingestor = OrderFeedIngestor(consumer_factory=lambda: consumer)
+
+        with Session(self.engine) as session:
+            self._seed_execution(session)
+            counters = ingestor.ingest_once(session)
+            cursor = session.execute(select(OrderFeedConsumerCursor)).scalar_one()
+
+        self.assertEqual(counters["cursor_updates_total"], 1)
+        self.assertEqual(cursor.consumer_group, "paper-route-client")
+
+    def test_valid_event_without_source_position_skips_cursor_update(self) -> None:
+        record = SimpleNamespace(
+            value=(
+                b'{"channel":"trade_updates","payload":{"event":"fill","timestamp":"2026-02-01T10:00:00Z",'
+                b'"order":{"id":"order-1","client_order_id":"client-1","symbol":"AAPL","status":"filled",'
+                b'"qty":"1","filled_qty":"1","filled_avg_price":"190.2"}},"seq":10}'
+            ),
+            topic="torghut.trade-updates.v1",
+        )
+        consumer = FakeConsumer([record])
+        ingestor = OrderFeedIngestor(consumer_factory=lambda: consumer)
+
+        with Session(self.engine) as session:
+            self._seed_execution(session)
+            counters = ingestor.ingest_once(session)
+            cursor_count = len(session.execute(select(OrderFeedConsumerCursor)).all())
+
+        self.assertEqual(counters["events_persisted_total"], 1)
+        self.assertEqual(counters["cursor_updates_total"], 0)
+        self.assertEqual(cursor_count, 0)
+        self.assertEqual(consumer.commit_calls, 1)
+
+    def test_later_offset_with_gap_advances_cursor_gap_accounting(self) -> None:
+        first = FakeRecord(
+            value=(
+                b'{"channel":"trade_updates","payload":{"event":"partial_fill",'
+                b'"timestamp":"2026-02-01T10:00:00Z",'
+                b'"order":{"id":"order-1","client_order_id":"client-1","symbol":"AAPL","status":"partially_filled",'
+                b'"qty":"2","filled_qty":"1","filled_avg_price":"190.2"}},"seq":10}'
+            ),
+            offset=7,
+        )
+        later = FakeRecord(
+            value=(
+                b'{"channel":"trade_updates","payload":{"event":"fill","timestamp":"2026-02-01T10:00:05Z",'
+                b'"order":{"id":"order-1","client_order_id":"client-1","symbol":"AAPL","status":"filled",'
+                b'"qty":"2","filled_qty":"2","filled_avg_price":"190.4"}},"seq":11}'
+            ),
+            offset=10,
+        )
+        consumer = FakeConsumer([first, later])
+        ingestor = OrderFeedIngestor(consumer_factory=lambda: consumer)
+
+        with Session(self.engine) as session:
+            self._seed_execution(session)
+            counters = ingestor.ingest_once(session)
+            cursor = session.execute(select(OrderFeedConsumerCursor)).scalar_one()
+
+        self.assertEqual(counters["events_persisted_total"], 2)
+        self.assertEqual(counters["cursor_updates_total"], 2)
+        self.assertEqual(cursor.high_watermark_offset, 10)
+        self.assertEqual(cursor.processed_event_count, 2)
+        self.assertEqual(cursor.offset_gap_count, 1)
+        self.assertEqual(
+            cursor.last_event_ts,
+            datetime(2026, 2, 1, 10, 0, 5),
+        )
+
+    def test_duplicate_event_advances_cursor_accounting_and_commits(self) -> None:
+        record = FakeRecord(
+            value=(
+                b'{"channel":"trade_updates","payload":{"event":"fill","timestamp":"2026-02-01T10:00:00Z",'
+                b'"order":{"id":"order-1","client_order_id":"client-1","symbol":"AAPL","status":"filled",'
+                b'"qty":"1","filled_qty":"1","filled_avg_price":"190.2"}},"seq":10}'
+            ),
+            offset=11,
+        )
+
+        with Session(self.engine) as session:
+            self._seed_execution(session)
+            first_consumer = FakeConsumer([record])
+            first_ingestor = OrderFeedIngestor(consumer_factory=lambda: first_consumer)
+            first_ingestor.ingest_once(session)
+
+            duplicate_consumer = FakeConsumer([record])
+            duplicate_ingestor = OrderFeedIngestor(
+                consumer_factory=lambda: duplicate_consumer
+            )
+            counters = duplicate_ingestor.ingest_once(session)
+            cursor = session.execute(select(OrderFeedConsumerCursor)).scalar_one()
+
+        self.assertEqual(counters["duplicates_total"], 1)
+        self.assertEqual(counters["cursor_updates_total"], 1)
+        self.assertEqual(duplicate_consumer.commit_calls, 1)
+        self.assertEqual(cursor.high_watermark_offset, 11)
+        self.assertEqual(cursor.processed_event_count, 2)
+        self.assertEqual(cursor.duplicate_event_count, 1)
 
     def test_manual_assignment_skips_missing_topic_metadata_then_fails_closed(
         self,

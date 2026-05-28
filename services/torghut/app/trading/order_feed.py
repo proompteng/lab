@@ -16,7 +16,13 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
 from ..config import settings
-from ..models import Execution, ExecutionOrderEvent, TradeDecision, coerce_json_payload
+from ..models import (
+    Execution,
+    ExecutionOrderEvent,
+    OrderFeedConsumerCursor,
+    TradeDecision,
+    coerce_json_payload,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -83,18 +89,18 @@ class OrderFeedIngestor:
         if not records:
             return counters
 
-        inserted_any = False
+        persisted_any = False
         for record in records:
-            inserted_any = (
+            persisted_any = (
                 self._ingest_record(
                     session=session,
                     record=record,
                     counters=counters,
                 )
-                or inserted_any
+                or persisted_any
             )
 
-        if inserted_any:
+        if persisted_any:
             session.commit()
             _commit_consumer(consumer)
         return counters
@@ -109,6 +115,7 @@ class OrderFeedIngestor:
             "missing_fields_total": 0,
             "apply_updates_total": 0,
             "consumer_errors_total": 0,
+            "cursor_updates_total": 0,
         }
 
     def _preconditions_met(self) -> bool:
@@ -158,9 +165,16 @@ class OrderFeedIngestor:
 
         event = normalized.event
         persisted, duplicate = persist_order_event(session, event)
+        cursor_updated = _upsert_order_feed_consumer_cursor(
+            session,
+            event,
+            duplicate=duplicate,
+        )
+        if cursor_updated:
+            counters["cursor_updates_total"] += 1
         if duplicate:
             counters["duplicates_total"] += 1
-            return False
+            return cursor_updated
         counters["events_persisted_total"] += 1
 
         if persisted.execution_id is None:
@@ -651,8 +665,30 @@ def _flatten_poll_records(polled: Any) -> list[Any]:
     return []
 
 
+def _order_feed_cursor_consumer_group() -> str:
+    group_id = settings.trading_order_feed_group_id.strip()
+    if group_id:
+        return group_id
+    client_id = settings.trading_order_feed_client_id.strip()
+    return client_id or "torghut-order-feed"
+
+
 def _latest_persisted_source_offsets(session: Session) -> dict[tuple[str, int], int]:
-    rows = session.execute(
+    consumer_group = _order_feed_cursor_consumer_group()
+    cursor_rows = session.execute(
+        select(
+            OrderFeedConsumerCursor.source_topic,
+            OrderFeedConsumerCursor.source_partition,
+            OrderFeedConsumerCursor.high_watermark_offset,
+        ).where(OrderFeedConsumerCursor.consumer_group == consumer_group)
+    ).all()
+    offsets: dict[tuple[str, int], int] = {
+        (str(topic), int(partition)): int(offset)
+        for topic, partition, offset in cursor_rows
+        if topic is not None and partition is not None and offset is not None
+    }
+
+    event_rows = session.execute(
         select(
             ExecutionOrderEvent.source_topic,
             ExecutionOrderEvent.source_partition,
@@ -668,12 +704,58 @@ def _latest_persisted_source_offsets(session: Session) -> dict[tuple[str, int], 
             ExecutionOrderEvent.source_partition,
         )
     ).all()
-    offsets: dict[tuple[str, int], int] = {}
-    for topic, partition, offset in rows:
+    for topic, partition, offset in event_rows:
         if topic is None or partition is None or offset is None:
             continue
-        offsets[(str(topic), int(partition))] = int(offset)
+        offsets.setdefault((str(topic), int(partition)), int(offset))
     return offsets
+
+
+def _upsert_order_feed_consumer_cursor(
+    session: Session,
+    event: NormalizedOrderEvent,
+    *,
+    duplicate: bool,
+) -> bool:
+    if event.source_partition is None or event.source_offset is None:
+        return False
+
+    consumer_group = _order_feed_cursor_consumer_group()
+    cursor = session.execute(
+        select(OrderFeedConsumerCursor).where(
+            OrderFeedConsumerCursor.consumer_group == consumer_group,
+            OrderFeedConsumerCursor.source_topic == event.source_topic,
+            OrderFeedConsumerCursor.source_partition == event.source_partition,
+        )
+    ).scalar_one_or_none()
+
+    if cursor is None:
+        cursor = OrderFeedConsumerCursor(
+            consumer_group=consumer_group,
+            source_topic=event.source_topic,
+            source_partition=event.source_partition,
+            high_watermark_offset=event.source_offset,
+            last_event_fingerprint=event.event_fingerprint,
+            last_event_ts=event.event_ts,
+            processed_event_count=1,
+            duplicate_event_count=1 if duplicate else 0,
+            offset_gap_count=0,
+        )
+        session.add(cursor)
+        return True
+
+    if event.source_offset > cursor.high_watermark_offset:
+        if event.source_offset > cursor.high_watermark_offset + 1:
+            cursor.offset_gap_count = int(cursor.offset_gap_count or 0) + 1
+        cursor.high_watermark_offset = event.source_offset
+        cursor.last_event_fingerprint = event.event_fingerprint
+        cursor.last_event_ts = event.event_ts
+
+    cursor.processed_event_count = int(cursor.processed_event_count or 0) + 1
+    if duplicate:
+        cursor.duplicate_event_count = int(cursor.duplicate_event_count or 0) + 1
+    session.add(cursor)
+    return True
 
 
 def _coerce_text(value: Any) -> str | None:
