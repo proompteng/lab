@@ -29,7 +29,10 @@ from ..paper_route_target_plan import (
 )
 from ..prices import MarketSnapshot
 from ..proof_floor import build_profitability_proof_floor_receipt
-from ..runtime_decision_authority import ROUTE_ACQUISITION_SOURCE_DECISION_MODE
+from ..runtime_decision_authority import (
+    ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
+    STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE,
+)
 from ..session_context import REGULAR_OPEN_UTC
 from ..simple_risk import (
     position_qty_for_symbol,
@@ -204,6 +207,14 @@ def _target_probe_action(target: Mapping[str, Any]) -> Literal["buy", "sell"]:
         if normalized in {"sell", "short"}:
             return "sell"
     return "buy"
+
+
+def _target_truthy(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int | float | Decimal):
+        return bool(value)
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _lineage_text_values(value: object) -> list[str]:
@@ -2140,9 +2151,147 @@ class SimpleTradingPipeline(TradingPipeline):
             **lineage,
         }
 
+    @staticmethod
+    def _target_matches_decision_strategy(
+        target: Mapping[str, Any],
+        decision: StrategyDecision,
+        strategy: Strategy | None,
+    ) -> bool:
+        lookup_names = {value.lower() for value in _target_lookup_names(target)}
+        if not lookup_names:
+            return False
+        candidate_names = {
+            str(decision.strategy_id).strip(),
+        }
+        if strategy is not None:
+            candidate_names.add(str(strategy.id))
+            candidate_names.add(str(strategy.name))
+        return any(
+            candidate.strip().lower() in lookup_names
+            for candidate in candidate_names
+            if candidate.strip()
+        )
+
+    @staticmethod
+    def _decision_event_in_target_window(
+        decision: StrategyDecision,
+        target: Mapping[str, Any],
+    ) -> bool:
+        window = _target_probe_window(target)
+        if window is None:
+            return False
+        window_start, window_end = window
+        event_ts = decision.event_ts
+        if event_ts.tzinfo is None:
+            event_ts = event_ts.replace(tzinfo=timezone.utc)
+        event_ts = event_ts.astimezone(timezone.utc)
+        return window_start <= event_ts < window_end
+
+    def _strategy_signal_paper_target_for_decision(
+        self,
+        decision: StrategyDecision,
+        strategy: Strategy | None,
+    ) -> Mapping[str, Any] | None:
+        if settings.trading_mode != "paper":
+            return None
+        if not settings.trading_simple_paper_route_probe_enabled:
+            return None
+        if self._paper_route_target_source_cap(decision.params) is not None:
+            return None
+        if isinstance(
+            decision.params.get("paper_route_target_plan_source_decision"), Mapping
+        ):
+            return None
+        existing_mode = (
+            str(decision.params.get("source_decision_mode") or "")
+            .strip()
+            .lower()
+            .replace("-", "_")
+        )
+        if existing_mode == ROUTE_ACQUISITION_SOURCE_DECISION_MODE:
+            return None
+        symbol = decision.symbol.strip().upper()
+        if not symbol:
+            return None
+        target_plan_symbols, target_plan_error, target_plan_targets = (
+            self._external_paper_route_target_probe_symbols_cached()
+        )
+        if target_plan_error or symbol not in target_plan_symbols:
+            return None
+        for target in target_plan_targets:
+            target_symbols = _target_symbols(target)
+            if target_symbols and symbol not in target_symbols:
+                continue
+            if not self._decision_event_in_target_window(decision, target):
+                continue
+            if not self._target_matches_decision_strategy(target, decision, strategy):
+                continue
+            if _safe_text(target.get("candidate_id")) is None:
+                continue
+            if _safe_text(target.get("hypothesis_id")) is None:
+                continue
+            if str(target.get("observed_stage") or "").strip().lower() != "paper":
+                continue
+            if (
+                _safe_text(target.get("source_kind"))
+                != "paper_route_probe_runtime_observed"
+            ):
+                continue
+            if not _target_truthy(target.get("paper_probation_authorized")):
+                continue
+            return target
+        return None
+
+    @staticmethod
+    def _strategy_signal_paper_metadata(
+        *,
+        decision: StrategyDecision,
+        target: Mapping[str, Any],
+        strategy: Strategy | None,
+    ) -> dict[str, Any]:
+        lineage = _target_plan_lineage([dict(target)], decision.symbol)
+        window = _target_probe_window(target)
+        metadata: dict[str, Any] = {
+            "mode": STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE,
+            "source": "external_target_plan_url",
+            "symbol": decision.symbol.strip().upper(),
+            "source_decision_mode": STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE,
+            "profit_proof_eligible": True,
+            "paper_route_target_plan_source": "external_target_plan_url",
+            "paper_route_probe_scope_authority": "external_target_plan",
+            "paper_probation_authorized": True,
+            "promotion_allowed": False,
+            "final_promotion_authorized": False,
+            "final_promotion_allowed": False,
+            **lineage,
+        }
+        if strategy is not None:
+            metadata["strategy_name"] = strategy.name
+            metadata["strategy_id"] = str(strategy.id)
+        for key in (
+            "candidate_id",
+            "hypothesis_id",
+            "observed_stage",
+            "strategy_family",
+            "runtime_strategy_name",
+            "source_kind",
+            "source_manifest_ref",
+            "dataset_snapshot_ref",
+        ):
+            value = _safe_text(target.get(key))
+            if value is not None:
+                metadata[key] = value
+        if window is not None:
+            window_start, window_end = window
+            metadata["paper_route_probe_window_start"] = window_start.isoformat()
+            metadata["paper_route_probe_window_end"] = window_end.isoformat()
+        return metadata
+
     def _with_paper_route_target_lineage(
         self,
         decision: StrategyDecision,
+        *,
+        strategy: Strategy | None = None,
     ) -> StrategyDecision:
         lineage = self._paper_route_target_lineage_for_decision(decision)
         if not lineage:
@@ -2158,6 +2307,27 @@ class SimpleTradingPipeline(TradingPipeline):
         else:
             params["paper_route_target_plan"] = lineage
         _merge_paper_route_probe_lineage(params, lineage)
+        strategy_signal_target = self._strategy_signal_paper_target_for_decision(
+            decision, strategy
+        )
+        if strategy_signal_target is not None:
+            metadata = self._strategy_signal_paper_metadata(
+                decision=decision,
+                target=strategy_signal_target,
+                strategy=strategy,
+            )
+            params["strategy_signal_paper"] = metadata
+            params["source_decision_mode"] = STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE
+            params["profit_proof_eligible"] = True
+            params.setdefault("promotion_allowed", False)
+            params.setdefault("final_promotion_authorized", False)
+            params.setdefault("final_promotion_allowed", False)
+            target_plan = params.get("paper_route_target_plan")
+            if isinstance(target_plan, Mapping):
+                merged_target_plan = dict(cast(Mapping[str, Any], target_plan))
+                for key, value in metadata.items():
+                    merged_target_plan.setdefault(key, value)
+                params["paper_route_target_plan"] = merged_target_plan
         return decision.model_copy(update={"params": params})
 
     def _paper_route_probe_context(
@@ -2319,7 +2489,7 @@ class SimpleTradingPipeline(TradingPipeline):
         decision: StrategyDecision,
         strategy: Strategy,
     ) -> TradeDecision | None:
-        decision = self._with_paper_route_target_lineage(decision)
+        decision = self._with_paper_route_target_lineage(decision, strategy=strategy)
         decision_row = self.executor.ensure_decision(
             session, decision, strategy, self.account_label
         )

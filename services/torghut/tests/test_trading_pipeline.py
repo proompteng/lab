@@ -59,6 +59,7 @@ from app.trading.scheduler.simple_pipeline import (
     _safe_int,
     _target_probe_action,
     _target_probe_window,
+    _target_truthy,
 )
 from app.trading.scheduler.pipeline_helpers import (
     _apply_projected_position_decision,
@@ -5981,6 +5982,288 @@ class TestTradingPipeline(TestCase):
             ],
         )
         self.assertNotIn("paper_route_probe", params)
+
+    def test_matching_paper_target_signal_gets_strategy_signal_paper_authority(
+        self,
+    ) -> None:
+        from app import config
+
+        window_start = datetime(2026, 5, 28, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 28, 20, 0, tzinfo=timezone.utc)
+        config.settings.trading_mode = "paper"
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_paper_route_target_plan_url = (
+            "http://torghut.local/trading/paper-route-evidence"
+        )
+        config.settings.trading_paper_route_target_plan_timeout_seconds = 1.0
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="microbar-cross-sectional-pairs-v1",
+                enabled=True,
+                base_timeframe="1Sec",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=datetime(2026, 5, 28, 15, 30, tzinfo=timezone.utc),
+                timeframe="1Sec",
+                action="sell",
+                qty=Decimal("1"),
+                params={"price": "100"},
+            )
+            with patch(
+                "app.trading.scheduler.simple_pipeline.fetch_paper_route_target_plan_url",
+                return_value={
+                    "targets": [
+                        {
+                            "paper_route_probe_symbols": ["AAPL"],
+                            "paper_route_probe_window_start": window_start.isoformat(),
+                            "paper_route_probe_window_end": window_end.isoformat(),
+                            "candidate_id": "candidate-pairs-a",
+                            "hypothesis_id": "H-PAIRS-01",
+                            "observed_stage": "paper",
+                            "strategy_family": "microbar_cross_sectional_pairs",
+                            "strategy_name": "microbar-cross-sectional-pairs-v1",
+                            "strategy_lookup_names": [
+                                str(strategy.id),
+                                "microbar-cross-sectional-pairs-v1",
+                            ],
+                            "source_kind": "paper_route_probe_runtime_observed",
+                            "source_manifest_ref": (
+                                "config/trading/hypotheses/h-pairs-01.json"
+                            ),
+                            "dataset_snapshot_ref": (
+                                "portfolio-profit-autoresearch-500-v1"
+                            ),
+                            "paper_probation_authorized": True,
+                        }
+                    ]
+                },
+            ):
+                row = pipeline._ensure_pending_decision_row(
+                    session=session,
+                    decision=decision,
+                    strategy=strategy,
+                )
+
+            self.assertIsNotNone(row)
+            assert row is not None
+            payload = cast(dict[str, Any], row.decision_json)
+            params = cast(dict[str, Any], payload.get("params"))
+            target_plan = cast(dict[str, Any], params.get("paper_route_target_plan"))
+            authority = cast(dict[str, Any], params.get("strategy_signal_paper"))
+
+        self.assertEqual(params.get("source_candidate_ids"), ["candidate-pairs-a"])
+        self.assertEqual(params.get("source_hypothesis_ids"), ["H-PAIRS-01"])
+        self.assertEqual(params.get("source_decision_mode"), "strategy_signal_paper")
+        self.assertTrue(params.get("profit_proof_eligible"))
+        self.assertFalse(params.get("promotion_allowed"))
+        self.assertEqual(authority.get("mode"), "strategy_signal_paper")
+        self.assertEqual(authority.get("candidate_id"), "candidate-pairs-a")
+        self.assertEqual(authority.get("hypothesis_id"), "H-PAIRS-01")
+        self.assertEqual(
+            authority.get("source_kind"), "paper_route_probe_runtime_observed"
+        )
+        self.assertEqual(
+            authority.get("paper_route_probe_window_start"), window_start.isoformat()
+        )
+        self.assertEqual(
+            target_plan.get("source_decision_mode"), "strategy_signal_paper"
+        )
+        self.assertTrue(target_plan.get("profit_proof_eligible"))
+        self.assertNotIn("paper_route_probe", params)
+        self.assertNotIn("paper_route_target_plan_source_decision", params)
+
+    def test_strategy_signal_paper_target_rejects_unqualified_targets(
+        self,
+    ) -> None:
+        from app import config
+
+        window_start = datetime(2026, 5, 28, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 28, 20, 0, tzinfo=timezone.utc)
+        config.settings.trading_mode = "paper"
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_paper_route_target_plan_url = (
+            "http://torghut.local/trading/paper-route-evidence"
+        )
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        strategy = Strategy(
+            id=uuid4(),
+            name="microbar-cross-sectional-pairs-v1",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="static",
+            universe_symbols=["AAPL"],
+        )
+
+        def make_decision(
+            *,
+            symbol: str = "AAPL",
+            event_ts: datetime = datetime(2026, 5, 28, 15, 30),
+            params: Mapping[str, Any] | None = None,
+        ) -> StrategyDecision:
+            return StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol=symbol,
+                event_ts=event_ts,
+                timeframe="1Sec",
+                action="sell",
+                qty=Decimal("1"),
+                params={"price": "100", **dict(params or {})},
+            )
+
+        def make_target(**overrides: object) -> dict[str, object]:
+            target: dict[str, object] = {
+                "paper_route_probe_symbols": ["AAPL"],
+                "paper_route_probe_window_start": window_start.isoformat(),
+                "paper_route_probe_window_end": window_end.isoformat(),
+                "candidate_id": "candidate-pairs-a",
+                "hypothesis_id": "H-PAIRS-01",
+                "observed_stage": "paper",
+                "strategy_lookup_names": [str(strategy.id), strategy.name],
+                "source_kind": "paper_route_probe_runtime_observed",
+                "paper_probation_authorized": "yes",
+            }
+            target.update(overrides)
+            return target
+
+        good_decision = make_decision()
+        good_target = make_target()
+
+        self.assertFalse(_target_truthy(Decimal("0")))
+        self.assertTrue(_target_truthy("yes"))
+
+        config.settings.trading_mode = "live"
+        self.assertIsNone(
+            pipeline._strategy_signal_paper_target_for_decision(
+                good_decision,
+                strategy,
+            )
+        )
+
+        config.settings.trading_mode = "paper"
+        config.settings.trading_simple_paper_route_probe_enabled = False
+        self.assertIsNone(
+            pipeline._strategy_signal_paper_target_for_decision(
+                good_decision,
+                strategy,
+            )
+        )
+        config.settings.trading_simple_paper_route_probe_enabled = True
+
+        guarded_cases: list[tuple[str, StrategyDecision, list[Mapping[str, Any]]]] = [
+            (
+                "source decision payload",
+                make_decision(
+                    params={"paper_route_target_plan_source_decision": {"mode": "x"}}
+                ),
+                [good_target],
+            ),
+            (
+                "route acquisition mode",
+                make_decision(
+                    params={"source_decision_mode": "route_acquisition_probe"}
+                ),
+                [good_target],
+            ),
+            ("blank symbol", make_decision(symbol=" "), [good_target]),
+            (
+                "empty strategy lookup names",
+                good_decision,
+                [
+                    make_target(
+                        strategy_lookup_names=[],
+                        strategy_name=None,
+                        strategy_id=None,
+                        runtime_strategy_name=None,
+                    )
+                ],
+            ),
+            (
+                "strategy mismatch",
+                good_decision,
+                [make_target(strategy_lookup_names=["other-strategy"])],
+            ),
+            ("missing candidate", good_decision, [make_target(candidate_id=None)]),
+            ("missing hypothesis", good_decision, [make_target(hypothesis_id=None)]),
+            ("wrong stage", good_decision, [make_target(observed_stage="backtest")]),
+            ("wrong source kind", good_decision, [make_target(source_kind="manual")]),
+            (
+                "probation unauthorized",
+                good_decision,
+                [make_target(paper_probation_authorized=0)],
+            ),
+        ]
+        for name, decision, targets in guarded_cases:
+            with self.subTest(name=name):
+                with patch.object(
+                    pipeline,
+                    "_external_paper_route_target_probe_symbols_cached",
+                    return_value=({"AAPL"}, None, targets),
+                ):
+                    self.assertIsNone(
+                        pipeline._strategy_signal_paper_target_for_decision(
+                            decision,
+                            strategy,
+                        )
+                    )
+
+        with patch.object(
+            pipeline,
+            "_external_paper_route_target_probe_symbols_cached",
+            return_value=({"AAPL"}, "fetch failed", [good_target]),
+        ):
+            self.assertIsNone(
+                pipeline._strategy_signal_paper_target_for_decision(
+                    good_decision,
+                    strategy,
+                )
+            )
+
+        with patch.object(
+            pipeline,
+            "_external_paper_route_target_probe_symbols_cached",
+            return_value=({"AAPL"}, None, [good_target]),
+        ):
+            self.assertEqual(
+                pipeline._strategy_signal_paper_target_for_decision(
+                    good_decision,
+                    strategy,
+                ),
+                good_target,
+            )
 
     def test_paper_decision_persists_external_target_lineage_existing_row(
         self,
