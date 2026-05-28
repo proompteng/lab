@@ -4238,6 +4238,16 @@ class TestTradingPipeline(TestCase):
             def seed_missing_position_snapshot(self, _position: object) -> bool:
                 raise RuntimeError("seed failed")
 
+        class RecordingSeedAdapter:
+            name = "simulation"
+
+            def __init__(self) -> None:
+                self.positions: list[dict[str, Any]] = []
+
+            def seed_missing_position_snapshot(self, position: object) -> bool:
+                self.positions.append(dict(cast(Mapping[str, Any], position)))
+                return True
+
         base_kwargs = {
             "positions": [],
             "decision": decision,
@@ -4279,6 +4289,25 @@ class TestTradingPipeline(TestCase):
                 **{**base_kwargs, "trading_mode": "paper"}
             )
         )
+        restored_positions: list[dict[str, Any]] = []
+        recording_adapter = RecordingSeedAdapter()
+        self.assertEqual(
+            SimpleTradingPipeline._restore_simulation_paper_route_probe_exit_position(
+                **{
+                    **base_kwargs,
+                    "positions": restored_positions,
+                    "trading_mode": "paper",
+                    "metadata": {"db_open_qty": "3", "db_open_side": "sideways"},
+                    "execution_adapter": recording_adapter,
+                }
+            ),
+            Decimal("2"),
+        )
+        self.assertEqual(
+            recording_adapter.positions,
+            [{"symbol": "AAPL", "qty": "2", "side": "long", "market_value": "200"}],
+        )
+        self.assertEqual(restored_positions, recording_adapter.positions)
         self.assertIsNone(
             SimpleTradingPipeline._restore_simulation_paper_route_probe_exit_position(
                 **{
@@ -5372,6 +5401,151 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(params.get("source_hypothesis_ids"), ["H-PAIRS-01"])
         self.assertEqual(target_plan.get("mode"), "paper_route_target_lineage")
         self.assertNotIn("paper_route_probe", params)
+
+    def test_paper_route_target_lineage_cache_and_existing_plan_merge(self) -> None:
+        from app import config
+
+        config.settings.trading_mode = "paper"
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_paper_route_target_plan_url = (
+            "http://torghut.local/trading/paper-route-evidence"
+        )
+        config.settings.trading_paper_route_target_plan_timeout_seconds = 1.0
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        first = StrategyDecision(
+            strategy_id="strategy-1",
+            symbol="AAPL",
+            event_ts=datetime(2026, 3, 26, 14, 30, tzinfo=timezone.utc),
+            timeframe="1Sec",
+            action="sell",
+            qty=Decimal("1"),
+            params={
+                "price": "100",
+                "paper_route_target_plan": {
+                    "existing": "keep",
+                    "source_candidate_ids": ["candidate-existing"],
+                },
+            },
+        )
+        second = first.model_copy(update={"symbol": "MSFT", "params": {"price": "200"}})
+        fetch = Mock(
+            return_value={
+                "targets": [
+                    {
+                        "paper_route_probe_symbols": ["AAPL"],
+                        "candidate_id": "candidate-aapl",
+                        "hypothesis_id": "H-AAPL",
+                        "strategy_name": "pairs-runtime-a",
+                    },
+                    {
+                        "paper_route_probe_symbols": ["MSFT"],
+                        "candidate_id": "candidate-msft",
+                        "hypothesis_id": "H-MSFT",
+                        "strategy_name": "pairs-runtime-b",
+                    },
+                ]
+            }
+        )
+
+        with (
+            patch(
+                "app.trading.scheduler.simple_pipeline.trading_now",
+                return_value=datetime(2026, 3, 26, 14, 31, tzinfo=timezone.utc),
+            ),
+            patch(
+                "app.trading.scheduler.simple_pipeline.fetch_paper_route_target_plan_url",
+                fetch,
+            ),
+        ):
+            enriched_first = pipeline._with_paper_route_target_lineage(first)
+            enriched_second = pipeline._with_paper_route_target_lineage(second)
+
+        self.assertEqual(fetch.call_count, 1)
+        first_params = cast(dict[str, Any], enriched_first.params)
+        first_target_plan = cast(
+            dict[str, Any], first_params.get("paper_route_target_plan")
+        )
+        self.assertEqual(first_target_plan.get("existing"), "keep")
+        self.assertEqual(
+            first_target_plan.get("source_candidate_ids"),
+            ["candidate-existing", "candidate-aapl"],
+        )
+        self.assertEqual(first_params.get("source_candidate_ids"), ["candidate-aapl"])
+        self.assertEqual(first_params.get("source_hypothesis_ids"), ["H-AAPL"])
+        second_params = cast(dict[str, Any], enriched_second.params)
+        second_target_plan = cast(
+            dict[str, Any], second_params.get("paper_route_target_plan")
+        )
+        self.assertEqual(
+            second_target_plan.get("source_candidate_ids"), ["candidate-msft"]
+        )
+        self.assertEqual(second_params.get("source_hypothesis_ids"), ["H-MSFT"])
+        self.assertNotIn("paper_route_probe", first_params)
+        self.assertNotIn("paper_route_probe", second_params)
+
+    def test_paper_route_target_lineage_skips_empty_symbol_and_empty_lineage(
+        self,
+    ) -> None:
+        from app import config
+
+        config.settings.trading_mode = "paper"
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_paper_route_target_plan_url = (
+            "http://torghut.local/trading/paper-route-evidence"
+        )
+        config.settings.trading_paper_route_target_plan_timeout_seconds = 1.0
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        base = StrategyDecision(
+            strategy_id="strategy-1",
+            symbol="AAPL",
+            event_ts=datetime(2026, 3, 26, 14, 30, tzinfo=timezone.utc),
+            timeframe="1Sec",
+            action="sell",
+            qty=Decimal("1"),
+            params={"price": "100"},
+        )
+        fetch = Mock(
+            return_value={"targets": [{"paper_route_probe_symbols": ["AAPL"]}]}
+        )
+
+        blank_symbol = pipeline._with_paper_route_target_lineage(
+            base.model_copy(update={"symbol": "   "})
+        )
+        with patch(
+            "app.trading.scheduler.simple_pipeline.fetch_paper_route_target_plan_url",
+            fetch,
+        ):
+            empty_lineage = pipeline._with_paper_route_target_lineage(base)
+
+        self.assertNotIn("paper_route_target_plan", blank_symbol.params)
+        self.assertNotIn("paper_route_target_plan", empty_lineage.params)
+        self.assertEqual(fetch.call_count, 1)
 
     def test_paper_route_probe_short_increasing_sell_classification(self) -> None:
         decision = StrategyDecision(
