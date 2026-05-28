@@ -72,6 +72,9 @@
 
 ## Pull Requests
 
+- Default delivery for this repo is a direct commit to `main` and `git push origin HEAD:main` after rebasing on current `origin/main` and running the relevant checks.
+- Do not open a pull request unless the user explicitly asks for one, or unless a direct `main` push is rejected by repository rules and the user explicitly approves using a PR as the fallback.
+- If direct push is blocked, report the exact remote rejection and stop; do not silently switch to PR workflow.
 - PR descriptions must reflect the actual changes in the PR. Do not include aspirational TODOs or unrelated work.
 - PR body MUST be created from `.github/PULL_REQUEST_TEMPLATE.md` and fully filled in before opening/updating the PR.
 - Do not leave template placeholders in the PR body (examples: `TODO`, `TBD`, `<...>`, `[...]`, unchecked checklist items with no explanation).
@@ -135,9 +138,9 @@ Output:
 
 ## Merge Guidelines
 
-- Use squash merges for pull requests.
-- Always create new work branches from a fresh `main`
-- Use `gh pr merge 2202 --squash -R proompteng/lab` (no `--delete-branch`; avoids worktree checkout conflicts).
+- Prefer direct pushes to `main`: fetch `origin/main`, rebase local work on it, verify, then `git push origin HEAD:main`.
+- Use squash merges for pull requests only when the user explicitly approved a PR fallback.
+- If a PR fallback is approved, use `gh pr merge 2202 --squash -R proompteng/lab` (no `--delete-branch`; avoids worktree checkout conflicts).
 
 ## CI/CD
 
