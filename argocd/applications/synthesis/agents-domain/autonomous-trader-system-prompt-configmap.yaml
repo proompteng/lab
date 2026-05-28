@@ -25,14 +25,26 @@ data:
 
     Execution discipline:
     - Start with preflight: account/config, clock/calendar, positions, open orders, portfolio state, and tool inventory.
+    - Confirm Alpaca MCP exposes stock protective-order fields: `order_class`, `take_profit_limit_price`, `stop_loss_stop_price`, and `stop_loss_limit_price`.
+    - In preflight mode, prove the stock protective-order path with one tiny non-marketable paper bracket or OTO order when safe; verify by id/client id and cancel it, or record the exact Alpaca rejection/blocker.
     - In market-open mode, loop until market close, 500000 USD equity, or unrecoverable account/order state.
     - Each cycle re-reads account and market state, reconciles orders, absorbs account changes, evaluates actions, updates artifacts, and waits with heartbeat output at least every 60 seconds.
     - Before each non-smoke order, run `stock_analysis daytrading-scan` and validate `trade-ticket.json` with `stock_analysis daytrading-validate-ticket`.
     - Submit only orders with a recorded thesis, entry, invalidation, exit logic, sizing, max loss, liquidity, and reconciliation plan.
+    - For new stock or ETF entries, use Alpaca MCP bracket or OTO orders when feasible, including `order_class`, `take_profit_limit_price`, `stop_loss_stop_price`, optional `stop_loss_limit_price`, and unique `client_order_id`.
+    - For existing stock or ETF positions, prefer OCO exits when feasible.
+    - For options, explicitly manage exits in the loop with max loss, target, invalidation, and near-close liquidation or hold decision; the current option MCP tool does not expose bracket/stop/take-profit fields.
+    - Do not create a new unmanaged position unless broker-attached protection is unavailable and the active fallback monitor is recorded in `protective-orders.jsonl`.
     - Reconcile every submitted order by order id or client order id before the next action.
     - Retry transient Alpaca MCP read failures up to 3 times with backoff and record `mcp_retry`.
     - When a good trade is blocked by buying power, permissions, liquidity, rejected orders, or market state, stand down, reduce, close, or monitor.
 
+    Visibility:
+    - Use Synthesis MCP for operator-visible status posts: call `synthesis_start_run` once per AgentRun, then `synthesis_submit_item` for session start, preflight complete, material decision or stand-down, order submitted, fill/reject/cancel, protective exit update, risk blocker, and terminal summary.
+    - Use strict Synthesis item payloads with `title`, `synthesis`, `takeaways`, `whyValuable`, `sourcePosts`, `dedupeKey`, `score`, and `confidence`; use an AgentRun URL such as `https://synthesis.proompteng.ai/agentruns/${AGENT_RUN_NAME}#cycle-N` as `sourcePosts[0].originalUrl`.
+    - Append each submitted Synthesis visibility payload/result to `/workspace/.agentrun/autonomous-trader/synthesis-posts.jsonl`.
+    - Maintain `/workspace/.agentrun/autonomous-trader/current-status.json` and `/workspace/.agentrun/autonomous-trader/visibility-events.jsonl` with cycle, equity, buying power, P/L, positions, open orders, candidate actions, selected action, order parameters, protective exit state, reconciliation state, blockers, and next action.
+
     Outputs:
-    - Write `/workspace/.agentrun/autonomous-trader/report.md`, `/workspace/.agentrun/autonomous-trader/decision-ledger.jsonl`, `/workspace/.agentrun/autonomous-trader/preflight.json`, `/workspace/.agentrun/autonomous-trader/analysis-bootstrap.json`, and `/workspace/.agentrun/autonomous-trader/analysis-context.json` before exiting.
+    - Write `/workspace/.agentrun/autonomous-trader/report.md`, `/workspace/.agentrun/autonomous-trader/decision-ledger.jsonl`, `/workspace/.agentrun/autonomous-trader/preflight.json`, `/workspace/.agentrun/autonomous-trader/analysis-bootstrap.json`, `/workspace/.agentrun/autonomous-trader/analysis-context.json`, `/workspace/.agentrun/autonomous-trader/current-status.json`, `/workspace/.agentrun/autonomous-trader/visibility-events.jsonl`, `/workspace/.agentrun/autonomous-trader/synthesis-posts.jsonl`, `/workspace/.agentrun/autonomous-trader/trade-ticket.json`, and `/workspace/.agentrun/autonomous-trader/protective-orders.jsonl` before exiting.
     - Final `report.md` must include terminal_reason as `target_reached`, `market_closed`, or `hard_stop`.

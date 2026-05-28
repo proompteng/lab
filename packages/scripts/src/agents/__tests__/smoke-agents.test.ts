@@ -652,6 +652,32 @@ describe('synthesis autonomous trader provider', () => {
     expect(prompt).toContain('analysis-context.json')
     expect(prompt).toContain('daytrading-validate-ticket')
     expect(prompt).toContain('terminal_reason as `target_reached`, `market_closed`, or `hard_stop`')
+    expect(prompt).toContain('order_class')
+    expect(prompt).toContain('take_profit_limit_price')
+    expect(prompt).toContain('stop_loss_stop_price')
+    expect(prompt).toContain('stock protective-order path')
+    expect(prompt).toContain('bracket or OTO orders')
+    expect(prompt).toContain('prefer OCO exits')
+    expect(prompt).toContain('protective-orders.jsonl')
+    expect(prompt).toContain('Use Synthesis MCP for operator-visible status posts')
+    expect(prompt).toContain('synthesis_start_run')
+    expect(prompt).toContain('synthesis_submit_item')
+    expect(prompt).toContain('current-status.json')
+    expect(prompt).toContain('visibility-events.jsonl')
+    expect(prompt).toContain('synthesis-posts.jsonl')
+    expect(taskPrompt).toContain('order_class')
+    expect(taskPrompt).toContain('take_profit_limit_price')
+    expect(taskPrompt).toContain('stop_loss_stop_price')
+    expect(taskPrompt).toContain('non-marketable paper bracket or OTO stock order proof')
+    expect(taskPrompt).toContain('bracket or OTO orders')
+    expect(taskPrompt).toContain('prefer OCO exits')
+    expect(taskPrompt).toContain('protective-orders.jsonl')
+    expect(taskPrompt).toContain('Synthesis visibility')
+    expect(taskPrompt).toContain('synthesis_start_run')
+    expect(taskPrompt).toContain('synthesis_submit_item')
+    expect(taskPrompt).toContain('current-status.json')
+    expect(taskPrompt).toContain('visibility-events.jsonl')
+    expect(taskPrompt).toContain('synthesis-posts.jsonl')
   })
 
   it('wires the analysis daytrading bootstrap into the trader provider', () => {
@@ -684,9 +710,66 @@ describe('synthesis autonomous trader provider', () => {
     expect(objectAt(bootstrap, 'content')).toContain('analysis-bootstrap.json')
     expect(artifactNames).toContain('autonomous-trader-analysis-bootstrap')
     expect(artifactNames).toContain('autonomous-trader-analysis-context')
+    expect(artifactNames).toContain('autonomous-trader-current-status')
+    expect(artifactNames).toContain('autonomous-trader-visibility-events')
+    expect(artifactNames).toContain('autonomous-trader-synthesis-posts')
+    expect(artifactNames).toContain('autonomous-trader-trade-ticket')
+    expect(artifactNames).toContain('autonomous-trader-protective-orders')
     expect(objectAt(objectAt(objectAt(vcsProvider, 'spec'), 'repositoryPolicy'), 'allow')).toContain(
       'gregkonush/analysis',
     )
+  })
+
+  it('wires Synthesis MCP visibility into the trader provider', () => {
+    const provider = readYamlObjects(
+      'argocd/applications/synthesis/agents-domain/autonomous-trader-agentprovider.yaml',
+    ).find((manifest) => objectAt(manifest, 'kind') === 'AgentProvider')
+    const agent = readYamlObjects('argocd/applications/synthesis/agents-domain/autonomous-trader-agent.yaml').find(
+      (manifest) => objectAt(manifest, 'kind') === 'Agent',
+    )
+    const template = readYamlObjects(
+      'argocd/applications/synthesis/agents-domain/autonomous-trader-agentrun-template.yaml',
+    ).find((manifest) => objectAt(manifest, 'kind') === 'AgentRun')
+    const secretBinding = readYamlObjects(
+      'argocd/applications/synthesis/agents-domain/autonomous-trader-secretbinding.yaml',
+    ).find((manifest) => objectAt(manifest, 'kind') === 'SecretBinding')
+    const spec = objectAt(provider, 'spec')
+    const codex = objectAt(objectAt(spec, 'adapter'), 'codex')
+    const threadConfig = objectAt(codex, 'threadConfig')
+    const synthesis = objectAt(objectAt(threadConfig, 'mcp_servers'), 'synthesis')
+    const envTemplate = objectAt(spec, 'envTemplate')
+    const secretEnv = objectAt(spec, 'secretEnv') as Record<string, unknown>[] | undefined
+    const inputFiles = objectAt(spec, 'inputFiles') as Record<string, unknown>[] | undefined
+    const codexConfig = (inputFiles ?? []).find(
+      (inputFile) => objectAt(inputFile, 'path') === '/root/.codex/config.toml',
+    )
+    const synthesisProxy = (inputFiles ?? []).find(
+      (inputFile) => objectAt(inputFile, 'path') === '/root/.codex/synthesis-mcp-proxy.mjs',
+    )
+    const workload = objectAt(objectAt(template, 'spec'), 'workload')
+    const volumes = objectAt(workload, 'volumes') as Record<string, unknown>[] | undefined
+    const synthesisVolume = (volumes ?? []).find((volume) => objectAt(volume, 'name') === 'synthesis-env')
+
+    expect(objectAt(synthesis, 'command')).toBe('node')
+    expect(objectAt(synthesis, 'args')).toEqual(['/root/.codex/synthesis-mcp-proxy.mjs'])
+    expect(objectAt(objectAt(synthesis, 'env'), 'SYNTHESIS_API_TOKEN_FILE')).toBe(
+      '/var/run/synthesis/SYNTHESIS_API_TOKEN',
+    )
+    expect(objectAt(objectAt(synthesis, 'env'), 'SYNTHESIS_MCP_URL')).toBe(
+      'http://synthesis.synthesis.svc.cluster.local:3000/mcp',
+    )
+    expect(objectAt(envTemplate, 'SYNTHESIS_API_TOKEN_FILE')).toBe('/var/run/synthesis/SYNTHESIS_API_TOKEN')
+    expect(objectAt(envTemplate, 'SYNTHESIS_MCP_URL')).toBe('http://synthesis.synthesis.svc.cluster.local:3000/mcp')
+    expect((secretEnv ?? []).some((entry) => objectAt(entry, 'name') === 'SYNTHESIS_API_TOKEN')).toBe(true)
+    expect(objectAt(codexConfig, 'content')).toContain('[mcp_servers.synthesis]')
+    expect(objectAt(codexConfig, 'content')).toContain('SYNTHESIS_API_TOKEN_FILE')
+    expect(objectAt(synthesisProxy, 'content')).toContain('Synthesis MCP HTTP')
+    expect(objectAt(synthesisProxy, 'content')).toContain('Bearer')
+    expect(objectAt(synthesisVolume, 'mountPath')).toBe('/var/run/synthesis')
+    expect(objectAt(synthesisVolume, 'readOnly')).toBe(true)
+    expect(objectAt(objectAt(objectAt(agent, 'spec'), 'security'), 'allowedSecrets')).toContain('synthesis-env')
+    expect(objectAt(objectAt(secretBinding, 'spec'), 'allowedSecrets')).toContain('synthesis-env')
+    expect(objectAt(objectAt(template, 'spec'), 'secrets')).toContain('synthesis-env')
   })
 
   it('bridges Codex framed MCP stdio to Alpaca newline stdio', () => {
