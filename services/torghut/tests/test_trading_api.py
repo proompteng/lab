@@ -28,6 +28,7 @@ from app.main import (
     _build_live_submission_gate_payload,
     _build_route_image_proof_summary,
     _check_alpaca,
+    _decimal_or_none,
     _fetch_paper_route_target_plan_url,
     _forecast_service_status,
     _load_external_paper_route_target_plan,
@@ -172,6 +173,9 @@ class _MappingRows:
     def one(self) -> dict[str, object]:
         return self._rows[0]
 
+    def first(self) -> dict[str, object] | None:
+        return self._rows[0] if self._rows else None
+
     def __iter__(self) -> Iterator[dict[str, object]]:
         return iter(self._rows)
 
@@ -249,6 +253,75 @@ class _FailingOptionsFreshnessSession:
     ) -> _ExecuteResult:
         self.calls.append((str(statement), params))
         raise SQLAlchemyError("statement timeout")
+
+
+class _FallbackOptionsFreshnessSession:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, object | None]] = []
+
+    def execute(
+        self, statement: object, params: object | None = None
+    ) -> _ExecuteResult:
+        statement_text = str(statement)
+        self.calls.append((statement_text, params))
+        if statement_text.startswith("SET LOCAL"):
+            return _ExecuteResult([])
+        if "GROUP BY underlying_symbol" in statement_text:
+            raise SQLAlchemyError("statement timeout")
+        if "LIMIT 1" in statement_text:
+            symbol = None
+            if isinstance(params, dict):
+                symbol = params.get("route_symbol")
+            rows = {
+                "AAPL": {
+                    "underlying_symbol": "AAPL",
+                    "last_seen_ts": datetime(2026, 5, 12, tzinfo=timezone.utc),
+                    "provider_updated_ts": datetime(2026, 5, 12, tzinfo=timezone.utc),
+                    "close_price": Decimal("182.10"),
+                    "open_interest": Decimal("100"),
+                }
+            }
+            row = rows.get(str(symbol or "").upper())
+            return _ExecuteResult([row] if row is not None else [])
+        return _ExecuteResult([])
+
+
+class _FallbackOptionsFreshnessBlankSymbolSession:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, object | None]] = []
+
+    def execute(
+        self, statement: object, params: object | None = None
+    ) -> _ExecuteResult:
+        statement_text = str(statement)
+        self.calls.append((statement_text, params))
+        if statement_text.startswith("SET LOCAL"):
+            return _ExecuteResult([])
+        if "GROUP BY underlying_symbol" in statement_text:
+            raise SQLAlchemyError("statement timeout")
+        if "LIMIT 1" in statement_text:
+            symbol = None
+            if isinstance(params, dict):
+                symbol = params.get("route_symbol")
+            rows = {
+                "AAPL": {
+                    "underlying_symbol": " ",
+                    "last_seen_ts": datetime(2026, 5, 12, tzinfo=timezone.utc),
+                    "provider_updated_ts": datetime(2026, 5, 12, tzinfo=timezone.utc),
+                    "close_price": Decimal("182.10"),
+                    "open_interest": Decimal("100"),
+                },
+                "MSFT": {
+                    "underlying_symbol": "MSFT",
+                    "last_seen_ts": datetime(2026, 5, 12, tzinfo=timezone.utc),
+                    "provider_updated_ts": datetime(2026, 5, 12, tzinfo=timezone.utc),
+                    "close_price": None,
+                    "open_interest": None,
+                },
+            }
+            row = rows.get(str(symbol or "").upper())
+            return _ExecuteResult([row] if row is not None else [])
+        return _ExecuteResult([])
 
 
 class TestTradingApi(TestCase):
@@ -498,7 +571,9 @@ class TestTradingApi(TestCase):
     def test_options_catalog_freshness_summary_caches_unavailable_route_scope(
         self,
     ) -> None:
-        original_cache_seconds = settings.trading_options_catalog_freshness_cache_seconds
+        original_cache_seconds = (
+            settings.trading_options_catalog_freshness_cache_seconds
+        )
         settings.trading_options_catalog_freshness_cache_seconds = 30
         self.addCleanup(
             setattr,
@@ -521,7 +596,7 @@ class TestTradingApi(TestCase):
         self.assertEqual(second["status"], "unavailable")
         self.assertEqual(first["route_symbols"], ["AAPL"])
         self.assertEqual(second["route_symbols"], ["AAPL"])
-        self.assertEqual(len(fake_session.calls), 1)
+        self.assertEqual(len(fake_session.calls), 2)
         first_cache = first.get("cache")
         second_cache = second.get("cache")
         self.assertIsInstance(first_cache, dict)
@@ -534,7 +609,9 @@ class TestTradingApi(TestCase):
     def test_options_catalog_freshness_summary_expires_cached_route_scope(
         self,
     ) -> None:
-        original_cache_seconds = settings.trading_options_catalog_freshness_cache_seconds
+        original_cache_seconds = (
+            settings.trading_options_catalog_freshness_cache_seconds
+        )
         settings.trading_options_catalog_freshness_cache_seconds = 1
         self.addCleanup(
             setattr,
@@ -572,6 +649,69 @@ class TestTradingApi(TestCase):
         self.assertIsInstance(cache, dict)
         assert isinstance(cache, dict)
         self.assertEqual(cache["hit"], False)
+
+    def test_options_catalog_freshness_summary_falls_back_to_bounded_route_scope(
+        self,
+    ) -> None:
+        fake_session = _FallbackOptionsFreshnessSession()
+
+        payload = _load_options_catalog_freshness_summary(
+            fake_session,  # type: ignore[arg-type]
+            route_symbols=["AAPL", "MSFT"],
+        )
+
+        self.assertEqual(payload["status"], "current")
+        self.assertEqual(payload["scope"], "route_symbols")
+        self.assertEqual(payload["route_symbols"], ["AAPL", "MSFT"])
+        self.assertTrue(payload["bounded"])
+        self.assertFalse(payload["coverage_exact"])
+        self.assertFalse(payload["active_contracts_exact"])
+        self.assertEqual(payload["active_contracts"], 1)
+        self.assertFalse(payload["provider_updated_ts_present"])
+        self.assertEqual(payload["missing_provider_updated_ts_count"], 1)
+        self.assertIn(
+            "options_catalog_freshness_bounded_route_scope",
+            payload["reason_codes"],
+        )
+        route_scope = payload["route_symbol_freshness"]
+        self.assertIsInstance(route_scope, dict)
+        route_scope = dict(route_scope)
+        self.assertEqual(set(route_scope), {"AAPL"})
+        self.assertFalse(route_scope["AAPL"]["provider_updated_ts_present"])
+        self.assertEqual(route_scope["AAPL"]["missing_provider_updated_ts_count"], 1)
+        self.assertTrue(route_scope["AAPL"]["bounded"])
+        self.assertFalse(route_scope["AAPL"]["coverage_exact"])
+        self.assertEqual(
+            sum("LIMIT 1" in sql for sql, _params in fake_session.calls),
+            2,
+        )
+
+    def test_options_catalog_freshness_bounded_fallback_skips_blank_symbols(
+        self,
+    ) -> None:
+        fake_session = _FallbackOptionsFreshnessBlankSymbolSession()
+
+        payload = _load_options_catalog_freshness_summary(
+            fake_session,  # type: ignore[arg-type]
+            route_symbols=["AAPL", "MSFT"],
+        )
+
+        self.assertEqual(payload["status"], "current")
+        self.assertTrue(payload["bounded"])
+        self.assertEqual(payload["active_contracts"], 2)
+        self.assertEqual(payload["missing_close_price_count"], 1)
+        self.assertEqual(payload["zero_open_interest_count"], 1)
+        route_scope = payload["route_symbol_freshness"]
+        self.assertIsInstance(route_scope, dict)
+        route_scope = dict(route_scope)
+        self.assertEqual(set(route_scope), {"MSFT"})
+        self.assertEqual(route_scope["MSFT"]["missing_close_price_count"], 1)
+        self.assertEqual(route_scope["MSFT"]["zero_open_interest_count"], 1)
+
+    def test_decimal_or_none_handles_missing_and_unparseable_values(self) -> None:
+        self.assertIsNone(_decimal_or_none(None))
+        self.assertIsNone(_decimal_or_none(object()))
+        self.assertEqual(_decimal_or_none("1.25"), Decimal("1.25"))
 
     def test_route_image_proof_summary_preserves_route_workload_status(self) -> None:
         payload = _build_route_image_proof_summary(
