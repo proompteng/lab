@@ -24,6 +24,26 @@ from app.trading.models import SignalEnvelope
 import scripts.search_consistent_profitability_frontier as frontier
 
 
+class _GuardedSignalRow:
+    def __init__(
+        self,
+        *,
+        symbol: str,
+        event_ts: datetime,
+        seq: int,
+    ) -> None:
+        self.symbol = symbol
+        self.seq = seq
+        self._event_ts = event_ts
+        self.raise_on_event_ts = False
+
+    @property
+    def event_ts(self) -> datetime:
+        if self.raise_on_event_ts:
+            raise AssertionError("cached iterator should use the prebuilt date index")
+        return self._event_ts
+
+
 def _authoritative_exact_replay_rows() -> list[dict[str, object]]:
     return [
         {
@@ -2029,6 +2049,78 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         )
         filtered = list(iterator(config))
         self.assertEqual([item.symbol for item in filtered], ["NVDA"])
+        self.assertEqual(filtered[0].seq, 2)
+
+    def test_cached_iter_signal_rows_factory_preserves_cross_symbol_order(
+        self,
+    ) -> None:
+        rows = [
+            SimpleNamespace(
+                symbol="NVDA",
+                event_ts=datetime(2026, 3, 23, 14, 0, tzinfo=timezone.utc),
+                seq=1,
+            ),
+            SimpleNamespace(
+                symbol="AMAT",
+                event_ts=datetime(2026, 3, 23, 14, 0, 1, tzinfo=timezone.utc),
+                seq=2,
+            ),
+            SimpleNamespace(
+                symbol="META",
+                event_ts=datetime(2026, 3, 23, 14, 0, 2, tzinfo=timezone.utc),
+                seq=3,
+            ),
+            SimpleNamespace(
+                symbol="NVDA",
+                event_ts=datetime(2026, 3, 24, 14, 0, tzinfo=timezone.utc),
+                seq=4,
+            ),
+        ]
+        iterator = frontier._cached_iter_signal_rows_factory(rows)
+        config = SimpleNamespace(
+            symbols=("amat", "nvda"),
+            start_date=date(2026, 3, 23),
+            end_date=date(2026, 3, 24),
+        )
+
+        filtered = list(iterator(config))
+
+        self.assertEqual([item.symbol for item in filtered], ["NVDA", "AMAT", "NVDA"])
+        self.assertEqual([item.seq for item in filtered], [1, 2, 4])
+
+    def test_cached_iter_signal_rows_factory_uses_index_after_factory(
+        self,
+    ) -> None:
+        rows = [
+            _GuardedSignalRow(
+                symbol="NVDA",
+                event_ts=datetime(2026, 3, 22, 14, 0, tzinfo=timezone.utc),
+                seq=1,
+            ),
+            _GuardedSignalRow(
+                symbol="AMAT",
+                event_ts=datetime(2026, 3, 23, 14, 0, tzinfo=timezone.utc),
+                seq=2,
+            ),
+            _GuardedSignalRow(
+                symbol="META",
+                event_ts=datetime(2026, 3, 24, 14, 0, tzinfo=timezone.utc),
+                seq=3,
+            ),
+        ]
+        iterator = frontier._cached_iter_signal_rows_factory(rows)
+        for row in rows:
+            row.raise_on_event_ts = True
+
+        config = SimpleNamespace(
+            symbols=("AMAT",),
+            start_date=date(2026, 3, 23),
+            end_date=date(2026, 3, 23),
+        )
+
+        filtered = list(iterator(config))
+
+        self.assertEqual([item.symbol for item in filtered], ["AMAT"])
         self.assertEqual(filtered[0].seq, 2)
 
     def test_apply_candidate_to_configmap_with_overrides_updates_top_level_fields(
