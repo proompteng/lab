@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import sys
+import time as wall_time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -197,6 +198,21 @@ def _parse_args() -> argparse.Namespace:
         default=5.0,
     )
     parser.add_argument(
+        "--runtime-window-target-plan-url-attempts",
+        type=int,
+        default=1,
+        help=(
+            "Bounded attempts for runtime-window target plan URL reads. Retries "
+            "transport failures and transient empty paper-route evidence while "
+            "preserving required/exclusive fail-closed semantics."
+        ),
+    )
+    parser.add_argument(
+        "--runtime-window-target-plan-url-retry-backoff-seconds",
+        type=float,
+        default=0.25,
+    )
+    parser.add_argument(
         "--runtime-window-target-plan-exclusive",
         action="store_true",
         help=(
@@ -289,6 +305,12 @@ def _as_dict(value: Any) -> dict[str, Any]:
         if isinstance(value, Mapping)
         else {}
     )
+
+
+def _as_sequence(value: Any) -> Sequence[Any]:
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return value
+    return ()
 
 
 def _as_text(value: Any) -> str | None:
@@ -490,11 +512,63 @@ def _runtime_window_target_plan_from_payload(
     return _as_dict(payload)
 
 
-def _read_runtime_window_target_plan_url(
+def _runtime_window_target_plan_has_targets(plan: Mapping[str, Any]) -> bool:
+    targets = plan.get("targets")
+    return (
+        isinstance(targets, Sequence)
+        and not isinstance(targets, (str, bytes, bytearray))
+        and len(targets) > 0
+    )
+
+
+def _runtime_window_target_plan_transient_empty_reason(
+    *,
+    payload: Mapping[str, Any],
+    plan: Mapping[str, Any],
+) -> str | None:
+    if _runtime_window_target_plan_has_targets(plan):
+        return None
+    reason_values: list[object] = []
+    summary = _as_dict(payload.get("summary"))
+    reason_values.extend(_as_sequence(summary.get("blockers")))
+    audit = _as_dict(payload.get("runtime_window_import_audit"))
+    reason_values.append(audit.get("state"))
+    reason_values.extend(_as_sequence(audit.get("blockers")))
+    gate = _as_dict(payload.get("live_submission_gate"))
+    reason_values.append(gate.get("paper_route_target_plan_error"))
+    gate_plan = _as_dict(gate.get("runtime_ledger_paper_probation_import_plan"))
+    for skipped in _as_sequence(gate_plan.get("skipped_targets")):
+        skipped_map = _as_dict(skipped)
+        reason_values.append(skipped_map.get("reason"))
+        reason_values.extend(
+            _as_sequence(skipped_map.get("missing_or_blocking_fields"))
+        )
+
+    transient_prefixes = (
+        "paper_route_target_plan_fetch_failed",
+        "paper_route_target_plan_http_status",
+        "paper_probation_import_plan_missing",
+        "external_paper_route_target_plan_unavailable",
+    )
+    for raw_reason in reason_values:
+        reason = str(raw_reason or "").strip()
+        if not reason:
+            continue
+        if reason.startswith(transient_prefixes) or "timed out" in reason.lower():
+            return reason
+    return None
+
+
+def _runtime_window_target_plan_url_error_retryable(error: RuntimeError) -> bool:
+    text = str(error)
+    return "runtime_window_target_plan_url_fetch_failed" in text
+
+
+def _read_runtime_window_target_plan_url_once(
     ref: str,
     *,
     timeout_seconds: float,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], dict[str, Any]]:
     url = ref.strip()
     if not url:
         raise RuntimeError("runtime_window_target_plan_url_empty")
@@ -517,7 +591,42 @@ def _read_runtime_window_target_plan_url(
     data = _as_dict(payload)
     if not data:
         raise RuntimeError(f"runtime_window_target_plan_url_invalid:{url}")
-    return _runtime_window_target_plan_from_payload(data)
+    return _runtime_window_target_plan_from_payload(data), data
+
+
+def _read_runtime_window_target_plan_url(
+    ref: str,
+    *,
+    timeout_seconds: float,
+    attempts: int = 1,
+    retry_backoff_seconds: float = 0.25,
+) -> dict[str, Any]:
+    max_attempts = max(int(attempts), 1)
+    last_plan: dict[str, Any] = {}
+    for attempt in range(1, max_attempts + 1):
+        try:
+            plan, payload = _read_runtime_window_target_plan_url_once(
+                ref,
+                timeout_seconds=timeout_seconds,
+            )
+            last_plan = plan
+            transient_empty_reason = _runtime_window_target_plan_transient_empty_reason(
+                payload=payload,
+                plan=plan,
+            )
+            if transient_empty_reason and attempt < max_attempts:
+                wall_time.sleep(max(float(retry_backoff_seconds), 0.0))
+                continue
+            return plan
+        except RuntimeError as exc:
+            if (
+                attempt < max_attempts
+                and _runtime_window_target_plan_url_error_retryable(exc)
+            ):
+                wall_time.sleep(max(float(retry_backoff_seconds), 0.0))
+                continue
+            raise
+    return last_plan
 
 
 def _runtime_family_harnesses(family_dir: str) -> dict[str, dict[str, str]]:
@@ -648,10 +757,21 @@ def _runtime_window_plan_targets(
     timeout_seconds = float(
         getattr(args, "runtime_window_target_plan_url_timeout_seconds", 5.0) or 5.0
     )
+    url_attempts = int(getattr(args, "runtime_window_target_plan_url_attempts", 1) or 1)
+    raw_retry_backoff_seconds = getattr(
+        args,
+        "runtime_window_target_plan_url_retry_backoff_seconds",
+        0.25,
+    )
+    retry_backoff_seconds = (
+        0.25 if raw_retry_backoff_seconds is None else float(raw_retry_backoff_seconds)
+    )
     for ref in url_refs:
         plan = _read_runtime_window_target_plan_url(
             ref,
             timeout_seconds=timeout_seconds,
+            attempts=url_attempts,
+            retry_backoff_seconds=retry_backoff_seconds,
         )
         targets.extend(_runtime_window_targets_from_plan(plan=plan, ref=ref, args=args))
     return targets

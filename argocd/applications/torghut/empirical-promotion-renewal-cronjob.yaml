@@ -47,6 +47,9 @@ spec:
                     --strategy-spec-ref microbar_cross_sectional_pairs_v1@research \
                     --runtime-window-import \
                     --runtime-window-target-plan-url http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-evidence \
+                    --runtime-window-target-plan-url-timeout-seconds 45 \
+                    --runtime-window-target-plan-url-attempts 3 \
+                    --runtime-window-target-plan-url-retry-backoff-seconds 5 \
                     --runtime-window-target-plan-exclusive \
                     --runtime-window-target-plan-required \
                     --runtime-window-target-plan-settlement-seconds 3600 \
