@@ -7831,6 +7831,8 @@ class TestTradingApi(TestCase):
             fetch.assert_called_once_with(
                 "http://torghut.example/plan",
                 timeout_seconds=7,
+                attempts=3,
+                retry_backoff_seconds=0.25,
             )
         finally:
             settings.trading_paper_route_target_plan_url = original_target_plan_url

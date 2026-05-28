@@ -3367,6 +3367,129 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             ],
         )
 
+    def test_main_audit_only_reports_source_to_ledger_path_without_persisting(
+        self,
+    ) -> None:
+        args = SimpleNamespace(
+            run_id="run-audit",
+            candidate_id="cand-audit",
+            hypothesis_id="H-CONT-01",
+            observed_stage="paper",
+            strategy_family="",
+            source_dsn="postgresql://example",
+            source_dsn_env="DB_DSN",
+            strategy_name="intraday-tsmom-profit-v2",
+            account_label="TORGHUT_SIM",
+            source_account_label="TORGHUT_SIM",
+            window_start="2026-03-06T14:30:00Z",
+            window_end="2026-03-06T15:00:00Z",
+            bucket_minutes=30,
+            sample_minutes=5,
+            source_manifest_ref="",
+            source_kind="paper_runtime_observed",
+            artifact_ref=[],
+            delay_adjusted_depth_stress_report_ref="",
+            dataset_snapshot_ref="runtime-audit-snapshot",
+            target_metadata_json="",
+            dependency_quorum_decision="allow",
+            continuity_ok="true",
+            drift_ok="true",
+            audit_only=True,
+            json=True,
+        )
+        manifest = SimpleNamespace(
+            strategy_family="intraday_continuation",
+            strategy_id="intraday_tsmom_v1@paper",
+            max_allowed_slippage_bps=Decimal("12"),
+        )
+        runtime_bucket = _complete_runtime_ledger_bucket()
+        tca_row = {
+            "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+            "abs_slippage_bps": Decimal("1"),
+            "post_cost_expectancy_bps": Decimal("40"),
+            "post_cost_expectancy_basis": POST_COST_BASIS_RUNTIME_LEDGER,
+            "post_cost_promotion_eligible": True,
+            "source_decision_mode": "strategy_signal_paper",
+            "runtime_ledger_bucket": runtime_bucket,
+        }
+
+        with (
+            patch(
+                "scripts.import_hypothesis_runtime_windows._parse_args",
+                return_value=args,
+            ),
+            patch(
+                "scripts.import_hypothesis_runtime_windows.resolve_hypothesis_manifest",
+                return_value=(
+                    SimpleNamespace(path="config/trading/hypotheses/h-cont-01.json"),
+                    manifest,
+                ),
+            ),
+            patch(
+                "scripts.import_hypothesis_runtime_windows._query_timestamps",
+                return_value=(
+                    [datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)],
+                    [datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc)],
+                    [tca_row],
+                ),
+            ),
+            patch(
+                "scripts.import_hypothesis_runtime_windows._runtime_ledger_tca_rows_from_source_dsn",
+                return_value=(
+                    [],
+                    {
+                        "runtime_ledger_source_bucket_count": 0,
+                        "runtime_ledger_source_bucket_run_ids": [],
+                        "runtime_ledger_source_bucket_fill_count": 0,
+                        "runtime_ledger_source_bucket_tca_row_count": 0,
+                        "runtime_ledger_source_bucket_profit_proof_count": 0,
+                    },
+                ),
+            ),
+            patch(
+                "scripts.import_hypothesis_runtime_windows.build_regular_session_buckets",
+                return_value=[
+                    (
+                        datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                        datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                        6,
+                    )
+                ],
+            ),
+            patch(
+                "scripts.import_hypothesis_runtime_windows.build_observed_runtime_buckets",
+                return_value=[
+                    SimpleNamespace(
+                        payload_json={
+                            "runtime_ledger_profit_proof_present": True,
+                            "runtime_ledger_profit_proof_blockers": [],
+                        }
+                    )
+                ],
+            ),
+            patch(
+                "scripts.import_hypothesis_runtime_windows.persist_observed_runtime_windows",
+                return_value={"run_id": "run-audit"},
+            ) as persist_windows,
+            patch("builtins.print") as print_result,
+        ):
+            exit_code = main()
+
+        self.assertEqual(exit_code, 0)
+        persist_windows.assert_not_called()
+        summary = json.loads(print_result.call_args.args[0])
+        self.assertEqual(
+            summary["schema_version"],
+            "torghut.runtime-window-import-source-audit.v1",
+        )
+        self.assertEqual(summary["verdict"], "profit_proof_present")
+        self.assertEqual(summary["decision_count"], 1)
+        self.assertEqual(summary["execution_count"], 1)
+        self.assertEqual(summary["tca_row_count"], 1)
+        self.assertEqual(summary["runtime_ledger_bucket_row_count"], 1)
+        self.assertTrue(summary["runtime_ledger_profit_proof_present"])
+        self.assertFalse(summary["would_persist"])
+
     def test_main_attaches_target_metadata_to_runtime_payload(self) -> None:
         args = SimpleNamespace(
             run_id="run-probation",

@@ -252,6 +252,11 @@ If the packet reports `paper_route_source_activity_missing`, `source_decisions_m
 activity is present but runtime ledger counts are missing, then inspect `renew_latest_empirical_promotion_jobs.py`
 runtime-window import output and the DB-backed runtime-ledger buckets. Neither case authorizes promotion by itself.
 
+Before a settled live-paper import, use the renewal runner's `--runtime-window-import-audit-only` option when you need a
+read-only diagnosis of source decisions, executions, TCA rows, and runtime-ledger materialization. Audit-only output is
+explicitly non-authoritative because it does not persist runtime/governance rows; promotion still requires the normal
+runtime-window import and the post-cost runtime-ledger proof packet.
+
 Execute the planned sequence with explicit human confirmation:
 
 ```bash

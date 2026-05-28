@@ -324,6 +324,7 @@ class TestRunEmpiricalPromotionJobs(TestCase):
                 "--run-id-prefix",
                 "renew-prefix",
                 "--runtime-window-import",
+                "--runtime-window-import-audit-only",
                 "--runtime-window-hypothesis-id",
                 "H-TSMOM-01",
                 "--runtime-window-candidate-id",
@@ -351,6 +352,7 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         self.assertEqual(args.strategy_spec_ref, "strategy@paper")
         self.assertEqual(args.run_id_prefix, "renew-prefix")
         self.assertTrue(args.runtime_window_import)
+        self.assertTrue(args.runtime_window_import_audit_only)
         self.assertEqual(args.runtime_window_hypothesis_id, "H-TSMOM-01")
         self.assertEqual(
             args.runtime_window_candidate_id, "spec-83161ae16d17828eabcc58cc"
@@ -1750,6 +1752,80 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         self.assertIn("--dataset-snapshot-ref", command)
         self.assertIn("portfolio-profit-autoresearch-500-v1", command)
         self.assertNotIn("stale-empirical-dataset", command)
+
+    def test_runtime_window_import_audit_only_never_counts_as_promotion_proof(
+        self,
+    ) -> None:
+        manifest_path = self.tmp_dir / "empirical-promotion-manifest.yaml"
+        manifest_path.write_text("run_id: renew-1\n", encoding="utf-8")
+        hypothesis_path = self.tmp_dir / "h-tsmom-01.json"
+        hypothesis_path.write_text(
+            json.dumps(
+                {
+                    "candidate_id": "spec-83161ae16d17828eabcc58cc",
+                    "dataset_snapshot_ref": "portfolio-profit-autoresearch-500-v1",
+                }
+            ),
+            encoding="utf-8",
+        )
+        completed = SimpleNamespace(
+            stdout=json.dumps(
+                {
+                    "schema_version": "torghut.runtime-window-import-source-audit.v1",
+                    "audit_only": True,
+                    "would_persist": False,
+                    "verdict": "profit_proof_present",
+                    "runtime_observation": {
+                        "authoritative": True,
+                        "promotion_authority": "runtime_ledger_profit_proof",
+                    },
+                    "promotion_allowed": True,
+                }
+            )
+        )
+        args = SimpleNamespace(
+            runtime_window_import=True,
+            runtime_window_import_audit_only=True,
+            runtime_window_hypothesis_id="H-TSMOM-01",
+            runtime_window_candidate_id="",
+            runtime_window_observed_stage="paper",
+            runtime_window_strategy_family="intraday_tsmom_consistent",
+            runtime_window_source_dsn_env="SIM_DB_DSN",
+            runtime_window_strategy_name="intraday-tsmom-profit-v3",
+            runtime_window_account_label="TORGHUT_SIM",
+            runtime_window_start="2026-05-18T13:30:00Z",
+            runtime_window_end="2026-05-18T20:00:00Z",
+            runtime_window_dataset_snapshot_ref="",
+            runtime_window_bucket_minutes=30,
+            runtime_window_sample_minutes=5,
+            runtime_window_source_manifest_ref=str(hypothesis_path),
+            runtime_window_source_kind="paper_runtime_observed",
+        )
+
+        with patch.object(
+            renewal.subprocess, "run", return_value=completed
+        ) as run_mock:
+            payload = renewal._run_runtime_window_import(
+                args=args,
+                manifest={},
+                run_id="renew-1",
+                manifest_path=manifest_path,
+                now=datetime(2026, 5, 18, 21, 23, tzinfo=timezone.utc),
+            )
+
+        self.assertIsNotNone(payload)
+        assert payload is not None
+        self.assertEqual(payload["status"], "audit_only")
+        self.assertEqual(payload["proof_status"], "blocked")
+        command = run_mock.call_args.args[0]
+        self.assertIn("--audit-only", command)
+        blocker_codes = [item["blocker"] for item in payload["proof_blockers"]]
+        self.assertEqual(
+            blocker_codes,
+            ["runtime_window_import_audit_only_no_persistence"],
+        )
+        self.assertTrue(payload["summary"]["audit_only"])
+        self.assertFalse(payload["summary"]["would_persist"])
 
     def test_runtime_window_import_passes_probation_metadata_and_artifacts(
         self,

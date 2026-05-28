@@ -124,6 +124,14 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--runtime-window-import", action="store_true")
     parser.add_argument(
+        "--runtime-window-import-audit-only",
+        action="store_true",
+        help=(
+            "Run planned runtime-window imports in read-only audit mode. "
+            "This never authorizes promotion because no governance/runtime rows are persisted."
+        ),
+    )
+    parser.add_argument(
         "--runtime-window-targets-from-registry",
         action="store_true",
         help=(
@@ -1878,6 +1886,9 @@ def _run_runtime_window_import_target(
         drift_ok,
         "--json",
     ]
+    audit_only = bool(getattr(args, "runtime_window_import_audit_only", False))
+    if audit_only:
+        command.append("--audit-only")
     for artifact_ref in target.artifact_refs:
         command.extend(["--artifact-ref", artifact_ref])
     if target.target_metadata:
@@ -1924,8 +1935,24 @@ def _run_runtime_window_import_target(
         window_end=window_end,
     )
     proof_blockers.extend(payload_proof_blockers)
+    if audit_only:
+        proof_blockers.append(
+            {
+                "blocker": "runtime_window_import_audit_only_no_persistence",
+                "hypothesis_id": target.hypothesis_id,
+                "candidate_id": candidate_id,
+                "observed_stage": target.observed_stage,
+                "window_start": _utc_iso(window_start),
+                "window_end": _utc_iso(window_end),
+                "remediation": (
+                    "Use the audit counts to repair source, execution, TCA, or "
+                    "runtime-ledger materialization, then rerun the normal "
+                    "runtime-window import before promotion."
+                ),
+            }
+        )
     return {
-        "status": "ok",
+        "status": "audit_only" if audit_only else "ok",
         "command": " ".join(command[:2] + ["..."]),
         "window_start": _utc_iso(window_start),
         "window_end": _utc_iso(window_end),
