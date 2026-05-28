@@ -148,6 +148,63 @@ def _target_plan_lineage(
     }
 
 
+def _target_lookup_names(target: Mapping[str, Any]) -> list[str]:
+    names: list[str] = []
+    for value in (
+        target.get("strategy_id"),
+        target.get("runtime_strategy_name"),
+        target.get("strategy_name"),
+        target.get("strategy_lookup_names"),
+    ):
+        _merge_unique_texts(names, _lineage_text_values(value))
+    return names
+
+
+def _parse_target_datetime(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        raw_text = _safe_text(value)
+        if raw_text is None:
+            return None
+        try:
+            parsed = datetime.fromisoformat(raw_text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _target_probe_window(target: Mapping[str, Any]) -> tuple[datetime, datetime] | None:
+    window_start = _parse_target_datetime(
+        target.get("paper_route_probe_window_start") or target.get("window_start")
+    )
+    window_end = _parse_target_datetime(
+        target.get("paper_route_probe_window_end") or target.get("window_end")
+    )
+    if window_start is None or window_end is None or window_end <= window_start:
+        return None
+    return window_start, window_end
+
+
+def _target_probe_action(target: Mapping[str, Any]) -> Literal["buy", "sell"]:
+    for key in (
+        "paper_route_probe_action",
+        "paper_route_probe_side",
+        "probe_action",
+        "probe_side",
+        "action",
+        "side",
+    ):
+        normalized = str(target.get(key) or "").strip().lower()
+        if normalized in {"buy", "long"}:
+            return "buy"
+        if normalized in {"sell", "short"}:
+            return "sell"
+    return "buy"
+
+
 def _lineage_text_values(value: object) -> list[str]:
     raw_items: Sequence[object]
     if isinstance(value, str):
@@ -337,6 +394,13 @@ class SimpleTradingPipeline(TradingPipeline):
                     allowed_symbols=allowed_symbols,
                 )
                 self._process_paper_route_probe_retry_decisions(
+                    session=session,
+                    strategies=strategies,
+                    account=account,
+                    positions=positions,
+                    allowed_symbols=allowed_symbols,
+                )
+                self._process_paper_route_target_source_decisions(
                     session=session,
                     strategies=strategies,
                     account=account,
@@ -1275,6 +1339,49 @@ class SimpleTradingPipeline(TradingPipeline):
                     ["broker_submit_failed"]
                 )
 
+    def _process_paper_route_target_source_decisions(
+        self,
+        *,
+        session: Session,
+        strategies: list[Strategy],
+        account: dict[str, str],
+        positions: list[dict[str, Any]],
+        allowed_symbols: set[str],
+    ) -> None:
+        decisions = self._paper_route_target_source_decisions(
+            strategies=strategies,
+            allowed_symbols=allowed_symbols,
+        )
+        for decision in decisions:
+            self.state.metrics.decisions_total += 1
+            try:
+                submitted = self._handle_decision(
+                    session,
+                    decision,
+                    strategies,
+                    account,
+                    positions,
+                    allowed_symbols,
+                )
+                if submitted is not None:
+                    self._apply_simple_projected_buying_power(
+                        account,
+                        positions,
+                        submitted,
+                    )
+                    self._apply_simple_projected_position(positions, submitted)
+            except Exception:
+                logger.exception(
+                    "Paper-route target source decision handling failed strategy_id=%s symbol=%s timeframe=%s",
+                    decision.strategy_id,
+                    decision.symbol,
+                    decision.timeframe,
+                )
+                self.state.metrics.orders_rejected_total += 1
+                self.state.metrics.record_decision_rejection_reasons(
+                    ["broker_submit_failed"]
+                )
+
     def _submission_control_plane_snapshot(
         self,
         *,
@@ -1783,6 +1890,195 @@ class SimpleTradingPipeline(TradingPipeline):
         )
         return symbols, load_error, targets
 
+    @staticmethod
+    def _paper_route_target_strategy(
+        target: Mapping[str, Any],
+        strategies: Sequence[Strategy],
+    ) -> Strategy | None:
+        lookup_names = set(_target_lookup_names(target))
+        if not lookup_names:
+            return None
+        for strategy in strategies:
+            if str(strategy.id) in lookup_names or strategy.name in lookup_names:
+                return strategy
+        return None
+
+    @staticmethod
+    def _paper_route_target_strategy_symbols(strategy: Strategy) -> set[str]:
+        raw_symbols = strategy.universe_symbols
+        if isinstance(raw_symbols, str):
+            values: Sequence[object] = raw_symbols.split(",")
+        elif isinstance(raw_symbols, Sequence) and not isinstance(
+            raw_symbols, (bytes, bytearray)
+        ):
+            values = cast(Sequence[object], raw_symbols)
+        else:
+            values = ()
+        return {symbol for raw in values if (symbol := str(raw).strip().upper())}
+
+    @staticmethod
+    def _paper_route_target_source_decision_metadata(
+        *,
+        target: Mapping[str, Any],
+        strategy: Strategy,
+        symbol: str,
+        window_start: datetime,
+        window_end: datetime,
+        max_notional: Decimal,
+    ) -> dict[str, Any]:
+        lineage = _target_plan_lineage([dict(target)], symbol)
+        metadata: dict[str, Any] = {
+            "mode": "paper_route_target_plan_source_decision",
+            "source": "external_target_plan_url",
+            "symbol": symbol,
+            "strategy_name": strategy.name,
+            "runtime_strategy_name": _safe_text(target.get("runtime_strategy_name")),
+            "strategy_lookup_names": _target_lookup_names(target),
+            "paper_route_probe_symbols": sorted(_target_symbols(target)),
+            "paper_route_probe_window_start": window_start.isoformat(),
+            "paper_route_probe_window_end": window_end.isoformat(),
+            "paper_route_probe_next_session_max_notional": str(max_notional),
+            "paper_route_target_plan_source": "external_target_plan_url",
+            "paper_route_probe_scope_authority": "external_target_plan",
+            "source_kind": _safe_text(target.get("source_kind")),
+            "source_manifest_ref": _safe_text(target.get("source_manifest_ref")),
+            "paper_probation_authorized": bool(
+                target.get("paper_probation_authorized")
+            ),
+            "promotion_allowed": False,
+            "final_promotion_authorized": False,
+            "final_promotion_allowed": False,
+            **lineage,
+        }
+        for key in (
+            "candidate_id",
+            "hypothesis_id",
+            "observed_stage",
+            "strategy_family",
+        ):
+            value = _safe_text(target.get(key))
+            if value is not None:
+                metadata[key] = value
+        return metadata
+
+    @staticmethod
+    def _paper_route_target_source_cap(
+        params: Mapping[str, Any],
+    ) -> Decimal | None:
+        metadata = params.get("paper_route_target_plan_source_decision")
+        if not isinstance(metadata, Mapping):
+            metadata = params.get("paper_route_target_plan")
+        if not isinstance(metadata, Mapping):
+            return None
+        mode = str(cast(Mapping[str, Any], metadata).get("mode") or "").strip()
+        if mode != "paper_route_target_plan_source_decision":
+            return None
+        cap = _optional_decimal(
+            cast(Mapping[str, Any], metadata).get(
+                "paper_route_probe_next_session_max_notional"
+            )
+        )
+        return cap if cap is not None and cap > 0 else None
+
+    def _paper_route_target_source_decisions(
+        self,
+        *,
+        strategies: Sequence[Strategy],
+        allowed_symbols: set[str],
+    ) -> list[StrategyDecision]:
+        if settings.trading_mode != "paper":
+            return []
+        if not settings.trading_simple_paper_route_probe_enabled:
+            return []
+        now = trading_now(account_label=self.account_label).astimezone(timezone.utc)
+        if not self._is_market_session_open(now):
+            return []
+        target_symbols, target_plan_error, target_plan_targets = (
+            self._external_paper_route_target_probe_symbols_cached()
+        )
+        if target_plan_error or not target_symbols:
+            return []
+
+        normalized_allowed = {
+            symbol.strip().upper() for symbol in allowed_symbols if symbol.strip()
+        }
+        decisions: list[StrategyDecision] = []
+        seen: set[tuple[str, str, str, str]] = set()
+        for target in target_plan_targets:
+            window = _target_probe_window(target)
+            if window is None:
+                continue
+            window_start, window_end = window
+            if now < window_start or now >= window_end:
+                continue
+            target_cap = _optional_decimal(
+                target.get("paper_route_probe_next_session_max_notional")
+            )
+            if target_cap is None or target_cap <= 0:
+                continue
+            strategy = self._paper_route_target_strategy(target, strategies)
+            if strategy is None:
+                continue
+            strategy_symbols = self._paper_route_target_strategy_symbols(strategy)
+            symbols = sorted(_target_symbols(target) & target_symbols)
+            if normalized_allowed:
+                symbols = [symbol for symbol in symbols if symbol in normalized_allowed]
+            if strategy_symbols:
+                symbols = [symbol for symbol in symbols if symbol in strategy_symbols]
+            action = _target_probe_action(target)
+            if action == "sell" and not settings.trading_allow_shorts:
+                continue
+            for symbol in symbols:
+                key = (str(strategy.id), symbol, window_start.isoformat(), action)
+                if key in seen:
+                    continue
+                seen.add(key)
+                metadata = self._paper_route_target_source_decision_metadata(
+                    target=target,
+                    strategy=strategy,
+                    symbol=symbol,
+                    window_start=window_start,
+                    window_end=window_end,
+                    max_notional=target_cap,
+                )
+                simple_lane = {
+                    "source": "external_target_plan_url",
+                    "target_plan_source_decision": True,
+                    "paper_route_probe_max_notional": str(target_cap),
+                    "paper_route_probe_window_start": window_start.isoformat(),
+                    "paper_route_probe_window_end": window_end.isoformat(),
+                }
+                params: dict[str, Any] = {
+                    "paper_route_target_plan": metadata,
+                    "paper_route_target_plan_source_decision": metadata,
+                    "simple_lane": simple_lane,
+                    "promotion_allowed": False,
+                    "final_promotion_authorized": False,
+                    "final_promotion_allowed": False,
+                    **_target_plan_lineage([dict(target)], symbol),
+                }
+                timeframe = (
+                    _safe_text(target.get("timeframe"))
+                    or _safe_text(target.get("base_timeframe"))
+                    or _safe_text(strategy.base_timeframe)
+                    or "1Min"
+                )
+                decisions.append(
+                    StrategyDecision(
+                        strategy_id=str(strategy.id),
+                        symbol=symbol,
+                        event_ts=window_start,
+                        timeframe=timeframe,
+                        action=action,
+                        qty=Decimal("1"),
+                        order_type="market",
+                        time_in_force="day",
+                        rationale="external paper-route target plan source decision",
+                        params=params,
+                    )
+                )
+        return decisions
+
     def _paper_route_target_lineage_for_decision(
         self,
         decision: StrategyDecision,
@@ -1856,7 +2152,10 @@ class SimpleTradingPipeline(TradingPipeline):
             return None
         if decision.action not in {"buy", "sell"}:
             return None
-        cap = _optional_decimal(settings.trading_simple_paper_route_probe_max_notional)
+        cap = _min_optional_decimal(
+            _optional_decimal(settings.trading_simple_paper_route_probe_max_notional),
+            self._paper_route_target_source_cap(decision.params),
+        )
         if cap is None or cap <= 0:
             return None
         if not self._proof_floor_market_session_open(proof_floor):
@@ -1897,6 +2196,11 @@ class SimpleTradingPipeline(TradingPipeline):
             return None
         if target_plan_symbols and symbol not in target_plan_symbols:
             return None
+        target_source_authorized = (
+            self._paper_route_target_source_cap(decision.params) is not None
+            and bool(target_plan_symbols)
+            and symbol in target_plan_symbols
+        )
         symbol_route_probe_reasons = self._proof_floor_symbol_route_probe_reasons(
             proof_floor,
             symbol,
@@ -1909,6 +2213,7 @@ class SimpleTradingPipeline(TradingPipeline):
             (blocking_reasons & _PAPER_ROUTE_PROBE_REASONS)
             or symbol_route_probe_reasons
             or symbol_paper_route_probe_eligible
+            or target_source_authorized
         ):
             return None
 
@@ -1927,6 +2232,7 @@ class SimpleTradingPipeline(TradingPipeline):
             "symbol": symbol,
             "side": decision.action,
             "blocking_reasons": sorted(blocking_reasons | symbol_route_probe_reasons),
+            "target_source_authorized": target_source_authorized,
             "route_repair_symbols": sorted(repair_symbols),
             "paper_route_probe_symbols": sorted(paper_route_probe_symbols),
             "paper_route_target_plan_symbols": sorted(target_plan_symbols),
@@ -1991,6 +2297,14 @@ class SimpleTradingPipeline(TradingPipeline):
         if "paper_route_target_plan" in decision.params:
             self.executor.update_decision_params(session, decision_row, decision.params)
             self.executor.sync_decision_state(session, decision_row, decision)
+        if (
+            decision_row.status == "planned"
+            and self._paper_route_target_source_cap(decision.params) is not None
+        ):
+            decision_row.created_at = trading_now(account_label=self.account_label)
+            session.add(decision_row)
+            session.commit()
+            session.refresh(decision_row)
         retry_metadata = self._paper_route_probe_retry_metadata(decision_row)
         if retry_metadata is None:
             return super()._ensure_pending_decision_row(
