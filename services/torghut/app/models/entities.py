@@ -288,6 +288,47 @@ class ExecutionOrderEvent(Base, CreatedAtMixin):
     )
 
 
+class OrderFeedConsumerCursor(Base, TimestampMixin):
+    """Durable consumed-offset cursor for order-feed provenance."""
+
+    __tablename__ = "order_feed_consumer_cursors"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    consumer_group: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    source_topic: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    source_partition: Mapped[int] = mapped_column(nullable=False)
+    high_watermark_offset: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    last_event_fingerprint: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    last_event_ts: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    processed_event_count: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default=text("0")
+    )
+    duplicate_event_count: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default=text("0")
+    )
+    offset_gap_count: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default=text("0")
+    )
+
+    __table_args__ = (
+        Index(
+            "uq_order_feed_consumer_cursors_partition",
+            "consumer_group",
+            "source_topic",
+            "source_partition",
+            unique=True,
+        ),
+        Index(
+            "ix_order_feed_consumer_cursors_updated_at",
+            "updated_at",
+        ),
+    )
+
+
 class ResearchRun(Base, TimestampMixin):
     """Durable research execution metadata for autonomous lane runs."""
 
