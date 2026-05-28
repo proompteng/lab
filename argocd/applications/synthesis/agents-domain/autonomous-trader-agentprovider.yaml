@@ -137,7 +137,8 @@ spec:
           git_token="${GH_TOKEN:-}"
         fi
         if [ -n "${git_token}" ]; then
-          git_auth=(-c "http.https://github.com/.extraheader=Authorization: Bearer ${git_token}")
+          git_basic_auth="$(printf 'x-access-token:%s' "${git_token}" | base64 | tr -d '\n')"
+          git_auth=(-c "http.https://github.com/.extraheader=Authorization: Basic ${git_basic_auth}")
         fi
 
         git_with_auth() {
