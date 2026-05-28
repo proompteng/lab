@@ -37,6 +37,7 @@ class TestSnapshotRuntimeCostCoverage(TestCase):
                 "cost_amount": "0.25",
                 "cost_basis": "broker_reported_fees",
                 "source_field": "cost_amount",
+                "source": "broker_order_response",
             },
         )
 
@@ -54,6 +55,7 @@ class TestSnapshotRuntimeCostCoverage(TestCase):
                 "cost_amount": "0",
                 "cost_basis": "broker_reported_commission",
                 "source_field": "commission",
+                "source": "broker_order_response",
             },
         )
 

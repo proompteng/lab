@@ -36,6 +36,13 @@ PROMOTION_GRADE_POST_COST_BASES = frozenset(
         "realized_strategy_pnl_after_explicit_costs",
     }
 )
+NON_PROMOTION_GRADE_RUNTIME_COST_BASES = frozenset(
+    {
+        "modeled_paper_cost_budget",
+        "paper_cost_model_estimate",
+        "decision_impact_assumptions_total_cost_bps",
+    }
+)
 _RUNTIME_LEDGER_PROOF_SATISFIED_METADATA_BLOCKERS = frozenset(
     {
         "paper_route_runtime_ledger_import_pending",
@@ -250,6 +257,16 @@ def _hash_count(value: Any) -> int:
     return sum(1 for key in mapping.keys() if str(key).strip())
 
 
+def _cost_basis_counts_have_non_promotion_grade_costs(value: Any) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    return any(
+        str(key).strip() in NON_PROMOTION_GRADE_RUNTIME_COST_BASES
+        and _observation_int(count) > 0
+        for key, count in cast(Mapping[object, object], value).items()
+    )
+
+
 def _persisted_runtime_ledger_bucket_evidence_grade(
     row: StrategyRuntimeLedgerBucket,
 ) -> bool:
@@ -265,6 +282,9 @@ def _persisted_runtime_ledger_bucket_evidence_grade(
         and _hash_count(row.execution_policy_hash_counts) > 0
         and _hash_count(row.cost_model_hash_counts) > 0
         and _hash_count(row.lineage_hash_counts) > 0
+        and not _cost_basis_counts_have_non_promotion_grade_costs(
+            _mapping(row.payload_json).get("cost_basis_counts")
+        )
         and not blockers
     )
 
@@ -301,6 +321,14 @@ def _runtime_ledger_bucket_blockers(bucket: Mapping[str, Any]) -> list[str]:
         blockers.append("filled_notional_missing")
     if cost_amount is None or cost_amount < 0:
         blockers.append("explicit_cost_missing")
+    non_promotion_grade_cost_basis = (
+        str(bucket.get("cost_basis") or "").strip()
+        in NON_PROMOTION_GRADE_RUNTIME_COST_BASES
+    ) or _cost_basis_counts_have_non_promotion_grade_costs(
+        bucket.get("cost_basis_counts")
+    )
+    if non_promotion_grade_cost_basis:
+        blockers.append("runtime_ledger_cost_basis_non_promotion_grade")
     if post_cost_expectancy is None:
         blockers.append("runtime_ledger_expectancy_missing")
     if _hash_count(bucket.get("execution_policy_hash_counts")) <= 0:

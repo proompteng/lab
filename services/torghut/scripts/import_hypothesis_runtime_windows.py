@@ -55,6 +55,13 @@ RUNTIME_LEDGER_BUCKET_SCHEMAS = frozenset(
         "torghut.runtime-ledger-bucket.v1",
     }
 )
+NON_PROMOTION_GRADE_RUNTIME_COST_BASES = frozenset(
+    {
+        "modeled_paper_cost_budget",
+        "paper_cost_model_estimate",
+        "decision_impact_assumptions_total_cost_bps",
+    }
+)
 EXACT_REPLAY_ARTIFACT_AUTHORITY_CLASS = "exact_replay_artifact_only_not_live"
 EXACT_REPLAY_ARTIFACT_AUTHORITY_BLOCKERS = (
     "exact_replay_artifact_not_runtime_proof",
@@ -396,6 +403,16 @@ def _mapping_hash_count(value: object) -> int:
     return sum(1 for key in value.keys() if str(key).strip())
 
 
+def _cost_basis_counts_have_non_promotion_grade_costs(value: object) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    return any(
+        str(key).strip() in NON_PROMOTION_GRADE_RUNTIME_COST_BASES
+        and _nonnegative_int(count) > 0
+        for key, count in cast(Mapping[object, object], value).items()
+    )
+
+
 def _runtime_ledger_bucket_profit_proof_present(
     bucket: Mapping[str, object],
 ) -> bool:
@@ -423,6 +440,15 @@ def _runtime_ledger_bucket_profit_proof_present(
     if filled_notional is None or filled_notional <= 0:
         return False
     if cost_amount is None or cost_amount < 0:
+        return False
+    if (
+        str(bucket.get("cost_basis") or "").strip()
+        in NON_PROMOTION_GRADE_RUNTIME_COST_BASES
+    ):
+        return False
+    if _cost_basis_counts_have_non_promotion_grade_costs(
+        bucket.get("cost_basis_counts")
+    ):
         return False
     if post_cost_expectancy is None:
         return False
