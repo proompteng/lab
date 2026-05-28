@@ -8,7 +8,7 @@ import tempfile
 from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import Mock, patch
-from typing import Any, Callable, Mapping, Sequence, cast
+from typing import Any, Callable, Literal, Mapping, Sequence, cast
 from uuid import uuid4
 
 from sqlalchemy import create_engine, select
@@ -831,6 +831,7 @@ class TestTradingPipeline(TestCase):
         self,
         *,
         symbol: str = "AAPL",
+        side: Literal["buy", "sell"] = "buy",
         qty: Decimal = Decimal("2"),
         avg_fill_price: Decimal = Decimal("100"),
         entry_ts: datetime = datetime(2026, 3, 26, 14, 0, tzinfo=timezone.utc),
@@ -904,7 +905,7 @@ class TestTradingPipeline(TestCase):
                 symbol=symbol,
                 event_ts=entry_ts,
                 timeframe="1Min",
-                action="buy",
+                action=side,
                 qty=qty,
                 rationale="paper-route-entry",
                 params=params,
@@ -927,7 +928,7 @@ class TestTradingPipeline(TestCase):
                     alpaca_order_id=f"filled-entry-{symbol.lower()}",
                     client_order_id=decision_row.decision_hash,
                     symbol=symbol,
-                    side="buy",
+                    side=side,
                     order_type="market",
                     time_in_force="day",
                     submitted_qty=qty,
@@ -3810,6 +3811,52 @@ class TestTradingPipeline(TestCase):
             ],
         )
 
+    def test_simple_pipeline_closes_short_paper_route_probe_with_buy_exit(
+        self,
+    ) -> None:
+        self._seed_filled_paper_route_probe_entry(
+            symbol="AMZN",
+            side="sell",
+            source_candidate_ids=("candidate-pairs-a",),
+            source_hypothesis_ids=("H-PAIRS-01",),
+            source_strategy_names=("microbar-cross-sectional-pairs-v1",),
+        )
+        alpaca_client = PositionedAlpacaClient(
+            [{"symbol": "AMZN", "qty": "2", "side": "short"}]
+        )
+
+        self._run_simple_paper_pipeline(
+            alpaca_client=alpaca_client,
+            now=datetime(2026, 3, 26, 15, 31, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(len(alpaca_client.submitted), 1)
+        self.assertEqual(alpaca_client.submitted[0]["side"], "buy")
+        self.assertEqual(alpaca_client.submitted[0]["qty"], "2.0")
+        with self.session_local() as session:
+            decisions = (
+                session.execute(
+                    select(TradeDecision).order_by(TradeDecision.created_at.asc())
+                )
+                .scalars()
+                .all()
+            )
+            self.assertEqual(len(decisions), 2)
+            exit_payload = cast(dict[str, Any], decisions[-1].decision_json)
+            params = cast(dict[str, Any], exit_payload.get("params"))
+            exit_metadata = cast(
+                dict[str, Any],
+                params.get("paper_route_probe_exit"),
+            )
+
+        self.assertEqual(exit_payload.get("action"), "buy")
+        self.assertEqual(exit_metadata.get("db_open_side"), "short")
+        self.assertEqual(exit_metadata.get("db_open_qty"), "2.00000000")
+        self.assertEqual(
+            exit_metadata.get("source_candidate_ids"), ["candidate-pairs-a"]
+        )
+        self.assertEqual(exit_metadata.get("source_hypothesis_ids"), ["H-PAIRS-01"])
+
     def test_simple_pipeline_closes_late_filled_probe_from_strategy_exit_metadata(
         self,
     ) -> None:
@@ -4191,6 +4238,16 @@ class TestTradingPipeline(TestCase):
             def seed_missing_position_snapshot(self, _position: object) -> bool:
                 raise RuntimeError("seed failed")
 
+        class RecordingSeedAdapter:
+            name = "simulation"
+
+            def __init__(self) -> None:
+                self.positions: list[dict[str, Any]] = []
+
+            def seed_missing_position_snapshot(self, position: object) -> bool:
+                self.positions.append(dict(cast(Mapping[str, Any], position)))
+                return True
+
         base_kwargs = {
             "positions": [],
             "decision": decision,
@@ -4232,6 +4289,25 @@ class TestTradingPipeline(TestCase):
                 **{**base_kwargs, "trading_mode": "paper"}
             )
         )
+        restored_positions: list[dict[str, Any]] = []
+        recording_adapter = RecordingSeedAdapter()
+        self.assertEqual(
+            SimpleTradingPipeline._restore_simulation_paper_route_probe_exit_position(
+                **{
+                    **base_kwargs,
+                    "positions": restored_positions,
+                    "trading_mode": "paper",
+                    "metadata": {"db_open_qty": "3", "db_open_side": "sideways"},
+                    "execution_adapter": recording_adapter,
+                }
+            ),
+            Decimal("2"),
+        )
+        self.assertEqual(
+            recording_adapter.positions,
+            [{"symbol": "AAPL", "qty": "2", "side": "long", "market_value": "200"}],
+        )
+        self.assertEqual(restored_positions, recording_adapter.positions)
         self.assertIsNone(
             SimpleTradingPipeline._restore_simulation_paper_route_probe_exit_position(
                 **{
@@ -4869,6 +4945,13 @@ class TestTradingPipeline(TestCase):
                     strategy=exit_bound_strategy,
                 )
             )
+            self.assertIsNone(
+                pipeline._paper_route_probe_context(
+                    proof_floor=proof_floor,
+                    decision=sell_decision,
+                    strategy=exit_bound_strategy,
+                )
+            )
 
         no_route_reason_floor = {
             **proof_floor,
@@ -4973,6 +5056,55 @@ class TestTradingPipeline(TestCase):
                 decision=decision,
             )
         )
+
+    def test_short_paper_route_probe_entry_after_exit_minute_rejected(self) -> None:
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        strategy = Strategy(
+            name="paper-route-short-exit-bound",
+            description=(
+                "paper route short exit-bound fixture\n[catalog_metadata]\n"
+                + json.dumps({"params": {"exit_minute_after_open": "120"}})
+            ),
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="static",
+            universe_symbols=["AMZN"],
+            max_notional_per_trade=Decimal("1000"),
+        )
+        decision = StrategyDecision(
+            strategy_id="strategy-1",
+            symbol="AMZN",
+            event_ts=datetime(2026, 3, 26, 14, 30, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="sell",
+            qty=Decimal("1"),
+            rationale="route-probe-short-entry",
+            params={"price": "200"},
+        )
+
+        with patch(
+            "app.trading.scheduler.simple_pipeline.trading_now",
+            return_value=datetime(2026, 3, 26, 15, 31, tzinfo=timezone.utc),
+        ):
+            self.assertTrue(
+                pipeline._paper_route_probe_entry_after_exit_minute(
+                    decision=decision,
+                    strategy=strategy,
+                )
+            )
 
     def test_paper_route_probe_context_honors_external_target_plan_scope(self) -> None:
         from app import config
@@ -5097,6 +5229,323 @@ class TestTradingPipeline(TestCase):
                     decision=decision.model_copy(update={"symbol": "AAPL"}),
                 )
             )
+
+    def test_paper_decision_persists_external_target_lineage_without_gate_bypass(
+        self,
+    ) -> None:
+        from app import config
+
+        config.settings.trading_mode = "paper"
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_paper_route_target_plan_url = (
+            "http://torghut.local/trading/paper-route-evidence"
+        )
+        config.settings.trading_paper_route_target_plan_timeout_seconds = 1.0
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="microbar-cross-sectional-pairs-v1",
+                enabled=True,
+                base_timeframe="1Sec",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=datetime(2026, 3, 26, 14, 30, tzinfo=timezone.utc),
+                timeframe="1Sec",
+                action="sell",
+                qty=Decimal("1"),
+                params={"price": "100"},
+            )
+            with patch(
+                "app.trading.scheduler.simple_pipeline.fetch_paper_route_target_plan_url",
+                return_value={
+                    "targets": [
+                        {
+                            "paper_route_probe_symbols": ["AAPL"],
+                            "candidate_id": "candidate-pairs-a",
+                            "hypothesis_id": "H-PAIRS-01",
+                            "strategy_name": "microbar-cross-sectional-pairs-v1",
+                        }
+                    ]
+                },
+            ):
+                row = pipeline._ensure_pending_decision_row(
+                    session=session,
+                    decision=decision,
+                    strategy=strategy,
+                )
+
+            self.assertIsNotNone(row)
+            assert row is not None
+            payload = cast(dict[str, Any], row.decision_json)
+            params = cast(dict[str, Any], payload.get("params"))
+            target_plan = cast(dict[str, Any], params.get("paper_route_target_plan"))
+
+        self.assertEqual(params.get("source_candidate_ids"), ["candidate-pairs-a"])
+        self.assertEqual(params.get("source_hypothesis_ids"), ["H-PAIRS-01"])
+        self.assertEqual(target_plan.get("mode"), "paper_route_target_lineage")
+        self.assertEqual(
+            target_plan.get("paper_route_probe_lineage_targets"),
+            [
+                {
+                    "candidate_id": "candidate-pairs-a",
+                    "hypothesis_id": "H-PAIRS-01",
+                    "strategy_name": "microbar-cross-sectional-pairs-v1",
+                }
+            ],
+        )
+        self.assertNotIn("paper_route_probe", params)
+
+    def test_paper_decision_persists_external_target_lineage_existing_row(
+        self,
+    ) -> None:
+        from app import config
+
+        config.settings.trading_mode = "paper"
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_paper_route_target_plan_url = (
+            "http://torghut.local/trading/paper-route-evidence"
+        )
+        config.settings.trading_paper_route_target_plan_timeout_seconds = 1.0
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="microbar-cross-sectional-pairs-v1",
+                enabled=True,
+                base_timeframe="1Sec",
+                universe_type="static",
+                universe_symbols=["AMZN"],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AMZN",
+                event_ts=datetime(2026, 3, 26, 14, 31, tzinfo=timezone.utc),
+                timeframe="1Sec",
+                action="sell",
+                qty=Decimal("1"),
+                params={"price": "200"},
+            )
+            existing = pipeline.executor.ensure_decision(
+                session,
+                decision,
+                strategy,
+                pipeline.account_label,
+            )
+            existing_payload = cast(dict[str, Any], existing.decision_json)
+            existing_params = cast(dict[str, Any], existing_payload.get("params"))
+            self.assertNotIn("paper_route_target_plan", existing_params)
+
+            with patch(
+                "app.trading.scheduler.simple_pipeline.fetch_paper_route_target_plan_url",
+                return_value={
+                    "targets": [
+                        {
+                            "paper_route_probe_symbols": ["AMZN"],
+                            "candidate_id": "candidate-pairs-a",
+                            "hypothesis_id": "H-PAIRS-01",
+                            "strategy_name": "microbar-cross-sectional-pairs-v1",
+                        }
+                    ]
+                },
+            ):
+                row = pipeline._ensure_pending_decision_row(
+                    session=session,
+                    decision=decision,
+                    strategy=strategy,
+                )
+
+            self.assertIsNotNone(row)
+            assert row is not None
+            self.assertEqual(row.id, existing.id)
+            session.refresh(row)
+            payload = cast(dict[str, Any], row.decision_json)
+            params = cast(dict[str, Any], payload.get("params"))
+            target_plan = cast(dict[str, Any], params.get("paper_route_target_plan"))
+
+        self.assertEqual(params.get("source_candidate_ids"), ["candidate-pairs-a"])
+        self.assertEqual(params.get("source_hypothesis_ids"), ["H-PAIRS-01"])
+        self.assertEqual(target_plan.get("mode"), "paper_route_target_lineage")
+        self.assertNotIn("paper_route_probe", params)
+
+    def test_paper_route_target_lineage_cache_and_existing_plan_merge(self) -> None:
+        from app import config
+
+        config.settings.trading_mode = "paper"
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_paper_route_target_plan_url = (
+            "http://torghut.local/trading/paper-route-evidence"
+        )
+        config.settings.trading_paper_route_target_plan_timeout_seconds = 1.0
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        first = StrategyDecision(
+            strategy_id="strategy-1",
+            symbol="AAPL",
+            event_ts=datetime(2026, 3, 26, 14, 30, tzinfo=timezone.utc),
+            timeframe="1Sec",
+            action="sell",
+            qty=Decimal("1"),
+            params={
+                "price": "100",
+                "paper_route_target_plan": {
+                    "existing": "keep",
+                    "source_candidate_ids": ["candidate-existing"],
+                },
+            },
+        )
+        second = first.model_copy(update={"symbol": "MSFT", "params": {"price": "200"}})
+        fetch = Mock(
+            return_value={
+                "targets": [
+                    {
+                        "paper_route_probe_symbols": ["AAPL"],
+                        "candidate_id": "candidate-aapl",
+                        "hypothesis_id": "H-AAPL",
+                        "strategy_name": "pairs-runtime-a",
+                    },
+                    {
+                        "paper_route_probe_symbols": ["MSFT"],
+                        "candidate_id": "candidate-msft",
+                        "hypothesis_id": "H-MSFT",
+                        "strategy_name": "pairs-runtime-b",
+                    },
+                ]
+            }
+        )
+
+        with (
+            patch(
+                "app.trading.scheduler.simple_pipeline.trading_now",
+                return_value=datetime(2026, 3, 26, 14, 31, tzinfo=timezone.utc),
+            ),
+            patch(
+                "app.trading.scheduler.simple_pipeline.fetch_paper_route_target_plan_url",
+                fetch,
+            ),
+        ):
+            enriched_first = pipeline._with_paper_route_target_lineage(first)
+            enriched_second = pipeline._with_paper_route_target_lineage(second)
+
+        self.assertEqual(fetch.call_count, 1)
+        first_params = cast(dict[str, Any], enriched_first.params)
+        first_target_plan = cast(
+            dict[str, Any], first_params.get("paper_route_target_plan")
+        )
+        self.assertEqual(first_target_plan.get("existing"), "keep")
+        self.assertEqual(
+            first_target_plan.get("source_candidate_ids"),
+            ["candidate-existing", "candidate-aapl"],
+        )
+        self.assertEqual(first_params.get("source_candidate_ids"), ["candidate-aapl"])
+        self.assertEqual(first_params.get("source_hypothesis_ids"), ["H-AAPL"])
+        second_params = cast(dict[str, Any], enriched_second.params)
+        second_target_plan = cast(
+            dict[str, Any], second_params.get("paper_route_target_plan")
+        )
+        self.assertEqual(
+            second_target_plan.get("source_candidate_ids"), ["candidate-msft"]
+        )
+        self.assertEqual(second_params.get("source_hypothesis_ids"), ["H-MSFT"])
+        self.assertNotIn("paper_route_probe", first_params)
+        self.assertNotIn("paper_route_probe", second_params)
+
+    def test_paper_route_target_lineage_skips_empty_symbol_and_empty_lineage(
+        self,
+    ) -> None:
+        from app import config
+
+        config.settings.trading_mode = "paper"
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_paper_route_target_plan_url = (
+            "http://torghut.local/trading/paper-route-evidence"
+        )
+        config.settings.trading_paper_route_target_plan_timeout_seconds = 1.0
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        base = StrategyDecision(
+            strategy_id="strategy-1",
+            symbol="AAPL",
+            event_ts=datetime(2026, 3, 26, 14, 30, tzinfo=timezone.utc),
+            timeframe="1Sec",
+            action="sell",
+            qty=Decimal("1"),
+            params={"price": "100"},
+        )
+        fetch = Mock(
+            return_value={"targets": [{"paper_route_probe_symbols": ["AAPL"]}]}
+        )
+
+        blank_symbol = pipeline._with_paper_route_target_lineage(
+            base.model_copy(update={"symbol": "   "})
+        )
+        with patch(
+            "app.trading.scheduler.simple_pipeline.fetch_paper_route_target_plan_url",
+            fetch,
+        ):
+            empty_lineage = pipeline._with_paper_route_target_lineage(base)
+
+        self.assertNotIn("paper_route_target_plan", blank_symbol.params)
+        self.assertNotIn("paper_route_target_plan", empty_lineage.params)
+        self.assertEqual(fetch.call_count, 1)
 
     def test_paper_route_probe_short_increasing_sell_classification(self) -> None:
         decision = StrategyDecision(
