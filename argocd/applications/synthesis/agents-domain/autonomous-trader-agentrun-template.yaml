@@ -14,7 +14,7 @@ spec:
   implementationSpecRef:
     name: autonomous-trader-v1
   goal:
-    objective: Reach 500000 USD account equity in the Alpaca paper account using autonomous stock, ETF, or option day trading through Alpaca MCP.
+    objective: Reach 500000 USD account equity in the Alpaca paper account using autonomous day trading through Alpaca MCP across stocks, ETFs, options, or any other financial instruments available in the account.
   vcsRef:
     name: github
   vcsPolicy:
