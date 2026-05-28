@@ -30,6 +30,13 @@ spec:
               FASTMCP_SHOW_SERVER_BANNER: "false"
               FASTMCP_LOG_LEVEL: "ERROR"
             startup_timeout_sec: 60
+          synthesis:
+            command: node
+            args:
+              - /root/.codex/synthesis-mcp-proxy.mjs
+            env:
+              SYNTHESIS_API_TOKEN_FILE: /var/run/synthesis/SYNTHESIS_API_TOKEN
+              SYNTHESIS_MCP_URL: http://synthesis.synthesis.svc.cluster.local:3000/mcp
         web_search: live
   argsTemplate: []
   secretEnv:
@@ -57,6 +64,9 @@ spec:
     - name: AGENTS_ARTIFACTS_SECRET_ACCESS_KEY
       secretName: agents-artifacts
       key: AWS_SECRET_ACCESS_KEY
+    - name: SYNTHESIS_API_TOKEN
+      secretName: synthesis-env
+      key: SYNTHESIS_API_TOKEN
   envTemplate:
     AGENT_RUN_NAME: "{{agentRun.name}}"
     AGENT_RUN_NAMESPACE: "{{agentRun.namespace}}"
@@ -76,6 +86,8 @@ spec:
     FASTMCP_LOG_LEVEL: "ERROR"
     FASTMCP_SHOW_SERVER_BANNER: "false"
     HOME: /root
+    SYNTHESIS_API_TOKEN_FILE: /var/run/synthesis/SYNTHESIS_API_TOKEN
+    SYNTHESIS_MCP_URL: http://synthesis.synthesis.svc.cluster.local:3000/mcp
   inputFiles:
     - path: /root/.codex/config.toml
       content: |-
@@ -118,6 +130,11 @@ spec:
         args = ["-u", "/root/alpaca-mcp-stdio-bridge.py"]
         startup_timeout_sec = 60.0
         env = { FASTMCP_SHOW_SERVER_BANNER = "false", FASTMCP_LOG_LEVEL = "ERROR" }
+
+        [mcp_servers.synthesis]
+        command = "node"
+        args = ["/root/.codex/synthesis-mcp-proxy.mjs"]
+        env = { SYNTHESIS_API_TOKEN_FILE = "/var/run/synthesis/SYNTHESIS_API_TOKEN", SYNTHESIS_MCP_URL = "http://synthesis.synthesis.svc.cluster.local:3000/mcp" }
     - path: /root/bootstrap-analysis-daytrading.sh
       content: |-
         #!/usr/bin/env bash
@@ -267,6 +284,100 @@ spec:
 
         exit_code = child.wait()
         sys.exit(exit_code)
+    - path: /root/.codex/synthesis-mcp-proxy.mjs
+      content: |-
+        #!/usr/bin/env node
+
+        import { readFileSync } from 'node:fs'
+        import readline from 'node:readline'
+
+        const readFirstTokenFile = (paths) => {
+          for (const path of paths) {
+            if (!path) continue
+            try {
+              const token = readFileSync(path, 'utf8').trim()
+              if (token) return token
+            } catch {}
+          }
+          return ''
+        }
+
+        const endpoint = process.env.SYNTHESIS_MCP_URL || 'http://synthesis.synthesis.svc.cluster.local:3000/mcp'
+        const token =
+          process.env.SYNTHESIS_API_TOKEN ||
+          process.env.SYNTHESIS_MCP_TOKEN ||
+          readFirstTokenFile([process.env.SYNTHESIS_API_TOKEN_FILE, '/var/run/synthesis/SYNTHESIS_API_TOKEN'])
+
+        const buildError = (id, code, message, data) => ({
+          jsonrpc: '2.0',
+          id,
+          error: {
+            code,
+            message,
+            ...(data == null ? {} : { data }),
+          },
+        })
+
+        const getId = (message) => {
+          if (!message || typeof message !== 'object') return null
+          const id = message.id
+          return typeof id === 'string' || typeof id === 'number' || id === null ? id : null
+        }
+
+        const writeJson = (message) => {
+          process.stdout.write(`${JSON.stringify(message)}\n`)
+        }
+
+        const forward = async (line) => {
+          if (!line.trim()) return
+
+          let message
+          try {
+            message = JSON.parse(line)
+          } catch {
+            writeJson(buildError(null, -32700, 'Parse error'))
+            return
+          }
+
+          const id = getId(message)
+          const headers = {
+            accept: 'application/json, text/event-stream',
+            'content-type': 'application/json',
+          }
+          if (token) headers.authorization = `Bearer ${token}`
+
+          try {
+            const response = await fetch(endpoint, {
+              method: 'POST',
+              headers,
+              body: JSON.stringify(message),
+            })
+            const body = await response.text()
+
+            if (!body.trim()) return
+            if (!response.ok) {
+              writeJson(buildError(id, -32000, `Synthesis MCP HTTP ${response.status}`, body.slice(0, 1000)))
+              return
+            }
+
+            for (const event of body.split(/\n\n+/)) {
+              const dataLine = event.split(/\r?\n/).find((eventLine) => eventLine.startsWith('data:'))
+              if (dataLine) {
+                process.stdout.write(`${dataLine.slice(5).trim()}\n`)
+                continue
+              }
+              process.stdout.write(`${body.trim()}\n`)
+              break
+            }
+          } catch (error) {
+            writeJson(buildError(id, -32000, 'Synthesis MCP proxy failed', error instanceof Error ? error.message : error))
+          }
+        }
+
+        const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })
+        input.on('line', (line) => {
+          void forward(line)
+        })
   outputArtifacts:
     - name: autonomous-trader-report
       path: /workspace/.agentrun/autonomous-trader/report.md
@@ -283,6 +394,21 @@ spec:
     - name: autonomous-trader-analysis-context
       path: /workspace/.agentrun/autonomous-trader/analysis-context.json
       key: synthesis/autonomous-trader/{{ agentRun.name }}/analysis-context.json
+    - name: autonomous-trader-current-status
+      path: /workspace/.agentrun/autonomous-trader/current-status.json
+      key: synthesis/autonomous-trader/{{ agentRun.name }}/current-status.json
+    - name: autonomous-trader-visibility-events
+      path: /workspace/.agentrun/autonomous-trader/visibility-events.jsonl
+      key: synthesis/autonomous-trader/{{ agentRun.name }}/visibility-events.jsonl
+    - name: autonomous-trader-synthesis-posts
+      path: /workspace/.agentrun/autonomous-trader/synthesis-posts.jsonl
+      key: synthesis/autonomous-trader/{{ agentRun.name }}/synthesis-posts.jsonl
+    - name: autonomous-trader-trade-ticket
+      path: /workspace/.agentrun/autonomous-trader/trade-ticket.json
+      key: synthesis/autonomous-trader/{{ agentRun.name }}/trade-ticket.json
+    - name: autonomous-trader-protective-orders
+      path: /workspace/.agentrun/autonomous-trader/protective-orders.jsonl
+      key: synthesis/autonomous-trader/{{ agentRun.name }}/protective-orders.jsonl
     - name: runner-log
       path: /workspace/.agent/runner.log
     - name: runner-status

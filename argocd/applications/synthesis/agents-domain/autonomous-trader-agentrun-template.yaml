@@ -40,7 +40,14 @@ spec:
     - agents-artifacts
     - codex-auth
     - github-token
+    - synthesis-env
   workload:
+    volumes:
+      - type: secret
+        name: synthesis-env
+        secretName: synthesis-env
+        mountPath: /var/run/synthesis
+        readOnly: true
     resources:
       requests:
         cpu: "2"

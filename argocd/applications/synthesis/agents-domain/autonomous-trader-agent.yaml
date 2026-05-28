@@ -20,5 +20,6 @@ spec:
       - agents-artifacts
       - codex-auth
       - github-token
+      - synthesis-env
     allowedServiceAccounts:
       - agents-sa
