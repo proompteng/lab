@@ -58,6 +58,18 @@ CAPITAL_PROMOTION_STATUS_BLOCKER_PREFIXES = (
     "promotion_",
     "paper_probation_",
 )
+RUNTIME_IMPORT_MATERIALIZATION_PROMOTION_ONLY_BLOCKERS = frozenset(
+    {
+        "candidate_board_promotion_not_allowed",
+        "final_promotion_not_authorized",
+        "final_promotion_not_allowed",
+        "live_runtime_ledger_required",
+        "paper_probation_evidence_collection_only",
+        "paper_route_runtime_ledger_import_pending",
+        "paper_stage_evidence_collection_only",
+        "runtime_ledger_stage_not_live",
+    }
+)
 
 
 class _ObjectStoreClient(Protocol):
@@ -804,6 +816,18 @@ def _runtime_import_target_blocker_codes(value: object) -> list[str]:
     return blockers
 
 
+def _runtime_import_materialization_metadata_blockers(
+    observation: Mapping[str, Any],
+) -> list[str]:
+    return [
+        blocker
+        for blocker in _text_list(
+            observation.get("runtime_ledger_target_metadata_blockers")
+        )
+        if blocker not in RUNTIME_IMPORT_MATERIALIZATION_PROMOTION_ONLY_BLOCKERS
+    ]
+
+
 def _runtime_import_target_surface_blockers(
     *,
     summary: Mapping[str, Any],
@@ -954,7 +978,7 @@ def _runtime_import_materialization_summary(
         )
         _extend_unique(
             materialization_blockers,
-            _text_list(observation.get("runtime_ledger_target_metadata_blockers")),
+            _runtime_import_materialization_metadata_blockers(observation),
         )
         materialized = (
             observation.get("authoritative") is True

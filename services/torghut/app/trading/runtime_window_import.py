@@ -41,6 +41,31 @@ _RUNTIME_LEDGER_PROOF_SATISFIED_METADATA_BLOCKERS = frozenset(
         "paper_route_runtime_ledger_import_pending",
     }
 )
+_RUNTIME_WINDOW_IMPORT_CAPITAL_ONLY_BLOCKERS = frozenset(
+    {
+        "candidate_board_promotion_not_allowed",
+        "drift_checks_not_ok",
+        "final_promotion_not_authorized",
+        "final_promotion_not_allowed",
+        "live_runtime_ledger_required",
+        "paper_probation_evidence_collection_only",
+        "paper_stage_evidence_collection_only",
+        "post_cost_expectancy_below_manifest_threshold",
+        "post_cost_expectancy_non_positive",
+        "runtime_ledger_avg_daily_filled_notional_below_target_implied_floor",
+        "runtime_ledger_best_day_share_above_limit",
+        "runtime_ledger_max_intraday_drawdown_above_limit",
+        "runtime_ledger_mean_daily_net_pnl_after_costs_below_target",
+        "runtime_ledger_median_daily_net_pnl_after_costs_below_floor",
+        "runtime_ledger_observed_trading_day_count_below_authority_minimum",
+        "runtime_ledger_p10_daily_net_pnl_after_costs_below_floor",
+        "runtime_ledger_stage_not_live",
+        "runtime_ledger_worst_day_net_pnl_after_costs_below_floor",
+        "sample_count_below_canary_minimum",
+        "slippage_budget_exceeded",
+        "recent_slippage_budget_exceeded",
+    }
+)
 RUNTIME_LEDGER_BUCKET_SCHEMAS = frozenset(
     {
         EXACT_REPLAY_LEDGER_SCHEMA_VERSION,
@@ -680,6 +705,16 @@ def _runtime_window_import_proof_blockers(
         )
 
     return blockers
+
+
+def _runtime_window_import_evidence_blocking_reasons(
+    promotion_blocking_reasons: Sequence[str],
+) -> list[str]:
+    return [
+        reason
+        for reason in promotion_blocking_reasons
+        if reason not in _RUNTIME_WINDOW_IMPORT_CAPITAL_ONLY_BLOCKERS
+    ]
 
 
 def _runtime_ledger_authority_gate_targets(
@@ -1579,8 +1614,11 @@ def persist_observed_runtime_windows(
         )
     )
     promotion_allowed = not promotion_blocking_reasons
+    evidence_blocking_reasons = _runtime_window_import_evidence_blocking_reasons(
+        promotion_blocking_reasons
+    )
     proof_blockers = _runtime_window_import_proof_blockers(
-        promotion_blocking_reasons=promotion_blocking_reasons,
+        promotion_blocking_reasons=evidence_blocking_reasons,
         runtime_payload=runtime_payload,
         candidate_id=candidate_id,
         hypothesis_id=hypothesis_id,
@@ -1609,6 +1647,9 @@ def persist_observed_runtime_windows(
         "runtime_ledger_daily_summary": runtime_ledger_daily_summary,
         "proof_status": proof_status,
         "proof_blockers": proof_blockers,
+        "evidence_blocking_reasons": evidence_blocking_reasons,
+        "capital_promotion_allowed": promotion_allowed,
+        "capital_promotion_blocking_reasons": promotion_blocking_reasons,
     }
     metric_window_rows: list[StrategyHypothesisMetricWindow] = []
     runtime_ledger_rows: list[StrategyRuntimeLedgerBucket] = []
@@ -1767,6 +1808,7 @@ def persist_observed_runtime_windows(
                 **runtime_ledger_daily_summary,
                 "promotion_allowed": promotion_allowed,
                 "promotion_blocking_reasons": promotion_blocking_reasons,
+                "evidence_blocking_reasons": evidence_blocking_reasons,
                 "delay_adjusted_depth_stress": delay_depth_stress_summary,
                 "runtime_observation": runtime_payload,
             },
@@ -1804,6 +1846,7 @@ def persist_observed_runtime_windows(
             "latest_three_within_budget": latest_three_budget_ok,
             "promotion_allowed": promotion_allowed,
             "promotion_blocking_reasons": promotion_blocking_reasons,
+            "evidence_blocking_reasons": evidence_blocking_reasons,
             "delay_adjusted_depth_stress": delay_depth_stress_summary,
             "runtime_observation": runtime_payload,
         },
@@ -1915,6 +1958,7 @@ def persist_observed_runtime_windows(
         "slippage_budget_bps": str(budget),
         "promotion_allowed": promotion_allowed,
         "promotion_blocking_reasons": promotion_blocking_reasons,
+        "evidence_blocking_reasons": evidence_blocking_reasons,
         "proof_status": proof_status,
         "proof_blockers": proof_blockers,
         "runtime_materialization_target": runtime_materialization_target,
