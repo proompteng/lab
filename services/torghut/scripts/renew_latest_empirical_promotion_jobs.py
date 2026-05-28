@@ -1863,6 +1863,19 @@ def _run_runtime_window_import_target(
     if not isinstance(payload, Mapping):
         raise RuntimeError("runtime_window_import_payload_not_mapping")
     payload = dict(payload)
+    runtime_observation = _as_dict(payload.get("runtime_observation"))
+    source_activity_diagnostics = _as_dict(payload.get("source_activity_diagnostics"))
+    if not source_activity_diagnostics and runtime_observation:
+        source_activity_diagnostics = _as_dict(
+            runtime_observation.get("source_activity_diagnostics")
+        )
+    source_activity_diagnostic_blockers = _as_text_list(
+        payload.get("source_activity_diagnostic_blockers")
+    )
+    if not source_activity_diagnostic_blockers and runtime_observation:
+        source_activity_diagnostic_blockers = _as_text_list(
+            runtime_observation.get("source_activity_diagnostic_blockers")
+        )
     payload_proof_blockers = _runtime_window_import_payload_proof_blockers(
         payload=payload,
         target=target,
@@ -1884,6 +1897,8 @@ def _run_runtime_window_import_target(
         "source_kind": target.source_kind,
         "artifact_refs": [str(manifest_path), *target.artifact_refs],
         "target_metadata": dict(target.target_metadata or {}),
+        "source_activity_diagnostics": source_activity_diagnostics,
+        "source_activity_diagnostic_blockers": source_activity_diagnostic_blockers,
         "proof_status": "blocked" if proof_blockers else "ok",
         "proof_blockers": proof_blockers,
         "summary": payload,

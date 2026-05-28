@@ -44,6 +44,7 @@ from scripts.import_hypothesis_runtime_windows import (
     _runtime_window_import_proof_hygiene_blockers,
     _runtime_window_source_kind_is_informational,
     _source_kind_allows_runtime_ledger_materialization,
+    _source_activity_diagnostics_blockers,
     _source_row_matches_lineage,
     _source_activity_missing_summary,
     _stable_payload_digest,
@@ -853,6 +854,16 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             source_kind="paper_runtime_observed",
             dataset_snapshot_ref="snapshot-1",
             proof_hygiene_blockers=("runtime_window_target_metadata_missing",),
+            source_activity_diagnostics={
+                "strategy_name_candidates": ["microbar-cross-sectional-pairs-v1"],
+                "account_label": "TORGHUT_SIM",
+                "source_activity_symbol_filter": ["AAPL"],
+                "decision_rows_before_lineage_filter": 2,
+                "decision_rows_after_lineage_filter": 0,
+                "execution_rows_before_lineage_filter": 1,
+                "execution_rows_after_lineage_filter": 0,
+                "runtime_ledger_source_bucket_count": 0,
+            },
         )
 
         self.assertEqual(summary["proof_status"], "blocked")
@@ -862,6 +873,18 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 "runtime_window_source_activity_missing",
                 "runtime_window_target_metadata_missing",
             ],
+        )
+        self.assertEqual(
+            summary["source_activity_diagnostics"]["decision_rows_before_lineage_filter"],
+            2,
+        )
+        self.assertIn(
+            "source_lineage_filter_excluded_activity",
+            summary["promotion_blocking_reasons"],
+        )
+        self.assertIn(
+            "runtime_ledger_source_bucket_missing",
+            summary["runtime_observation"]["source_activity_diagnostic_blockers"],
         )
 
     def test_main_requires_source_dsn_or_durable_runtime_ledger_bucket(self) -> None:
@@ -2104,6 +2127,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         connection = _FakeConnection(cursor)
         window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
         window_end = datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc)
+        diagnostics: dict[str, object] = {}
 
         with patch(
             "scripts.import_hypothesis_runtime_windows.psycopg.connect",
@@ -2115,6 +2139,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 account_label="TORGHUT_SIM",
                 window_start=window_start,
                 window_end=window_end,
+                source_activity_diagnostics=diagnostics,
             )
 
         self.assertEqual(decisions, [datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)])
@@ -2168,6 +2193,50 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertIn("t.computed_at < %s", tca_query)
         self.assertNotIn("and d.created_at >= %s", tca_query)
         self.assertNotIn("and d.created_at < %s", tca_query)
+        self.assertEqual(diagnostics["decision_rows_before_lineage_filter"], 1)
+        self.assertEqual(diagnostics["decision_rows_after_lineage_filter"], 1)
+        self.assertEqual(diagnostics["execution_rows_before_lineage_filter"], 1)
+        self.assertEqual(diagnostics["execution_rows_after_lineage_filter"], 1)
+        self.assertEqual(diagnostics["order_lifecycle_rows_before_lineage_filter"], 1)
+        self.assertEqual(diagnostics["tca_rows_before_lineage_filter"], 1)
+        self.assertEqual(
+            diagnostics["order_feed_fill_lifecycle_blockers"],
+            ["order_feed_fill_lifecycle_missing"],
+        )
+
+    def test_source_activity_diagnostic_blockers_classify_materialization_gap(
+        self,
+    ) -> None:
+        self.assertEqual(
+            _source_activity_diagnostics_blockers(
+                {
+                    "decision_rows_before_lineage_filter": 2,
+                    "decision_rows_after_lineage_filter": 0,
+                    "execution_rows_before_lineage_filter": 1,
+                    "execution_rows_after_lineage_filter": 0,
+                    "runtime_ledger_source_bucket_count": 0,
+                }
+            ),
+            [
+                "source_lineage_filter_excluded_activity",
+                "runtime_ledger_source_bucket_missing",
+            ],
+        )
+        self.assertEqual(
+            _source_activity_diagnostics_blockers(
+                {
+                    "decision_rows_before_lineage_filter": 1,
+                    "decision_rows_after_lineage_filter": 1,
+                    "execution_rows_before_lineage_filter": 0,
+                    "execution_rows_after_lineage_filter": 0,
+                    "runtime_ledger_source_bucket_count": 0,
+                }
+            ),
+            [
+                "execution_rows_missing_for_matched_decisions",
+                "runtime_ledger_source_bucket_missing",
+            ],
+        )
 
     def test_query_timestamps_filters_to_target_symbols_when_configured(
         self,
