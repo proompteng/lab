@@ -78,6 +78,7 @@ spec:
     ALPACA_PAPER_TRADE: "true"
     ANALYSIS_REPO_URL: https://github.com/gregkonush/analysis.git
     ANALYSIS_REQUIRED_COMMIT: b4d7485e106dc1197d293683e3413fe74dacd698
+    ANALYSIS_FETCH_DEPTH: "64"
     AUTONOMOUS_TRADER_ARTIFACT_DIR: /workspace/.agentrun/autonomous-trader
     CODEX_CONFIG: /root/.codex/config.toml
     CODEX_LOG_LEVEL: info
@@ -146,9 +147,11 @@ spec:
         analysis_dir="${ANALYSIS_REPO_DIR:-/workspace/analysis}"
         analysis_repo_url="${ANALYSIS_REPO_URL:-https://github.com/gregkonush/analysis.git}"
         required_commit="${ANALYSIS_REQUIRED_COMMIT:-b4d7485e106dc1197d293683e3413fe74dacd698}"
+        fetch_depth="${ANALYSIS_FETCH_DEPTH:-64}"
         python_bin="${PYTHON_BIN:-python3}"
 
         mkdir -p "${artifact_dir}"
+        bootstrap_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
         ensure_artifact_file() {
           local name="$1"
@@ -185,18 +188,41 @@ spec:
           fi
         }
 
-        if [ -d "${analysis_dir}/.git" ]; then
-          git_with_auth -C "${analysis_dir}" fetch origin main
-        else
+        fetch_analysis_main() {
+          local depth="$1"
+          if ! git_with_auth -C "${analysis_dir}" fetch --filter=blob:none --prune --depth="${depth}" origin main:refs/remotes/origin/main; then
+            git_with_auth -C "${analysis_dir}" fetch --prune --depth="${depth}" origin main:refs/remotes/origin/main
+          fi
+        }
+
+        deepen_analysis_history() {
+          local deepen_by="$1"
+          if ! git_with_auth -C "${analysis_dir}" fetch --filter=blob:none --deepen="${deepen_by}" origin main:refs/remotes/origin/main; then
+            git_with_auth -C "${analysis_dir}" fetch --deepen="${deepen_by}" origin main:refs/remotes/origin/main || true
+          fi
+        }
+
+        if [ ! -d "${analysis_dir}/.git" ]; then
           rm -rf "${analysis_dir}"
-          git_with_auth clone "${analysis_repo_url}" "${analysis_dir}"
+          mkdir -p "${analysis_dir}"
+          git -C "${analysis_dir}" init -q
+          git -C "${analysis_dir}" remote add origin "${analysis_repo_url}"
         fi
 
-        git_with_auth -C "${analysis_dir}" fetch origin main
-        git -C "${analysis_dir}" checkout --detach origin/main
         git -C "${analysis_dir}" remote set-url origin "${analysis_repo_url}"
+        git -C "${analysis_dir}" config gc.auto 0
+        fetch_analysis_main "${fetch_depth}"
+        git -C "${analysis_dir}" checkout --force --detach origin/main
+        git -C "${analysis_dir}" reset --hard origin/main
+        git -C "${analysis_dir}" clean -ffd
 
         analysis_head="$(git -C "${analysis_dir}" rev-parse HEAD)"
+        if ! git -C "${analysis_dir}" merge-base --is-ancestor "${required_commit}" HEAD; then
+          deepen_analysis_history 256
+        fi
+        if ! git -C "${analysis_dir}" merge-base --is-ancestor "${required_commit}" HEAD; then
+          deepen_analysis_history 1024
+        fi
         if ! git -C "${analysis_dir}" merge-base --is-ancestor "${required_commit}" HEAD; then
           printf '{"ok":false,"reason":"analysis_repo_stale","analysis_head":"%s","required_commit":"%s"}\n' \
             "${analysis_head}" "${required_commit}" > "${artifact_dir}/analysis-bootstrap.json"
@@ -245,8 +271,8 @@ spec:
         PYTHONPATH="${analysis_dir}/src" "${analysis_python}" -m stock_analysis daytrading-validate-context \
           "${artifact_dir}/analysis-context.json"
 
-        printf '{"ok":true,"analysis_head":"%s","required_commit":"%s","context_path":"%s","install_method":"%s"}\n' \
-          "${analysis_head}" "${required_commit}" "${artifact_dir}/analysis-context.json" "${install_method}" \
+        printf '{"ok":true,"analysis_head":"%s","required_commit":"%s","context_path":"%s","install_method":"%s","fetch_depth":"%s","partial_clone":true,"started_at":"%s","finished_at":"%s"}\n' \
+          "${analysis_head}" "${required_commit}" "${artifact_dir}/analysis-context.json" "${install_method}" "${fetch_depth}" "${bootstrap_started_at}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
           > "${artifact_dir}/analysis-bootstrap.json"
     - path: /root/alpaca-mcp-stdio-bridge.py
       content: |-

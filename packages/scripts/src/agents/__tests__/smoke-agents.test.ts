@@ -692,7 +692,7 @@ describe('synthesis autonomous trader provider', () => {
     expect(taskPrompt).toContain('Retry transient Alpaca MCP read failures up to 3 times')
     expect(taskPrompt).toContain('record `mcp_retry`')
     expect(taskPrompt).toContain(
-      'terminal_reason `target_reached`, `market_closed`, `dry_run_complete`, or `hard_stop`',
+      'terminal_reason `target_reached`, `market_closed`, `dry_run_complete`, `scorecard_readback_waiting`, `scorecard_readback_complete`, or `hard_stop`',
     )
     expect(taskPrompt).toContain('/root/bootstrap-analysis-daytrading.sh')
     expect(taskPrompt).toContain('Use the scheduled premarket window')
@@ -702,10 +702,14 @@ describe('synthesis autonomous trader provider', () => {
     expect(prompt).toContain('In scorecard-readback mode')
     expect(prompt).toContain('call `autotrader_get_scorecard` before any scanner or candidate grading')
     expect(prompt).toContain('scorecard_readback_complete')
+    expect(prompt).toContain('do not inspect Synthesis source code')
+    expect(prompt).toContain('Use the already-deployed Synthesis MCP/API and finish after the readback proof')
     expect(prompt).toContain('do not call Alpaca order submission, cancel, replace, or close-position tools')
     expect(taskPrompt).toContain('`scorecard-readback`')
     expect(taskPrompt).toContain('scorecard_readback_waiting_for_market_session')
     expect(taskPrompt).toContain('scorecard_readback_complete')
+    expect(taskPrompt).toContain('do not inspect Synthesis source code')
+    expect(taskPrompt).toContain('Use the already-deployed Synthesis MCP/API and finish after the readback proof')
     expect(taskPrompt).toContain('do not call Alpaca order submission, cancel, replace, or close-position tools')
     expect(prompt).toContain('loop until market close, 500000 USD equity, or unrecoverable account/order state')
     expect(prompt).toContain('run exactly one bounded paper-order smoke before the first non-smoke trade')
@@ -719,7 +723,9 @@ describe('synthesis autonomous trader provider', () => {
     expect(prompt).toContain('Use the scheduled premarket window')
     expect(prompt).toContain('analysis-context.json')
     expect(prompt).toContain('daytrading-validate-ticket')
-    expect(prompt).toContain('terminal_reason as `target_reached`, `market_closed`, `dry_run_complete`, or `hard_stop`')
+    expect(prompt).toContain(
+      'terminal_reason as `target_reached`, `market_closed`, `dry_run_complete`, `scorecard_readback_waiting`, `scorecard_readback_complete`, or `hard_stop`',
+    )
     expect(prompt).toContain('order_class')
     expect(prompt).toContain('take_profit_limit_price')
     expect(prompt).toContain('stop_loss_stop_price')
@@ -799,11 +805,16 @@ describe('synthesis autonomous trader provider', () => {
 
     expect(objectAt(envTemplate, 'ANALYSIS_REPO_URL')).toBe('https://github.com/gregkonush/analysis.git')
     expect(objectAt(envTemplate, 'ANALYSIS_REQUIRED_COMMIT')).toBe('b4d7485e106dc1197d293683e3413fe74dacd698')
+    expect(objectAt(envTemplate, 'ANALYSIS_FETCH_DEPTH')).toBe('64')
     expect(objectAt(codexConfig, 'content')).toContain('[projects."/workspace/analysis"]')
     expect(objectAt(codexConfig, 'content')).toContain('model_reasoning_summary = "none"')
     expect(objectAt(bootstrap, 'content')).toContain('x-access-token:%s')
     expect(objectAt(bootstrap, 'content')).toContain('Authorization: Basic')
     expect(objectAt(bootstrap, 'content')).not.toContain('Authorization: Bearer')
+    expect(objectAt(bootstrap, 'content')).toContain('--filter=blob:none')
+    expect(objectAt(bootstrap, 'content')).toContain('--depth="${depth}"')
+    expect(objectAt(bootstrap, 'content')).toContain('deepen_analysis_history')
+    expect(objectAt(bootstrap, 'content')).not.toContain('git_with_auth clone')
     expect(objectAt(bootstrap, 'content')).toContain('ensure_artifact_file')
     expect(objectAt(bootstrap, 'content')).toContain('decision-ledger.jsonl')
     expect(objectAt(bootstrap, 'content')).toContain('protective-orders.jsonl')
