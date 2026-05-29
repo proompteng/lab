@@ -643,6 +643,16 @@ def _runtime_ledger_bucket_payload(bucket: RuntimeLedgerBucket) -> dict[str, obj
             if bucket.post_cost_expectancy_bps is not None
             else None
         ),
+        "diagnostic_closed_trade_expectancy_bps": (
+            str(bucket.diagnostic_closed_trade_expectancy_bps)
+            if bucket.diagnostic_closed_trade_expectancy_bps is not None
+            else None
+        ),
+        "diagnostic_closed_trade_expectancy_basis": (
+            "realized_closed_trips_after_explicit_costs_not_promotion_grade"
+            if bucket.diagnostic_closed_trade_expectancy_bps is not None
+            else None
+        ),
         "cost_basis_counts": bucket.cost_basis_counts,
         "execution_policy_hash_counts": bucket.execution_policy_hash_counts,
         "cost_model_hash_counts": bucket.cost_model_hash_counts,
@@ -671,6 +681,9 @@ def _runtime_ledger_bucket_profit_proof_blockers(
     filled_notional = _decimal_or_none(bucket.get("filled_notional"))
     cost_amount = _decimal_or_none(bucket.get("cost_amount"))
     post_cost_expectancy = _decimal_or_none(bucket.get("post_cost_expectancy_bps"))
+    diagnostic_closed_trade_expectancy = _decimal_or_none(
+        bucket.get("diagnostic_closed_trade_expectancy_bps")
+    )
     if bucket.get("pnl_basis") != POST_COST_BASIS_RUNTIME_LEDGER:
         add("runtime_ledger_pnl_basis_not_runtime_ledger")
     if bucket.get("ledger_schema_version") not in RUNTIME_LEDGER_BUCKET_SCHEMAS:
@@ -730,7 +743,11 @@ def _runtime_ledger_bucket_profit_proof_blockers(
     if profit_proof_eligible is False:
         add(SOURCE_DECISION_MODE_NOT_PROFIT_PROOF_ELIGIBLE_BLOCKER)
     if post_cost_expectancy is None:
-        add("runtime_ledger_post_cost_expectancy_missing")
+        add(
+            "runtime_ledger_post_cost_expectancy_not_promotion_grade"
+            if diagnostic_closed_trade_expectancy is not None
+            else "runtime_ledger_post_cost_expectancy_missing"
+        )
     if _mapping_hash_count(bucket.get("execution_policy_hash_counts")) <= 0:
         add("runtime_ledger_execution_policy_hash_missing")
     if _mapping_hash_count(bucket.get("cost_model_hash_counts")) <= 0:
@@ -768,6 +785,14 @@ def _runtime_ledger_tca_row_from_bucket(
         "post_cost_expectancy_bps": bucket.post_cost_expectancy_bps,
         "post_cost_expectancy_basis": POST_COST_BASIS_RUNTIME_LEDGER,
         "post_cost_promotion_eligible": promotion_eligible,
+        "diagnostic_closed_trade_expectancy_bps": (
+            bucket.diagnostic_closed_trade_expectancy_bps
+        ),
+        "diagnostic_closed_trade_expectancy_basis": (
+            "realized_closed_trips_after_explicit_costs_not_promotion_grade"
+            if bucket.diagnostic_closed_trade_expectancy_bps is not None
+            else None
+        ),
         "realized_gross_pnl": bucket.gross_strategy_pnl,
         "realized_net_pnl": bucket.net_strategy_pnl_after_costs,
         "turnover_notional": bucket.filled_notional,

@@ -295,7 +295,9 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         args = SimpleNamespace(target_dsn="", target_dsn_env="SIM_DB_DSN")
 
         with patch.dict("os.environ", {}, clear=True):
-            with self.assertRaisesRegex(RuntimeError, "target_dsn_not_configured:SIM_DB_DSN"):
+            with self.assertRaisesRegex(
+                RuntimeError, "target_dsn_not_configured:SIM_DB_DSN"
+            ):
                 _target_persistence_dsn(args)
 
     def test_persistence_session_uses_target_dsn_env(self) -> None:
@@ -603,6 +605,35 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertIn("runtime_ledger_cost_model_hash_missing", blockers)
         self.assertIn("runtime_ledger_lineage_hash_missing", blockers)
         self.assertIn("source_decision_mode_not_profit_proof_eligible", blockers)
+
+    def test_runtime_ledger_profit_proof_distinguishes_diagnostic_expectancy(
+        self,
+    ) -> None:
+        blockers = _runtime_ledger_bucket_profit_proof_blockers(
+            _complete_runtime_ledger_bucket(
+                open_position_count=1,
+                post_cost_expectancy_bps=None,
+                diagnostic_closed_trade_expectancy_bps="282.5",
+                diagnostic_closed_trade_expectancy_basis=(
+                    "realized_closed_trips_after_explicit_costs_not_promotion_grade"
+                ),
+            )
+        )
+
+        self.assertIn("unclosed_position", blockers)
+        self.assertIn(
+            "runtime_ledger_post_cost_expectancy_not_promotion_grade", blockers
+        )
+        self.assertNotIn("runtime_ledger_post_cost_expectancy_missing", blockers)
+        self.assertFalse(
+            _runtime_ledger_bucket_profit_proof_present(
+                _complete_runtime_ledger_bucket(
+                    open_position_count=1,
+                    post_cost_expectancy_bps=None,
+                    diagnostic_closed_trade_expectancy_bps="282.5",
+                )
+            )
+        )
 
     def test_runtime_ledger_profit_proof_rejects_missing_source_decision_evidence(
         self,

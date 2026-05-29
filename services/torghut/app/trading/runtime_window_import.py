@@ -292,6 +292,9 @@ def _runtime_ledger_bucket_blockers(bucket: Mapping[str, Any]) -> list[str]:
     filled_notional = _optional_decimal(bucket.get("filled_notional"))
     cost_amount = _optional_decimal(bucket.get("cost_amount"))
     post_cost_expectancy = _optional_decimal(bucket.get("post_cost_expectancy_bps"))
+    diagnostic_closed_trade_expectancy = _optional_decimal(
+        bucket.get("diagnostic_closed_trade_expectancy_bps")
+    )
 
     if ledger_schema_version is None:
         blockers.append("runtime_ledger_schema_version_missing")
@@ -351,7 +354,11 @@ def _runtime_ledger_bucket_blockers(bucket: Mapping[str, Any]) -> list[str]:
     if profit_proof_eligible is False:
         blockers.append(SOURCE_DECISION_MODE_NOT_PROFIT_PROOF_ELIGIBLE_BLOCKER)
     if post_cost_expectancy is None:
-        blockers.append("runtime_ledger_expectancy_missing")
+        blockers.append(
+            "runtime_ledger_expectancy_not_promotion_grade"
+            if diagnostic_closed_trade_expectancy is not None
+            else "runtime_ledger_expectancy_missing"
+        )
     if _hash_count(bucket.get("execution_policy_hash_counts")) <= 0:
         blockers.append("runtime_ledger_execution_policy_hash_missing")
     if _hash_count(bucket.get("cost_model_hash_counts")) <= 0:
