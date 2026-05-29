@@ -673,7 +673,7 @@ describe('synthesis autonomous trader provider', () => {
     )
     expect(taskPrompt).toContain('/root/bootstrap-analysis-daytrading.sh')
     expect(taskPrompt).toContain('Use the scheduled premarket window')
-    expect(taskPrompt).toContain('4ce90bf7fc16f9bf90f7fe221f36db23c7ff44a5')
+    expect(taskPrompt).toContain('b4d7485e106dc1197d293683e3413fe74dacd698')
     expect(taskPrompt).toContain('daytrading-scan')
     expect(taskPrompt).toContain('daytrading-validate-ticket')
     expect(prompt).toContain('loop until market close, 500000 USD equity, or unrecoverable account/order state')
@@ -767,7 +767,7 @@ describe('synthesis autonomous trader provider', () => {
     const artifactNames = (outputArtifacts ?? []).map((artifact) => objectAt(artifact, 'name'))
 
     expect(objectAt(envTemplate, 'ANALYSIS_REPO_URL')).toBe('https://github.com/gregkonush/analysis.git')
-    expect(objectAt(envTemplate, 'ANALYSIS_REQUIRED_COMMIT')).toBe('4ce90bf7fc16f9bf90f7fe221f36db23c7ff44a5')
+    expect(objectAt(envTemplate, 'ANALYSIS_REQUIRED_COMMIT')).toBe('b4d7485e106dc1197d293683e3413fe74dacd698')
     expect(objectAt(codexConfig, 'content')).toContain('[projects."/workspace/analysis"]')
     expect(objectAt(codexConfig, 'content')).toContain('model_reasoning_summary = "none"')
     expect(objectAt(bootstrap, 'content')).toContain('x-access-token:%s')

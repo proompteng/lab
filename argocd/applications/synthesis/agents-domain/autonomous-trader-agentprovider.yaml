@@ -77,7 +77,7 @@ spec:
     AGENTS_ARTIFACTS_SECURE: "false"
     ALPACA_PAPER_TRADE: "true"
     ANALYSIS_REPO_URL: https://github.com/gregkonush/analysis.git
-    ANALYSIS_REQUIRED_COMMIT: 4ce90bf7fc16f9bf90f7fe221f36db23c7ff44a5
+    ANALYSIS_REQUIRED_COMMIT: b4d7485e106dc1197d293683e3413fe74dacd698
     AUTONOMOUS_TRADER_ARTIFACT_DIR: /workspace/.agentrun/autonomous-trader
     CODEX_CONFIG: /root/.codex/config.toml
     CODEX_LOG_LEVEL: info
@@ -145,7 +145,7 @@ spec:
         artifact_dir="${AUTONOMOUS_TRADER_ARTIFACT_DIR:-/workspace/.agentrun/autonomous-trader}"
         analysis_dir="${ANALYSIS_REPO_DIR:-/workspace/analysis}"
         analysis_repo_url="${ANALYSIS_REPO_URL:-https://github.com/gregkonush/analysis.git}"
-        required_commit="${ANALYSIS_REQUIRED_COMMIT:-4ce90bf7fc16f9bf90f7fe221f36db23c7ff44a5}"
+        required_commit="${ANALYSIS_REQUIRED_COMMIT:-b4d7485e106dc1197d293683e3413fe74dacd698}"
         python_bin="${PYTHON_BIN:-python3}"
 
         mkdir -p "${artifact_dir}"

@@ -42,7 +42,7 @@ spec:
     1. Bootstrap analysis before any market-open order:
        - Run `/usr/bin/env bash /root/bootstrap-analysis-daytrading.sh`.
        - Read `/workspace/analysis/docs/daytrading-agent-bootstrap.md`.
-       - Require analysis commit `4ce90bf7fc16f9bf90f7fe221f36db23c7ff44a5` or newer.
+       - Require analysis commit `b4d7485e106dc1197d293683e3413fe74dacd698` or newer.
        - Produce valid `/workspace/.agentrun/autonomous-trader/analysis-context.json` and `/workspace/.agentrun/autonomous-trader/analysis-bootstrap.json`.
        - Use the scheduled premarket window for this bootstrap, tool validation, scorecard readback, and context construction; do not submit orders until the regular session is open.
     2. Preflight:
