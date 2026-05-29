@@ -136,7 +136,7 @@ spec:
         [mcp_servers.synthesis]
         command = "node"
         args = ["/root/.codex/synthesis-mcp-proxy.mjs"]
-        env = { SYNTHESIS_API_TOKEN_FILE = "/var/run/synthesis/SYNTHESIS_API_TOKEN", SYNTHESIS_MCP_URL = "http://synthesis.synthesis.svc.cluster.local:3000/mcp", AGENT_RUN_NAME = "{{ agentRun.name }}", AGENT_RUN_NAMESPACE = "{{ agentRun.namespace }}" }
+        env = { SYNTHESIS_API_TOKEN_FILE = "/var/run/synthesis/SYNTHESIS_API_TOKEN", SYNTHESIS_MCP_URL = "http://synthesis.synthesis.svc.cluster.local:3000/mcp" }
     - path: /root/bootstrap-analysis-daytrading.sh
       content: |-
         #!/usr/bin/env bash
@@ -332,7 +332,25 @@ spec:
           process.env.SYNTHESIS_API_TOKEN ||
           process.env.SYNTHESIS_MCP_TOKEN ||
           readFirstTokenFile([process.env.SYNTHESIS_API_TOKEN_FILE, '/var/run/synthesis/SYNTHESIS_API_TOKEN'])
-        const agentRunName = process.env.AGENT_RUN_NAME || ''
+
+        const readJsonFile = (path) => {
+          try {
+            return JSON.parse(readFileSync(path, 'utf8'))
+          } catch {
+            return null
+          }
+        }
+
+        const isTemplatePlaceholder = (value) => typeof value === 'string' && value.includes('{{')
+        const cleanIdentityValue = (value) => {
+          if (typeof value !== 'string') return ''
+          const trimmed = value.trim()
+          return trimmed && !isTemplatePlaceholder(trimmed) ? trimmed : ''
+        }
+
+        const runEnvelope = readJsonFile('/workspace/run.json')
+        const agentRunName =
+          cleanIdentityValue(process.env.AGENT_RUN_NAME) || cleanIdentityValue(runEnvelope?.agentRun?.name)
 
         const buildError = (id, code, message, data) => ({
           jsonrpc: '2.0',
