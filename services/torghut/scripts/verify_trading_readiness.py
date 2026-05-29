@@ -479,7 +479,9 @@ def _paper_route_preopen_evidence_collection_ready(
         "profile_allows_paper": profile in {"paper", "either"},
         "market_open_not_required": not require_market_open,
         "market_closed": not market_open,
-        "probe_candidate_required": require_paper_route_probe_candidate,
+        "probe_candidate_requirement_satisfied": (
+            require_paper_route_probe_candidate or require_paper_route_target_plan
+        ),
         "target_plan_required": require_paper_route_target_plan,
         "import_ready_not_required": not require_paper_route_import_ready,
         "runtime_profit_proof_not_required": not require_runtime_ledger_profit_proof,
