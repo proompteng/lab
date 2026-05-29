@@ -95,7 +95,7 @@ class MarketContextDomain(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    domain: Literal["technicals", "fundamentals", "news", "regime"]
+    domain: Literal["technicals", "regime"]
     state: Literal["ok", "stale", "missing", "error"]
     as_of: Optional[datetime] = Field(default=None, alias="asOf")
     freshness_seconds: Optional[int] = Field(default=None, alias="freshnessSeconds")
@@ -103,18 +103,18 @@ class MarketContextDomain(BaseModel):
     source_count: int = Field(alias="sourceCount")
     quality_score: float = Field(ge=0.0, le=1.0, alias="qualityScore")
     payload: dict[str, Any] = Field(default_factory=dict)
-    citations: list[MarketContextCitation] = Field(default_factory=_market_context_citations_default)
+    citations: list[MarketContextCitation] = Field(
+        default_factory=_market_context_citations_default
+    )
     risk_flags: list[str] = Field(default_factory=list, alias="riskFlags")
 
 
 class MarketContextDomains(BaseModel):
     """Grouped domain blocks in the market-context bundle."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     technicals: MarketContextDomain
-    fundamentals: MarketContextDomain
-    news: MarketContextDomain
     regime: MarketContextDomain
 
 
@@ -169,7 +169,9 @@ class LLMReviewRequest(BaseModel):
     portfolio: PortfolioSnapshot
     market: Optional[MarketSnapshot] = None
     market_context: Optional[MarketContextBundle] = None
-    recent_decisions: list[RecentDecisionSummary] = Field(default_factory=_recent_decisions_default)
+    recent_decisions: list[RecentDecisionSummary] = Field(
+        default_factory=_recent_decisions_default
+    )
     account: dict[str, str] = Field(default_factory=_account_default)
     positions: list[dict[str, Any]] = Field(default_factory=_positions_default)
     policy: LLMPolicyContext
@@ -191,7 +193,9 @@ class LLMReviewResponse(BaseModel):
     uncertainty: "LLMUncertainty"
     calibration_metadata: dict[str, Any] = Field(default_factory=dict)
     adjusted_qty: Optional[Decimal] = None
-    adjusted_order_type: Optional[Literal["market", "limit", "stop", "stop_limit"]] = None
+    adjusted_order_type: Optional[Literal["market", "limit", "stop", "stop_limit"]] = (
+        None
+    )
     limit_price: Optional[Decimal] = None
     escalate_reason: Optional[str] = None
     rationale: str
@@ -236,7 +240,10 @@ class LLMReviewResponse(BaseModel):
             raise ValueError("adjusted_qty_required_for_adjust_verdict")
         if self.verdict == "escalate" and self.escalate_reason is None:
             raise ValueError("escalate_reason_required_for_escalate_verdict")
-        if self.adjusted_order_type in {"limit", "stop_limit"} and self.limit_price is None:
+        if (
+            self.adjusted_order_type in {"limit", "stop_limit"}
+            and self.limit_price is None
+        ):
             raise ValueError("limit_price_required_for_limit_orders")
         return self
 
@@ -272,9 +279,15 @@ class LLMUncertainty(BaseModel):
 
     @model_validator(mode="after")
     def validate_interval(self) -> "LLMUncertainty":
-        if self.confidence_interval_low is None and self.confidence_interval_high is None:
+        if (
+            self.confidence_interval_low is None
+            and self.confidence_interval_high is None
+        ):
             return self
-        if self.confidence_interval_low is None or self.confidence_interval_high is None:
+        if (
+            self.confidence_interval_low is None
+            or self.confidence_interval_high is None
+        ):
             raise ValueError("uncertainty_confidence_interval_incomplete")
         if self.confidence_interval_low > self.confidence_interval_high:
             raise ValueError("uncertainty_confidence_interval_invalid")
@@ -293,7 +306,9 @@ class LLMCommitteeMemberResponse(BaseModel):
     rationale_short: str
     required_checks: list[str] = Field(default_factory=list)
     adjusted_qty: Optional[Decimal] = None
-    adjusted_order_type: Optional[Literal["market", "limit", "stop", "stop_limit"]] = None
+    adjusted_order_type: Optional[Literal["market", "limit", "stop", "stop_limit"]] = (
+        None
+    )
     limit_price: Optional[Decimal] = None
     risk_flags: list[str] = Field(default_factory=list)
     latency_ms: Optional[int] = None
