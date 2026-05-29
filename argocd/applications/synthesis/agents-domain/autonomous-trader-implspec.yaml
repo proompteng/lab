@@ -25,6 +25,7 @@ spec:
     - Read Synthesis scorecards before grading new candidates and finalize every session with scorecard observations.
     - Use available Alpaca paper-account instruments and operations when justified by current account and market state.
     - Use stock/ETF bracket, OTO, or OCO protective order classes when feasible; otherwise record the exact managed-exit fallback.
+    - Use AgentRun-owned deterministic client order ids for every broker mutation, including entries, exits, risk reductions, flattens, cancels, and replacements.
     - Publish operator-visible status through Synthesis MCP autotrader tables; feed items are milestone summaries only.
     - Keep market-open runs active until market close, 500000 USD equity, or an unrecoverable blocker.
     - In dry-run mode, never call Alpaca order submission, cancel, replace, or close-position tools; still write scanner, no-trade, risk, status, and scorecard state to Synthesis.
@@ -39,6 +40,7 @@ spec:
     - Trade only through Alpaca MCP in the paper account.
     - Use stocks, ETFs, options, or any other financial instruments available in the account.
     - You may open, close, reduce, hedge, reverse, or stand down when the current signal and account state justify it.
+    - Use AgentRun-owned deterministic client order ids for every broker mutation, including entries, exits, risk reductions, flattens, cancels, and replacements.
 
     Execution contract:
     1. Bootstrap analysis before any market-open order:
@@ -86,7 +88,9 @@ spec:
        - For existing stock or ETF positions, prefer OCO exits when feasible.
        - For options, manage exits explicitly in the loop with max loss, target, invalidation, and near-close liquidation or hold decision because the current option MCP tool does not expose bracket/stop/take-profit fields.
        - Do not create a new unmanaged position unless broker-attached protection is unavailable and the active fallback monitor is recorded in `/workspace/.agentrun/autonomous-trader/protective-orders.jsonl`.
-       - Reconcile each submitted order by order id or client order id before the next action.
+       - For every Alpaca broker mutation in `market-open`, including stock/ETF entries, protective exits, risk reductions, residual flattens, option closes, cancels, and replacements, build a deterministic `client_order_id` prefixed with `AGENT_RUN_NAME`, record the planned order with `autotrader_record_order` before the broker call, submit or mutate with that exact `client_order_id` when the Alpaca MCP tool supports it, and reconcile by that exact id before the next action.
+       - Never rely on broker-generated or random client ids for AgentRun-owned orders. If an observed order has a generated/random client id or `source=access_key`, classify it as external/non-AgentRun, record it as external in Synthesis, and do not treat it as proof that this AgentRun submitted the order.
+       - Reconcile each submitted order by order id and AgentRun-prefixed client order id before the next action.
        - Write each cycle through Synthesis autotrader MCP: `autotrader_upsert_status` for current state, `autotrader_append_event` for decisions/no-trade/order lifecycle, `autotrader_create_trade_ticket` for every candidate selected or blocked, `autotrader_record_risk_check` for risk gates, `autotrader_record_order` and `autotrader_record_fill` for Alpaca reconciliation, and `autotrader_record_position_snapshot` after broker position reads.
        - After every broker-changing action, external account change, reconciled order, or reconciled fill, immediately refresh broker account/positions, call `autotrader_upsert_status`, and rewrite `current-status.json` before scanning or submitting another order.
        - Append local JSONL artifacts only as export/debug copies; Synthesis Postgres is primary runtime state.

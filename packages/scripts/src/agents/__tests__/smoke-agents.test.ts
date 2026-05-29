@@ -687,6 +687,7 @@ describe('synthesis autonomous trader provider', () => {
     expect(prompt).toContain('Reach 500000 USD account equity')
     expect(prompt).toContain('Trade stocks, ETFs, options, or any other financial instruments available in the account')
     expect(prompt).toContain('Open, close, reduce, hedge, reverse, or stand down')
+    expect(prompt).toContain('Use AgentRun-owned deterministic client order ids for every broker mutation')
     expect(prompt).toContain('Route orders only to the Alpaca paper account')
     expect(prompt).toContain('or any other financial instruments available in the account')
     expect(prompt).not.toContain('Target the requested account value as actual paper account equity')
@@ -756,6 +757,13 @@ describe('synthesis autonomous trader provider', () => {
     expect(prompt).toContain('bracket or OTO orders')
     expect(prompt).toContain('prefer OCO exits')
     expect(prompt).toContain('protective-orders.jsonl')
+    expect(prompt).toContain('For every Alpaca broker mutation in market-open mode')
+    expect(prompt).toContain('build a deterministic `client_order_id` prefixed with `AGENT_RUN_NAME`')
+    expect(prompt).toContain('submit or mutate with that exact `client_order_id` when the Alpaca MCP tool supports it')
+    expect(prompt).toContain('Never rely on broker-generated or random client ids for AgentRun-owned orders')
+    expect(prompt).toContain('`source=access_key`')
+    expect(prompt).toContain('classify it as external/non-AgentRun')
+    expect(prompt).toContain('Reconcile every submitted order by order id and AgentRun-prefixed client order id')
     expect(prompt).toContain('Use Synthesis MCP autotrader tools as the canonical operator-visible runtime state')
     expect(prompt).toContain('Read the exact Kubernetes AgentRun name from `AGENT_RUN_NAME`')
     expect(prompt).toContain('Do not invent, normalize, shorten, timestamp, or replace the `AGENT_RUN_NAME` value')
@@ -788,6 +796,16 @@ describe('synthesis autonomous trader provider', () => {
     expect(taskPrompt).toContain('bracket or OTO orders')
     expect(taskPrompt).toContain('prefer OCO exits')
     expect(taskPrompt).toContain('protective-orders.jsonl')
+    expect(taskPrompt).toContain('Use AgentRun-owned deterministic client order ids for every broker mutation')
+    expect(taskPrompt).toContain('For every Alpaca broker mutation in `market-open`')
+    expect(taskPrompt).toContain('build a deterministic `client_order_id` prefixed with `AGENT_RUN_NAME`')
+    expect(taskPrompt).toContain(
+      'submit or mutate with that exact `client_order_id` when the Alpaca MCP tool supports it',
+    )
+    expect(taskPrompt).toContain('Never rely on broker-generated or random client ids for AgentRun-owned orders')
+    expect(taskPrompt).toContain('`source=access_key`')
+    expect(taskPrompt).toContain('classify it as external/non-AgentRun')
+    expect(taskPrompt).toContain('Reconcile each submitted order by order id and AgentRun-prefixed client order id')
     expect(taskPrompt).toContain('Synthesis visibility')
     expect(taskPrompt).toContain(
       'Read the exact Kubernetes AgentRun name from the `AGENT_RUN_NAME` environment variable',
