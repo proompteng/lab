@@ -729,6 +729,74 @@ def _strategy_universe_symbols(
     return []
 
 
+def _strategy_source_decision_readiness(
+    session: Session,
+    *,
+    strategy_lookup_names: Sequence[str],
+    raw_probe_symbols: Sequence[str],
+    scoped_probe_symbols: Sequence[str],
+) -> dict[str, object]:
+    lookup_names = [name for name in strategy_lookup_names if name]
+    blockers: list[str] = []
+    matched: dict[str, object] | None = None
+    if lookup_names:
+        rows = [
+            dict(row)
+            for row in session.execute(
+                select(
+                    Strategy.id.label("id"),
+                    Strategy.name.label("name"),
+                    Strategy.enabled.label("enabled"),
+                    Strategy.base_timeframe.label("base_timeframe"),
+                    Strategy.universe_symbols.label("universe_symbols"),
+                    Strategy.max_notional_per_trade.label("max_notional_per_trade"),
+                ).where(Strategy.name.in_(lookup_names))
+            )
+            .mappings()
+            .all()
+        ]
+        rows_by_name = {str(row.get("name")): row for row in rows if row.get("name")}
+        for lookup_name in lookup_names:
+            row = rows_by_name.get(lookup_name)
+            if row is None:
+                continue
+            universe_symbols = [
+                symbol
+                for raw_symbol in _as_sequence(row.get("universe_symbols"))
+                if (symbol := str(raw_symbol).strip().upper())
+            ]
+            matched = {
+                "strategy_id": str(row.get("id") or ""),
+                "strategy_name": str(row.get("name") or ""),
+                "enabled": bool(row.get("enabled")),
+                "base_timeframe": str(row.get("base_timeframe") or ""),
+                "universe_symbols": universe_symbols,
+                "max_notional_per_trade": _decimal_text(
+                    row.get("max_notional_per_trade")
+                ),
+            }
+            break
+    else:
+        blockers.append("source_strategy_lookup_missing")
+    if matched is None:
+        blockers.append("source_strategy_missing")
+    elif not bool(matched.get("enabled")):
+        blockers.append("source_strategy_disabled")
+    if not raw_probe_symbols:
+        blockers.append("paper_route_probe_symbol_missing")
+    elif not scoped_probe_symbols:
+        blockers.append("source_strategy_universe_excludes_probe_symbols")
+    return {
+        "schema_version": "torghut.paper-route-source-decision-readiness.v1",
+        "ready": not blockers,
+        "blockers": blockers,
+        "strategy_lookup_names": lookup_names,
+        "matched_strategy": matched,
+        "raw_probe_symbols": list(raw_probe_symbols),
+        "scoped_probe_symbols": list(scoped_probe_symbols),
+    }
+
+
 def _next_session_probe_notional(probe: Mapping[str, object]) -> str:
     next_notional = _safe_decimal(probe.get("next_session_max_notional"))
     if next_notional > 0:
@@ -1100,6 +1168,12 @@ def _next_paper_route_runtime_window_targets(
                 raw_target_probe_symbols,
                 scope_symbols=strategy_universe_symbols,
             )
+        source_decision_readiness = _strategy_source_decision_readiness(
+            session,
+            strategy_lookup_names=strategy_lookup_names,
+            raw_probe_symbols=raw_target_probe_symbols,
+            scoped_probe_symbols=target_probe_symbols,
+        )
         target_probe_ready = (
             bool(probe.get("configured_enabled"))
             and _safe_decimal(next_notional) > 0
@@ -1265,6 +1339,7 @@ def _next_paper_route_runtime_window_targets(
                 "window_end": _isoformat(window_end),
                 "paper_route_probe_symbols": target_probe_symbols,
             },
+            "source_decision_readiness": source_decision_readiness,
             "paper_route_session_readiness_state": _safe_text(
                 session_readiness.get("state")
             )
@@ -1315,6 +1390,20 @@ def _next_paper_route_runtime_window_targets(
         planned_execution_source_keys[execution_source_key] = planned_target
         planned_targets.append(planned_target)
     health_gate_summary = _runtime_window_import_health_gate_summary(planned_targets)
+    source_decision_readiness_items = [
+        _as_mapping(target.get("source_decision_readiness"))
+        for target in planned_targets
+    ]
+    source_decision_ready_count = sum(
+        1 for item in source_decision_readiness_items if bool(item.get("ready"))
+    )
+    source_decision_blockers = sorted(
+        {
+            blocker
+            for item in source_decision_readiness_items
+            for blocker in _unique_text_items(item.get("blockers"))
+        }
+    )
     return {
         "schema_version": NEXT_PAPER_ROUTE_RUNTIME_WINDOW_TARGETS_SCHEMA_VERSION,
         "source": "paper_route_evidence_audit",
@@ -1337,6 +1426,15 @@ def _next_paper_route_runtime_window_targets(
             "runtime_window_import_health_gate": health_gate_summary,
         },
         "runtime_window_import_health_gate": health_gate_summary,
+        "source_decision_readiness": {
+            "schema_version": "torghut.paper-route-source-decision-readiness-summary.v1",
+            "target_count": len(source_decision_readiness_items),
+            "ready_target_count": source_decision_ready_count,
+            "blocked_target_count": (
+                len(source_decision_readiness_items) - source_decision_ready_count
+            ),
+            "blockers": source_decision_blockers,
+        },
         "paper_route_probe": {
             "configured_enabled": bool(probe.get("configured_enabled")),
             "active": bool(probe.get("active")),
@@ -2520,6 +2618,7 @@ def _next_paper_route_target_summaries(
     for target in targets:
         strategy_name = _safe_text(target.get("strategy_name"))
         runtime_strategy_name = _safe_text(target.get("runtime_strategy_name"))
+        source_decision_readiness = _as_mapping(target.get("source_decision_readiness"))
         summaries.append(
             {
                 "hypothesis_id": _safe_text(target.get("hypothesis_id")),
@@ -2545,6 +2644,10 @@ def _next_paper_route_target_summaries(
                 "final_promotion_allowed": bool(target.get("final_promotion_allowed")),
                 "promotion_blocked": not bool(target.get("final_promotion_allowed")),
                 "promotion_gate": _safe_text(target.get("promotion_gate")),
+                "source_decision_ready": bool(source_decision_readiness.get("ready")),
+                "source_decision_blockers": _unique_text_items(
+                    source_decision_readiness.get("blockers")
+                ),
             }
         )
     return summaries
@@ -2638,6 +2741,9 @@ def _runtime_ledger_proof_packet_handoff(
             "import_blockers": sorted(dict.fromkeys(import_blockers)),
             "health_gate": _as_mapping(
                 next_targets.get("runtime_window_import_health_gate")
+            ),
+            "source_decision_readiness": _as_mapping(
+                next_targets.get("source_decision_readiness")
             ),
             "session_window": _as_mapping(next_targets.get("session_window")),
             "settlement_ready_at": session_readiness.get("settlement_ready_at"),
