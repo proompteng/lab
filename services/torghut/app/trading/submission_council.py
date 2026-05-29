@@ -37,6 +37,10 @@ from .hypotheses import (
     resolve_hypothesis_dependency_quorum,
     summarize_hypothesis_runtime_statuses,
 )
+from .market_context_domains import (
+    active_market_context_mapping,
+    active_market_context_reasons,
+)
 from .discovery.profit_target_oracle import evaluate_profit_target_oracle
 from .profit_windows import build_profit_window_contract
 from .profit_leases import build_profit_lease_projection
@@ -1776,6 +1780,27 @@ def _refresh_runtime_summary_totals(
 
 
 def build_submission_gate_market_context_status(state: object) -> dict[str, object]:
+    last_domain_states = {
+        key: str(value).strip().lower()
+        for key, value in active_market_context_mapping(
+            cast(
+                Mapping[str, Any],
+                getattr(state, "last_market_context_domain_states", {}),
+            )
+        ).items()
+    }
+    last_risk_flags = active_market_context_reasons(
+        cast(Sequence[str], getattr(state, "last_market_context_risk_flags", []))
+    )
+    raw_alert_active = bool(getattr(state, "market_context_alert_active", False))
+    alert_reason = (
+        getattr(state, "market_context_alert_reason", None)
+        or "market_context_alert_active"
+        if raw_alert_active
+        else None
+    )
+    active_alert_reasons = active_market_context_reasons([alert_reason])
+    filtered_alert_reason = active_alert_reasons[0] if active_alert_reasons else None
     return {
         "last_symbol": getattr(state, "last_market_context_symbol", None),
         "last_checked_at": getattr(state, "last_market_context_checked_at", None),
@@ -1783,17 +1808,10 @@ def build_submission_gate_market_context_status(state: object) -> dict[str, obje
         "last_freshness_seconds": getattr(
             state, "last_market_context_freshness_seconds", None
         ),
-        "last_domain_states": dict(
-            cast(
-                Mapping[str, str],
-                getattr(state, "last_market_context_domain_states", {}),
-            )
-        ),
-        "last_risk_flags": list(
-            cast(Sequence[str], getattr(state, "last_market_context_risk_flags", []))
-        ),
-        "alert_active": bool(getattr(state, "market_context_alert_active", False)),
-        "alert_reason": getattr(state, "market_context_alert_reason", None),
+        "last_domain_states": last_domain_states,
+        "last_risk_flags": last_risk_flags,
+        "alert_active": raw_alert_active and filtered_alert_reason is not None,
+        "alert_reason": filtered_alert_reason,
     }
 
 
@@ -2288,16 +2306,22 @@ def _segment_summary(
 ) -> dict[str, dict[str, object]]:
     market_context_ref = build_submission_gate_market_context_status(state)
     domain_states = {
-        str(key): str(value).strip().lower()
-        for key, value in cast(
-            Mapping[str, Any], market_context_ref.get("last_domain_states", {})
+        key: str(value).strip().lower()
+        for key, value in active_market_context_mapping(
+            cast(Mapping[str, Any], market_context_ref.get("last_domain_states", {}))
         ).items()
-        if str(key).strip()
     }
     market_context_reasons: list[str] = []
     if bool(market_context_ref.get("alert_active")):
-        market_context_reasons.append(
-            str(market_context_ref.get("alert_reason") or "market_context_alert_active")
+        market_context_reasons.extend(
+            active_market_context_reasons(
+                [
+                    str(
+                        market_context_ref.get("alert_reason")
+                        or "market_context_alert_active"
+                    )
+                ]
+            )
         )
     stale_domains = [
         domain

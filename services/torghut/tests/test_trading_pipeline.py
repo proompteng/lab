@@ -2490,7 +2490,7 @@ class TestTradingPipeline(TestCase):
         last_domain_states = cast(
             dict[str, str], captured_market_context["last_domain_states"]
         )
-        self.assertEqual(last_domain_states["news"], "ok")
+        self.assertEqual(last_domain_states, {"technicals": "ok", "regime": "ok"})
         self.assertEqual(receipt["floor_state"], "paper_ready")
         proof_dimensions = cast(list[dict[str, object]], receipt["proof_dimensions"])
         dimensions = {cast(str, item["dimension"]): item for item in proof_dimensions}

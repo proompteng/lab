@@ -107,9 +107,10 @@ def _packet(frontier: Mapping[str, object], repair_class: str) -> Mapping[str, A
         (
             "market_context_status",
             {
-                "stale_fundamentals_count": 9,
-                "stale_news_count": 15,
+                "stale_technicals_count": 9,
+                "stale_regime_count": 15,
                 "risk_flag_count": 25,
+                "risk_flags": ["technicals_source_error"],
             },
             "market_context",
             {"market_context_stale", "market_context_risk_flags"},

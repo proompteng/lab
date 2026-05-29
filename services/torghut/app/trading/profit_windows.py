@@ -9,6 +9,11 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from typing import Any, cast
 
+from .market_context_domains import (
+    active_market_context_mapping,
+    active_market_context_reasons,
+)
+
 PROFIT_WINDOW_CONTRACT_SCHEMA_VERSION = "torghut.profit-window-contract.v1"
 
 _CLICKHOUSE_FRESHNESS_REASONS = frozenset(
@@ -236,8 +241,12 @@ def _market_context_escrow(
     segment_summary: Mapping[str, Mapping[str, object]],
 ) -> dict[str, object]:
     segment = _as_mapping(segment_summary.get("market-context"))
-    reason_codes = _string_list(segment.get("reason_codes") or [])
-    domain_states = _as_mapping(market_context_ref.get("last_domain_states"))
+    reason_codes = active_market_context_reasons(
+        _string_list(segment.get("reason_codes") or [])
+    )
+    domain_states = active_market_context_mapping(
+        _as_mapping(market_context_ref.get("last_domain_states"))
+    )
     source_ref = market_context_ref.get("last_as_of") or market_context_ref.get(
         "last_checked_at"
     )
@@ -251,9 +260,13 @@ def _market_context_escrow(
     ]
     reason_codes.extend(stale_domains)
     if bool(market_context_ref.get("alert_active")):
-        reason_codes.append(
-            _safe_text(market_context_ref.get("alert_reason"))
-            or "market_context_alert_active"
+        reason_codes.extend(
+            active_market_context_reasons(
+                [
+                    _safe_text(market_context_ref.get("alert_reason"))
+                    or "market_context_alert_active"
+                ]
+            )
         )
     missing_required_evidence = required and source_ref is None and not domain_states
     if missing_required_evidence and not reason_codes:

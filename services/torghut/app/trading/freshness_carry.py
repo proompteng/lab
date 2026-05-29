@@ -9,6 +9,8 @@ from hashlib import sha256
 import json
 from typing import Any, cast
 
+from .market_context_domains import active_market_context_reasons
+
 
 FRESHNESS_CARRY_LEDGER_SCHEMA_VERSION = "torghut.freshness-carry-ledger.v1"
 
@@ -289,15 +291,22 @@ def _market_context_dimension(
     last_checked_at = market_context_status.get(
         "last_checked_at"
     ) or market_context_status.get("last_as_of")
-    reasons = [
-        *_strings(market_context_status.get("last_risk_flags")),
-        *_strings(market_context_status.get("reason_codes")),
-        *_strings(market_context_status.get("blocking_reasons")),
-    ]
+    reasons = active_market_context_reasons(
+        [
+            *_strings(market_context_status.get("last_risk_flags")),
+            *_strings(market_context_status.get("reason_codes")),
+            *_strings(market_context_status.get("blocking_reasons")),
+        ]
+    )
     if _bool(market_context_status.get("alert_active")):
-        reasons.append(
-            _text(
-                market_context_status.get("alert_reason"), "market_context_alert_active"
+        reasons.extend(
+            active_market_context_reasons(
+                [
+                    _text(
+                        market_context_status.get("alert_reason"),
+                        "market_context_alert_active",
+                    )
+                ]
             )
         )
     if market_context_status.get("health_error"):

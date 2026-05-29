@@ -10,6 +10,11 @@ from hashlib import sha256
 import json
 from typing import Any, cast
 
+from .market_context_domains import (
+    active_market_context_reasons,
+    is_active_market_context_domain,
+)
+
 
 PROFIT_SIGNAL_QUORUM_SCHEMA_VERSION = "torghut.profit-signal-quorum.v1"
 
@@ -235,16 +240,13 @@ def _market_context_signal(market: Mapping[str, Any]) -> dict[str, object]:
         reasons.append(f"market_context_route_{state}")
     if market.get("alert_active") is True:
         reasons.append(_text(market.get("alert_reason"), "market_context_alert_active"))
-    for key, reason in (
-        ("stale_snapshot_count", "market_context_snapshot_stale"),
-        ("stale_fundamentals_count", "market_context_fundamentals_stale"),
-        ("stale_news_count", "market_context_news_stale"),
-    ):
-        if _int(market.get(key)) > 0:
-            reasons.append(reason)
-    if _int(market.get("risk_flag_count")) > 0 or _strings(market.get("risk_flags")):
+    if _int(market.get("stale_snapshot_count")) > 0:
+        reasons.append("market_context_snapshot_stale")
+    if active_market_context_reasons(_strings(market.get("risk_flags"))):
         reasons.append("market_context_risk_flags")
     for domain_name, raw_domain in _mapping(market.get("domains")).items():
+        if not is_active_market_context_domain(domain_name):
+            continue
         domain = _mapping(raw_domain)
         domain_state = _first(domain, "state", "status", default="unknown").lower()
         if domain_state in _BAD_STATES:

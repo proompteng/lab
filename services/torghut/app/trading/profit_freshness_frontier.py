@@ -9,6 +9,11 @@ from hashlib import sha256
 import json
 from typing import Any, cast
 
+from .market_context_domains import (
+    active_market_context_mapping,
+    active_market_context_reasons,
+)
+
 
 PROFIT_FRESHNESS_FRONTIER_SCHEMA_VERSION = "torghut.profit-freshness-frontier.v1"
 
@@ -357,11 +362,13 @@ def _market_dimension(
     hypothesis_payload: Mapping[str, Any],
     generated_at: datetime,
 ) -> dict[str, object]:
-    reasons = [
-        *_strings(market_context_status.get("blocking_reasons")),
-        *_strings(market_context_status.get("reason_codes")),
-        *_strings(market_context_status.get("last_risk_flags")),
-    ]
+    reasons = active_market_context_reasons(
+        [
+            *_strings(market_context_status.get("blocking_reasons")),
+            *_strings(market_context_status.get("reason_codes")),
+            *_strings(market_context_status.get("last_risk_flags")),
+        ]
+    )
     status = _text(
         _mapping(market_context_status.get("health")).get("status")
         or market_context_status.get("status")
@@ -369,15 +376,22 @@ def _market_dimension(
         or market_context_status.get("last_reason")
     ).lower()
     stale_domains: list[str] = []
-    for domain_name, raw_domain in _market_domain_states(market_context_status).items():
+    for domain_name, raw_domain in active_market_context_mapping(
+        _market_domain_states(market_context_status)
+    ).items():
         domain = _mapping(raw_domain)
         domain_state = _text(domain.get("status") or domain.get("state")).lower()
         if domain_state == "stale" or domain.get("stale") is True:
             stale_domains.append(str(domain_name))
     if _bool(market_context_status.get("alert_active")):
-        reasons.append(
-            _text(
-                market_context_status.get("alert_reason"), "market_context_alert_active"
+        reasons.extend(
+            active_market_context_reasons(
+                [
+                    _text(
+                        market_context_status.get("alert_reason"),
+                        "market_context_alert_active",
+                    )
+                ]
             )
         )
     if status and status not in _CURRENT_STATES and status != "fresh":
