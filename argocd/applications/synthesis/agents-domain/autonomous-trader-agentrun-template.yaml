@@ -35,6 +35,7 @@ spec:
     accountType: paper
     targetEquityUsd: "500000"
     marketOpenTimezone: America/New_York
+    premarketBootstrapMinutes: "15"
   secrets:
     - alpaca-mcp
     - agents-artifacts

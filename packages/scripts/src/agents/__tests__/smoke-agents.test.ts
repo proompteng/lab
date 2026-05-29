@@ -595,6 +595,31 @@ describe('scheduled AgentRun templates', () => {
 })
 
 describe('synthesis autonomous trader provider', () => {
+  it('starts the single market session run before the bell for bootstrap', () => {
+    const schedule = readYamlObjects(
+      'argocd/applications/synthesis/agents-domain/autonomous-trader-schedule.yaml',
+    ).find((manifest) => objectAt(manifest, 'kind') === 'Schedule')
+    const template = readYamlObjects(
+      'argocd/applications/synthesis/agents-domain/autonomous-trader-agentrun-template.yaml',
+    ).find((manifest) => objectAt(manifest, 'kind') === 'AgentRun')
+    const spec = objectAt(schedule, 'spec')
+    const parameters = objectAt(objectAt(template, 'spec'), 'parameters')
+
+    expect(objectAt(spec, 'cron')).toBe('15 9 * * 1-5')
+    expect(objectAt(spec, 'timezone')).toBe('America/New_York')
+    expect(objectAt(parameters, 'mode')).toBe('market-open')
+    expect(objectAt(parameters, 'premarketBootstrapMinutes')).toBe('15')
+  })
+
+  it('preinstalls day-trading Python dependencies in the Codex runner image', () => {
+    const dockerfile = readFileSync(resolve(process.cwd(), 'services/agents/Dockerfile.codex-runner'), 'utf8')
+
+    expect(dockerfile).toContain('"alpaca-py>=0.43"')
+    expect(dockerfile).toContain('"pandas>=2.2"')
+    expect(dockerfile).toContain('"pydantic>=2.8"')
+    expect(dockerfile).toContain('"pyarrow>=16.0"')
+  })
+
   it('sets the trader goal to reach 500000 without a token budget', () => {
     const template = readYamlObjects(
       'argocd/applications/synthesis/agents-domain/autonomous-trader-agentrun-template.yaml',
@@ -647,7 +672,8 @@ describe('synthesis autonomous trader provider', () => {
       'terminal_reason `target_reached`, `market_closed`, `dry_run_complete`, or `hard_stop`',
     )
     expect(taskPrompt).toContain('/root/bootstrap-analysis-daytrading.sh')
-    expect(taskPrompt).toContain('4ce90bf7fc16f9bf90f7fe221f36db23c7ff44a5')
+    expect(taskPrompt).toContain('Use the scheduled premarket window')
+    expect(taskPrompt).toContain('b4d7485e106dc1197d293683e3413fe74dacd698')
     expect(taskPrompt).toContain('daytrading-scan')
     expect(taskPrompt).toContain('daytrading-validate-ticket')
     expect(prompt).toContain('loop until market close, 500000 USD equity, or unrecoverable account/order state')
@@ -659,6 +685,7 @@ describe('synthesis autonomous trader provider', () => {
     expect(prompt).toContain('Retry transient Alpaca MCP read failures up to 3 times')
     expect(prompt).toContain('record `mcp_retry`')
     expect(prompt).toContain('/root/bootstrap-analysis-daytrading.sh')
+    expect(prompt).toContain('Use the scheduled premarket window')
     expect(prompt).toContain('analysis-context.json')
     expect(prompt).toContain('daytrading-validate-ticket')
     expect(prompt).toContain('terminal_reason as `target_reached`, `market_closed`, `dry_run_complete`, or `hard_stop`')
@@ -740,7 +767,7 @@ describe('synthesis autonomous trader provider', () => {
     const artifactNames = (outputArtifacts ?? []).map((artifact) => objectAt(artifact, 'name'))
 
     expect(objectAt(envTemplate, 'ANALYSIS_REPO_URL')).toBe('https://github.com/gregkonush/analysis.git')
-    expect(objectAt(envTemplate, 'ANALYSIS_REQUIRED_COMMIT')).toBe('4ce90bf7fc16f9bf90f7fe221f36db23c7ff44a5')
+    expect(objectAt(envTemplate, 'ANALYSIS_REQUIRED_COMMIT')).toBe('b4d7485e106dc1197d293683e3413fe74dacd698')
     expect(objectAt(codexConfig, 'content')).toContain('[projects."/workspace/analysis"]')
     expect(objectAt(codexConfig, 'content')).toContain('model_reasoning_summary = "none"')
     expect(objectAt(bootstrap, 'content')).toContain('x-access-token:%s')
@@ -750,6 +777,7 @@ describe('synthesis autonomous trader provider', () => {
     expect(objectAt(bootstrap, 'content')).toContain('decision-ledger.jsonl')
     expect(objectAt(bootstrap, 'content')).toContain('protective-orders.jsonl')
     expect(objectAt(bootstrap, 'content')).toContain('uv venv --seed')
+    expect(objectAt(bootstrap, 'content')).toContain('preinstalled-pythonpath')
     expect(objectAt(bootstrap, 'content')).toContain('--break-system-packages')
     expect(objectAt(bootstrap, 'content')).toContain('install_method')
     expect(objectAt(bootstrap, 'content')).toContain('daytrading-context')

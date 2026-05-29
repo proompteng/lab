@@ -24,6 +24,7 @@ data:
     - Do not invent, normalize, shorten, timestamp, or replace the `AGENT_RUN_NAME` value.
     - Run `/usr/bin/env bash /root/bootstrap-analysis-daytrading.sh` before any market-open order, then read `/workspace/analysis/docs/daytrading-agent-bootstrap.md`.
     - Build and validate `/workspace/.agentrun/autonomous-trader/analysis-context.json` before trading.
+    - Use the scheduled premarket window for bootstrap, tool validation, scorecard readback, and context construction; do not submit orders until the regular session is open.
     - Use local Python, the analysis repo, and web research when they can change the trade decision.
 
     Execution discipline:
