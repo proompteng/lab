@@ -595,25 +595,22 @@ describe('scheduled AgentRun templates', () => {
 })
 
 describe('synthesis autonomous trader provider', () => {
-  it('starts the single market session run before the bell for bootstrap', () => {
-    const schedule = readYamlObjects(
-      'argocd/applications/synthesis/agents-domain/autonomous-trader-schedule.yaml',
-    ).find((manifest) => objectAt(manifest, 'kind') === 'Schedule')
+  it('keeps the market-open trader template manual-only while recurring broker mutation is disabled', () => {
+    const kustomization = readYamlObjects('argocd/applications/synthesis/agents-domain/kustomization.yaml')[0]
+    const resources = objectAt(kustomization, 'resources') as string[] | undefined
     const template = readYamlObjects(
       'argocd/applications/synthesis/agents-domain/autonomous-trader-agentrun-template.yaml',
     ).find((manifest) => objectAt(manifest, 'kind') === 'AgentRun')
     const provider = readYamlObjects(
       'argocd/applications/synthesis/agents-domain/autonomous-trader-agentprovider.yaml',
     ).find((manifest) => objectAt(manifest, 'kind') === 'AgentProvider')
-    const spec = objectAt(schedule, 'spec')
     const templateSpec = objectAt(template, 'spec')
     const parameters = objectAt(templateSpec, 'parameters')
     const envTemplate = objectAt(objectAt(provider, 'spec'), 'envTemplate')
     const goal = objectAt(templateSpec, 'goal') as Record<string, unknown>
     const overallTimeoutSeconds = Number(objectAt(envTemplate, 'CODEX_MARKET_CONTEXT_OVERALL_TIMEOUT_SECONDS'))
 
-    expect(objectAt(spec, 'cron')).toBe('15 9 * * 1-5')
-    expect(objectAt(spec, 'timezone')).toBe('America/New_York')
+    expect(resources).not.toContain('autonomous-trader-schedule.yaml')
     expect(objectAt(parameters, 'mode')).toBe('market-open')
     expect(objectAt(parameters, 'synthesisSessionMode')).toBe('market_open')
     expect(objectAt(parameters, 'premarketBootstrapMinutes')).toBe('15')
