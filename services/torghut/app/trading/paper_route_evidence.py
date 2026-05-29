@@ -2513,6 +2513,43 @@ def _runtime_window_target_counts(
     }
 
 
+def _next_paper_route_target_summaries(
+    targets: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    summaries: list[dict[str, object]] = []
+    for target in targets:
+        strategy_name = _safe_text(target.get("strategy_name"))
+        runtime_strategy_name = _safe_text(target.get("runtime_strategy_name"))
+        summaries.append(
+            {
+                "hypothesis_id": _safe_text(target.get("hypothesis_id")),
+                "candidate_id": _safe_text(target.get("candidate_id")),
+                "strategy_family": _safe_text(target.get("strategy_family")),
+                "strategy_name": strategy_name,
+                "runtime_strategy_name": runtime_strategy_name,
+                "runtime_strategy_id": runtime_strategy_name or strategy_name,
+                "account_label": _safe_text(target.get("account_label")),
+                "source_kind": _safe_text(target.get("source_kind")),
+                "symbols": _unique_text_items(target.get("paper_route_probe_symbols")),
+                "session_start": _safe_text(target.get("window_start")),
+                "session_end": _safe_text(target.get("window_end")),
+                "next_session_max_notional": _safe_text(
+                    target.get("paper_route_probe_next_session_max_notional")
+                )
+                or "0",
+                "import_ready": bool(target.get("paper_route_session_import_ready")),
+                "import_blockers": _unique_text_items(
+                    target.get("paper_route_session_import_blockers")
+                ),
+                "promotion_allowed": bool(target.get("promotion_allowed")),
+                "final_promotion_allowed": bool(target.get("final_promotion_allowed")),
+                "promotion_blocked": not bool(target.get("final_promotion_allowed")),
+                "promotion_gate": _safe_text(target.get("promotion_gate")),
+            }
+        )
+    return summaries
+
+
 def _runtime_ledger_proof_packet_handoff(
     *,
     next_targets: Mapping[str, object],
@@ -2712,6 +2749,7 @@ def build_paper_route_evidence_audit(
         target_audits=target_audits,
         next_target_audits=next_target_audits,
     )
+    next_target_counts = _runtime_window_target_counts(next_target_audits)
     proof_packet_handoff = _runtime_ledger_proof_packet_handoff(
         next_targets=next_targets,
         runtime_window_import_audit=runtime_window_import_audit,
@@ -2856,6 +2894,31 @@ def build_paper_route_evidence_audit(
                     )
                 )
                 for audit in target_audits
+            ),
+            "next_runtime_window_target_count": _safe_int(
+                next_targets.get("target_count")
+            ),
+            "next_runtime_window_selected_target_count": len(next_target_audits),
+            "next_runtime_window_target_with_source_activity_count": (
+                next_target_counts["source_activity"]
+            ),
+            "next_runtime_window_target_with_rejected_signal_activity_count": (
+                next_target_counts["rejected_signal_activity"]
+            ),
+            "next_runtime_window_target_with_runtime_ledger_count": (
+                next_target_counts["runtime_ledger"]
+            ),
+            "next_runtime_window_target_with_evidence_grade_runtime_ledger_count": (
+                next_target_counts["evidence_grade_runtime_ledger"]
+            ),
+            "next_runtime_window_target_with_promotion_decision_count": (
+                next_target_counts["promotion_decision"]
+            ),
+            "next_runtime_window_import_next_action": runtime_window_import_audit[
+                "next_action"
+            ],
+            "next_paper_route_targets": _next_paper_route_target_summaries(
+                _as_mapping_items(next_targets.get("targets"))
             ),
             "promotion_authority": {
                 "allowed": False,
