@@ -184,21 +184,31 @@ spec:
           exit 42
         fi
 
-        "${python_bin}" -m venv "${artifact_dir}/analysis-venv"
-        # shellcheck disable=SC1091
-        source "${artifact_dir}/analysis-venv/bin/activate"
-        python -m pip install --upgrade pip
-        python -m pip install -e "${analysis_dir}[daytrading]"
+        analysis_python="${python_bin}"
+        rm -rf "${artifact_dir}/analysis-venv"
+        if "${python_bin}" -m venv "${artifact_dir}/analysis-venv"; then
+          # shellcheck disable=SC1091
+          source "${artifact_dir}/analysis-venv/bin/activate"
+          python -m pip install --upgrade pip
+          python -m pip install -e "${analysis_dir}[daytrading]"
+          analysis_python="python"
+        else
+          printf 'analysis bootstrap warning: venv unavailable, continuing with PYTHONPATH source checkout\n' >&2
+          if "${python_bin}" -m pip --version >/dev/null 2>&1; then
+            "${python_bin}" -m pip install --user -e "${analysis_dir}[daytrading]" || \
+              printf 'analysis bootstrap warning: user install failed, continuing with PYTHONPATH\n' >&2
+          fi
+        fi
 
         (
           cd "${analysis_dir}"
-          PYTHONPATH=src python -m stock_analysis audit
+          PYTHONPATH=src "${analysis_python}" -m stock_analysis audit
         )
-        PYTHONPATH="${analysis_dir}/src" python -m stock_analysis daytrading-import-smoke
-        PYTHONPATH="${analysis_dir}/src" python -m stock_analysis daytrading-context \
+        PYTHONPATH="${analysis_dir}/src" "${analysis_python}" -m stock_analysis daytrading-import-smoke
+        PYTHONPATH="${analysis_dir}/src" "${analysis_python}" -m stock_analysis daytrading-context \
           --repo-root "${analysis_dir}" \
           --output "${artifact_dir}/analysis-context.json"
-        PYTHONPATH="${analysis_dir}/src" python -m stock_analysis daytrading-validate-context \
+        PYTHONPATH="${analysis_dir}/src" "${analysis_python}" -m stock_analysis daytrading-validate-context \
           "${artifact_dir}/analysis-context.json"
 
         printf '{"ok":true,"analysis_head":"%s","required_commit":"%s","context_path":"%s"}\n' \
