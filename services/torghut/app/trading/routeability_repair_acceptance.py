@@ -10,6 +10,7 @@ import json
 from typing import Any, cast
 
 from .market_context_domains import (
+    ACTIVE_MARKET_CONTEXT_DOMAINS,
     active_market_context_reasons,
     is_active_market_context_domain,
 )
@@ -596,7 +597,9 @@ def build_routeability_repair_acceptance_ledger(
             expected_gate_delta="retire_stale_market_context_domains",
             required_receipts=["market_context_domain_receipt"],
             blockers=market_blockers,
-            acceptance_condition="fundamentals, technicals, news, and regime domains are fresh or not required",
+            acceptance_condition=(
+                f"{', '.join(ACTIVE_MARKET_CONTEXT_DOMAINS)} domains are fresh or not required"
+            ),
             next_repair_action="refresh_stale_market_context_domains",
             rollback_trigger="market-context repair accepts a stale domain",
             symbols=_symbols(route_repair_rows),

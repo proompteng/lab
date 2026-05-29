@@ -47,7 +47,7 @@ spec:
                     --expected-account-label TORGHUT_SIM \
                     --trading-mode paper \
                     --paper-base-url https://paper-api.alpaca.markets \
-                    --max-gross-market-value 2500 \
+                    --max-gross-market-value 100000 \
                     --max-position-count 25 \
                     --apply \
                     --json

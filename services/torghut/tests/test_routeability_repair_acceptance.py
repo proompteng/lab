@@ -211,6 +211,10 @@ def test_stale_market_context_domains_keep_acceptance_unsettled() -> None:
     market_lot = _lot(ledger, "market_context_domain_repair")
 
     assert market_lot["current_state"] == "stale"
+    assert (
+        market_lot["acceptance_condition"]
+        == "technicals, regime domains are fresh or not required"
+    )
     assert "market_context_technicals_stale" in market_lot["blocking_reason_codes"]
     assert "market_context_news_stale" not in market_lot["blocking_reason_codes"]
     assert "market_context_regime_stale" in market_lot["blocking_reason_codes"]

@@ -17,7 +17,7 @@ from app.trading.firewall import OrderFirewall
 
 DEFAULT_ACCOUNT_LABEL = "TORGHUT_SIM"
 DEFAULT_PAPER_BASE_URL = "https://paper-api.alpaca.markets"
-DEFAULT_MAX_GROSS_MARKET_VALUE = Decimal("2500")
+DEFAULT_MAX_GROSS_MARKET_VALUE = Decimal("100000")
 DEFAULT_MAX_POSITION_COUNT = 25
 TERMINAL_CLEAN_STATUSES = frozenset({"clean", "dry_run", "submitted"})
 
