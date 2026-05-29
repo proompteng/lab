@@ -141,6 +141,26 @@ class TestMarketContextClient(TestCase):
         self.assertIsNotNone(bundle)
         self.assertEqual(bundle.symbol, "AAPL")
         self.assertEqual(bundle.context_version, "torghut.market-context.v1")
+        self.assertFalse(hasattr(bundle.domains, "fundamentals"))
+        self.assertFalse(hasattr(bundle.domains, "news"))
+
+    def test_fetch_parses_active_domain_bundle_without_retired_context(self) -> None:
+        config.settings.trading_market_context_url = (
+            "http://jangar.test/api/torghut/market-context"
+        )
+        config.settings.trading_market_context_timeout_seconds = 2
+
+        payload = io.BytesIO(
+            b'{"ok":true,"context":{"contextVersion":"torghut.market-context.v1","symbol":"AAPL","asOfUtc":"2026-02-19T12:00:00Z","freshnessSeconds":10,"qualityScore":1,"sourceCount":2,"riskFlags":[],"domains":{"technicals":{"domain":"technicals","state":"ok","asOf":"2026-02-19T12:00:00Z","freshnessSeconds":10,"maxFreshnessSeconds":60,"sourceCount":1,"qualityScore":1,"payload":{"price":100},"citations":[],"riskFlags":[]},"regime":{"domain":"regime","state":"ok","asOf":"2026-02-19T12:00:00Z","freshnessSeconds":10,"maxFreshnessSeconds":120,"sourceCount":1,"qualityScore":1,"payload":{"volatility":0.1},"citations":[],"riskFlags":[]}}}}'
+        )
+
+        with patch("app.trading.market_context.urlopen", return_value=payload):
+            bundle = MarketContextClient().fetch("AAPL")
+
+        self.assertIsNotNone(bundle)
+        self.assertEqual(bundle.symbol, "AAPL")
+        self.assertEqual(bundle.domains.technicals.domain, "technicals")
+        self.assertEqual(bundle.domains.regime.domain, "regime")
 
     def test_fetch_rejects_non_success_status(self) -> None:
         config.settings.trading_market_context_url = (

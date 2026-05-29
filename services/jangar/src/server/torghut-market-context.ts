@@ -12,7 +12,7 @@ type MarketContextCitation = {
 }
 
 type MarketContextDomain = {
-  domain: 'technicals' | 'fundamentals' | 'news' | 'regime'
+  domain: 'technicals' | 'regime'
   state: MarketContextDomainState
   asOf: string | null
   freshnessSeconds: number | null
@@ -34,20 +34,8 @@ export type TorghutMarketContextBundle = {
   riskFlags: string[]
   domains: {
     technicals: MarketContextDomain
-    fundamentals: MarketContextDomain
-    news: MarketContextDomain
     regime: MarketContextDomain
   }
-}
-
-type ProviderHealthSignal = {
-  provider: 'news'
-  configured: boolean
-  lastAttemptAt: string | null
-  lastSuccessAt: string | null
-  lastError: string | null
-  consecutiveFailures: number
-  latencyMs: number | null
 }
 
 type ClickHouseHealthSignal = {
@@ -65,7 +53,7 @@ export type TorghutMarketContextHealth = {
   maxStalenessSeconds: number
   bundleFreshnessSeconds: number
   bundleQualityScore: number
-  providerHealth: ProviderHealthSignal[]
+  providerHealth: []
   ingestionHealth: {
     clickhouse: ClickHouseHealthSignal
   }
@@ -80,44 +68,13 @@ export type TorghutMarketContextHealth = {
   overallState: 'ok' | 'degraded' | 'down'
 }
 
-const RETIRED_FUNDAMENTALS_MAX_FRESHNESS_SECONDS = 0
-
 export type MarketContextOptions = {
   asOf?: Date
   maxStalenessSeconds?: number
   client?: ClickHouseClient
 }
 
-const MARKET_CONTEXT_EXCHANGE_TIMEZONE = 'America/New_York'
-const MARKET_CONTEXT_TRADING_WEEKDAYS = new Set(['Mon', 'Tue', 'Wed', 'Thu', 'Fri'])
-const MARKET_CONTEXT_SESSION_OPEN_MINUTE = 9 * 60 + 30
-const MARKET_CONTEXT_SESSION_CLOSE_MINUTE = 16 * 60
-
-const exchangeClockFormatter = new Intl.DateTimeFormat('en-US', {
-  timeZone: MARKET_CONTEXT_EXCHANGE_TIMEZONE,
-  weekday: 'short',
-  hour: '2-digit',
-  minute: '2-digit',
-  hour12: false,
-})
-
 const resolveSettings = () => resolveMarketContextRuntimeConfig(process.env)
-
-const isUsRegularTradingSession = (now: Date) => {
-  const parts = exchangeClockFormatter.formatToParts(now)
-  const weekday = parts.find((part) => part.type === 'weekday')?.value ?? ''
-  if (!MARKET_CONTEXT_TRADING_WEEKDAYS.has(weekday)) return false
-  const hour = Number.parseInt(parts.find((part) => part.type === 'hour')?.value ?? '-1', 10)
-  const minute = Number.parseInt(parts.find((part) => part.type === 'minute')?.value ?? '-1', 10)
-  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return false
-  const minuteOfDay = hour * 60 + minute
-  return minuteOfDay >= MARKET_CONTEXT_SESSION_OPEN_MINUTE && minuteOfDay <= MARKET_CONTEXT_SESSION_CLOSE_MINUTE
-}
-
-const resolveNewsMaxFreshnessSeconds = (params: { now: Date; settings: ReturnType<typeof resolveSettings> }) => {
-  if (!isUsRegularTradingSession(params.now)) return params.settings.newsMaxFreshnessSeconds
-  return Math.max(params.settings.newsMaxFreshnessSeconds, params.settings.newsTradingHoursMaxFreshnessSeconds)
-}
 
 const resolveMarketContextEnabled = (params: { settings: ReturnType<typeof resolveSettings> }) =>
   getBooleanFeatureFlag({
@@ -131,21 +88,6 @@ type CacheEntry = {
 }
 
 const cache = new Map<string, CacheEntry>()
-
-const providerHealth = new Map<'news', ProviderHealthSignal>([
-  [
-    'news',
-    {
-      provider: 'news',
-      configured: false,
-      lastAttemptAt: null,
-      lastSuccessAt: null,
-      lastError: null,
-      consecutiveFailures: 0,
-      latencyMs: null,
-    },
-  ],
-])
 
 let clickHouseHealth: ClickHouseHealthSignal = {
   configured: false,
@@ -194,48 +136,6 @@ const resolveFreshnessSeconds = (now: Date, asOf: Date | null) => {
   if (!asOf) return null
   const seconds = Math.floor((now.getTime() - asOf.getTime()) / 1000)
   return Math.max(0, seconds)
-}
-
-const coerceRiskFlags = (value: unknown) => {
-  if (!Array.isArray(value)) return []
-  return value
-    .map((flag) => (typeof flag === 'string' ? flag.trim() : ''))
-    .filter((flag): flag is string => flag.length > 0)
-}
-
-const coerceCitations = (value: unknown): MarketContextCitation[] => {
-  if (!Array.isArray(value)) return []
-  const citations: MarketContextCitation[] = []
-  for (const item of value) {
-    if (!item || typeof item !== 'object') continue
-    const row = item as Record<string, unknown>
-    const source = typeof row.source === 'string' ? row.source : ''
-    const publishedAt = parseTimestamp(row.publishedAt)
-    if (!source || !publishedAt) continue
-    citations.push({
-      source,
-      publishedAt: iso(publishedAt),
-      url: typeof row.url === 'string' ? row.url : null,
-    })
-  }
-  return citations
-}
-
-const recordProviderAttempt = (
-  provider: 'news',
-  params: { configured: boolean; success: boolean; error?: string; latencyMs: number },
-) => {
-  const previous = providerHealth.get(provider)
-  const nowIso = new Date().toISOString()
-  providerHealth.set(provider, {
-    provider,
-    configured: params.configured,
-    lastAttemptAt: nowIso,
-    lastSuccessAt: params.success ? nowIso : (previous?.lastSuccessAt ?? null),
-    lastError: params.success ? null : (params.error ?? 'provider_unknown_error'),
-    consecutiveFailures: params.success ? 0 : (previous?.consecutiveFailures ?? 0) + 1,
-    latencyMs: params.latencyMs,
-  })
 }
 
 const recordClickHouseAttempt = (params: {
@@ -361,176 +261,7 @@ const regimeDomain = (params: {
   }
 }
 
-type ExternalDomainResponse = {
-  asOf: Date | null
-  sourceCount: number
-  qualityScore: number
-  payload: Record<string, unknown>
-  citations: MarketContextCitation[]
-  riskFlags: string[]
-}
-
-const fetchExternalDomainResponse = async (params: {
-  provider: 'news'
-  symbol: string
-  now: Date
-  sourceUrl: string
-  timeoutMs: number
-}): Promise<ExternalDomainResponse | null> => {
-  if (!params.sourceUrl) {
-    providerHealth.set(params.provider, {
-      provider: params.provider,
-      configured: false,
-      lastAttemptAt: null,
-      lastSuccessAt: null,
-      lastError: null,
-      consecutiveFailures: 0,
-      latencyMs: null,
-    })
-    return null
-  }
-
-  const start = Date.now()
-  try {
-    const url = new URL(params.sourceUrl)
-    url.searchParams.set('symbol', params.symbol)
-
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), params.timeoutMs)
-    const response = await fetch(url, {
-      headers: { accept: 'application/json' },
-      signal: controller.signal,
-    })
-    clearTimeout(timeout)
-
-    if (!response.ok) {
-      recordProviderAttempt(params.provider, {
-        configured: true,
-        success: false,
-        error: `provider_http_${response.status}`,
-        latencyMs: Date.now() - start,
-      })
-      return {
-        asOf: null,
-        sourceCount: 0,
-        qualityScore: 0,
-        payload: {},
-        citations: [],
-        riskFlags: [`${params.provider}_provider_http_${response.status}`],
-      }
-    }
-
-    const body = (await response.json()) as Record<string, unknown>
-    const data =
-      body.ok === true && typeof body.context === 'object' && body.context
-        ? (body.context as Record<string, unknown>)
-        : body
-    const asOf = parseTimestamp(data.asOfUtc ?? data.asOf ?? data.publishedAt)
-    const sourceCount = Math.max(0, Math.trunc(toNumber(data.sourceCount) ?? toNumber(data.itemCount) ?? 0))
-    const rawQuality = toNumber(data.qualityScore)
-    const qualityScore = rawQuality === null ? 1 : Math.max(0, Math.min(1, rawQuality))
-    const payload = data.payload && typeof data.payload === 'object' ? (data.payload as Record<string, unknown>) : data
-    const citations = coerceCitations(data.citations)
-    const riskFlags = coerceRiskFlags(data.riskFlags)
-    recordProviderAttempt(params.provider, {
-      configured: true,
-      success: true,
-      latencyMs: Date.now() - start,
-    })
-    return {
-      asOf,
-      sourceCount,
-      qualityScore,
-      payload,
-      citations,
-      riskFlags,
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'provider_fetch_failed'
-    recordProviderAttempt(params.provider, {
-      configured: true,
-      success: false,
-      error: message,
-      latencyMs: Date.now() - start,
-    })
-    return {
-      asOf: null,
-      sourceCount: 0,
-      qualityScore: 0,
-      payload: {},
-      citations: [],
-      riskFlags: [`${params.provider}_provider_error`],
-    }
-  }
-}
-
-const emptyDomain = (params: {
-  now: Date
-  domain: 'fundamentals' | 'news'
-  maxFreshnessSeconds: number
-  provider: string
-}): MarketContextDomain => ({
-  domain: params.domain,
-  state: 'missing',
-  asOf: null,
-  freshnessSeconds: null,
-  maxFreshnessSeconds: params.maxFreshnessSeconds,
-  sourceCount: 0,
-  qualityScore: 0,
-  payload: {
-    asOfUtc: iso(params.now),
-    provider: params.provider,
-    itemCount: 0,
-  },
-  citations: [],
-  riskFlags: [`${params.domain}_missing`],
-})
-
-const externalDomain = (params: {
-  now: Date
-  domain: 'news'
-  maxFreshnessSeconds: number
-  response: ExternalDomainResponse | null
-}): MarketContextDomain => {
-  if (!params.response) {
-    return emptyDomain({
-      now: params.now,
-      domain: params.domain,
-      maxFreshnessSeconds: params.maxFreshnessSeconds,
-      provider: 'not_configured',
-    })
-  }
-
-  const freshnessSeconds = resolveFreshnessSeconds(params.now, params.response.asOf)
-  let state = resolveState(freshnessSeconds, params.maxFreshnessSeconds)
-  const riskFlags = [...params.response.riskFlags]
-  if (riskFlags.some((flag) => flag.includes('provider_error') || flag.includes('provider_http_'))) {
-    state = 'error'
-  }
-  if (state !== 'ok' && !riskFlags.includes(`${params.domain}_${state}`)) {
-    riskFlags.push(`${params.domain}_${state}`)
-  }
-
-  return {
-    domain: params.domain,
-    state,
-    asOf: params.response.asOf ? iso(params.response.asOf) : null,
-    freshnessSeconds,
-    maxFreshnessSeconds: params.maxFreshnessSeconds,
-    sourceCount: params.response.sourceCount,
-    qualityScore: state === 'error' ? 0 : params.response.qualityScore,
-    payload: params.response.payload,
-    citations: params.response.citations,
-    riskFlags,
-  }
-}
-
-const domainSetFrom = (domain: TorghutMarketContextBundle['domains']) => [
-  domain.technicals,
-  domain.fundamentals,
-  domain.news,
-  domain.regime,
-]
+const domainSetFrom = (domain: TorghutMarketContextBundle['domains']) => [domain.technicals, domain.regime]
 
 const buildBundleFromDomains = (params: {
   symbol: string
@@ -558,14 +289,9 @@ const buildBundleFromDomains = (params: {
   }
 }
 
-const bundleCacheKey = (params: {
-  symbol: string
-  asOf: Date | undefined
-  maxStalenessSeconds: number
-  newsMaxFreshnessSeconds: number
-}) => {
+const bundleCacheKey = (params: { symbol: string; asOf: Date | undefined; maxStalenessSeconds: number }) => {
   const asOfKey = params.asOf ? params.asOf.toISOString() : 'latest'
-  return `${params.symbol.toUpperCase()}|${asOfKey}|${params.maxStalenessSeconds}|news:${params.newsMaxFreshnessSeconds}`
+  return `${params.symbol.toUpperCase()}|${asOfKey}|${params.maxStalenessSeconds}`
 }
 
 export const clearMarketContextCache = () => {
@@ -579,24 +305,11 @@ export const getTorghutMarketContext = async (
   const settings = resolveSettings()
   const symbol = normalizeTorghutSymbol(symbolInput)
   const now = options.asOf ?? new Date()
-  const newsMaxFreshnessSeconds = resolveNewsMaxFreshnessSeconds({ now, settings })
   const maxStalenessSeconds = options.maxStalenessSeconds ?? settings.maxStalenessSeconds
   const enabled = await resolveMarketContextEnabled({ settings })
   if (!enabled) {
     const domains = {
       technicals: technicalDomain({ now, row: null, maxFreshnessSeconds: settings.technicalsMaxFreshnessSeconds }),
-      fundamentals: emptyDomain({
-        now,
-        domain: 'fundamentals',
-        maxFreshnessSeconds: RETIRED_FUNDAMENTALS_MAX_FRESHNESS_SECONDS,
-        provider: 'feature_disabled',
-      }),
-      news: emptyDomain({
-        now,
-        domain: 'news',
-        maxFreshnessSeconds: newsMaxFreshnessSeconds,
-        provider: 'feature_disabled',
-      }),
       regime: regimeDomain({ now, row: null, maxFreshnessSeconds: settings.regimeMaxFreshnessSeconds }),
     }
     const disabledBundle = buildBundleFromDomains({ symbol, now, domains })
@@ -607,7 +320,6 @@ export const getTorghutMarketContext = async (
     symbol,
     asOf: options.asOf,
     maxStalenessSeconds,
-    newsMaxFreshnessSeconds,
   })
   const cached = cache.get(cacheKey)
   if (cached) {
@@ -651,14 +363,6 @@ export const getTorghutMarketContext = async (
     })
   }
 
-  const newsResponse = await fetchExternalDomainResponse({
-    provider: 'news',
-    symbol,
-    now,
-    sourceUrl: settings.newsSourceUrl,
-    timeoutMs: settings.providerTimeoutMs,
-  })
-
   const domains = {
     technicals: technicalDomain({
       now,
@@ -666,18 +370,6 @@ export const getTorghutMarketContext = async (
       maxFreshnessSeconds: settings.technicalsMaxFreshnessSeconds,
       sourceError: settings.requireTechnicalsSourceHealth ? signalSourceError : null,
       sourceLatencyMs: signalSourceLatencyMs,
-    }),
-    fundamentals: emptyDomain({
-      now,
-      domain: 'fundamentals',
-      maxFreshnessSeconds: RETIRED_FUNDAMENTALS_MAX_FRESHNESS_SECONDS,
-      provider: 'fundamentals_provider_retired',
-    }),
-    news: externalDomain({
-      now,
-      domain: 'news',
-      maxFreshnessSeconds: newsMaxFreshnessSeconds,
-      response: newsResponse,
     }),
     regime: regimeDomain({
       now,
@@ -719,7 +411,7 @@ export const getTorghutMarketContextHealth = async (symbol = 'SPY', options: Mar
     maxStalenessSeconds: settings.maxStalenessSeconds,
     bundleFreshnessSeconds: bundle.freshnessSeconds,
     bundleQualityScore: bundle.qualityScore,
-    providerHealth: Array.from(providerHealth.values()),
+    providerHealth: [],
     ingestionHealth: {
       clickhouse: clickHouseHealth,
     },

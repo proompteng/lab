@@ -5,7 +5,6 @@ resources:
   - torghut-db-ca-sealedsecret.yaml
   - rook-ceph-rgw-jangar-sealedsecret.yaml
   - cnpg-jangar-db-objectbucketclaim.yaml
-  - market-context-providers-secret.yaml
   - deployment.yaml
   - service.yaml
   - github-token.yaml

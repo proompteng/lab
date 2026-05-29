@@ -267,8 +267,6 @@ spec:
               value: "300"
             - name: JANGAR_MARKET_CONTEXT_PROVIDER_CHAIN
               value: codex-spark,codex
-            - name: JANGAR_MARKET_CONTEXT_PROVIDER_TIMEOUT_MS
-              value: "10000"
             - name: JANGAR_MARKET_CONTEXT_PROVIDER_FAILURE_THRESHOLD
               value: "3"
             - name: JANGAR_MARKET_CONTEXT_PROVIDER_COOLDOWN_SECONDS
@@ -299,12 +297,8 @@ spec:
               value: "true"
             - name: JANGAR_MARKET_CONTEXT_TECHNICALS_MAX_FRESHNESS_SECONDS
               value: "60"
-            - name: JANGAR_MARKET_CONTEXT_NEWS_MAX_FRESHNESS_SECONDS
-              value: "300"
             - name: JANGAR_MARKET_CONTEXT_REGIME_MAX_FRESHNESS_SECONDS
               value: "120"
-            - name: JANGAR_MARKET_CONTEXT_NEWS_URL
-              value: http://jangar.jangar.svc.cluster.local/api/torghut/market-context/providers/news
             - name: JANGAR_MARKET_CONTEXT_BATCH_REQUIRE_OPEN_SESSION
               value: "true"
             - name: JANGAR_MARKET_CONTEXT_BATCH_TRADING_STATUS_URL

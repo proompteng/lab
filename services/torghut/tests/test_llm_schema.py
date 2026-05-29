@@ -9,6 +9,7 @@ from app.trading.llm.schema import (
     LLMDecisionContext,
     LLMRegimeHMMContext,
     LLMReviewResponse,
+    LLMUncertainty,
 )
 
 
@@ -90,6 +91,16 @@ class TestLlmSchema(TestCase):
                 calibration_metadata={},
                 rationale="invalid probability mass",
                 risk_flags=[],
+            )
+
+    def test_uncertainty_requires_complete_confidence_interval(self) -> None:
+        with self.assertRaises(ValidationError):
+            LLMUncertainty.model_validate(
+                {
+                    "score": 0.2,
+                    "band": "low",
+                    "confidence_interval_low": 0.1,
+                }
             )
 
     def test_adjust_verdict_requires_adjusted_qty(self) -> None:
