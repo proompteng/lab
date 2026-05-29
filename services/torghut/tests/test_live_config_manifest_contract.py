@@ -613,7 +613,7 @@ class TestLiveConfigManifestContract(TestCase):
         )
         self.assertEqual(
             sim_env.get("TRADING_PAPER_ROUTE_TARGET_PLAN_URL"),
-            "http://torghut.torghut.svc.cluster.local/trading/paper-route-evidence",
+            "http://torghut.torghut.svc.cluster.local/trading/paper-route-target-plan",
         )
         self.assertEqual(
             sim_env.get("TRADING_PAPER_ROUTE_TARGET_PLAN_TIMEOUT_SECONDS"),
@@ -934,7 +934,7 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("scripts/renew_latest_empirical_promotion_jobs.py", args)
         self.assertIn(
             "--runtime-window-target-plan-url "
-            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-evidence",
+            "http://torghut.torghut.svc.cluster.local/trading/paper-route-target-plan",
             args,
         )
         self.assertIn("--runtime-window-target-plan-url-timeout-seconds 45", args)
@@ -946,6 +946,11 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertNotIn(
             "--runtime-window-target-plan-url "
             "http://torghut.torghut.svc.cluster.local/trading/paper-route-evidence",
+            args,
+        )
+        self.assertNotIn(
+            "--runtime-window-target-plan-url "
+            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-evidence",
             args,
         )
         self.assertIn("--runtime-window-target-plan-exclusive", args)

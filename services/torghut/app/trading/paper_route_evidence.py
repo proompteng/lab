@@ -33,6 +33,7 @@ from .runtime_ledger import POST_COST_PNL_BASIS
 
 
 PAPER_ROUTE_EVIDENCE_SCHEMA_VERSION = "torghut.paper-route-evidence.v1"
+PAPER_ROUTE_TARGET_PLAN_PAYLOAD_SCHEMA_VERSION = "torghut.paper-route-target-plan.v1"
 NEXT_PAPER_ROUTE_RUNTIME_WINDOW_TARGETS_SCHEMA_VERSION = (
     "torghut.next-paper-route-runtime-window-targets.v1"
 )
@@ -46,6 +47,7 @@ DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS = 72
 DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT = 20
 PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL = "TORGHUT_SIM"
 PAPER_ROUTE_RUNTIME_IMPORT_SETTLEMENT_SECONDS = 3600
+PAPER_ROUTE_TARGET_PLAN_ENDPOINT = "/trading/paper-route-target-plan"
 DEFAULT_TORGHUT_LIVE_SERVICE_BASE_URL = "http://torghut.torghut.svc.cluster.local"
 DEFAULT_TORGHUT_PAPER_ROUTE_SERVICE_BASE_URL = (
     "http://torghut-sim.torghut.svc.cluster.local"
@@ -702,6 +704,16 @@ def _target_probe_symbols(
     return _paper_route_probe_symbols(probe)
 
 
+def _target_allows_strategy_universe_probe_fallback(
+    target: Mapping[str, object],
+) -> bool:
+    source_kind = _safe_text(target.get("source_kind"))
+    return bool(target.get("paper_probation_authorized")) or source_kind in {
+        "durable_runtime_ledger_bucket",
+        "runtime_ledger_paper_probation_candidates",
+    }
+
+
 def _strategy_universe_symbols(
     session: Session,
     *,
@@ -1112,7 +1124,7 @@ def _next_paper_route_runtime_window_targets(
     ]
     import_handoff = {
         "runner": "scripts/renew_latest_empirical_promotion_jobs.py",
-        "target_plan_endpoint": "/trading/paper-route-evidence",
+        "target_plan_endpoint": PAPER_ROUTE_TARGET_PLAN_ENDPOINT,
         "required_flags": [
             "--runtime-window-import",
             "--runtime-window-target-plan-url",
@@ -1157,9 +1169,18 @@ def _next_paper_route_runtime_window_targets(
             strategy_lookup_names=strategy_lookup_names,
         )
         target_probe_symbols = raw_target_probe_symbols
+        source_readiness_raw_probe_symbols = raw_target_probe_symbols
         out_of_strategy_scope_symbols: list[str] = []
         missing_strategy_universe_symbols: list[str] = []
-        if strategy_universe_symbols:
+        strategy_universe_probe_fallback = (
+            not target_probe_symbols
+            and bool(strategy_universe_symbols)
+            and _target_allows_strategy_universe_probe_fallback(target)
+        )
+        if strategy_universe_probe_fallback:
+            target_probe_symbols = list(strategy_universe_symbols)
+            source_readiness_raw_probe_symbols = list(strategy_universe_symbols)
+        elif strategy_universe_symbols:
             (
                 target_probe_symbols,
                 out_of_strategy_scope_symbols,
@@ -1171,7 +1192,7 @@ def _next_paper_route_runtime_window_targets(
         source_decision_readiness = _strategy_source_decision_readiness(
             session,
             strategy_lookup_names=strategy_lookup_names,
-            raw_probe_symbols=raw_target_probe_symbols,
+            raw_probe_symbols=source_readiness_raw_probe_symbols,
             scoped_probe_symbols=target_probe_symbols,
         )
         target_probe_ready = (
@@ -1317,6 +1338,9 @@ def _next_paper_route_runtime_window_targets(
             "paper_route_probe_symbol_count": len(target_probe_symbols),
             "paper_route_probe_raw_target_symbols": raw_target_probe_symbols,
             "paper_route_probe_strategy_scope_applied": bool(strategy_universe_symbols),
+            "paper_route_probe_strategy_universe_fallback": (
+                strategy_universe_probe_fallback
+            ),
             "paper_route_probe_strategy_universe_symbols": (strategy_universe_symbols),
             "paper_route_probe_out_of_strategy_scope_symbols": (
                 out_of_strategy_scope_symbols
@@ -2796,6 +2820,91 @@ def _runtime_ledger_proof_packet_handoff(
     }
 
 
+def build_paper_route_target_plan_payload(
+    session: Session,
+    *,
+    live_submission_gate: Mapping[str, Any],
+    route_reacquisition_book: Mapping[str, Any],
+    generated_at: datetime | None = None,
+    target_limit: int = DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
+) -> dict[str, object]:
+    """Build the lightweight runtime-window target-plan payload."""
+
+    resolved_generated_at = generated_at or datetime.now(timezone.utc)
+    plan = _as_mapping(
+        live_submission_gate.get("runtime_ledger_paper_probation_import_plan")
+    )
+    targets = _as_mapping_items(plan.get("targets"))[: max(0, target_limit)]
+    probe = _paper_route_probe_summary(
+        route_reacquisition_book,
+        target_plan=plan,
+        target_plan_source=_safe_text(
+            live_submission_gate.get("paper_route_target_plan_source")
+        )
+        or _target_plan_source(plan),
+        target_plan_error=_safe_text(
+            live_submission_gate.get("paper_route_target_plan_error")
+        ),
+    )
+    next_targets = _next_paper_route_runtime_window_targets(
+        session=session,
+        targets=targets,
+        probe=probe,
+        live_submission_gate=live_submission_gate,
+        generated_at=resolved_generated_at,
+    )
+    return {
+        "schema_version": PAPER_ROUTE_TARGET_PLAN_PAYLOAD_SCHEMA_VERSION,
+        "generated_at": _isoformat(resolved_generated_at),
+        "source": "paper_route_target_plan_endpoint",
+        "live_submission_gate": {
+            "allowed": bool(live_submission_gate.get("allowed")),
+            "reason": _safe_text(live_submission_gate.get("reason")),
+            "blocked_reasons": [
+                str(item).strip()
+                for item in _as_sequence(live_submission_gate.get("blocked_reasons"))
+                if str(item).strip()
+            ],
+            "promotion_eligible_total": _safe_int(
+                live_submission_gate.get("promotion_eligible_total")
+            ),
+            "runtime_ledger_paper_probation_import_plan": {
+                "schema_version": _safe_text(plan.get("schema_version")),
+                "target_count": _safe_int(plan.get("target_count") or len(targets)),
+                "skipped_target_count": _safe_int(plan.get("skipped_target_count")),
+                "source_promotion_allowed": bool(plan.get("promotion_allowed")),
+                "source_final_promotion_allowed": bool(
+                    plan.get("final_promotion_allowed")
+                    or plan.get("final_promotion_authorized")
+                ),
+                "promotion_allowed": False,
+                "final_promotion_allowed": False,
+            },
+            "paper_route_target_plan_source": _safe_text(
+                live_submission_gate.get("paper_route_target_plan_source")
+            ),
+            "paper_route_target_plan_error": _safe_text(
+                live_submission_gate.get("paper_route_target_plan_error")
+            ),
+        },
+        "paper_route_probe": probe,
+        "runtime_window_import_plan": next_targets,
+        "next_paper_route_runtime_window_targets": next_targets,
+        "summary": {
+            "source_target_count": len(targets),
+            "next_runtime_window_target_count": _safe_int(
+                next_targets.get("target_count")
+            ),
+            "skipped_target_count": _safe_int(next_targets.get("skipped_target_count")),
+            "promotion_authority": {
+                "allowed": False,
+                "reason": "paper_route_target_plan_observability_only",
+                "blockers": ["live_runtime_ledger_required"],
+            },
+        },
+    }
+
+
 def build_paper_route_evidence_audit(
     session: Session,
     *,
@@ -3042,7 +3151,9 @@ __all__ = [
     "DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS",
     "NEXT_PAPER_ROUTE_RUNTIME_WINDOW_TARGETS_SCHEMA_VERSION",
     "PAPER_ROUTE_EVIDENCE_SCHEMA_VERSION",
+    "PAPER_ROUTE_TARGET_PLAN_PAYLOAD_SCHEMA_VERSION",
     "PAPER_ROUTE_RUNTIME_WINDOW_IMPORT_AUDIT_SCHEMA_VERSION",
     "RUNTIME_LEDGER_PROOF_PACKET_HANDOFF_SCHEMA_VERSION",
     "build_paper_route_evidence_audit",
+    "build_paper_route_target_plan_payload",
 ]

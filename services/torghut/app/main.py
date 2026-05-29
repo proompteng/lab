@@ -130,7 +130,10 @@ from .trading.paper_route_target_plan import (
     mapping_items as _shared_mapping_items,
     paper_route_target_plan_from_payload as _shared_paper_route_target_plan_from_payload,
 )
-from .trading.paper_route_evidence import build_paper_route_evidence_audit
+from .trading.paper_route_evidence import (
+    build_paper_route_evidence_audit,
+    build_paper_route_target_plan_payload,
+)
 from .trading.runtime_cost_authority import (
     cost_basis_counts_have_non_promotion_grade_costs,
 )
@@ -4589,6 +4592,66 @@ def trading_paper_route_evidence(
         simple_lane_status=simple_lane_status,
     )
     payload = build_paper_route_evidence_audit(
+        session,
+        live_submission_gate=cast(Mapping[str, Any], live_submission_gate),
+        route_reacquisition_book=cast(
+            Mapping[str, Any],
+            proof_floor.get("route_reacquisition_book") or {},
+        ),
+    )
+    return JSONResponse(status_code=200, content=jsonable_encoder(payload))
+
+
+@app.get("/trading/paper-route-target-plan")
+def trading_paper_route_target_plan(
+    session: Session = Depends(get_session),
+) -> JSONResponse:
+    """Return the lightweight next-window paper-route target plan."""
+
+    scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
+    if scheduler is None:
+        scheduler = TradingScheduler()
+        app.state.trading_scheduler = scheduler
+
+    empirical_jobs = _empirical_jobs_status()
+    quant_evidence = load_quant_evidence_status(
+        account_label=settings.trading_account_label,
+    )
+    tca_summary = _load_tca_summary(session, scheduler=scheduler)
+    market_context_status = scheduler.market_context_status()
+    hypothesis_payload, _hypothesis_summary, _dependency_quorum = (
+        _build_hypothesis_runtime_payload(
+            scheduler,
+            tca_summary=tca_summary,
+            market_context_status=market_context_status,
+        )
+    )
+    live_submission_gate = _build_live_submission_gate_payload(
+        scheduler.state,
+        session=session,
+        hypothesis_summary=hypothesis_payload,
+        empirical_jobs_status=empirical_jobs,
+        dspy_runtime_status=cast(
+            dict[str, object],
+            scheduler.llm_status().get("dspy_runtime", {}),
+        ),
+        quant_health_status=quant_evidence,
+    )
+    live_submission_gate = _merge_external_paper_route_target_plan(
+        cast(Mapping[str, Any], live_submission_gate)
+    )
+    proof_floor = _build_profitability_proof_floor_payload(
+        state=scheduler.state,
+        torghut_revision=BUILD_VERSION,
+        live_submission_gate=live_submission_gate,
+        hypothesis_payload=hypothesis_payload,
+        empirical_jobs_status=empirical_jobs,
+        quant_evidence=quant_evidence,
+        market_context_status=market_context_status,
+        tca_summary=tca_summary,
+        simple_lane_status=_build_simple_lane_status_payload(),
+    )
+    payload = build_paper_route_target_plan_payload(
         session,
         live_submission_gate=cast(Mapping[str, Any], live_submission_gate),
         route_reacquisition_book=cast(

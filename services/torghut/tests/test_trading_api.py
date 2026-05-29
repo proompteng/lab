@@ -7355,13 +7355,107 @@ class TestTradingApi(TestCase):
             else:
                 app.state.trading_scheduler = original_scheduler
 
+    def test_trading_paper_route_target_plan_returns_lightweight_plan(self) -> None:
+        original_scheduler = getattr(app.state, "trading_scheduler", None)
+        target = {
+            "hypothesis_id": "H-PAIRS-01",
+            "candidate_id": "c88421d619759b2cfaa6f4d0",
+            "observed_stage": "paper",
+            "strategy_family": "microbar_cross_sectional_pairs",
+            "strategy_name": "69cf50e3-4815-47c2-b802-1efbaac09ecb",
+            "account_label": "TORGHUT_REPLAY",
+            "source_kind": "runtime_ledger_paper_probation_candidates",
+            "source_manifest_ref": "config/trading/hypotheses/h-pairs.json",
+            "dataset_snapshot_ref": "torghut-chip-full-day-20260505-4c330ce9-r1",
+            "window_start": "2026-05-22T13:30:00+00:00",
+            "window_end": "2026-05-22T20:00:00+00:00",
+            "paper_route_probe_symbols": ["AAPL"],
+            "paper_probation_authorized": True,
+            "promotion_allowed": False,
+            "final_promotion_allowed": False,
+            "max_notional": "0",
+        }
+        live_gate = {
+            "allowed": True,
+            "reason": "non_live_mode",
+            "blocked_reasons": [],
+            "promotion_eligible_total": 0,
+            "runtime_ledger_paper_probation_import_plan": {
+                "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                "target_count": 1,
+                "skipped_target_count": 0,
+                "promotion_allowed": False,
+                "final_promotion_allowed": False,
+                "targets": [target],
+            },
+        }
+        proof_floor = {
+            "route_reacquisition_book": {
+                "schema_version": "torghut.route-reacquisition-book.v1",
+                "state": "repair_only",
+                "paper_route_probe": {
+                    "configured_enabled": True,
+                    "active": False,
+                    "effective_max_notional": "0",
+                    "next_session_max_notional": "63180",
+                    "eligible_symbol_count": 1,
+                    "eligible_symbols": ["AAPL"],
+                    "active_symbols": [],
+                    "blocking_reasons": ["market_session_closed"],
+                },
+            }
+        }
+        try:
+            if hasattr(app.state, "trading_scheduler"):
+                del app.state.trading_scheduler
+            with (
+                patch(
+                    "app.main._build_live_submission_gate_payload",
+                    return_value=live_gate,
+                ),
+                patch(
+                    "app.main._build_profitability_proof_floor_payload",
+                    return_value=proof_floor,
+                ),
+                patch(
+                    "app.main.build_paper_route_evidence_audit",
+                    side_effect=AssertionError("full audit should not run"),
+                ),
+            ):
+                response = self.client.get("/trading/paper-route-target-plan")
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(
+                payload["schema_version"], "torghut.paper-route-target-plan.v1"
+            )
+            self.assertNotIn("next_runtime_window_target_audits", payload)
+            plan = payload["runtime_window_import_plan"]
+            self.assertEqual(plan["target_count"], 1)
+            self.assertEqual(
+                payload["next_paper_route_runtime_window_targets"]["target_count"], 1
+            )
+            self.assertEqual(
+                plan["runtime_window_import_handoff"]["target_plan_endpoint"],
+                "/trading/paper-route-target-plan",
+            )
+            self.assertEqual(plan["targets"][0]["candidate_id"], target["candidate_id"])
+            self.assertEqual(plan["targets"][0]["paper_route_probe_symbols"], ["AAPL"])
+            self.assertFalse(plan["targets"][0]["promotion_allowed"])
+            self.assertFalse(plan["targets"][0]["final_promotion_allowed"])
+        finally:
+            if original_scheduler is None:
+                if hasattr(app.state, "trading_scheduler"):
+                    del app.state.trading_scheduler
+            else:
+                app.state.trading_scheduler = original_scheduler
+
     def test_trading_paper_route_evidence_uses_external_plan_when_url_configured(
         self,
     ) -> None:
         original_scheduler = getattr(app.state, "trading_scheduler", None)
         original_target_plan_url = settings.trading_paper_route_target_plan_url
         settings.trading_paper_route_target_plan_url = (
-            "http://torghut.torghut.svc.cluster.local/trading/paper-route-evidence"
+            "http://torghut.torghut.svc.cluster.local/trading/paper-route-target-plan"
         )
         target = {
             "hypothesis_id": "H-PAIRS-01",
@@ -8204,7 +8298,7 @@ class TestTradingApi(TestCase):
         original_scheduler = getattr(app.state, "trading_scheduler", None)
         original_target_plan_url = settings.trading_paper_route_target_plan_url
         settings.trading_paper_route_target_plan_url = (
-            "http://torghut.torghut.svc.cluster.local/trading/paper-route-evidence"
+            "http://torghut.torghut.svc.cluster.local/trading/paper-route-target-plan"
         )
         target = {
             "hypothesis_id": "H-PAIRS-01",

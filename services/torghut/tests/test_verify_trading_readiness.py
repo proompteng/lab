@@ -235,7 +235,7 @@ def _paper_route_evidence(
             },
             "runtime_window_import_handoff": {
                 "runner": "scripts/renew_latest_empirical_promotion_jobs.py",
-                "target_plan_endpoint": "/trading/paper-route-evidence",
+                "target_plan_endpoint": "/trading/paper-route-target-plan",
                 "required_flags": flags,
                 "source_dsn_env": "SIM_DB_DSN",
                 "account_label": "TORGHUT_SIM",
