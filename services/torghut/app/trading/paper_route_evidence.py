@@ -21,6 +21,7 @@ from ..models import (
     Execution,
     ExecutionOrderEvent,
     ExecutionTCAMetric,
+    PositionSnapshot,
     RejectedSignalOutcomeEvent,
     Strategy,
     StrategyHypothesisMetricWindow,
@@ -47,6 +48,8 @@ DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS = 72
 DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT = 20
 PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL = "TORGHUT_SIM"
 PAPER_ROUTE_RUNTIME_IMPORT_SETTLEMENT_SECONDS = 3600
+PAPER_ROUTE_ACCOUNT_START_SNAPSHOT_STALE_SECONDS = 900
+PAPER_ROUTE_ACCOUNT_START_SNAPSHOT_AFTER_START_GRACE_SECONDS = 300
 PAPER_ROUTE_TARGET_PLAN_ENDPOINT = "/trading/paper-route-target-plan"
 DEFAULT_TORGHUT_LIVE_SERVICE_BASE_URL = "http://torghut.torghut.svc.cluster.local"
 DEFAULT_TORGHUT_PAPER_ROUTE_SERVICE_BASE_URL = (
@@ -1792,6 +1795,184 @@ def _account_contamination_audit(
     }
 
 
+def _position_quantity(position: Mapping[str, object]) -> Decimal:
+    qty = _safe_decimal(
+        position.get("qty")
+        or position.get("quantity")
+        or position.get("position_qty")
+        or position.get("shares")
+    )
+    if qty == 0:
+        return Decimal("0")
+    side = (_safe_text(position.get("side")) or "").lower()
+    if side == "short" and qty > 0:
+        return -qty
+    return qty
+
+
+def _position_market_value(position: Mapping[str, object]) -> Decimal:
+    for key in ("market_value", "marketValue", "notional", "position_value"):
+        if key in position:
+            return _safe_decimal(position.get(key)).copy_abs()
+    qty = _position_quantity(position).copy_abs()
+    price = _safe_decimal(
+        position.get("current_price")
+        or position.get("currentPrice")
+        or position.get("avg_entry_price")
+        or position.get("avgEntryPrice")
+    ).copy_abs()
+    return qty * price
+
+
+def _normalized_open_positions(
+    positions: object,
+    *,
+    target_symbols: set[str],
+) -> list[dict[str, object]]:
+    normalized: list[dict[str, object]] = []
+    for raw_position in _as_sequence(positions):
+        position = _as_mapping(raw_position)
+        symbol = (_safe_text(position.get("symbol")) or "").upper()
+        qty = _position_quantity(position)
+        if not symbol or qty == 0:
+            continue
+        normalized.append(
+            {
+                "symbol": symbol,
+                "qty": _decimal_text(qty),
+                "side": _safe_text(position.get("side")),
+                "market_value": _decimal_text(_position_market_value(position)),
+                "target_symbol": symbol in target_symbols,
+            }
+        )
+    return sorted(
+        normalized,
+        key=lambda item: (
+            not bool(item.get("target_symbol")),
+            str(item.get("symbol") or ""),
+        ),
+    )
+
+
+def _account_window_start_snapshot_audit(
+    session: Session,
+    *,
+    account_label: str | None,
+    symbols: Sequence[str],
+    window_start: datetime,
+) -> dict[str, object]:
+    symbol_filters = {
+        str(item).strip().upper() for item in symbols if str(item).strip()
+    }
+    base_payload: dict[str, object] = {
+        "schema_version": "torghut.paper-route-account-window-start-snapshot-audit.v1",
+        "scope": "account_position_snapshot_at_runtime_window_start",
+        "account_label": account_label,
+        "symbols": sorted(symbol_filters),
+        "window_start": _isoformat(window_start),
+        "snapshot_id": None,
+        "snapshot_as_of": None,
+        "snapshot_source": None,
+        "snapshot_offset_seconds": None,
+        "flat": False,
+        "position_count": 0,
+        "target_symbol_position_count": 0,
+        "non_target_symbol_position_count": 0,
+        "gross_position_market_value": "0",
+        "sample_positions": [],
+        "blockers": [],
+    }
+    if account_label is None:
+        return {
+            **base_payload,
+            "flat": True,
+        }
+
+    before_snapshot = session.execute(
+        select(PositionSnapshot)
+        .where(PositionSnapshot.alpaca_account_label == account_label)
+        .where(PositionSnapshot.as_of <= window_start)
+        .order_by(PositionSnapshot.as_of.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    after_snapshot = None
+    if before_snapshot is None:
+        after_snapshot = session.execute(
+            select(PositionSnapshot)
+            .where(PositionSnapshot.alpaca_account_label == account_label)
+            .where(PositionSnapshot.as_of > window_start)
+            .where(
+                PositionSnapshot.as_of
+                <= window_start
+                + timedelta(
+                    seconds=PAPER_ROUTE_ACCOUNT_START_SNAPSHOT_AFTER_START_GRACE_SECONDS
+                )
+            )
+            .order_by(PositionSnapshot.as_of.asc())
+            .limit(1)
+        ).scalar_one_or_none()
+
+    snapshot = before_snapshot or after_snapshot
+    if snapshot is None:
+        return {
+            **base_payload,
+            "blockers": ["paper_route_account_window_start_snapshot_missing"],
+        }
+
+    snapshot_as_of = snapshot.as_of
+    if snapshot_as_of.tzinfo is None:
+        snapshot_as_of = snapshot_as_of.replace(tzinfo=timezone.utc)
+    snapshot_as_of = snapshot_as_of.astimezone(timezone.utc)
+    offset_seconds = int((snapshot_as_of - window_start).total_seconds())
+    blockers: list[str] = []
+    if offset_seconds < -PAPER_ROUTE_ACCOUNT_START_SNAPSHOT_STALE_SECONDS:
+        blockers.append("paper_route_account_window_start_snapshot_stale")
+    if offset_seconds > PAPER_ROUTE_ACCOUNT_START_SNAPSHOT_AFTER_START_GRACE_SECONDS:
+        blockers.append("paper_route_account_window_start_snapshot_stale")
+
+    positions = _normalized_open_positions(
+        snapshot.positions,
+        target_symbols=symbol_filters,
+    )
+    target_position_count = sum(
+        int(bool(position.get("target_symbol"))) for position in positions
+    )
+    non_target_position_count = len(positions) - target_position_count
+    if positions:
+        blockers.extend(
+            [
+                "paper_route_account_window_start_not_flat",
+                "paper_route_account_window_start_positions_present",
+            ]
+        )
+    if target_position_count:
+        blockers.append("paper_route_account_window_start_target_positions_present")
+    if non_target_position_count:
+        blockers.append("paper_route_account_window_start_non_target_positions_present")
+    gross_market_value = sum(
+        (_safe_decimal(position.get("market_value")) for position in positions),
+        Decimal("0"),
+    )
+    return {
+        **base_payload,
+        "snapshot_id": str(snapshot.id),
+        "snapshot_as_of": _isoformat(snapshot_as_of),
+        "snapshot_source": (
+            "latest_before_window_start"
+            if before_snapshot is not None
+            else "first_after_window_start"
+        ),
+        "snapshot_offset_seconds": offset_seconds,
+        "flat": not positions and not blockers,
+        "position_count": len(positions),
+        "target_symbol_position_count": target_position_count,
+        "non_target_symbol_position_count": non_target_position_count,
+        "gross_position_market_value": _decimal_text(gross_market_value),
+        "sample_positions": positions[:10],
+        "blockers": sorted(dict.fromkeys(blockers)),
+    }
+
+
 def _rejected_signal_activity(
     session: Session,
     *,
@@ -2227,6 +2408,7 @@ def _readiness_blockers(
     probe: Mapping[str, object],
     source_activity: Mapping[str, object],
     account_contamination: Mapping[str, object],
+    account_state: Mapping[str, object],
     rejected_signal_activity: Mapping[str, object],
     runtime_ledger: Mapping[str, object],
     hypothesis_windows: Mapping[str, object],
@@ -2266,6 +2448,11 @@ def _readiness_blockers(
     blockers.update(
         str(item).strip()
         for item in _as_sequence(account_contamination.get("blockers"))
+        if str(item).strip()
+    )
+    blockers.update(
+        str(item).strip()
+        for item in _as_sequence(account_state.get("blockers"))
         if str(item).strip()
     )
     if bool(source_activity.get("missing")):
@@ -2329,6 +2516,12 @@ def _target_audit(
         window_start=window_start,
         window_end=window_end,
     )
+    account_state = _account_window_start_snapshot_audit(
+        session,
+        account_label=cast(str | None, target.get("account_label")),
+        symbols=_target_probe_symbols(target, probe),
+        window_start=window_start,
+    )
     rejected_signal_activity = _rejected_signal_activity(
         session,
         account_label=cast(str | None, target.get("account_label")),
@@ -2365,6 +2558,7 @@ def _target_audit(
         probe=probe,
         source_activity=source_activity,
         account_contamination=account_contamination,
+        account_state=account_state,
         rejected_signal_activity=rejected_signal_activity,
         runtime_ledger=runtime_ledger,
         hypothesis_windows=hypothesis_windows,
@@ -2383,6 +2577,7 @@ def _target_audit(
         },
         "source_activity": source_activity,
         "account_contamination": account_contamination,
+        "account_state": account_state,
         "rejected_signal_activity": rejected_signal_activity,
         "runtime_ledger": runtime_ledger,
         "hypothesis_windows": hypothesis_windows,
@@ -2465,6 +2660,16 @@ def _runtime_window_import_audit(
             if str(blocker).strip()
         }
     )
+    account_state_blockers = sorted(
+        {
+            str(blocker).strip()
+            for audit in next_target_audits
+            for blocker in _as_sequence(
+                _as_mapping(audit.get("account_state")).get("blockers")
+            )
+            if str(blocker).strip()
+        }
+    )
     source_runtime_ledger_blockers = _source_runtime_ledger_materialization_blockers(
         next_target_audits
     )
@@ -2505,6 +2710,10 @@ def _runtime_window_import_audit(
         state = "import_due_account_contamination_detected"
         next_action = "isolate_paper_account_or_discard_contaminated_window"
         blockers = account_contamination_blockers
+    elif account_state_blockers:
+        state = "import_due_account_state_not_clean"
+        next_action = "reset_paper_account_or_discard_contaminated_window"
+        blockers = account_state_blockers
     elif targets_with_source_activity < current_target_count:
         state = "import_due_source_activity_missing"
         next_action = "inspect_paper_route_source_activity_before_import"
@@ -2548,6 +2757,7 @@ def _runtime_window_import_audit(
                 source_runtime_ledger_blockers
             ),
             "account_contamination_blockers": account_contamination_blockers,
+            "account_state_blockers": account_state_blockers,
             "runtime_ledger_blockers": runtime_ledger_blockers,
             "target_blockers_effective_when": "runtime_window_import_ready",
         },
@@ -2605,6 +2815,7 @@ def _runtime_window_target_blockers(
         target = _as_mapping(audit.get("target"))
         source_activity = _as_mapping(audit.get("source_activity"))
         account_contamination = _as_mapping(audit.get("account_contamination"))
+        account_state = _as_mapping(audit.get("account_state"))
         rejected_signal_activity = _as_mapping(audit.get("rejected_signal_activity"))
         runtime_ledger = _as_mapping(audit.get("runtime_ledger"))
         promotion_decisions = _as_mapping(audit.get("promotion_decisions"))
@@ -2622,6 +2833,7 @@ def _runtime_window_target_blockers(
                     else []
                 ),
                 *_unique_text_items(account_contamination.get("blockers")),
+                *_unique_text_items(account_state.get("blockers")),
                 *(
                     ["runtime_ledger_bucket_missing"]
                     if _safe_int(runtime_ledger.get("bucket_count")) <= 0
@@ -2692,6 +2904,26 @@ def _runtime_window_target_blockers(
                     "last_event_at": _safe_text(
                         account_contamination.get("last_event_at")
                     ),
+                },
+                "account_state": {
+                    "flat": bool(account_state.get("flat")),
+                    "snapshot_id": _safe_text(account_state.get("snapshot_id")),
+                    "snapshot_as_of": _safe_text(account_state.get("snapshot_as_of")),
+                    "snapshot_source": _safe_text(account_state.get("snapshot_source")),
+                    "position_count": _safe_int(account_state.get("position_count")),
+                    "target_symbol_position_count": _safe_int(
+                        account_state.get("target_symbol_position_count")
+                    ),
+                    "non_target_symbol_position_count": _safe_int(
+                        account_state.get("non_target_symbol_position_count")
+                    ),
+                    "gross_position_market_value": _safe_text(
+                        account_state.get("gross_position_market_value")
+                    ),
+                    "sample_positions": [
+                        _as_mapping(item)
+                        for item in _as_sequence(account_state.get("sample_positions"))
+                    ],
                 },
                 "runtime_ledger": {
                     "bucket_count": _safe_int(runtime_ledger.get("bucket_count")),

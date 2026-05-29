@@ -13,6 +13,7 @@ from app.models import (
     Execution,
     ExecutionOrderEvent,
     ExecutionTCAMetric,
+    PositionSnapshot,
     RejectedSignalOutcomeEvent,
     Strategy,
     StrategyHypothesisMetricWindow,
@@ -39,6 +40,24 @@ class TestPaperRouteEvidenceAudit(TestCase):
             poolclass=StaticPool,
         )
         Base.metadata.create_all(self.engine)
+
+    def _add_flat_account_start_snapshot(
+        self,
+        session: Session,
+        *,
+        account_label: str,
+        window_start: datetime,
+    ) -> None:
+        session.add(
+            PositionSnapshot(
+                alpaca_account_label=account_label,
+                as_of=window_start - timedelta(seconds=30),
+                equity=Decimal("100000"),
+                cash=Decimal("100000"),
+                buying_power=Decimal("200000"),
+                positions=[],
+            )
+        )
 
     def test_runtime_ledger_diagnostic_expectancy_prefers_payload_value(self) -> None:
         row = StrategyRuntimeLedgerBucket(
@@ -987,8 +1006,21 @@ class TestPaperRouteEvidenceAudit(TestCase):
     def test_next_paper_route_session_readiness_tracks_collection_and_import(
         self,
     ) -> None:
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+
         def build(generated_at: datetime) -> dict[str, object]:
             with Session(self.engine) as session:
+                self._add_flat_account_start_snapshot(
+                    session,
+                    account_label="TORGHUT_REPLAY",
+                    window_start=window_start,
+                )
+                self._add_flat_account_start_snapshot(
+                    session,
+                    account_label="TORGHUT_SIM",
+                    window_start=window_start,
+                )
+                session.flush()
                 return build_paper_route_evidence_audit(
                     session,
                     live_submission_gate={
@@ -1263,6 +1295,11 @@ class TestPaperRouteEvidenceAudit(TestCase):
                     updated_at=window_start + timedelta(minutes=13),
                 )
             )
+            self._add_flat_account_start_snapshot(
+                session,
+                account_label="TORGHUT_SIM",
+                window_start=window_start,
+            )
             session.commit()
 
             missing_ledger_payload = build(session)
@@ -1415,6 +1452,11 @@ class TestPaperRouteEvidenceAudit(TestCase):
                         event_payload_json={"event_id": "paper-route-reject-amzn"},
                     ),
                 ]
+            )
+            self._add_flat_account_start_snapshot(
+                session,
+                account_label="TORGHUT_SIM",
+                window_start=window_start,
             )
             session.commit()
 
@@ -1874,6 +1916,11 @@ class TestPaperRouteEvidenceAudit(TestCase):
                     trade_decision_id=decision.id,
                     created_at=event_at,
                 )
+            )
+            self._add_flat_account_start_snapshot(
+                session,
+                account_label="TORGHUT_SIM",
+                window_start=window_start,
             )
             session.commit()
 
@@ -2658,6 +2705,11 @@ class TestPaperRouteEvidenceAudit(TestCase):
                     ),
                 ]
             )
+            self._add_flat_account_start_snapshot(
+                session,
+                account_label="TORGHUT_SIM",
+                window_start=window_start,
+            )
             session.commit()
 
             payload = build_paper_route_evidence_audit(
@@ -2947,6 +2999,11 @@ class TestPaperRouteEvidenceAudit(TestCase):
                     ),
                 ]
             )
+            self._add_flat_account_start_snapshot(
+                session,
+                account_label="TORGHUT_SIM",
+                window_start=window_start,
+            )
             session.commit()
 
             payload = build_paper_route_evidence_audit(
@@ -3019,6 +3076,196 @@ class TestPaperRouteEvidenceAudit(TestCase):
                 "client_order_id_count"
             ],
             1,
+        )
+
+    def test_account_window_start_positions_block_runtime_window_import(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, tzinfo=timezone.utc)
+        now = datetime(2026, 5, 26, 21, 5, tzinfo=timezone.utc)
+
+        with Session(self.engine) as session:
+            strategy = Strategy(
+                name="account-state-proof-strategy",
+                description="paper account state fixture",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+                created_at=window_start,
+                updated_at=window_start,
+            )
+            session.add(strategy)
+            session.flush()
+            decision = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="TORGHUT_SIM",
+                symbol="AAPL",
+                timeframe="1Min",
+                decision_json={
+                    "action": "sell",
+                    "qty": "1",
+                    "candidate_id": "candidate-account-state",
+                    "hypothesis_id": "H-ACCOUNT-STATE",
+                },
+                rationale="paper route account state fixture",
+                status="executed",
+                created_at=window_start + timedelta(minutes=10),
+                executed_at=window_start + timedelta(minutes=11),
+            )
+            session.add(decision)
+            session.flush()
+            execution = Execution(
+                trade_decision_id=decision.id,
+                alpaca_account_label="TORGHUT_SIM",
+                alpaca_order_id="torghut-account-state-order",
+                client_order_id="torghut-account-state-client",
+                symbol="AAPL",
+                side="sell",
+                order_type="limit",
+                time_in_force="day",
+                submitted_qty=Decimal("1"),
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("100"),
+                status="filled",
+                raw_order={},
+                created_at=window_start + timedelta(minutes=12),
+                updated_at=window_start + timedelta(minutes=12),
+                last_update_at=window_start + timedelta(minutes=12),
+            )
+            session.add(execution)
+            session.flush()
+            session.add_all(
+                [
+                    PositionSnapshot(
+                        alpaca_account_label="TORGHUT_SIM",
+                        as_of=window_start - timedelta(seconds=30),
+                        equity=Decimal("100000"),
+                        cash=Decimal("99500"),
+                        buying_power=Decimal("199000"),
+                        positions=[
+                            {
+                                "symbol": "AMAT",
+                                "qty": "0.5",
+                                "side": "long",
+                                "market_value": "250",
+                            },
+                            {
+                                "symbol": "AAPL",
+                                "qty": "1",
+                                "side": "long",
+                                "market_value": "200",
+                            },
+                        ],
+                    ),
+                    ExecutionTCAMetric(
+                        execution_id=execution.id,
+                        trade_decision_id=decision.id,
+                        strategy_id=strategy.id,
+                        alpaca_account_label="TORGHUT_SIM",
+                        symbol="AAPL",
+                        side="sell",
+                        arrival_price=Decimal("101"),
+                        avg_fill_price=Decimal("100"),
+                        filled_qty=Decimal("1"),
+                        signed_qty=Decimal("-1"),
+                        slippage_bps=Decimal("5"),
+                        shortfall_notional=Decimal("1"),
+                        realized_shortfall_bps=Decimal("5"),
+                        churn_qty=Decimal("0"),
+                        churn_ratio=Decimal("0"),
+                        computed_at=window_start + timedelta(minutes=13),
+                        created_at=window_start + timedelta(minutes=13),
+                        updated_at=window_start + timedelta(minutes=13),
+                    ),
+                    StrategyPromotionDecision(
+                        run_id="paper-route-account-state-run",
+                        candidate_id="candidate-account-state",
+                        hypothesis_id="H-ACCOUNT-STATE",
+                        promotion_target="paper",
+                        state="allowed",
+                        allowed=True,
+                        reason_summary="paper_evidence_collecting",
+                        created_at=now,
+                        updated_at=now,
+                    ),
+                ]
+            )
+            session.commit()
+
+            payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "paper_route_probe_only",
+                    "blocked_reasons": [],
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "target_count": "1",
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-ACCOUNT-STATE",
+                                "candidate_id": "candidate-account-state",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_pairs",
+                                "strategy_name": "account-state-proof-strategy",
+                                "strategy_id": "account_state_proof_strategy@research",
+                                "account_label": "TORGHUT_SIM",
+                                "source_kind": "paper_route_probe_runtime_observed",
+                                "source_manifest_ref": "config/trading/hypotheses/h-account-state.json",
+                                "window_start": window_start.isoformat(),
+                                "window_end": window_end.isoformat(),
+                                "paper_probation_authorized": True,
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "summary": {
+                        "paper_route_probe_eligible_symbols": ["AAPL"],
+                        "paper_route_probe_active_symbols": ["AAPL"],
+                    },
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": True,
+                        "effective_max_notional": 25,
+                        "next_session_max_notional": 25,
+                    },
+                },
+                generated_at=now,
+            )
+
+        audit = payload["next_runtime_window_target_audits"][0]
+        account_state = audit["account_state"]
+        self.assertFalse(account_state["flat"])
+        self.assertEqual(account_state["position_count"], 2)
+        self.assertEqual(account_state["target_symbol_position_count"], 1)
+        self.assertEqual(account_state["non_target_symbol_position_count"], 1)
+        self.assertEqual(account_state["gross_position_market_value"], "450")
+        self.assertIn(
+            "paper_route_account_window_start_not_flat",
+            audit["readiness"]["blockers"],
+        )
+        self.assertIn(
+            "paper_route_account_window_start_non_target_positions_present",
+            audit["readiness"]["blockers"],
+        )
+        import_audit = payload["runtime_window_import_audit"]
+        self.assertEqual(import_audit["state"], "import_due_account_state_not_clean")
+        self.assertEqual(
+            import_audit["next_action"],
+            "reset_paper_account_or_discard_contaminated_window",
+        )
+        self.assertIn(
+            "paper_route_account_window_start_positions_present",
+            import_audit["blockers"],
+        )
+        self.assertEqual(
+            import_audit["target_blockers"][0]["account_state"]["position_count"],
+            2,
         )
 
     def test_paper_route_source_activity_requires_candidate_lineage(self) -> None:
@@ -3440,6 +3687,11 @@ class TestPaperRouteEvidenceAudit(TestCase):
                     ),
                 ]
             )
+            self._add_flat_account_start_snapshot(
+                session,
+                account_label="TORGHUT_SIM",
+                window_start=window_start,
+            )
             session.commit()
 
             payload = build_paper_route_evidence_audit(
@@ -3542,6 +3794,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
         historical_start = datetime(2026, 5, 21, 17, tzinfo=timezone.utc)
         historical_end = datetime(2026, 5, 21, 17, 30, tzinfo=timezone.utc)
         now = datetime(2026, 5, 26, 21, tzinfo=timezone.utc)
+        next_window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
         strategy_name = "historical-paper-route"
         with Session(self.engine) as session:
             session.add(
@@ -3572,6 +3825,16 @@ class TestPaperRouteEvidenceAudit(TestCase):
                     lineage_hash_counts={"lineage-a": 1},
                     blockers_json=[],
                 )
+            )
+            self._add_flat_account_start_snapshot(
+                session,
+                account_label="TORGHUT_REPLAY",
+                window_start=historical_start,
+            )
+            self._add_flat_account_start_snapshot(
+                session,
+                account_label="TORGHUT_SIM",
+                window_start=next_window_start,
             )
             session.commit()
 
