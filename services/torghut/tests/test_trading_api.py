@@ -69,6 +69,7 @@ from app.models import (
     Execution,
     ExecutionTCAMetric,
     LLMDecisionReview,
+    PositionSnapshot,
     RejectedSignalOutcomeEvent,
     Strategy,
     StrategyHypothesisMetricWindow,
@@ -485,6 +486,18 @@ class TestTradingApi(TestCase):
                 created_at=datetime.now(timezone.utc),
             )
             session.add(review)
+            session.commit()
+
+            session.add(
+                PositionSnapshot(
+                    alpaca_account_label="TORGHUT_SIM",
+                    as_of=datetime.now(timezone.utc),
+                    equity=Decimal("100000"),
+                    cash=Decimal("100000"),
+                    buying_power=Decimal("200000"),
+                    positions=[],
+                )
+            )
             session.commit()
 
     def test_forecast_service_status_uses_empirical_job_lineage_when_registry_empty(
