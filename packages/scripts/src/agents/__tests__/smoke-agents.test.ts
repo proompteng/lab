@@ -762,6 +762,9 @@ describe('synthesis autonomous trader provider', () => {
     expect(prompt).toContain('stock protective-order path')
     expect(prompt).toContain('bracket or OTO orders')
     expect(prompt).toContain('prefer OCO exits')
+    expect(prompt).toContain('take_profit_limit_price` / `take_profit.limit_price')
+    expect(prompt).toContain('bracket parent fills but broker-generated take-profit or stop-loss children are canceled')
+    expect(prompt).toContain('change the paper account `dtbp_check` to `entry`')
     expect(prompt).toContain('protective-orders.jsonl')
     expect(prompt).toContain('For every Alpaca broker mutation in market-open mode')
     expect(prompt).toContain('build a deterministic `client_order_id` prefixed with `AGENT_RUN_NAME`')
@@ -805,6 +808,11 @@ describe('synthesis autonomous trader provider', () => {
     expect(taskPrompt).toContain('non-marketable paper bracket or OTO stock order proof')
     expect(taskPrompt).toContain('bracket or OTO orders')
     expect(taskPrompt).toContain('prefer OCO exits')
+    expect(taskPrompt).toContain('take_profit_limit_price` / `take_profit.limit_price')
+    expect(taskPrompt).toContain(
+      'bracket parent fills but broker-generated take-profit or stop-loss children are canceled',
+    )
+    expect(taskPrompt).toContain('change the paper account `dtbp_check` to `entry`')
     expect(taskPrompt).toContain('protective-orders.jsonl')
     expect(taskPrompt).toContain('Use AgentRun-owned deterministic client order ids for every broker mutation')
     expect(taskPrompt).toContain('For every Alpaca broker mutation in `market-open`')
