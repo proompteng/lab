@@ -300,7 +300,10 @@ const toolsListResult = {
         type: 'object',
         properties: {
           agentRunName: { type: 'string' },
-          mode: { type: 'string', enum: ['market_session', 'market_open', 'dry_run', 'paper_smoke'] },
+          mode: {
+            type: 'string',
+            enum: ['market_session', 'market_open', 'dry_run', 'paper_smoke', 'scorecard_readback'],
+          },
           tradingDate: { type: 'string' },
           accountId: { type: 'string' },
           goalEquity: numericStringSchema,
