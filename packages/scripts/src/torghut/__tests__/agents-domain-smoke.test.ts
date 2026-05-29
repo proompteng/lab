@@ -94,14 +94,22 @@ describe('Agents domain scheduled AgentRun templates', () => {
     expect(scheduleTargets).toEqual([])
   })
 
-  it('keeps dedicated Torghut capacity pools blocking while shared providers only degrade by default', () => {
-    const provider = readYamlObjects(
-      'argocd/applications/torghut/agents-domain/torghut-market-context-agentprovider.yaml',
-    ).find((manifest) => objectAt(manifest, 'kind') === 'AgentProvider')
-    const spec = objectAt(provider, 'spec')
-    const health = objectAt(spec, 'health')
+  it('keeps retired market-context provider resources out of the agents domain', () => {
+    const kustomization = readYamlObjects('argocd/applications/torghut/agents-domain/kustomization.yaml')[0]
+    const resources = objectAt(kustomization, 'resources') as string[] | undefined
 
-    expect(objectAt(health, 'capacityFailurePolicy')).toBe('block')
+    expect(resources).not.toContain('torghut-market-context-agentprovider.yaml')
+    expect(resources).not.toContain('torghut-market-context-priorityclass.yaml')
+    expect(
+      existsSync(
+        resolve(process.cwd(), 'argocd/applications/torghut/agents-domain/torghut-market-context-agentprovider.yaml'),
+      ),
+    ).toBe(false)
+    expect(
+      existsSync(
+        resolve(process.cwd(), 'argocd/applications/torghut/agents-domain/torghut-market-context-priorityclass.yaml'),
+      ),
+    ).toBe(false)
   })
 
   it('wires Torghut health reports to durable AgentRun artifacts', () => {
