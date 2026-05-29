@@ -7,6 +7,7 @@ import {
   handleAutotraderGetScorecard,
   handleAutotraderGetSession,
   handleAutotraderListSessions,
+  handleAutotraderRecordOrder,
   handleAutotraderRecordPositionSnapshot,
   handleAutotraderStartSession,
   handleAutotraderUpsertStatus,
@@ -564,5 +565,102 @@ describe('synthesis REST auth', () => {
     expect(snapshotPayload.positionSnapshot.capturedAt).not.toBe('2999-01-01T00:00:00.000Z')
     expect(Date.parse(snapshotPayload.positionSnapshot.capturedAt)).toBeLessThanOrEqual(Date.now() + 60_000)
     expect(detailPayload.positionSnapshots[0].capturedAt).toBe(snapshotPayload.positionSnapshot.capturedAt)
+  })
+
+  test('marks replaced broker orders as replaced when recording a replacement order', async () => {
+    const authedHeaders = {
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+    }
+    const startResponse = await handleAutotraderStartSession(
+      new Request('http://synthesis.test/api/autotrader/sessions', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          agentRunName: 'autonomous-trader-order-replace-api-test',
+          mode: 'market_open',
+          tradingDate: '2026-05-29',
+          accountId: 'paper-account',
+          goalEquity: '500000',
+          openingEquity: '38400',
+          marketOpenAt: '2026-05-29T13:30:00Z',
+          marketCloseAt: '2026-05-29T20:00:00Z',
+        }),
+      }),
+    )
+    const startPayload = await startResponse.json()
+    const sessionId = startPayload.session.id
+
+    await handleAutotraderRecordOrder(
+      new Request('http://synthesis.test/api/autotrader/orders', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          sessionId,
+          clientOrderId: 'avgo-original-stop',
+          brokerOrderId: 'alpaca-original-stop',
+          symbol: 'AVGO',
+          instrument: 'stock',
+          side: 'sell',
+          quantity: '50',
+          orderType: 'stop_limit',
+          orderClass: 'bracket_child_stop_broker_generated',
+          limitPrice: '438.75',
+          stopPrice: '438.90',
+          status: 'accepted',
+          brokerPayload: { status: 'held' },
+        }),
+      }),
+    )
+    await handleAutotraderRecordOrder(
+      new Request('http://synthesis.test/api/autotrader/orders', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          sessionId,
+          clientOrderId: 'avgo-tightened-stop',
+          brokerOrderId: 'alpaca-tightened-stop',
+          symbol: 'AVGO',
+          instrument: 'stock',
+          side: 'sell',
+          quantity: '50',
+          orderType: 'stop_limit',
+          orderClass: 'bracket_child_stop_replace',
+          limitPrice: '439.50',
+          stopPrice: '439.70',
+          status: 'accepted',
+          brokerPayload: {
+            status: 'held',
+            replaces: 'alpaca-original-stop',
+          },
+        }),
+      }),
+    )
+
+    const detailResponse = await handleAutotraderGetSession(
+      new Request(`http://synthesis.test/api/autotrader/sessions/${sessionId}`),
+      sessionId,
+    )
+    const detailPayload = await detailResponse.json()
+    const originalStop = detailPayload.orders.find(
+      (order: { clientOrderId: string }) => order.clientOrderId === 'avgo-original-stop',
+    )
+    const tightenedStop = detailPayload.orders.find(
+      (order: { clientOrderId: string }) => order.clientOrderId === 'avgo-tightened-stop',
+    )
+
+    expect(originalStop).toMatchObject({
+      brokerOrderId: 'alpaca-original-stop',
+      status: 'replaced',
+      brokerPayload: {
+        replacedBy: 'alpaca-tightened-stop',
+        replacementClientOrderId: 'avgo-tightened-stop',
+      },
+    })
+    expect(tightenedStop).toMatchObject({
+      brokerOrderId: 'alpaca-tightened-stop',
+      status: 'accepted',
+      brokerPayload: { replaces: 'alpaca-original-stop' },
+    })
   })
 })

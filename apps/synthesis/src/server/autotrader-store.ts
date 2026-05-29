@@ -72,6 +72,10 @@ const toJson = (value: Record<string, unknown>) => JSON.stringify(value)
 const numericOrNull = (value: string | null | undefined) => value ?? null
 const normalizedSymbol = (value: string | null | undefined) => value?.trim().toUpperCase() || null
 const scorecardSymbol = (value: string | null | undefined) => normalizedSymbol(value) ?? '*'
+const brokerReplacesOrderId = (payload: Record<string, unknown>) => {
+  const replaces = payload.replaces
+  return typeof replaces === 'string' && replaces.trim() ? replaces.trim() : null
+}
 const numericFromPayload = (payload: Record<string, unknown>, keys: string[]) => {
   for (const key of keys) {
     const value = payload[key]
@@ -330,6 +334,7 @@ class InMemoryAutotraderStore implements AutotraderStore {
 
   async recordOrder(input: AutotraderRecordOrderInput): Promise<AutotraderOrder> {
     this.requireSession(input.sessionId)
+    const updatedAt = nowIso()
     const order: AutotraderOrder = {
       sessionId: input.sessionId,
       ticketId: input.ticketId ?? null,
@@ -349,9 +354,28 @@ class InMemoryAutotraderStore implements AutotraderStore {
       status: input.status,
       rejectReason: input.rejectReason ?? null,
       brokerPayload: input.brokerPayload,
-      updatedAt: nowIso(),
+      updatedAt,
     }
     this.orders.set(order.clientOrderId, order)
+    const replaces = brokerReplacesOrderId(input.brokerPayload)
+    if (replaces) {
+      for (const [clientOrderId, existing] of this.orders) {
+        if (existing.sessionId !== order.sessionId) continue
+        if (existing.clientOrderId === order.clientOrderId) continue
+        if (existing.brokerOrderId !== replaces) continue
+        this.orders.set(clientOrderId, {
+          ...existing,
+          status: 'replaced',
+          brokerPayload: {
+            ...existing.brokerPayload,
+            replacedBy: order.brokerOrderId ?? order.clientOrderId,
+            replacementClientOrderId: order.clientOrderId,
+            replacementRecordedAt: updatedAt,
+          },
+          updatedAt,
+        })
+      }
+    }
     return order
   }
 
@@ -1066,55 +1090,84 @@ class PostgresAutotraderStore implements AutotraderStore {
 
   async recordOrder(input: AutotraderRecordOrderInput): Promise<AutotraderOrder> {
     await this.ensureSchema()
-    const result = await this.pool.query<OrderRow>(
-      `INSERT INTO autotrader.orders (
-        session_id, ticket_id, client_order_id, broker_order_id, symbol, instrument, side, quantity, order_type,
-        order_class, limit_price, stop_price, take_profit_limit_price, stop_loss_stop_price, stop_loss_limit_price,
-        status, reject_reason, broker_payload
+    const client = await this.pool.connect()
+    try {
+      await client.query('BEGIN')
+      const result = await client.query<OrderRow>(
+        `INSERT INTO autotrader.orders (
+          session_id, ticket_id, client_order_id, broker_order_id, symbol, instrument, side, quantity, order_type,
+          order_class, limit_price, stop_price, take_profit_limit_price, stop_loss_stop_price, stop_loss_limit_price,
+          status, reject_reason, broker_payload
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18::jsonb)
+        ON CONFLICT (client_order_id) DO UPDATE SET
+          session_id = EXCLUDED.session_id,
+          ticket_id = EXCLUDED.ticket_id,
+          broker_order_id = COALESCE(EXCLUDED.broker_order_id, autotrader.orders.broker_order_id),
+          symbol = EXCLUDED.symbol,
+          instrument = EXCLUDED.instrument,
+          side = EXCLUDED.side,
+          quantity = EXCLUDED.quantity,
+          order_type = EXCLUDED.order_type,
+          order_class = EXCLUDED.order_class,
+          limit_price = EXCLUDED.limit_price,
+          stop_price = EXCLUDED.stop_price,
+          take_profit_limit_price = EXCLUDED.take_profit_limit_price,
+          stop_loss_stop_price = EXCLUDED.stop_loss_stop_price,
+          stop_loss_limit_price = EXCLUDED.stop_loss_limit_price,
+          status = EXCLUDED.status,
+          reject_reason = EXCLUDED.reject_reason,
+          broker_payload = EXCLUDED.broker_payload,
+          updated_at = now()
+        RETURNING *`,
+        [
+          input.sessionId,
+          input.ticketId ?? null,
+          input.clientOrderId,
+          input.brokerOrderId ?? null,
+          normalizedSymbol(input.symbol) ?? input.symbol,
+          input.instrument,
+          input.side,
+          input.quantity,
+          input.orderType,
+          input.orderClass ?? null,
+          numericOrNull(input.limitPrice),
+          numericOrNull(input.stopPrice),
+          numericOrNull(input.takeProfitLimitPrice),
+          numericOrNull(input.stopLossStopPrice),
+          numericOrNull(input.stopLossLimitPrice),
+          input.status,
+          input.rejectReason ?? null,
+          toJson(input.brokerPayload),
+        ],
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18::jsonb)
-      ON CONFLICT (client_order_id) DO UPDATE SET
-        session_id = EXCLUDED.session_id,
-        ticket_id = EXCLUDED.ticket_id,
-        broker_order_id = COALESCE(EXCLUDED.broker_order_id, autotrader.orders.broker_order_id),
-        symbol = EXCLUDED.symbol,
-        instrument = EXCLUDED.instrument,
-        side = EXCLUDED.side,
-        quantity = EXCLUDED.quantity,
-        order_type = EXCLUDED.order_type,
-        order_class = EXCLUDED.order_class,
-        limit_price = EXCLUDED.limit_price,
-        stop_price = EXCLUDED.stop_price,
-        take_profit_limit_price = EXCLUDED.take_profit_limit_price,
-        stop_loss_stop_price = EXCLUDED.stop_loss_stop_price,
-        stop_loss_limit_price = EXCLUDED.stop_loss_limit_price,
-        status = EXCLUDED.status,
-        reject_reason = EXCLUDED.reject_reason,
-        broker_payload = EXCLUDED.broker_payload,
-        updated_at = now()
-      RETURNING *`,
-      [
-        input.sessionId,
-        input.ticketId ?? null,
-        input.clientOrderId,
-        input.brokerOrderId ?? null,
-        normalizedSymbol(input.symbol) ?? input.symbol,
-        input.instrument,
-        input.side,
-        input.quantity,
-        input.orderType,
-        input.orderClass ?? null,
-        numericOrNull(input.limitPrice),
-        numericOrNull(input.stopPrice),
-        numericOrNull(input.takeProfitLimitPrice),
-        numericOrNull(input.stopLossStopPrice),
-        numericOrNull(input.stopLossLimitPrice),
-        input.status,
-        input.rejectReason ?? null,
-        toJson(input.brokerPayload),
-      ],
-    )
-    return mapOrder(result.rows[0])
+      const order = mapOrder(result.rows[0])
+      const replaces = brokerReplacesOrderId(input.brokerPayload)
+      if (replaces) {
+        await client.query(
+          `UPDATE autotrader.orders
+           SET status = 'replaced',
+               broker_payload = broker_payload || jsonb_build_object(
+                 'replacedBy', $3::text,
+                 'replacementClientOrderId', $4::text,
+                 'replacementRecordedAt', now()::text
+               ),
+               updated_at = now()
+           WHERE session_id = $1
+             AND broker_order_id = $2
+             AND client_order_id <> $4
+             AND status <> 'replaced'`,
+          [input.sessionId, replaces, input.brokerOrderId ?? input.clientOrderId, input.clientOrderId],
+        )
+      }
+      await client.query('COMMIT')
+      return order
+    } catch (error) {
+      await client.query('ROLLBACK')
+      throw error
+    } finally {
+      client.release()
+    }
   }
 
   async recordFill(input: AutotraderRecordFillInput): Promise<AutotraderFill> {
