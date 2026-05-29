@@ -11,7 +11,13 @@ const OptionalNumericStringSchema = NumericStringSchema.optional()
 const PayloadSchema = z.record(z.string(), z.unknown()).default({})
 const TagsSchema = z.array(z.string().trim().min(1).max(80)).max(32).default([])
 
-export const AutotraderSessionModeSchema = z.enum(['market_session', 'market_open', 'dry_run', 'paper_smoke'])
+export const AutotraderSessionModeSchema = z.enum([
+  'market_session',
+  'market_open',
+  'dry_run',
+  'paper_smoke',
+  'scorecard_readback',
+])
 export const AutotraderPhaseSchema = z.enum([
   'preflight',
   'scan',
