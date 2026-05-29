@@ -402,6 +402,17 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(target["paper_route_probe_symbols"], ["AAPL"])
         self.assertEqual(target["paper_route_probe_next_session_max_notional"], "25")
         self.assertEqual(
+            target["source_decision_readiness"]["blockers"],
+            ["source_strategy_missing"],
+        )
+        self.assertFalse(target["source_decision_readiness"]["ready"])
+        self.assertEqual(
+            plan["source_decision_readiness"]["blockers"],
+            ["source_strategy_missing"],
+        )
+        self.assertEqual(plan["source_decision_readiness"]["ready_target_count"], 0)
+        self.assertEqual(plan["source_decision_readiness"]["blocked_target_count"], 1)
+        self.assertEqual(
             plan["paper_route_probe"]["blocking_reasons"],
             ["not_paper_mode", "market_session_closed"],
         )
@@ -475,6 +486,11 @@ class TestPaperRouteEvidenceAudit(TestCase):
         )
         self.assertFalse(summary_target["promotion_allowed"])
         self.assertTrue(summary_target["promotion_blocked"])
+        self.assertFalse(summary_target["source_decision_ready"])
+        self.assertEqual(
+            summary_target["source_decision_blockers"],
+            ["source_strategy_missing"],
+        )
         self.assertEqual(
             import_audit["diagnostics"]["target_blockers_effective_when"],
             "runtime_window_import_ready",
@@ -536,6 +552,12 @@ class TestPaperRouteEvidenceAudit(TestCase):
             1,
         )
         self.assertEqual(
+            proof_handoff["runtime_window"]["source_decision_readiness"][
+                "blocked_target_count"
+            ],
+            1,
+        )
+        self.assertEqual(
             proof_handoff["default_live_service_base_url"],
             "http://torghut.torghut.svc.cluster.local",
         )
@@ -594,6 +616,118 @@ class TestPaperRouteEvidenceAudit(TestCase):
             "paper_route_runtime_ledger_import_pending",
             target["runtime_ledger_target_metadata_blockers"],
         )
+
+    def test_next_paper_route_targets_surface_source_decision_readiness(
+        self,
+    ) -> None:
+        generated_at = datetime(2026, 5, 24, 12, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            session.add(
+                Strategy(
+                    name="microbar-cross-sectional-pairs-v1",
+                    description="paper route source strategy",
+                    enabled=True,
+                    base_timeframe="1Sec",
+                    universe_type="static",
+                    universe_symbols=["AAPL", "AMZN"],
+                    max_notional_per_trade=Decimal("31590"),
+                )
+            )
+            session.commit()
+            payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "paper_route_probe_only",
+                    "blocked_reasons": [],
+                    "promotion_eligible_total": 0,
+                    "dependency_quorum_decision": "allow",
+                    "continuity_ok": True,
+                    "continuity_reason": "signal_continuity_nominal",
+                    "drift_ok": True,
+                    "drift_reason": "drift_live_promotion_eligible",
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "target_count": 1,
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-PAIRS-01",
+                                "candidate_id": "candidate-paper-route",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_pairs",
+                                "strategy_name": (
+                                    "69cf50e3-4815-47c2-b802-1efbaac09ecb"
+                                ),
+                                "runtime_strategy_name": (
+                                    "69cf50e3-4815-47c2-b802-1efbaac09ecb"
+                                ),
+                                "strategy_lookup_names": [
+                                    "69cf50e3-4815-47c2-b802-1efbaac09ecb",
+                                    "microbar-cross-sectional-pairs-v1",
+                                ],
+                                "account_label": "TORGHUT_SIM",
+                                "source_kind": "durable_runtime_ledger_bucket",
+                                "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
+                                "dataset_snapshot_ref": "portfolio-profit-autoresearch-500-v1",
+                                "paper_probation_authorized": True,
+                                "promotion_allowed": False,
+                                "final_promotion_authorized": False,
+                                "max_notional": "0",
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "summary": {
+                        "paper_route_probe_eligible_symbols": ["AAPL", "AMZN", "INTC"],
+                        "paper_route_probe_active_symbols": [],
+                    },
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": False,
+                        "next_session_max_notional": "63180",
+                        "eligible_symbol_count": 3,
+                        "eligible_symbols": ["AAPL", "AMZN", "INTC"],
+                        "blocking_reasons": ["market_session_closed"],
+                    },
+                },
+                generated_at=generated_at,
+            )
+
+        plan = payload["next_paper_route_runtime_window_targets"]
+        self.assertEqual(
+            plan["source_decision_readiness"]["ready_target_count"],
+            1,
+        )
+        self.assertEqual(plan["source_decision_readiness"]["blocked_target_count"], 0)
+        self.assertEqual(plan["source_decision_readiness"]["blockers"], [])
+        target = plan["targets"][0]
+        readiness = target["source_decision_readiness"]
+        self.assertTrue(readiness["ready"])
+        self.assertEqual(readiness["blockers"], [])
+        self.assertEqual(
+            readiness["matched_strategy"]["strategy_name"],
+            "microbar-cross-sectional-pairs-v1",
+        )
+        self.assertEqual(readiness["matched_strategy"]["base_timeframe"], "1Sec")
+        self.assertEqual(
+            readiness["matched_strategy"]["universe_symbols"],
+            ["AAPL", "AMZN"],
+        )
+        self.assertEqual(readiness["scoped_probe_symbols"], ["AAPL", "AMZN"])
+        self.assertEqual(
+            target["paper_route_probe_out_of_strategy_scope_symbols"],
+            ["INTC"],
+        )
+        self.assertEqual(
+            target["paper_route_probe_missing_strategy_universe_symbols"],
+            [],
+        )
+        summary_target = payload["summary"]["next_paper_route_targets"][0]
+        self.assertTrue(summary_target["source_decision_ready"])
+        self.assertEqual(summary_target["source_decision_blockers"], [])
 
     def test_builder_exports_missing_runtime_window_health_gate_as_blockers(
         self,
