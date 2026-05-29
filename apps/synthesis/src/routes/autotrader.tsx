@@ -423,26 +423,65 @@ function PositionsPanel({ detail }: { detail: AutotraderSessionDetail }) {
 }
 
 function ScorecardsPanel({ detail }: { detail: AutotraderSessionDetail }) {
+  const examplesByScorecard = new Map<string, AutotraderSessionDetail['setupExamples']>()
+  for (const example of detail.setupExamples) {
+    const existing = examplesByScorecard.get(example.scorecardKey) ?? []
+    existing.push(example)
+    examplesByScorecard.set(example.scorecardKey, existing)
+  }
+
   return (
     <Panel title="Scorecards" icon={<BarChart3 />}>
       {detail.scorecards.length ? (
-        detail.scorecards.map((scorecard) => (
-          <div key={scorecard.key} className="border-b border-[#2f3336] px-4 py-3 last:border-b-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <TrendingUp className="size-4 text-[#1d9bf0]" />
-              <span className="text-sm font-semibold">{scorecard.symbol ?? 'ALL'}</span>
-              <Pill>{scorecard.setupGrade}</Pill>
-              <Pill>{scorecard.timeBucket}</Pill>
+        detail.scorecards.map((scorecard) => {
+          const examples = examplesByScorecard.get(scorecard.key)?.slice(0, 3) ?? []
+
+          return (
+            <div key={scorecard.key} className="border-b border-[#2f3336] px-4 py-3 last:border-b-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <TrendingUp className="size-4 text-[#1d9bf0]" />
+                <span className="text-sm font-semibold">{scorecard.symbol ?? 'ALL'}</span>
+                <Pill>{scorecard.setupGrade}</Pill>
+                <Pill>{scorecard.timeBucket}</Pill>
+              </div>
+              <div className="mt-2 text-xs text-[#71767b]">{scorecard.setupType}</div>
+              <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-[#71767b]">
+                <span>n {scorecard.sampleSize}</span>
+                <span>avg R {formatNumber(scorecard.avgRealizedR)}</span>
+                <span>wins {scorecard.wins}</span>
+                <span>losses {scorecard.losses}</span>
+              </div>
+              {examples.length ? (
+                <div className="mt-3 border-t border-[#2f3336] pt-3">
+                  <div className="text-[0.625rem] font-medium uppercase tracking-normal text-[#71767b]">
+                    recent examples
+                  </div>
+                  <div className="mt-2 grid gap-2">
+                    {examples.map((example) => (
+                      <div key={example.id} className="text-xs leading-5 text-[#cfd3d6]">
+                        <div className="flex flex-wrap items-center gap-2 text-[#71767b]">
+                          <Pill>{example.outcome}</Pill>
+                          <span>R {formatNumber(example.realizedR)}</span>
+                          <span>{formatDate(example.createdAt)}</span>
+                        </div>
+                        {example.notes ? <div className="mt-1">{example.notes}</div> : null}
+                        {example.mistakeTags.length ? (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {example.mistakeTags.map((tag) => (
+                              <span key={tag} className="font-mono text-[0.625rem] text-[#71767b]">
+                                #{tag}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </div>
-            <div className="mt-2 text-xs text-[#71767b]">{scorecard.setupType}</div>
-            <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-[#71767b]">
-              <span>n {scorecard.sampleSize}</span>
-              <span>avg R {formatNumber(scorecard.avgRealizedR)}</span>
-              <span>wins {scorecard.wins}</span>
-              <span>losses {scorecard.losses}</span>
-            </div>
-          </div>
-        ))
+          )
+        })
       ) : (
         <EmptyLine text="No scorecards linked to this session." />
       )}

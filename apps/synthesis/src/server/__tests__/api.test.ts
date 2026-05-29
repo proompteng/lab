@@ -489,10 +489,16 @@ describe('synthesis REST auth', () => {
     expect(detailPayload.status.currentAction).toContain('standing down')
     expect(detailPayload.events[0].eventType).toBe('no_trade_decision')
     expect(detailPayload.tradeTickets[0].noTradeReason).toBe('C setup blocked')
+    expect(detailPayload.setupExamples[0]).toMatchObject({
+      ticketId: ticketPayload.ticket.id,
+      outcome: 'rejected_invalid',
+      notes: 'C setup correctly blocked',
+    })
     expect(scorecardPayload.scorecards[0]).toMatchObject({
       symbol: 'AMD',
       setupType: 'vwap_reclaim',
       rejectedInvalid: 1,
     })
+    expect(scorecardPayload.setupExamples[0].notes).toBe('C setup correctly blocked')
   })
 })
