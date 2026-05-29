@@ -66,6 +66,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BEFORE_SHA: ${{ github.event.before }}
           HEAD_SHA: ${{ github.sha }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
@@ -78,14 +79,30 @@ jobs:
           fi
 
           changed_files="$(mktemp)"
+          github_api() {
+            local url="$1"
+            local attempt
+
+            for attempt in 1 2 3; do
+              if curl -fsSL \
+                -H "Authorization: Bearer ${GH_TOKEN}" \
+                -H 'Accept: application/vnd.github+json' \
+                -H 'X-GitHub-Api-Version: 2022-11-28' \
+                "${url}"; then
+                return 0
+              fi
+              sleep $((attempt * 2))
+            done
+
+            echo "Failed to fetch GitHub API URL after retries: ${url}" >&2
+            return 1
+          }
+
           if [ "${EVENT_NAME}" = "pull_request" ]; then
             page=1
             while true; do
               response="$(
-                curl -fsSL \
-                  -H 'Accept: application/vnd.github+json' \
-                  -H 'X-GitHub-Api-Version: 2022-11-28' \
-                  "https://api.github.com/repos/${GH_REPO}/pulls/${PR_NUMBER}/files?per_page=100&page=${page}"
+                github_api "https://api.github.com/repos/${GH_REPO}/pulls/${PR_NUMBER}/files?per_page=100&page=${page}"
               )"
               count="$(jq 'length' <<< "${response}")"
               if [ "${count}" -eq 0 ]; then
@@ -95,10 +112,7 @@ jobs:
               page=$((page + 1))
             done
           else
-            curl -fsSL \
-              -H 'Accept: application/vnd.github+json' \
-              -H 'X-GitHub-Api-Version: 2022-11-28' \
-              "https://api.github.com/repos/${GH_REPO}/compare/${BEFORE_SHA}...${HEAD_SHA}" \
+            github_api "https://api.github.com/repos/${GH_REPO}/compare/${BEFORE_SHA}...${HEAD_SHA}" \
               | jq -r '.files[].filename' > "${changed_files}"
           fi
 
