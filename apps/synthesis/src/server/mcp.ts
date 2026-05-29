@@ -458,6 +458,7 @@ const toolsListResult = {
           stopPrice: numericStringSchema,
           takeProfitLimitPrice: numericStringSchema,
           stopLossStopPrice: numericStringSchema,
+          stopLossLimitPrice: numericStringSchema,
           status: {
             type: 'string',
             enum: [

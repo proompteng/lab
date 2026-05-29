@@ -323,6 +323,7 @@ class InMemoryAutotraderStore implements AutotraderStore {
       stopPrice: input.stopPrice ?? null,
       takeProfitLimitPrice: input.takeProfitLimitPrice ?? null,
       stopLossStopPrice: input.stopLossStopPrice ?? null,
+      stopLossLimitPrice: input.stopLossLimitPrice ?? null,
       status: input.status,
       rejectReason: input.rejectReason ?? null,
       brokerPayload: input.brokerPayload,
@@ -557,6 +558,7 @@ type OrderRow = {
   stop_price: string | null
   take_profit_limit_price: string | null
   stop_loss_stop_price: string | null
+  stop_loss_limit_price: string | null
   status: AutotraderOrder['status']
   reject_reason: string | null
   broker_payload: unknown
@@ -732,6 +734,7 @@ const mapOrder = (row: OrderRow): AutotraderOrder => ({
   stopPrice: row.stop_price == null ? null : String(row.stop_price),
   takeProfitLimitPrice: row.take_profit_limit_price == null ? null : String(row.take_profit_limit_price),
   stopLossStopPrice: row.stop_loss_stop_price == null ? null : String(row.stop_loss_stop_price),
+  stopLossLimitPrice: row.stop_loss_limit_price == null ? null : String(row.stop_loss_limit_price),
   status: row.status,
   rejectReason: row.reject_reason,
   brokerPayload: toPayload(row.broker_payload),
@@ -1020,10 +1023,10 @@ class PostgresAutotraderStore implements AutotraderStore {
     const result = await this.pool.query<OrderRow>(
       `INSERT INTO autotrader.orders (
         session_id, ticket_id, client_order_id, broker_order_id, symbol, instrument, side, quantity, order_type,
-        order_class, limit_price, stop_price, take_profit_limit_price, stop_loss_stop_price, status, reject_reason,
-        broker_payload
+        order_class, limit_price, stop_price, take_profit_limit_price, stop_loss_stop_price, stop_loss_limit_price,
+        status, reject_reason, broker_payload
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18::jsonb)
       ON CONFLICT (client_order_id) DO UPDATE SET
         session_id = EXCLUDED.session_id,
         ticket_id = EXCLUDED.ticket_id,
@@ -1038,6 +1041,7 @@ class PostgresAutotraderStore implements AutotraderStore {
         stop_price = EXCLUDED.stop_price,
         take_profit_limit_price = EXCLUDED.take_profit_limit_price,
         stop_loss_stop_price = EXCLUDED.stop_loss_stop_price,
+        stop_loss_limit_price = EXCLUDED.stop_loss_limit_price,
         status = EXCLUDED.status,
         reject_reason = EXCLUDED.reject_reason,
         broker_payload = EXCLUDED.broker_payload,
@@ -1058,6 +1062,7 @@ class PostgresAutotraderStore implements AutotraderStore {
         numericOrNull(input.stopPrice),
         numericOrNull(input.takeProfitLimitPrice),
         numericOrNull(input.stopLossStopPrice),
+        numericOrNull(input.stopLossLimitPrice),
         input.status,
         input.rejectReason ?? null,
         toJson(input.brokerPayload),
@@ -1480,11 +1485,15 @@ class PostgresAutotraderStore implements AutotraderStore {
         stop_price numeric,
         take_profit_limit_price numeric,
         stop_loss_stop_price numeric,
+        stop_loss_limit_price numeric,
         status text NOT NULL,
         reject_reason text,
         broker_payload jsonb NOT NULL DEFAULT '{}'::jsonb,
         updated_at timestamptz NOT NULL DEFAULT now()
       );
+
+      ALTER TABLE autotrader.orders
+        ADD COLUMN IF NOT EXISTS stop_loss_limit_price numeric;
 
       CREATE TABLE IF NOT EXISTS autotrader.fills (
         broker_fill_id text PRIMARY KEY,

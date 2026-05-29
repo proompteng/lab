@@ -317,6 +317,9 @@ function OrdersPanel({ orders, fills }: { orders: AutotraderOrder[]; fills: Auto
                 <span>{order.side}</span>
                 <span>qty {formatNumber(order.quantity)}</span>
                 <span>limit {formatMoney(order.limitPrice)}</span>
+                {order.takeProfitLimitPrice ? <span>target {formatMoney(order.takeProfitLimitPrice)}</span> : null}
+                {order.stopLossStopPrice ? <span>stop {formatMoney(order.stopLossStopPrice)}</span> : null}
+                {order.stopLossLimitPrice ? <span>stop limit {formatMoney(order.stopLossLimitPrice)}</span> : null}
               </div>
               {order.rejectReason ? <div className="mt-2 text-sm text-[#ff7a85]">{order.rejectReason}</div> : null}
             </div>

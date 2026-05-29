@@ -154,6 +154,7 @@ export const AutotraderRecordOrderInputSchema = z
     stopPrice: OptionalNumericStringSchema,
     takeProfitLimitPrice: OptionalNumericStringSchema,
     stopLossStopPrice: OptionalNumericStringSchema,
+    stopLossLimitPrice: OptionalNumericStringSchema,
     status: AutotraderOrderStatusSchema,
     rejectReason: z.string().trim().min(1).max(1_000).nullable().optional(),
     brokerPayload: PayloadSchema,
@@ -347,6 +348,7 @@ export type AutotraderOrder = {
   stopPrice: string | null
   takeProfitLimitPrice: string | null
   stopLossStopPrice: string | null
+  stopLossLimitPrice: string | null
   status: z.infer<typeof AutotraderOrderStatusSchema>
   rejectReason: string | null
   brokerPayload: Record<string, unknown>

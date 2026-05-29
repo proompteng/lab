@@ -435,6 +435,7 @@ describe('synthesis MCP', () => {
             limitPrice: '125.10',
             takeProfitLimitPrice: '128.50',
             stopLossStopPrice: '123.80',
+            stopLossLimitPrice: '123.70',
             status: 'filled',
             brokerPayload: { source: 'alpaca' },
           },
@@ -525,6 +526,7 @@ describe('synthesis MCP', () => {
 
     expect(finalizedPayload.detail.session.terminalReason).toBe('market_close')
     expect(finalizedPayload.detail.orders).toHaveLength(1)
+    expect(finalizedPayload.detail.orders[0].stopLossLimitPrice).toBe('123.70')
     expect(finalizedPayload.detail.positionSnapshots[0].symbol).toBe('NVDA')
     expect(scorecardPayload.scorecards[0]).toMatchObject({
       symbol: 'NVDA',
