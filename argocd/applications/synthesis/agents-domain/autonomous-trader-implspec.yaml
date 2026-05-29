@@ -75,7 +75,7 @@ spec:
        - Reconcile open orders and absorb any account/position changes as current state.
        - Call `autotrader_get_scorecard` before ranking candidates and include the scorecard summary in scanner input.
        - Build a ranked action list from analysis context, live snapshots/quotes/bars, option-chain data when relevant, technicals, catalysts, liquidity, account constraints, and web research when fresh information can change the trade.
-       - Before each non-smoke order, run `stock_analysis daytrading-scan` and validate `/workspace/.agentrun/autonomous-trader/trade-ticket.json` with `stock_analysis daytrading-validate-ticket`.
+       - Before each non-smoke order, run `/workspace/.agentrun/autonomous-trader/stock_analysis daytrading-scan` and validate `/workspace/.agentrun/autonomous-trader/trade-ticket.json` with `/workspace/.agentrun/autonomous-trader/stock_analysis daytrading-validate-ticket`.
        - Submit an order only after the trade ticket records setup type, setup grade, expected R, fat-pitch flag, thesis, entry, invalidation, exit logic, sizing, max loss, liquidity, and reconciliation plan.
        - Block C setups and record the no-trade reason with `autotrader_create_trade_ticket`, `autotrader_record_risk_check`, and `autotrader_append_event`.
        - For new stock or ETF entries, use Alpaca MCP bracket or OTO orders when feasible with `order_class`, `take_profit_limit_price`, `stop_loss_stop_price`, optional `stop_loss_limit_price`, and unique `client_order_id`.

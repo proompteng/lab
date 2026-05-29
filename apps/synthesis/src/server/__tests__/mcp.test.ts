@@ -308,10 +308,20 @@ describe('synthesis MCP', () => {
     }>
     const toolNames = tools.map((tool) => tool.name)
     const startSessionTool = tools.find((tool) => tool.name === 'autotrader_start_session')
+    const finalizeSessionTool = tools.find((tool) => tool.name === 'autotrader_finalize_session')
 
     expect(toolNames).toEqual(expect.arrayContaining(['autotrader_start_session', 'autotrader_get_scorecard']))
     expect(startSessionTool?.inputSchema?.properties?.mode?.enum).toEqual(
       expect.arrayContaining(['market_session', 'market_open', 'dry_run', 'paper_smoke', 'scorecard_readback']),
+    )
+    expect(startSessionTool?.inputSchema?.properties?.openingEquity).toBeDefined()
+    expect(finalizeSessionTool?.inputSchema?.properties).toEqual(
+      expect.objectContaining({
+        openingEquity: expect.any(Object),
+        closingEquity: expect.any(Object),
+        realizedPnl: expect.any(Object),
+        maxDrawdown: expect.any(Object),
+      }),
     )
 
     const sessionPayload = await parseToolJson(
@@ -324,6 +334,7 @@ describe('synthesis MCP', () => {
             tradingDate: '2026-05-29',
             accountId: 'paper-account',
             goalEquity: '500000',
+            openingEquity: '38400',
             marketOpenAt: '2026-05-29T13:30:00Z',
             marketCloseAt: '2026-05-29T20:00:00Z',
             analysisHead: 'b187dcf',
