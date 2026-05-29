@@ -4,17 +4,18 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import hashlib
 import json
 import os
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import ROUND_CEILING, Decimal
 from pathlib import Path
-from typing import Any, Mapping, Sequence, cast
+from typing import Any, Iterator, Mapping, Sequence, cast
 
 import psycopg
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.db import SessionLocal
 from app.models import StrategyRuntimeLedgerBucket
@@ -128,6 +129,15 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--strategy-family", default="")
     parser.add_argument("--source-dsn", default="")
     parser.add_argument("--source-dsn-env", default="DB_DSN")
+    parser.add_argument("--target-dsn", default="")
+    parser.add_argument(
+        "--target-dsn-env",
+        default="",
+        help=(
+            "Optional environment variable for the database where imported runtime "
+            "governance rows are persisted. Defaults to DB_DSN via SessionLocal."
+        ),
+    )
     parser.add_argument("--strategy-name", required=True)
     parser.add_argument("--account-label", required=True)
     parser.add_argument("--source-account-label", default="")
@@ -161,6 +171,56 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--json", action="store_true")
     return parser.parse_args()
+
+
+def _sqlalchemy_dsn(dsn: str) -> str:
+    text = dsn.strip()
+    if text.startswith("postgresql+psycopg://"):
+        return text
+    if text.startswith("postgres://"):
+        return text.replace("postgres://", "postgresql+psycopg://", 1)
+    if text.startswith("postgresql://"):
+        return text.replace("postgresql://", "postgresql+psycopg://", 1)
+    return text
+
+
+def _target_persistence_dsn(args: argparse.Namespace) -> str:
+    direct_dsn = str(getattr(args, "target_dsn", "") or "").strip()
+    if direct_dsn:
+        return direct_dsn
+    target_dsn_env = str(getattr(args, "target_dsn_env", "") or "").strip()
+    if not target_dsn_env:
+        return ""
+    dsn = os.getenv(target_dsn_env, "").strip()
+    if not dsn:
+        raise RuntimeError(f"target_dsn_not_configured:{target_dsn_env}")
+    return dsn
+
+
+@contextmanager
+def _persistence_session(args: argparse.Namespace) -> Iterator[Session]:
+    target_dsn = _target_persistence_dsn(args)
+    if not target_dsn:
+        with SessionLocal() as session:
+            yield session
+        return
+    engine = create_engine(
+        _sqlalchemy_dsn(target_dsn),
+        pool_pre_ping=True,
+        future=True,
+    )
+    TargetSessionLocal = sessionmaker(
+        bind=engine,
+        autocommit=False,
+        autoflush=False,
+        expire_on_commit=False,
+        future=True,
+    )
+    try:
+        with TargetSessionLocal() as session:
+            yield session
+    finally:
+        engine.dispose()
 
 
 def _flag(value: str) -> bool:
@@ -3321,6 +3381,9 @@ def main() -> int:
         "strategy_name_candidates": strategy_names,
         "account_label": args.account_label,
         "source_account_label": source_account_label,
+        "source_dsn_env": str(getattr(args, "source_dsn_env", "") or "").strip(),
+        "target_dsn_env": str(getattr(args, "target_dsn_env", "") or "").strip(),
+        "target_dsn_configured": bool(_target_persistence_dsn(args)),
         "window_start": window_start.isoformat(),
         "window_end": window_end.isoformat(),
         "source_activity_symbol_filter": source_activity_symbols,
@@ -3406,7 +3469,7 @@ def main() -> int:
         not source_dsn
         and not runtime_ledger_artifact_metadata["runtime_ledger_artifact_refs"]
     ):
-        with SessionLocal() as session:
+        with _persistence_session(args) as session:
             durable_runtime_ledger_tca_rows, runtime_ledger_durable_metadata = (
                 _runtime_ledger_tca_rows_from_durable_buckets(
                     session=session,
@@ -3623,7 +3686,7 @@ def main() -> int:
         else:
             print(summary)
         return 0
-    with SessionLocal() as session:
+    with _persistence_session(args) as session:
         summary = persist_observed_runtime_windows(
             session=session,
             run_id=args.run_id,

@@ -768,6 +768,7 @@ def _target_identity(
         "account_label": _safe_text(target.get("account_label")),
         "source_kind": _safe_text(target.get("source_kind")),
         "source_dsn_env": _safe_text(target.get("source_dsn_env")),
+        "target_dsn_env": _safe_text(target.get("target_dsn_env")),
         "source_manifest_ref": _safe_text(target.get("source_manifest_ref")),
         "dataset_snapshot_ref": _safe_text(target.get("dataset_snapshot_ref")),
         "window_start": _safe_text(target.get("window_start")),
@@ -1053,6 +1054,7 @@ def _next_paper_route_runtime_window_targets(
         "target_plan_settlement_seconds": PAPER_ROUTE_RUNTIME_IMPORT_SETTLEMENT_SECONDS,
         "settlement_ready_at": session_readiness.get("settlement_ready_at"),
         "source_dsn_env": "SIM_DB_DSN",
+        "target_dsn_env": "SIM_DB_DSN",
         "account_label": PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
         "observed_stage": "paper",
         "import_ready": import_ready,
@@ -1219,6 +1221,7 @@ def _next_paper_route_runtime_window_targets(
             "account_label": PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
             "source_account_label": source_account_label or "",
             "source_dsn_env": "SIM_DB_DSN",
+            "target_dsn_env": "SIM_DB_DSN",
             "dataset_snapshot_ref": _safe_text(target.get("dataset_snapshot_ref"))
             or "",
             "source_manifest_ref": source_manifest_ref,

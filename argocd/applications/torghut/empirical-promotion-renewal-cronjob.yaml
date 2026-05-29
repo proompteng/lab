@@ -62,6 +62,7 @@ spec:
                     --runtime-window-account-label TORGHUT_SIM \
                     --runtime-window-observed-stage paper \
                     --runtime-window-source-dsn-env SIM_DB_DSN \
+                    --runtime-window-target-dsn-env SIM_DB_DSN \
                     --runtime-window-dataset-snapshot-ref portfolio-profit-autoresearch-500-v1 \
                     --runtime-window-source-manifest-ref config/trading/hypotheses/h-pairs-01.json \
                     --json \
