@@ -734,6 +734,128 @@ class TestVerifyTradingReadiness(TestCase):
         )
         self.assertEqual(result["paper_route_target_plan"]["missing_identity_count"], 0)
 
+    def test_preopen_paper_route_evidence_collection_softens_current_route_failures(
+        self,
+    ) -> None:
+        status = _ready_status()
+        metrics = status["metrics"]
+        assert isinstance(metrics, dict)
+        metrics["market_session_open"] = 0
+        proof_floor = status["proof_floor"]
+        assert isinstance(proof_floor, dict)
+        proof_floor.update(
+            {
+                "floor_state": "repair_only",
+                "route_state": "repair_only",
+                "capital_state": "zero_notional",
+                "max_notional": "0",
+                "blocking_reasons": [
+                    "alpha_readiness_not_promotion_eligible",
+                    "degraded",
+                    "execution_tca_slippage_guardrail_exceeded",
+                ],
+            }
+        )
+        dimensions = proof_floor["proof_dimensions"]
+        assert isinstance(dimensions, list)
+        for dimension in dimensions:
+            if not isinstance(dimension, dict):
+                continue
+            if dimension.get("dimension") == "alpha_readiness":
+                dimension["state"] = "fail"
+                dimension["reason"] = "alpha_readiness_not_promotion_eligible"
+            if dimension.get("dimension") == "execution_tca":
+                dimension["state"] = "fail"
+                dimension["reason"] = "execution_tca_slippage_guardrail_exceeded"
+                source_ref = dimension["source_ref"]
+                assert isinstance(source_ref, dict)
+                symbol_routes = source_ref["symbol_routes"]
+                assert isinstance(symbol_routes, dict)
+                symbol_routes.update(
+                    {
+                        "routeable_symbol_count": 0,
+                        "routeable_symbols": [],
+                    }
+                )
+
+        status["route_reacquisition_board"] = {
+            "schema_version": "torghut.route-reacquisition-board.v1",
+            "state": "repair_only",
+            "capital_state": "zero_notional",
+            "jangar_continuity": {
+                "epoch_id": "truth-settlement:paper_canary:preopen",
+                "state": "present",
+                "decision": "allow",
+                "fresh_until": "2026-05-29T13:30:00+00:00",
+                "blocking_reasons": [],
+            },
+            "summary": {
+                "row_count": 4,
+                "state_counts": {"probing": 4},
+                "zero_notional_row_count": 4,
+                "expected_unblock_value": 12,
+                "top_repair_symbols": ["AAPL", "AMZN", "INTC", "NVDA"],
+                "capital_eligible_symbol_count": 0,
+            },
+            "rows": [
+                {"symbol": "AAPL", "state": "probing", "max_notional": "0"},
+                {"symbol": "AMZN", "state": "probing", "max_notional": "0"},
+            ],
+        }
+        route_book = status["route_reacquisition_book"]
+        assert isinstance(route_book, dict)
+        route_book["state"] = "repair_only"
+        probe = route_book["paper_route_probe"]
+        assert isinstance(probe, dict)
+        probe.update(
+            {
+                "active": False,
+                "effective_max_notional": "0",
+                "next_session_max_notional": "63180.0",
+                "eligible_symbol_count": 2,
+                "eligible_symbols": ["AAPL", "AMZN"],
+                "active_symbols": [],
+                "blocking_reasons": ["market_session_closed"],
+            }
+        )
+        summary = route_book["summary"]
+        assert isinstance(summary, dict)
+        summary["paper_route_probe_eligible_symbols"] = ["AAPL", "AMZN"]
+        summary["paper_route_probe_active_symbols"] = []
+
+        strict = evaluate_trading_readiness(
+            status,
+            paper_route_evidence=_paper_route_evidence(),
+            require_market_open=False,
+            require_quant_fresh=False,
+            require_paper_route_probe_candidate=True,
+            require_paper_route_target_plan=True,
+        )
+        preopen = evaluate_trading_readiness(
+            status,
+            paper_route_evidence=_paper_route_evidence(),
+            require_market_open=False,
+            require_quant_fresh=False,
+            require_paper_route_probe_candidate=True,
+            require_paper_route_target_plan=True,
+            allow_paper_route_preopen_evidence_collection=True,
+        )
+
+        self.assertFalse(strict["ok"])
+        self.assertIn("max_notional_positive", strict["failed_checks"])
+        self.assertTrue(preopen["ok"], preopen)
+        preopen_summary = preopen["paper_route_preopen_evidence_collection"]
+        self.assertTrue(preopen_summary["ready"])
+        self.assertIn(
+            "max_notional_positive",
+            preopen_summary["softened_checks"],
+        )
+        self.assertTrue(
+            preopen["checks"]["max_notional_positive"]["detail"][
+                "preopen_evidence_collection_override"
+            ]
+        )
+
     def test_paper_route_target_plan_fails_closed_on_missing_handoff_or_identity(
         self,
     ) -> None:
