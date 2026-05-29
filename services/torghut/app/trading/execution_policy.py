@@ -1233,9 +1233,11 @@ def _resolve_price(
 
 
 def _position_summary(symbol: str, positions: Iterable[dict[str, Any]]) -> Decimal:
+    normalized_symbol = symbol.strip().upper()
     total_qty = Decimal("0")
     for position in positions:
-        if position.get("symbol") != symbol:
+        position_symbol = str(position.get("symbol") or "").strip().upper()
+        if position_symbol != normalized_symbol:
             continue
         qty = _optional_decimal(position.get("qty")) or _optional_decimal(
             position.get("quantity")

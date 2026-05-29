@@ -138,6 +138,20 @@ class TestExecutionPolicy(TestCase):
         self.assertTrue(outcome.approved)
         self.assertNotIn("max_notional_exceeded", outcome.reasons)
 
+    def test_max_notional_does_not_block_position_reducing_sell_with_broker_symbol_format(
+        self,
+    ) -> None:
+        policy = ExecutionPolicy(config=_config(max_notional=Decimal("100")))
+        outcome = policy.evaluate(
+            _decision(action="sell", qty=Decimal("184"), price=Decimal("272.3")),
+            strategy=None,
+            positions=[{"symbol": " aapl ", "qty": "184", "side": "long"}],
+            market_snapshot=None,
+        )
+
+        self.assertTrue(outcome.approved)
+        self.assertNotIn("max_notional_exceeded", outcome.reasons)
+
     def test_max_notional_does_not_block_short_cover(self) -> None:
         policy = ExecutionPolicy(config=_config(max_notional=Decimal("100")))
         outcome = policy.evaluate(
