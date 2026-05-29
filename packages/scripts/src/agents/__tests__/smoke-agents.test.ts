@@ -771,6 +771,8 @@ describe('synthesis autonomous trader provider', () => {
     expect(prompt).toContain('classify it as external/non-AgentRun')
     expect(prompt).toContain('External/non-AgentRun classification is attribution only, not a restriction')
     expect(prompt).toContain('blocks buying power, creates unmanaged risk, or degrades the current strategy')
+    expect(prompt).toContain('record both sides of the lifecycle in Synthesis')
+    expect(prompt).toContain('brokerPayload.alpaca_status="replaced"')
     expect(prompt).toContain('Reconcile every submitted order by order id and AgentRun-prefixed client order id')
     expect(prompt).toContain('Use Synthesis MCP autotrader tools as the canonical operator-visible runtime state')
     expect(prompt).toContain('Read the exact Kubernetes AgentRun name from `AGENT_RUN_NAME`')
@@ -815,6 +817,8 @@ describe('synthesis autonomous trader provider', () => {
     expect(taskPrompt).toContain('classify it as external/non-AgentRun')
     expect(taskPrompt).toContain('External/non-AgentRun classification is attribution only, not a restriction')
     expect(taskPrompt).toContain('blocks buying power, creates unmanaged risk, or degrades the current strategy')
+    expect(taskPrompt).toContain('record both sides of the lifecycle in Synthesis')
+    expect(taskPrompt).toContain('brokerPayload.alpaca_status="replaced"')
     expect(taskPrompt).toContain('Reconcile each submitted order by order id and AgentRun-prefixed client order id')
     expect(taskPrompt).toContain('Synthesis visibility')
     expect(taskPrompt).toContain(
