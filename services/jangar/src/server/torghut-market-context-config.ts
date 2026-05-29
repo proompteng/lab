@@ -110,7 +110,7 @@ export const resolveMarketContextRuntimeConfig = (env: EnvSource = process.env):
   onDemandDispatchServiceAccountName:
     normalizeNonEmpty(env.JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_SERVICE_ACCOUNT_NAME) ?? 'agents-sa',
   onDemandDispatchPriorityClassName:
-    normalizeNonEmpty(env.JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_PRIORITY_CLASS_NAME) ?? 'torghut-market-context-low',
+    normalizeNonEmpty(env.JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_PRIORITY_CLASS_NAME) ?? '',
   onDemandDispatchCallbackUrl:
     normalizeNonEmpty(env.JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_CALLBACK_URL) ??
     'http://jangar.jangar.svc.cluster.local/api/torghut/market-context',

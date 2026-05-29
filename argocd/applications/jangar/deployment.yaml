@@ -283,8 +283,6 @@ spec:
               value: agents
             - name: JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_SERVICE_ACCOUNT_NAME
               value: agents-sa
-            - name: JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_PRIORITY_CLASS_NAME
-              value: torghut-market-context-low
             - name: JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_CALLBACK_URL
               value: http://jangar.jangar.svc.cluster.local/api/torghut/market-context
             - name: JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_TTL_SECONDS

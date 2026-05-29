@@ -6895,12 +6895,14 @@ class TestTradingPipeline(TestCase):
                         "candidate_id": "candidate-aapl",
                         "hypothesis_id": "H-AAPL",
                         "strategy_name": "pairs-runtime-a",
+                        "strategy_lookup_names": ["strategy-1"],
                     },
                     {
                         "paper_route_probe_symbols": ["MSFT"],
                         "candidate_id": "candidate-msft",
                         "hypothesis_id": "H-MSFT",
                         "strategy_name": "pairs-runtime-b",
+                        "strategy_lookup_names": ["strategy-1"],
                     },
                 ]
             }
@@ -6941,6 +6943,65 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(second_params.get("source_hypothesis_ids"), ["H-MSFT"])
         self.assertNotIn("paper_route_probe", first_params)
         self.assertNotIn("paper_route_probe", second_params)
+
+    def test_paper_route_target_lineage_rejects_strategy_mismatch(self) -> None:
+        from app import config
+
+        config.settings.trading_mode = "paper"
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_paper_route_target_plan_url = (
+            "http://torghut.local/trading/paper-route-evidence"
+        )
+        config.settings.trading_paper_route_target_plan_timeout_seconds = 1.0
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        decision = StrategyDecision(
+            strategy_id="microbar-volume-continuation-long-top2-chip-v1@paper",
+            symbol="AAPL",
+            event_ts=datetime(2026, 5, 29, 17, 27, tzinfo=timezone.utc),
+            timeframe="1Sec",
+            action="buy",
+            qty=Decimal("1"),
+            params={"price": "310.49"},
+        )
+
+        with patch(
+            "app.trading.scheduler.simple_pipeline.fetch_paper_route_target_plan_url",
+            return_value={
+                "targets": [
+                    {
+                        "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                        "paper_route_probe_window_start": "2026-05-29T13:30:00+00:00",
+                        "paper_route_probe_window_end": "2026-05-29T20:00:00+00:00",
+                        "candidate_id": "c88421d619759b2cfaa6f4d0",
+                        "hypothesis_id": "H-PAIRS-01",
+                        "strategy_name": "microbar-cross-sectional-pairs-v1",
+                        "strategy_lookup_names": [
+                            "69cf50e3-4815-47c2-b802-1efbaac09ecb",
+                            "microbar-cross-sectional-pairs-v1",
+                        ],
+                        "source_kind": "paper_route_probe_runtime_observed",
+                    }
+                ]
+            },
+        ):
+            enriched = pipeline._with_paper_route_target_lineage(decision)
+
+        self.assertNotIn("paper_route_target_plan", enriched.params)
+        self.assertNotIn("source_candidate_ids", enriched.params)
+        self.assertNotIn("source_hypothesis_ids", enriched.params)
 
     def test_paper_route_target_lineage_skips_empty_symbol_and_empty_lineage(
         self,

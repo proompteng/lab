@@ -2359,6 +2359,7 @@ class SimpleTradingPipeline(TradingPipeline):
     def _paper_route_target_lineage_for_decision(
         self,
         decision: StrategyDecision,
+        strategy: Strategy | None,
     ) -> dict[str, Any]:
         if settings.trading_mode != "paper":
             return {}
@@ -2372,7 +2373,21 @@ class SimpleTradingPipeline(TradingPipeline):
         )
         if target_plan_error or symbol not in target_plan_symbols:
             return {}
-        lineage = _target_plan_lineage(target_plan_targets, symbol)
+        matching_targets: list[dict[str, Any]] = []
+        for target in target_plan_targets:
+            target_symbols = _target_symbols(target)
+            if target_symbols and symbol not in target_symbols:
+                continue
+            if not self._target_matches_decision_strategy(target, decision, strategy):
+                continue
+            if _target_probe_window(target) is not None and not (
+                self._decision_event_in_target_window(decision, target)
+            ):
+                continue
+            matching_targets.append(dict(target))
+        if not matching_targets:
+            return {}
+        lineage = _target_plan_lineage(matching_targets, symbol)
         if not any(
             lineage.get(key)
             for key in (
@@ -2532,7 +2547,7 @@ class SimpleTradingPipeline(TradingPipeline):
         *,
         strategy: Strategy | None = None,
     ) -> StrategyDecision:
-        lineage = self._paper_route_target_lineage_for_decision(decision)
+        lineage = self._paper_route_target_lineage_for_decision(decision, strategy)
         if not lineage:
             return decision
         params = dict(decision.params)
