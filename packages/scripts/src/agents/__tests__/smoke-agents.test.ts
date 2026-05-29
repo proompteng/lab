@@ -670,12 +670,19 @@ describe('synthesis autonomous trader provider', () => {
     expect(prompt).toContain('/milestones/${dedupeKey}')
     expect(prompt).not.toContain('synthesis_start_run')
     expect(prompt).toContain('synthesis_submit_item')
+    expect(prompt).toContain(
+      'do not call Alpaca order submission, cancel, replace, close-position tools, or `synthesis_submit_item`',
+    )
+    expect(prompt).toContain('feed milestone posts are disabled')
+    expect(prompt).toContain('The bootstrap script pre-creates output placeholders')
     expect(prompt).toContain('current-status.json')
     expect(prompt).toContain('visibility-events.jsonl')
     expect(prompt).toContain('synthesis-posts.jsonl')
-    expect(prompt).toContain('write only the required output files and exit the AgentRun')
+    expect(prompt).toContain('update only the minimal output placeholders created by bootstrap and exit the AgentRun')
     expect(prompt).toContain('Do not run completion audits')
-    expect(taskPrompt).toContain('write only the required output files and exit the AgentRun')
+    expect(taskPrompt).toContain(
+      'update only the minimal output placeholders created by bootstrap and exit the AgentRun',
+    )
     expect(taskPrompt).toContain('Do not run completion audits')
     expect(taskPrompt).toContain('order_class')
     expect(taskPrompt).toContain('take_profit_limit_price')
@@ -695,6 +702,11 @@ describe('synthesis autonomous trader provider', () => {
     expect(taskPrompt).toContain('/milestones/${dedupeKey}')
     expect(taskPrompt).not.toContain('synthesis_start_run')
     expect(taskPrompt).toContain('synthesis_submit_item')
+    expect(taskPrompt).toContain(
+      'do not call Alpaca order submission, cancel, replace, close-position tools, or `synthesis_submit_item`',
+    )
+    expect(taskPrompt).toContain('feed milestone posts are disabled')
+    expect(taskPrompt).toContain('The bootstrap script pre-creates output placeholders')
     expect(taskPrompt).toContain('current-status.json')
     expect(taskPrompt).toContain('visibility-events.jsonl')
     expect(taskPrompt).toContain('synthesis-posts.jsonl')
@@ -722,9 +734,13 @@ describe('synthesis autonomous trader provider', () => {
     expect(objectAt(envTemplate, 'ANALYSIS_REPO_URL')).toBe('https://github.com/gregkonush/analysis.git')
     expect(objectAt(envTemplate, 'ANALYSIS_REQUIRED_COMMIT')).toBe('4ce90bf7fc16f9bf90f7fe221f36db23c7ff44a5')
     expect(objectAt(codexConfig, 'content')).toContain('[projects."/workspace/analysis"]')
+    expect(objectAt(codexConfig, 'content')).toContain('model_reasoning_summary = "none"')
     expect(objectAt(bootstrap, 'content')).toContain('x-access-token:%s')
     expect(objectAt(bootstrap, 'content')).toContain('Authorization: Basic')
     expect(objectAt(bootstrap, 'content')).not.toContain('Authorization: Bearer')
+    expect(objectAt(bootstrap, 'content')).toContain('ensure_artifact_file')
+    expect(objectAt(bootstrap, 'content')).toContain('decision-ledger.jsonl')
+    expect(objectAt(bootstrap, 'content')).toContain('protective-orders.jsonl')
     expect(objectAt(bootstrap, 'content')).toContain('uv venv --seed')
     expect(objectAt(bootstrap, 'content')).toContain('--break-system-packages')
     expect(objectAt(bootstrap, 'content')).toContain('install_method')

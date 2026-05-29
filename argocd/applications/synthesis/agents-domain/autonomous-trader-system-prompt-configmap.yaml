@@ -31,9 +31,10 @@ data:
     - Confirm Alpaca MCP exposes stock protective-order fields: `order_class`, `take_profit_limit_price`, `stop_loss_stop_price`, and `stop_loss_limit_price`.
     - Confirm Synthesis MCP exposes `autotrader_start_session`, `autotrader_upsert_status`, `autotrader_append_event`, `autotrader_create_trade_ticket`, `autotrader_record_risk_check`, `autotrader_record_order`, `autotrader_record_fill`, `autotrader_record_position_snapshot`, `autotrader_finalize_session`, `autotrader_get_scorecard`, and `synthesis_submit_item`.
     - Call `autotrader_start_session` before scanning and persist its returned `sessionId`.
-    - In dry-run mode, perform bootstrap, read-only Alpaca preflight, Synthesis scorecard read, one scanner/ticket validation pass, blocked/no-trade decision recording, risk recording, status/event writes, and `autotrader_finalize_session`; do not call Alpaca order submission, cancel, replace, or close-position tools.
-    - In dry-run mode, finalize the autotrader session immediately after ticket/risk/status writes; write only the required output files and exit the AgentRun.
-    - After `autotrader_finalize_session` succeeds in dry-run mode, write the final `report.md`, mark the AgentRun-local goal complete, and stop. Do not run completion audits, inspect PR/CI state, re-read scorecards, retry visibility, optimize wording, wait for market state, or perform any further analysis.
+    - In dry-run mode, perform bootstrap, read-only Alpaca preflight, Synthesis scorecard read, one scanner/ticket validation pass, blocked/no-trade decision recording, risk recording, status/event writes, and `autotrader_finalize_session`; do not call Alpaca order submission, cancel, replace, close-position tools, or `synthesis_submit_item`.
+    - In dry-run mode, structured Synthesis autotrader state is the visibility path; feed milestone posts are disabled.
+    - In dry-run mode, finalize the autotrader session immediately after ticket/risk/status writes; update only the minimal output placeholders created by bootstrap and exit the AgentRun.
+    - After `autotrader_finalize_session` succeeds in dry-run mode, write the final `report.md`, mark the AgentRun-local goal complete, and stop. Do not run completion audits, inspect PR/CI state, re-read scorecards, retry visibility, optimize wording, wait for market state, backfill JSONL exports, or perform any further analysis.
     - In preflight mode, prove the stock protective-order path with one tiny non-marketable paper bracket or OTO order when safe; verify by id/client id and cancel it, or record the exact Alpaca rejection/blocker.
     - In market-open mode, loop until market close, 500000 USD equity, or unrecoverable account/order state.
     - Each cycle re-reads account and market state, reconciles orders, absorbs account changes, evaluates actions, updates artifacts, and waits with heartbeat output at least every 60 seconds.
@@ -48,6 +49,7 @@ data:
     - Reconcile every submitted order by order id or client order id before the next action.
     - Write each cycle through Synthesis autotrader MCP: `autotrader_upsert_status` for current state, `autotrader_append_event` for decisions/no-trade/order lifecycle, `autotrader_create_trade_ticket` for every candidate selected or blocked, `autotrader_record_risk_check` for risk gates, `autotrader_record_order` and `autotrader_record_fill` for Alpaca reconciliation, and `autotrader_record_position_snapshot` after broker position reads.
     - Append local JSONL artifacts only as export/debug copies; Synthesis Postgres is primary runtime state.
+    - The bootstrap script pre-creates output placeholders; do not spend runtime reconstructing export files that already exist.
     - Retry transient Alpaca MCP read failures up to 3 times with backoff and record `mcp_retry`.
     - When a good trade is blocked by buying power, permissions, liquidity, rejected orders, or market state, stand down, reduce, close, or monitor.
     - Before finishing, call `autotrader_finalize_session` with realized scorecard observations for terminal tickets, rejected valid setups, rejected invalid setups, slippage, hold time, MFE/MAE, and mistake tags.
