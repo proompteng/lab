@@ -33,6 +33,9 @@ def paper_route_target_plan_targets(plan: Mapping[str, Any]) -> list[dict[str, A
 def paper_route_target_plan_from_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     live_gate = _to_str_map(payload.get("live_submission_gate"))
     runtime_window_plan = _to_str_map(payload.get("runtime_window_import_plan"))
+    source_runtime_window_plan = _to_str_map(
+        payload.get("source_runtime_window_import_plan")
+    )
     next_paper_route_plan = _to_str_map(
         payload.get("next_paper_route_runtime_window_targets")
     )
@@ -43,6 +46,7 @@ def paper_route_target_plan_from_payload(payload: Mapping[str, Any]) -> dict[str
     candidate_plans = [
         runtime_window_plan,
         *paper_route_plans,
+        source_runtime_window_plan,
         _to_str_map(live_gate.get("runtime_ledger_paper_probation_import_plan")),
         _to_str_map(payload.get("runtime_ledger_paper_probation_import_plan")),
         *([] if paper_route_payload else [next_paper_route_plan]),

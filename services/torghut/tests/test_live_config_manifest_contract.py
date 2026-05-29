@@ -934,13 +934,18 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("scripts/renew_latest_empirical_promotion_jobs.py", args)
         self.assertIn(
             "--runtime-window-target-plan-url "
-            "http://torghut.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
             args,
         )
         self.assertIn("--runtime-window-target-plan-url-timeout-seconds 45", args)
         self.assertIn("--runtime-window-target-plan-url-attempts 3", args)
         self.assertIn(
             "--runtime-window-target-plan-url-retry-backoff-seconds 5",
+            args,
+        )
+        self.assertNotIn(
+            "--runtime-window-target-plan-url "
+            "http://torghut.torghut.svc.cluster.local/trading/paper-route-target-plan",
             args,
         )
         self.assertNotIn(
