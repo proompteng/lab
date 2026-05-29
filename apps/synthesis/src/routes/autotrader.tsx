@@ -26,6 +26,9 @@ import type {
   AutotraderTradeTicket,
 } from '~/server/autotrader-schema'
 
+import { getAutotraderRuntimeAlerts } from './-autotrader-alerts'
+import type { AutotraderRuntimeAlert } from './-autotrader-alerts'
+
 export const Route = createFileRoute('/autotrader')({
   component: AutotraderPage,
 })
@@ -219,10 +222,13 @@ function RailLink({
 }
 
 function SessionDashboard({ detail }: { detail: AutotraderSessionDetail }) {
+  const alerts = getAutotraderRuntimeAlerts(detail)
+
   return (
     <div className="grid gap-0 xl:grid-cols-[minmax(0,1fr)_380px]">
       <div className="min-w-0">
         <StatusPanel detail={detail} />
+        <RuntimeAlertsPanel alerts={alerts} />
         <TicketsPanel tickets={detail.tradeTickets} />
         <OrdersPanel orders={detail.orders} fills={detail.fills} />
         <EventsPanel events={detail.events} />
@@ -234,6 +240,38 @@ function SessionDashboard({ detail }: { detail: AutotraderSessionDetail }) {
         <SummaryPanel detail={detail} />
       </div>
     </div>
+  )
+}
+
+function RuntimeAlertsPanel({ alerts }: { alerts: AutotraderRuntimeAlert[] }) {
+  return (
+    <Panel title="Runtime Alerts" icon={<AlertTriangle />}>
+      {alerts.length ? (
+        alerts.map((alert) => (
+          <div
+            key={alert.key}
+            className={cx(
+              'border-b border-[#2f3336] px-4 py-3 last:border-b-0',
+              alert.severity === 'critical' ? 'bg-[#19090d]' : 'bg-[#151109]',
+            )}
+          >
+            <div className="flex flex-wrap items-center gap-2">
+              <AlertTriangle
+                className={cx('size-4', alert.severity === 'critical' ? 'text-[#ff7a85]' : 'text-[#ffb86b]')}
+              />
+              <span className="text-sm font-semibold">{alert.title}</span>
+              <Pill>{alert.severity}</Pill>
+            </div>
+            <div className="mt-2 text-sm leading-6 text-[#cfd3d6]">{alert.message}</div>
+          </div>
+        ))
+      ) : (
+        <div className="flex items-center gap-2 px-4 py-4 text-sm text-[#71767b]">
+          <CheckCircle2 className="size-4 text-[#3fb950]" />
+          <span>No runtime alerts for the selected session.</span>
+        </div>
+      )}
+    </Panel>
   )
 }
 
