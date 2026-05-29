@@ -54,6 +54,15 @@ const toIso = (value: Date | string | null | undefined) => {
   return value
 }
 
+const observedAtIso = (value: Date | string | null | undefined) => {
+  const now = nowIso()
+  const observed = toIso(value) ?? now
+  const observedMs = Date.parse(observed)
+  const nowMs = Date.parse(now)
+  if (Number.isFinite(observedMs) && Number.isFinite(nowMs) && observedMs > nowMs + 60_000) return now
+  return observed
+}
+
 const toPayload = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
   return value as Record<string, unknown>
@@ -365,7 +374,7 @@ class InMemoryAutotraderStore implements AutotraderStore {
 
   async recordPositionSnapshot(input: AutotraderRecordPositionSnapshotInput): Promise<AutotraderPositionSnapshot> {
     this.requireSession(input.sessionId)
-    const capturedAt = toIso(input.capturedAt) ?? nowIso()
+    const capturedAt = observedAtIso(input.capturedAt)
     const id = `${input.sessionId}:${normalizedSymbol(input.symbol) ?? input.symbol}:${capturedAt}`
     const snapshot: AutotraderPositionSnapshot = {
       id,
@@ -1142,7 +1151,7 @@ class PostgresAutotraderStore implements AutotraderStore {
 
   async recordPositionSnapshot(input: AutotraderRecordPositionSnapshotInput): Promise<AutotraderPositionSnapshot> {
     await this.ensureSchema()
-    const capturedAt = toIso(input.capturedAt) ?? nowIso()
+    const capturedAt = observedAtIso(input.capturedAt)
     const result = await this.pool.query<PositionSnapshotRow>(
       `INSERT INTO autotrader.position_snapshots (
         id, session_id, symbol, quantity, market_value, average_entry_price, unrealized_pnl, captured_at, broker_payload

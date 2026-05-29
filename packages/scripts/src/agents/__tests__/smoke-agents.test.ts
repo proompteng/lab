@@ -777,6 +777,8 @@ describe('synthesis autonomous trader provider', () => {
     expect(prompt).toContain('record both sides of the lifecycle in Synthesis')
     expect(prompt).toContain('brokerPayload.alpaca_status="replaced"')
     expect(prompt).toContain('Reconcile every submitted order by order id and AgentRun-prefixed client order id')
+    expect(prompt).toContain('do not use phase `blocked` unless the AgentRun itself cannot continue')
+    expect(prompt).toContain('Position snapshot timestamps must be observed broker-read times in UTC')
     expect(prompt).toContain('Use Synthesis MCP autotrader tools as the canonical operator-visible runtime state')
     expect(prompt).toContain('Read the exact Kubernetes AgentRun name from `AGENT_RUN_NAME`')
     expect(prompt).toContain('Do not invent, normalize, shorten, timestamp, or replace the `AGENT_RUN_NAME` value')
@@ -828,6 +830,8 @@ describe('synthesis autonomous trader provider', () => {
     expect(taskPrompt).toContain('record both sides of the lifecycle in Synthesis')
     expect(taskPrompt).toContain('brokerPayload.alpaca_status="replaced"')
     expect(taskPrompt).toContain('Reconcile each submitted order by order id and AgentRun-prefixed client order id')
+    expect(taskPrompt).toContain('do not use phase `blocked` unless the AgentRun itself cannot continue')
+    expect(taskPrompt).toContain('Position snapshot timestamps must be observed broker-read times in UTC')
     expect(taskPrompt).toContain('Synthesis visibility')
     expect(taskPrompt).toContain(
       'Read the exact Kubernetes AgentRun name from the `AGENT_RUN_NAME` environment variable',
