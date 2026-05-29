@@ -1631,17 +1631,60 @@ class PostgresAutotraderStore implements AutotraderStore {
         created_at timestamptz NOT NULL DEFAULT now()
       );
 
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1
+          FROM pg_constraint
+          WHERE conname = 'autotrader_trade_tickets_grade_check'
+            AND conrelid = 'autotrader.trade_tickets'::regclass
+        ) THEN
+          ALTER TABLE autotrader.trade_tickets
+            ADD CONSTRAINT autotrader_trade_tickets_grade_check
+            CHECK (setup_grade IN ('A+', 'A', 'B', 'C', 'blocked'));
+        END IF;
+
+        IF NOT EXISTS (
+          SELECT 1
+          FROM pg_constraint
+          WHERE conname = 'autotrader_trade_tickets_positive_risk_check'
+            AND conrelid = 'autotrader.trade_tickets'::regclass
+        ) THEN
+          ALTER TABLE autotrader.trade_tickets
+            ADD CONSTRAINT autotrader_trade_tickets_positive_risk_check
+            CHECK (
+              (max_loss_amount IS NULL OR max_loss_amount >= 0)
+              AND (risk_dollars IS NULL OR risk_dollars >= 0)
+            );
+        END IF;
+      END $$;
+
       CREATE INDEX IF NOT EXISTS autotrader_sessions_started_at_idx ON autotrader.sessions (started_at DESC);
+      CREATE INDEX IF NOT EXISTS autotrader_sessions_trading_date_idx
+        ON autotrader.sessions (trading_date DESC);
       CREATE INDEX IF NOT EXISTS autotrader_status_phase_idx ON autotrader.status (phase, updated_at DESC);
       CREATE INDEX IF NOT EXISTS autotrader_events_session_seq_idx ON autotrader.events (session_id, seq);
+      CREATE INDEX IF NOT EXISTS autotrader_events_session_time_idx
+        ON autotrader.events (session_id, occurred_at);
+      CREATE INDEX IF NOT EXISTS autotrader_events_type_time_idx
+        ON autotrader.events (event_type, occurred_at DESC);
+      CREATE INDEX IF NOT EXISTS autotrader_events_symbol_time_idx
+        ON autotrader.events (symbol, occurred_at DESC);
+      CREATE INDEX IF NOT EXISTS autotrader_events_setup_idx
+        ON autotrader.events (setup_type, setup_grade, occurred_at DESC);
       CREATE INDEX IF NOT EXISTS autotrader_trade_tickets_session_idx ON autotrader.trade_tickets (session_id, created_at);
       CREATE INDEX IF NOT EXISTS autotrader_orders_session_idx ON autotrader.orders (session_id, updated_at);
+      CREATE UNIQUE INDEX IF NOT EXISTS autotrader_orders_broker_order_id_idx
+        ON autotrader.orders (broker_order_id)
+        WHERE broker_order_id IS NOT NULL;
       CREATE INDEX IF NOT EXISTS autotrader_fills_session_idx ON autotrader.fills (session_id, filled_at);
       CREATE INDEX IF NOT EXISTS autotrader_positions_session_idx ON autotrader.position_snapshots (session_id, captured_at DESC);
       CREATE INDEX IF NOT EXISTS autotrader_scorecards_lookup_idx
         ON autotrader.scorecards (setup_type, setup_grade, regime, time_bucket, updated_at DESC);
       CREATE INDEX IF NOT EXISTS autotrader_setup_examples_scorecard_idx
         ON autotrader.setup_examples (scorecard_key, created_at DESC);
+      CREATE INDEX IF NOT EXISTS autotrader_setup_examples_session_idx
+        ON autotrader.setup_examples (session_id, created_at DESC);
     `)
   }
 }
