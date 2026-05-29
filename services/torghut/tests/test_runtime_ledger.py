@@ -587,6 +587,82 @@ def test_exact_replay_ledger_requires_order_lifecycle_and_hash_lineage() -> None
     assert bucket.post_cost_expectancy_bps is not None
 
 
+def test_exact_replay_ledger_does_not_use_idempotency_key_as_policy_hash() -> None:
+    common = {
+        "account_label": "paper",
+        "strategy_id": "strategy-1",
+        "symbol": "NVDA",
+        "cost_model_hash": "cost-sha",
+        "lineage_hash": "lineage-sha",
+    }
+    bucket = build_runtime_ledger_buckets(
+        [
+            {
+                **common,
+                "event_type": "decision",
+                "executed_at": _ts(1),
+                "decision_id": "decision-buy",
+                "execution_idempotency_key": "buy-decision-key",
+            },
+            {
+                **common,
+                "event_type": "order_submitted",
+                "executed_at": _ts(2),
+                "decision_id": "decision-buy",
+                "order_id": "order-buy",
+                "execution_idempotency_key": "buy-order-key",
+            },
+            {
+                **common,
+                "event_type": "fill",
+                "executed_at": _ts(3),
+                "order_id": "order-buy",
+                "side": "buy",
+                "filled_qty": "10",
+                "avg_fill_price": "100",
+                "cost_amount": "1",
+                "cost_basis": "broker_reported_commission_and_fees",
+                "execution_idempotency_key": "buy-fill-key",
+            },
+            {
+                **common,
+                "event_type": "decision",
+                "executed_at": _ts(10),
+                "decision_id": "decision-sell",
+                "execution_idempotency_key": "sell-decision-key",
+            },
+            {
+                **common,
+                "event_type": "order_submitted",
+                "executed_at": _ts(11),
+                "decision_id": "decision-sell",
+                "order_id": "order-sell",
+                "execution_idempotency_key": "sell-order-key",
+            },
+            {
+                **common,
+                "event_type": "fill",
+                "executed_at": _ts(12),
+                "order_id": "order-sell",
+                "side": "sell",
+                "filled_qty": "10",
+                "avg_fill_price": "110",
+                "cost_amount": "2",
+                "cost_basis": "broker_reported_commission_and_fees",
+                "execution_idempotency_key": "sell-fill-key",
+            },
+        ],
+        bucket_ranges=[(_ts(), _ts(60))],
+        require_order_lifecycle=True,
+    )[0]
+
+    assert bucket.execution_policy_hash_counts == {}
+    assert "execution_policy_hash_missing" in bucket.blockers
+    assert "execution_policy_hash_ambiguous" not in bucket.blockers
+    assert bucket.cost_model_hash_counts == {"cost-sha": 6}
+    assert bucket.lineage_hash_counts == {"lineage-sha": 6}
+
+
 def test_runtime_ledger_blocks_non_promotion_grade_cost_basis_at_builder() -> None:
     common = {
         "account_label": "paper",

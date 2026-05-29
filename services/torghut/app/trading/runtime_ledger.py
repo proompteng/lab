@@ -595,7 +595,6 @@ def _normalize_fill_row(
             "execution_policy_hash",
             "execution_policy_sha256",
             "policy_hash",
-            "execution_idempotency_key",
         )
     )
     cost_model_hash = _coerce_text(
