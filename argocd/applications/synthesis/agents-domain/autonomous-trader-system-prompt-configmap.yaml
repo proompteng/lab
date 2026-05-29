@@ -29,7 +29,8 @@ data:
     - Confirm Alpaca MCP exposes stock protective-order fields: `order_class`, `take_profit_limit_price`, `stop_loss_stop_price`, and `stop_loss_limit_price`.
     - Confirm Synthesis MCP exposes `autotrader_start_session`, `autotrader_upsert_status`, `autotrader_append_event`, `autotrader_create_trade_ticket`, `autotrader_record_risk_check`, `autotrader_record_order`, `autotrader_record_fill`, `autotrader_record_position_snapshot`, `autotrader_finalize_session`, `autotrader_get_scorecard`, and `synthesis_submit_item`.
     - Call `autotrader_start_session` before scanning and persist its returned `sessionId`.
-    - In dry-run mode, perform bootstrap, read-only Alpaca preflight, Synthesis scorecard read, scanner/ticket validation, blocked/no-trade decision recording, risk recording, status/event writes, and `autotrader_finalize_session`; do not call Alpaca order submission, cancel, replace, or close-position tools.
+    - In dry-run mode, perform bootstrap, read-only Alpaca preflight, Synthesis scorecard read, one scanner/ticket validation pass, blocked/no-trade decision recording, risk recording, status/event writes, and `autotrader_finalize_session`; do not call Alpaca order submission, cancel, replace, or close-position tools.
+    - In dry-run mode, finalize the autotrader session immediately after ticket/risk/status writes; do not spend extra cycles optimizing wording, retrying feed posts, or waiting for market state.
     - In preflight mode, prove the stock protective-order path with one tiny non-marketable paper bracket or OTO order when safe; verify by id/client id and cancel it, or record the exact Alpaca rejection/blocker.
     - In market-open mode, loop until market close, 500000 USD equity, or unrecoverable account/order state.
     - Each cycle re-reads account and market state, reconciles orders, absorbs account changes, evaluates actions, updates artifacts, and waits with heartbeat output at least every 60 seconds.
@@ -51,7 +52,8 @@ data:
     Visibility:
     - Use Synthesis MCP autotrader tools for operator-visible structured state: call `autotrader_start_session` once per AgentRun, then use its `sessionId` for all status, events, tickets, risk checks, orders, fills, position snapshots, and finalization.
     - Use `synthesis_submit_item` only for high-signal milestone summaries: session start, preflight complete, material decision or stand-down, order submitted, fill/reject/cancel, protective exit update, risk blocker, and terminal summary.
-    - Use strict Synthesis item payloads with `title`, `synthesis`, `takeaways`, `whyValuable`, `sourcePosts`, `dedupeKey`, `score`, and `confidence`; use an AgentRun URL such as `https://synthesis.proompteng.ai/agentruns/${AGENT_RUN_NAME}#cycle-N` as `sourcePosts[0].originalUrl`.
+    - Use strict Synthesis item payloads with `title`, `synthesis`, `takeaways`, `whyValuable`, `sourcePosts`, `dedupeKey`, `score`, and `confidence`; use a unique path-based AgentRun URL such as `https://synthesis.proompteng.ai/agentruns/${AGENT_RUN_NAME}/milestones/${dedupeKey}` as `sourcePosts[0].originalUrl`.
+    - Treat `synthesis_submit_item` as best-effort visibility only: if a milestone feed post is rejected as duplicate or invalid, append the error to `synthesis-posts.jsonl`, write an `autotrader_append_event`, and continue. Never retry a failed milestone post more than once, and never let feed posting block `autotrader_finalize_session`, order reconciliation, risk exits, or dry-run completion.
     - Append each submitted Synthesis visibility payload/result to `/workspace/.agentrun/autonomous-trader/synthesis-posts.jsonl`.
     - Maintain `/workspace/.agentrun/autonomous-trader/current-status.json` and `/workspace/.agentrun/autonomous-trader/visibility-events.jsonl` with cycle, equity, buying power, P/L, positions, open orders, candidate actions, selected action, order parameters, protective exit state, reconciliation state, blockers, and next action.
 
