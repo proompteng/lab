@@ -63,6 +63,15 @@ const toJson = (value: Record<string, unknown>) => JSON.stringify(value)
 const numericOrNull = (value: string | null | undefined) => value ?? null
 const normalizedSymbol = (value: string | null | undefined) => value?.trim().toUpperCase() || null
 const scorecardSymbol = (value: string | null | undefined) => normalizedSymbol(value) ?? '*'
+const numericFromPayload = (payload: Record<string, unknown>, keys: string[]) => {
+  for (const key of keys) {
+    const value = payload[key]
+    if (typeof value !== 'string' && typeof value !== 'number') continue
+    const normalized = String(value)
+    if (Number.isFinite(Number(normalized))) return normalized
+  }
+  return null
+}
 
 const scorecardKeyFor = (value: {
   symbol?: string | null
@@ -192,6 +201,10 @@ class InMemoryAutotraderStore implements AutotraderStore {
       tradingDate: input.tradingDate,
       accountId: input.accountId ?? null,
       goalEquity: input.goalEquity,
+      openingEquity: input.openingEquity ?? null,
+      closingEquity: null,
+      realizedPnl: null,
+      maxDrawdown: null,
       marketOpenAt: input.marketOpenAt,
       marketCloseAt: input.marketCloseAt,
       analysisHead: input.analysisHead ?? null,
@@ -375,6 +388,20 @@ class InMemoryAutotraderStore implements AutotraderStore {
       ...session,
       finalizedAt: nowIso(),
       terminalReason: input.terminalReason,
+      openingEquity:
+        input.openingEquity ??
+        numericFromPayload(input.summary, ['openingEquity', 'opening_equity']) ??
+        session.openingEquity,
+      closingEquity:
+        input.closingEquity ??
+        numericFromPayload(input.summary, ['closingEquity', 'closing_equity', 'accountEquity', 'equity']) ??
+        session.closingEquity,
+      realizedPnl:
+        input.realizedPnl ??
+        numericFromPayload(input.summary, ['realizedPnl', 'realized_pnl', 'realizedPnL']) ??
+        session.realizedPnl,
+      maxDrawdown:
+        input.maxDrawdown ?? numericFromPayload(input.summary, ['maxDrawdown', 'max_drawdown']) ?? session.maxDrawdown,
       summary: input.summary,
     }
     this.sessions.set(updatedSession.id, updatedSession)
@@ -462,6 +489,10 @@ type SessionRow = {
   trading_date: string
   account_id: string | null
   goal_equity: string
+  opening_equity: string | null
+  closing_equity: string | null
+  realized_pnl: string | null
+  max_drawdown: string | null
   market_open_at: Date | string
   market_close_at: Date | string
   analysis_head: string | null
@@ -638,6 +669,10 @@ const mapSession = (row: SessionRow): AutotraderSession => ({
   tradingDate: row.trading_date,
   accountId: row.account_id,
   goalEquity: String(row.goal_equity),
+  openingEquity: row.opening_equity == null ? null : String(row.opening_equity),
+  closingEquity: row.closing_equity == null ? null : String(row.closing_equity),
+  realizedPnl: row.realized_pnl == null ? null : String(row.realized_pnl),
+  maxDrawdown: row.max_drawdown == null ? null : String(row.max_drawdown),
   marketOpenAt: toIso(row.market_open_at) ?? String(row.market_open_at),
   marketCloseAt: toIso(row.market_close_at) ?? String(row.market_close_at),
   analysisHead: row.analysis_head,
@@ -820,13 +855,14 @@ class PostgresAutotraderStore implements AutotraderStore {
     const result = await this.pool.query<SessionRow>(
       `INSERT INTO autotrader.sessions (
         id, agent_run_name, mode, trading_date, account_id, goal_equity, market_open_at, market_close_at,
-        analysis_head, analysis_context_hash
+        analysis_head, analysis_context_hash, opening_equity
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7::timestamptz, $8::timestamptz, $9, $10)
+      VALUES ($1, $2, $3, $4, $5, $6, $7::timestamptz, $8::timestamptz, $9, $10, $11)
       ON CONFLICT (agent_run_name) DO UPDATE SET
         mode = EXCLUDED.mode,
         account_id = COALESCE(EXCLUDED.account_id, autotrader.sessions.account_id),
         goal_equity = EXCLUDED.goal_equity,
+        opening_equity = COALESCE(EXCLUDED.opening_equity, autotrader.sessions.opening_equity),
         market_open_at = EXCLUDED.market_open_at,
         market_close_at = EXCLUDED.market_close_at,
         analysis_head = COALESCE(EXCLUDED.analysis_head, autotrader.sessions.analysis_head),
@@ -843,6 +879,7 @@ class PostgresAutotraderStore implements AutotraderStore {
         input.marketCloseAt,
         input.analysisHead ?? null,
         input.analysisContextHash ?? null,
+        numericOrNull(input.openingEquity),
       ],
     )
     return mapSession(result.rows[0])
@@ -1136,13 +1173,35 @@ class PostgresAutotraderStore implements AutotraderStore {
   async finalizeSession(input: AutotraderFinalizeSessionInput): Promise<AutotraderSessionDetail> {
     await this.ensureSchema()
     const client = await this.pool.connect()
+    const openingEquity =
+      input.openingEquity ?? numericFromPayload(input.summary, ['openingEquity', 'opening_equity']) ?? null
+    const closingEquity =
+      input.closingEquity ??
+      numericFromPayload(input.summary, ['closingEquity', 'closing_equity', 'accountEquity', 'equity'])
+    const realizedPnl =
+      input.realizedPnl ?? numericFromPayload(input.summary, ['realizedPnl', 'realized_pnl', 'realizedPnL'])
+    const maxDrawdown = input.maxDrawdown ?? numericFromPayload(input.summary, ['maxDrawdown', 'max_drawdown'])
     try {
       await client.query('BEGIN')
       await client.query(
         `UPDATE autotrader.sessions
-         SET finalized_at = now(), terminal_reason = $2, summary = $3::jsonb
+         SET finalized_at = now(),
+             terminal_reason = $2,
+             summary = $3::jsonb,
+             opening_equity = COALESCE($4, opening_equity),
+             closing_equity = COALESCE($5, closing_equity),
+             realized_pnl = COALESCE($6, realized_pnl),
+             max_drawdown = COALESCE($7, max_drawdown)
          WHERE id = $1`,
-        [input.sessionId, input.terminalReason, toJson(input.summary)],
+        [
+          input.sessionId,
+          input.terminalReason,
+          toJson(input.summary),
+          numericOrNull(openingEquity),
+          numericOrNull(closingEquity),
+          numericOrNull(realizedPnl),
+          numericOrNull(maxDrawdown),
+        ],
       )
       for (const observation of input.scorecardObservations) {
         await this.recordScorecardObservation(client, input.sessionId, observation)
@@ -1386,6 +1445,10 @@ class PostgresAutotraderStore implements AutotraderStore {
         trading_date text NOT NULL,
         account_id text,
         goal_equity numeric NOT NULL,
+        opening_equity numeric,
+        closing_equity numeric,
+        realized_pnl numeric,
+        max_drawdown numeric,
         market_open_at timestamptz NOT NULL,
         market_close_at timestamptz NOT NULL,
         analysis_head text,
@@ -1395,6 +1458,12 @@ class PostgresAutotraderStore implements AutotraderStore {
         terminal_reason text,
         summary jsonb NOT NULL DEFAULT '{}'::jsonb
       );
+
+      ALTER TABLE autotrader.sessions
+        ADD COLUMN IF NOT EXISTS opening_equity numeric,
+        ADD COLUMN IF NOT EXISTS closing_equity numeric,
+        ADD COLUMN IF NOT EXISTS realized_pnl numeric,
+        ADD COLUMN IF NOT EXISTS max_drawdown numeric;
 
       CREATE TABLE IF NOT EXISTS autotrader.status (
         session_id text PRIMARY KEY REFERENCES autotrader.sessions(id) ON DELETE CASCADE,

@@ -64,6 +64,7 @@ export const AutotraderStartSessionInputSchema = z
     tradingDate: z.string().trim().min(1).max(40),
     accountId: z.string().trim().min(1).max(180).optional(),
     goalEquity: NumericStringSchema.default('500000'),
+    openingEquity: OptionalNumericStringSchema,
     marketOpenAt: z.string().trim().min(1).max(80),
     marketCloseAt: z.string().trim().min(1).max(80),
     analysisHead: z.string().trim().min(1).max(120).optional(),
@@ -217,6 +218,10 @@ export const AutotraderFinalizeSessionInputSchema = z
   .object({
     sessionId: z.string().trim().min(1),
     terminalReason: z.string().trim().min(1).max(240),
+    openingEquity: OptionalNumericStringSchema,
+    closingEquity: OptionalNumericStringSchema,
+    realizedPnl: OptionalNumericStringSchema,
+    maxDrawdown: OptionalNumericStringSchema,
     summary: PayloadSchema,
     scorecardObservations: z.array(AutotraderScorecardObservationSchema).max(200).default([]),
   })
@@ -258,6 +263,10 @@ export type AutotraderSession = {
   tradingDate: string
   accountId: string | null
   goalEquity: string
+  openingEquity: string | null
+  closingEquity: string | null
+  realizedPnl: string | null
+  maxDrawdown: string | null
   marketOpenAt: string
   marketCloseAt: string
   analysisHead: string | null

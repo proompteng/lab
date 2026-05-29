@@ -496,6 +496,10 @@ describe('synthesis MCP', () => {
           {
             sessionId,
             terminalReason: 'market_close',
+            openingEquity: '38400',
+            closingEquity: '38750',
+            realizedPnl: '350',
+            maxDrawdown: '75',
             summary: { realizedPnl: '350' },
             scorecardObservations: [
               {
@@ -533,6 +537,10 @@ describe('synthesis MCP', () => {
     )
 
     expect(finalizedPayload.detail.session.terminalReason).toBe('market_close')
+    expect(finalizedPayload.detail.session.openingEquity).toBe('38400')
+    expect(finalizedPayload.detail.session.closingEquity).toBe('38750')
+    expect(finalizedPayload.detail.session.realizedPnl).toBe('350')
+    expect(finalizedPayload.detail.session.maxDrawdown).toBe('75')
     expect(finalizedPayload.detail.orders).toHaveLength(1)
     expect(finalizedPayload.detail.orders[0].stopLossLimitPrice).toBe('123.70')
     expect(finalizedPayload.detail.positionSnapshots[0].symbol).toBe('NVDA')
