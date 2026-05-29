@@ -1,0 +1,81 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: torghut-paper-account-flatten
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut
+    app.kubernetes.io/component: paper-account-flatten
+spec:
+  schedule: "5,20,35,50 19 * * 1-5"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 300
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 180
+      template:
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: torghut-runtime
+          nodeSelector:
+            kubernetes.io/arch: arm64
+          containers:
+            - name: flatten-paper-account
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:bca1e2504ee4668024435cc1bd606268f0eaceb63321ef643ac7fc3566d3d499
+              imagePullPolicy: IfNotPresent
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                  ephemeral-storage: 128Mi
+                limits:
+                  cpu: 250m
+                  memory: 256Mi
+                  ephemeral-storage: 512Mi
+              command:
+                - /bin/bash
+                - -lc
+              args:
+                - |
+                  set -euo pipefail
+                  cd /app
+                  /opt/venv/bin/python scripts/flatten_paper_account_positions.py \
+                    --account-label TORGHUT_SIM \
+                    --expected-account-label TORGHUT_SIM \
+                    --trading-mode paper \
+                    --paper-base-url https://paper-api.alpaca.markets \
+                    --max-gross-market-value 2500 \
+                    --max-position-count 25 \
+                    --apply \
+                    --json
+              env:
+                - name: APCA_API_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-alpaca
+                      key: APCA_API_KEY_ID
+                      optional: true
+                - name: APCA_API_SECRET_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-alpaca
+                      key: APCA_API_SECRET_KEY
+                      optional: true
+                - name: APCA_API_BASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-alpaca
+                      key: APCA_API_BASE_URL
+                      optional: true
+                - name: TRADING_MODE
+                  value: paper
+                - name: TRADING_ACCOUNT_LABEL
+                  value: TORGHUT_SIM
+                - name: TRADING_ACCOUNTS_JSON
+                  value: >
+                    [{"label":"TORGHUT_SIM","mode":"paper","enabled":true}]
+                - name: TRADING_KILL_SWITCH_ENABLED
+                  value: "false"
