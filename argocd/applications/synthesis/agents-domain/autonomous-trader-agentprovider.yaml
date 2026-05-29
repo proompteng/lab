@@ -266,7 +266,7 @@ spec:
         "${analysis_cli}" daytrading-validate-context \
           "${artifact_dir}/analysis-context.json"
 
-        printf '{"ok":true,"analysis_head":"%s","required_commit":"%s","context_path":"%s","analysis_cli":"%s","install_method":"%s","fetch_mode":"full","partial_clone":false,"started_at":"%s","finished_at":"%s"}\n' \
+        printf '{"ok":true,"analysis_head":"%s","required_commit":"%s","context_path":"%s","analysis_cli":"%s","install_method":"%s","started_at":"%s","finished_at":"%s"}\n' \
           "${analysis_head}" "${required_commit}" "${artifact_dir}/analysis-context.json" "${analysis_cli}" "${install_method}" "${bootstrap_started_at}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
           > "${artifact_dir}/analysis-bootstrap.json"
     - path: /root/alpaca-mcp-stdio-bridge.py
