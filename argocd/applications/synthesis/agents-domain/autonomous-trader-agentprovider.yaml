@@ -206,7 +206,9 @@ spec:
         analysis_python="${python_bin}"
         install_method="pythonpath"
         rm -rf "${artifact_dir}/analysis-venv"
-        if command -v uv >/dev/null 2>&1; then
+        if PYTHONPATH="${analysis_dir}/src" "${python_bin}" -m stock_analysis daytrading-import-smoke; then
+          install_method="preinstalled-pythonpath"
+        elif command -v uv >/dev/null 2>&1; then
           if uv venv --seed --python "${python_bin}" "${artifact_dir}/analysis-venv"; then
             uv pip install --python "${artifact_dir}/analysis-venv/bin/python" -e "${analysis_dir}[daytrading]"
             analysis_python="${artifact_dir}/analysis-venv/bin/python"

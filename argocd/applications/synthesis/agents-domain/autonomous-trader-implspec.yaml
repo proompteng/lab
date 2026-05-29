@@ -20,6 +20,7 @@ spec:
     - Operate as a day-trading AgentRun for the Alpaca paper account only.
     - Verify Alpaca MCP account, clock, market data, order, and instrument tools before any order call.
     - Bootstrap and validate the private analysis repo before any market-open order.
+    - Start before the regular open so dependency/context validation is complete before execution hours.
     - Start a Synthesis autotrader session and use autotrader MCP/API tools as canonical runtime state.
     - Read Synthesis scorecards before grading new candidates and finalize every session with scorecard observations.
     - Use available Alpaca paper-account instruments and operations when justified by current account and market state.
@@ -43,6 +44,7 @@ spec:
        - Read `/workspace/analysis/docs/daytrading-agent-bootstrap.md`.
        - Require analysis commit `4ce90bf7fc16f9bf90f7fe221f36db23c7ff44a5` or newer.
        - Produce valid `/workspace/.agentrun/autonomous-trader/analysis-context.json` and `/workspace/.agentrun/autonomous-trader/analysis-bootstrap.json`.
+       - Use the scheduled premarket window for this bootstrap, tool validation, scorecard readback, and context construction; do not submit orders until the regular session is open.
     2. Preflight:
        - Read the exact Kubernetes AgentRun name from the `AGENT_RUN_NAME` environment variable and store it in `preflight.json`.
        - Use that exact `AGENT_RUN_NAME` unchanged for `autotrader_start_session`, local artifacts, milestone URLs, and dedupe keys; do not invent, normalize, shorten, timestamp, or replace it.

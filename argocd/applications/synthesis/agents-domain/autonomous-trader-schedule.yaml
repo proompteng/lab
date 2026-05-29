@@ -7,7 +7,7 @@ metadata:
     app.kubernetes.io/part-of: synthesis
     app.kubernetes.io/component: autonomous-trader
 spec:
-  cron: "30 9 * * 1-5"
+  cron: "15 9 * * 1-5"
   timezone: America/New_York
   targetRef:
     apiVersion: agents.proompteng.ai/v1alpha1
