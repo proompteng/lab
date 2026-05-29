@@ -76,10 +76,14 @@ spec:
     AGENTS_ARTIFACTS_ENDPOINT: http://rook-ceph-rgw-objectstore.rook-ceph.svc:80
     AGENTS_ARTIFACTS_SECURE: "false"
     ALPACA_PAPER_TRADE: "true"
+    AUTONOMOUS_TRADER_ACCOUNT_TYPE: "{{parameters.accountType}}"
     ANALYSIS_REPO_DIR: /workspace/analysis
     ANALYSIS_REPO_URL: https://github.com/gregkonush/analysis.git
     ANALYSIS_REQUIRED_COMMIT: b4d7485e106dc1197d293683e3413fe74dacd698
     AUTONOMOUS_TRADER_ARTIFACT_DIR: /workspace/.agentrun/autonomous-trader
+    AUTONOMOUS_TRADER_MODE: "{{parameters.mode}}"
+    AUTONOMOUS_TRADER_SYNTHESIS_SESSION_MODE: "{{parameters.synthesisSessionMode}}"
+    AUTONOMOUS_TRADER_TARGET_EQUITY_USD: "{{parameters.targetEquityUsd}}"
     CODEX_CONFIG: /root/.codex/config.toml
     CODEX_LOG_LEVEL: info
     CODEX_MARKET_CONTEXT_ATTEMPT_TIMEOUT_SECONDS: "900"

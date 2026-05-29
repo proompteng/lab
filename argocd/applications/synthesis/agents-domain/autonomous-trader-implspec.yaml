@@ -52,13 +52,14 @@ spec:
     2. Preflight:
        - Read the exact Kubernetes AgentRun name from the `AGENT_RUN_NAME` environment variable and store it in `preflight.json`.
        - Use that exact `AGENT_RUN_NAME` unchanged for `autotrader_start_session`, local artifacts, milestone URLs, and dedupe keys; do not invent, normalize, shorten, timestamp, or replace it.
+       - Read the AgentRun mode from `AUTONOMOUS_TRADER_MODE` and the normalized Synthesis session mode from `AUTONOMOUS_TRADER_SYNTHESIS_SESSION_MODE`; when that normalized value is non-empty, pass exactly it to `autotrader_start_session.mode`.
        - Use Alpaca MCP to read account, account config, clock, calendar, open orders, positions, recent portfolio state, and available tools.
        - Confirm stock order tooling exposes `order_class`, `take_profit_limit_price`, `stop_loss_stop_price`, and `stop_loss_limit_price`.
        - Confirm Synthesis MCP exposes `autotrader_start_session`, `autotrader_upsert_status`, `autotrader_append_event`, `autotrader_create_trade_ticket`, `autotrader_record_risk_check`, `autotrader_record_order`, `autotrader_record_fill`, `autotrader_record_position_snapshot`, `autotrader_finalize_session`, `autotrader_get_scorecard`, and `synthesis_submit_item`.
        - Confirm paper account routing before any order call.
        - Write `/workspace/.agentrun/autonomous-trader/preflight.json` with redacted evidence.
        - Call `autotrader_start_session` before scanning and persist its returned `sessionId`.
-       - Pass Synthesis session mode `market_open` for AgentRun mode `market-open`, `dry_run` for `dry-run`, `paper_smoke` for paper-smoke/preflight proofs, and `scorecard_readback` for AgentRun mode `scorecard-readback`.
+       - Pass Synthesis session mode from `AUTONOMOUS_TRADER_SYNTHESIS_SESSION_MODE`; expected values are `market_open` for AgentRun mode `market-open`, `dry_run` for `dry-run`, `paper_smoke` for paper-smoke/preflight proofs, and `scorecard_readback` for AgentRun mode `scorecard-readback`.
     3. Mode handling:
        - `dry-run`: perform bootstrap, read-only Alpaca preflight, Synthesis scorecard read, one scanner/ticket validation pass, blocked/no-trade decision recording, risk recording, status/event writes, and `autotrader_finalize_session`; do not call Alpaca order submission, cancel, replace, close-position tools, or `synthesis_submit_item`; finish with terminal_reason `dry_run_complete`.
        - In `dry-run`, structured Synthesis autotrader state is the visibility path; feed milestone posts are disabled.

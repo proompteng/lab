@@ -32,6 +32,7 @@ spec:
     base: main
     head: codex/synthesis-autonomous-trader-session
     mode: market-open
+    synthesisSessionMode: market_open
     accountType: paper
     targetEquityUsd: "500000"
     marketOpenTimezone: America/New_York

@@ -22,6 +22,8 @@ data:
     - Use Synthesis MCP autotrader tools as the canonical operator-visible runtime state for sessions, status, events, tickets, risk checks, orders, fills, position snapshots, finalization, and scorecards.
     - Read the exact Kubernetes AgentRun name from `AGENT_RUN_NAME` and use that value unchanged for Synthesis session identity, artifacts, milestone URLs, dedupe keys, and report fields.
     - Do not invent, normalize, shorten, timestamp, or replace the `AGENT_RUN_NAME` value.
+    - Read the AgentRun mode from `AUTONOMOUS_TRADER_MODE` and the normalized Synthesis session mode from `AUTONOMOUS_TRADER_SYNTHESIS_SESSION_MODE`.
+    - When `AUTONOMOUS_TRADER_SYNTHESIS_SESSION_MODE` is non-empty, pass exactly that value to `autotrader_start_session.mode`; do not derive, remap, or default the Synthesis session mode from prose.
     - Run `/usr/bin/env bash /root/bootstrap-analysis-daytrading.sh` before any market-open order, then read `/workspace/analysis/docs/daytrading-agent-bootstrap.md`.
     - Treat `/workspace/analysis` as the full analysis repo checkout and primary local knowledge base. Use its docs, data, source, examples, and tools directly when useful.
     - Do not copy, prune, reshape, summarize, or rebuild a separate subset of the analysis repo during market hours. Keep the repo whole; use the `stock_analysis` wrapper only as a convenience for packaged day-trading commands.
@@ -34,7 +36,7 @@ data:
     - Confirm Alpaca MCP exposes stock protective-order fields: `order_class`, `take_profit_limit_price`, `stop_loss_stop_price`, and `stop_loss_limit_price`.
     - Confirm Synthesis MCP exposes `autotrader_start_session`, `autotrader_upsert_status`, `autotrader_append_event`, `autotrader_create_trade_ticket`, `autotrader_record_risk_check`, `autotrader_record_order`, `autotrader_record_fill`, `autotrader_record_position_snapshot`, `autotrader_finalize_session`, `autotrader_get_scorecard`, and `synthesis_submit_item`.
     - Call `autotrader_start_session` before scanning and persist its returned `sessionId`.
-    - Pass Synthesis session mode `market_open` for AgentRun mode `market-open`, `dry_run` for `dry-run`, `paper_smoke` for paper-smoke/preflight proofs, and `scorecard_readback` for AgentRun mode `scorecard-readback`.
+    - Pass Synthesis session mode from `AUTONOMOUS_TRADER_SYNTHESIS_SESSION_MODE`; expected values are `market_open` for AgentRun mode `market-open`, `dry_run` for `dry-run`, `paper_smoke` for paper-smoke/preflight proofs, and `scorecard_readback` for AgentRun mode `scorecard-readback`.
     - In dry-run mode, perform bootstrap, read-only Alpaca preflight, Synthesis scorecard read, one scanner/ticket validation pass, blocked/no-trade decision recording, risk recording, status/event writes, and `autotrader_finalize_session`; do not call Alpaca order submission, cancel, replace, close-position tools, or `synthesis_submit_item`.
     - In dry-run mode, structured Synthesis autotrader state is the visibility path; feed milestone posts are disabled.
     - In dry-run mode, finalize the autotrader session immediately after ticket/risk/status writes; update only the minimal output placeholders created by bootstrap and exit the AgentRun.
