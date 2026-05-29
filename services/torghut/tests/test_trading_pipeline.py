@@ -6117,6 +6117,84 @@ class TestTradingPipeline(TestCase):
         )
         self.assertNotIn("paper_route_probe", params)
 
+    def test_external_paper_route_target_plan_cache_spans_scheduler_cycle(
+        self,
+    ) -> None:
+        from app import config
+
+        original_target_plan_url = config.settings.trading_paper_route_target_plan_url
+        original_target_plan_timeout = (
+            config.settings.trading_paper_route_target_plan_timeout_seconds
+        )
+        config.settings.trading_paper_route_target_plan_url = (
+            "http://torghut.local/trading/paper-route-evidence"
+        )
+        config.settings.trading_paper_route_target_plan_timeout_seconds = 1.0
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        now = datetime(2026, 3, 26, 14, 30, tzinfo=timezone.utc)
+        try:
+            with (
+                patch(
+                    "app.trading.scheduler.simple_pipeline.trading_now",
+                    side_effect=[
+                        now,
+                        now + timedelta(seconds=30),
+                        now + timedelta(seconds=61),
+                    ],
+                ),
+                patch(
+                    "app.trading.scheduler.simple_pipeline.fetch_paper_route_target_plan_url",
+                    return_value={
+                        "targets": [
+                            {
+                                "paper_route_probe_symbols": ["AAPL"],
+                                "candidate_id": "candidate-pairs-a",
+                            }
+                        ]
+                    },
+                ) as fetch_plan,
+            ):
+                first_symbols, first_error, first_targets = (
+                    pipeline._external_paper_route_target_probe_symbols_cached()
+                )
+                second_symbols, second_error, second_targets = (
+                    pipeline._external_paper_route_target_probe_symbols_cached()
+                )
+                third_symbols, third_error, third_targets = (
+                    pipeline._external_paper_route_target_probe_symbols_cached()
+                )
+        finally:
+            config.settings.trading_paper_route_target_plan_url = (
+                original_target_plan_url
+            )
+            config.settings.trading_paper_route_target_plan_timeout_seconds = (
+                original_target_plan_timeout
+            )
+
+        self.assertEqual(first_symbols, {"AAPL"})
+        self.assertIsNone(first_error)
+        self.assertEqual(first_targets[0]["candidate_id"], "candidate-pairs-a")
+        self.assertEqual(second_symbols, {"AAPL"})
+        self.assertIsNone(second_error)
+        self.assertEqual(second_targets[0]["candidate_id"], "candidate-pairs-a")
+        self.assertEqual(third_symbols, {"AAPL"})
+        self.assertIsNone(third_error)
+        self.assertEqual(third_targets[0]["candidate_id"], "candidate-pairs-a")
+        self.assertEqual(fetch_plan.call_count, 2)
+
     def test_matching_paper_target_signal_gets_strategy_signal_paper_authority(
         self,
     ) -> None:
