@@ -1,8 +1,8 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/agents-controller
-  tag: 08530a30
-  digest: sha256:4ac23dbf0ab2907e667820dc81419d8544eb6b30f10f616d08f53867d7a74245
+  tag: 7700ea83
+  digest: sha256:351af720400063ee4f22f964db46a87c0a57834f64489dc4416ab1f2599d37d2
   pullPolicy: IfNotPresent
 imagePolicy:
   requireDigest: true
@@ -11,26 +11,26 @@ nodeSelector:
 controlPlane:
   image:
     repository: registry.ide-newton.ts.net/lab/agents-control-plane
-    tag: 08530a30
-    digest: sha256:75671b54d81fa0a3e0a14d5c3c04bc0289d58c391c7a63f35d075979021b4c19
+    tag: 7700ea83
+    digest: sha256:0318f6fee0da19470eeb5a1a651d135ee1af47b474e8f995e46dc4e3265b5403
   env:
     vars:
       AGENTS_CONTROL_PLANE_CACHE_ENABLED: "true"
       AGENTS_CONTROL_PLANE_CACHE_ALLOW_STALE: "false"
       AGENTS_CONTROL_PLANE_CACHE_RESYNC_SECONDS: "60"
       AGENTS_CONTROL_PLANE_CACHE_MAX_PENDING_WRITES: "5000"
-      AGENTS_SOURCE_HEAD_SHA: 08530a30c3327ef1ca021871c3dd7017b915e0b8
-      AGENTS_GITOPS_REVISION: 08530a30c3327ef1ca021871c3dd7017b915e0b8
-      AGENTS_SOURCE_CI_RUN_ID: "26652680224"
+      AGENTS_SOURCE_HEAD_SHA: 7700ea834dc3902a9010ed04dc475b1f8fcaacdb
+      AGENTS_GITOPS_REVISION: 7700ea834dc3902a9010ed04dc475b1f8fcaacdb
+      AGENTS_SOURCE_CI_RUN_ID: "26657364975"
       AGENTS_SOURCE_CI_CONCLUSION: success
-      AGENTS_MANIFEST_IMAGE_DIGEST: sha256:75671b54d81fa0a3e0a14d5c3c04bc0289d58c391c7a63f35d075979021b4c19
-      AGENTS_SERVING_BUILD_COMMIT: 08530a30c3327ef1ca021871c3dd7017b915e0b8
-      AGENTS_SERVING_IMAGE_DIGEST: sha256:75671b54d81fa0a3e0a14d5c3c04bc0289d58c391c7a63f35d075979021b4c19
+      AGENTS_MANIFEST_IMAGE_DIGEST: sha256:0318f6fee0da19470eeb5a1a651d135ee1af47b474e8f995e46dc4e3265b5403
+      AGENTS_SERVING_BUILD_COMMIT: 7700ea834dc3902a9010ed04dc475b1f8fcaacdb
+      AGENTS_SERVING_IMAGE_DIGEST: sha256:0318f6fee0da19470eeb5a1a651d135ee1af47b474e8f995e46dc4e3265b5403
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/agents-codex-runner
-    tag: 08530a30
-    digest: sha256:4aa232e93d7d2738a9fa326b99bb0e4c3dd1667dd5899ba628a0e28ec2e77b4f
+    tag: 7700ea83
+    digest: sha256:5b568c1e3277cd77f76cf412e492bb1e0adaa427d700790565a085ce22414b23
 agentRuntime:
   native:
     rerunOrchestration: codex-rerun
@@ -85,8 +85,8 @@ controllers:
   replicaCount: 2
   image:
     repository: registry.ide-newton.ts.net/lab/agents-controller
-    tag: 08530a30
-    digest: sha256:4ac23dbf0ab2907e667820dc81419d8544eb6b30f10f616d08f53867d7a74245
+    tag: 7700ea83
+    digest: sha256:351af720400063ee4f22f964db46a87c0a57834f64489dc4416ab1f2599d37d2
   autoscaling:
     enabled: false
 swarm:
