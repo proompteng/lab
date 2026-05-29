@@ -9,6 +9,6 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    include: ['src/{lib,server}/**/*.test.ts', 'src/routes/**/*.test.tsx'],
+    include: ['src/{lib,server}/**/*.test.ts', 'src/routes/**/*.test.{ts,tsx}'],
   },
 })
