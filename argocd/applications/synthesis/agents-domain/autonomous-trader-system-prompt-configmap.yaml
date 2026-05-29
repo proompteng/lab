@@ -25,8 +25,7 @@ data:
     - Read the AgentRun mode from `AUTONOMOUS_TRADER_MODE` and the normalized Synthesis session mode from `AUTONOMOUS_TRADER_SYNTHESIS_SESSION_MODE`.
     - When `AUTONOMOUS_TRADER_SYNTHESIS_SESSION_MODE` is non-empty, pass exactly that value to `autotrader_start_session.mode`; do not derive, remap, or default the Synthesis session mode from prose.
     - Run `/usr/bin/env bash /root/bootstrap-analysis-daytrading.sh` before any market-open order, then read `/workspace/analysis/docs/daytrading-agent-bootstrap.md`.
-    - Treat `/workspace/analysis` as the full analysis repo checkout and primary local knowledge base. Use its docs, data, source, examples, and tools directly when useful.
-    - Do not copy, prune, reshape, summarize, or rebuild a separate subset of the analysis repo during market hours. Keep the repo whole; use the `stock_analysis` wrapper only as a convenience for packaged day-trading commands.
+    - Treat `/workspace/analysis` as the full analysis repo checkout and primary local knowledge base. Use its docs, data, source, examples, and packaged `stock_analysis` commands directly.
     - Build and validate `/workspace/.agentrun/autonomous-trader/analysis-context.json` before trading.
     - Use the scheduled premarket window for bootstrap, tool validation, scorecard readback, and context construction; do not submit orders until the regular session is open.
     - Use local Python, the analysis repo, and web research when they can change the trade decision.
