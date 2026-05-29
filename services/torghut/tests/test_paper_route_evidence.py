@@ -2260,13 +2260,13 @@ class TestPaperRouteEvidenceAudit(TestCase):
                         fill_count=50,
                         decision_count=25,
                         submitted_order_count=25,
-                        closed_trade_count=0,
+                        closed_trade_count=1,
                         open_position_count=1,
                         filled_notional=Decimal("1000000"),
                         gross_strategy_pnl=Decimal("110000"),
                         cost_amount=Decimal("10000"),
                         net_strategy_pnl_after_costs=Decimal("100000"),
-                        post_cost_expectancy_bps=Decimal("1000"),
+                        post_cost_expectancy_bps=None,
                         ledger_schema_version="torghut.runtime-ledger-bucket.v1",
                         pnl_basis="realized_strategy_pnl_after_explicit_costs",
                         execution_policy_hash_counts={"policy-a": 25},
@@ -2401,6 +2401,32 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(audit["runtime_ledger"]["bucket_count"], 2)
         self.assertEqual(audit["runtime_ledger"]["evidence_grade_bucket_count"], 1)
         self.assertEqual(audit["runtime_ledger"]["non_evidence_grade_bucket_count"], 1)
+        self.assertEqual(
+            audit["runtime_ledger"]["non_evidence_grade_diagnostic"]["scope"],
+            "non_evidence_grade_runtime_ledger_buckets_diagnostic_only_not_promotion_proof",
+        )
+        self.assertEqual(
+            audit["runtime_ledger"]["non_evidence_grade_diagnostic"][
+                "diagnostic_bucket_count"
+            ],
+            1,
+        )
+        self.assertEqual(
+            audit["runtime_ledger"]["non_evidence_grade_diagnostic"][
+                "net_strategy_pnl_after_costs"
+            ],
+            "100000",
+        )
+        self.assertEqual(
+            audit["runtime_ledger"]["non_evidence_grade_diagnostic"][
+                "diagnostic_closed_trade_expectancy_bps"
+            ],
+            "1000",
+        )
+        self.assertEqual(
+            audit["runtime_ledger"]["non_evidence_grade_diagnostic"]["blocker_counts"],
+            {"open_position_count_nonzero": 1},
+        )
         self.assertEqual(
             audit["runtime_ledger"]["proof_scope"],
             "evidence_grade_runtime_ledger_buckets_only",
