@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { setSynthesisEmbeddingProviderForTests } from '../embeddings'
 import { handleMcpRequest } from '../mcp'
 import { createInMemorySynthesisStore, setSynthesisStoreForTests } from '../store'
+import { createInMemoryAutotraderStore, setAutotraderStoreForTests } from '../autotrader-store'
 
 const token = 'test-synthesis-token'
 
@@ -41,6 +42,7 @@ describe('synthesis MCP', () => {
       return { embedding: [0, 0, 1], model: config.model, dimension: config.dimension }
     })
     setSynthesisStoreForTests(createInMemorySynthesisStore())
+    setAutotraderStoreForTests(createInMemoryAutotraderStore())
   })
 
   afterEach(() => {
@@ -49,6 +51,7 @@ describe('synthesis MCP', () => {
     delete process.env.SYNTHESIS_EMBEDDING_MODEL
     setSynthesisEmbeddingProviderForTests(null)
     setSynthesisStoreForTests(null)
+    setAutotraderStoreForTests(null)
   })
 
   test('initializes with synthesis-control-plane server info', async () => {
@@ -293,5 +296,243 @@ describe('synthesis MCP', () => {
 
     expect(feedPayload.items).toHaveLength(1)
     expect(feedPayload.items[0].dedupeKey).toBe('theme:browser-agents')
+  })
+
+  test('records an autotrader session and returns compounded scorecards through MCP', async () => {
+    const headers = { authorization: `Bearer ${token}` }
+    const toolsResponse = await handleMcpRequest(rpc('tools/list'))
+    const toolsPayload = await toolsResponse.json()
+    const toolNames = toolsPayload.result.tools.map((tool: { name: string }) => tool.name)
+
+    expect(toolNames).toEqual(expect.arrayContaining(['autotrader_start_session', 'autotrader_get_scorecard']))
+
+    const sessionPayload = await parseToolJson(
+      await handleMcpRequest(
+        callTool(
+          'autotrader_start_session',
+          {
+            agentRunName: 'autonomous-trader-market-open-20260529-0930',
+            mode: 'market_open',
+            tradingDate: '2026-05-29',
+            accountId: 'paper-account',
+            goalEquity: '500000',
+            marketOpenAt: '2026-05-29T13:30:00Z',
+            marketCloseAt: '2026-05-29T20:00:00Z',
+            analysisHead: 'b187dcf',
+            analysisContextHash: 'sha256:test',
+          },
+          headers,
+        ),
+      ),
+    )
+    const sessionId = sessionPayload.session.id
+
+    await parseToolJson(
+      await handleMcpRequest(
+        callTool(
+          'autotrader_upsert_status',
+          {
+            sessionId,
+            cycle: 1,
+            phase: 'scan',
+            equity: '38763.11',
+            buyingPower: '51235.31',
+            daytradeBuyingPower: '51235.31',
+            grossExposure: '0',
+            netExposure: '0',
+            realizedPnl: '0',
+            unrealizedPnl: '0',
+            currentAction: 'ranking candidates',
+            payload: { topCandidates: ['NVDA'] },
+          },
+          headers,
+        ),
+      ),
+    )
+    await parseToolJson(
+      await handleMcpRequest(
+        callTool(
+          'autotrader_append_event',
+          {
+            sessionId,
+            seq: 1,
+            eventType: 'candidate_ranked',
+            symbol: 'nvda',
+            setupType: 'opening_range_breakout',
+            setupGrade: 'A',
+            payload: { relativeVolume: 4.2 },
+          },
+          headers,
+        ),
+      ),
+    )
+    const ticketPayload = await parseToolJson(
+      await handleMcpRequest(
+        callTool(
+          'autotrader_create_trade_ticket',
+          {
+            sessionId,
+            idempotencyKey: 'cycle-1-nvda',
+            symbol: 'NVDA',
+            instrument: 'stock',
+            side: 'buy',
+            setupType: 'opening_range_breakout',
+            setupGrade: 'A',
+            fatPitch: true,
+            regime: 'news_driven',
+            timeBucket: 'open_30m',
+            thesis: 'Relative strength and clean opening range break.',
+            entryTrigger: 'Break and hold above opening range high.',
+            invalidation: 'Loss of VWAP.',
+            entryLimitPrice: '125.10',
+            stopPrice: '123.80',
+            targetPrice: '128.50',
+            expectedR: '2.61',
+            maxLossAmount: '260',
+            riskDollars: '260',
+            plannedQuantity: '200',
+            protectionType: 'bracket',
+            brokerOrderPlan: { orderClass: 'bracket' },
+            status: 'validated',
+          },
+          headers,
+        ),
+      ),
+    )
+
+    await parseToolJson(
+      await handleMcpRequest(
+        callTool(
+          'autotrader_record_risk_check',
+          {
+            sessionId,
+            ticketId: ticketPayload.ticket.id,
+            idempotencyKey: 'cycle-1-nvda-risk',
+            checkType: 'expected_r',
+            passed: true,
+            reason: 'expected R above threshold',
+            payload: { expectedR: '2.61' },
+          },
+          headers,
+        ),
+      ),
+    )
+    await parseToolJson(
+      await handleMcpRequest(
+        callTool(
+          'autotrader_record_order',
+          {
+            sessionId,
+            ticketId: ticketPayload.ticket.id,
+            clientOrderId: 'atr-test-nvda-1',
+            brokerOrderId: 'alpaca-order-1',
+            symbol: 'NVDA',
+            instrument: 'stock',
+            side: 'buy',
+            quantity: '200',
+            orderType: 'limit',
+            orderClass: 'bracket',
+            limitPrice: '125.10',
+            takeProfitLimitPrice: '128.50',
+            stopLossStopPrice: '123.80',
+            status: 'filled',
+            brokerPayload: { source: 'alpaca' },
+          },
+          headers,
+        ),
+      ),
+    )
+    await parseToolJson(
+      await handleMcpRequest(
+        callTool(
+          'autotrader_record_fill',
+          {
+            sessionId,
+            clientOrderId: 'atr-test-nvda-1',
+            brokerFillId: 'fill-1',
+            symbol: 'NVDA',
+            side: 'buy',
+            quantity: '200',
+            price: '125.04',
+            filledAt: '2026-05-29T13:42:00Z',
+            brokerPayload: { source: 'alpaca' },
+          },
+          headers,
+        ),
+      ),
+    )
+    await parseToolJson(
+      await handleMcpRequest(
+        callTool(
+          'autotrader_record_position_snapshot',
+          {
+            sessionId,
+            symbol: 'NVDA',
+            quantity: '200',
+            marketValue: '25100',
+            averageEntryPrice: '125.04',
+            unrealizedPnl: '92',
+            capturedAt: '2026-05-29T13:43:00Z',
+            brokerPayload: { source: 'alpaca' },
+          },
+          headers,
+        ),
+      ),
+    )
+
+    const finalizedPayload = await parseToolJson(
+      await handleMcpRequest(
+        callTool(
+          'autotrader_finalize_session',
+          {
+            sessionId,
+            terminalReason: 'market_close',
+            summary: { realizedPnl: '350' },
+            scorecardObservations: [
+              {
+                ticketId: ticketPayload.ticket.id,
+                symbol: 'NVDA',
+                setupType: 'opening_range_breakout',
+                setupGrade: 'A',
+                regime: 'news_driven',
+                timeBucket: 'open_30m',
+                outcome: 'win',
+                realizedR: '1.35',
+                holdSeconds: '930',
+                mfeR: '1.8',
+                maeR: '-0.2',
+                mistakeTags: [],
+                notes: 'clean break and target management',
+                payload: { targetHit: true },
+              },
+            ],
+          },
+          headers,
+        ),
+      ),
+    )
+    const scorecardPayload = await parseToolJson(
+      await handleMcpRequest(
+        callTool('autotrader_get_scorecard', {
+          symbol: 'NVDA',
+          setupType: 'opening_range_breakout',
+          setupGrade: 'A',
+          regime: 'news_driven',
+          timeBucket: 'open_30m',
+        }),
+      ),
+    )
+
+    expect(finalizedPayload.detail.session.terminalReason).toBe('market_close')
+    expect(finalizedPayload.detail.orders).toHaveLength(1)
+    expect(finalizedPayload.detail.positionSnapshots[0].symbol).toBe('NVDA')
+    expect(scorecardPayload.scorecards[0]).toMatchObject({
+      symbol: 'NVDA',
+      setupType: 'opening_range_breakout',
+      sampleSize: 1,
+      wins: 1,
+      avgRealizedR: '1.35',
+    })
+    expect(scorecardPayload.setupExamples[0].notes).toContain('clean break')
   })
 })

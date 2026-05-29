@@ -9,7 +9,7 @@ import {
 
 describe('synthesis shell polish contract', () => {
   test('removes legacy navigation/actions and makes search full width', () => {
-    expect(synthesisSidebarItems).toEqual(['Feed'])
+    expect(synthesisSidebarItems).toEqual(['Feed', 'Autotrader'])
     expect(synthesisSidebarItems).not.toContain('Search')
     expect(synthesisHasCurateAction).toBe(false)
     expect(synthesisHasBottomLeftCounter).toBe(false)

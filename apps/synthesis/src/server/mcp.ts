@@ -2,6 +2,19 @@ import { isAuthorized } from './auth'
 import { CompanyProfileHintSchema } from './company'
 import { jsonResponse } from './http'
 import {
+  AutotraderAppendEventInputSchema,
+  AutotraderCreateTradeTicketInputSchema,
+  AutotraderFinalizeSessionInputSchema,
+  AutotraderGetScorecardInputSchema,
+  AutotraderRecordFillInputSchema,
+  AutotraderRecordOrderInputSchema,
+  AutotraderRecordPositionSnapshotInputSchema,
+  AutotraderRecordRiskCheckInputSchema,
+  AutotraderStartSessionInputSchema,
+  AutotraderUpsertStatusInputSchema,
+} from './autotrader-schema'
+import { getAutotraderStore } from './autotrader-store'
+import {
   ListFeedInputSchema,
   RecordFeedbackInputSchema,
   StartRunInputSchema,
@@ -43,7 +56,26 @@ const mutatingTools = new Set([
   'synthesis_submit_batch',
   'synthesis_prefill_company',
   'synthesis_record_feedback',
+  'autotrader_start_session',
+  'autotrader_upsert_status',
+  'autotrader_append_event',
+  'autotrader_create_trade_ticket',
+  'autotrader_record_risk_check',
+  'autotrader_record_order',
+  'autotrader_record_fill',
+  'autotrader_record_position_snapshot',
+  'autotrader_finalize_session',
 ])
+
+const numericStringSchema = { type: 'string', description: 'Decimal value encoded as a string.' } as const
+const payloadSchema = { type: 'object', additionalProperties: true } as const
+const optionalStringArraySchema = { type: 'array', items: { type: 'string' } } as const
+const setupGradeSchema = { type: 'string', enum: ['A+', 'A', 'B', 'C', 'blocked'] } as const
+const sideSchema = {
+  type: 'string',
+  enum: ['buy', 'sell', 'sell_short', 'buy_to_cover', 'buy_to_open', 'buy_to_close', 'sell_to_open', 'sell_to_close'],
+} as const
+const instrumentSchema = { type: 'string', enum: ['stock', 'etf', 'option', 'crypto', 'other'] } as const
 
 const toolsListResult = {
   tools: [
@@ -260,6 +292,288 @@ const toolsListResult = {
         additionalProperties: false,
       },
     },
+    {
+      name: 'autotrader_start_session',
+      description:
+        'Start or idempotently reopen a Synthesis-owned autonomous-trader market session. This creates durable canonical state before the AgentRun scans or trades.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          agentRunName: { type: 'string' },
+          mode: { type: 'string', enum: ['market_session', 'market_open', 'dry_run', 'paper_smoke'] },
+          tradingDate: { type: 'string' },
+          accountId: { type: 'string' },
+          goalEquity: numericStringSchema,
+          marketOpenAt: { type: 'string' },
+          marketCloseAt: { type: 'string' },
+          analysisHead: { type: 'string' },
+          analysisContextHash: { type: 'string' },
+        },
+        required: ['agentRunName', 'tradingDate', 'marketOpenAt', 'marketCloseAt'],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: 'autotrader_upsert_status',
+      description: 'Write the latest live trading loop status for operator visibility and recovery.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sessionId: { type: 'string' },
+          cycle: { type: 'integer', minimum: 0 },
+          phase: {
+            type: 'string',
+            enum: [
+              'preflight',
+              'scan',
+              'ticket',
+              'risk_check',
+              'order',
+              'manage',
+              'reconcile',
+              'finalize',
+              'blocked',
+              'idle',
+            ],
+          },
+          equity: numericStringSchema,
+          buyingPower: numericStringSchema,
+          daytradeBuyingPower: numericStringSchema,
+          grossExposure: numericStringSchema,
+          netExposure: numericStringSchema,
+          realizedPnl: numericStringSchema,
+          unrealizedPnl: numericStringSchema,
+          currentAction: { type: 'string' },
+          blocker: { type: ['string', 'null'] },
+          payload: payloadSchema,
+        },
+        required: ['sessionId', 'cycle', 'phase', 'currentAction'],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: 'autotrader_append_event',
+      description: 'Append or idempotently replace a sequenced autotrader session event.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sessionId: { type: 'string' },
+          seq: { type: 'integer', minimum: 0 },
+          occurredAt: { type: 'string' },
+          eventType: { type: 'string' },
+          symbol: { type: 'string' },
+          setupType: { type: 'string' },
+          setupGrade: setupGradeSchema,
+          severity: { type: 'string', enum: ['debug', 'info', 'warn', 'error'] },
+          payload: payloadSchema,
+        },
+        required: ['sessionId', 'seq', 'eventType'],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: 'autotrader_create_trade_ticket',
+      description:
+        'Create or update the validated trade ticket that must exist before any non-smoke order. C setups should be recorded as blocked/no-trade tickets.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sessionId: { type: 'string' },
+          idempotencyKey: { type: 'string' },
+          symbol: { type: 'string' },
+          instrument: instrumentSchema,
+          side: sideSchema,
+          setupType: { type: 'string' },
+          setupGrade: setupGradeSchema,
+          fatPitch: { type: 'boolean' },
+          regime: { type: 'string' },
+          timeBucket: { type: 'string' },
+          thesis: { type: 'string' },
+          entryTrigger: { type: 'string' },
+          invalidation: { type: 'string' },
+          entryLimitPrice: numericStringSchema,
+          stopPrice: numericStringSchema,
+          targetPrice: numericStringSchema,
+          expectedR: numericStringSchema,
+          maxLossAmount: numericStringSchema,
+          riskDollars: numericStringSchema,
+          plannedQuantity: numericStringSchema,
+          protectionType: { type: 'string' },
+          brokerOrderPlan: payloadSchema,
+          status: { type: 'string', enum: ['candidate', 'validated', 'blocked', 'ordered', 'filled', 'closed'] },
+          noTradeReason: { type: ['string', 'null'] },
+        },
+        required: [
+          'sessionId',
+          'idempotencyKey',
+          'symbol',
+          'instrument',
+          'side',
+          'setupType',
+          'setupGrade',
+          'regime',
+          'thesis',
+          'entryTrigger',
+          'invalidation',
+          'protectionType',
+        ],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: 'autotrader_record_risk_check',
+      description: 'Record the ticket risk gate, including blocked/no-trade rationale.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sessionId: { type: 'string' },
+          ticketId: { type: 'string' },
+          idempotencyKey: { type: 'string' },
+          checkType: { type: 'string' },
+          passed: { type: 'boolean' },
+          reason: { type: 'string' },
+          payload: payloadSchema,
+        },
+        required: ['sessionId', 'idempotencyKey', 'checkType', 'passed'],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: 'autotrader_record_order',
+      description: 'Record or reconcile an Alpaca order by client order id.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sessionId: { type: 'string' },
+          ticketId: { type: 'string' },
+          clientOrderId: { type: 'string' },
+          brokerOrderId: { type: ['string', 'null'] },
+          symbol: { type: 'string' },
+          instrument: instrumentSchema,
+          side: sideSchema,
+          quantity: numericStringSchema,
+          orderType: { type: 'string' },
+          orderClass: { type: 'string' },
+          limitPrice: numericStringSchema,
+          stopPrice: numericStringSchema,
+          takeProfitLimitPrice: numericStringSchema,
+          stopLossStopPrice: numericStringSchema,
+          status: {
+            type: 'string',
+            enum: [
+              'planned',
+              'submitted',
+              'accepted',
+              'partially_filled',
+              'filled',
+              'canceled',
+              'rejected',
+              'expired',
+              'reconciled',
+            ],
+          },
+          rejectReason: { type: ['string', 'null'] },
+          brokerPayload: payloadSchema,
+        },
+        required: ['sessionId', 'clientOrderId', 'symbol', 'instrument', 'side', 'quantity', 'orderType', 'status'],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: 'autotrader_record_fill',
+      description: 'Record or reconcile an Alpaca fill by broker fill id.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sessionId: { type: 'string' },
+          clientOrderId: { type: 'string' },
+          brokerFillId: { type: 'string' },
+          symbol: { type: 'string' },
+          side: sideSchema,
+          quantity: numericStringSchema,
+          price: numericStringSchema,
+          filledAt: { type: 'string' },
+          brokerPayload: payloadSchema,
+        },
+        required: ['sessionId', 'clientOrderId', 'brokerFillId', 'symbol', 'side', 'quantity', 'price', 'filledAt'],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: 'autotrader_record_position_snapshot',
+      description: 'Record broker position state for reconciliation and UI visibility.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sessionId: { type: 'string' },
+          symbol: { type: 'string' },
+          quantity: numericStringSchema,
+          marketValue: numericStringSchema,
+          averageEntryPrice: numericStringSchema,
+          unrealizedPnl: numericStringSchema,
+          capturedAt: { type: 'string' },
+          brokerPayload: payloadSchema,
+        },
+        required: ['sessionId', 'symbol', 'quantity'],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: 'autotrader_finalize_session',
+      description:
+        'Finalize the market session and update setup scorecards/examples from realized outcomes so the next run can compound evidence.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sessionId: { type: 'string' },
+          terminalReason: { type: 'string' },
+          summary: payloadSchema,
+          scorecardObservations: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                ticketId: { type: 'string' },
+                symbol: { type: 'string' },
+                setupType: { type: 'string' },
+                setupGrade: setupGradeSchema,
+                regime: { type: 'string' },
+                timeBucket: { type: 'string' },
+                outcome: { type: 'string', enum: ['win', 'loss', 'scratch', 'rejected_valid', 'rejected_invalid'] },
+                realizedR: numericStringSchema,
+                holdSeconds: numericStringSchema,
+                mfeR: numericStringSchema,
+                maeR: numericStringSchema,
+                mistakeTags: optionalStringArraySchema,
+                notes: { type: 'string' },
+                payload: payloadSchema,
+              },
+              required: ['setupType', 'setupGrade', 'regime', 'timeBucket', 'outcome'],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ['sessionId', 'terminalReason'],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: 'autotrader_get_scorecard',
+      description:
+        'Read prior setup scorecards and examples before grading new candidates. Scorecards inform filtering/sizing but do not replace live confirmation.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          symbol: { type: 'string' },
+          setupType: { type: 'string' },
+          setupGrade: setupGradeSchema,
+          regime: { type: 'string' },
+          timeBucket: { type: 'string' },
+          limit: { type: 'integer', minimum: 1, maximum: 100 },
+        },
+        additionalProperties: false,
+      },
+    },
   ],
 } as const
 
@@ -348,6 +662,13 @@ const buildConfigResource = (request: Request) => ({
           primaryProfileSource: 'Webull when configured; local official-source fixtures/manual hints otherwise',
           quoteContext: 'optional Alpaca market-data read only; never required for static prefill',
         },
+        autotrader: {
+          appOwnedState: true,
+          brokerTruth: 'Alpaca MCP',
+          durableState: 'Postgres autotrader schema',
+          feedItems: 'milestone summaries only; never primary trade state',
+          learning: 'scorecards/examples must be read before grading new candidates',
+        },
       },
       tools: toolsListResult.tools,
     },
@@ -409,6 +730,89 @@ const handleToolCall = async (
       const parsed = RecordFeedbackInputSchema.safeParse(args)
       if (!parsed.success) return invalidParams(id, 'Invalid synthesis_record_feedback input')
       return asJsonRpcResponse(id, toTextToolResult({ ok: true, feedback: await store.recordFeedback(parsed.data) }))
+    }
+    if (name === 'autotrader_start_session') {
+      const parsed = AutotraderStartSessionInputSchema.safeParse(args)
+      if (!parsed.success) return invalidParams(id, 'Invalid autotrader_start_session input')
+      return asJsonRpcResponse(
+        id,
+        toTextToolResult({ ok: true, session: await getAutotraderStore().startSession(parsed.data) }),
+      )
+    }
+    if (name === 'autotrader_upsert_status') {
+      const parsed = AutotraderUpsertStatusInputSchema.safeParse(args)
+      if (!parsed.success) return invalidParams(id, 'Invalid autotrader_upsert_status input')
+      return asJsonRpcResponse(
+        id,
+        toTextToolResult({ ok: true, status: await getAutotraderStore().upsertStatus(parsed.data) }),
+      )
+    }
+    if (name === 'autotrader_append_event') {
+      const parsed = AutotraderAppendEventInputSchema.safeParse(args)
+      if (!parsed.success) return invalidParams(id, 'Invalid autotrader_append_event input')
+      return asJsonRpcResponse(
+        id,
+        toTextToolResult({ ok: true, event: await getAutotraderStore().appendEvent(parsed.data) }),
+      )
+    }
+    if (name === 'autotrader_create_trade_ticket') {
+      const parsed = AutotraderCreateTradeTicketInputSchema.safeParse(args)
+      if (!parsed.success) return invalidParams(id, 'Invalid autotrader_create_trade_ticket input')
+      return asJsonRpcResponse(
+        id,
+        toTextToolResult({ ok: true, ticket: await getAutotraderStore().createTradeTicket(parsed.data) }),
+      )
+    }
+    if (name === 'autotrader_record_risk_check') {
+      const parsed = AutotraderRecordRiskCheckInputSchema.safeParse(args)
+      if (!parsed.success) return invalidParams(id, 'Invalid autotrader_record_risk_check input')
+      return asJsonRpcResponse(
+        id,
+        toTextToolResult({ ok: true, riskCheck: await getAutotraderStore().recordRiskCheck(parsed.data) }),
+      )
+    }
+    if (name === 'autotrader_record_order') {
+      const parsed = AutotraderRecordOrderInputSchema.safeParse(args)
+      if (!parsed.success) return invalidParams(id, 'Invalid autotrader_record_order input')
+      return asJsonRpcResponse(
+        id,
+        toTextToolResult({ ok: true, order: await getAutotraderStore().recordOrder(parsed.data) }),
+      )
+    }
+    if (name === 'autotrader_record_fill') {
+      const parsed = AutotraderRecordFillInputSchema.safeParse(args)
+      if (!parsed.success) return invalidParams(id, 'Invalid autotrader_record_fill input')
+      return asJsonRpcResponse(
+        id,
+        toTextToolResult({ ok: true, fill: await getAutotraderStore().recordFill(parsed.data) }),
+      )
+    }
+    if (name === 'autotrader_record_position_snapshot') {
+      const parsed = AutotraderRecordPositionSnapshotInputSchema.safeParse(args)
+      if (!parsed.success) return invalidParams(id, 'Invalid autotrader_record_position_snapshot input')
+      return asJsonRpcResponse(
+        id,
+        toTextToolResult({
+          ok: true,
+          positionSnapshot: await getAutotraderStore().recordPositionSnapshot(parsed.data),
+        }),
+      )
+    }
+    if (name === 'autotrader_finalize_session') {
+      const parsed = AutotraderFinalizeSessionInputSchema.safeParse(args)
+      if (!parsed.success) return invalidParams(id, 'Invalid autotrader_finalize_session input')
+      return asJsonRpcResponse(
+        id,
+        toTextToolResult({ ok: true, detail: await getAutotraderStore().finalizeSession(parsed.data) }),
+      )
+    }
+    if (name === 'autotrader_get_scorecard') {
+      const parsed = AutotraderGetScorecardInputSchema.safeParse(args)
+      if (!parsed.success) return invalidParams(id, 'Invalid autotrader_get_scorecard input')
+      return asJsonRpcResponse(
+        id,
+        toTextToolResult({ ok: true, ...(await getAutotraderStore().getScorecard(parsed.data)) }),
+      )
     }
 
     return asJsonRpcError(id, { code: -32601, message: `Unknown tool: ${name}` })

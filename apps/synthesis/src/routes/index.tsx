@@ -1,6 +1,6 @@
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
-import { ArrowUpRight, ExternalLink, ImageIcon, Newspaper, Search, X } from 'lucide-react'
+import { Activity, ArrowUpRight, ExternalLink, ImageIcon, Newspaper, Search, X } from 'lucide-react'
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import type {
   ButtonHTMLAttributes,
@@ -247,9 +247,14 @@ function App() {
         <div className="flex w-[220px] flex-col px-2 py-3">
           <nav className="grid gap-1" aria-label="Synthesis navigation">
             {synthesisSidebarItems.map((item) => (
-              <RailButton key={item} active={item === 'Feed'} icon={<Newspaper />}>
+              <RailLink
+                key={item}
+                active={item === 'Feed'}
+                href={item === 'Autotrader' ? '/autotrader' : '/'}
+                icon={item === 'Autotrader' ? <Activity /> : <Newspaper />}
+              >
                 {item}
-              </RailButton>
+              </RailLink>
             ))}
           </nav>
           <div className="mt-auto px-3 py-4 font-mono text-xs leading-6 text-[#71767b]">private reading output</div>
@@ -332,10 +337,20 @@ function App() {
   )
 }
 
-function RailButton({ active, icon, children }: { active?: boolean; icon: ReactNode; children: ReactNode }) {
+function RailLink({
+  href,
+  active,
+  icon,
+  children,
+}: {
+  href: string
+  active?: boolean
+  icon: ReactNode
+  children: ReactNode
+}) {
   return (
-    <button
-      type="button"
+    <a
+      href={href}
       className={cx(
         'flex w-fit items-center gap-4 rounded-full px-4 py-3 text-xl tracking-normal transition-colors hover:bg-[#181818]',
         active ? 'font-bold text-[#e7e9ea]' : 'font-normal text-[#e7e9ea]',
@@ -343,7 +358,7 @@ function RailButton({ active, icon, children }: { active?: boolean; icon: ReactN
     >
       <span className="[&>svg]:size-6">{icon}</span>
       <span>{children}</span>
-    </button>
+    </a>
   )
 }
 

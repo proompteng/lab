@@ -1,5 +1,16 @@
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 
+import {
+  handleAutotraderAppendEvent,
+  handleAutotraderCreateTradeTicket,
+  handleAutotraderFinalizeSession,
+  handleAutotraderGetScorecard,
+  handleAutotraderGetSession,
+  handleAutotraderListSessions,
+  handleAutotraderStartSession,
+  handleAutotraderUpsertStatus,
+} from '../autotrader-api'
+import { createInMemoryAutotraderStore, setAutotraderStoreForTests } from '../autotrader-store'
 import { handleCreateRun, handleGetAsset, handleListFeed, handleSubmitItem } from '../api'
 import { setSynthesisEmbeddingProviderForTests } from '../embeddings'
 import { createInMemorySynthesisStore, setSynthesisStoreForTests } from '../store'
@@ -67,6 +78,7 @@ describe('synthesis REST auth', () => {
       return { embedding: [0, 0, 1], model: config.model, dimension: config.dimension }
     })
     setSynthesisStoreForTests(createInMemorySynthesisStore())
+    setAutotraderStoreForTests(createInMemoryAutotraderStore())
   })
 
   afterEach(() => {
@@ -75,6 +87,7 @@ describe('synthesis REST auth', () => {
     delete process.env.SYNTHESIS_EMBEDDING_MODEL
     setSynthesisEmbeddingProviderForTests(null)
     setSynthesisStoreForTests(null)
+    setAutotraderStoreForTests(null)
   })
 
   test('rejects missing bearer token for mutating routes', async () => {
@@ -355,5 +368,131 @@ describe('synthesis REST auth', () => {
     expect(payload.items).toHaveLength(1)
     expect(payload.items[0].dedupeKey).toBe('theme:hbm-memory-capacity')
     expect(payload.nextCursor).toBeNull()
+  })
+
+  test('serves canonical autotrader state and scorecards through REST handlers', async () => {
+    const authedHeaders = {
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+    }
+    const startResponse = await handleAutotraderStartSession(
+      new Request('http://synthesis.test/api/autotrader/sessions', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          agentRunName: 'autonomous-trader-market-open-api-test',
+          mode: 'dry_run',
+          tradingDate: '2026-05-29',
+          accountId: 'paper-account',
+          goalEquity: '500000',
+          marketOpenAt: '2026-05-29T13:30:00Z',
+          marketCloseAt: '2026-05-29T20:00:00Z',
+        }),
+      }),
+    )
+    const startPayload = await startResponse.json()
+    const sessionId = startPayload.session.id
+
+    await handleAutotraderUpsertStatus(
+      new Request('http://synthesis.test/api/autotrader/status', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          sessionId,
+          cycle: 3,
+          phase: 'scan',
+          currentAction: 'standing down on weak candidates',
+          blocker: null,
+          payload: { noTradeReason: 'no A setup' },
+        }),
+      }),
+    )
+    await handleAutotraderAppendEvent(
+      new Request('http://synthesis.test/api/autotrader/events', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          sessionId,
+          seq: 3,
+          eventType: 'no_trade_decision',
+          symbol: 'AMD',
+          setupType: 'vwap_reclaim',
+          setupGrade: 'C',
+          payload: { reason: 'wide spread' },
+        }),
+      }),
+    )
+    const ticketResponse = await handleAutotraderCreateTradeTicket(
+      new Request('http://synthesis.test/api/autotrader/trade-tickets', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          sessionId,
+          idempotencyKey: 'amd-c-setup',
+          symbol: 'AMD',
+          instrument: 'stock',
+          side: 'buy',
+          setupType: 'vwap_reclaim',
+          setupGrade: 'C',
+          regime: 'range_bound',
+          timeBucket: 'midday',
+          thesis: 'Rejected because setup grade was too weak.',
+          entryTrigger: 'Not applicable.',
+          invalidation: 'Not applicable.',
+          protectionType: 'none',
+          status: 'blocked',
+          noTradeReason: 'C setup blocked',
+        }),
+      }),
+    )
+    const ticketPayload = await ticketResponse.json()
+    await handleAutotraderFinalizeSession(
+      new Request('http://synthesis.test/api/autotrader/finalize', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          sessionId,
+          terminalReason: 'dry_run_complete',
+          summary: { noTrade: true },
+          scorecardObservations: [
+            {
+              ticketId: ticketPayload.ticket.id,
+              symbol: 'AMD',
+              setupType: 'vwap_reclaim',
+              setupGrade: 'C',
+              regime: 'range_bound',
+              timeBucket: 'midday',
+              outcome: 'rejected_invalid',
+              realizedR: '0',
+              notes: 'C setup correctly blocked',
+            },
+          ],
+        }),
+      }),
+    )
+
+    const listResponse = await handleAutotraderListSessions(
+      new Request('http://synthesis.test/api/autotrader/sessions?limit=5'),
+    )
+    const detailResponse = await handleAutotraderGetSession(
+      new Request(`http://synthesis.test/api/autotrader/sessions/${sessionId}`),
+      sessionId,
+    )
+    const scorecardResponse = await handleAutotraderGetScorecard(
+      new Request('http://synthesis.test/api/autotrader/scorecards?symbol=AMD&setupType=vwap_reclaim&limit=5'),
+    )
+    const listPayload = await listResponse.json()
+    const detailPayload = await detailResponse.json()
+    const scorecardPayload = await scorecardResponse.json()
+
+    expect(listPayload.sessions[0].agentRunName).toBe('autonomous-trader-market-open-api-test')
+    expect(detailPayload.status.currentAction).toContain('standing down')
+    expect(detailPayload.events[0].eventType).toBe('no_trade_decision')
+    expect(detailPayload.tradeTickets[0].noTradeReason).toBe('C setup blocked')
+    expect(scorecardPayload.scorecards[0]).toMatchObject({
+      symbol: 'AMD',
+      setupType: 'vwap_reclaim',
+      rejectedInvalid: 1,
+    })
   })
 })
