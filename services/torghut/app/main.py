@@ -210,6 +210,9 @@ _OPTIONS_CATALOG_FRESHNESS_CACHE: dict[
 ] = {}
 _ALPACA_HEALTH_CACHE_LOCK = Lock()
 _ALPACA_HEALTH_STATE: dict[str, object] = {}
+_PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS = 600
+_PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK = Lock()
+_paper_route_target_plan_success_cache: tuple[dict[str, Any], float] | None = None
 
 
 def _extract_bearer_token(authorization_header: str | None) -> str | None:
@@ -4697,12 +4700,55 @@ def _load_external_paper_route_target_plan() -> dict[str, Any]:
     url = str(settings.trading_paper_route_target_plan_url or "").strip()
     if not url:
         return {}
-    return _fetch_paper_route_target_plan_url(
+    plan = _fetch_paper_route_target_plan_url(
         url,
         timeout_seconds=settings.trading_paper_route_target_plan_timeout_seconds,
         attempts=3,
         retry_backoff_seconds=0.25,
     )
+    load_error = str(plan.get("load_error") or "").strip()
+    if load_error:
+        cached_plan = _cached_external_paper_route_target_plan_success(load_error)
+        if cached_plan:
+            logger.warning(
+                "Using stale successful paper-route target plan after fetch failure url=%s error=%s",
+                url,
+                load_error,
+            )
+            return cached_plan
+        return plan
+    if _paper_route_target_plan_targets(plan):
+        _remember_external_paper_route_target_plan_success(plan)
+    return plan
+
+
+def _remember_external_paper_route_target_plan_success(
+    plan: Mapping[str, Any],
+) -> None:
+    global _paper_route_target_plan_success_cache
+
+    if not _paper_route_target_plan_targets(plan):
+        return
+    with _PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK:
+        _paper_route_target_plan_success_cache = (deepcopy(dict(plan)), time.time())
+
+
+def _cached_external_paper_route_target_plan_success(
+    load_error: str,
+) -> dict[str, Any]:
+    with _PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK:
+        cached = _paper_route_target_plan_success_cache
+    if cached is None:
+        return {}
+    plan, cached_at = cached
+    age_seconds = max(time.time() - cached_at, 0.0)
+    if age_seconds > _PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS:
+        return {}
+    cached_plan = deepcopy(plan)
+    cached_plan["paper_route_target_plan_cache_status"] = "stale_success"
+    cached_plan["paper_route_target_plan_last_load_error"] = load_error
+    cached_plan["paper_route_target_plan_stale_success_age_seconds"] = int(age_seconds)
+    return cached_plan
 
 
 def _merge_external_paper_route_target_plan(
@@ -4754,6 +4800,12 @@ def _merge_external_paper_route_target_plan(
 
     if _paper_route_target_plan_targets(external_plan):
         merged_plan = dict(external_plan)
+        cache_status = str(
+            merged_plan.get("paper_route_target_plan_cache_status") or ""
+        ).strip()
+        last_load_error = str(
+            merged_plan.get("paper_route_target_plan_last_load_error") or ""
+        ).strip()
         merged_targets: list[dict[str, Any]] = []
         for raw_target in _paper_route_target_plan_targets(external_plan):
             target = dict(raw_target)
@@ -4771,6 +4823,10 @@ def _merge_external_paper_route_target_plan(
         merged_plan["final_promotion_authorized"] = False
         gate["runtime_ledger_paper_probation_import_plan"] = merged_plan
         gate["paper_route_target_plan_source"] = "external_target_plan_url"
+        if cache_status:
+            gate["paper_route_target_plan_cache_status"] = cache_status
+        if last_load_error:
+            gate["paper_route_target_plan_error"] = last_load_error
         return gate
 
     return gate

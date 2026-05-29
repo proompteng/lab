@@ -18,6 +18,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.orm import Session, sessionmaker
 
+import app.main as main_module
 from app.db import get_session
 from app.main import (
     _ALPACA_HEALTH_STATE,
@@ -7876,6 +7877,117 @@ class TestTradingApi(TestCase):
             settings.trading_paper_route_target_plan_url = original_target_plan_url
             settings.trading_paper_route_target_plan_timeout_seconds = original_timeout
 
+    def test_load_external_paper_route_target_plan_uses_recent_success_after_timeout(
+        self,
+    ) -> None:
+        original_target_plan_url = settings.trading_paper_route_target_plan_url
+        original_timeout = settings.trading_paper_route_target_plan_timeout_seconds
+        original_cache = main_module._paper_route_target_plan_success_cache
+        settings.trading_paper_route_target_plan_url = "http://torghut.example/plan"
+        settings.trading_paper_route_target_plan_timeout_seconds = 7
+        main_module._paper_route_target_plan_success_cache = None
+        success_plan = {
+            "source": "external_paper_route_target_plan",
+            "targets": [
+                {
+                    "candidate_id": "candidate-stale-safe",
+                    "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                }
+            ],
+        }
+        try:
+            with (
+                patch(
+                    "app.main._fetch_paper_route_target_plan_url",
+                    side_effect=[
+                        success_plan,
+                        {
+                            "load_error": (
+                                "paper_route_target_plan_fetch_failed:timed out"
+                            )
+                        },
+                    ],
+                ),
+                patch(
+                    "app.main.time.time",
+                    side_effect=[1000.0, 1005.0, 1005.0, 1005.0],
+                ),
+            ):
+                first_plan = _load_external_paper_route_target_plan()
+                second_plan = _load_external_paper_route_target_plan()
+        finally:
+            settings.trading_paper_route_target_plan_url = original_target_plan_url
+            settings.trading_paper_route_target_plan_timeout_seconds = original_timeout
+            main_module._paper_route_target_plan_success_cache = original_cache
+
+        self.assertEqual(
+            first_plan["targets"][0]["candidate_id"],
+            "candidate-stale-safe",
+        )
+        self.assertEqual(
+            second_plan["paper_route_target_plan_cache_status"], "stale_success"
+        )
+        self.assertEqual(
+            second_plan["paper_route_target_plan_last_load_error"],
+            "paper_route_target_plan_fetch_failed:timed out",
+        )
+        self.assertEqual(
+            second_plan["targets"][0]["candidate_id"],
+            "candidate-stale-safe",
+        )
+
+    def test_external_paper_route_target_plan_cache_fails_closed_when_unusable(
+        self,
+    ) -> None:
+        original_target_plan_url = settings.trading_paper_route_target_plan_url
+        original_cache = main_module._paper_route_target_plan_success_cache
+        settings.trading_paper_route_target_plan_url = "http://torghut.example/plan"
+        main_module._paper_route_target_plan_success_cache = None
+        try:
+            with patch(
+                "app.main._fetch_paper_route_target_plan_url",
+                return_value={
+                    "load_error": "paper_route_target_plan_fetch_failed:timed out"
+                },
+            ):
+                plan = _load_external_paper_route_target_plan()
+            self.assertEqual(
+                plan["load_error"],
+                "paper_route_target_plan_fetch_failed:timed out",
+            )
+
+            main_module._paper_route_target_plan_success_cache = ("sentinel", 1000.0)
+            main_module._remember_external_paper_route_target_plan_success(
+                {"targets": []}
+            )
+            self.assertEqual(
+                main_module._paper_route_target_plan_success_cache,
+                ("sentinel", 1000.0),
+            )
+
+            main_module._paper_route_target_plan_success_cache = None
+            self.assertEqual(
+                main_module._cached_external_paper_route_target_plan_success(
+                    "paper_route_target_plan_fetch_failed:missing"
+                ),
+                {},
+            )
+
+            main_module._paper_route_target_plan_success_cache = (
+                {"targets": [{"candidate_id": "expired"}]},
+                1000.0,
+            )
+            with patch("app.main.time.time", return_value=2000.0):
+                self.assertEqual(
+                    main_module._cached_external_paper_route_target_plan_success(
+                        "paper_route_target_plan_fetch_failed:expired"
+                    ),
+                    {},
+                )
+        finally:
+            settings.trading_paper_route_target_plan_url = original_target_plan_url
+            main_module._paper_route_target_plan_success_cache = original_cache
+
     def test_merge_external_paper_route_target_plan_fails_closed(self) -> None:
         local_gate = {
             "runtime_ledger_paper_probation_import_plan": {
@@ -7991,6 +8103,8 @@ class TestTradingApi(TestCase):
         with patch(
             "app.main._load_external_paper_route_target_plan",
             return_value={
+                "paper_route_target_plan_cache_status": "stale_success",
+                "paper_route_target_plan_last_load_error": "paper_route_timeout",
                 "promotion_allowed": True,
                 "final_promotion_allowed": True,
                 "final_promotion_authorized": True,
@@ -8007,6 +8121,8 @@ class TestTradingApi(TestCase):
         self.assertEqual(
             gate["paper_route_target_plan_source"], "external_target_plan_url"
         )
+        self.assertEqual(gate["paper_route_target_plan_cache_status"], "stale_success")
+        self.assertEqual(gate["paper_route_target_plan_error"], "paper_route_timeout")
         self.assertFalse(plan["promotion_allowed"])
         self.assertFalse(plan["final_promotion_allowed"])
         self.assertFalse(plan["final_promotion_authorized"])

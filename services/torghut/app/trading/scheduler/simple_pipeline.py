@@ -74,6 +74,7 @@ _SIMPLE_MARKET_CONTEXT_RETRY_INTERVAL = timedelta(seconds=30)
 _PAPER_ROUTE_PROBE_QTY_STEP = Decimal("0.0001")
 _REGULAR_SESSION_MINUTES = 390
 _PAPER_ROUTE_TARGET_PLAN_CACHE_SECONDS = 60
+_PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS = 600
 
 
 def _safe_int(value: object) -> int:
@@ -371,6 +372,14 @@ class SimpleTradingPipeline(TradingPipeline):
         tuple[
             set[str],
             str | None,
+            list[dict[str, Any]],
+            datetime,
+        ]
+        | None
+    ) = None
+    _paper_route_target_plan_success_cache: (
+        tuple[
+            set[str],
             list[dict[str, Any]],
             datetime,
         ]
@@ -1990,6 +1999,41 @@ class SimpleTradingPipeline(TradingPipeline):
             ).total_seconds() < _PAPER_ROUTE_TARGET_PLAN_CACHE_SECONDS:
                 return set(symbols), load_error, [dict(target) for target in targets]
         symbols, load_error, targets = self._external_paper_route_target_probe_symbols()
+        used_stale_success = False
+        if load_error:
+            success_cached = self._paper_route_target_plan_success_cache
+            if success_cached is not None:
+                cached_symbols, cached_targets, success_cached_at = success_cached
+                success_age_seconds = max(
+                    (now - success_cached_at.astimezone(timezone.utc)).total_seconds(),
+                    0.0,
+                )
+                if success_age_seconds < _PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS:
+                    logger.warning(
+                        "Using stale successful paper-route target plan for bounded probe error=%s age_seconds=%.1f",
+                        load_error,
+                        success_age_seconds,
+                    )
+                    targets = [
+                        {
+                            **dict(target),
+                            "paper_route_target_plan_cache_status": "stale_success",
+                            "paper_route_target_plan_last_load_error": load_error,
+                            "paper_route_target_plan_stale_success_age_seconds": int(
+                                max(success_age_seconds, 0.0)
+                            ),
+                        }
+                        for target in cached_targets
+                    ]
+                    symbols = set(cached_symbols)
+                    load_error = None
+                    used_stale_success = True
+        if load_error is None and symbols and targets and not used_stale_success:
+            self._paper_route_target_plan_success_cache = (
+                set(symbols),
+                [dict(target) for target in targets],
+                now,
+            )
         self._paper_route_target_plan_cache = (
             set(symbols),
             load_error,
