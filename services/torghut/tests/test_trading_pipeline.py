@@ -6195,6 +6195,91 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(third_targets[0]["candidate_id"], "candidate-pairs-a")
         self.assertEqual(fetch_plan.call_count, 2)
 
+    def test_external_paper_route_target_plan_cache_uses_recent_success_after_timeout(
+        self,
+    ) -> None:
+        from app import config
+
+        original_target_plan_url = config.settings.trading_paper_route_target_plan_url
+        original_target_plan_timeout = (
+            config.settings.trading_paper_route_target_plan_timeout_seconds
+        )
+        config.settings.trading_paper_route_target_plan_url = (
+            "http://torghut.local/trading/paper-route-evidence"
+        )
+        config.settings.trading_paper_route_target_plan_timeout_seconds = 1.0
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        pipeline._paper_route_target_plan_cache = None
+        pipeline._paper_route_target_plan_success_cache = None
+        now = datetime(2026, 3, 26, 14, 30, tzinfo=timezone.utc)
+        try:
+            with (
+                patch(
+                    "app.trading.scheduler.simple_pipeline.trading_now",
+                    side_effect=[now, now + timedelta(seconds=120)],
+                ),
+                patch(
+                    "app.trading.scheduler.simple_pipeline.fetch_paper_route_target_plan_url",
+                    side_effect=[
+                        {
+                            "targets": [
+                                {
+                                    "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                                    "candidate_id": "candidate-pairs-a",
+                                }
+                            ]
+                        },
+                        {
+                            "load_error": (
+                                "paper_route_target_plan_fetch_failed:timed out"
+                            ),
+                        },
+                    ],
+                ) as fetch_plan,
+            ):
+                first_symbols, first_error, first_targets = (
+                    pipeline._external_paper_route_target_probe_symbols_cached()
+                )
+                second_symbols, second_error, second_targets = (
+                    pipeline._external_paper_route_target_probe_symbols_cached()
+                )
+        finally:
+            config.settings.trading_paper_route_target_plan_url = (
+                original_target_plan_url
+            )
+            config.settings.trading_paper_route_target_plan_timeout_seconds = (
+                original_target_plan_timeout
+            )
+
+        self.assertEqual(first_symbols, {"AAPL", "AMZN"})
+        self.assertIsNone(first_error)
+        self.assertEqual(first_targets[0]["candidate_id"], "candidate-pairs-a")
+        self.assertEqual(second_symbols, {"AAPL", "AMZN"})
+        self.assertIsNone(second_error)
+        self.assertEqual(second_targets[0]["candidate_id"], "candidate-pairs-a")
+        self.assertEqual(
+            second_targets[0]["paper_route_target_plan_cache_status"],
+            "stale_success",
+        )
+        self.assertEqual(
+            second_targets[0]["paper_route_target_plan_last_load_error"],
+            "paper_route_target_plan_fetch_failed:timed out",
+        )
+        self.assertEqual(fetch_plan.call_count, 2)
+
     def test_matching_paper_target_signal_gets_strategy_signal_paper_authority(
         self,
     ) -> None:
