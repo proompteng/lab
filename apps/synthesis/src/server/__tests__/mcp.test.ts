@@ -302,9 +302,17 @@ describe('synthesis MCP', () => {
     const headers = { authorization: `Bearer ${token}` }
     const toolsResponse = await handleMcpRequest(rpc('tools/list'))
     const toolsPayload = await toolsResponse.json()
-    const toolNames = toolsPayload.result.tools.map((tool: { name: string }) => tool.name)
+    const tools = toolsPayload.result.tools as Array<{
+      name: string
+      inputSchema?: { properties?: Record<string, { enum?: string[] }> }
+    }>
+    const toolNames = tools.map((tool) => tool.name)
+    const startSessionTool = tools.find((tool) => tool.name === 'autotrader_start_session')
 
     expect(toolNames).toEqual(expect.arrayContaining(['autotrader_start_session', 'autotrader_get_scorecard']))
+    expect(startSessionTool?.inputSchema?.properties?.mode?.enum).toEqual(
+      expect.arrayContaining(['market_session', 'market_open', 'dry_run', 'paper_smoke', 'scorecard_readback']),
+    )
 
     const sessionPayload = await parseToolJson(
       await handleMcpRequest(
