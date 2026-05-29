@@ -20,6 +20,8 @@ data:
     - Route orders only to the Alpaca paper account.
     - Use Alpaca MCP for account, clock, calendar, market data, position, order, and execution state.
     - Use Synthesis MCP autotrader tools as the canonical operator-visible runtime state for sessions, status, events, tickets, risk checks, orders, fills, position snapshots, finalization, and scorecards.
+    - Read the exact Kubernetes AgentRun name from `AGENT_RUN_NAME` and use that value unchanged for Synthesis session identity, artifacts, milestone URLs, dedupe keys, and report fields.
+    - Do not invent, normalize, shorten, timestamp, or replace the `AGENT_RUN_NAME` value.
     - Run `/usr/bin/env bash /root/bootstrap-analysis-daytrading.sh` before any market-open order, then read `/workspace/analysis/docs/daytrading-agent-bootstrap.md`.
     - Build and validate `/workspace/.agentrun/autonomous-trader/analysis-context.json` before trading.
     - Use local Python, the analysis repo, and web research when they can change the trade decision.
@@ -31,7 +33,7 @@ data:
     - Call `autotrader_start_session` before scanning and persist its returned `sessionId`.
     - In dry-run mode, perform bootstrap, read-only Alpaca preflight, Synthesis scorecard read, one scanner/ticket validation pass, blocked/no-trade decision recording, risk recording, status/event writes, and `autotrader_finalize_session`; do not call Alpaca order submission, cancel, replace, or close-position tools.
     - In dry-run mode, finalize the autotrader session immediately after ticket/risk/status writes; write only the required output files and exit the AgentRun.
-    - After `autotrader_finalize_session` succeeds in dry-run mode, do not run completion audits, inspect PR/CI state, re-read scorecards, retry visibility, optimize wording, wait for market state, or perform any further analysis.
+    - After `autotrader_finalize_session` succeeds in dry-run mode, write the final `report.md`, mark the AgentRun-local goal complete, and stop. Do not run completion audits, inspect PR/CI state, re-read scorecards, retry visibility, optimize wording, wait for market state, or perform any further analysis.
     - In preflight mode, prove the stock protective-order path with one tiny non-marketable paper bracket or OTO order when safe; verify by id/client id and cancel it, or record the exact Alpaca rejection/blocker.
     - In market-open mode, loop until market close, 500000 USD equity, or unrecoverable account/order state.
     - Each cycle re-reads account and market state, reconciles orders, absorbs account changes, evaluates actions, updates artifacts, and waits with heartbeat output at least every 60 seconds.
@@ -52,6 +54,7 @@ data:
 
     Visibility:
     - Use Synthesis MCP autotrader tools for operator-visible structured state: call `autotrader_start_session` once per AgentRun, then use its `sessionId` for all status, events, tickets, risk checks, orders, fills, position snapshots, and finalization.
+    - The Synthesis MCP proxy injects the exact `AGENT_RUN_NAME` into `autotrader_start_session`; still use the same exact value in every operator-visible status, artifact, milestone source URL, and report field.
     - Use `synthesis_submit_item` only for high-signal milestone summaries: session start, preflight complete, material decision or stand-down, order submitted, fill/reject/cancel, protective exit update, risk blocker, and terminal summary.
     - Use strict Synthesis item payloads with `title`, `synthesis`, `takeaways`, `whyValuable`, `sourcePosts`, `dedupeKey`, `score`, and `confidence`; use a unique path-based AgentRun URL such as `https://synthesis.proompteng.ai/agentruns/${AGENT_RUN_NAME}/milestones/${dedupeKey}` as `sourcePosts[0].originalUrl`.
     - Treat `synthesis_submit_item` as best-effort visibility only: if a milestone feed post is rejected as duplicate or invalid, append the error to `synthesis-posts.jsonl`, write an `autotrader_append_event`, and continue. Never retry a failed milestone post more than once, and never let feed posting block `autotrader_finalize_session`, order reconciliation, risk exits, or dry-run completion.

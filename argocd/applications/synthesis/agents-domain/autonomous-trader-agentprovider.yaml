@@ -330,6 +330,7 @@ spec:
           process.env.SYNTHESIS_API_TOKEN ||
           process.env.SYNTHESIS_MCP_TOKEN ||
           readFirstTokenFile([process.env.SYNTHESIS_API_TOKEN_FILE, '/var/run/synthesis/SYNTHESIS_API_TOKEN'])
+        const agentRunName = process.env.AGENT_RUN_NAME || ''
 
         const buildError = (id, code, message, data) => ({
           jsonrpc: '2.0',
@@ -345,6 +346,28 @@ spec:
           if (!message || typeof message !== 'object') return null
           const id = message.id
           return typeof id === 'string' || typeof id === 'number' || id === null ? id : null
+        }
+
+        const isPlainObject = (value) => value != null && typeof value === 'object' && !Array.isArray(value)
+
+        const normalizeAutotraderArguments = (toolName, args) => {
+          if (!toolName.startsWith('autotrader_')) return args
+          if (!agentRunName) return args
+          if (toolName !== 'autotrader_start_session') return args
+
+          const nextArgs = isPlainObject(args) ? { ...args } : {}
+          nextArgs.agentRunName = agentRunName
+          return nextArgs
+        }
+
+        const normalizeMessage = (message) => {
+          if (!isPlainObject(message) || message.method !== 'tools/call') return message
+          const params = message.params
+          if (!isPlainObject(params)) return message
+          const toolName = typeof params.name === 'string' ? params.name : ''
+          const nextArgs = normalizeAutotraderArguments(toolName, params.arguments)
+          if (nextArgs === params.arguments) return message
+          return { ...message, params: { ...params, arguments: nextArgs } }
         }
 
         const writeJson = (message) => {
@@ -370,10 +393,11 @@ spec:
           if (token) headers.authorization = `Bearer ${token}`
 
           try {
+            const outbound = normalizeMessage(message)
             const response = await fetch(endpoint, {
               method: 'POST',
               headers,
-              body: JSON.stringify(message),
+              body: JSON.stringify(outbound),
             })
             const body = await response.text()
 
