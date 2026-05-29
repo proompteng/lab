@@ -602,13 +602,22 @@ describe('synthesis autonomous trader provider', () => {
     const template = readYamlObjects(
       'argocd/applications/synthesis/agents-domain/autonomous-trader-agentrun-template.yaml',
     ).find((manifest) => objectAt(manifest, 'kind') === 'AgentRun')
+    const provider = readYamlObjects(
+      'argocd/applications/synthesis/agents-domain/autonomous-trader-agentprovider.yaml',
+    ).find((manifest) => objectAt(manifest, 'kind') === 'AgentProvider')
     const spec = objectAt(schedule, 'spec')
-    const parameters = objectAt(objectAt(template, 'spec'), 'parameters')
+    const templateSpec = objectAt(template, 'spec')
+    const parameters = objectAt(templateSpec, 'parameters')
+    const envTemplate = objectAt(objectAt(provider, 'spec'), 'envTemplate')
+    const goal = objectAt(templateSpec, 'goal') as Record<string, unknown>
+    const overallTimeoutSeconds = Number(objectAt(envTemplate, 'CODEX_MARKET_CONTEXT_OVERALL_TIMEOUT_SECONDS'))
 
     expect(objectAt(spec, 'cron')).toBe('15 9 * * 1-5')
     expect(objectAt(spec, 'timezone')).toBe('America/New_York')
     expect(objectAt(parameters, 'mode')).toBe('market-open')
     expect(objectAt(parameters, 'premarketBootstrapMinutes')).toBe('15')
+    expect(Object.hasOwn(goal, 'tokenBudget')).toBe(false)
+    expect(overallTimeoutSeconds).toBeGreaterThanOrEqual(32400)
   })
 
   it('schedules a post-close scorecard readback proof without broker mutations', () => {
