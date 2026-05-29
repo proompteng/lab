@@ -369,6 +369,24 @@ class TestRuntimeWindowImport(TestCase):
         self.assertIn("runtime_ledger_lineage_hash_missing", invalid_blockers)
         self.assertIn("source_decision_mode_profit_proof_missing", invalid_blockers)
 
+    def test_runtime_ledger_bucket_blockers_preserve_diagnostic_expectancy(
+        self,
+    ) -> None:
+        blockers = _runtime_ledger_bucket_blockers(
+            _runtime_ledger_bucket(
+                open_position_count=1,
+                post_cost_expectancy_bps=None,
+                diagnostic_closed_trade_expectancy_bps="282.5",
+                diagnostic_closed_trade_expectancy_basis=(
+                    "realized_closed_trips_after_explicit_costs_not_promotion_grade"
+                ),
+            )
+        )
+
+        self.assertIn("unclosed_position", blockers)
+        self.assertIn("runtime_ledger_expectancy_not_promotion_grade", blockers)
+        self.assertNotIn("runtime_ledger_expectancy_missing", blockers)
+
     def test_runtime_ledger_bucket_blockers_reject_non_promotion_grade_cost_basis(
         self,
     ) -> None:

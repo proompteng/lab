@@ -107,6 +107,10 @@ def test_partial_unclosed_positions_report_realized_pnl_but_block_expectancy() -
     assert bucket.gross_strategy_pnl == Decimal("40")
     assert bucket.net_strategy_pnl_after_costs == Decimal("38.60")
     assert bucket.post_cost_expectancy_bps is None
+    _assert_decimal_close(
+        bucket.diagnostic_closed_trade_expectancy_bps,
+        (Decimal("38.60") / Decimal("840")) * Decimal("10000"),
+    )
 
 
 def test_missing_price_notional_and_cost_basis_are_blockers() -> None:
@@ -708,6 +712,7 @@ def test_runtime_ledger_defensively_blocks_usable_non_promotion_grade_cost_basis
     assert bucket.cost_basis_counts == {"modeled_paper_cost_budget": 2}
     assert "runtime_ledger_cost_basis_non_promotion_grade" in bucket.blockers
     assert bucket.post_cost_expectancy_bps is None
+    assert bucket.diagnostic_closed_trade_expectancy_bps is None
 
 
 def test_exact_replay_ledger_blocks_fill_only_profit_proof() -> None:
@@ -742,6 +747,10 @@ def test_exact_replay_ledger_blocks_fill_only_profit_proof() -> None:
 
     assert bucket.net_strategy_pnl_after_costs == Decimal("97")
     assert bucket.post_cost_expectancy_bps is None
+    _assert_decimal_close(
+        bucket.diagnostic_closed_trade_expectancy_bps,
+        (Decimal("97") / Decimal("2100")) * Decimal("10000"),
+    )
     assert "runtime_decision_lifecycle_missing" in bucket.blockers
     assert "submitted_order_lifecycle_missing" in bucket.blockers
     assert "fill_order_linkage_missing" in bucket.blockers

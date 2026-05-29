@@ -45,6 +45,21 @@ _TCA_PNL_BASES = frozenset(
         "execution_tca_shortfall_cost",
     }
 )
+_DIAGNOSTIC_EXPECTANCY_SUPPRESSING_BLOCKERS = frozenset(
+    {
+        "runtime_fills_missing",
+        "zero_fill_runtime_ledger",
+        "closed_round_trip_missing",
+        "filled_notional_missing",
+        "filled_qty_missing_or_non_positive",
+        "fill_price_missing",
+        "side_missing_or_invalid",
+        "explicit_cost_missing",
+        "cost_basis_missing",
+        "tca_shortfall_not_runtime_pnl",
+        "runtime_ledger_cost_basis_non_promotion_grade",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -98,6 +113,7 @@ class RuntimeLedgerBucket:
     cost_model_hash_counts: dict[str, int]
     lineage_hash_counts: dict[str, int]
     blockers: list[str]
+    diagnostic_closed_trade_expectancy_bps: Decimal | None = None
     ledger_schema_version: str = EXACT_REPLAY_LEDGER_SCHEMA_VERSION
     pnl_basis: str = POST_COST_PNL_BASIS
 
@@ -317,12 +333,19 @@ def _build_bucket(
 
     unique_blockers = _dedupe(blockers)
     post_cost_expectancy_bps: Decimal | None = None
-    if not unique_blockers and accumulator.filled_notional > 0:
-        post_cost_expectancy_bps = (
+    diagnostic_closed_trade_expectancy_bps: Decimal | None = None
+    if (
+        accumulator.filled_notional > 0
+        and accumulator.closed_trade_count > 0
+        and not (_DIAGNOSTIC_EXPECTANCY_SUPPRESSING_BLOCKERS & set(unique_blockers))
+    ):
+        diagnostic_closed_trade_expectancy_bps = (
             accumulator.net_strategy_pnl_after_costs
             / accumulator.filled_notional
             * _BPS_MULTIPLIER
         )
+    if not unique_blockers and accumulator.filled_notional > 0:
+        post_cost_expectancy_bps = diagnostic_closed_trade_expectancy_bps
 
     return RuntimeLedgerBucket(
         bucket_started_at=bucket_start,
@@ -350,6 +373,7 @@ def _build_bucket(
         cost_model_hash_counts=dict(sorted(cost_model_hash_counter.items())),
         lineage_hash_counts=dict(sorted(lineage_hash_counter.items())),
         blockers=unique_blockers,
+        diagnostic_closed_trade_expectancy_bps=diagnostic_closed_trade_expectancy_bps,
     )
 
 
