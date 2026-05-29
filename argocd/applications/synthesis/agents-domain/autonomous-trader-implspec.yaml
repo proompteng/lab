@@ -51,7 +51,8 @@ spec:
        - Write `/workspace/.agentrun/autonomous-trader/preflight.json` with redacted evidence.
        - Call `autotrader_start_session` before scanning and persist its returned `sessionId`.
     3. Mode handling:
-       - `dry-run`: perform bootstrap, read-only Alpaca preflight, Synthesis scorecard read, scanner/ticket validation, blocked/no-trade decision recording, risk recording, status/event writes, and `autotrader_finalize_session`; do not call Alpaca order submission, cancel, replace, or close-position tools; finish with terminal_reason `dry_run_complete`.
+       - `dry-run`: perform bootstrap, read-only Alpaca preflight, Synthesis scorecard read, one scanner/ticket validation pass, blocked/no-trade decision recording, risk recording, status/event writes, and `autotrader_finalize_session`; do not call Alpaca order submission, cancel, replace, or close-position tools; finish with terminal_reason `dry_run_complete`.
+       - In `dry-run`, finalize the autotrader session immediately after ticket/risk/status writes; do not spend extra cycles optimizing wording, retrying feed posts, or waiting for market state.
        - `preflight`: perform readiness checks and, only if safe, one tiny non-marketable paper bracket or OTO stock order proof that is verified by id/client id and canceled; if Alpaca rejects or blocks it, record the exact request and reason.
        - `market-open`: wait for the market to open, then run an intraday loop until market close, equity is at least 500000 USD, or account/order state becomes unrecoverable.
     4. Each market-open cycle:
@@ -73,7 +74,8 @@ spec:
     5. Synthesis visibility:
        - Use Synthesis MCP to call `autotrader_start_session` once per AgentRun and use its `sessionId` for all structured state.
        - Use `synthesis_submit_item` only for high-signal milestone updates: session start, preflight complete, material action or stand-down, order submitted, fill/reject/cancel, protective exit change, risk blocker, and terminal summary.
-       - Use strict payloads with `title`, `synthesis`, `takeaways`, `whyValuable`, `sourcePosts`, `dedupeKey`, `score`, and `confidence`; use `https://synthesis.proompteng.ai/agentruns/${AGENT_RUN_NAME}#cycle-N` for the synthetic source URL and record each payload/result in `/workspace/.agentrun/autonomous-trader/synthesis-posts.jsonl`.
+       - Use strict payloads with `title`, `synthesis`, `takeaways`, `whyValuable`, `sourcePosts`, `dedupeKey`, `score`, and `confidence`; use a unique path-based synthetic source URL such as `https://synthesis.proompteng.ai/agentruns/${AGENT_RUN_NAME}/milestones/${dedupeKey}` and record each payload/result in `/workspace/.agentrun/autonomous-trader/synthesis-posts.jsonl`.
+       - Treat `synthesis_submit_item` as best-effort visibility only: if a milestone feed post is rejected as duplicate or invalid, append the error to `synthesis-posts.jsonl`, write an `autotrader_append_event`, and continue. Never retry a failed milestone post more than once, and never let feed posting block `autotrader_finalize_session`, order reconciliation, risk exits, or dry-run completion.
        - Link milestone feed items to the Synthesis autotrader session id and AgentRun name.
 
     Recovery and stop conditions:

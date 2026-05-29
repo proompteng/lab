@@ -136,6 +136,14 @@ describe('agents-ci workflow local Agents image build', () => {
     expect(workflow).toContain('git diff --name-only "${BASE_SHA}...${HEAD_SHA}"')
   })
 
+  it('installs kubectl without sudo so ARC runners cannot hang on password prompts', () => {
+    const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
+
+    expect(workflow).toContain('install_dir="${RUNNER_TEMP:-/tmp}/agents-ci-bin"')
+    expect(workflow).toContain('echo "${install_dir}" >> "${GITHUB_PATH}"')
+    expect(workflow).not.toContain('sudo mv kubectl')
+  })
+
   it('resolves published smoke images from Agents GitOps values instead of Jangar release contracts', () => {
     const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
 
