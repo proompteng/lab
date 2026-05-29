@@ -781,11 +781,15 @@ describe('synthesis autonomous trader provider', () => {
     expect(objectAt(objectAt(synthesis, 'env'), 'SYNTHESIS_MCP_URL')).toBe(
       'http://synthesis.synthesis.svc.cluster.local:3000/mcp',
     )
+    expect(objectAt(objectAt(synthesis, 'env'), 'AGENT_RUN_NAME')).toBe('{{ agentRun.name }}')
+    expect(objectAt(objectAt(synthesis, 'env'), 'AGENT_RUN_NAMESPACE')).toBe('{{ agentRun.namespace }}')
     expect(objectAt(envTemplate, 'SYNTHESIS_API_TOKEN_FILE')).toBe('/var/run/synthesis/SYNTHESIS_API_TOKEN')
     expect(objectAt(envTemplate, 'SYNTHESIS_MCP_URL')).toBe('http://synthesis.synthesis.svc.cluster.local:3000/mcp')
     expect((secretEnv ?? []).some((entry) => objectAt(entry, 'name') === 'SYNTHESIS_API_TOKEN')).toBe(true)
     expect(objectAt(codexConfig, 'content')).toContain('[mcp_servers.synthesis]')
     expect(objectAt(codexConfig, 'content')).toContain('SYNTHESIS_API_TOKEN_FILE')
+    expect(objectAt(codexConfig, 'content')).toContain('AGENT_RUN_NAME = "{{ agentRun.name }}"')
+    expect(objectAt(codexConfig, 'content')).toContain('AGENT_RUN_NAMESPACE = "{{ agentRun.namespace }}"')
     expect(objectAt(synthesisProxy, 'content')).toContain('Synthesis MCP HTTP')
     expect(objectAt(synthesisProxy, 'content')).toContain('Bearer')
     expect(objectAt(synthesisProxy, 'content')).toContain('const agentRunName = process.env.AGENT_RUN_NAME')

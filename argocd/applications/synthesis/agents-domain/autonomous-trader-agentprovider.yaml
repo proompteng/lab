@@ -37,6 +37,8 @@ spec:
             env:
               SYNTHESIS_API_TOKEN_FILE: /var/run/synthesis/SYNTHESIS_API_TOKEN
               SYNTHESIS_MCP_URL: http://synthesis.synthesis.svc.cluster.local:3000/mcp
+              AGENT_RUN_NAME: "{{ agentRun.name }}"
+              AGENT_RUN_NAMESPACE: "{{ agentRun.namespace }}"
         web_search: live
   argsTemplate: []
   secretEnv:
@@ -134,7 +136,7 @@ spec:
         [mcp_servers.synthesis]
         command = "node"
         args = ["/root/.codex/synthesis-mcp-proxy.mjs"]
-        env = { SYNTHESIS_API_TOKEN_FILE = "/var/run/synthesis/SYNTHESIS_API_TOKEN", SYNTHESIS_MCP_URL = "http://synthesis.synthesis.svc.cluster.local:3000/mcp" }
+        env = { SYNTHESIS_API_TOKEN_FILE = "/var/run/synthesis/SYNTHESIS_API_TOKEN", SYNTHESIS_MCP_URL = "http://synthesis.synthesis.svc.cluster.local:3000/mcp", AGENT_RUN_NAME = "{{ agentRun.name }}", AGENT_RUN_NAMESPACE = "{{ agentRun.namespace }}" }
     - path: /root/bootstrap-analysis-daytrading.sh
       content: |-
         #!/usr/bin/env bash
