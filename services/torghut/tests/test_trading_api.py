@@ -287,6 +287,50 @@ class _FallbackOptionsFreshnessSession:
         return _ExecuteResult([])
 
 
+class _FallbackOptionsFreshnessRequiresRollbackSession:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, object | None]] = []
+        self.rollback_count = 0
+        self._transaction_failed = False
+
+    def rollback(self) -> None:
+        self.rollback_count += 1
+        self._transaction_failed = False
+
+    def execute(
+        self, statement: object, params: object | None = None
+    ) -> _ExecuteResult:
+        statement_text = str(statement)
+        self.calls.append((statement_text, params))
+        if statement_text.startswith("SET LOCAL"):
+            return _ExecuteResult([])
+        if "GROUP BY underlying_symbol" in statement_text:
+            self._transaction_failed = True
+            raise SQLAlchemyError("statement timeout")
+        if "LIMIT 1" in statement_text:
+            if self._transaction_failed:
+                raise SQLAlchemyError("current transaction is aborted")
+            symbol = None
+            if isinstance(params, dict):
+                symbol = params.get("route_symbol")
+            if str(symbol or "").upper() != "AAPL":
+                return _ExecuteResult([])
+            return _ExecuteResult(
+                [
+                    {
+                        "underlying_symbol": "AAPL",
+                        "last_seen_ts": datetime(2026, 5, 12, tzinfo=timezone.utc),
+                        "provider_updated_ts": datetime(
+                            2026, 5, 12, tzinfo=timezone.utc
+                        ),
+                        "close_price": Decimal("182.10"),
+                        "open_interest": Decimal("100"),
+                    }
+                ]
+            )
+        return _ExecuteResult([])
+
+
 class _FallbackOptionsFreshnessBlankSymbolSession:
     def __init__(self) -> None:
         self.calls: list[tuple[str, object | None]] = []
@@ -685,6 +729,25 @@ class TestTradingApi(TestCase):
         self.assertEqual(
             sum("LIMIT 1" in sql for sql, _params in fake_session.calls),
             2,
+        )
+
+    def test_options_catalog_freshness_summary_rolls_back_before_bounded_fallback(
+        self,
+    ) -> None:
+        fake_session = _FallbackOptionsFreshnessRequiresRollbackSession()
+
+        payload = _load_options_catalog_freshness_summary(
+            fake_session,  # type: ignore[arg-type]
+            route_symbols=["AAPL"],
+        )
+
+        self.assertEqual(payload["status"], "current")
+        self.assertTrue(payload["bounded"])
+        self.assertEqual(payload["active_contracts"], 1)
+        self.assertEqual(fake_session.rollback_count, 1)
+        self.assertEqual(
+            sum("LIMIT 1" in sql for sql, _params in fake_session.calls),
+            1,
         )
 
     def test_options_catalog_freshness_bounded_fallback_skips_blank_symbols(

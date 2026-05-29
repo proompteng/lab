@@ -5745,6 +5745,12 @@ WHERE status = 'active'
             zero_open_interest_count = int(row["zero_open_interest_count"] or 0)
     except SQLAlchemyError as exc:
         logger.warning("Options catalog freshness summary unavailable: %s", exc)
+        rollback = getattr(session, "rollback", None)
+        if callable(rollback):
+            try:
+                rollback()
+            except SQLAlchemyError:
+                logger.warning("Failed to roll back options catalog freshness session")
         bounded_payload = _load_bounded_options_catalog_freshness_summary(
             session,
             scoped_symbols,
