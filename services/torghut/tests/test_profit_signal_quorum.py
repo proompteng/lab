@@ -151,7 +151,7 @@ def test_degraded_inputs_emit_scoped_repair_reasons_without_capital():
             ],
         )
     )
-    expected = "quant_health_fetch_failed quant_status_degraded quant_latest_metrics_empty quant_latest_metrics_degraded pipeline_ingestion_alarm quant_pipeline_stage_ingestion_degraded quant_pipeline_stage_ingestion_stale market_context_snapshot_stale market_context_domain_news_stale route_tca_blocked execution_tca_slippage_above_guardrail".split()
+    expected = "quant_health_fetch_failed quant_status_degraded quant_latest_metrics_empty quant_latest_metrics_degraded pipeline_ingestion_alarm quant_pipeline_stage_ingestion_degraded quant_pipeline_stage_ingestion_stale market_context_snapshot_stale route_tca_blocked execution_tca_slippage_above_guardrail".split()
 
     assert quorum["decision"] == "repair_only"
     assert set(expected) <= set(quorum["reason_codes"])

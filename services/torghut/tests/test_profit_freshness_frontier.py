@@ -434,7 +434,8 @@ def test_stale_market_context_and_empirical_jobs_are_explicit_dimensions() -> No
 
     assert market["state"] == "stale"
     assert "market_context_technicals_stale" in market["reason_codes"]
-    assert "market_context:news" in market["evidence_refs"]
+    assert "market_context:regime" in market["evidence_refs"]
+    assert "market_context:news" not in market["evidence_refs"]
     assert empirical["state"] == "stale"
     assert "empirical_job_stale:benchmark_parity" in empirical["reason_codes"]
     assert "dataset-nvda" in empirical["evidence_refs"]

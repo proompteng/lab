@@ -61,6 +61,10 @@ from ..market_context import (
     MarketContextStatus,
     evaluate_market_context,
 )
+from ..market_context_domains import (
+    active_market_context_domain_states,
+    active_market_context_reasons,
+)
 from ..models import SignalEnvelope, StrategyDecision
 from ..order_feed import OrderFeedIngestor
 from ..portfolio import (
@@ -4436,13 +4440,12 @@ class TradingPipeline:
         self.state.last_market_context_quality_score = float(
             market_context.quality_score
         )
-        self.state.last_market_context_domain_states = {
-            "technicals": market_context.domains.technicals.state,
-            "fundamentals": market_context.domains.fundamentals.state,
-            "news": market_context.domains.news.state,
-            "regime": market_context.domains.regime.state,
-        }
-        self.state.last_market_context_risk_flags = list(market_context.risk_flags)
+        self.state.last_market_context_domain_states = (
+            active_market_context_domain_states(market_context)
+        )
+        self.state.last_market_context_risk_flags = active_market_context_reasons(
+            market_context.risk_flags
+        )
         self.state.last_market_context_allow_llm = market_context_status.allow_llm
         self.state.last_market_context_reason = (
             market_context_error or market_context_status.reason
