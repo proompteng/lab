@@ -53,9 +53,10 @@ spec:
        - Write `/workspace/.agentrun/autonomous-trader/preflight.json` with redacted evidence.
        - Call `autotrader_start_session` before scanning and persist its returned `sessionId`.
     3. Mode handling:
-       - `dry-run`: perform bootstrap, read-only Alpaca preflight, Synthesis scorecard read, one scanner/ticket validation pass, blocked/no-trade decision recording, risk recording, status/event writes, and `autotrader_finalize_session`; do not call Alpaca order submission, cancel, replace, or close-position tools; finish with terminal_reason `dry_run_complete`.
-       - In `dry-run`, finalize the autotrader session immediately after ticket/risk/status writes; write only the required output files and exit the AgentRun.
-       - After `autotrader_finalize_session` succeeds in `dry-run`, write the final `report.md`, mark the AgentRun-local goal complete, and stop. Do not run completion audits, inspect PR/CI state, re-read scorecards, retry visibility, optimize wording, wait for market state, or perform any further analysis.
+       - `dry-run`: perform bootstrap, read-only Alpaca preflight, Synthesis scorecard read, one scanner/ticket validation pass, blocked/no-trade decision recording, risk recording, status/event writes, and `autotrader_finalize_session`; do not call Alpaca order submission, cancel, replace, close-position tools, or `synthesis_submit_item`; finish with terminal_reason `dry_run_complete`.
+       - In `dry-run`, structured Synthesis autotrader state is the visibility path; feed milestone posts are disabled.
+       - In `dry-run`, finalize the autotrader session immediately after ticket/risk/status writes; update only the minimal output placeholders created by bootstrap and exit the AgentRun.
+       - After `autotrader_finalize_session` succeeds in `dry-run`, write the final `report.md`, mark the AgentRun-local goal complete, and stop. Do not run completion audits, inspect PR/CI state, re-read scorecards, retry visibility, optimize wording, wait for market state, backfill JSONL exports, or perform any further analysis.
        - `preflight`: perform readiness checks and, only if safe, one tiny non-marketable paper bracket or OTO stock order proof that is verified by id/client id and canceled; if Alpaca rejects or blocks it, record the exact request and reason.
        - `market-open`: wait for the market to open, then run an intraday loop until market close, equity is at least 500000 USD, or account/order state becomes unrecoverable.
     4. Each market-open cycle:
@@ -73,6 +74,7 @@ spec:
        - Reconcile each submitted order by order id or client order id before the next action.
        - Write each cycle through Synthesis autotrader MCP: `autotrader_upsert_status` for current state, `autotrader_append_event` for decisions/no-trade/order lifecycle, `autotrader_create_trade_ticket` for every candidate selected or blocked, `autotrader_record_risk_check` for risk gates, `autotrader_record_order` and `autotrader_record_fill` for Alpaca reconciliation, and `autotrader_record_position_snapshot` after broker position reads.
        - Append local JSONL artifacts only as export/debug copies; Synthesis Postgres is primary runtime state.
+       - The bootstrap script pre-creates output placeholders; do not spend runtime reconstructing export files that already exist.
        - Update `/workspace/.agentrun/autonomous-trader/report.md`; emit heartbeat output at least every 60 seconds while waiting.
     5. Synthesis visibility:
        - Use Synthesis MCP to call `autotrader_start_session` once per AgentRun and use its `sessionId` for all structured state.

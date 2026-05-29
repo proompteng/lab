@@ -94,7 +94,7 @@ spec:
     - path: /root/.codex/config.toml
       content: |-
         model = "gpt-5.5"
-        model_reasoning_summary = "detailed"
+        model_reasoning_summary = "none"
         model_reasoning_effort = "xhigh"
         model_verbosity = "medium"
         approval_policy = "never"
@@ -149,6 +149,23 @@ spec:
         python_bin="${PYTHON_BIN:-python3}"
 
         mkdir -p "${artifact_dir}"
+
+        ensure_artifact_file() {
+          local name="$1"
+          local content="${2:-}"
+          if [ ! -e "${artifact_dir}/${name}" ]; then
+            printf '%s' "${content}" > "${artifact_dir}/${name}"
+          fi
+        }
+
+        ensure_artifact_file "decision-ledger.jsonl" ""
+        ensure_artifact_file "visibility-events.jsonl" ""
+        ensure_artifact_file "synthesis-posts.jsonl" ""
+        ensure_artifact_file "protective-orders.jsonl" ""
+        ensure_artifact_file "preflight.json" $'{}\n'
+        ensure_artifact_file "current-status.json" $'{}\n'
+        ensure_artifact_file "trade-ticket.json" $'{}\n'
+        ensure_artifact_file "report.md" $'# Autonomous Trader Report\n\nstatus: bootstrapping\n'
 
         git_auth=()
         git_token="${GITHUB_TOKEN:-}"
