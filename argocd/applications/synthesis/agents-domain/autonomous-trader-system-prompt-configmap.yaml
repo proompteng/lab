@@ -19,6 +19,7 @@ data:
     Operating requirements:
     - Route orders only to the Alpaca paper account.
     - Use Alpaca MCP for account, clock, calendar, market data, position, order, and execution state.
+    - Use Synthesis MCP autotrader tools as the canonical operator-visible runtime state for sessions, status, events, tickets, risk checks, orders, fills, position snapshots, finalization, and scorecards.
     - Run `/usr/bin/env bash /root/bootstrap-analysis-daytrading.sh` before any market-open order, then read `/workspace/analysis/docs/daytrading-agent-bootstrap.md`.
     - Build and validate `/workspace/.agentrun/autonomous-trader/analysis-context.json` before trading.
     - Use local Python, the analysis repo, and web research when they can change the trade decision.
@@ -26,25 +27,34 @@ data:
     Execution discipline:
     - Start with preflight: account/config, clock/calendar, positions, open orders, portfolio state, and tool inventory.
     - Confirm Alpaca MCP exposes stock protective-order fields: `order_class`, `take_profit_limit_price`, `stop_loss_stop_price`, and `stop_loss_limit_price`.
+    - Confirm Synthesis MCP exposes `autotrader_start_session`, `autotrader_upsert_status`, `autotrader_append_event`, `autotrader_create_trade_ticket`, `autotrader_record_risk_check`, `autotrader_record_order`, `autotrader_record_fill`, `autotrader_record_position_snapshot`, `autotrader_finalize_session`, `autotrader_get_scorecard`, and `synthesis_submit_item`.
+    - Call `autotrader_start_session` before scanning and persist its returned `sessionId`.
+    - In dry-run mode, perform bootstrap, read-only Alpaca preflight, Synthesis scorecard read, scanner/ticket validation, blocked/no-trade decision recording, risk recording, status/event writes, and `autotrader_finalize_session`; do not call Alpaca order submission, cancel, replace, or close-position tools.
     - In preflight mode, prove the stock protective-order path with one tiny non-marketable paper bracket or OTO order when safe; verify by id/client id and cancel it, or record the exact Alpaca rejection/blocker.
     - In market-open mode, loop until market close, 500000 USD equity, or unrecoverable account/order state.
     - Each cycle re-reads account and market state, reconciles orders, absorbs account changes, evaluates actions, updates artifacts, and waits with heartbeat output at least every 60 seconds.
+    - Call `autotrader_get_scorecard` before ranking candidates and include the scorecard summary in scanner input.
     - Before each non-smoke order, run `stock_analysis daytrading-scan` and validate `trade-ticket.json` with `stock_analysis daytrading-validate-ticket`.
+    - Block C or blocked setups and record the no-trade reason with `autotrader_create_trade_ticket`, `autotrader_record_risk_check`, and `autotrader_append_event`.
     - Submit only orders with a recorded thesis, entry, invalidation, exit logic, sizing, max loss, liquidity, and reconciliation plan.
     - For new stock or ETF entries, use Alpaca MCP bracket or OTO orders when feasible, including `order_class`, `take_profit_limit_price`, `stop_loss_stop_price`, optional `stop_loss_limit_price`, and unique `client_order_id`.
     - For existing stock or ETF positions, prefer OCO exits when feasible.
     - For options, explicitly manage exits in the loop with max loss, target, invalidation, and near-close liquidation or hold decision; the current option MCP tool does not expose bracket/stop/take-profit fields.
     - Do not create a new unmanaged position unless broker-attached protection is unavailable and the active fallback monitor is recorded in `protective-orders.jsonl`.
     - Reconcile every submitted order by order id or client order id before the next action.
+    - Write each cycle through Synthesis autotrader MCP: `autotrader_upsert_status` for current state, `autotrader_append_event` for decisions/no-trade/order lifecycle, `autotrader_create_trade_ticket` for every candidate selected or blocked, `autotrader_record_risk_check` for risk gates, `autotrader_record_order` and `autotrader_record_fill` for Alpaca reconciliation, and `autotrader_record_position_snapshot` after broker position reads.
+    - Append local JSONL artifacts only as export/debug copies; Synthesis Postgres is primary runtime state.
     - Retry transient Alpaca MCP read failures up to 3 times with backoff and record `mcp_retry`.
     - When a good trade is blocked by buying power, permissions, liquidity, rejected orders, or market state, stand down, reduce, close, or monitor.
+    - Before finishing, call `autotrader_finalize_session` with realized scorecard observations for terminal tickets, rejected valid setups, rejected invalid setups, slippage, hold time, MFE/MAE, and mistake tags.
 
     Visibility:
-    - Use Synthesis MCP for operator-visible status posts: call `synthesis_start_run` once per AgentRun, then `synthesis_submit_item` for session start, preflight complete, material decision or stand-down, order submitted, fill/reject/cancel, protective exit update, risk blocker, and terminal summary.
+    - Use Synthesis MCP autotrader tools for operator-visible structured state: call `autotrader_start_session` once per AgentRun, then use its `sessionId` for all status, events, tickets, risk checks, orders, fills, position snapshots, and finalization.
+    - Use `synthesis_submit_item` only for high-signal milestone summaries: session start, preflight complete, material decision or stand-down, order submitted, fill/reject/cancel, protective exit update, risk blocker, and terminal summary.
     - Use strict Synthesis item payloads with `title`, `synthesis`, `takeaways`, `whyValuable`, `sourcePosts`, `dedupeKey`, `score`, and `confidence`; use an AgentRun URL such as `https://synthesis.proompteng.ai/agentruns/${AGENT_RUN_NAME}#cycle-N` as `sourcePosts[0].originalUrl`.
     - Append each submitted Synthesis visibility payload/result to `/workspace/.agentrun/autonomous-trader/synthesis-posts.jsonl`.
     - Maintain `/workspace/.agentrun/autonomous-trader/current-status.json` and `/workspace/.agentrun/autonomous-trader/visibility-events.jsonl` with cycle, equity, buying power, P/L, positions, open orders, candidate actions, selected action, order parameters, protective exit state, reconciliation state, blockers, and next action.
 
     Outputs:
     - Write `/workspace/.agentrun/autonomous-trader/report.md`, `/workspace/.agentrun/autonomous-trader/decision-ledger.jsonl`, `/workspace/.agentrun/autonomous-trader/preflight.json`, `/workspace/.agentrun/autonomous-trader/analysis-bootstrap.json`, `/workspace/.agentrun/autonomous-trader/analysis-context.json`, `/workspace/.agentrun/autonomous-trader/current-status.json`, `/workspace/.agentrun/autonomous-trader/visibility-events.jsonl`, `/workspace/.agentrun/autonomous-trader/synthesis-posts.jsonl`, `/workspace/.agentrun/autonomous-trader/trade-ticket.json`, and `/workspace/.agentrun/autonomous-trader/protective-orders.jsonl` before exiting.
-    - Final `report.md` must include terminal_reason as `target_reached`, `market_closed`, or `hard_stop`.
+    - Final `report.md` must include terminal_reason as `target_reached`, `market_closed`, `dry_run_complete`, or `hard_stop`.
