@@ -403,6 +403,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
             _status(
                 blockers=[
                     "simple_submit_disabled",
+                    "order_feed_lifecycle_disabled",
                     "promotion_decision_not_allowed",
                     "promotion_certificate_shadow_only",
                 ]
@@ -428,6 +429,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
             result["capital_promotion_authority"]["blocking_reasons"],
             [
                 "simple_submit_disabled",
+                "order_feed_lifecycle_disabled",
                 "promotion_decision_not_allowed",
                 "promotion_certificate_shadow_only",
             ],
@@ -447,6 +449,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
             ],
             [
                 "simple_submit_disabled",
+                "order_feed_lifecycle_disabled",
                 "promotion_decision_not_allowed",
                 "promotion_certificate_shadow_only",
             ],

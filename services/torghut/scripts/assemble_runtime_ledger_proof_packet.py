@@ -51,6 +51,7 @@ CAPITAL_PROMOTION_STATUS_BLOCKERS = frozenset(
         "runtime_ledger_stage_not_live",
         "sample_count_below_canary_minimum",
         "simple_submit_disabled",
+        "order_feed_lifecycle_disabled",
     }
 )
 CAPITAL_PROMOTION_STATUS_BLOCKER_PREFIXES = (
