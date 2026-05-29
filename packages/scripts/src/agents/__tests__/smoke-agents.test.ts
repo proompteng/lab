@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { parseAllDocuments } from 'yaml'
 
@@ -595,32 +595,28 @@ describe('scheduled AgentRun templates', () => {
 })
 
 describe('synthesis autonomous trader provider', () => {
-  it('keeps the market-open trader template manual-only while recurring broker mutation is disabled', () => {
+  it('removes the market-open trader template while recurring broker mutation is disabled', () => {
     const kustomization = readYamlObjects('argocd/applications/synthesis/agents-domain/kustomization.yaml')[0]
     const resources = objectAt(kustomization, 'resources') as string[] | undefined
-    const template = readYamlObjects(
-      'argocd/applications/synthesis/agents-domain/autonomous-trader-agentrun-template.yaml',
-    ).find((manifest) => objectAt(manifest, 'kind') === 'AgentRun')
     const provider = readYamlObjects(
       'argocd/applications/synthesis/agents-domain/autonomous-trader-agentprovider.yaml',
     ).find((manifest) => objectAt(manifest, 'kind') === 'AgentProvider')
-    const templateSpec = objectAt(template, 'spec')
-    const parameters = objectAt(templateSpec, 'parameters')
     const envTemplate = objectAt(objectAt(provider, 'spec'), 'envTemplate')
-    const goal = objectAt(templateSpec, 'goal') as Record<string, unknown>
     const overallTimeoutSeconds = Number(objectAt(envTemplate, 'CODEX_MARKET_CONTEXT_OVERALL_TIMEOUT_SECONDS'))
 
     expect(resources).not.toContain('autonomous-trader-schedule.yaml')
-    expect(objectAt(parameters, 'mode')).toBe('market-open')
-    expect(objectAt(parameters, 'synthesisSessionMode')).toBe('market_open')
-    expect(objectAt(parameters, 'premarketBootstrapMinutes')).toBe('15')
+    expect(resources).not.toContain('autonomous-trader-agentrun-template.yaml')
+    expect(
+      existsSync(
+        resolve(process.cwd(), 'argocd/applications/synthesis/agents-domain/autonomous-trader-agentrun-template.yaml'),
+      ),
+    ).toBe(false)
     expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_MODE')).toBe('{{parameters.mode}}')
     expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_SYNTHESIS_SESSION_MODE')).toBe(
       '{{parameters.synthesisSessionMode}}',
     )
     expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_TARGET_EQUITY_USD')).toBe('{{parameters.targetEquityUsd}}')
     expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_ACCOUNT_TYPE')).toBe('{{parameters.accountType}}')
-    expect(Object.hasOwn(goal, 'tokenBudget')).toBe(false)
     expect(overallTimeoutSeconds).toBeGreaterThanOrEqual(32400)
   })
 
@@ -655,19 +651,6 @@ describe('synthesis autonomous trader provider', () => {
     expect(dockerfile).toContain('"pandas>=2.2"')
     expect(dockerfile).toContain('"pydantic>=2.8"')
     expect(dockerfile).toContain('"pyarrow>=16.0"')
-  })
-
-  it('sets the trader goal to reach 500000 without a token budget', () => {
-    const template = readYamlObjects(
-      'argocd/applications/synthesis/agents-domain/autonomous-trader-agentrun-template.yaml',
-    ).find((manifest) => objectAt(manifest, 'kind') === 'AgentRun')
-    const spec = objectAt(template, 'spec')
-    const goal = objectAt(spec, 'goal') as Record<string, unknown>
-
-    expect(objectAt(goal, 'objective')).toBe(
-      'Reach 500000 USD account equity in the Alpaca paper account using autonomous day trading through Alpaca MCP across stocks, ETFs, options, or any other financial instruments available in the account.',
-    )
-    expect(Object.hasOwn(goal, 'tokenBudget')).toBe(false)
   })
 
   it('keeps the trader prompt aligned with day-trading authority', () => {
@@ -896,7 +879,7 @@ describe('synthesis autonomous trader provider', () => {
       (manifest) => objectAt(manifest, 'kind') === 'Agent',
     )
     const template = readYamlObjects(
-      'argocd/applications/synthesis/agents-domain/autonomous-trader-agentrun-template.yaml',
+      'argocd/applications/synthesis/agents-domain/autonomous-trader-scorecard-readback-template.yaml',
     ).find((manifest) => objectAt(manifest, 'kind') === 'AgentRun')
     const secretBinding = readYamlObjects(
       'argocd/applications/synthesis/agents-domain/autonomous-trader-secretbinding.yaml',
@@ -947,7 +930,7 @@ describe('synthesis autonomous trader provider', () => {
     expect(objectAt(synthesisProxy, 'content')).toContain("toolName !== 'autotrader_start_session'")
     expect(objectAt(synthesisProxy, 'content')).toContain('nextArgs.agentRunName = agentRunName')
     expect(objectAt(requests, 'ephemeral-storage')).toBe('2Gi')
-    expect(objectAt(limits, 'ephemeral-storage')).toBe('16Gi')
+    expect(objectAt(limits, 'ephemeral-storage')).toBe('12Gi')
     expect(objectAt(synthesisVolume, 'mountPath')).toBe('/var/run/synthesis')
     expect(objectAt(synthesisVolume, 'readOnly')).toBe(true)
     expect(objectAt(objectAt(objectAt(agent, 'spec'), 'security'), 'allowedSecrets')).toContain('synthesis-env')

@@ -17,6 +17,5 @@ resources:
   - autonomous-trader-agent.yaml
   - autonomous-trader-secretbinding.yaml
   - autonomous-trader-implspec.yaml
-  - autonomous-trader-agentrun-template.yaml
   - autonomous-trader-scorecard-readback-template.yaml
   - autonomous-trader-scorecard-readback-schedule.yaml
