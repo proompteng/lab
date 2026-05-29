@@ -7,6 +7,7 @@ of mutating any live submission gate.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -1711,6 +1712,75 @@ def _runtime_ledger_bucket_evidence_grade(row: StrategyRuntimeLedgerBucket) -> b
     )
 
 
+def _runtime_ledger_row_diagnostic_expectancy_bps(
+    row: StrategyRuntimeLedgerBucket,
+) -> Decimal | None:
+    payload = _as_mapping(row.payload_json)
+    if diagnostic := payload.get("diagnostic_closed_trade_expectancy_bps"):
+        return _safe_decimal(diagnostic)
+    if row.post_cost_expectancy_bps is not None:
+        return _safe_decimal(row.post_cost_expectancy_bps)
+    filled_notional = _safe_decimal(row.filled_notional)
+    if _safe_int(row.closed_trade_count) <= 0 or filled_notional <= 0:
+        return None
+    return (
+        _safe_decimal(row.net_strategy_pnl_after_costs)
+        / filled_notional
+        * Decimal("10000")
+    )
+
+
+def _runtime_ledger_non_evidence_diagnostic_summary(
+    rows: Sequence[StrategyRuntimeLedgerBucket],
+) -> dict[str, object]:
+    diagnostic_rows = [
+        row
+        for row in rows
+        if _runtime_ledger_row_diagnostic_expectancy_bps(row) is not None
+    ]
+    filled_notional = sum(
+        (_safe_decimal(row.filled_notional) for row in diagnostic_rows), Decimal("0")
+    )
+    net_pnl = sum(
+        (_safe_decimal(row.net_strategy_pnl_after_costs) for row in diagnostic_rows),
+        Decimal("0"),
+    )
+    blocker_counts: Counter[str] = Counter(
+        str(item).strip()
+        for row in rows
+        for item in _as_sequence(row.blockers_json)
+        if str(item).strip()
+    )
+    return {
+        "scope": (
+            "non_evidence_grade_runtime_ledger_buckets_diagnostic_only_not_promotion_proof"
+        ),
+        "bucket_count": len(rows),
+        "diagnostic_bucket_count": len(diagnostic_rows),
+        "fill_count": sum(max(0, _safe_int(row.fill_count)) for row in rows),
+        "decision_count": sum(max(0, _safe_int(row.decision_count)) for row in rows),
+        "submitted_order_count": sum(
+            max(0, _safe_int(row.submitted_order_count)) for row in rows
+        ),
+        "closed_trade_count": sum(
+            max(0, _safe_int(row.closed_trade_count)) for row in rows
+        ),
+        "open_position_count": sum(
+            max(0, _safe_int(row.open_position_count)) for row in rows
+        ),
+        "filled_notional": _decimal_text(filled_notional),
+        "net_strategy_pnl_after_costs": _decimal_text(net_pnl),
+        "diagnostic_closed_trade_expectancy_bps": _decimal_text(
+            (net_pnl / filled_notional * Decimal("10000"))
+            if filled_notional > 0
+            else Decimal("0")
+        ),
+        "blocker_counts": dict(sorted(blocker_counts.items())),
+        "latest_bucket_ended_at": _isoformat(rows[0].bucket_ended_at if rows else None),
+        "db_row_refs": [str(row.id) for row in rows],
+    }
+
+
 def _runtime_ledger_summary(
     session: Session,
     *,
@@ -1757,6 +1827,10 @@ def _runtime_ledger_summary(
     evidence_grade_rows = [
         row for row in rows if _runtime_ledger_bucket_evidence_grade(row)
     ]
+    evidence_grade_row_ids = {id(row) for row in evidence_grade_rows}
+    non_evidence_grade_rows = [
+        row for row in rows if id(row) not in evidence_grade_row_ids
+    ]
     filled_notional = sum(
         (row.filled_notional for row in evidence_grade_rows), Decimal("0")
     )
@@ -1767,7 +1841,7 @@ def _runtime_ledger_summary(
     return {
         "bucket_count": len(rows),
         "evidence_grade_bucket_count": len(evidence_grade_rows),
-        "non_evidence_grade_bucket_count": len(rows) - len(evidence_grade_rows),
+        "non_evidence_grade_bucket_count": len(non_evidence_grade_rows),
         "returned_bucket_count": len(rows),
         "query_limit": RUNTIME_LEDGER_SUMMARY_ROW_LIMIT,
         "truncated": truncated,
@@ -1812,6 +1886,9 @@ def _runtime_ledger_summary(
                 for item in _as_sequence(row.blockers_json)
                 if str(item).strip()
             }
+        ),
+        "non_evidence_grade_diagnostic": (
+            _runtime_ledger_non_evidence_diagnostic_summary(non_evidence_grade_rows)
         ),
     }
 
