@@ -453,7 +453,13 @@ describe('synthesis REST auth', () => {
         body: JSON.stringify({
           sessionId,
           terminalReason: 'dry_run_complete',
-          summary: { noTrade: true },
+          summary: {
+            noTrade: true,
+            openingEquity: '38000',
+            accountEquity: '38025',
+            realizedPnl: '25',
+            maxDrawdown: '12',
+          },
           scorecardObservations: [
             {
               ticketId: ticketPayload.ticket.id,
@@ -486,6 +492,13 @@ describe('synthesis REST auth', () => {
     const scorecardPayload = await scorecardResponse.json()
 
     expect(listPayload.sessions[0].agentRunName).toBe('autonomous-trader-market-open-api-test')
+    expect(listPayload.sessions[0]).toMatchObject({
+      openingEquity: '38000',
+      closingEquity: '38025',
+      realizedPnl: '25',
+      maxDrawdown: '12',
+    })
+    expect(detailPayload.session.closingEquity).toBe('38025')
     expect(detailPayload.status.currentAction).toContain('standing down')
     expect(detailPayload.events[0].eventType).toBe('no_trade_decision')
     expect(detailPayload.tradeTickets[0].noTradeReason).toBe('C setup blocked')
