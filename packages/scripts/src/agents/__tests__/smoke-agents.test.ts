@@ -786,6 +786,9 @@ describe('synthesis autonomous trader provider', () => {
       (inputFile) => objectAt(inputFile, 'path') === '/root/.codex/synthesis-mcp-proxy.mjs',
     )
     const workload = objectAt(objectAt(template, 'spec'), 'workload')
+    const resources = objectAt(workload, 'resources')
+    const requests = objectAt(resources, 'requests')
+    const limits = objectAt(resources, 'limits')
     const volumes = objectAt(workload, 'volumes') as Record<string, unknown>[] | undefined
     const synthesisVolume = (volumes ?? []).find((volume) => objectAt(volume, 'name') === 'synthesis-env')
 
@@ -814,6 +817,8 @@ describe('synthesis autonomous trader provider', () => {
     expect(objectAt(synthesisProxy, 'content')).toContain('normalizeAutotraderArguments')
     expect(objectAt(synthesisProxy, 'content')).toContain("toolName !== 'autotrader_start_session'")
     expect(objectAt(synthesisProxy, 'content')).toContain('nextArgs.agentRunName = agentRunName')
+    expect(objectAt(requests, 'ephemeral-storage')).toBe('2Gi')
+    expect(objectAt(limits, 'ephemeral-storage')).toBe('16Gi')
     expect(objectAt(synthesisVolume, 'mountPath')).toBe('/var/run/synthesis')
     expect(objectAt(synthesisVolume, 'readOnly')).toBe(true)
     expect(objectAt(objectAt(objectAt(agent, 'spec'), 'security'), 'allowedSecrets')).toContain('synthesis-env')
