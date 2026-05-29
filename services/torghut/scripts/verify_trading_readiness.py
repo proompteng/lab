@@ -433,6 +433,126 @@ def _paper_route_target_plan_summary(
     }
 
 
+_PAPER_ROUTE_PREOPEN_SOFT_CHECKS = {
+    "proof_floor_state",
+    "route_state",
+    "capital_state",
+    "max_notional_positive",
+    "blocking_reasons_empty",
+    "alpha_readiness_pass",
+    "execution_tca_pass",
+    "routeable_symbol_count",
+    "route_board_capital_eligible_symbols",
+    "route_board_zero_notional_rows",
+}
+
+
+def _paper_route_preopen_evidence_collection_ready(
+    *,
+    profile: str,
+    require_market_open: bool,
+    require_paper_route_probe_candidate: bool,
+    require_paper_route_target_plan: bool,
+    require_paper_route_import_ready: bool,
+    require_runtime_ledger_profit_proof: bool,
+    require_runtime_ledger_proof_packet: bool,
+    market_open: bool,
+    paper_route_probe: Mapping[str, Any],
+    paper_route_target_plan: Mapping[str, Any],
+) -> dict[str, Any]:
+    target_plan_health_gate = _mapping(
+        paper_route_target_plan.get("runtime_window_import_health_gate")
+    )
+    probe_blockers = [
+        _text(reason)
+        for reason in _sequence(paper_route_probe.get("blocking_reasons"))
+        if _text(reason)
+    ]
+    import_blockers = [
+        _text(reason)
+        for reason in _sequence(paper_route_target_plan.get("import_blockers"))
+        if _text(reason)
+    ]
+    allowed_probe_blockers = {"market_session_closed"}
+    allowed_import_blockers = {"paper_route_session_window_not_open"}
+    conditions = {
+        "profile_allows_paper": profile in {"paper", "either"},
+        "market_open_not_required": not require_market_open,
+        "market_closed": not market_open,
+        "probe_candidate_required": require_paper_route_probe_candidate,
+        "target_plan_required": require_paper_route_target_plan,
+        "import_ready_not_required": not require_paper_route_import_ready,
+        "runtime_profit_proof_not_required": not require_runtime_ledger_profit_proof,
+        "runtime_packet_not_required": not require_runtime_ledger_proof_packet,
+        "probe_present": bool(paper_route_probe.get("route_book_present")),
+        "probe_configured": _bool(paper_route_probe.get("configured_enabled")),
+        "probe_symbols_present": _int(paper_route_probe.get("eligible_symbol_count"))
+        > 0,
+        "probe_next_notional_positive": _decimal_positive(
+            paper_route_probe.get("next_session_max_notional")
+        ),
+        "probe_blockers_only_market_closed": all(
+            blocker in allowed_probe_blockers for blocker in probe_blockers
+        ),
+        "target_plan_present": bool(paper_route_target_plan.get("present")),
+        "target_plan_targets_present": _int(
+            paper_route_target_plan.get("actual_target_count")
+        )
+        > 0,
+        "target_plan_identity_complete": _int(
+            paper_route_target_plan.get("missing_identity_count")
+        )
+        == 0,
+        "target_plan_probe_contract_ready": _int(
+            paper_route_target_plan.get("probe_contract_count")
+        )
+        == _int(paper_route_target_plan.get("actual_target_count"))
+        and _int(paper_route_target_plan.get("actual_target_count")) > 0,
+        "target_plan_promotion_blocked": _int(
+            paper_route_target_plan.get("promotion_blocked_count")
+        )
+        == _int(paper_route_target_plan.get("actual_target_count"))
+        and _int(paper_route_target_plan.get("actual_target_count")) > 0,
+        "target_plan_health_gate_ready": _bool(target_plan_health_gate.get("ready")),
+        "target_plan_import_blockers_only_session_not_open": all(
+            blocker in allowed_import_blockers for blocker in import_blockers
+        ),
+    }
+    ready = all(conditions.values())
+    return {
+        "ready": ready,
+        "conditions": conditions,
+        "softened_checks": sorted(_PAPER_ROUTE_PREOPEN_SOFT_CHECKS) if ready else [],
+        "probe_blockers": probe_blockers,
+        "import_blockers": import_blockers,
+        "note": (
+            "pre-open evidence collection only; not promotion, runtime-ledger, "
+            "or profitability proof"
+        ),
+    }
+
+
+def _apply_paper_route_preopen_evidence_collection(
+    checks: dict[str, dict[str, Any]],
+    summary: Mapping[str, Any],
+) -> None:
+    if not _bool(summary.get("ready")):
+        return
+    for check_name in _sequence(summary.get("softened_checks")):
+        check = checks.get(_text(check_name))
+        if not check or check.get("passed") is True:
+            continue
+        detail = _mapping(check.get("detail"))
+        check["detail"] = {
+            **dict(detail),
+            "preopen_evidence_collection_override": True,
+            "original_expected": check.get("expected"),
+            "original_observed": check.get("observed"),
+        }
+        check["expected"] = "paper_route_preopen_evidence_collection_ready"
+        check["passed"] = True
+
+
 def _completion_gate(
     completion_status: Mapping[str, Any], gate_id: str
 ) -> Mapping[str, Any]:
@@ -672,6 +792,7 @@ def evaluate_trading_readiness(
     require_paper_route_import_ready: bool = False,
     require_runtime_ledger_profit_proof: bool = False,
     require_runtime_ledger_proof_packet: bool = False,
+    allow_paper_route_preopen_evidence_collection: bool = False,
 ) -> dict[str, Any]:
     """Return a strict readiness verdict from a Torghut trading status payload."""
 
@@ -1104,6 +1225,43 @@ def evaluate_trading_readiness(
             runtime_ledger_proof_packet,
         )
 
+    paper_route_preopen_evidence_collection = (
+        _paper_route_preopen_evidence_collection_ready(
+            profile=profile,
+            require_market_open=require_market_open,
+            require_paper_route_probe_candidate=require_paper_route_probe_candidate,
+            require_paper_route_target_plan=require_paper_route_target_plan,
+            require_paper_route_import_ready=require_paper_route_import_ready,
+            require_runtime_ledger_profit_proof=require_runtime_ledger_profit_proof,
+            require_runtime_ledger_proof_packet=require_runtime_ledger_proof_packet,
+            market_open=market_open,
+            paper_route_probe=paper_route_probe,
+            paper_route_target_plan=paper_route_target_plan,
+        )
+        if allow_paper_route_preopen_evidence_collection
+        else {
+            "ready": False,
+            "conditions": {},
+            "softened_checks": [],
+            "probe_blockers": paper_route_probe["blocking_reasons"],
+            "import_blockers": paper_route_target_plan["import_blockers"],
+            "note": "disabled",
+        }
+    )
+    _add_check(
+        checks,
+        "paper_route_preopen_evidence_collection_ready",
+        passed=not allow_paper_route_preopen_evidence_collection
+        or _bool(paper_route_preopen_evidence_collection.get("ready")),
+        observed=paper_route_preopen_evidence_collection,
+        expected={"ready": True}
+        if allow_paper_route_preopen_evidence_collection
+        else {"enabled": False},
+    )
+    _apply_paper_route_preopen_evidence_collection(
+        checks, paper_route_preopen_evidence_collection
+    )
+
     failed_checks = [key for key, value in checks.items() if not value["passed"]]
     return {
         "schema_version": SCHEMA_VERSION,
@@ -1113,6 +1271,9 @@ def evaluate_trading_readiness(
         "checks": checks,
         "paper_route_probe": paper_route_probe,
         "paper_route_target_plan": paper_route_target_plan,
+        "paper_route_preopen_evidence_collection": (
+            paper_route_preopen_evidence_collection
+        ),
         "completion_profit_proof": {
             "required": require_runtime_ledger_profit_proof,
             "gate_id": DOC29_LIVE_SCALE_GATE,
@@ -1217,6 +1378,15 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Require canonical runtime-ledger proof packet promotion authority.",
     )
+    parser.add_argument(
+        "--allow-paper-route-preopen-evidence-collection",
+        action="store_true",
+        help=(
+            "Allow closed-session paper-route target-plan checks to pass when the "
+            "next session proof lane is armed. Does not satisfy import, "
+            "runtime-ledger, promotion, or profitability proof gates."
+        ),
+    )
     parser.add_argument("--timeout-seconds", type=float, default=10.0)
     return parser
 
@@ -1282,6 +1452,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
         require_runtime_ledger_proof_packet=bool(
             args.require_runtime_ledger_proof_packet
+        ),
+        allow_paper_route_preopen_evidence_collection=bool(
+            args.allow_paper_route_preopen_evidence_collection
         ),
     )
     result["evaluated_at"] = datetime.now(timezone.utc).isoformat()
