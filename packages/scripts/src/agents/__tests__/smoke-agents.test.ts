@@ -798,7 +798,12 @@ describe('synthesis autonomous trader provider', () => {
     expect(taskPrompt).toContain('autotrader_start_session')
     expect(taskPrompt).toContain('call `update_goal` with status `complete` if that tool is available')
     expect(taskPrompt).toContain('best-effort visibility only')
+    expect(taskPrompt).toContain(
+      'After every broker-changing action, external account change, reconciled order, or reconciled fill',
+    )
+    expect(taskPrompt).toContain('Synthesis status row must never lag behind the latest recorded order or fill')
     expect(taskPrompt).toContain('/milestones/${dedupeKey}')
+    expect(taskPrompt).toContain('Do not set `runId` on `synthesis_submit_item` from `AGENT_RUN_NAME`')
     expect(taskPrompt).not.toContain('synthesis_start_run')
     expect(taskPrompt).toContain('synthesis_submit_item')
     expect(taskPrompt).toContain(
