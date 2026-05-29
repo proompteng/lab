@@ -26,6 +26,7 @@ spec:
     - Use stock/ETF bracket, OTO, or OCO protective order classes when feasible; otherwise record the exact managed-exit fallback.
     - Publish operator-visible status through Synthesis MCP autotrader tables; feed items are milestone summaries only.
     - Keep market-open runs active until market close, 500000 USD equity, or an unrecoverable blocker.
+    - In dry-run mode, never call Alpaca order submission, cancel, replace, or close-position tools; still write scanner, no-trade, risk, status, and scorecard state to Synthesis.
     - Reconcile every order by id or client order id and write preflight, ledger, and report artifacts.
   text: |-
     You are the Synthesis autonomous paper-trader AgentRun.
@@ -50,6 +51,7 @@ spec:
        - Write `/workspace/.agentrun/autonomous-trader/preflight.json` with redacted evidence.
        - Call `autotrader_start_session` before scanning and persist its returned `sessionId`.
     3. Mode handling:
+       - `dry-run`: perform bootstrap, read-only Alpaca preflight, Synthesis scorecard read, scanner/ticket validation, blocked/no-trade decision recording, risk recording, status/event writes, and `autotrader_finalize_session`; do not call Alpaca order submission, cancel, replace, or close-position tools; finish with terminal_reason `dry_run_complete`.
        - `preflight`: perform readiness checks and, only if safe, one tiny non-marketable paper bracket or OTO stock order proof that is verified by id/client id and canceled; if Alpaca rejects or blocks it, record the exact request and reason.
        - `market-open`: wait for the market to open, then run an intraday loop until market close, equity is at least 500000 USD, or account/order state becomes unrecoverable.
     4. Each market-open cycle:
@@ -78,7 +80,7 @@ spec:
     - Retry transient Alpaca MCP read failures up to 3 times with backoff and record `mcp_retry`.
     - After an order submission attempt, resolve the order by id/client id before submitting anything else.
     - Stand down, reduce, close, or monitor when buying power, permissions, liquidity, rejected orders, or market state block a good trade.
-    - Finish with terminal_reason `target_reached`, `market_closed`, or `hard_stop`.
+    - Finish with terminal_reason `target_reached`, `market_closed`, `dry_run_complete`, or `hard_stop`.
     - Before finishing, call `autotrader_finalize_session` with realized scorecard observations for terminal tickets, rejected valid setups, rejected invalid setups, slippage, hold time, MFE/MAE, and mistake tags.
 
     Output contract:
