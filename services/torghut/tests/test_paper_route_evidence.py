@@ -26,6 +26,7 @@ from app.trading.paper_route_evidence import (
     _paper_route_probe_summary,
     _runtime_ledger_row_diagnostic_expectancy_bps,
     build_paper_route_evidence_audit,
+    build_paper_route_target_plan_payload,
 )
 
 
@@ -360,7 +361,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
             handoff["runner"], "scripts/renew_latest_empirical_promotion_jobs.py"
         )
         self.assertEqual(
-            handoff["target_plan_endpoint"], "/trading/paper-route-evidence"
+            handoff["target_plan_endpoint"], "/trading/paper-route-target-plan"
         )
         self.assertIn("--runtime-window-import", handoff["required_flags"])
         self.assertIn(
@@ -430,7 +431,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
         )
         self.assertEqual(
             target["paper_route_runtime_import_handoff"]["target_plan_endpoint"],
-            "/trading/paper-route-evidence",
+            "/trading/paper-route-target-plan",
         )
         import_audit = payload["runtime_window_import_audit"]
         self.assertEqual(
@@ -728,6 +729,98 @@ class TestPaperRouteEvidenceAudit(TestCase):
         summary_target = payload["summary"]["next_paper_route_targets"][0]
         self.assertTrue(summary_target["source_decision_ready"])
         self.assertEqual(summary_target["source_decision_blockers"], [])
+
+    def test_next_paper_route_targets_use_strategy_universe_when_route_probe_empty(
+        self,
+    ) -> None:
+        generated_at = datetime(2026, 5, 24, 12, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            session.add(
+                Strategy(
+                    name="microbar-cross-sectional-pairs-v1",
+                    description="paper route source strategy",
+                    enabled=True,
+                    base_timeframe="1Sec",
+                    universe_type="static",
+                    universe_symbols=["AAPL", "AMZN"],
+                    max_notional_per_trade=Decimal("31590"),
+                )
+            )
+            session.commit()
+            payload = build_paper_route_target_plan_payload(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "paper_route_probe_only",
+                    "blocked_reasons": [],
+                    "promotion_eligible_total": 0,
+                    "dependency_quorum_decision": "allow",
+                    "continuity_ok": True,
+                    "continuity_reason": "signal_continuity_nominal",
+                    "drift_ok": True,
+                    "drift_reason": "drift_live_promotion_eligible",
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "target_count": 1,
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-PAIRS-01",
+                                "candidate_id": "candidate-paper-route",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_pairs",
+                                "strategy_name": (
+                                    "69cf50e3-4815-47c2-b802-1efbaac09ecb"
+                                ),
+                                "runtime_strategy_name": (
+                                    "69cf50e3-4815-47c2-b802-1efbaac09ecb"
+                                ),
+                                "strategy_lookup_names": [
+                                    "69cf50e3-4815-47c2-b802-1efbaac09ecb",
+                                    "microbar-cross-sectional-pairs-v1",
+                                ],
+                                "account_label": "TORGHUT_SIM",
+                                "source_kind": "durable_runtime_ledger_bucket",
+                                "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
+                                "dataset_snapshot_ref": "portfolio-profit-autoresearch-500-v1",
+                                "paper_probation_authorized": True,
+                                "promotion_allowed": False,
+                                "final_promotion_authorized": False,
+                                "max_notional": "0",
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": False,
+                        "next_session_max_notional": "63180",
+                        "eligible_symbol_count": 0,
+                        "eligible_symbols": [],
+                        "active_symbols": [],
+                        "blocking_reasons": ["market_session_closed"],
+                    },
+                },
+                generated_at=generated_at,
+            )
+
+        plan = payload["runtime_window_import_plan"]
+        self.assertEqual(plan["target_count"], 1)
+        self.assertEqual(plan["source_decision_readiness"]["ready_target_count"], 1)
+        target = plan["targets"][0]
+        self.assertEqual(target["paper_route_probe_symbols"], ["AAPL", "AMZN"])
+        self.assertEqual(
+            target["paper_route_probe_scope_authority"], "strategy_universe"
+        )
+        self.assertTrue(target["paper_route_probe_strategy_scope_applied"])
+        self.assertTrue(target["paper_route_probe_strategy_universe_fallback"])
+        self.assertEqual(target["paper_route_probe_raw_target_symbols"], [])
+        self.assertEqual(
+            target["source_decision_readiness"]["scoped_probe_symbols"],
+            ["AAPL", "AMZN"],
+        )
 
     def test_builder_exports_missing_runtime_window_health_gate_as_blockers(
         self,
