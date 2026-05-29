@@ -1211,9 +1211,7 @@ class SimpleTradingPipeline(TradingPipeline):
                 Sequence[object], raw_previous_risk_reasons
             )
         previous_risk_reasons = [
-            str(item)
-            for item in previous_risk_reason_items
-            if str(item).strip()
+            str(item) for item in previous_risk_reason_items if str(item).strip()
         ]
         self.executor.sync_decision_state(session, decision_row, decision)
         raw_decision_json = decision_row.decision_json
@@ -1253,6 +1251,114 @@ class SimpleTradingPipeline(TradingPipeline):
             decision.symbol,
             previous_stage,
             ",".join(previous_risk_reasons),
+        )
+        return decision_row
+
+    @staticmethod
+    def _paper_route_target_price_retry_metadata(
+        decision_row: TradeDecision,
+    ) -> dict[str, object] | None:
+        if decision_row.status != "rejected":
+            return None
+        decision_json_raw = decision_row.decision_json
+        if not isinstance(decision_json_raw, Mapping):
+            return None
+        decision_json = cast(Mapping[str, object], decision_json_raw)
+        if decision_json.get("submission_stage") != "rejected_pre_submit":
+            return None
+        params_raw = decision_json.get("params")
+        if not isinstance(params_raw, Mapping):
+            return None
+        params = cast(Mapping[str, object], params_raw)
+        if not isinstance(params.get("paper_route_target_plan"), Mapping):
+            return None
+        precheck_raw = params.get("simple_lane_precheck")
+        if not isinstance(precheck_raw, Mapping):
+            return None
+        precheck = cast(Mapping[str, object], precheck_raw)
+        if precheck.get("price") is not None:
+            return None
+        raw_risk_reasons = decision_json.get("risk_reasons")
+        risk_reason_items: Sequence[object] = []
+        if isinstance(raw_risk_reasons, Sequence) and not isinstance(
+            raw_risk_reasons,
+            (str, bytes, bytearray),
+        ):
+            risk_reason_items = cast(Sequence[object], raw_risk_reasons)
+        risk_reasons = [
+            str(item).strip() for item in risk_reason_items if str(item).strip()
+        ]
+        if "broker_precheck_failed" not in risk_reasons:
+            return None
+        retry_attempts = _safe_int(
+            decision_json.get("paper_route_target_price_retry_attempts")
+        )
+        retry_limit = max(
+            _safe_int(settings.trading_simple_paper_route_probe_retry_attempt_limit),
+            0,
+        )
+        if retry_limit <= 0 or retry_attempts >= retry_limit:
+            return None
+        return {
+            "previous_decision_status": "rejected",
+            "previous_submission_stage": "rejected_pre_submit",
+            "previous_risk_reasons": risk_reasons,
+            "previous_retry_attempts": retry_attempts,
+        }
+
+    def _reopen_rejected_paper_route_target_price_decision(
+        self,
+        *,
+        session: Session,
+        decision: StrategyDecision,
+        decision_row: TradeDecision,
+    ) -> TradeDecision | None:
+        retry_metadata = self._paper_route_target_price_retry_metadata(decision_row)
+        if retry_metadata is None:
+            return None
+        if self.executor.execution_exists(session, decision_row):
+            return None
+
+        self.executor.sync_decision_state(session, decision_row, decision)
+        raw_decision_json = decision_row.decision_json
+        decision_json = (
+            dict(cast(Mapping[str, Any], raw_decision_json))
+            if isinstance(raw_decision_json, Mapping)
+            else {}
+        )
+        retry_attempts = _safe_int(
+            decision_json.get("paper_route_target_price_retry_attempts")
+        )
+        decision_json["submission_stage"] = "paper_route_target_price_retry_pending"
+        decision_json["paper_route_target_price_retry_attempts"] = retry_attempts + 1
+        decision_json["paper_route_target_price_retry"] = {
+            **retry_metadata,
+            "submission_stage": "paper_route_target_price_retry_pending",
+            "symbol": decision.symbol.strip().upper(),
+            "strategy_id": decision.strategy_id,
+        }
+        for key in (
+            "risk_reasons",
+            "reject_reason_atomic",
+            "reject_class",
+            "reject_origin",
+            "broker_precheck",
+        ):
+            decision_json.pop(key, None)
+        decision_row.status = "planned"
+        decision_row.created_at = trading_now(account_label=self.account_label)
+        decision_row.decision_json = decision_json
+        session.add(decision_row)
+        session.commit()
+        session.refresh(decision_row)
+        logger.warning(
+            "Reopening paper route target source decision after transient price precheck failure strategy_id=%s decision_id=%s symbol=%s previous_reasons=%s",
+            decision.strategy_id,
+            decision_row.id,
+            decision.symbol,
+            ",".join(
+                cast(list[str], retry_metadata.get("previous_risk_reasons") or [])
+            ),
         )
         return decision_row
 
@@ -2636,6 +2742,13 @@ class SimpleTradingPipeline(TradingPipeline):
         )
         if reopened_exit is not None:
             return reopened_exit
+        reopened_price_retry = self._reopen_rejected_paper_route_target_price_decision(
+            session=session,
+            decision=decision,
+            decision_row=decision_row,
+        )
+        if reopened_price_retry is not None:
+            return reopened_price_retry
         if (
             decision_row.status == "planned"
             and self._paper_route_target_source_cap(decision.params) is not None

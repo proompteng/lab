@@ -3147,6 +3147,207 @@ class TestTradingPipeline(TestCase):
             )
         )
 
+    def test_simple_pipeline_target_price_retry_metadata_requires_price_null_precheck(
+        self,
+    ) -> None:
+        def decision_row(
+            *,
+            status: str = "rejected",
+            decision_json: object,
+        ) -> TradeDecision:
+            return TradeDecision(
+                strategy_id=uuid4(),
+                alpaca_account_label="paper",
+                symbol="AAPL",
+                timeframe="1Min",
+                decision_json=decision_json,
+                status=status,
+            )
+
+        base_params: dict[str, Any] = {
+            "paper_route_target_plan": {
+                "candidate_id": "candidate-1",
+                "hypothesis_id": "H-PAIRS-01",
+            },
+            "simple_lane_precheck": {
+                "price": None,
+                "requested_qty": "1",
+            },
+        }
+        base_json: dict[str, Any] = {
+            "submission_stage": "rejected_pre_submit",
+            "risk_reasons": ["broker_precheck_failed"],
+            "params": base_params,
+        }
+        self.assertIsNone(
+            SimpleTradingPipeline._paper_route_target_price_retry_metadata(
+                decision_row(status="planned", decision_json=base_json)
+            )
+        )
+        self.assertIsNone(
+            SimpleTradingPipeline._paper_route_target_price_retry_metadata(
+                decision_row(
+                    decision_json={
+                        **base_json,
+                        "params": {
+                            **base_params,
+                            "simple_lane_precheck": {"price": "100"},
+                        },
+                    }
+                )
+            )
+        )
+        self.assertIsNone(
+            SimpleTradingPipeline._paper_route_target_price_retry_metadata(
+                decision_row(
+                    decision_json={
+                        **base_json,
+                        "risk_reasons": ["max_notional_exceeded"],
+                    }
+                )
+            )
+        )
+        self.assertEqual(
+            SimpleTradingPipeline._paper_route_target_price_retry_metadata(
+                decision_row(decision_json=base_json)
+            ),
+            {
+                "previous_decision_status": "rejected",
+                "previous_submission_stage": "rejected_pre_submit",
+                "previous_risk_reasons": ["broker_precheck_failed"],
+                "previous_retry_attempts": 0,
+            },
+        )
+
+        from app import config
+
+        config.settings.trading_simple_paper_route_probe_retry_attempt_limit = 1
+        self.assertIsNone(
+            SimpleTradingPipeline._paper_route_target_price_retry_metadata(
+                decision_row(
+                    decision_json={
+                        **base_json,
+                        "paper_route_target_price_retry_attempts": 1,
+                    }
+                )
+            )
+        )
+
+    def test_simple_pipeline_reopens_price_null_target_source_decision(self) -> None:
+        from app import config
+
+        config.settings.trading_simple_paper_route_probe_retry_attempt_limit = 2
+
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="simple-paper-target-price-retry",
+                description="simple paper target source price retry",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+                max_notional_per_trade=Decimal("1000"),
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=datetime(2026, 5, 29, 13, 30, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="buy",
+                qty=Decimal("1"),
+                rationale="paper-route-target-source",
+                params={
+                    "paper_route_target_plan": {
+                        "candidate_id": "candidate-1",
+                        "hypothesis_id": "H-PAIRS-01",
+                    },
+                    "source_decision_mode": "route_acquisition_probe",
+                },
+            )
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(
+                session,
+                decision,
+                strategy,
+                "paper",
+            )
+            decision_json = dict(cast(Mapping[str, Any], decision_row.decision_json))
+            params = dict(cast(Mapping[str, Any], decision_json.get("params") or {}))
+            params["simple_lane_precheck"] = {
+                "price": None,
+                "requested_qty": "1",
+            }
+            decision_json.update(
+                {
+                    "params": params,
+                    "submission_stage": "rejected_pre_submit",
+                    "risk_reasons": ["broker_precheck_failed"],
+                    "reject_reason_atomic": ["broker_precheck_failed"],
+                    "reject_class": "runtime",
+                    "reject_origin": "scheduler",
+                }
+            )
+            decision_row.status = "rejected"
+            decision_row.decision_json = decision_json
+            session.add(decision_row)
+            session.commit()
+            session.refresh(decision_row)
+
+            pipeline = SimpleTradingPipeline(
+                alpaca_client=FakeAlpacaClient(),
+                order_firewall=OrderFirewall(FakeAlpacaClient()),
+                ingestor=FakeIngestor([]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=executor,
+                execution_adapter=FakeAlpacaClient(),
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=TradingState(),
+                account_label="paper",
+                session_factory=self.session_local,
+            )
+
+            pending = pipeline._ensure_pending_decision_row(
+                session=session,
+                decision=decision,
+                strategy=strategy,
+            )
+
+            self.assertIsNotNone(pending)
+            assert pending is not None
+            self.assertEqual(pending.id, decision_row.id)
+            refreshed = session.get(TradeDecision, decision_row.id)
+            assert refreshed is not None
+            self.assertEqual(refreshed.status, "planned")
+            refreshed_json = cast(dict[str, Any], refreshed.decision_json)
+            self.assertEqual(
+                refreshed_json.get("submission_stage"),
+                "paper_route_target_price_retry_pending",
+            )
+            self.assertNotIn("risk_reasons", refreshed_json)
+            self.assertNotIn("reject_reason_atomic", refreshed_json)
+            self.assertEqual(
+                refreshed_json.get("paper_route_target_price_retry_attempts"),
+                1,
+            )
+            retry = cast(
+                dict[str, Any],
+                refreshed_json.get("paper_route_target_price_retry"),
+            )
+            self.assertEqual(
+                retry.get("previous_risk_reasons"), ["broker_precheck_failed"]
+            )
+            self.assertEqual(retry.get("previous_retry_attempts"), 0)
+            self.assertEqual(
+                retry.get("submission_stage"),
+                "paper_route_target_price_retry_pending",
+            )
+
     def test_simple_pipeline_retry_helpers_filter_invalid_rows_and_limits(
         self,
     ) -> None:
@@ -4166,9 +4367,7 @@ class TestTradingPipeline(TestCase):
             ),
             self.session_local() as session,
         ):
-            exit_decisions = pipeline._paper_route_probe_exit_decisions(
-                session=session
-            )
+            exit_decisions = pipeline._paper_route_probe_exit_decisions(session=session)
             self.assertEqual(len(exit_decisions), 1)
             exit_decision = exit_decisions[0]
             strategy = (
