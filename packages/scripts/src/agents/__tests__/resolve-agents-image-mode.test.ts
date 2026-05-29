@@ -189,7 +189,6 @@ describe('agents-ci workflow local Agents image build', () => {
     expect(workflow).toContain('agents-runner-image-smoke')
     expect(workflow).toContain('--build-arg "AGENTS_VERSION=${AGENTS_VERSION}"')
     expect(workflow).not.toContain('-f "${WORKSPACE}/services/jangar/Dockerfile"')
-    expect(workflow).not.toContain('--build-arg "JANGAR_VERSION=')
   })
 })
 

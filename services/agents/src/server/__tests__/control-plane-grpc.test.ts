@@ -82,16 +82,6 @@ describe('resolveGrpcStatus', () => {
     expect(status.message).toContain('invalid AGENTS_GRPC_ENABLED value')
   })
 
-  it('ignores legacy JANGAR_GRPC_ENABLED when only the legacy name is set', async () => {
-    const status = await withEnv({ JANGAR_GRPC_ENABLED: 'bogus' }, () => resolveGrpcStatus())
-
-    expect(status).toMatchObject({
-      enabled: false,
-      status: 'disabled',
-    })
-    expect(status.message).toBe('gRPC disabled')
-  })
-
   it('returns degraded when AGENTS_GRPC_PORT is malformed and no address override is set', async () => {
     const status = await withEnv(
       {

@@ -219,7 +219,7 @@ const buildVcsProvider = (overrides: Record<string, unknown> = {}) => ({
 })
 
 describe('agents controller startup', () => {
-  it('uses the Agents-owned startup feature flag without the legacy Jangar gate', async () => {
+  it('uses the Agents-owned startup feature flag without a domain gate', async () => {
     const previousNodeEnv = process.env.NODE_ENV
     const previousVitest = process.env.VITEST
     process.env.NODE_ENV = 'development'

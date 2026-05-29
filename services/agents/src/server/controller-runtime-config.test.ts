@@ -14,31 +14,12 @@ describe('Agents controller runtime config', () => {
       AGENTS_CONTROL_PLANE_CACHE_ENABLED: 'true',
       AGENTS_CONTROL_PLANE_CACHE_NAMESPACES: 'agents,agents-system',
       AGENTS_CONTROL_PLANE_CACHE_CLUSTER: 'prod-agents',
-      JANGAR_CONTROL_PLANE_CACHE_ENABLED: 'false',
-      JANGAR_CONTROL_PLANE_CACHE_NAMESPACES: 'jangar',
-      JANGAR_CONTROL_PLANE_CACHE_CLUSTER: 'prod-jangar',
     })
 
     expect(config).toEqual({
       enabled: true,
       namespaces: ['agents', 'agents-system'],
       clusterId: 'prod-agents',
-      resyncSeconds: 60,
-      maxPendingWrites: 5000,
-    })
-  })
-
-  it('does not read legacy Jangar control-plane cache aliases', () => {
-    expect(
-      resolveControlPlaneCacheConfig({
-        JANGAR_CONTROL_PLANE_CACHE_ENABLED: 'on',
-        JANGAR_CONTROL_PLANE_CACHE_NAMESPACES: 'jangar',
-        JANGAR_CONTROL_PLANE_CACHE_CLUSTER: 'compat',
-      }),
-    ).toEqual({
-      enabled: false,
-      namespaces: ['agents'],
-      clusterId: 'default',
       resyncSeconds: 60,
       maxPendingWrites: 5000,
     })

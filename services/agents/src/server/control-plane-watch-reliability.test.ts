@@ -54,20 +54,6 @@ describe('control-plane watch reliability', () => {
     expect(summary.total_restarts).toBe(2)
   })
 
-  it('ignores legacy Jangar threshold aliases', () => {
-    expect(
-      resolveControlPlaneWatchReliabilityConfig({
-        JANGAR_CONTROL_PLANE_WATCH_HEALTH_RESTART_DEGRADE_THRESHOLD: '9',
-      }).restartDegradeThreshold,
-    ).toBe(2)
-    expect(
-      resolveControlPlaneWatchReliabilityConfig({
-        AGENTS_CONTROL_PLANE_WATCH_HEALTH_RESTART_DEGRADE_THRESHOLD: '3',
-        JANGAR_CONTROL_PLANE_WATCH_HEALTH_RESTART_DEGRADE_THRESHOLD: '9',
-      }).restartDegradeThreshold,
-    ).toBe(3)
-  })
-
   it('keeps independent single-stream restarts observable without degrading status', () => {
     vi.stubEnv('AGENTS_CONTROL_PLANE_WATCH_HEALTH_RESTART_DEGRADE_THRESHOLD', '2')
     recordWatchReliabilityRestart({

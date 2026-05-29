@@ -317,7 +317,7 @@ describe('buildRuntimeAdmissionSnapshot', () => {
       natsUrl: 'nats://nats.nats.svc.cluster.local:4222',
       executionTrust: {
         status: 'degraded',
-        reason: 'requirements are degraded on jangar-control-plane: pending=5',
+        reason: 'requirements are degraded on agents-control-plane: pending=5',
         last_evaluated_at: '2026-03-21T00:30:01.000Z',
         blocking_windows: [],
         evidence_summary: ['requirements pending=5'],

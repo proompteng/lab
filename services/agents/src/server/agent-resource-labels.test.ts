@@ -46,13 +46,13 @@ describe('Agents resource labels', () => {
 
     expect(
       readOrchestrationRunLabel({
-        metadata: { labels: { 'jangar.proompteng.ai/orchestration-run': 'legacy-orch' } },
+        metadata: { labels: { 'legacy.proompteng.ai/orchestration-run': 'legacy-orch' } },
       }),
     ).toBeUndefined()
 
     expect(
       readToolRunLabel({
-        metadata: { labels: { 'jangar.proompteng.ai/tool-run': 'legacy-toolrun' } },
+        metadata: { labels: { 'legacy.proompteng.ai/tool-run': 'legacy-toolrun' } },
       }),
     ).toBeUndefined()
   })

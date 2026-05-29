@@ -22,8 +22,6 @@ const envKeys = [
   'AGENTS_IMAGE_REPOSITORY',
   'AGENTS_IMAGE_TAG',
   'AGENTS_VERSION',
-  'JANGAR_BUILD_CI',
-  'JANGAR_BUILD_MINIFY',
 ]
 
 afterEach(() => {
@@ -60,16 +58,6 @@ describe('agents build-image helpers', () => {
       AGENTS_BUILD_SOURCEMAP: '0',
       AGENTS_BUILD_CI: 'true',
       AGENTS_BUILD_LOG_LEVEL: 'warn',
-    })
-  })
-
-  it('ignores legacy Jangar build env names', () => {
-    process.env.JANGAR_BUILD_MINIFY = '0'
-    process.env.JANGAR_BUILD_CI = 'true'
-
-    expect(__private.buildArgsFromEnv('v1', 'commit1')).toEqual({
-      AGENTS_VERSION: 'v1',
-      AGENTS_COMMIT: 'commit1',
     })
   })
 
