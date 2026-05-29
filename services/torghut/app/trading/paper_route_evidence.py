@@ -50,6 +50,8 @@ PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL = "TORGHUT_SIM"
 PAPER_ROUTE_RUNTIME_IMPORT_SETTLEMENT_SECONDS = 3600
 PAPER_ROUTE_ACCOUNT_START_SNAPSHOT_STALE_SECONDS = 900
 PAPER_ROUTE_ACCOUNT_START_SNAPSHOT_AFTER_START_GRACE_SECONDS = 300
+PAPER_ROUTE_ACCOUNT_PRE_SESSION_READINESS_SECONDS = 900
+PAPER_ROUTE_ACCOUNT_PRE_SESSION_SNAPSHOT_STALE_SECONDS = 900
 PAPER_ROUTE_TARGET_PLAN_ENDPOINT = "/trading/paper-route-target-plan"
 DEFAULT_TORGHUT_LIVE_SERVICE_BASE_URL = "http://torghut.torghut.svc.cluster.local"
 DEFAULT_TORGHUT_PAPER_ROUTE_SERVICE_BASE_URL = (
@@ -1233,6 +1235,33 @@ def _next_paper_route_runtime_window_targets(
                 }
             )
             continue
+        account_pre_session_state = _account_pre_session_snapshot_audit(
+            session,
+            account_label=PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
+            symbols=target_probe_symbols,
+            generated_at=generated_at,
+            window_start=window_start,
+            window_end=window_end,
+        )
+        account_pre_session_blockers = _unique_text_items(
+            account_pre_session_state.get("blockers")
+        )
+        if account_pre_session_blockers:
+            skipped_targets.append(
+                {
+                    "hypothesis_id": hypothesis_id,
+                    "candidate_id": candidate_id,
+                    "reason": "paper_route_account_pre_session_not_clean",
+                    "missing_or_blocking_fields": account_pre_session_blockers,
+                    "paper_route_account_pre_session_state": (
+                        account_pre_session_state
+                    ),
+                    "paper_route_account_pre_session_blockers": (
+                        account_pre_session_blockers
+                    ),
+                }
+            )
+            continue
         planned_key = (
             hypothesis_id,
             candidate_id,
@@ -1357,6 +1386,8 @@ def _next_paper_route_runtime_window_targets(
             "paper_route_target_plan_source": paper_route_target_plan_source or "",
             "paper_route_probe_scope_authority": paper_route_probe_scope_authority
             or "",
+            "paper_route_account_pre_session_state": account_pre_session_state,
+            "paper_route_account_pre_session_blockers": (account_pre_session_blockers),
             "paper_route_execution_source_key": {
                 "strategy_family": strategy_family or "",
                 "strategy": execution_source_key[1],
@@ -1431,6 +1462,30 @@ def _next_paper_route_runtime_window_targets(
             for blocker in _unique_text_items(item.get("blockers"))
         }
     )
+    account_pre_session_items = [
+        _as_mapping(target.get("paper_route_account_pre_session_state"))
+        for target in planned_targets
+    ]
+    account_pre_session_items.extend(
+        _as_mapping(skipped_target.get("paper_route_account_pre_session_state"))
+        for skipped_target in skipped_targets
+    )
+    account_pre_session_required_count = sum(
+        1 for item in account_pre_session_items if bool(item.get("required"))
+    )
+    account_pre_session_blockers = sorted(
+        {
+            blocker
+            for item in account_pre_session_items
+            for blocker in _unique_text_items(item.get("blockers"))
+        }
+    )
+    account_pre_session_clean_count = sum(
+        1
+        for item in account_pre_session_items
+        if item.get("state") in {"clean", "not_required_until_pre_session"}
+        and not _unique_text_items(item.get("blockers"))
+    )
     return {
         "schema_version": NEXT_PAPER_ROUTE_RUNTIME_WINDOW_TARGETS_SCHEMA_VERSION,
         "source": "paper_route_evidence_audit",
@@ -1461,6 +1516,16 @@ def _next_paper_route_runtime_window_targets(
                 len(source_decision_readiness_items) - source_decision_ready_count
             ),
             "blockers": source_decision_blockers,
+        },
+        "account_pre_session_readiness": {
+            "schema_version": "torghut.paper-route-account-pre-session-readiness-summary.v1",
+            "target_count": len(account_pre_session_items),
+            "required_target_count": account_pre_session_required_count,
+            "clean_target_count": account_pre_session_clean_count,
+            "blocked_target_count": (
+                len(account_pre_session_items) - account_pre_session_clean_count
+            ),
+            "blockers": account_pre_session_blockers,
         },
         "paper_route_probe": {
             "configured_enabled": bool(probe.get("configured_enabled")),
@@ -1968,6 +2033,118 @@ def _account_window_start_snapshot_audit(
         "gross_position_market_value": _decimal_text(gross_market_value),
         "sample_positions": positions[:10],
         "blockers": sorted(dict.fromkeys(blockers)),
+    }
+
+
+def _account_pre_session_snapshot_audit(
+    session: Session,
+    *,
+    account_label: str | None,
+    symbols: Sequence[str],
+    generated_at: datetime,
+    window_start: datetime,
+    window_end: datetime,
+) -> dict[str, object]:
+    symbol_filters = {
+        str(item).strip().upper() for item in symbols if str(item).strip()
+    }
+    required_after = window_start - timedelta(
+        seconds=PAPER_ROUTE_ACCOUNT_PRE_SESSION_READINESS_SECONDS
+    )
+    required = required_after <= generated_at < window_end
+    base_payload: dict[str, object] = {
+        "schema_version": "torghut.paper-route-account-pre-session-snapshot-audit.v1",
+        "scope": "account_position_snapshot_before_runtime_window_start",
+        "account_label": account_label,
+        "symbols": sorted(symbol_filters),
+        "generated_at": _isoformat(generated_at),
+        "window_start": _isoformat(window_start),
+        "required": required,
+        "required_after": _isoformat(required_after),
+        "snapshot_id": None,
+        "snapshot_as_of": None,
+        "snapshot_age_seconds": None,
+        "flat": None,
+        "position_count": 0,
+        "target_symbol_position_count": 0,
+        "non_target_symbol_position_count": 0,
+        "gross_position_market_value": "0",
+        "sample_positions": [],
+        "blockers": [],
+    }
+    if not required:
+        return {
+            **base_payload,
+            "state": "not_required_until_pre_session",
+        }
+    if account_label is None:
+        return {
+            **base_payload,
+            "state": "clean",
+            "flat": True,
+        }
+
+    snapshot = session.execute(
+        select(PositionSnapshot)
+        .where(PositionSnapshot.alpaca_account_label == account_label)
+        .where(PositionSnapshot.as_of <= generated_at)
+        .order_by(PositionSnapshot.as_of.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if snapshot is None:
+        return {
+            **base_payload,
+            "state": "blocked",
+            "flat": False,
+            "blockers": ["paper_route_account_pre_session_snapshot_missing"],
+        }
+
+    snapshot_as_of = snapshot.as_of
+    if snapshot_as_of.tzinfo is None:
+        snapshot_as_of = snapshot_as_of.replace(tzinfo=timezone.utc)
+    snapshot_as_of = snapshot_as_of.astimezone(timezone.utc)
+    snapshot_age_seconds = int((generated_at - snapshot_as_of).total_seconds())
+    blockers: list[str] = []
+    if snapshot_age_seconds > PAPER_ROUTE_ACCOUNT_PRE_SESSION_SNAPSHOT_STALE_SECONDS:
+        blockers.append("paper_route_account_pre_session_snapshot_stale")
+
+    positions = _normalized_open_positions(
+        snapshot.positions,
+        target_symbols=symbol_filters,
+    )
+    target_position_count = sum(
+        int(bool(position.get("target_symbol"))) for position in positions
+    )
+    non_target_position_count = len(positions) - target_position_count
+    if positions:
+        blockers.extend(
+            [
+                "paper_route_account_pre_session_not_flat",
+                "paper_route_account_pre_session_positions_present",
+            ]
+        )
+    if target_position_count:
+        blockers.append("paper_route_account_pre_session_target_positions_present")
+    if non_target_position_count:
+        blockers.append("paper_route_account_pre_session_non_target_positions_present")
+    gross_market_value = sum(
+        (_safe_decimal(position.get("market_value")) for position in positions),
+        Decimal("0"),
+    )
+    blockers = sorted(dict.fromkeys(blockers))
+    return {
+        **base_payload,
+        "state": "blocked" if blockers else "clean",
+        "snapshot_id": str(snapshot.id),
+        "snapshot_as_of": _isoformat(snapshot_as_of),
+        "snapshot_age_seconds": snapshot_age_seconds,
+        "flat": not positions and not blockers,
+        "position_count": len(positions),
+        "target_symbol_position_count": target_position_count,
+        "non_target_symbol_position_count": non_target_position_count,
+        "gross_position_market_value": _decimal_text(gross_market_value),
+        "sample_positions": positions[:10],
+        "blockers": blockers,
     }
 
 

@@ -61,6 +61,84 @@ class TestPaperRouteEvidenceAudit(TestCase):
             )
         )
 
+    def _add_account_position_snapshot(
+        self,
+        session: Session,
+        *,
+        account_label: str,
+        as_of: datetime,
+        positions: list[dict[str, object]],
+    ) -> None:
+        session.add(
+            PositionSnapshot(
+                alpaca_account_label=account_label,
+                as_of=as_of,
+                equity=Decimal("100000"),
+                cash=Decimal("100000"),
+                buying_power=Decimal("200000"),
+                positions=positions,
+            )
+        )
+
+    def _build_basic_paper_route_target_plan(
+        self,
+        session: Session,
+        *,
+        generated_at: datetime,
+    ) -> dict[str, object]:
+        return build_paper_route_target_plan_payload(
+            session,
+            live_submission_gate={
+                "allowed": False,
+                "reason": "paper_route_probe_only",
+                "blocked_reasons": [],
+                "promotion_eligible_total": 0,
+                "dependency_quorum_decision": "allow",
+                "continuity_ok": True,
+                "continuity_reason": "signal_continuity_nominal",
+                "drift_ok": True,
+                "drift_reason": "drift_live_promotion_eligible",
+                "runtime_ledger_paper_probation_import_plan": {
+                    "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                    "target_count": 1,
+                    "targets": [
+                        {
+                            "hypothesis_id": "H-PAIRS-01",
+                            "candidate_id": "candidate-pre-session",
+                            "observed_stage": "paper",
+                            "strategy_family": "microbar_pairs",
+                            "strategy_name": "paper-route-candidate-v1",
+                            "account_label": "TORGHUT_REPLAY",
+                            "source_kind": "durable_runtime_ledger_bucket",
+                            "source_manifest_ref": "config/trading/hypotheses/h-pairs.json",
+                            "dataset_snapshot_ref": "dataset://paper-route",
+                            "paper_probation_authorized": True,
+                            "promotion_allowed": False,
+                            "final_promotion_authorized": False,
+                            "max_notional": "0",
+                        }
+                    ],
+                },
+            },
+            route_reacquisition_book={
+                "schema_version": "torghut.route-reacquisition-book.v1",
+                "state": "repair_only",
+                "summary": {
+                    "paper_route_probe_eligible_symbols": ["AAPL", "AMZN"],
+                    "paper_route_probe_active_symbols": [],
+                },
+                "paper_route_probe": {
+                    "configured_enabled": True,
+                    "active": False,
+                    "next_session_max_notional": "25",
+                    "eligible_symbol_count": 2,
+                    "eligible_symbols": ["AAPL", "AMZN"],
+                    "blocking_reasons": ["market_session_closed"],
+                },
+            },
+            generated_at=generated_at,
+        )
+
     def test_normalized_open_positions_handles_flat_short_and_implicit_market_value(
         self,
     ) -> None:
@@ -126,6 +204,79 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(
             audit["blockers"],
             ["paper_route_account_window_start_snapshot_stale"],
+        )
+
+    def test_pre_session_dirty_account_skips_next_paper_route_target(self) -> None:
+        generated_at = datetime(2026, 5, 26, 13, 20, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            self._add_account_position_snapshot(
+                session,
+                account_label="TORGHUT_SIM",
+                as_of=generated_at - timedelta(seconds=30),
+                positions=[
+                    {
+                        "symbol": "AAPL",
+                        "qty": "2",
+                        "side": "long",
+                        "market_value": "400",
+                    },
+                    {
+                        "symbol": "MSFT",
+                        "qty": "1",
+                        "side": "long",
+                        "market_value": "300",
+                    },
+                ],
+            )
+            session.commit()
+
+            payload = self._build_basic_paper_route_target_plan(
+                session,
+                generated_at=generated_at,
+            )
+
+        plan = payload["next_paper_route_runtime_window_targets"]
+        self.assertEqual(plan["target_count"], 0)
+        self.assertEqual(plan["runtime_window_import_handoff"]["target_count"], 0)
+        self.assertEqual(plan["skipped_target_count"], 1)
+        skipped = plan["skipped_targets"][0]
+        self.assertEqual(skipped["reason"], "paper_route_account_pre_session_not_clean")
+        self.assertEqual(
+            skipped["paper_route_account_pre_session_state"]["state"], "blocked"
+        )
+        blockers = skipped["paper_route_account_pre_session_blockers"]
+        self.assertIn("paper_route_account_pre_session_not_flat", blockers)
+        self.assertIn("paper_route_account_pre_session_positions_present", blockers)
+        self.assertIn(
+            "paper_route_account_pre_session_target_positions_present", blockers
+        )
+        self.assertIn(
+            "paper_route_account_pre_session_non_target_positions_present", blockers
+        )
+        readiness = plan["account_pre_session_readiness"]
+        self.assertEqual(readiness["required_target_count"], 1)
+        self.assertEqual(readiness["clean_target_count"], 0)
+        self.assertIn("paper_route_account_pre_session_not_flat", readiness["blockers"])
+
+    def test_pre_session_missing_account_snapshot_skips_target(self) -> None:
+        generated_at = datetime(2026, 5, 26, 13, 20, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            payload = self._build_basic_paper_route_target_plan(
+                session,
+                generated_at=generated_at,
+            )
+
+        plan = payload["next_paper_route_runtime_window_targets"]
+        self.assertEqual(plan["target_count"], 0)
+        self.assertEqual(plan["skipped_target_count"], 1)
+        skipped = plan["skipped_targets"][0]
+        self.assertEqual(
+            skipped["paper_route_account_pre_session_blockers"],
+            ["paper_route_account_pre_session_snapshot_missing"],
+        )
+        self.assertEqual(
+            plan["account_pre_session_readiness"]["blockers"],
+            ["paper_route_account_pre_session_snapshot_missing"],
         )
 
     def test_runtime_ledger_diagnostic_expectancy_prefers_payload_value(self) -> None:
@@ -1076,6 +1227,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self,
     ) -> None:
         window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, tzinfo=timezone.utc)
 
         def build(generated_at: datetime) -> dict[str, object]:
             with Session(self.engine) as session:
@@ -1089,6 +1241,13 @@ class TestPaperRouteEvidenceAudit(TestCase):
                     account_label="TORGHUT_SIM",
                     window_start=window_start,
                 )
+                if window_start <= generated_at < window_end:
+                    self._add_account_position_snapshot(
+                        session,
+                        account_label="TORGHUT_SIM",
+                        as_of=generated_at - timedelta(seconds=30),
+                        positions=[],
+                    )
                 session.flush()
                 return build_paper_route_evidence_audit(
                     session,
