@@ -856,6 +856,76 @@ class TestVerifyTradingReadiness(TestCase):
             ]
         )
 
+    def test_preopen_target_plan_check_does_not_require_separate_probe_flag(
+        self,
+    ) -> None:
+        status = _ready_status()
+        metrics = status["metrics"]
+        assert isinstance(metrics, dict)
+        metrics["market_session_open"] = 0
+        proof_floor = status["proof_floor"]
+        assert isinstance(proof_floor, dict)
+        proof_floor.update(
+            {
+                "floor_state": "repair_only",
+                "route_state": "repair_only",
+                "capital_state": "zero_notional",
+                "max_notional": "0",
+                "blocking_reasons": [
+                    "alpha_readiness_not_promotion_eligible",
+                    "execution_tca_slippage_guardrail_exceeded",
+                ],
+            }
+        )
+        dimensions = proof_floor["proof_dimensions"]
+        assert isinstance(dimensions, list)
+        for dimension in dimensions:
+            if not isinstance(dimension, dict):
+                continue
+            if dimension.get("dimension") == "alpha_readiness":
+                dimension["state"] = "fail"
+                dimension["reason"] = "alpha_readiness_not_promotion_eligible"
+            if dimension.get("dimension") == "execution_tca":
+                dimension["state"] = "fail"
+                dimension["reason"] = "execution_tca_slippage_guardrail_exceeded"
+
+        route_book = status["route_reacquisition_book"]
+        assert isinstance(route_book, dict)
+        route_book["state"] = "repair_only"
+        probe = route_book["paper_route_probe"]
+        assert isinstance(probe, dict)
+        probe.update(
+            {
+                "active": False,
+                "effective_max_notional": "0",
+                "next_session_max_notional": "63180.0",
+                "eligible_symbol_count": 2,
+                "eligible_symbols": ["AAPL", "AMZN"],
+                "active_symbols": [],
+                "blocking_reasons": ["market_session_closed"],
+            }
+        )
+        summary = route_book["summary"]
+        assert isinstance(summary, dict)
+        summary["paper_route_probe_eligible_symbols"] = ["AAPL", "AMZN"]
+        summary["paper_route_probe_active_symbols"] = []
+
+        result = evaluate_trading_readiness(
+            status,
+            paper_route_evidence=_paper_route_evidence(),
+            require_market_open=False,
+            require_quant_fresh=False,
+            require_paper_route_target_plan=True,
+            allow_paper_route_preopen_evidence_collection=True,
+        )
+
+        self.assertTrue(result["ok"], result)
+        preopen_summary = result["paper_route_preopen_evidence_collection"]
+        self.assertTrue(preopen_summary["ready"])
+        self.assertTrue(
+            preopen_summary["conditions"]["probe_candidate_requirement_satisfied"]
+        )
+
     def test_paper_route_target_plan_fails_closed_on_missing_handoff_or_identity(
         self,
     ) -> None:
