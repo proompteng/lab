@@ -78,7 +78,6 @@ spec:
     ALPACA_PAPER_TRADE: "true"
     ANALYSIS_REPO_URL: https://github.com/gregkonush/analysis.git
     ANALYSIS_REQUIRED_COMMIT: b4d7485e106dc1197d293683e3413fe74dacd698
-    ANALYSIS_FETCH_DEPTH: "64"
     AUTONOMOUS_TRADER_ARTIFACT_DIR: /workspace/.agentrun/autonomous-trader
     CODEX_CONFIG: /root/.codex/config.toml
     CODEX_LOG_LEVEL: info
@@ -147,7 +146,6 @@ spec:
         analysis_dir="${ANALYSIS_REPO_DIR:-/workspace/analysis}"
         analysis_repo_url="${ANALYSIS_REPO_URL:-https://github.com/gregkonush/analysis.git}"
         required_commit="${ANALYSIS_REQUIRED_COMMIT:-b4d7485e106dc1197d293683e3413fe74dacd698}"
-        fetch_depth="${ANALYSIS_FETCH_DEPTH:-64}"
         python_bin="${PYTHON_BIN:-python3}"
 
         mkdir -p "${artifact_dir}"
@@ -189,17 +187,7 @@ spec:
         }
 
         fetch_analysis_main() {
-          local depth="$1"
-          if ! git_with_auth -C "${analysis_dir}" fetch --filter=blob:none --prune --depth="${depth}" origin main:refs/remotes/origin/main; then
-            git_with_auth -C "${analysis_dir}" fetch --prune --depth="${depth}" origin main:refs/remotes/origin/main
-          fi
-        }
-
-        deepen_analysis_history() {
-          local deepen_by="$1"
-          if ! git_with_auth -C "${analysis_dir}" fetch --filter=blob:none --deepen="${deepen_by}" origin main:refs/remotes/origin/main; then
-            git_with_auth -C "${analysis_dir}" fetch --deepen="${deepen_by}" origin main:refs/remotes/origin/main || true
-          fi
+          git_with_auth -C "${analysis_dir}" fetch --prune origin main:refs/remotes/origin/main
         }
 
         if [ ! -d "${analysis_dir}/.git" ]; then
@@ -211,18 +199,12 @@ spec:
 
         git -C "${analysis_dir}" remote set-url origin "${analysis_repo_url}"
         git -C "${analysis_dir}" config gc.auto 0
-        fetch_analysis_main "${fetch_depth}"
+        fetch_analysis_main
         git -C "${analysis_dir}" checkout --force --detach origin/main
         git -C "${analysis_dir}" reset --hard origin/main
         git -C "${analysis_dir}" clean -ffd
 
         analysis_head="$(git -C "${analysis_dir}" rev-parse HEAD)"
-        if ! git -C "${analysis_dir}" merge-base --is-ancestor "${required_commit}" HEAD; then
-          deepen_analysis_history 256
-        fi
-        if ! git -C "${analysis_dir}" merge-base --is-ancestor "${required_commit}" HEAD; then
-          deepen_analysis_history 1024
-        fi
         if ! git -C "${analysis_dir}" merge-base --is-ancestor "${required_commit}" HEAD; then
           printf '{"ok":false,"reason":"analysis_repo_stale","analysis_head":"%s","required_commit":"%s"}\n' \
             "${analysis_head}" "${required_commit}" > "${artifact_dir}/analysis-bootstrap.json"
@@ -260,19 +242,27 @@ spec:
           fi
         fi
 
+        analysis_cli="${artifact_dir}/stock_analysis"
+        {
+          printf '#!/usr/bin/env bash\n'
+          printf 'set -euo pipefail\n'
+          printf 'PYTHONPATH=%q %q -m stock_analysis "$@"\n' "${analysis_dir}/src" "${analysis_python}"
+        } > "${analysis_cli}"
+        chmod +x "${analysis_cli}"
+
         (
           cd "${analysis_dir}"
-          PYTHONPATH=src "${analysis_python}" -m stock_analysis audit
+          "${analysis_cli}" audit
         )
-        PYTHONPATH="${analysis_dir}/src" "${analysis_python}" -m stock_analysis daytrading-import-smoke
-        PYTHONPATH="${analysis_dir}/src" "${analysis_python}" -m stock_analysis daytrading-context \
+        "${analysis_cli}" daytrading-import-smoke
+        "${analysis_cli}" daytrading-context \
           --repo-root "${analysis_dir}" \
           --output "${artifact_dir}/analysis-context.json"
-        PYTHONPATH="${analysis_dir}/src" "${analysis_python}" -m stock_analysis daytrading-validate-context \
+        "${analysis_cli}" daytrading-validate-context \
           "${artifact_dir}/analysis-context.json"
 
-        printf '{"ok":true,"analysis_head":"%s","required_commit":"%s","context_path":"%s","install_method":"%s","fetch_depth":"%s","partial_clone":true,"started_at":"%s","finished_at":"%s"}\n' \
-          "${analysis_head}" "${required_commit}" "${artifact_dir}/analysis-context.json" "${install_method}" "${fetch_depth}" "${bootstrap_started_at}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        printf '{"ok":true,"analysis_head":"%s","required_commit":"%s","context_path":"%s","analysis_cli":"%s","install_method":"%s","fetch_mode":"full","partial_clone":false,"started_at":"%s","finished_at":"%s"}\n' \
+          "${analysis_head}" "${required_commit}" "${artifact_dir}/analysis-context.json" "${analysis_cli}" "${install_method}" "${bootstrap_started_at}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
           > "${artifact_dir}/analysis-bootstrap.json"
     - path: /root/alpaca-mcp-stdio-bridge.py
       content: |-

@@ -307,6 +307,7 @@ const toolsListResult = {
           tradingDate: { type: 'string' },
           accountId: { type: 'string' },
           goalEquity: numericStringSchema,
+          openingEquity: numericStringSchema,
           marketOpenAt: { type: 'string' },
           marketCloseAt: { type: 'string' },
           analysisHead: { type: 'string' },
@@ -531,6 +532,10 @@ const toolsListResult = {
         properties: {
           sessionId: { type: 'string' },
           terminalReason: { type: 'string' },
+          openingEquity: numericStringSchema,
+          closingEquity: numericStringSchema,
+          realizedPnl: numericStringSchema,
+          maxDrawdown: numericStringSchema,
           summary: payloadSchema,
           scorecardObservations: {
             type: 'array',
