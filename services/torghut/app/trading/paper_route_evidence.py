@@ -1105,6 +1105,7 @@ def _next_paper_route_runtime_window_targets(
     probe: Mapping[str, object],
     live_submission_gate: Mapping[str, Any],
     generated_at: datetime,
+    require_clean_pre_session: bool = True,
 ) -> dict[str, object]:
     window_start, window_end = _next_regular_equities_session_window(generated_at)
     probe_symbols = _paper_route_probe_symbols(probe)
@@ -1246,7 +1247,7 @@ def _next_paper_route_runtime_window_targets(
         account_pre_session_blockers = _unique_text_items(
             account_pre_session_state.get("blockers")
         )
-        if account_pre_session_blockers:
+        if account_pre_session_blockers and require_clean_pre_session:
             skipped_targets.append(
                 {
                     "hypothesis_id": hypothesis_id,
@@ -3391,6 +3392,14 @@ def build_paper_route_target_plan_payload(
         live_submission_gate=live_submission_gate,
         generated_at=resolved_generated_at,
     )
+    source_targets = _next_paper_route_runtime_window_targets(
+        session=session,
+        targets=targets,
+        probe=probe,
+        live_submission_gate=live_submission_gate,
+        generated_at=resolved_generated_at,
+        require_clean_pre_session=False,
+    )
     return {
         "schema_version": PAPER_ROUTE_TARGET_PLAN_PAYLOAD_SCHEMA_VERSION,
         "generated_at": _isoformat(resolved_generated_at),
@@ -3427,11 +3436,15 @@ def build_paper_route_target_plan_payload(
         },
         "paper_route_probe": probe,
         "runtime_window_import_plan": next_targets,
+        "source_runtime_window_import_plan": source_targets,
         "next_paper_route_runtime_window_targets": next_targets,
         "summary": {
             "source_target_count": len(targets),
             "next_runtime_window_target_count": _safe_int(
                 next_targets.get("target_count")
+            ),
+            "source_runtime_window_target_count": _safe_int(
+                source_targets.get("target_count")
             ),
             "skipped_target_count": _safe_int(next_targets.get("skipped_target_count")),
             "promotion_authority": {

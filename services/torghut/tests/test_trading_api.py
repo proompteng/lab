@@ -7621,6 +7621,38 @@ class TestTradingApi(TestCase):
 
         self.assertEqual(plan["targets"][0]["candidate_id"], "c88421d619759b2cfaa6f4d0")
 
+    def test_paper_route_target_plan_from_payload_falls_back_to_source_plan(
+        self,
+    ) -> None:
+        plan = _paper_route_target_plan_from_payload(
+            {
+                "schema_version": "torghut.paper-route-target-plan.v1",
+                "runtime_window_import_plan": {
+                    "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                    "target_count": 0,
+                    "targets": [],
+                },
+                "source_runtime_window_import_plan": {
+                    "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                    "target_count": 1,
+                    "targets": [
+                        {
+                            "hypothesis_id": "H-PAIRS-01",
+                            "candidate_id": "candidate-source-scope",
+                            "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                        }
+                    ],
+                },
+                "next_paper_route_runtime_window_targets": {
+                    "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                    "target_count": 0,
+                    "targets": [],
+                },
+            }
+        )
+
+        self.assertEqual(plan["targets"][0]["candidate_id"], "candidate-source-scope")
+
     def test_paper_route_target_plan_from_payload_requires_targets(self) -> None:
         self.assertEqual(
             _paper_route_target_plan_from_payload(

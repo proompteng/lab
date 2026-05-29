@@ -278,6 +278,19 @@ class TestPaperRouteEvidenceAudit(TestCase):
             plan["account_pre_session_readiness"]["blockers"],
             ["paper_route_account_pre_session_snapshot_missing"],
         )
+        source_plan = payload["source_runtime_window_import_plan"]
+        self.assertEqual(source_plan["target_count"], 1)
+        self.assertEqual(
+            source_plan["targets"][0]["candidate_id"], "candidate-pre-session"
+        )
+        self.assertEqual(
+            source_plan["targets"][0]["paper_route_account_pre_session_blockers"],
+            ["paper_route_account_pre_session_snapshot_missing"],
+        )
+        self.assertEqual(
+            payload["summary"]["source_runtime_window_target_count"],
+            1,
+        )
 
     def test_runtime_ledger_diagnostic_expectancy_prefers_payload_value(self) -> None:
         row = StrategyRuntimeLedgerBucket(
