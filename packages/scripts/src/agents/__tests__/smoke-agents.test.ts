@@ -611,6 +611,29 @@ describe('synthesis autonomous trader provider', () => {
     expect(objectAt(parameters, 'premarketBootstrapMinutes')).toBe('15')
   })
 
+  it('schedules a post-close scorecard readback proof without broker mutations', () => {
+    const schedule = readYamlObjects(
+      'argocd/applications/synthesis/agents-domain/autonomous-trader-scorecard-readback-schedule.yaml',
+    ).find((manifest) => objectAt(manifest, 'kind') === 'Schedule')
+    const template = readYamlObjects(
+      'argocd/applications/synthesis/agents-domain/autonomous-trader-scorecard-readback-template.yaml',
+    ).find((manifest) => objectAt(manifest, 'kind') === 'AgentRun')
+    const scheduleSpec = objectAt(schedule, 'spec')
+    const templateSpec = objectAt(template, 'spec')
+    const parameters = objectAt(templateSpec, 'parameters')
+    const goal = objectAt(templateSpec, 'goal') as Record<string, unknown>
+    const secrets = objectAt(templateSpec, 'secrets') as unknown[]
+
+    expect(objectAt(scheduleSpec, 'cron')).toBe('20 16 * * 1-5')
+    expect(objectAt(scheduleSpec, 'timezone')).toBe('America/New_York')
+    expect(objectAt(objectAt(scheduleSpec, 'targetRef'), 'name')).toBe('autonomous-trader-scorecard-readback-template')
+    expect(objectAt(parameters, 'mode')).toBe('scorecard-readback')
+    expect(objectAt(goal, 'objective')).toContain('reads finalized Synthesis scorecards before candidate grading')
+    expect(Object.hasOwn(goal, 'tokenBudget')).toBe(false)
+    expect(secrets).toContain('synthesis-env')
+    expect(secrets).toContain('alpaca-mcp')
+  })
+
   it('preinstalls day-trading Python dependencies in the Codex runner image', () => {
     const dockerfile = readFileSync(resolve(process.cwd(), 'services/agents/Dockerfile.codex-runner'), 'utf8')
 
@@ -676,6 +699,14 @@ describe('synthesis autonomous trader provider', () => {
     expect(taskPrompt).toContain('b4d7485e106dc1197d293683e3413fe74dacd698')
     expect(taskPrompt).toContain('daytrading-scan')
     expect(taskPrompt).toContain('daytrading-validate-ticket')
+    expect(prompt).toContain('In scorecard-readback mode')
+    expect(prompt).toContain('call `autotrader_get_scorecard` before any scanner or candidate grading')
+    expect(prompt).toContain('scorecard_readback_complete')
+    expect(prompt).toContain('do not call Alpaca order submission, cancel, replace, or close-position tools')
+    expect(taskPrompt).toContain('`scorecard-readback`')
+    expect(taskPrompt).toContain('scorecard_readback_waiting_for_market_session')
+    expect(taskPrompt).toContain('scorecard_readback_complete')
+    expect(taskPrompt).toContain('do not call Alpaca order submission, cancel, replace, or close-position tools')
     expect(prompt).toContain('loop until market close, 500000 USD equity, or unrecoverable account/order state')
     expect(prompt).toContain('run exactly one bounded paper-order smoke before the first non-smoke trade')
     expect(prompt).toContain('persist a planned order with `autotrader_record_order` before the broker call')
