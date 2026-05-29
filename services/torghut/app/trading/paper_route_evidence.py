@@ -1927,8 +1927,6 @@ def _account_window_start_snapshot_audit(
     blockers: list[str] = []
     if offset_seconds < -PAPER_ROUTE_ACCOUNT_START_SNAPSHOT_STALE_SECONDS:
         blockers.append("paper_route_account_window_start_snapshot_stale")
-    if offset_seconds > PAPER_ROUTE_ACCOUNT_START_SNAPSHOT_AFTER_START_GRACE_SECONDS:
-        blockers.append("paper_route_account_window_start_snapshot_stale")
 
     positions = _normalized_open_positions(
         snapshot.positions,

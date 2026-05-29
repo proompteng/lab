@@ -23,7 +23,9 @@ from app.models import (
 )
 from app.trading.paper_route_evidence import (
     RUNTIME_LEDGER_PROOF_PACKET_HANDOFF_SCHEMA_VERSION,
+    _account_window_start_snapshot_audit,
     _next_regular_equities_session_window,
+    _normalized_open_positions,
     _paper_route_probe_summary,
     _runtime_ledger_row_diagnostic_expectancy_bps,
     build_paper_route_evidence_audit,
@@ -57,6 +59,73 @@ class TestPaperRouteEvidenceAudit(TestCase):
                 buying_power=Decimal("200000"),
                 positions=[],
             )
+        )
+
+    def test_normalized_open_positions_handles_flat_short_and_implicit_market_value(
+        self,
+    ) -> None:
+        positions = _normalized_open_positions(
+            [
+                {
+                    "symbol": "FLAT",
+                    "qty": "0",
+                    "market_value": "100",
+                },
+                {
+                    "symbol": "AAPL",
+                    "qty": "2",
+                    "side": "short",
+                    "avg_entry_price": "150",
+                },
+                {
+                    "symbol": "",
+                    "qty": "1",
+                    "market_value": "10",
+                },
+            ],
+            target_symbols={"AAPL"},
+        )
+
+        self.assertEqual(
+            positions,
+            [
+                {
+                    "symbol": "AAPL",
+                    "qty": "-2",
+                    "side": "short",
+                    "market_value": "300",
+                    "target_symbol": True,
+                }
+            ],
+        )
+
+    def test_account_window_start_snapshot_audit_blocks_stale_snapshot(self) -> None:
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            session.add(
+                PositionSnapshot(
+                    alpaca_account_label="TORGHUT_SIM",
+                    as_of=window_start - timedelta(minutes=16),
+                    equity=Decimal("100000"),
+                    cash=Decimal("100000"),
+                    buying_power=Decimal("200000"),
+                    positions=[],
+                )
+            )
+            session.commit()
+
+            audit = _account_window_start_snapshot_audit(
+                session,
+                account_label="TORGHUT_SIM",
+                symbols=["AAPL"],
+                window_start=window_start,
+            )
+
+        self.assertFalse(audit["flat"])
+        self.assertEqual(audit["snapshot_offset_seconds"], -960)
+        self.assertEqual(
+            audit["blockers"],
+            ["paper_route_account_window_start_snapshot_stale"],
         )
 
     def test_runtime_ledger_diagnostic_expectancy_prefers_payload_value(self) -> None:
