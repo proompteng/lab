@@ -161,6 +161,81 @@ class TestFlattenPaperAccountPositions(TestCase):
         self.assertFalse(client.cancelled)
         self.assertEqual(client.submitted, [])
 
+    def test_default_guardrail_can_unwind_dirty_paper_proof_account_shape(
+        self,
+    ) -> None:
+        client = FakeFlattenClient(
+            [
+                {
+                    "symbol": "AAPL",
+                    "qty": "-81",
+                    "side": "short",
+                    "market_value": "25264.710000",
+                },
+                {
+                    "symbol": "AMZN",
+                    "qty": "184",
+                    "side": "long",
+                    "market_value": "49961.520000",
+                },
+                {
+                    "symbol": "AMZN250530C00190000",
+                    "qty": "1",
+                    "side": "long",
+                    "market_value": "42.00",
+                },
+                {
+                    "symbol": "AMAT",
+                    "qty": "0.8761",
+                    "side": "long",
+                    "market_value": "396.65",
+                },
+                {
+                    "symbol": "INTC",
+                    "qty": "0.0477",
+                    "side": "long",
+                    "market_value": "5.90",
+                },
+                {
+                    "symbol": "MU",
+                    "qty": "0.0757",
+                    "side": "long",
+                    "market_value": "72.44",
+                },
+                {
+                    "symbol": "SPY",
+                    "qty": "0.00266",
+                    "side": "long",
+                    "market_value": "2.01",
+                },
+                {
+                    "symbol": "TSM",
+                    "qty": "0.3321",
+                    "side": "long",
+                    "market_value": "141.80",
+                },
+            ]
+        )
+
+        payload = flatten_paper_account_positions(
+            client=client,
+            account_label="TORGHUT_SIM",
+            expected_account_label="TORGHUT_SIM",
+            trading_mode="paper",
+            apply=True,
+            max_gross_market_value=flatten_script.DEFAULT_MAX_GROSS_MARKET_VALUE,
+            max_position_count=25,
+            generated_at=datetime(2026, 5, 29, 19, 50, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(payload["status"], "submitted")
+        self.assertEqual(payload["position_count"], 8)
+        self.assertEqual(payload["max_gross_market_value"], "100000")
+        self.assertTrue(client.cancelled)
+        self.assertEqual(payload["submitted_order_count"], 8)
+        self.assertEqual(client.submitted[0]["symbol"], "AAPL")
+        self.assertEqual(client.submitted[0]["side"], "buy")
+
     def test_normalizes_dirty_positions_and_refuses_position_count_above_limit(
         self,
     ) -> None:

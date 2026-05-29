@@ -872,6 +872,67 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("--max-batches 1", args)
         self.assertIn("--apply", args)
 
+    def test_paper_account_flatten_cronjob_can_clean_dirty_paper_proof_account(
+        self,
+    ) -> None:
+        spec, container = _load_cronjob_container(
+            "argocd/applications/torghut/paper-account-flatten-cronjob.yaml"
+        )
+
+        self.assertEqual(spec.get("schedule"), "5,20,35,50 19 * * 1-5")
+        self.assertEqual(spec.get("concurrencyPolicy"), "Forbid")
+        job_spec = cast(
+            Mapping[str, object],
+            cast(Mapping[str, object], spec.get("jobTemplate", {})).get("spec", {}),
+        )
+        template = cast(
+            Mapping[str, object],
+            cast(Mapping[str, object], job_spec.get("template", {})),
+        )
+        pod_spec = cast(Mapping[str, object], template.get("spec", {}))
+        self.assertEqual(job_spec.get("activeDeadlineSeconds"), 180)
+        self.assertEqual(pod_spec.get("serviceAccountName"), "torghut-runtime")
+        self.assertEqual(
+            pod_spec.get("nodeSelector"),
+            {"kubernetes.io/arch": "arm64"},
+        )
+        resources = cast(Mapping[str, object], container.get("resources", {}))
+        self.assertEqual(
+            resources,
+            {
+                "requests": {
+                    "cpu": "50m",
+                    "memory": "128Mi",
+                    "ephemeral-storage": "128Mi",
+                },
+                "limits": {
+                    "cpu": "250m",
+                    "memory": "256Mi",
+                    "ephemeral-storage": "512Mi",
+                },
+            },
+        )
+
+        env = {
+            item.get("name"): item
+            for item in cast(list[Mapping[str, object]], container.get("env", []))
+        }
+        self.assertEqual(env["TRADING_MODE"].get("value"), "paper")
+        self.assertEqual(env["TRADING_ACCOUNT_LABEL"].get("value"), "TORGHUT_SIM")
+        self.assertEqual(env["TRADING_KILL_SWITCH_ENABLED"].get("value"), "false")
+
+        args = "\n".join(str(item) for item in container.get("args", []))
+        self.assertIn("scripts/flatten_paper_account_positions.py", args)
+        self.assertIn("--account-label TORGHUT_SIM", args)
+        self.assertIn("--expected-account-label TORGHUT_SIM", args)
+        self.assertIn("--trading-mode paper", args)
+        self.assertIn("--paper-base-url https://paper-api.alpaca.markets", args)
+        self.assertIn("--max-gross-market-value 100000", args)
+        self.assertNotIn("--max-gross-market-value 2500", args)
+        self.assertIn("--max-position-count 25", args)
+        self.assertIn("--apply", args)
+        self.assertIn("--json", args)
+
     def test_empirical_promotion_renewal_imports_authoritative_sim_paper_plan_and_sim_db(
         self,
     ) -> None:
