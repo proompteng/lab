@@ -144,7 +144,7 @@ spec:
           - name: selectionOnly
           - name: persistResults
       container:
-        image: registry.ide-newton.ts.net/lab/torghut@sha256:81b8f0beda8bf644d252b26a4bcc728a49745996ce6a34d563adef05a9a11b37
+        image: registry.ide-newton.ts.net/lab/torghut@sha256:fd87f1be044e260e6eb46be3acb3de324cd4bc6c0c0cbdcb5b55c9aaed239acf
         imagePullPolicy: IfNotPresent
         command:
           - /bin/bash
