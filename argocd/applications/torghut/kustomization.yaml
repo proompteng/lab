@@ -36,6 +36,7 @@ resources:
   - empirical-promotion-renewal-cronjob.yaml
   - empirical-artifacts-retention-cronjob.yaml
   - execution-tca-refresh-cronjob.yaml
+  - paper-account-flatten-cronjob.yaml
   - whitepaper-autoresearch-workflowtemplate.yaml
   - empirical-promotion-workflowtemplate.yaml
   - historical-simulation-workflowtemplate.yaml
