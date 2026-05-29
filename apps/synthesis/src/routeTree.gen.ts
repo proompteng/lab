@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as McpRouteImport } from './routes/mcp'
+import { Route as AutotraderRouteImport } from './routes/autotrader'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as CompaniesSymbolRouteImport } from './routes/companies/$symbol'
 import { Route as ApiRunsRouteImport } from './routes/api/runs'
@@ -18,12 +19,28 @@ import { Route as ApiFeedRouteImport } from './routes/api/feed'
 import { Route as ApiItemsBatchRouteImport } from './routes/api/items/batch'
 import { Route as ApiItemsIdRouteImport } from './routes/api/items/$id'
 import { Route as ApiCompaniesSymbolRouteImport } from './routes/api/companies/$symbol'
+import { Route as ApiAutotraderTradeTicketsRouteImport } from './routes/api/autotrader/trade-tickets'
+import { Route as ApiAutotraderStatusRouteImport } from './routes/api/autotrader/status'
+import { Route as ApiAutotraderSessionsRouteImport } from './routes/api/autotrader/sessions'
+import { Route as ApiAutotraderScorecardsRouteImport } from './routes/api/autotrader/scorecards'
+import { Route as ApiAutotraderRiskChecksRouteImport } from './routes/api/autotrader/risk-checks'
+import { Route as ApiAutotraderPositionSnapshotsRouteImport } from './routes/api/autotrader/position-snapshots'
+import { Route as ApiAutotraderOrdersRouteImport } from './routes/api/autotrader/orders'
+import { Route as ApiAutotraderFinalizeRouteImport } from './routes/api/autotrader/finalize'
+import { Route as ApiAutotraderFillsRouteImport } from './routes/api/autotrader/fills'
+import { Route as ApiAutotraderEventsRouteImport } from './routes/api/autotrader/events'
 import { Route as ApiAssetsIdRouteImport } from './routes/api/assets/$id'
 import { Route as ApiItemsIdFeedbackRouteImport } from './routes/api/items/$id/feedback'
+import { Route as ApiAutotraderSessionsIdRouteImport } from './routes/api/autotrader/sessions/$id'
 
 const McpRoute = McpRouteImport.update({
   id: '/mcp',
   path: '/mcp',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AutotraderRoute = AutotraderRouteImport.update({
+  id: '/autotrader',
+  path: '/autotrader',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -66,6 +83,58 @@ const ApiCompaniesSymbolRoute = ApiCompaniesSymbolRouteImport.update({
   path: '/api/companies/$symbol',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiAutotraderTradeTicketsRoute =
+  ApiAutotraderTradeTicketsRouteImport.update({
+    id: '/api/autotrader/trade-tickets',
+    path: '/api/autotrader/trade-tickets',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiAutotraderStatusRoute = ApiAutotraderStatusRouteImport.update({
+  id: '/api/autotrader/status',
+  path: '/api/autotrader/status',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAutotraderSessionsRoute = ApiAutotraderSessionsRouteImport.update({
+  id: '/api/autotrader/sessions',
+  path: '/api/autotrader/sessions',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAutotraderScorecardsRoute = ApiAutotraderScorecardsRouteImport.update({
+  id: '/api/autotrader/scorecards',
+  path: '/api/autotrader/scorecards',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAutotraderRiskChecksRoute = ApiAutotraderRiskChecksRouteImport.update({
+  id: '/api/autotrader/risk-checks',
+  path: '/api/autotrader/risk-checks',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAutotraderPositionSnapshotsRoute =
+  ApiAutotraderPositionSnapshotsRouteImport.update({
+    id: '/api/autotrader/position-snapshots',
+    path: '/api/autotrader/position-snapshots',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiAutotraderOrdersRoute = ApiAutotraderOrdersRouteImport.update({
+  id: '/api/autotrader/orders',
+  path: '/api/autotrader/orders',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAutotraderFinalizeRoute = ApiAutotraderFinalizeRouteImport.update({
+  id: '/api/autotrader/finalize',
+  path: '/api/autotrader/finalize',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAutotraderFillsRoute = ApiAutotraderFillsRouteImport.update({
+  id: '/api/autotrader/fills',
+  path: '/api/autotrader/fills',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAutotraderEventsRoute = ApiAutotraderEventsRouteImport.update({
+  id: '/api/autotrader/events',
+  path: '/api/autotrader/events',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiAssetsIdRoute = ApiAssetsIdRouteImport.update({
   id: '/api/assets/$id',
   path: '/api/assets/$id',
@@ -76,97 +145,185 @@ const ApiItemsIdFeedbackRoute = ApiItemsIdFeedbackRouteImport.update({
   path: '/feedback',
   getParentRoute: () => ApiItemsIdRoute,
 } as any)
+const ApiAutotraderSessionsIdRoute = ApiAutotraderSessionsIdRouteImport.update({
+  id: '/$id',
+  path: '/$id',
+  getParentRoute: () => ApiAutotraderSessionsRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/autotrader': typeof AutotraderRoute
   '/mcp': typeof McpRoute
   '/api/feed': typeof ApiFeedRoute
   '/api/items': typeof ApiItemsRouteWithChildren
   '/api/runs': typeof ApiRunsRoute
   '/companies/$symbol': typeof CompaniesSymbolRoute
   '/api/assets/$id': typeof ApiAssetsIdRoute
+  '/api/autotrader/events': typeof ApiAutotraderEventsRoute
+  '/api/autotrader/fills': typeof ApiAutotraderFillsRoute
+  '/api/autotrader/finalize': typeof ApiAutotraderFinalizeRoute
+  '/api/autotrader/orders': typeof ApiAutotraderOrdersRoute
+  '/api/autotrader/position-snapshots': typeof ApiAutotraderPositionSnapshotsRoute
+  '/api/autotrader/risk-checks': typeof ApiAutotraderRiskChecksRoute
+  '/api/autotrader/scorecards': typeof ApiAutotraderScorecardsRoute
+  '/api/autotrader/sessions': typeof ApiAutotraderSessionsRouteWithChildren
+  '/api/autotrader/status': typeof ApiAutotraderStatusRoute
+  '/api/autotrader/trade-tickets': typeof ApiAutotraderTradeTicketsRoute
   '/api/companies/$symbol': typeof ApiCompaniesSymbolRoute
   '/api/items/$id': typeof ApiItemsIdRouteWithChildren
   '/api/items/batch': typeof ApiItemsBatchRoute
+  '/api/autotrader/sessions/$id': typeof ApiAutotraderSessionsIdRoute
   '/api/items/$id/feedback': typeof ApiItemsIdFeedbackRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/autotrader': typeof AutotraderRoute
   '/mcp': typeof McpRoute
   '/api/feed': typeof ApiFeedRoute
   '/api/items': typeof ApiItemsRouteWithChildren
   '/api/runs': typeof ApiRunsRoute
   '/companies/$symbol': typeof CompaniesSymbolRoute
   '/api/assets/$id': typeof ApiAssetsIdRoute
+  '/api/autotrader/events': typeof ApiAutotraderEventsRoute
+  '/api/autotrader/fills': typeof ApiAutotraderFillsRoute
+  '/api/autotrader/finalize': typeof ApiAutotraderFinalizeRoute
+  '/api/autotrader/orders': typeof ApiAutotraderOrdersRoute
+  '/api/autotrader/position-snapshots': typeof ApiAutotraderPositionSnapshotsRoute
+  '/api/autotrader/risk-checks': typeof ApiAutotraderRiskChecksRoute
+  '/api/autotrader/scorecards': typeof ApiAutotraderScorecardsRoute
+  '/api/autotrader/sessions': typeof ApiAutotraderSessionsRouteWithChildren
+  '/api/autotrader/status': typeof ApiAutotraderStatusRoute
+  '/api/autotrader/trade-tickets': typeof ApiAutotraderTradeTicketsRoute
   '/api/companies/$symbol': typeof ApiCompaniesSymbolRoute
   '/api/items/$id': typeof ApiItemsIdRouteWithChildren
   '/api/items/batch': typeof ApiItemsBatchRoute
+  '/api/autotrader/sessions/$id': typeof ApiAutotraderSessionsIdRoute
   '/api/items/$id/feedback': typeof ApiItemsIdFeedbackRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/autotrader': typeof AutotraderRoute
   '/mcp': typeof McpRoute
   '/api/feed': typeof ApiFeedRoute
   '/api/items': typeof ApiItemsRouteWithChildren
   '/api/runs': typeof ApiRunsRoute
   '/companies/$symbol': typeof CompaniesSymbolRoute
   '/api/assets/$id': typeof ApiAssetsIdRoute
+  '/api/autotrader/events': typeof ApiAutotraderEventsRoute
+  '/api/autotrader/fills': typeof ApiAutotraderFillsRoute
+  '/api/autotrader/finalize': typeof ApiAutotraderFinalizeRoute
+  '/api/autotrader/orders': typeof ApiAutotraderOrdersRoute
+  '/api/autotrader/position-snapshots': typeof ApiAutotraderPositionSnapshotsRoute
+  '/api/autotrader/risk-checks': typeof ApiAutotraderRiskChecksRoute
+  '/api/autotrader/scorecards': typeof ApiAutotraderScorecardsRoute
+  '/api/autotrader/sessions': typeof ApiAutotraderSessionsRouteWithChildren
+  '/api/autotrader/status': typeof ApiAutotraderStatusRoute
+  '/api/autotrader/trade-tickets': typeof ApiAutotraderTradeTicketsRoute
   '/api/companies/$symbol': typeof ApiCompaniesSymbolRoute
   '/api/items/$id': typeof ApiItemsIdRouteWithChildren
   '/api/items/batch': typeof ApiItemsBatchRoute
+  '/api/autotrader/sessions/$id': typeof ApiAutotraderSessionsIdRoute
   '/api/items/$id/feedback': typeof ApiItemsIdFeedbackRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/autotrader'
     | '/mcp'
     | '/api/feed'
     | '/api/items'
     | '/api/runs'
     | '/companies/$symbol'
     | '/api/assets/$id'
+    | '/api/autotrader/events'
+    | '/api/autotrader/fills'
+    | '/api/autotrader/finalize'
+    | '/api/autotrader/orders'
+    | '/api/autotrader/position-snapshots'
+    | '/api/autotrader/risk-checks'
+    | '/api/autotrader/scorecards'
+    | '/api/autotrader/sessions'
+    | '/api/autotrader/status'
+    | '/api/autotrader/trade-tickets'
     | '/api/companies/$symbol'
     | '/api/items/$id'
     | '/api/items/batch'
+    | '/api/autotrader/sessions/$id'
     | '/api/items/$id/feedback'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/autotrader'
     | '/mcp'
     | '/api/feed'
     | '/api/items'
     | '/api/runs'
     | '/companies/$symbol'
     | '/api/assets/$id'
+    | '/api/autotrader/events'
+    | '/api/autotrader/fills'
+    | '/api/autotrader/finalize'
+    | '/api/autotrader/orders'
+    | '/api/autotrader/position-snapshots'
+    | '/api/autotrader/risk-checks'
+    | '/api/autotrader/scorecards'
+    | '/api/autotrader/sessions'
+    | '/api/autotrader/status'
+    | '/api/autotrader/trade-tickets'
     | '/api/companies/$symbol'
     | '/api/items/$id'
     | '/api/items/batch'
+    | '/api/autotrader/sessions/$id'
     | '/api/items/$id/feedback'
   id:
     | '__root__'
     | '/'
+    | '/autotrader'
     | '/mcp'
     | '/api/feed'
     | '/api/items'
     | '/api/runs'
     | '/companies/$symbol'
     | '/api/assets/$id'
+    | '/api/autotrader/events'
+    | '/api/autotrader/fills'
+    | '/api/autotrader/finalize'
+    | '/api/autotrader/orders'
+    | '/api/autotrader/position-snapshots'
+    | '/api/autotrader/risk-checks'
+    | '/api/autotrader/scorecards'
+    | '/api/autotrader/sessions'
+    | '/api/autotrader/status'
+    | '/api/autotrader/trade-tickets'
     | '/api/companies/$symbol'
     | '/api/items/$id'
     | '/api/items/batch'
+    | '/api/autotrader/sessions/$id'
     | '/api/items/$id/feedback'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AutotraderRoute: typeof AutotraderRoute
   McpRoute: typeof McpRoute
   ApiFeedRoute: typeof ApiFeedRoute
   ApiItemsRoute: typeof ApiItemsRouteWithChildren
   ApiRunsRoute: typeof ApiRunsRoute
   CompaniesSymbolRoute: typeof CompaniesSymbolRoute
   ApiAssetsIdRoute: typeof ApiAssetsIdRoute
+  ApiAutotraderEventsRoute: typeof ApiAutotraderEventsRoute
+  ApiAutotraderFillsRoute: typeof ApiAutotraderFillsRoute
+  ApiAutotraderFinalizeRoute: typeof ApiAutotraderFinalizeRoute
+  ApiAutotraderOrdersRoute: typeof ApiAutotraderOrdersRoute
+  ApiAutotraderPositionSnapshotsRoute: typeof ApiAutotraderPositionSnapshotsRoute
+  ApiAutotraderRiskChecksRoute: typeof ApiAutotraderRiskChecksRoute
+  ApiAutotraderScorecardsRoute: typeof ApiAutotraderScorecardsRoute
+  ApiAutotraderSessionsRoute: typeof ApiAutotraderSessionsRouteWithChildren
+  ApiAutotraderStatusRoute: typeof ApiAutotraderStatusRoute
+  ApiAutotraderTradeTicketsRoute: typeof ApiAutotraderTradeTicketsRoute
   ApiCompaniesSymbolRoute: typeof ApiCompaniesSymbolRoute
 }
 
@@ -177,6 +334,13 @@ declare module '@tanstack/react-router' {
       path: '/mcp'
       fullPath: '/mcp'
       preLoaderRoute: typeof McpRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/autotrader': {
+      id: '/autotrader'
+      path: '/autotrader'
+      fullPath: '/autotrader'
+      preLoaderRoute: typeof AutotraderRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -235,6 +399,76 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiCompaniesSymbolRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/autotrader/trade-tickets': {
+      id: '/api/autotrader/trade-tickets'
+      path: '/api/autotrader/trade-tickets'
+      fullPath: '/api/autotrader/trade-tickets'
+      preLoaderRoute: typeof ApiAutotraderTradeTicketsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/autotrader/status': {
+      id: '/api/autotrader/status'
+      path: '/api/autotrader/status'
+      fullPath: '/api/autotrader/status'
+      preLoaderRoute: typeof ApiAutotraderStatusRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/autotrader/sessions': {
+      id: '/api/autotrader/sessions'
+      path: '/api/autotrader/sessions'
+      fullPath: '/api/autotrader/sessions'
+      preLoaderRoute: typeof ApiAutotraderSessionsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/autotrader/scorecards': {
+      id: '/api/autotrader/scorecards'
+      path: '/api/autotrader/scorecards'
+      fullPath: '/api/autotrader/scorecards'
+      preLoaderRoute: typeof ApiAutotraderScorecardsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/autotrader/risk-checks': {
+      id: '/api/autotrader/risk-checks'
+      path: '/api/autotrader/risk-checks'
+      fullPath: '/api/autotrader/risk-checks'
+      preLoaderRoute: typeof ApiAutotraderRiskChecksRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/autotrader/position-snapshots': {
+      id: '/api/autotrader/position-snapshots'
+      path: '/api/autotrader/position-snapshots'
+      fullPath: '/api/autotrader/position-snapshots'
+      preLoaderRoute: typeof ApiAutotraderPositionSnapshotsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/autotrader/orders': {
+      id: '/api/autotrader/orders'
+      path: '/api/autotrader/orders'
+      fullPath: '/api/autotrader/orders'
+      preLoaderRoute: typeof ApiAutotraderOrdersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/autotrader/finalize': {
+      id: '/api/autotrader/finalize'
+      path: '/api/autotrader/finalize'
+      fullPath: '/api/autotrader/finalize'
+      preLoaderRoute: typeof ApiAutotraderFinalizeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/autotrader/fills': {
+      id: '/api/autotrader/fills'
+      path: '/api/autotrader/fills'
+      fullPath: '/api/autotrader/fills'
+      preLoaderRoute: typeof ApiAutotraderFillsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/autotrader/events': {
+      id: '/api/autotrader/events'
+      path: '/api/autotrader/events'
+      fullPath: '/api/autotrader/events'
+      preLoaderRoute: typeof ApiAutotraderEventsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/assets/$id': {
       id: '/api/assets/$id'
       path: '/api/assets/$id'
@@ -248,6 +482,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/api/items/$id/feedback'
       preLoaderRoute: typeof ApiItemsIdFeedbackRouteImport
       parentRoute: typeof ApiItemsIdRoute
+    }
+    '/api/autotrader/sessions/$id': {
+      id: '/api/autotrader/sessions/$id'
+      path: '/$id'
+      fullPath: '/api/autotrader/sessions/$id'
+      preLoaderRoute: typeof ApiAutotraderSessionsIdRouteImport
+      parentRoute: typeof ApiAutotraderSessionsRoute
     }
   }
 }
@@ -278,14 +519,38 @@ const ApiItemsRouteWithChildren = ApiItemsRoute._addFileChildren(
   ApiItemsRouteChildren,
 )
 
+interface ApiAutotraderSessionsRouteChildren {
+  ApiAutotraderSessionsIdRoute: typeof ApiAutotraderSessionsIdRoute
+}
+
+const ApiAutotraderSessionsRouteChildren: ApiAutotraderSessionsRouteChildren = {
+  ApiAutotraderSessionsIdRoute: ApiAutotraderSessionsIdRoute,
+}
+
+const ApiAutotraderSessionsRouteWithChildren =
+  ApiAutotraderSessionsRoute._addFileChildren(
+    ApiAutotraderSessionsRouteChildren,
+  )
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AutotraderRoute: AutotraderRoute,
   McpRoute: McpRoute,
   ApiFeedRoute: ApiFeedRoute,
   ApiItemsRoute: ApiItemsRouteWithChildren,
   ApiRunsRoute: ApiRunsRoute,
   CompaniesSymbolRoute: CompaniesSymbolRoute,
   ApiAssetsIdRoute: ApiAssetsIdRoute,
+  ApiAutotraderEventsRoute: ApiAutotraderEventsRoute,
+  ApiAutotraderFillsRoute: ApiAutotraderFillsRoute,
+  ApiAutotraderFinalizeRoute: ApiAutotraderFinalizeRoute,
+  ApiAutotraderOrdersRoute: ApiAutotraderOrdersRoute,
+  ApiAutotraderPositionSnapshotsRoute: ApiAutotraderPositionSnapshotsRoute,
+  ApiAutotraderRiskChecksRoute: ApiAutotraderRiskChecksRoute,
+  ApiAutotraderScorecardsRoute: ApiAutotraderScorecardsRoute,
+  ApiAutotraderSessionsRoute: ApiAutotraderSessionsRouteWithChildren,
+  ApiAutotraderStatusRoute: ApiAutotraderStatusRoute,
+  ApiAutotraderTradeTicketsRoute: ApiAutotraderTradeTicketsRoute,
   ApiCompaniesSymbolRoute: ApiCompaniesSymbolRoute,
 }
 export const routeTree = rootRouteImport

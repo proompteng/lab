@@ -1,4 +1,4 @@
-export const synthesisSidebarItems = ['Feed'] as const
+export const synthesisSidebarItems = ['Feed', 'Autotrader'] as const
 export const synthesisHasCurateAction = false
 export const synthesisHasBottomLeftCounter = false
 export const synthesisSearchInputClassName =
