@@ -1,0 +1,15 @@
+apiVersion: schedules.proompteng.ai/v1alpha1
+kind: Schedule
+metadata:
+  name: autonomous-trader-scorecard-readback
+  namespace: synthesis
+  labels:
+    app.kubernetes.io/part-of: synthesis
+    app.kubernetes.io/component: autonomous-trader
+spec:
+  cron: "20 16 * * 1-5"
+  timezone: America/New_York
+  targetRef:
+    apiVersion: agents.proompteng.ai/v1alpha1
+    kind: AgentRun
+    name: autonomous-trader-scorecard-readback-template
