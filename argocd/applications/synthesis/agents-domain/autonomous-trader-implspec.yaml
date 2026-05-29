@@ -52,7 +52,8 @@ spec:
        - Call `autotrader_start_session` before scanning and persist its returned `sessionId`.
     3. Mode handling:
        - `dry-run`: perform bootstrap, read-only Alpaca preflight, Synthesis scorecard read, one scanner/ticket validation pass, blocked/no-trade decision recording, risk recording, status/event writes, and `autotrader_finalize_session`; do not call Alpaca order submission, cancel, replace, or close-position tools; finish with terminal_reason `dry_run_complete`.
-       - In `dry-run`, finalize the autotrader session immediately after ticket/risk/status writes; do not spend extra cycles optimizing wording, retrying feed posts, or waiting for market state.
+       - In `dry-run`, finalize the autotrader session immediately after ticket/risk/status writes; write only the required output files and exit the AgentRun.
+       - After `autotrader_finalize_session` succeeds in `dry-run`, do not run completion audits, inspect PR/CI state, re-read scorecards, retry visibility, optimize wording, wait for market state, or perform any further analysis.
        - `preflight`: perform readiness checks and, only if safe, one tiny non-marketable paper bracket or OTO stock order proof that is verified by id/client id and canceled; if Alpaca rejects or blocks it, record the exact request and reason.
        - `market-open`: wait for the market to open, then run an intraday loop until market close, equity is at least 500000 USD, or account/order state becomes unrecoverable.
     4. Each market-open cycle:

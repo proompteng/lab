@@ -185,18 +185,31 @@ spec:
         fi
 
         analysis_python="${python_bin}"
+        install_method="pythonpath"
         rm -rf "${artifact_dir}/analysis-venv"
-        if "${python_bin}" -m venv "${artifact_dir}/analysis-venv"; then
-          # shellcheck disable=SC1091
-          source "${artifact_dir}/analysis-venv/bin/activate"
-          python -m pip install --upgrade pip
-          python -m pip install -e "${analysis_dir}[daytrading]"
-          analysis_python="python"
-        else
+        if command -v uv >/dev/null 2>&1; then
+          if uv venv --seed --python "${python_bin}" "${artifact_dir}/analysis-venv"; then
+            uv pip install --python "${artifact_dir}/analysis-venv/bin/python" -e "${analysis_dir}[daytrading]"
+            analysis_python="${artifact_dir}/analysis-venv/bin/python"
+            install_method="uv-venv"
+          else
+            printf 'analysis bootstrap warning: uv venv unavailable, trying python venv\n' >&2
+            rm -rf "${artifact_dir}/analysis-venv"
+          fi
+        fi
+        if [ "${install_method}" = "pythonpath" ] && "${python_bin}" -m venv "${artifact_dir}/analysis-venv"; then
+          "${artifact_dir}/analysis-venv/bin/python" -m pip install --upgrade pip
+          "${artifact_dir}/analysis-venv/bin/python" -m pip install -e "${analysis_dir}[daytrading]"
+          analysis_python="${artifact_dir}/analysis-venv/bin/python"
+          install_method="python-venv"
+        elif [ "${install_method}" = "pythonpath" ]; then
           printf 'analysis bootstrap warning: venv unavailable, continuing with PYTHONPATH source checkout\n' >&2
           if "${python_bin}" -m pip --version >/dev/null 2>&1; then
-            "${python_bin}" -m pip install --user -e "${analysis_dir}[daytrading]" || \
+            if "${python_bin}" -m pip install --user --break-system-packages -e "${analysis_dir}[daytrading]"; then
+              install_method="pip-user-break-system-packages"
+            else
               printf 'analysis bootstrap warning: user install failed, continuing with PYTHONPATH\n' >&2
+            fi
           fi
         fi
 
@@ -211,8 +224,8 @@ spec:
         PYTHONPATH="${analysis_dir}/src" "${analysis_python}" -m stock_analysis daytrading-validate-context \
           "${artifact_dir}/analysis-context.json"
 
-        printf '{"ok":true,"analysis_head":"%s","required_commit":"%s","context_path":"%s"}\n' \
-          "${analysis_head}" "${required_commit}" "${artifact_dir}/analysis-context.json" \
+        printf '{"ok":true,"analysis_head":"%s","required_commit":"%s","context_path":"%s","install_method":"%s"}\n' \
+          "${analysis_head}" "${required_commit}" "${artifact_dir}/analysis-context.json" "${install_method}" \
           > "${artifact_dir}/analysis-bootstrap.json"
     - path: /root/alpaca-mcp-stdio-bridge.py
       content: |-
