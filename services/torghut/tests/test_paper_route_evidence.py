@@ -24,6 +24,7 @@ from app.trading.paper_route_evidence import (
     RUNTIME_LEDGER_PROOF_PACKET_HANDOFF_SCHEMA_VERSION,
     _next_regular_equities_session_window,
     _paper_route_probe_summary,
+    _runtime_ledger_row_diagnostic_expectancy_bps,
     build_paper_route_evidence_audit,
 )
 
@@ -37,6 +38,73 @@ class TestPaperRouteEvidenceAudit(TestCase):
             poolclass=StaticPool,
         )
         Base.metadata.create_all(self.engine)
+
+    def test_runtime_ledger_diagnostic_expectancy_prefers_payload_value(self) -> None:
+        row = StrategyRuntimeLedgerBucket(
+            run_id="diagnostic-runtime-ledger-run",
+            candidate_id="candidate-diagnostic",
+            hypothesis_id="H-DIAGNOSTIC",
+            observed_stage="paper",
+            bucket_started_at=datetime(2026, 5, 28, 14, 30, tzinfo=timezone.utc),
+            bucket_ended_at=datetime(2026, 5, 28, 15, 30, tzinfo=timezone.utc),
+            account_label="TORGHUT_SIM",
+            runtime_strategy_name="diagnostic-strategy",
+            strategy_family="microbar_pairs",
+            fill_count=2,
+            decision_count=1,
+            submitted_order_count=1,
+            closed_trade_count=0,
+            open_position_count=1,
+            filled_notional=Decimal("1000"),
+            gross_strategy_pnl=Decimal("20"),
+            cost_amount=Decimal("1"),
+            net_strategy_pnl_after_costs=Decimal("19"),
+            post_cost_expectancy_bps=None,
+            ledger_schema_version="torghut.runtime-ledger-bucket.v1",
+            pnl_basis="realized_strategy_pnl_after_explicit_costs",
+            execution_policy_hash_counts={"policy-a": 1},
+            cost_model_hash_counts={"cost-a": 1},
+            lineage_hash_counts={"lineage-a": 1},
+            blockers_json=["unclosed_position"],
+            payload_json={"diagnostic_closed_trade_expectancy_bps": "12.5"},
+        )
+
+        self.assertEqual(
+            _runtime_ledger_row_diagnostic_expectancy_bps(row),
+            Decimal("12.5"),
+        )
+
+    def test_runtime_ledger_diagnostic_expectancy_requires_closed_trade(self) -> None:
+        row = StrategyRuntimeLedgerBucket(
+            run_id="diagnostic-runtime-ledger-run",
+            candidate_id="candidate-diagnostic",
+            hypothesis_id="H-DIAGNOSTIC",
+            observed_stage="paper",
+            bucket_started_at=datetime(2026, 5, 28, 14, 30, tzinfo=timezone.utc),
+            bucket_ended_at=datetime(2026, 5, 28, 15, 30, tzinfo=timezone.utc),
+            account_label="TORGHUT_SIM",
+            runtime_strategy_name="diagnostic-strategy",
+            strategy_family="microbar_pairs",
+            fill_count=1,
+            decision_count=1,
+            submitted_order_count=1,
+            closed_trade_count=0,
+            open_position_count=1,
+            filled_notional=Decimal("1000"),
+            gross_strategy_pnl=Decimal("20"),
+            cost_amount=Decimal("1"),
+            net_strategy_pnl_after_costs=Decimal("19"),
+            post_cost_expectancy_bps=None,
+            ledger_schema_version="torghut.runtime-ledger-bucket.v1",
+            pnl_basis="realized_strategy_pnl_after_explicit_costs",
+            execution_policy_hash_counts={"policy-a": 1},
+            cost_model_hash_counts={"cost-a": 1},
+            lineage_hash_counts={"lineage-a": 1},
+            blockers_json=["closed_round_trip_missing"],
+            payload_json={},
+        )
+
+        self.assertIsNone(_runtime_ledger_row_diagnostic_expectancy_bps(row))
 
     def test_next_paper_route_window_stays_on_current_session_for_import(
         self,
