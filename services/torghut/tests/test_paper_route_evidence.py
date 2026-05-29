@@ -436,6 +436,45 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(import_audit["counts"]["source_plan_target_count"], 2)
         self.assertEqual(import_audit["counts"]["selected_target_count"], 1)
         self.assertEqual(import_audit["counts"]["next_runtime_window_target_count"], 1)
+        summary = payload["summary"]
+        self.assertEqual(summary["next_runtime_window_target_count"], 1)
+        self.assertEqual(summary["next_runtime_window_selected_target_count"], 1)
+        self.assertEqual(
+            summary["next_runtime_window_target_with_source_activity_count"],
+            0,
+        )
+        self.assertEqual(
+            summary["next_runtime_window_target_with_runtime_ledger_count"],
+            0,
+        )
+        self.assertEqual(
+            summary["next_runtime_window_import_next_action"],
+            "wait_for_regular_session_open",
+        )
+        self.assertEqual(len(summary["next_paper_route_targets"]), 1)
+        summary_target = summary["next_paper_route_targets"][0]
+        self.assertEqual(summary_target["candidate_id"], "candidate-paper-route")
+        self.assertEqual(summary_target["hypothesis_id"], "H-PAPER-ROUTE")
+        self.assertEqual(
+            summary_target["runtime_strategy_id"],
+            "paper-route-candidate-v1",
+        )
+        self.assertEqual(summary_target["symbols"], ["AAPL"])
+        self.assertEqual(
+            summary_target["session_start"],
+            "2026-05-26T13:30:00+00:00",
+        )
+        self.assertEqual(
+            summary_target["session_end"],
+            "2026-05-26T20:00:00+00:00",
+        )
+        self.assertFalse(summary_target["import_ready"])
+        self.assertEqual(
+            summary_target["import_blockers"],
+            ["paper_route_session_window_not_open"],
+        )
+        self.assertFalse(summary_target["promotion_allowed"])
+        self.assertTrue(summary_target["promotion_blocked"])
         self.assertEqual(
             import_audit["diagnostics"]["target_blockers_effective_when"],
             "runtime_window_import_ready",
