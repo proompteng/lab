@@ -19,7 +19,7 @@ spec:
   acceptanceCriteria:
     - Operate as a day-trading AgentRun for the Alpaca paper account only.
     - Verify Alpaca MCP account, clock, market data, order, and instrument tools before any order call.
-    - Bootstrap and validate the private analysis repo before any market-open order.
+    - Bootstrap and validate the full private analysis repo before any market-open order.
     - Start before the regular open so dependency/context validation is complete before execution hours.
     - Start a Synthesis autotrader session and use autotrader MCP/API tools as canonical runtime state.
     - Read Synthesis scorecards before grading new candidates and finalize every session with scorecard observations.
@@ -43,6 +43,8 @@ spec:
     Execution contract:
     1. Bootstrap analysis before any market-open order:
        - Run `/usr/bin/env bash /root/bootstrap-analysis-daytrading.sh`.
+       - Treat `/workspace/analysis` as the full analysis repo checkout and primary local knowledge base. Use its docs, data, source, examples, and tools directly when useful.
+       - Do not spend market-session time copying, pruning, reshaping, summarizing, or rebuilding a separate subset of the analysis repo. Keep the repo whole; use the `stock_analysis` wrapper only as a convenience for the packaged day-trading commands.
        - Read `/workspace/analysis/docs/daytrading-agent-bootstrap.md`.
        - Require analysis commit `b4d7485e106dc1197d293683e3413fe74dacd698` or newer.
        - Produce valid `/workspace/.agentrun/autonomous-trader/analysis-context.json` and `/workspace/.agentrun/autonomous-trader/analysis-bootstrap.json`.
