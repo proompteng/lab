@@ -51,7 +51,7 @@
     "@proompteng/temporal-bun-sdk": "workspace:*",
     "@tabler/icons-react": "3.42.0",
     "@tailwindcss/vite": "4.2.4",
-    "@tanstack/react-router": "1.169.1",
+    "@tanstack/react-router": "1.170.8",
     "@tanstack/react-router-devtools": "1.166.13",
     "@xterm/addon-canvas": "^0.7.0",
     "@xterm/addon-clipboard": "^0.2.0",
