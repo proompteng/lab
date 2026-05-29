@@ -54,6 +54,20 @@ describe('torghut build-push workflow', () => {
     expect(installStep).toBeGreaterThan(cachePath)
   })
 
+  it('authenticates changed-file planner GitHub API calls', () => {
+    const changesJob = ciWorkflow.indexOf('changes:')
+    const tokenEnv = ciWorkflow.indexOf('GH_TOKEN: ${{ github.token }}', changesJob)
+    const authHeader = ciWorkflow.indexOf('-H "Authorization: Bearer ${GH_TOKEN}"', tokenEnv)
+    const prFilesCall = ciWorkflow.indexOf('/pulls/${PR_NUMBER}/files?per_page=100&page=${page}', authHeader)
+    const compareCall = ciWorkflow.indexOf('/compare/${BEFORE_SHA}...${HEAD_SHA}', authHeader)
+
+    expect(changesJob).toBeGreaterThan(-1)
+    expect(tokenEnv).toBeGreaterThan(changesJob)
+    expect(authHeader).toBeGreaterThan(tokenEnv)
+    expect(prFilesCall).toBeGreaterThan(authHeader)
+    expect(compareCall).toBeGreaterThan(authHeader)
+  })
+
   it('does not cancel main source CI that release promotion must verify', () => {
     expect(ciWorkflow).toContain(
       "group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.sha }}",
