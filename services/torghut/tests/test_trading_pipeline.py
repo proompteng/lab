@@ -4729,7 +4729,7 @@ class TestTradingPipeline(TestCase):
         config.settings.trading_simple_submit_enabled = True
         config.settings.trading_fractional_equities_enabled = True
         config.settings.trading_simple_paper_route_probe_enabled = True
-        config.settings.trading_simple_paper_route_probe_max_notional = 100.0
+        config.settings.trading_simple_paper_route_probe_max_notional = 1000.0
         config.settings.trading_paper_route_target_plan_url = "http://torghut.test/plan"
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
@@ -4764,7 +4764,7 @@ class TestTradingPipeline(TestCase):
             "source_kind": "paper_route_probe_runtime_observed",
             "source_manifest_ref": "config/trading/hypotheses/h-paper-route.json",
             "paper_route_probe_symbols": ["AAPL"],
-            "paper_route_probe_next_session_max_notional": "25",
+            "paper_route_probe_next_session_max_notional": "250",
             "paper_route_probe_window_start": window_start.isoformat(),
             "paper_route_probe_window_end": window_end.isoformat(),
             "exit_minute_after_open": "120",
@@ -4825,7 +4825,7 @@ class TestTradingPipeline(TestCase):
 
         self.assertEqual(len(alpaca_client.submitted), 1)
         self.assertEqual(alpaca_client.submitted[0]["side"], "buy")
-        self.assertEqual(alpaca_client.submitted[0]["qty"], "0.25")
+        self.assertEqual(alpaca_client.submitted[0]["qty"], "2.5")
         with self.session_local() as session:
             decisions = list(session.execute(select(TradeDecision)).scalars())
             executions = list(session.execute(select(Execution)).scalars())
@@ -4863,7 +4863,7 @@ class TestTradingPipeline(TestCase):
             self.assertFalse(params["profit_proof_eligible"])
             self.assertFalse(params["promotion_allowed"])
             self.assertFalse(params["final_promotion_authorized"])
-            self.assertEqual(paper_route_probe["max_notional"], "25")
+            self.assertEqual(paper_route_probe["max_notional"], "250")
             self.assertTrue(paper_route_probe["target_source_authorized"])
             self.assertEqual(
                 paper_route_probe["source_decision_mode"], "route_acquisition_probe"
@@ -4874,7 +4874,9 @@ class TestTradingPipeline(TestCase):
                 paper_route_probe["exit_due_at"],
                 "2026-05-26T15:30:00+00:00",
             )
-            self.assertEqual(paper_route_probe["capped_qty"], "0.2500")
+            self.assertEqual(paper_route_probe["capped_qty"], "2.5000")
+            self.assertEqual(paper_route_probe["capped_notional"], "250.000000")
+            self.assertTrue(paper_route_probe["target_source_notional_sized"])
 
     def test_simple_pipeline_signal_cycle_still_generates_target_plan_source_decision(
         self,

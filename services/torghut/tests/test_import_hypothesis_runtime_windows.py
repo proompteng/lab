@@ -136,6 +136,7 @@ class _FakeCursor:
             [
                 (
                     datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 15, 5, tzinfo=timezone.utc),
                     Decimal("1.25"),
                     Decimal("0.50"),
                     "decision-sha",
@@ -2765,6 +2766,14 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(tca_rows[0]["abs_slippage_bps"], Decimal("1.25"))
         self.assertEqual(tca_rows[0]["post_cost_expectancy_bps"], Decimal("0.50"))
         self.assertEqual(
+            tca_rows[0]["computed_at"],
+            datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+        )
+        self.assertEqual(
+            tca_rows[0]["tca_computed_at"],
+            datetime(2026, 3, 6, 15, 5, tzinfo=timezone.utc),
+        )
+        self.assertEqual(
             tca_rows[0]["post_cost_expectancy_basis"], POST_COST_BASIS_TCA_PROXY
         )
         self.assertEqual(tca_rows[0]["post_cost_promotion_eligible"], False)
@@ -2801,13 +2810,18 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertIn("coalesce(oe.event_ts, oe.created_at) < %s", order_event_query)
         self.assertNotIn("and d.created_at >= %s", order_event_query)
         self.assertNotIn("and d.created_at < %s", order_event_query)
-        self.assertIn("select\n                    t.computed_at", tca_query)
+        self.assertIn("as execution_event_at", tca_query)
+        self.assertIn("t.computed_at as tca_computed_at", tca_query)
         self.assertIn(
             "coalesce(t.alpaca_account_label, e.alpaca_account_label, d.alpaca_account_label) = %s",
             tca_query,
         )
-        self.assertIn("t.computed_at >= %s", tca_query)
-        self.assertIn("t.computed_at < %s", tca_query)
+        self.assertIn("e.order_feed_last_event_ts", tca_query)
+        self.assertIn("e.last_update_at", tca_query)
+        self.assertIn("e.updated_at", tca_query)
+        self.assertIn("e.created_at", tca_query)
+        self.assertNotIn("t.computed_at >= %s", tca_query)
+        self.assertNotIn("t.computed_at < %s", tca_query)
         self.assertNotIn("and d.created_at >= %s", tca_query)
         self.assertNotIn("and d.created_at < %s", tca_query)
         self.assertEqual(diagnostics["decision_rows_before_lineage_filter"], 1)
@@ -3079,6 +3093,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             [
                 (
                     datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 15, 5, tzinfo=timezone.utc),
                     Decimal("1.25"),
                     Decimal("0.50"),
                     "decision-matched",
@@ -3086,6 +3101,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 ),
                 (
                     datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 15, 6, tzinfo=timezone.utc),
                     Decimal("9.99"),
                     Decimal("-9.99"),
                     "decision-unscoped",

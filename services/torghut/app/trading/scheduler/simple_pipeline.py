@@ -2672,7 +2672,8 @@ class SimpleTradingPipeline(TradingPipeline):
         )
         if capped_qty <= 0:
             return False
-        if decision.qty > 0:
+        target_source_authorized = bool(context.get("target_source_authorized"))
+        if decision.qty > 0 and not target_source_authorized:
             capped_qty = min(decision.qty, capped_qty)
 
         capped_notional = capped_qty * price
@@ -2681,6 +2682,8 @@ class SimpleTradingPipeline(TradingPipeline):
         simple_lane["final_qty"] = str(capped_qty)
         simple_lane["notional"] = str(capped_notional)
         simple_lane["paper_route_probe_cap_applied"] = True
+        if target_source_authorized:
+            simple_lane["target_source_notional_sized"] = True
         params["simple_lane"] = simple_lane
         params["paper_route_probe"] = {
             **dict(context),
@@ -2688,6 +2691,7 @@ class SimpleTradingPipeline(TradingPipeline):
             "capped_qty": str(capped_qty),
             "capped_notional": str(capped_notional),
             "capital_stage": str(proof_floor.get("capital_state") or "zero_notional"),
+            "target_source_notional_sized": target_source_authorized,
         }
         decision.qty = capped_qty
         decision.params = params
