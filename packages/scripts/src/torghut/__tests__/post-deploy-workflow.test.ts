@@ -50,7 +50,16 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).toContain('TORGHUT_READYZ_HTTP_STATUS')
     expect(workflow).toContain('TORGHUT_READYZ_PAYLOAD="${EVIDENCE_DIR}/torghut-readyz.json"')
     expect(workflow).toContain('bun run packages/scripts/src/torghut/post-deploy-evidence.ts')
-    expect(workflow).not.toContain('expected 2xx')
+    expect(workflow).not.toContain('Torghut /readyz returned HTTP')
+  })
+
+  it('retries Knative service JSON evidence capture before invoking the validator', () => {
+    expect(workflow).toContain('fetch_json()')
+    expect(workflow).toContain('python3 -m json.tool "${output_path}"')
+    expect(workflow).toContain('not usable JSON yet; retrying')
+    expect(workflow).toContain('fetch_json_2xx')
+    expect(workflow).toContain('Torghut sim /trading/paper-route-evidence')
+    expect(workflow).not.toContain('curl -fsS http://torghut.torghut.svc.cluster.local/trading/status')
   })
 
   it('verifies torghut-sim paper-route target mirroring after deploy', () => {

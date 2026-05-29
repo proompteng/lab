@@ -235,9 +235,54 @@ jobs:
           EVIDENCE_DIR="${RUNNER_TEMP}/torghut-post-deploy"
           mkdir -p "${EVIDENCE_DIR}"
 
+          fetch_json() {
+            local url="$1"
+            local output_path="$2"
+            local label="$3"
+            local status
+
+            for attempt in $(seq 1 18); do
+              status="$(
+                curl -sS --connect-timeout 10 --max-time 90 \
+                  -o "${output_path}" -w '%{http_code}' "${url}" || true
+              )"
+              if [[ "${status}" =~ ^[0-9]{3}$ ]] &&
+                [ "${status}" != '000' ] &&
+                python3 -m json.tool "${output_path}" >/dev/null 2>&1; then
+                printf '%s' "${status}"
+                return 0
+              fi
+
+              if [ "${attempt}" -eq 18 ]; then
+                echo "${label} did not return a parseable JSON HTTP response; status=${status:-empty}" >&2
+                head -c 1000 "${output_path}" >&2 || true
+                echo >&2
+                return 1
+              fi
+
+              echo "Attempt ${attempt}: ${label} status=${status:-empty} not usable JSON yet; retrying" >&2
+              sleep 5
+            done
+          }
+
+          fetch_json_2xx() {
+            local url="$1"
+            local output_path="$2"
+            local label="$3"
+            local status
+
+            status="$(fetch_json "${url}" "${output_path}" "${label}")"
+            if ! [[ "${status}" =~ ^2[0-9][0-9]$ ]]; then
+              echo "${label} returned HTTP ${status}; expected 2xx" >&2
+              return 1
+            fi
+          }
+
           TORGHUT_READYZ_HTTP_STATUS="$(
-            curl -sS -o "${EVIDENCE_DIR}/torghut-readyz.json" -w '%{http_code}' \
-              http://torghut.torghut.svc.cluster.local/readyz || true
+            fetch_json \
+              http://torghut.torghut.svc.cluster.local/readyz \
+              "${EVIDENCE_DIR}/torghut-readyz.json" \
+              "Torghut /readyz"
           )"
           if [ -z "${TORGHUT_READYZ_HTTP_STATUS}" ] || [ "${TORGHUT_READYZ_HTTP_STATUS}" = '000' ]; then
             echo "Torghut /readyz did not return an HTTP response"
@@ -249,16 +294,26 @@ jobs:
           fi
           echo "Torghut /readyz HTTP ${TORGHUT_READYZ_HTTP_STATUS}"
 
-          curl -fsS http://torghut.torghut.svc.cluster.local/trading/status \
-            >"${EVIDENCE_DIR}/torghut-status.json"
-          curl -fsS http://torghut.torghut.svc.cluster.local/trading/revenue-repair \
-            >"${EVIDENCE_DIR}/torghut-revenue-repair-digest.json"
-          curl -fsS http://torghut.torghut.svc.cluster.local/trading/paper-route-evidence \
-            >"${EVIDENCE_DIR}/torghut-paper-route-evidence.json"
-          curl -fsS http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-evidence \
-            >"${EVIDENCE_DIR}/torghut-sim-paper-route-evidence.json"
-          curl -fsS http://torghut-ws.torghut.svc.cluster.local/readyz \
-            >"${EVIDENCE_DIR}/torghut-ws-ready.json"
+          fetch_json_2xx \
+            http://torghut.torghut.svc.cluster.local/trading/status \
+            "${EVIDENCE_DIR}/torghut-status.json" \
+            "Torghut /trading/status"
+          fetch_json_2xx \
+            http://torghut.torghut.svc.cluster.local/trading/revenue-repair \
+            "${EVIDENCE_DIR}/torghut-revenue-repair-digest.json" \
+            "Torghut /trading/revenue-repair"
+          fetch_json_2xx \
+            http://torghut.torghut.svc.cluster.local/trading/paper-route-evidence \
+            "${EVIDENCE_DIR}/torghut-paper-route-evidence.json" \
+            "Torghut /trading/paper-route-evidence"
+          fetch_json_2xx \
+            http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-evidence \
+            "${EVIDENCE_DIR}/torghut-sim-paper-route-evidence.json" \
+            "Torghut sim /trading/paper-route-evidence"
+          fetch_json_2xx \
+            http://torghut-ws.torghut.svc.cluster.local/readyz \
+            "${EVIDENCE_DIR}/torghut-ws-ready.json" \
+            "Torghut ws /readyz"
 
           export TORGHUT_REVENUE_REPAIR_DIGEST="${EVIDENCE_DIR}/torghut-revenue-repair-digest.json"
           export TORGHUT_STATUS_PAYLOAD="${EVIDENCE_DIR}/torghut-status.json"
