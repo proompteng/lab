@@ -3145,7 +3145,13 @@ def _query_timestamps(
             cur.execute(
                 f"""
                 select
-                    t.computed_at,
+                    coalesce(
+                        e.order_feed_last_event_ts,
+                        e.last_update_at,
+                        e.updated_at,
+                        e.created_at
+                    ) as execution_event_at,
+                    t.computed_at as tca_computed_at,
                     abs(coalesce(t.realized_shortfall_bps, t.slippage_bps)) as abs_slippage_bps,
                     (-coalesce(t.realized_shortfall_bps, t.slippage_bps)) as post_cost_expectancy_bps,
                     d.decision_hash,
@@ -3157,10 +3163,25 @@ def _query_timestamps(
                 where s.name = any(%s)
                   and d.alpaca_account_label = %s
                   and coalesce(t.alpaca_account_label, e.alpaca_account_label, d.alpaca_account_label) = %s
-                  and t.computed_at >= %s
-                  and t.computed_at < %s
+                  and coalesce(
+                        e.order_feed_last_event_ts,
+                        e.last_update_at,
+                        e.updated_at,
+                        e.created_at
+                      ) >= %s
+                  and coalesce(
+                        e.order_feed_last_event_ts,
+                        e.last_update_at,
+                        e.updated_at,
+                        e.created_at
+                      ) < %s
                   {execution_symbol_clause}
-                order by t.computed_at
+                order by coalesce(
+                    e.order_feed_last_event_ts,
+                    e.last_update_at,
+                    e.updated_at,
+                    e.created_at
+                )
                 """,
                 (
                     strategy_names,
@@ -3174,10 +3195,11 @@ def _query_timestamps(
             tca_rows = [
                 {
                     "computed_at": row[0],
-                    "abs_slippage_bps": row[1] or Decimal("0"),
-                    "post_cost_expectancy_bps": row[2] or Decimal("0"),
-                    "decision_hash": row[3],
-                    "decision_json": row[4],
+                    "tca_computed_at": row[1],
+                    "abs_slippage_bps": row[2] or Decimal("0"),
+                    "post_cost_expectancy_bps": row[3] or Decimal("0"),
+                    "decision_hash": row[4],
+                    "decision_json": row[5],
                     "post_cost_expectancy_basis": POST_COST_BASIS_TCA_PROXY,
                     "post_cost_promotion_eligible": False,
                 }
