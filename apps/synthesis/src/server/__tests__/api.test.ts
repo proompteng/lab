@@ -7,6 +7,7 @@ import {
   handleAutotraderGetScorecard,
   handleAutotraderGetSession,
   handleAutotraderListSessions,
+  handleAutotraderRecordPositionSnapshot,
   handleAutotraderStartSession,
   handleAutotraderUpsertStatus,
 } from '../autotrader-api'
@@ -513,5 +514,55 @@ describe('synthesis REST auth', () => {
       rejectedInvalid: 1,
     })
     expect(scorecardPayload.setupExamples[0].notes).toBe('C setup correctly blocked')
+  })
+
+  test('clamps future autotrader position snapshot timestamps at ingestion', async () => {
+    const authedHeaders = {
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+    }
+    const startResponse = await handleAutotraderStartSession(
+      new Request('http://synthesis.test/api/autotrader/sessions', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          agentRunName: 'autonomous-trader-position-time-api-test',
+          mode: 'market_open',
+          tradingDate: '2026-05-29',
+          accountId: 'paper-account',
+          goalEquity: '500000',
+          openingEquity: '38400',
+          marketOpenAt: '2026-05-29T13:30:00Z',
+          marketCloseAt: '2026-05-29T20:00:00Z',
+        }),
+      }),
+    )
+    const startPayload = await startResponse.json()
+    const sessionId = startPayload.session.id
+
+    const snapshotResponse = await handleAutotraderRecordPositionSnapshot(
+      new Request('http://synthesis.test/api/autotrader/position-snapshots', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          sessionId,
+          symbol: 'NVDA',
+          quantity: '1',
+          marketValue: '220',
+          capturedAt: '2999-01-01T00:00:00Z',
+          brokerPayload: { source: 'test' },
+        }),
+      }),
+    )
+    const detailResponse = await handleAutotraderGetSession(
+      new Request(`http://synthesis.test/api/autotrader/sessions/${sessionId}`),
+      sessionId,
+    )
+    const snapshotPayload = await snapshotResponse.json()
+    const detailPayload = await detailResponse.json()
+
+    expect(snapshotPayload.positionSnapshot.capturedAt).not.toBe('2999-01-01T00:00:00.000Z')
+    expect(Date.parse(snapshotPayload.positionSnapshot.capturedAt)).toBeLessThanOrEqual(Date.now() + 60_000)
+    expect(detailPayload.positionSnapshots[0].capturedAt).toBe(snapshotPayload.positionSnapshot.capturedAt)
   })
 })
