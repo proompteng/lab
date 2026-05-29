@@ -1470,7 +1470,6 @@ def _runtime_lifecycle_ledger_row(
             "execution_policy_hash",
             "execution_policy_sha256",
             "policy_hash",
-            "execution_idempotency_key",
         )
         or _first_payload_digest(
             row,
@@ -1478,8 +1477,6 @@ def _runtime_lifecycle_ledger_row(
             "execution_policy_context",
             "execution_advisor",
             "_execution_advice_provenance",
-            "decision_json",
-            "raw_event",
         ),
         "cost_model_hash": _first_text(
             row,
@@ -1494,9 +1491,6 @@ def _runtime_lifecycle_ledger_row(
             "transaction_cost_model",
             "fee_model",
             "fees_model",
-            "model",
-            "decision_json",
-            "raw_event",
         ),
         "lineage_hash": _first_text(
             row,
@@ -1871,7 +1865,6 @@ def _build_realized_strategy_pnl_rows(
                 "execution_policy_hash",
                 "execution_policy_sha256",
                 "policy_hash",
-                "execution_idempotency_key",
             )
             or _first_payload_digest(
                 row,

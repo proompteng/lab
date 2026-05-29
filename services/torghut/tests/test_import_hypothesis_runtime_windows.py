@@ -2004,6 +2004,56 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(ledger_row["cost_model_hash"], "cost-sha")
         self.assertEqual(ledger_row["lineage_hash"], "lineage-sha")
 
+    def test_order_event_lifecycle_does_not_hash_raw_event_as_policy_or_cost(
+        self,
+    ) -> None:
+        row = {
+            "event_ts": datetime(2026, 3, 6, 14, 35, 1, tzinfo=timezone.utc),
+            "event_type": "filled",
+            "symbol": "AAPL",
+            "account_label": "TORGHUT_SIM",
+            "strategy_id": "microbar-cross-sectional-pairs-v1",
+            "decision_hash": "decision-buy",
+            "alpaca_order_id": "order-buy",
+            "execution_idempotency_key": "order-specific-idempotency-key",
+            "decision_json": {
+                "candidate_id": "candidate-1",
+                "decision_nonce": "changes-every-order",
+            },
+            "raw_event": {
+                "event": "fill",
+                "sequence": 25,
+                "order": {
+                    "id": "order-buy",
+                    "status": "filled",
+                    "filled_qty": "1",
+                    "filled_avg_price": "100",
+                },
+            },
+            "lineage_hash": "lineage-sha",
+            "raw_order": {
+                "side": "buy",
+                "runtime_ledger_cost": {
+                    "cost_amount": "0.20",
+                    "cost_basis": "broker_reported_commission_and_fees",
+                },
+            },
+        }
+
+        ledger_row = _runtime_lifecycle_ledger_row(
+            row,
+            event_type="filled",
+            require_complete_fill=True,
+        )
+
+        self.assertIsNotNone(ledger_row)
+        assert ledger_row is not None
+        self.assertIsNone(ledger_row["execution_policy_hash"])
+        self.assertIsNone(ledger_row["cost_model_hash"])
+        self.assertEqual(ledger_row["lineage_hash"], "lineage-sha")
+        self.assertEqual(ledger_row["filled_qty"], Decimal("1"))
+        self.assertEqual(ledger_row["cost_amount"], Decimal("0.20"))
+
     def test_order_event_lifecycle_materializes_alpaca_fee_schedule_costs(self) -> None:
         row = {
             "event_ts": datetime(2026, 3, 6, 14, 35, 1, tzinfo=timezone.utc),
@@ -2059,6 +2109,52 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             ledger_row["cost_model_hash"],
             _alpaca_2026_equity_fee_schedule_hash(),
         )
+
+    def test_build_realized_strategy_pnl_rows_does_not_use_idempotency_key_as_policy_hash(
+        self,
+    ) -> None:
+        rows = _build_realized_strategy_pnl_rows(
+            [
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                    "symbol": "AAPL",
+                    "side": "buy",
+                    "filled_qty": Decimal("1"),
+                    "avg_fill_price": Decimal("100"),
+                    "cost_amount": Decimal("0.20"),
+                    "cost_basis": "broker_reported_commission_and_fees",
+                    "decision_hash": "decision-buy",
+                    "alpaca_order_id": "order-buy",
+                    "execution_idempotency_key": "buy-order-key",
+                    "cost_model_hash": "cost-sha",
+                    "lineage_hash": "lineage-sha",
+                },
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
+                    "symbol": "AAPL",
+                    "side": "sell",
+                    "filled_qty": Decimal("1"),
+                    "avg_fill_price": Decimal("101"),
+                    "cost_amount": Decimal("0.10"),
+                    "cost_basis": "broker_reported_commission_and_fees",
+                    "decision_hash": "decision-sell",
+                    "alpaca_order_id": "order-sell",
+                    "execution_idempotency_key": "sell-order-key",
+                    "cost_model_hash": "cost-sha",
+                    "lineage_hash": "lineage-sha",
+                },
+            ],
+            allow_authoritative_runtime_ledger_materialization=True,
+        )
+
+        self.assertEqual(len(rows), 1)
+        bucket = rows[0]["runtime_ledger_bucket"]
+        self.assertIsInstance(bucket, dict)
+        assert isinstance(bucket, dict)
+        self.assertEqual(bucket["execution_policy_hash_counts"], {})
+        self.assertIn("execution_policy_hash_missing", bucket["blockers"])
+        self.assertNotIn("execution_policy_hash_ambiguous", bucket["blockers"])
+        self.assertEqual(bucket["cost_model_hash_counts"], {"cost-sha": 2})
 
     def test_runtime_ledger_tca_materialization_metadata_separates_authority(
         self,
