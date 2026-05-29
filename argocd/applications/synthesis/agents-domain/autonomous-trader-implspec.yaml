@@ -44,6 +44,8 @@ spec:
        - Require analysis commit `4ce90bf7fc16f9bf90f7fe221f36db23c7ff44a5` or newer.
        - Produce valid `/workspace/.agentrun/autonomous-trader/analysis-context.json` and `/workspace/.agentrun/autonomous-trader/analysis-bootstrap.json`.
     2. Preflight:
+       - Read the exact Kubernetes AgentRun name from the `AGENT_RUN_NAME` environment variable and store it in `preflight.json`.
+       - Use that exact `AGENT_RUN_NAME` unchanged for `autotrader_start_session`, local artifacts, milestone URLs, and dedupe keys; do not invent, normalize, shorten, timestamp, or replace it.
        - Use Alpaca MCP to read account, account config, clock, calendar, open orders, positions, recent portfolio state, and available tools.
        - Confirm stock order tooling exposes `order_class`, `take_profit_limit_price`, `stop_loss_stop_price`, and `stop_loss_limit_price`.
        - Confirm Synthesis MCP exposes `autotrader_start_session`, `autotrader_upsert_status`, `autotrader_append_event`, `autotrader_create_trade_ticket`, `autotrader_record_risk_check`, `autotrader_record_order`, `autotrader_record_fill`, `autotrader_record_position_snapshot`, `autotrader_finalize_session`, `autotrader_get_scorecard`, and `synthesis_submit_item`.
@@ -53,7 +55,7 @@ spec:
     3. Mode handling:
        - `dry-run`: perform bootstrap, read-only Alpaca preflight, Synthesis scorecard read, one scanner/ticket validation pass, blocked/no-trade decision recording, risk recording, status/event writes, and `autotrader_finalize_session`; do not call Alpaca order submission, cancel, replace, or close-position tools; finish with terminal_reason `dry_run_complete`.
        - In `dry-run`, finalize the autotrader session immediately after ticket/risk/status writes; write only the required output files and exit the AgentRun.
-       - After `autotrader_finalize_session` succeeds in `dry-run`, do not run completion audits, inspect PR/CI state, re-read scorecards, retry visibility, optimize wording, wait for market state, or perform any further analysis.
+       - After `autotrader_finalize_session` succeeds in `dry-run`, write the final `report.md`, mark the AgentRun-local goal complete, and stop. Do not run completion audits, inspect PR/CI state, re-read scorecards, retry visibility, optimize wording, wait for market state, or perform any further analysis.
        - `preflight`: perform readiness checks and, only if safe, one tiny non-marketable paper bracket or OTO stock order proof that is verified by id/client id and canceled; if Alpaca rejects or blocks it, record the exact request and reason.
        - `market-open`: wait for the market to open, then run an intraday loop until market close, equity is at least 500000 USD, or account/order state becomes unrecoverable.
     4. Each market-open cycle:
@@ -74,6 +76,7 @@ spec:
        - Update `/workspace/.agentrun/autonomous-trader/report.md`; emit heartbeat output at least every 60 seconds while waiting.
     5. Synthesis visibility:
        - Use Synthesis MCP to call `autotrader_start_session` once per AgentRun and use its `sessionId` for all structured state.
+       - The Synthesis MCP proxy injects the exact `AGENT_RUN_NAME` into `autotrader_start_session`; still use the same exact value in every operator-visible status, artifact, milestone source URL, and report field.
        - Use `synthesis_submit_item` only for high-signal milestone updates: session start, preflight complete, material action or stand-down, order submitted, fill/reject/cancel, protective exit change, risk blocker, and terminal summary.
        - Use strict payloads with `title`, `synthesis`, `takeaways`, `whyValuable`, `sourcePosts`, `dedupeKey`, `score`, and `confidence`; use a unique path-based synthetic source URL such as `https://synthesis.proompteng.ai/agentruns/${AGENT_RUN_NAME}/milestones/${dedupeKey}` and record each payload/result in `/workspace/.agentrun/autonomous-trader/synthesis-posts.jsonl`.
        - Treat `synthesis_submit_item` as best-effort visibility only: if a milestone feed post is rejected as duplicate or invalid, append the error to `synthesis-posts.jsonl`, write an `autotrader_append_event`, and continue. Never retry a failed milestone post more than once, and never let feed posting block `autotrader_finalize_session`, order reconciliation, risk exits, or dry-run completion.
