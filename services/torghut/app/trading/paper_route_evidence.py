@@ -1708,6 +1708,90 @@ def _strategy_source_activity(
     }
 
 
+def _account_contamination_audit(
+    session: Session,
+    *,
+    account_label: str | None,
+    symbols: Sequence[str],
+    window_start: datetime,
+    window_end: datetime,
+) -> dict[str, object]:
+    symbol_filters = [
+        str(item).strip().upper() for item in symbols if str(item).strip()
+    ]
+    blockers: list[str] = []
+    if account_label is None:
+        return {
+            "schema_version": "torghut.paper-route-account-contamination-audit.v1",
+            "scope": "target_window_account_symbol_order_events",
+            "account_label": None,
+            "symbols": symbol_filters,
+            "window_start": _isoformat(window_start),
+            "window_end": _isoformat(window_end),
+            "contaminated": False,
+            "unlinked_order_event_count": 0,
+            "client_order_id_count": 0,
+            "sample_client_order_ids": [],
+            "symbol_counts": {},
+            "event_type_counts": {},
+            "status_counts": {},
+            "last_event_at": None,
+            "blockers": [],
+        }
+    order_event_activity_ts = _order_event_activity_timestamp()
+    stmt = (
+        select(ExecutionOrderEvent)
+        .where(ExecutionOrderEvent.alpaca_account_label == account_label)
+        .where(order_event_activity_ts >= window_start)
+        .where(order_event_activity_ts < window_end)
+        .where(ExecutionOrderEvent.trade_decision_id.is_(None))
+    )
+    if symbol_filters:
+        stmt = stmt.where(func.upper(ExecutionOrderEvent.symbol).in_(symbol_filters))
+    rows = list(
+        session.execute(
+            stmt.order_by(order_event_activity_ts.desc()).limit(500)
+        ).scalars()
+    )
+    if rows:
+        blockers.extend(
+            [
+                "paper_route_account_contamination_detected",
+                "unlinked_order_events_present",
+            ]
+        )
+    client_order_ids: list[str] = []
+    symbol_counts: Counter[str] = Counter()
+    event_type_counts: Counter[str] = Counter()
+    status_counts: Counter[str] = Counter()
+    for row in rows:
+        if client_order_id := _safe_text(row.client_order_id):
+            if client_order_id not in client_order_ids:
+                client_order_ids.append(client_order_id)
+        symbol_counts[_safe_text(row.symbol) or "missing"] += 1
+        event_type_counts[_safe_text(row.event_type) or "missing"] += 1
+        status_counts[_safe_text(row.status) or "missing"] += 1
+    return {
+        "schema_version": "torghut.paper-route-account-contamination-audit.v1",
+        "scope": "target_window_account_symbol_order_events",
+        "account_label": account_label,
+        "symbols": symbol_filters,
+        "window_start": _isoformat(window_start),
+        "window_end": _isoformat(window_end),
+        "contaminated": bool(rows),
+        "unlinked_order_event_count": len(rows),
+        "client_order_id_count": len(client_order_ids),
+        "sample_client_order_ids": client_order_ids[:10],
+        "symbol_counts": dict(sorted(symbol_counts.items())),
+        "event_type_counts": dict(sorted(event_type_counts.items())),
+        "status_counts": dict(sorted(status_counts.items())),
+        "last_event_at": _isoformat(
+            _order_event_activity_at(rows[0]) if rows else None
+        ),
+        "blockers": blockers,
+    }
+
+
 def _rejected_signal_activity(
     session: Session,
     *,
@@ -2142,6 +2226,7 @@ def _readiness_blockers(
     target: Mapping[str, object],
     probe: Mapping[str, object],
     source_activity: Mapping[str, object],
+    account_contamination: Mapping[str, object],
     rejected_signal_activity: Mapping[str, object],
     runtime_ledger: Mapping[str, object],
     hypothesis_windows: Mapping[str, object],
@@ -2176,6 +2261,11 @@ def _readiness_blockers(
     blockers.update(
         str(item).strip()
         for item in _as_sequence(source_activity.get("missing_reasons"))
+        if str(item).strip()
+    )
+    blockers.update(
+        str(item).strip()
+        for item in _as_sequence(account_contamination.get("blockers"))
         if str(item).strip()
     )
     if bool(source_activity.get("missing")):
@@ -2232,6 +2322,13 @@ def _target_audit(
         hypothesis_id=hypothesis_id,
         require_source_lineage=_target_requires_source_lineage(target),
     )
+    account_contamination = _account_contamination_audit(
+        session,
+        account_label=cast(str | None, target.get("account_label")),
+        symbols=_target_probe_symbols(target, probe),
+        window_start=window_start,
+        window_end=window_end,
+    )
     rejected_signal_activity = _rejected_signal_activity(
         session,
         account_label=cast(str | None, target.get("account_label")),
@@ -2267,6 +2364,7 @@ def _target_audit(
         target=target,
         probe=probe,
         source_activity=source_activity,
+        account_contamination=account_contamination,
         rejected_signal_activity=rejected_signal_activity,
         runtime_ledger=runtime_ledger,
         hypothesis_windows=hypothesis_windows,
@@ -2284,6 +2382,7 @@ def _target_audit(
             "end": _isoformat(window_end),
         },
         "source_activity": source_activity,
+        "account_contamination": account_contamination,
         "rejected_signal_activity": rejected_signal_activity,
         "runtime_ledger": runtime_ledger,
         "hypothesis_windows": hypothesis_windows,
@@ -2356,6 +2455,16 @@ def _runtime_window_import_audit(
             if str(blocker).strip()
         }
     )
+    account_contamination_blockers = sorted(
+        {
+            str(blocker).strip()
+            for audit in next_target_audits
+            for blocker in _as_sequence(
+                _as_mapping(audit.get("account_contamination")).get("blockers")
+            )
+            if str(blocker).strip()
+        }
+    )
     source_runtime_ledger_blockers = _source_runtime_ledger_materialization_blockers(
         next_target_audits
     )
@@ -2392,6 +2501,10 @@ def _runtime_window_import_audit(
         state = "next_runtime_window_target_missing"
         next_action = "repair_next_paper_route_runtime_window_target_plan"
         blockers = ["next_runtime_window_target_missing"]
+    elif account_contamination_blockers:
+        state = "import_due_account_contamination_detected"
+        next_action = "isolate_paper_account_or_discard_contaminated_window"
+        blockers = account_contamination_blockers
     elif targets_with_source_activity < current_target_count:
         state = "import_due_source_activity_missing"
         next_action = "inspect_paper_route_source_activity_before_import"
@@ -2434,6 +2547,7 @@ def _runtime_window_import_audit(
             "source_activity_to_runtime_ledger_blockers": (
                 source_runtime_ledger_blockers
             ),
+            "account_contamination_blockers": account_contamination_blockers,
             "runtime_ledger_blockers": runtime_ledger_blockers,
             "target_blockers_effective_when": "runtime_window_import_ready",
         },
@@ -2490,6 +2604,7 @@ def _runtime_window_target_blockers(
     for audit in target_audits:
         target = _as_mapping(audit.get("target"))
         source_activity = _as_mapping(audit.get("source_activity"))
+        account_contamination = _as_mapping(audit.get("account_contamination"))
         rejected_signal_activity = _as_mapping(audit.get("rejected_signal_activity"))
         runtime_ledger = _as_mapping(audit.get("runtime_ledger"))
         promotion_decisions = _as_mapping(audit.get("promotion_decisions"))
@@ -2506,6 +2621,7 @@ def _runtime_window_target_blockers(
                     if _rejected_signal_reasons_actionable(source_activity)
                     else []
                 ),
+                *_unique_text_items(account_contamination.get("blockers")),
                 *(
                     ["runtime_ledger_bucket_missing"]
                     if _safe_int(runtime_ledger.get("bucket_count")) <= 0
@@ -2561,6 +2677,21 @@ def _runtime_window_target_blockers(
                         source_activity.get("last_execution_at")
                     ),
                     "last_tca_at": _safe_text(source_activity.get("last_tca_at")),
+                },
+                "account_contamination": {
+                    "contaminated": bool(account_contamination.get("contaminated")),
+                    "unlinked_order_event_count": _safe_int(
+                        account_contamination.get("unlinked_order_event_count")
+                    ),
+                    "client_order_id_count": _safe_int(
+                        account_contamination.get("client_order_id_count")
+                    ),
+                    "sample_client_order_ids": _unique_text_items(
+                        account_contamination.get("sample_client_order_ids")
+                    ),
+                    "last_event_at": _safe_text(
+                        account_contamination.get("last_event_at")
+                    ),
                 },
                 "runtime_ledger": {
                     "bucket_count": _safe_int(runtime_ledger.get("bucket_count")),
