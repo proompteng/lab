@@ -86,6 +86,8 @@ RUNTIME_LEDGER_BUCKET_SCHEMAS = frozenset(
         "torghut.runtime-ledger-bucket.v1",
     }
 )
+RUNTIME_LEDGER_SOURCE_WINDOW_MISSING_BLOCKER = "runtime_ledger_source_window_missing"
+RUNTIME_LEDGER_SOURCE_REFS_MISSING_BLOCKER = "runtime_ledger_source_refs_missing"
 
 
 @dataclass(frozen=True)
@@ -258,6 +260,45 @@ def _hash_count(value: Any) -> int:
     return sum(1 for key in mapping.keys() if str(key).strip())
 
 
+def _runtime_ledger_source_window_present(bucket: Mapping[str, Any]) -> bool:
+    start = _parse_observation_datetime(
+        bucket.get("source_window_start")
+        or bucket.get("runtime_ledger_source_window_start")
+    )
+    end = _parse_observation_datetime(
+        bucket.get("source_window_end")
+        or bucket.get("runtime_ledger_source_window_end")
+    )
+    return start is not None and end is not None and end > start
+
+
+def _positive_mapping_value_count(value: Any) -> int:
+    if not isinstance(value, Mapping):
+        return 0
+    count = 0
+    for item in cast(Mapping[object, object], value).values():
+        parsed = _optional_decimal(item)
+        if parsed is not None and parsed > 0:
+            count += 1
+    return count
+
+
+def _runtime_ledger_source_refs_present(bucket: Mapping[str, Any]) -> bool:
+    source_refs = _string_list(bucket.get("source_refs"))
+    source_ref = bucket.get("source_ref")
+    source_ref_present = bool(source_refs)
+    if isinstance(source_ref, Mapping):
+        source_ref_present = (
+            source_ref_present or len(cast(Mapping[object, object], source_ref)) > 0
+        )
+    elif _text(source_ref) is not None:
+        source_ref_present = True
+    return (
+        source_ref_present
+        and _positive_mapping_value_count(bucket.get("source_row_counts")) > 0
+    )
+
+
 def _persisted_runtime_ledger_bucket_evidence_grade(
     row: StrategyRuntimeLedgerBucket,
 ) -> bool:
@@ -299,6 +340,10 @@ def _runtime_ledger_bucket_blockers(bucket: Mapping[str, Any]) -> list[str]:
         blockers.append("runtime_ledger_pnl_basis_missing")
     elif pnl_basis != POST_COST_PNL_BASIS:
         blockers.append("runtime_ledger_pnl_basis_invalid")
+    if not _runtime_ledger_source_window_present(bucket):
+        blockers.append(RUNTIME_LEDGER_SOURCE_WINDOW_MISSING_BLOCKER)
+    if not _runtime_ledger_source_refs_present(bucket):
+        blockers.append(RUNTIME_LEDGER_SOURCE_REFS_MISSING_BLOCKER)
     if _observation_int(bucket.get("fill_count")) <= 0:
         blockers.append("runtime_fills_missing")
     if _observation_int(bucket.get("decision_count")) <= 0:
