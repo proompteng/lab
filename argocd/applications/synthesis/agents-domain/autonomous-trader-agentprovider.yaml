@@ -12,7 +12,7 @@ spec:
     type: codex-app-server
     codex:
       model: gpt-5.5
-      effort: xhigh
+      effort: high
       sandbox: danger-full-access
       approval: never
       cwd: /workspace/lab
@@ -79,7 +79,7 @@ spec:
     AUTONOMOUS_TRADER_ACCOUNT_TYPE: "{{parameters.accountType}}"
     ANALYSIS_REPO_DIR: /workspace/analysis
     ANALYSIS_REPO_URL: https://github.com/gregkonush/analysis.git
-    ANALYSIS_REQUIRED_COMMIT: b4d7485e106dc1197d293683e3413fe74dacd698
+    ANALYSIS_REQUIRED_COMMIT: 2b565baa93af4d883bb3d62b5e333cf4eb66e05d
     AUTONOMOUS_TRADER_ARTIFACT_DIR: /workspace/.agentrun/autonomous-trader
     AUTONOMOUS_TRADER_MODE: "{{parameters.mode}}"
     AUTONOMOUS_TRADER_SYNTHESIS_SESSION_MODE: "{{parameters.synthesisSessionMode}}"
@@ -100,8 +100,8 @@ spec:
       content: |-
         model = "gpt-5.5"
         model_reasoning_summary = "none"
-        model_reasoning_effort = "xhigh"
-        model_verbosity = "medium"
+        model_reasoning_effort = "high"
+        model_verbosity = "low"
         approval_policy = "never"
         sandbox_mode = "danger-full-access"
         web_search = "live"
@@ -150,7 +150,7 @@ spec:
         artifact_dir="${AUTONOMOUS_TRADER_ARTIFACT_DIR:-/workspace/.agentrun/autonomous-trader}"
         analysis_dir="${ANALYSIS_REPO_DIR:-/workspace/analysis}"
         analysis_repo_url="${ANALYSIS_REPO_URL:-https://github.com/gregkonush/analysis.git}"
-        required_commit="${ANALYSIS_REQUIRED_COMMIT:-b4d7485e106dc1197d293683e3413fe74dacd698}"
+        required_commit="${ANALYSIS_REQUIRED_COMMIT:-2b565baa93af4d883bb3d62b5e333cf4eb66e05d}"
         python_bin="${PYTHON_BIN:-python3}"
 
         mkdir -p "${artifact_dir}"
@@ -169,6 +169,8 @@ spec:
         ensure_artifact_file "synthesis-posts.jsonl" ""
         ensure_artifact_file "protective-orders.jsonl" ""
         ensure_artifact_file "preflight.json" $'{}\n'
+        ensure_artifact_file "protective-preflight.json" $'{}\n'
+        ensure_artifact_file "live-scan-input.json" $'{}\n'
         ensure_artifact_file "current-status.json" $'{}\n'
         ensure_artifact_file "trade-ticket.json" $'{}\n'
         ensure_artifact_file "report.md" $'# Autonomous Trader Report\n\nstatus: bootstrapping\n'
@@ -501,6 +503,12 @@ spec:
     - name: autonomous-trader-analysis-context
       path: /workspace/.agentrun/autonomous-trader/analysis-context.json
       key: synthesis/autonomous-trader/{{ agentRun.name }}/analysis-context.json
+    - name: autonomous-trader-protective-preflight
+      path: /workspace/.agentrun/autonomous-trader/protective-preflight.json
+      key: synthesis/autonomous-trader/{{ agentRun.name }}/protective-preflight.json
+    - name: autonomous-trader-live-scan-input
+      path: /workspace/.agentrun/autonomous-trader/live-scan-input.json
+      key: synthesis/autonomous-trader/{{ agentRun.name }}/live-scan-input.json
     - name: autonomous-trader-current-status
       path: /workspace/.agentrun/autonomous-trader/current-status.json
       key: synthesis/autonomous-trader/{{ agentRun.name }}/current-status.json

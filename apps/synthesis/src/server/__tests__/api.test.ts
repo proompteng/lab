@@ -567,6 +567,123 @@ describe('synthesis REST auth', () => {
     expect(detailPayload.positionSnapshots[0].capturedAt).toBe(snapshotPayload.positionSnapshot.capturedAt)
   })
 
+  test('finalizes idempotently and detaches cross-session ticket references', async () => {
+    const authedHeaders = {
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+    }
+    const startAResponse = await handleAutotraderStartSession(
+      new Request('http://synthesis.test/api/autotrader/sessions', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          agentRunName: 'autonomous-trader-finalize-a',
+          mode: 'market_open',
+          tradingDate: '2026-05-29',
+          accountId: 'paper-account',
+          goalEquity: '500000',
+          marketOpenAt: '2026-05-29T13:30:00Z',
+          marketCloseAt: '2026-05-29T20:00:00Z',
+        }),
+      }),
+    )
+    const startBResponse = await handleAutotraderStartSession(
+      new Request('http://synthesis.test/api/autotrader/sessions', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          agentRunName: 'autonomous-trader-finalize-b',
+          mode: 'market_open',
+          tradingDate: '2026-05-29',
+          accountId: 'paper-account',
+          goalEquity: '500000',
+          marketOpenAt: '2026-05-29T13:30:00Z',
+          marketCloseAt: '2026-05-29T20:00:00Z',
+        }),
+      }),
+    )
+    const sessionA = (await startAResponse.json()).session.id
+    const sessionB = (await startBResponse.json()).session.id
+    const otherTicketResponse = await handleAutotraderCreateTradeTicket(
+      new Request('http://synthesis.test/api/autotrader/trade-tickets', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          sessionId: sessionB,
+          idempotencyKey: 'other-session-ticket',
+          symbol: 'NVDA',
+          instrument: 'stock',
+          side: 'buy',
+          setupType: 'vwap_reclaim',
+          setupGrade: 'A',
+          regime: 'news_driven',
+          timeBucket: 'open_30m',
+          thesis: 'Valid setup in another session.',
+          entryTrigger: 'VWAP reclaim.',
+          invalidation: 'Lose VWAP.',
+          protectionType: 'bracket',
+          status: 'validated',
+        }),
+      }),
+    )
+    const otherTicket = (await otherTicketResponse.json()).ticket.id
+    const finalizeBody = {
+      sessionId: sessionA,
+      terminalReason: 'market_closed',
+      summary: { accountEquity: '38750' },
+      scorecardObservations: [
+        {
+          ticketId: otherTicket,
+          symbol: 'NVDA',
+          setupType: 'vwap_reclaim',
+          setupGrade: 'A',
+          regime: 'news_driven',
+          timeBucket: 'open_30m',
+          outcome: 'win',
+          realizedR: '1.25',
+          notes: 'cross-session ticket should detach',
+        },
+      ],
+    }
+
+    await handleAutotraderFinalizeSession(
+      new Request('http://synthesis.test/api/autotrader/finalize', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify(finalizeBody),
+      }),
+    )
+    const secondFinalizeResponse = await handleAutotraderFinalizeSession(
+      new Request('http://synthesis.test/api/autotrader/finalize', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify(finalizeBody),
+      }),
+    )
+    const scorecardResponse = await handleAutotraderGetScorecard(
+      new Request('http://synthesis.test/api/autotrader/scorecards?symbol=NVDA&setupType=vwap_reclaim&limit=5'),
+    )
+    const detail = await secondFinalizeResponse.json()
+    const scorecards = await scorecardResponse.json()
+
+    expect(detail.session.summary.finalizationWarnings[0]).toMatchObject({
+      type: 'detached_cross_session_ticket_id',
+      ticketId: otherTicket,
+      sessionId: sessionA,
+      ticketSessionId: sessionB,
+    })
+    expect(detail.setupExamples).toHaveLength(1)
+    expect(detail.setupExamples[0]).toMatchObject({
+      ticketId: null,
+      notes: 'cross-session ticket should detach',
+    })
+    expect(scorecards.scorecards[0]).toMatchObject({
+      symbol: 'NVDA',
+      sampleSize: 1,
+      wins: 1,
+    })
+  })
+
   test('marks replaced broker orders as replaced when recording a replacement order', async () => {
     const authedHeaders = {
       authorization: `Bearer ${token}`,

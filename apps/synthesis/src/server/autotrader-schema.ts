@@ -54,6 +54,7 @@ export const AutotraderOrderStatusSchema = z.enum([
   'rejected',
   'expired',
   'reconciled',
+  'replaced',
 ])
 export const AutotraderOutcomeSchema = z.enum(['win', 'loss', 'scratch', 'rejected_valid', 'rejected_invalid'])
 
