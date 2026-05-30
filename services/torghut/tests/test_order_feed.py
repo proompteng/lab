@@ -24,9 +24,13 @@ from app.models import (
     Strategy,
     TradeDecision,
 )
+from app.trading import order_feed as order_feed_module
 from app.trading.order_feed import (
+    HISTORICAL_ORDER_EVENT_SOURCE_WINDOW_REVISION,
+    ORDER_FEED_SOURCE_REVISION,
     OrderFeedIngestor,
     apply_order_event_to_execution,
+    backfill_order_feed_source_windows,
     latest_order_event_for_execution,
     merge_execution_raw_order_update,
     normalize_order_feed_record,
@@ -756,6 +760,7 @@ class TestOrderFeed(TestCase):
                 source_partition=0,
                 alpaca_account_label="paper",
                 assignment_mode="manual",
+                source_revision=ORDER_FEED_SOURCE_REVISION,
                 window_started_at=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
                 window_ended_at=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
                 start_offset=41,
@@ -815,6 +820,7 @@ class TestOrderFeed(TestCase):
                     source_partition=0,
                     alpaca_account_label="paper",
                     assignment_mode="manual",
+                    source_revision=ORDER_FEED_SOURCE_REVISION,
                     window_started_at=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
                     window_ended_at=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
                     start_offset=49,
@@ -843,6 +849,185 @@ class TestOrderFeed(TestCase):
             [(TopicPartition("torghut.trade-updates.v1", 0), 58)],
         )
         self.assertEqual(consumer.seek_to_beginning_calls, [])
+
+    def test_backfill_source_windows_links_legacy_events_without_cursor_authority(
+        self,
+    ) -> None:
+        settings.trading_order_feed_assignment_mode = "manual"
+        settings.trading_order_feed_auto_offset_reset = "earliest"
+        settings.trading_order_feed_group_id = "torghut-order-feed-v1"
+        consumer = FakeManualConsumer(
+            [],
+            partitions={"torghut.trade-updates.v1": {0}},
+        )
+
+        with Session(self.engine) as session:
+            execution = self._seed_execution(session)
+            event = ExecutionOrderEvent(
+                event_fingerprint="legacy-fill-with-source-offset",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=88,
+                alpaca_account_label="paper",
+                event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+                symbol="AAPL",
+                alpaca_order_id=execution.alpaca_order_id,
+                client_order_id=execution.client_order_id,
+                event_type="fill",
+                status="filled",
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("191.25"),
+                raw_event={"event": "fill"},
+                execution_id=execution.id,
+                trade_decision_id=execution.trade_decision_id,
+            )
+            session.add(event)
+            session.commit()
+
+            result = backfill_order_feed_source_windows(
+                session,
+                account_label="paper",
+                limit=10,
+            )
+            session.commit()
+            session.refresh(event)
+            source_window = session.get(OrderFeedSourceWindow, event.source_window_id)
+            self.assertIsNotNone(source_window)
+            assert source_window is not None
+            ingestor = OrderFeedIngestor(consumer_factory=lambda: consumer)
+            counters = ingestor.ingest_once(session)
+
+        self.assertEqual(
+            result,
+            {
+                "selected": 1,
+                "source_windows_created": 1,
+                "source_windows_reused": 0,
+                "events_linked": 1,
+            },
+        )
+        self.assertEqual(
+            source_window.source_revision,
+            HISTORICAL_ORDER_EVENT_SOURCE_WINDOW_REVISION,
+        )
+        self.assertEqual(source_window.status, "inserted")
+        self.assertEqual(
+            source_window.status_reason, "historical_execution_order_event_backfill"
+        )
+        self.assertEqual(source_window.inserted_count, 1)
+        self.assertEqual(source_window.unlinked_execution_count, 0)
+        self.assertEqual(source_window.unlinked_decision_count, 0)
+        self.assertEqual(source_window.payload_json["cursor_authority"], False)
+        self.assertEqual(counters["messages_total"], 0)
+        self.assertEqual(consumer.seek_calls, [])
+        self.assertEqual(
+            consumer.seek_to_beginning_calls,
+            [(TopicPartition("torghut.trade-updates.v1", 0),)],
+        )
+
+    def test_backfill_source_windows_reuses_existing_source_window(self) -> None:
+        settings.trading_order_feed_assignment_mode = "manual"
+        with Session(self.engine) as session:
+            execution = self._seed_execution(session)
+            source_window = OrderFeedSourceWindow(
+                consumer_group="torghut-order-feed-v1",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                alpaca_account_label="paper",
+                assignment_mode="manual",
+                source_revision=HISTORICAL_ORDER_EVENT_SOURCE_WINDOW_REVISION,
+                window_started_at=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+                window_ended_at=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+                start_offset=88,
+                end_offset=90,
+                consumed_count=3,
+                inserted_count=3,
+                status="inserted",
+            )
+            session.add(source_window)
+            session.flush()
+            source_window_id = source_window.id
+            event = ExecutionOrderEvent(
+                event_fingerprint="legacy-fill-existing-source-window",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=89,
+                alpaca_account_label="paper",
+                event_ts=datetime(2026, 2, 1, 10, 1, tzinfo=timezone.utc),
+                symbol="AAPL",
+                alpaca_order_id=execution.alpaca_order_id,
+                client_order_id=execution.client_order_id,
+                event_type="fill",
+                status="filled",
+                raw_event={"event": "fill"},
+                execution_id=execution.id,
+                trade_decision_id=execution.trade_decision_id,
+            )
+            session.add(event)
+            session.commit()
+
+            result = backfill_order_feed_source_windows(
+                session,
+                account_label="paper",
+                limit=10,
+            )
+            session.commit()
+            session.refresh(event)
+
+        self.assertEqual(
+            result,
+            {
+                "selected": 1,
+                "source_windows_created": 0,
+                "source_windows_reused": 1,
+                "events_linked": 1,
+            },
+        )
+        self.assertEqual(event.source_window_id, source_window_id)
+
+    def test_historical_source_window_helpers_handle_missing_and_aware_offsets(
+        self,
+    ) -> None:
+        event = ExecutionOrderEvent(
+            event_fingerprint="legacy-fill-missing-offset",
+            source_topic="torghut.trade-updates.v1",
+            source_partition=None,
+            source_offset=None,
+            alpaca_account_label="paper",
+            event_ts=datetime(
+                2026,
+                2,
+                1,
+                2,
+                0,
+                tzinfo=timezone(timedelta(hours=-8)),
+            ),
+            symbol="AAPL",
+            event_type="fill",
+            status="filled",
+            raw_event={"event": "fill"},
+        )
+
+        with Session(self.engine) as session:
+            self.assertIsNone(
+                order_feed_module._find_existing_source_window_for_event(
+                    session,
+                    event,
+                )
+            )
+            with self.assertRaisesRegex(
+                ValueError,
+                "historical_source_window_requires_source_offset",
+            ):
+                order_feed_module._create_historical_source_window_for_event(
+                    session,
+                    event,
+                )
+
+        self.assertEqual(
+            order_feed_module._event_timestamp_for_source_window(event),
+            datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+        )
 
     def test_ingest_persists_durable_consumer_cursor_for_valid_event(self) -> None:
         record = FakeRecord(
