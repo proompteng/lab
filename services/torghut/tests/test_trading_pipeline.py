@@ -5701,6 +5701,18 @@ class TestTradingPipeline(TestCase):
             ),
             set(),
         )
+        self.assertFalse(
+            SimpleTradingPipeline._paper_route_target_symbol_has_open_position(
+                [{"symbol": "AAPL", "qty": "10"}],
+                " ",
+            )
+        )
+        self.assertTrue(
+            SimpleTradingPipeline._paper_route_target_symbol_has_open_position(
+                [{"symbol": "AAPL", "qty": "0", "market_value": "25.50"}],
+                "AAPL",
+            )
+        )
 
     def test_paper_route_target_source_decisions_guard_paths_and_dedupes(
         self,
@@ -5821,6 +5833,68 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(decisions[0].symbol, "AAPL")
         self.assertEqual(decisions[0].action, "buy")
 
+    def test_paper_route_target_source_decisions_skip_symbols_with_open_exposure(
+        self,
+    ) -> None:
+        from app import config
+
+        now = datetime(2026, 5, 26, 14, 0, tzinfo=timezone.utc)
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, 0, tzinfo=timezone.utc)
+        config.settings.trading_mode = "paper"
+        config.settings.trading_simple_paper_route_probe_enabled = True
+
+        strategy = Strategy(
+            name="paper-route-candidate-v1",
+            description="paper route candidate",
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="static",
+            universe_symbols=["AAPL", "AMZN"],
+            max_notional_per_trade=Decimal("1000"),
+        )
+        target = {
+            "strategy_name": "paper-route-candidate-v1",
+            "paper_route_probe_symbols": ["AAPL", "AMZN"],
+            "paper_route_probe_next_session_max_notional": "25",
+            "paper_route_probe_window_start": window_start.isoformat(),
+            "paper_route_probe_window_end": window_end.isoformat(),
+        }
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+
+        with (
+            patch.object(
+                SimpleTradingPipeline,
+                "_external_paper_route_target_probe_symbols_cached",
+                return_value=({"AAPL", "AMZN"}, None, [target]),
+            ),
+            patch(
+                "app.trading.scheduler.simple_pipeline.trading_now",
+                return_value=now,
+            ),
+        ):
+            decisions = pipeline._paper_route_target_source_decisions(
+                strategies=[strategy],
+                allowed_symbols={"AAPL", "AMZN"},
+                positions=[{"symbol": "AMZN", "qty": "41", "side": "short"}],
+            )
+
+        self.assertEqual([decision.symbol for decision in decisions], ["AAPL"])
+
     def test_process_paper_route_target_source_decisions_records_submit_failure(
         self,
     ) -> None:
@@ -5859,13 +5933,14 @@ class TestTradingPipeline(TestCase):
             rationale="target-plan-source-decision",
             params={"price": "100"},
         )
+        positions: list[dict[str, Any]] = []
 
         with (
             patch.object(
                 pipeline,
                 "_paper_route_target_source_decisions",
                 return_value=[decision],
-            ),
+            ) as source_decisions,
             patch.object(
                 pipeline,
                 "_handle_decision",
@@ -5877,10 +5952,15 @@ class TestTradingPipeline(TestCase):
                 session=session,
                 strategies=[strategy],
                 account={"equity": "10000", "cash": "10000", "buying_power": "10000"},
-                positions=[],
+                positions=positions,
                 allowed_symbols={"AAPL"},
             )
 
+        source_decisions.assert_called_once_with(
+            strategies=[strategy],
+            allowed_symbols={"AAPL"},
+            positions=positions,
+        )
         self.assertEqual(state.metrics.decisions_total, 1)
         self.assertEqual(state.metrics.orders_rejected_total, 1)
         self.assertEqual(
