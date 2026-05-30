@@ -218,6 +218,19 @@ def _target_truthy(value: object) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _target_bool(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int | float | Decimal):
+        return bool(value)
+    text = str(value or "").strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return None
+
+
 def _lineage_text_values(value: object) -> list[str]:
     raw_items: Sequence[object]
     if isinstance(value, str):
@@ -253,6 +266,10 @@ def _paper_route_probe_lineage_from_params(params: Mapping[str, Any]) -> dict[st
     strategy_names: list[str] = []
     lineage_targets: list[dict[str, str]] = []
     lineage_target_keys: set[tuple[str | None, str | None, str | None]] = set()
+    source_decision_mode = _safe_text(params.get("source_decision_mode"))
+    profit_proof_eligible = _target_bool(params.get("profit_proof_eligible"))
+    fallback_source_decision_modes: list[str] = []
+    fallback_profit_proof_values: list[bool] = []
     for payload in payloads:
         _merge_unique_texts(
             candidate_ids, _lineage_text_values(payload.get("source_candidate_id"))
@@ -272,6 +289,13 @@ def _paper_route_probe_lineage_from_params(params: Mapping[str, Any]) -> dict[st
         _merge_unique_texts(
             strategy_names, _lineage_text_values(payload.get("source_strategy_names"))
         )
+        if payload is not params:
+            if mode := _safe_text(payload.get("source_decision_mode")):
+                fallback_source_decision_modes.append(mode)
+            if (
+                eligible := _target_bool(payload.get("profit_proof_eligible"))
+            ) is not None:
+                fallback_profit_proof_values.append(eligible)
 
         raw_targets = payload.get("paper_route_probe_lineage_targets")
         if isinstance(raw_targets, Sequence) and not isinstance(
@@ -299,6 +323,16 @@ def _paper_route_probe_lineage_from_params(params: Mapping[str, Any]) -> dict[st
         lineage["source_strategy_names"] = strategy_names
     if lineage_targets:
         lineage["paper_route_probe_lineage_targets"] = lineage_targets
+    if source_decision_mode:
+        lineage["source_decision_mode"] = source_decision_mode
+    else:
+        unique_modes = list(dict.fromkeys(fallback_source_decision_modes))
+        if len(unique_modes) == 1:
+            lineage["source_decision_mode"] = unique_modes[0]
+    if profit_proof_eligible is not None:
+        lineage["profit_proof_eligible"] = profit_proof_eligible
+    elif fallback_profit_proof_values:
+        lineage["profit_proof_eligible"] = all(fallback_profit_proof_values)
     return lineage
 
 
@@ -339,6 +373,10 @@ def _merge_paper_route_probe_lineage(
         current = target.setdefault(key, [])
         if isinstance(current, list):
             _merge_unique_texts(cast(list[str], current), values)
+
+    for key in ("source_decision_mode", "profit_proof_eligible"):
+        if key in lineage and key not in target:
+            target[key] = lineage[key]
 
     raw_targets = lineage.get("paper_route_probe_lineage_targets")
     if not isinstance(raw_targets, Sequence) or isinstance(
@@ -1115,6 +1153,12 @@ class SimpleTradingPipeline(TradingPipeline):
                     },
                 },
             }
+            exit_lineage = cast(
+                Mapping[str, Any], exposure.get("paper_route_probe_lineage") or {}
+            )
+            for key in ("source_decision_mode", "profit_proof_eligible"):
+                if key in exit_lineage:
+                    params[key] = exit_lineage[key]
             if avg_entry_price is not None:
                 params["price"] = avg_entry_price
             decisions.append(
