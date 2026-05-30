@@ -243,7 +243,7 @@ def _completion(
     net_pnl: str = "10000",
     trading_days: int = 20,
     expectancy_bps: str = "13",
-    drawdown_pct: str | None = "0.04",
+    drawdown_pct: str | None = "0.02",
     best_day_share: str | None = "0.20",
     symbol_concentration_share: str | None = "0.35",
     ledger_refs: list[str] | None = None,
@@ -406,11 +406,11 @@ class TestRuntimeLedgerProofPacket(TestCase):
             result["checks"]["runtime_ledger_risk_quality"]["observed"][
                 "drawdown_pct_equity"
             ],
-            "0.04",
+            "0.02",
         )
         self.assertEqual(
             result["target"]["max_runtime_ledger_drawdown_pct_equity"],
-            "0.08",
+            "0.03",
         )
         self.assertEqual(result["proof_mode"], "authority")
         self.assertTrue(result["final_authority_ok"])
@@ -434,6 +434,13 @@ class TestRuntimeLedgerProofPacket(TestCase):
             "smoke_proof_satisfied_evidence_collection_only",
         )
         self.assertFalse(result["promotion_authority"]["allowed"])
+        self.assertEqual(
+            result["target"]["max_runtime_ledger_drawdown_pct_equity"], "0.08"
+        )
+        self.assertEqual(
+            result["target"]["max_runtime_ledger_symbol_concentration_share"],
+            "0.5",
+        )
         self.assertIn(
             "runtime_ledger_proof_mode_not_authority",
             result["promotion_authority"]["blocking_reasons"],
@@ -1158,9 +1165,9 @@ class TestRuntimeLedgerProofPacket(TestCase):
         self.assertEqual(
             result["checks"]["runtime_ledger_risk_quality"]["expected"],
             {
-                "max_drawdown_pct_equity": "0.08",
+                "max_drawdown_pct_equity": "0.03",
                 "max_best_day_share": "0.25",
-                "max_symbol_concentration_share": "0.5",
+                "max_symbol_concentration_share": "0.35",
             },
         )
 

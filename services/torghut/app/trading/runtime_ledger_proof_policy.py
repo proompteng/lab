@@ -34,7 +34,9 @@ class RuntimeLedgerProofPolicy:
     authority_min_p10_daily_net_pnl_after_costs: Decimal = Decimal("-250")
     authority_min_worst_day_net_pnl_after_costs: Decimal = Decimal("-750")
     authority_max_intraday_drawdown: Decimal = Decimal("1500")
+    authority_max_drawdown_pct_equity: Decimal = Decimal("0.03")
     authority_max_best_day_share: Decimal = Decimal("0.25")
+    authority_max_symbol_concentration_share: Decimal = Decimal("0.35")
 
     def target_payload(
         self,
@@ -52,6 +54,15 @@ class RuntimeLedgerProofPolicy:
                 _target_decimal(targets, "min_daily_net_pnl_after_costs")
             ),
             "min_runtime_ledger_trading_days": targets["min_trading_days"],
+            "max_runtime_ledger_drawdown_pct_equity": _decimal_text(
+                _target_decimal(targets, "max_drawdown_pct_equity")
+            ),
+            "max_runtime_ledger_best_day_share": _decimal_text(
+                _target_decimal(targets, "max_best_day_share")
+            ),
+            "max_runtime_ledger_symbol_concentration_share": _decimal_text(
+                _target_decimal(targets, "max_symbol_concentration_share")
+            ),
         }
 
     def targets_for_mode(self, proof_mode: str) -> dict[str, object]:
@@ -59,6 +70,9 @@ class RuntimeLedgerProofPolicy:
         min_days = self.min_trading_days
         min_daily = self.min_daily_net_pnl_after_costs
         min_net = self.min_net_pnl_after_costs
+        max_drawdown_pct_equity = self.max_drawdown_pct_equity
+        max_best_day_share = self.max_best_day_share
+        max_symbol_concentration_share = self.max_symbol_concentration_share
         if mode == "probation":
             min_days = max(min_days, self.probation_min_trading_days)
             min_net = max(min_net, min_daily * Decimal(min_days))
@@ -69,6 +83,18 @@ class RuntimeLedgerProofPolicy:
                 self.authority_min_mean_daily_net_pnl_after_costs,
             )
             min_net = max(min_net, min_daily * Decimal(min_days))
+            max_drawdown_pct_equity = min(
+                max_drawdown_pct_equity,
+                self.authority_max_drawdown_pct_equity,
+            )
+            max_best_day_share = min(
+                max_best_day_share,
+                self.authority_max_best_day_share,
+            )
+            max_symbol_concentration_share = min(
+                max_symbol_concentration_share,
+                self.authority_max_symbol_concentration_share,
+            )
         return {
             "proof_mode": mode,
             "final_authority": mode == "authority",
@@ -76,6 +102,9 @@ class RuntimeLedgerProofPolicy:
             "min_net_pnl_after_costs": min_net,
             "min_daily_net_pnl_after_costs": min_daily,
             "min_trading_days": min_days,
+            "max_drawdown_pct_equity": max_drawdown_pct_equity,
+            "max_best_day_share": max_best_day_share,
+            "max_symbol_concentration_share": max_symbol_concentration_share,
         }
 
 
@@ -106,8 +135,14 @@ _DECIMAL_ENV_FIELDS = {
     "TORGHUT_RUNTIME_LEDGER_AUTHORITY_MAX_INTRADAY_DRAWDOWN": (
         "authority_max_intraday_drawdown"
     ),
+    "TORGHUT_RUNTIME_LEDGER_AUTHORITY_MAX_DRAWDOWN_PCT_EQUITY": (
+        "authority_max_drawdown_pct_equity"
+    ),
     "TORGHUT_RUNTIME_LEDGER_AUTHORITY_MAX_BEST_DAY_SHARE": (
         "authority_max_best_day_share"
+    ),
+    "TORGHUT_RUNTIME_LEDGER_AUTHORITY_MAX_SYMBOL_CONCENTRATION_SHARE": (
+        "authority_max_symbol_concentration_share"
     ),
 }
 _INT_ENV_FIELDS = {

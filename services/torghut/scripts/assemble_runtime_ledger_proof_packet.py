@@ -1282,6 +1282,18 @@ def build_runtime_ledger_proof_packet(
         min_runtime_ledger_trading_days,
         cast(int, proof_mode_targets["min_trading_days"]),
     )
+    max_runtime_ledger_drawdown_pct_equity = min(
+        max_runtime_ledger_drawdown_pct_equity,
+        cast(Decimal, proof_mode_targets["max_drawdown_pct_equity"]),
+    )
+    max_runtime_ledger_best_day_share = min(
+        max_runtime_ledger_best_day_share,
+        cast(Decimal, proof_mode_targets["max_best_day_share"]),
+    )
+    max_runtime_ledger_symbol_concentration_share = min(
+        max_runtime_ledger_symbol_concentration_share,
+        cast(Decimal, proof_mode_targets["max_symbol_concentration_share"]),
+    )
     final_authority_mode = bool(proof_mode_targets["final_authority"])
     mode_authority_blockers = (
         []
