@@ -288,6 +288,68 @@ class TestPaperRouteEvidenceAudit(TestCase):
             ["paper_route_account_pre_session_snapshot_missing"],
         )
         self.assertEqual(
+            source_plan["account_pre_session_readiness"]["blockers"],
+            ["paper_route_account_pre_session_snapshot_missing"],
+        )
+
+    def test_target_plan_import_plan_uses_latest_closed_window_on_weekend(
+        self,
+    ) -> None:
+        generated_at = datetime(2026, 5, 30, 8, 23, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            payload = self._build_basic_paper_route_target_plan(
+                session,
+                generated_at=generated_at,
+            )
+
+        import_plan = payload["runtime_window_import_plan"]
+        self.assertEqual(
+            import_plan["purpose"],
+            "latest_closed_session_paper_route_runtime_window_import",
+        )
+        self.assertEqual(
+            import_plan["session_window"],
+            {
+                "start": "2026-05-29T13:30:00+00:00",
+                "end": "2026-05-29T20:00:00+00:00",
+            },
+        )
+        self.assertTrue(import_plan["session_readiness"]["import_ready"])
+        self.assertEqual(import_plan["target_count"], 1)
+        latest_closed = payload["latest_closed_paper_route_runtime_window_targets"]
+        self.assertEqual(latest_closed["session_window"], import_plan["session_window"])
+        next_plan = payload["next_paper_route_runtime_window_targets"]
+        self.assertEqual(
+            next_plan["session_window"],
+            {
+                "start": "2026-06-01T13:30:00+00:00",
+                "end": "2026-06-01T20:00:00+00:00",
+            },
+        )
+        self.assertEqual(
+            payload["summary"]["runtime_window_import_plan_purpose"],
+            "latest_closed_session_paper_route_runtime_window_import",
+        )
+
+    def test_source_runtime_window_import_plan_keeps_next_session_window(
+        self,
+    ) -> None:
+        generated_at = datetime(2026, 5, 30, 8, 23, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            payload = self._build_basic_paper_route_target_plan(
+                session,
+                generated_at=generated_at,
+            )
+
+        source_plan = payload["source_runtime_window_import_plan"]
+        self.assertEqual(
+            source_plan["session_window"],
+            {
+                "start": "2026-06-01T13:30:00+00:00",
+                "end": "2026-06-01T20:00:00+00:00",
+            },
+        )
+        self.assertEqual(
             payload["summary"]["source_runtime_window_target_count"],
             1,
         )
@@ -1010,9 +1072,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
             [],
         )
         self.assertEqual(target["max_notional"], "0")
-        self.assertEqual(
-            target["paper_route_probe_next_session_max_notional"], "63180"
-        )
+        self.assertEqual(target["paper_route_probe_next_session_max_notional"], "63180")
         self.assertEqual(target["paper_route_probe_effective_max_notional"], "63180")
         self.assertTrue(target["bounded_evidence_collection_authorized"])
         self.assertEqual(
@@ -1042,7 +1102,9 @@ class TestPaperRouteEvidenceAudit(TestCase):
             summary_target["bounded_evidence_collection_max_notional"], "63180"
         )
         self.assertTrue(summary_target["source_collection_authorized"])
-        self.assertEqual(summary_target["source_decision_mode"], "route_acquisition_probe")
+        self.assertEqual(
+            summary_target["source_decision_mode"], "route_acquisition_probe"
+        )
         self.assertFalse(summary_target["profit_proof_eligible"])
 
     def test_next_paper_route_targets_use_strategy_universe_when_route_probe_empty(

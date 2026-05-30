@@ -493,6 +493,23 @@ def _next_regular_equities_session_window(
     return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
 
 
+def _latest_closed_regular_equities_session_window(
+    generated_at: datetime,
+) -> tuple[datetime, datetime]:
+    """Return the latest regular session that is closed at ``generated_at``."""
+
+    zone = ZoneInfo(US_EQUITIES_TIMEZONE)
+    local_generated_at = generated_at.astimezone(zone)
+    candidate_date = local_generated_at.date()
+    while True:
+        if _regular_equities_session_date(candidate_date):
+            end = datetime.combine(candidate_date, US_EQUITIES_CLOSE, tzinfo=zone)
+            if local_generated_at > end:
+                start = datetime.combine(candidate_date, US_EQUITIES_OPEN, tzinfo=zone)
+                return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
+        candidate_date -= timedelta(days=1)
+
+
 def _seconds_until(*, generated_at: datetime, target: datetime) -> int:
     return max(0, int((target - generated_at).total_seconds()))
 
@@ -1146,8 +1163,12 @@ def _next_paper_route_runtime_window_targets(
     live_submission_gate: Mapping[str, Any],
     generated_at: datetime,
     require_clean_pre_session: bool = True,
+    window_start: datetime | None = None,
+    window_end: datetime | None = None,
+    purpose: str = "next_session_paper_route_runtime_window_evidence_collection",
 ) -> dict[str, object]:
-    window_start, window_end = _next_regular_equities_session_window(generated_at)
+    if window_start is None or window_end is None:
+        window_start, window_end = _next_regular_equities_session_window(generated_at)
     probe_symbols = _paper_route_probe_symbols(probe)
     next_notional = _next_session_probe_notional(probe)
     probe_ready = (
@@ -1241,7 +1262,9 @@ def _next_paper_route_runtime_window_targets(
             raw_probe_symbols=source_readiness_raw_probe_symbols,
             scoped_probe_symbols=target_probe_symbols,
         )
-        matched_strategy = _as_mapping(source_decision_readiness.get("matched_strategy"))
+        matched_strategy = _as_mapping(
+            source_decision_readiness.get("matched_strategy")
+        )
         canonical_strategy_name = _canonical_runtime_strategy_name(
             strategy_name=strategy_name,
             runtime_strategy_name=runtime_strategy_name,
@@ -1566,7 +1589,7 @@ def _next_paper_route_runtime_window_targets(
     return {
         "schema_version": NEXT_PAPER_ROUTE_RUNTIME_WINDOW_TARGETS_SCHEMA_VERSION,
         "source": "paper_route_evidence_audit",
-        "purpose": "next_session_paper_route_runtime_window_evidence_collection",
+        "purpose": purpose,
         "promotion_allowed": False,
         "final_promotion_authorized": False,
         "final_promotion_allowed": False,
@@ -3501,6 +3524,20 @@ def build_paper_route_target_plan_payload(
         live_submission_gate=live_submission_gate,
         generated_at=resolved_generated_at,
     )
+    closed_window_start, closed_window_end = (
+        _latest_closed_regular_equities_session_window(resolved_generated_at)
+    )
+    latest_closed_targets = _next_paper_route_runtime_window_targets(
+        session=session,
+        targets=targets,
+        probe=probe,
+        live_submission_gate=live_submission_gate,
+        generated_at=resolved_generated_at,
+        require_clean_pre_session=False,
+        window_start=closed_window_start,
+        window_end=closed_window_end,
+        purpose="latest_closed_session_paper_route_runtime_window_import",
+    )
     source_targets = _next_paper_route_runtime_window_targets(
         session=session,
         targets=targets,
@@ -3508,6 +3545,15 @@ def build_paper_route_target_plan_payload(
         live_submission_gate=live_submission_gate,
         generated_at=resolved_generated_at,
         require_clean_pre_session=False,
+    )
+    latest_closed_readiness = _as_mapping(
+        latest_closed_targets.get("session_readiness")
+    )
+    runtime_window_import_plan = (
+        latest_closed_targets
+        if bool(latest_closed_readiness.get("import_ready"))
+        and _safe_int(latest_closed_targets.get("target_count")) > 0
+        else next_targets
     )
     return {
         "schema_version": PAPER_ROUTE_TARGET_PLAN_PAYLOAD_SCHEMA_VERSION,
@@ -3544,13 +3590,23 @@ def build_paper_route_target_plan_payload(
             ),
         },
         "paper_route_probe": probe,
-        "runtime_window_import_plan": next_targets,
+        "runtime_window_import_plan": runtime_window_import_plan,
         "source_runtime_window_import_plan": source_targets,
+        "latest_closed_paper_route_runtime_window_targets": latest_closed_targets,
         "next_paper_route_runtime_window_targets": next_targets,
         "summary": {
             "source_target_count": len(targets),
             "next_runtime_window_target_count": _safe_int(
                 next_targets.get("target_count")
+            ),
+            "runtime_window_import_target_count": _safe_int(
+                runtime_window_import_plan.get("target_count")
+            ),
+            "runtime_window_import_plan_purpose": _safe_text(
+                runtime_window_import_plan.get("purpose")
+            ),
+            "latest_closed_runtime_window_target_count": _safe_int(
+                latest_closed_targets.get("target_count")
             ),
             "source_runtime_window_target_count": _safe_int(
                 source_targets.get("target_count")
