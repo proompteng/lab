@@ -56,6 +56,7 @@ from app.trading.risk import RiskEngine
 from app.trading.scheduler.pipeline import TradingPipeline
 from app.trading.scheduler.simple_pipeline import (
     SimpleTradingPipeline,
+    _paper_route_probe_entry_metadata,
     _paper_route_probe_lineage_from_params,
     _parse_target_datetime,
     _safe_int,
@@ -4502,7 +4503,7 @@ class TestTradingPipeline(TestCase):
             payload = cast(dict[str, Any], exit_row.decision_json)
             self.assertNotIn("max_notional_exceeded", payload.get("risk_reasons", []))
 
-    def test_simple_pipeline_probe_exit_inherits_profit_proof_source_mode(
+    def test_simple_pipeline_does_not_close_strategy_signal_paper_as_probe_inventory(
         self,
     ) -> None:
         self._seed_filled_paper_route_probe_entry(
@@ -4521,30 +4522,66 @@ class TestTradingPipeline(TestCase):
             now=datetime(2026, 3, 26, 15, 31, tzinfo=timezone.utc),
         )
 
-        self.assertEqual(len(alpaca_client.submitted), 1)
+        self.assertEqual(alpaca_client.submitted, [])
         with self.session_local() as session:
-            exit_row = (
-                session.execute(
-                    select(TradeDecision)
-                    .where(TradeDecision.symbol == "AAPL")
-                    .order_by(TradeDecision.created_at.desc())
-                )
+            decisions = (
+                session.execute(select(TradeDecision).order_by(TradeDecision.created_at))
                 .scalars()
-                .first()
+                .all()
             )
-            assert exit_row is not None
-            payload = cast(dict[str, Any], exit_row.decision_json)
+            self.assertEqual(len(decisions), 1)
+            payload = cast(dict[str, Any], decisions[0].decision_json)
             params = cast(dict[str, Any], payload["params"])
-            exit_metadata = cast(dict[str, Any], params["paper_route_probe_exit"])
-
             self.assertEqual(params["source_decision_mode"], "strategy_signal_paper")
             self.assertTrue(params["profit_proof_eligible"])
-            self.assertEqual(
-                exit_metadata["source_decision_mode"], "strategy_signal_paper"
+            self.assertNotIn("paper_route_probe_exit", params)
+
+    def test_paper_route_probe_entry_metadata_rejects_proof_and_non_probe_rows(
+        self,
+    ) -> None:
+        self.assertIsNone(_paper_route_probe_entry_metadata({}))
+        self.assertIsNone(
+            _paper_route_probe_entry_metadata(
+                {
+                    "profit_proof_eligible": True,
+                    "paper_route_probe": {"mode": "paper_route_acquisition"},
+                }
             )
-            self.assertTrue(exit_metadata["profit_proof_eligible"])
-            self.assertEqual(exit_metadata["source_candidate_ids"], ["cand-h-pairs"])
-            self.assertEqual(exit_metadata["source_hypothesis_ids"], ["H-PAIRS-01"])
+        )
+        self.assertIsNone(
+            _paper_route_probe_entry_metadata(
+                {
+                    "paper_route_probe": {
+                        "mode": "paper_route_acquisition",
+                        "source_decision_mode": "strategy_signal_paper",
+                    }
+                }
+            )
+        )
+        self.assertIsNone(
+            _paper_route_probe_entry_metadata(
+                {
+                    "paper_route_probe": {
+                        "mode": "paper_route_acquisition",
+                        "profit_proof_eligible": True,
+                    }
+                }
+            )
+        )
+        self.assertEqual(
+            _paper_route_probe_entry_metadata(
+                {
+                    "paper_route_probe": {
+                        "mode": "paper_route_acquisition",
+                        "source_decision_mode": "route_acquisition_probe",
+                    }
+                }
+            ),
+            {
+                "mode": "paper_route_acquisition",
+                "source_decision_mode": "route_acquisition_probe",
+            },
+        )
 
     def test_paper_route_probe_lineage_parses_profit_proof_eligibility(self) -> None:
         self.assertTrue(
@@ -6960,6 +6997,11 @@ class TestTradingPipeline(TestCase):
                 make_decision(
                     params={"paper_route_target_plan_source_decision": {"mode": "x"}}
                 ),
+                [good_target],
+            ),
+            (
+                "paper route probe exit",
+                make_decision(params={"paper_route_probe_exit": {"mode": "x"}}),
                 [good_target],
             ),
             (

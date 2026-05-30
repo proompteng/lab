@@ -32,6 +32,7 @@ from ..proof_floor import build_profitability_proof_floor_receipt
 from ..runtime_decision_authority import (
     ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
     STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE,
+    normalize_source_decision_mode,
 )
 from ..session_context import REGULAR_OPEN_UTC
 from ..simple_risk import (
@@ -334,6 +335,35 @@ def _paper_route_probe_lineage_from_params(params: Mapping[str, Any]) -> dict[st
     elif fallback_profit_proof_values:
         lineage["profit_proof_eligible"] = all(fallback_profit_proof_values)
     return lineage
+
+
+def _paper_route_probe_entry_metadata(
+    params: Mapping[str, Any],
+) -> Mapping[str, Any] | None:
+    metadata = params.get("paper_route_probe")
+    if not isinstance(metadata, Mapping):
+        return None
+
+    source_decision_mode = normalize_source_decision_mode(
+        params.get("source_decision_mode")
+    )
+    if source_decision_mode == STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE:
+        return None
+    if _target_bool(params.get("profit_proof_eligible")) is True:
+        return None
+
+    probe_metadata = cast(Mapping[str, Any], metadata)
+    probe_source_decision_mode = normalize_source_decision_mode(
+        probe_metadata.get("source_decision_mode")
+    )
+    if (
+        probe_source_decision_mode is not None
+        and probe_source_decision_mode != ROUTE_ACQUISITION_SOURCE_DECISION_MODE
+    ):
+        return None
+    if _target_bool(probe_metadata.get("profit_proof_eligible")) is True:
+        return None
+    return probe_metadata
 
 
 def _lineage_target_from_mapping(raw_target: Mapping[str, object]) -> dict[str, str]:
@@ -984,7 +1014,7 @@ class SimpleTradingPipeline(TradingPipeline):
             if not isinstance(decision_json, Mapping):
                 continue
             params = decision.params
-            is_entry = isinstance(params.get("paper_route_probe"), Mapping)
+            is_entry = _paper_route_probe_entry_metadata(params) is not None
             is_exit = isinstance(params.get("paper_route_probe_exit"), Mapping)
             if not is_entry and not is_exit:
                 continue
@@ -2520,6 +2550,8 @@ class SimpleTradingPipeline(TradingPipeline):
         if isinstance(
             decision.params.get("paper_route_target_plan_source_decision"), Mapping
         ):
+            return None
+        if isinstance(decision.params.get("paper_route_probe_exit"), Mapping):
             return None
         existing_mode = (
             str(decision.params.get("source_decision_mode") or "")
