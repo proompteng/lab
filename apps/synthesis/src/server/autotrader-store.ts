@@ -413,6 +413,12 @@ class InMemoryAutotraderStore implements AutotraderStore {
 
   async recordOrder(input: AutotraderRecordOrderInput): Promise<AutotraderOrder> {
     this.requireSession(input.sessionId)
+    const existingOrder = this.orders.get(input.clientOrderId)
+    if (existingOrder && existingOrder.sessionId !== input.sessionId) {
+      throw new Error(
+        `Autotrader clientOrderId ${input.clientOrderId} already belongs to session ${existingOrder.sessionId}`,
+      )
+    }
     const updatedAt = nowIso()
     const order: AutotraderOrder = {
       sessionId: input.sessionId,
@@ -1186,7 +1192,6 @@ class PostgresAutotraderStore implements AutotraderStore {
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18::jsonb)
         ON CONFLICT (client_order_id) DO UPDATE SET
-          session_id = EXCLUDED.session_id,
           ticket_id = EXCLUDED.ticket_id,
           broker_order_id = COALESCE(EXCLUDED.broker_order_id, autotrader.orders.broker_order_id),
           symbol = EXCLUDED.symbol,
@@ -1204,6 +1209,7 @@ class PostgresAutotraderStore implements AutotraderStore {
           reject_reason = EXCLUDED.reject_reason,
           broker_payload = EXCLUDED.broker_payload,
           updated_at = now()
+        WHERE autotrader.orders.session_id = EXCLUDED.session_id
         RETURNING *`,
         [
           input.sessionId,
@@ -1226,6 +1232,9 @@ class PostgresAutotraderStore implements AutotraderStore {
           toJson(input.brokerPayload),
         ],
       )
+      if (!result.rows[0]) {
+        throw new Error(`Autotrader clientOrderId ${input.clientOrderId} already belongs to another session`)
+      }
       const order = mapOrder(result.rows[0])
       const replaces = brokerReplacesOrderId(input.brokerPayload)
       if (replaces) {
@@ -1521,8 +1530,32 @@ class PostgresAutotraderStore implements AutotraderStore {
   ) {
     const key = scorecardKeyFor(observation)
     const example = exampleFromObservation(sessionId, observation)
-    const existingExample = await client.query(`SELECT id FROM autotrader.setup_examples WHERE id = $1`, [example.id])
-    if (existingExample.rowCount) return
+    const insertExampleResult = await client.query(
+      `INSERT INTO autotrader.setup_examples (
+        id, scorecard_key, session_id, ticket_id, symbol, setup_type, setup_grade, regime, time_bucket, outcome,
+        realized_r, notes, mistake_tags, payload
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb)
+      ON CONFLICT (id) DO NOTHING
+      RETURNING id`,
+      [
+        example.id,
+        example.scorecardKey,
+        example.sessionId,
+        example.ticketId,
+        example.symbol,
+        example.setupType,
+        example.setupGrade,
+        example.regime,
+        example.timeBucket,
+        example.outcome,
+        example.realizedR,
+        example.notes,
+        JSON.stringify(example.mistakeTags),
+        toJson(example.payload),
+      ],
+    )
+    if (!insertExampleResult.rowCount) return
     const existingResult = await client.query<ScorecardRow>(`SELECT * FROM autotrader.scorecards WHERE key = $1`, [key])
     const updated = updateScorecardWithObservation(
       existingResult.rows[0] ? mapScorecard(existingResult.rows[0]) : null,
@@ -1577,30 +1610,6 @@ class PostgresAutotraderStore implements AutotraderStore {
         updated.confidence,
         updated.updatedAt,
         sessionId,
-      ],
-    )
-    await client.query(
-      `INSERT INTO autotrader.setup_examples (
-        id, scorecard_key, session_id, ticket_id, symbol, setup_type, setup_grade, regime, time_bucket, outcome,
-        realized_r, notes, mistake_tags, payload
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb)
-      ON CONFLICT (id) DO NOTHING`,
-      [
-        example.id,
-        example.scorecardKey,
-        example.sessionId,
-        example.ticketId,
-        example.symbol,
-        example.setupType,
-        example.setupGrade,
-        example.regime,
-        example.timeBucket,
-        example.outcome,
-        example.realizedR,
-        example.notes,
-        JSON.stringify(example.mistakeTags),
-        toJson(example.payload),
       ],
     )
   }

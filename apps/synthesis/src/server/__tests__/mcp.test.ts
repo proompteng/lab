@@ -66,6 +66,18 @@ describe('synthesis MCP', () => {
     const toolsPayload = await toolsResponse.json()
     const toolNames = toolsPayload.result.tools.map((tool: { name: string }) => tool.name)
     const submitTool = toolsPayload.result.tools.find((tool: { name: string }) => tool.name === 'synthesis_submit_item')
+    const statusTool = toolsPayload.result.tools.find(
+      (tool: { name: string }) => tool.name === 'autotrader_upsert_status',
+    )
+    const orderTool = toolsPayload.result.tools.find(
+      (tool: { name: string }) => tool.name === 'autotrader_record_order',
+    )
+    const positionTool = toolsPayload.result.tools.find(
+      (tool: { name: string }) => tool.name === 'autotrader_record_position_snapshot',
+    )
+    const finalizeTool = toolsPayload.result.tools.find(
+      (tool: { name: string }) => tool.name === 'autotrader_finalize_session',
+    )
 
     expect(toolNames).toContain('synthesis_submit_item')
     expect(toolNames).toContain('synthesis_prefill_company')
@@ -87,6 +99,11 @@ describe('synthesis MCP', () => {
     expect(submitTool.inputSchema.properties.replyText).toBeUndefined()
     expect(submitTool.inputSchema.properties.embedding).toBeUndefined()
     expect(submitTool.inputSchema.properties.companySymbols).toBeDefined()
+    expect(statusTool.inputSchema.properties.phase.enum).toContain('no_trade')
+    expect(orderTool.inputSchema.properties.status.enum).toContain('replaced')
+    expect(orderTool.inputSchema.properties.clientOrderId.maxLength).toBe(128)
+    expect(positionTool.inputSchema.required).toContain('capturedAt')
+    expect(finalizeTool.inputSchema.properties.terminalReason.enum).toContain('market_closed')
 
     const resourceResponse = await handleMcpRequest(rpc('resources/read', { uri: 'synthesis://config' }))
     const resourcePayload = await resourceResponse.json()
@@ -506,7 +523,7 @@ describe('synthesis MCP', () => {
           'autotrader_finalize_session',
           {
             sessionId,
-            terminalReason: 'market_close',
+            terminalReason: 'market_closed',
             openingEquity: '38400',
             closingEquity: '38750',
             realizedPnl: '350',
@@ -547,7 +564,7 @@ describe('synthesis MCP', () => {
       ),
     )
 
-    expect(finalizedPayload.detail.session.terminalReason).toBe('market_close')
+    expect(finalizedPayload.detail.session.terminalReason).toBe('market_closed')
     expect(finalizedPayload.detail.session.openingEquity).toBe('38400')
     expect(finalizedPayload.detail.session.closingEquity).toBe('38750')
     expect(finalizedPayload.detail.session.realizedPnl).toBe('350')
