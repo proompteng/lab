@@ -256,6 +256,7 @@ jobs:
             argocd/applications/torghut/analysis-template-artifact-bundle.yaml \
             argocd/applications/torghut/empirical-jobs-backfill-job.yaml \
             argocd/applications/torghut/execution-tca-refresh-cronjob.yaml \
+            argocd/applications/torghut/paper-account-flatten-cronjob.yaml \
             argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml \
             argocd/applications/torghut-options/catalog/deployment.yaml \
             argocd/applications/torghut-options/enricher/deployment.yaml; then
@@ -295,6 +296,7 @@ jobs:
             argocd/applications/torghut/analysis-template-artifact-bundle.yaml
             argocd/applications/torghut/empirical-jobs-backfill-job.yaml
             argocd/applications/torghut/execution-tca-refresh-cronjob.yaml
+            argocd/applications/torghut/paper-account-flatten-cronjob.yaml
             argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml
             argocd/applications/torghut-options/catalog/deployment.yaml
             argocd/applications/torghut-options/enricher/deployment.yaml
@@ -337,6 +339,7 @@ jobs:
             argocd/applications/torghut/analysis-template-artifact-bundle.yaml
             argocd/applications/torghut/empirical-jobs-backfill-job.yaml
             argocd/applications/torghut/execution-tca-refresh-cronjob.yaml
+            argocd/applications/torghut/paper-account-flatten-cronjob.yaml
             argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml
             argocd/applications/torghut-options/catalog/deployment.yaml
             argocd/applications/torghut-options/enricher/deployment.yaml
