@@ -29,6 +29,7 @@ export const AutotraderPhaseSchema = z.enum([
   'finalize',
   'blocked',
   'idle',
+  'no_trade',
 ])
 export const AutotraderInstrumentSchema = z.enum(['stock', 'etf', 'option', 'crypto', 'other'])
 export const AutotraderSideSchema = z.enum([
@@ -57,6 +58,14 @@ export const AutotraderOrderStatusSchema = z.enum([
   'replaced',
 ])
 export const AutotraderOutcomeSchema = z.enum(['win', 'loss', 'scratch', 'rejected_valid', 'rejected_invalid'])
+export const AutotraderTerminalReasonSchema = z.enum([
+  'target_reached',
+  'market_closed',
+  'dry_run_complete',
+  'scorecard_readback_waiting',
+  'scorecard_readback_complete',
+  'hard_stop',
+])
 
 export const AutotraderStartSessionInputSchema = z
   .object({
@@ -150,7 +159,7 @@ export const AutotraderRecordOrderInputSchema = z
   .object({
     sessionId: z.string().trim().min(1),
     ticketId: z.string().trim().min(1).optional(),
-    clientOrderId: z.string().trim().min(1).max(240),
+    clientOrderId: z.string().trim().min(1).max(128),
     brokerOrderId: z.string().trim().min(1).max(240).nullable().optional(),
     symbol: z.string().trim().min(1).max(32),
     instrument: AutotraderInstrumentSchema,
@@ -172,7 +181,7 @@ export const AutotraderRecordOrderInputSchema = z
 export const AutotraderRecordFillInputSchema = z
   .object({
     sessionId: z.string().trim().min(1),
-    clientOrderId: z.string().trim().min(1).max(240),
+    clientOrderId: z.string().trim().min(1).max(128),
     brokerFillId: z.string().trim().min(1).max(240),
     symbol: z.string().trim().min(1).max(32),
     side: AutotraderSideSchema,
@@ -191,7 +200,7 @@ export const AutotraderRecordPositionSnapshotInputSchema = z
     marketValue: OptionalNumericStringSchema,
     averageEntryPrice: OptionalNumericStringSchema,
     unrealizedPnl: OptionalNumericStringSchema,
-    capturedAt: z.string().trim().min(1).max(80).optional(),
+    capturedAt: z.string().trim().min(1).max(80),
     brokerPayload: PayloadSchema,
   })
   .strict()
@@ -218,7 +227,7 @@ export const AutotraderScorecardObservationSchema = z
 export const AutotraderFinalizeSessionInputSchema = z
   .object({
     sessionId: z.string().trim().min(1),
-    terminalReason: z.string().trim().min(1).max(240),
+    terminalReason: AutotraderTerminalReasonSchema,
     openingEquity: OptionalNumericStringSchema,
     closingEquity: OptionalNumericStringSchema,
     realizedPnl: OptionalNumericStringSchema,

@@ -402,7 +402,7 @@ describe('synthesis REST auth', () => {
         body: JSON.stringify({
           sessionId,
           cycle: 3,
-          phase: 'scan',
+          phase: 'no_trade',
           currentAction: 'standing down on weak candidates',
           blocker: null,
           payload: { noTradeReason: 'no A setup' },
@@ -501,6 +501,7 @@ describe('synthesis REST auth', () => {
       maxDrawdown: '12',
     })
     expect(detailPayload.session.closingEquity).toBe('38025')
+    expect(detailPayload.status.phase).toBe('no_trade')
     expect(detailPayload.status.currentAction).toContain('standing down')
     expect(detailPayload.events[0].eventType).toBe('no_trade_decision')
     expect(detailPayload.tradeTickets[0].noTradeReason).toBe('C setup blocked')
@@ -779,5 +780,41 @@ describe('synthesis REST auth', () => {
       status: 'accepted',
       brokerPayload: { replaces: 'alpaca-original-stop' },
     })
+
+    const otherSessionResponse = await handleAutotraderStartSession(
+      new Request('http://synthesis.test/api/autotrader/sessions', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          agentRunName: 'autonomous-trader-order-reuse-api-test',
+          mode: 'market_open',
+          tradingDate: '2026-05-29',
+          accountId: 'paper-account',
+          goalEquity: '500000',
+          openingEquity: '38400',
+          marketOpenAt: '2026-05-29T13:30:00Z',
+          marketCloseAt: '2026-05-29T20:00:00Z',
+        }),
+      }),
+    )
+    const otherSessionPayload = await otherSessionResponse.json()
+    const reusedOrderResponse = await handleAutotraderRecordOrder(
+      new Request('http://synthesis.test/api/autotrader/orders', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          sessionId: otherSessionPayload.session.id,
+          clientOrderId: 'avgo-original-stop',
+          symbol: 'AVGO',
+          instrument: 'stock',
+          side: 'sell',
+          quantity: '50',
+          orderType: 'stop_limit',
+          status: 'accepted',
+        }),
+      }),
+    )
+
+    expect(reusedOrderResponse.status).toBe(500)
   })
 })

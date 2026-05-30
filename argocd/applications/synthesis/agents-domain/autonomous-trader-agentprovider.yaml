@@ -79,7 +79,7 @@ spec:
     AUTONOMOUS_TRADER_ACCOUNT_TYPE: "{{parameters.accountType}}"
     ANALYSIS_REPO_DIR: /workspace/analysis
     ANALYSIS_REPO_URL: https://github.com/gregkonush/analysis.git
-    ANALYSIS_REQUIRED_COMMIT: 2b565baa93af4d883bb3d62b5e333cf4eb66e05d
+    ANALYSIS_REQUIRED_COMMIT: 56be940b69bf1a56578040eda9bf2e3699c5220e
     AUTONOMOUS_TRADER_ARTIFACT_DIR: /workspace/.agentrun/autonomous-trader
     AUTONOMOUS_TRADER_MODE: "{{parameters.mode}}"
     AUTONOMOUS_TRADER_SYNTHESIS_SESSION_MODE: "{{parameters.synthesisSessionMode}}"
@@ -150,7 +150,7 @@ spec:
         artifact_dir="${AUTONOMOUS_TRADER_ARTIFACT_DIR:-/workspace/.agentrun/autonomous-trader}"
         analysis_dir="${ANALYSIS_REPO_DIR:-/workspace/analysis}"
         analysis_repo_url="${ANALYSIS_REPO_URL:-https://github.com/gregkonush/analysis.git}"
-        required_commit="${ANALYSIS_REQUIRED_COMMIT:-2b565baa93af4d883bb3d62b5e333cf4eb66e05d}"
+        required_commit="${ANALYSIS_REQUIRED_COMMIT:-56be940b69bf1a56578040eda9bf2e3699c5220e}"
         python_bin="${PYTHON_BIN:-python3}"
 
         mkdir -p "${artifact_dir}"
