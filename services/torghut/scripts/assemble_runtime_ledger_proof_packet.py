@@ -967,6 +967,10 @@ def _runtime_import_materialization_summary(
             target_blockers.append("runtime_window_import_target_profit_proof_missing")
         _extend_unique(
             target_blockers,
+            _text_list(observation.get("runtime_ledger_profit_proof_blockers")),
+        )
+        _extend_unique(
+            target_blockers,
             _runtime_import_target_surface_blockers(
                 summary=summary,
                 profit_proof_count=profit_proof_count,
@@ -983,6 +987,10 @@ def _runtime_import_materialization_summary(
         _extend_unique(
             materialization_blockers,
             _text_list(observation.get("runtime_ledger_materialization_blockers")),
+        )
+        _extend_unique(
+            materialization_blockers,
+            _text_list(observation.get("runtime_ledger_profit_proof_blockers")),
         )
         _extend_unique(
             materialization_blockers,

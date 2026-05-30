@@ -75,6 +75,18 @@ def _runtime_ledger_bucket(**overrides: object) -> dict[str, object]:
         "lineage_hash_counts": {"lineage-sha": 2},
         "source_decision_mode_counts": {"strategy_signal_paper": 2},
         "profit_proof_eligible": True,
+        "source_window_start": "2026-03-06T14:30:00+00:00",
+        "source_window_end": "2026-03-06T15:00:00+00:00",
+        "source_refs": [
+            "postgres:trade_decisions",
+            "postgres:executions",
+            "postgres:execution_order_events",
+        ],
+        "source_row_counts": {
+            "trade_decisions": 2,
+            "executions": 2,
+            "execution_order_events": 2,
+        },
         "blockers": [],
     }
     payload.update(overrides)
@@ -397,24 +409,7 @@ class TestRuntimeWindowImport(TestCase):
         ):
             with self.subTest(basis=basis):
                 blockers = _runtime_ledger_bucket_blockers(
-                    {
-                        "ledger_schema_version": "torghut.runtime-ledger-bucket.v1",
-                        "pnl_basis": "realized_strategy_pnl_after_explicit_costs",
-                        "fill_count": 2,
-                        "decision_count": 2,
-                        "submitted_order_count": 2,
-                        "closed_trade_count": 1,
-                        "open_position_count": 0,
-                        "filled_notional": "200",
-                        "cost_amount": "0.20",
-                        "cost_basis_counts": {basis: 2},
-                        "source_decision_mode_counts": {"strategy_signal_paper": 2},
-                        "profit_proof_eligible": True,
-                        "post_cost_expectancy_bps": "40",
-                        "execution_policy_hash_counts": {"policy-sha": 2},
-                        "cost_model_hash_counts": {"cost-sha": 2},
-                        "lineage_hash_counts": {"lineage-sha": 2},
-                    }
+                    _runtime_ledger_bucket(cost_basis_counts={basis: 2})
                 )
 
                 self.assertEqual(
@@ -431,23 +426,10 @@ class TestRuntimeWindowImport(TestCase):
         self,
     ) -> None:
         blockers = _runtime_ledger_bucket_blockers(
-            {
-                "ledger_schema_version": "torghut.runtime-ledger-bucket.v1",
-                "pnl_basis": "realized_strategy_pnl_after_explicit_costs",
-                "fill_count": 2,
-                "decision_count": 2,
-                "submitted_order_count": 2,
-                "closed_trade_count": 1,
-                "open_position_count": 0,
-                "filled_notional": "200",
-                "cost_amount": "0.20",
-                "cost_basis_counts": {"broker_reported_commission_and_fees": 2},
-                "source_decision_mode_counts": {"route_acquisition_probe": 2},
-                "post_cost_expectancy_bps": "40",
-                "execution_policy_hash_counts": {"policy-sha": 2},
-                "cost_model_hash_counts": {"cost-sha": 2},
-                "lineage_hash_counts": {"lineage-sha": 2},
-            }
+            _runtime_ledger_bucket(
+                cost_basis_counts={"broker_reported_commission_and_fees": 2},
+                source_decision_mode_counts={"route_acquisition_probe": 2},
+            )
         )
 
         self.assertEqual(blockers, ["source_decision_mode_not_profit_proof_eligible"])
@@ -1223,6 +1205,32 @@ class TestRuntimeWindowImport(TestCase):
                 "target_implied_avg_daily_filled_notional"
             ],
             "625000",
+        )
+
+    def test_runtime_ledger_bucket_blocks_missing_source_authority(self) -> None:
+        missing_window = _runtime_ledger_bucket(
+            source_window_start=None,
+            source_window_end=None,
+        )
+        self.assertIn(
+            "runtime_ledger_source_window_missing",
+            _runtime_ledger_bucket_blockers(missing_window),
+        )
+
+        missing_refs = _runtime_ledger_bucket(source_refs=[], source_row_counts={})
+        self.assertIn(
+            "runtime_ledger_source_refs_missing",
+            _runtime_ledger_bucket_blockers(missing_refs),
+        )
+
+        complete = _runtime_ledger_bucket()
+        self.assertNotIn(
+            "runtime_ledger_source_window_missing",
+            _runtime_ledger_bucket_blockers(complete),
+        )
+        self.assertNotIn(
+            "runtime_ledger_source_refs_missing",
+            _runtime_ledger_bucket_blockers(complete),
         )
 
     def test_persist_observed_runtime_windows_allows_authority_grade_live_ledger(

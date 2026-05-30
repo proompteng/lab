@@ -190,6 +190,21 @@ def _runtime_import(
             "runtime_ledger_tca_profit_proof_count": 1 if authoritative else 0,
             "runtime_ledger_tca_runtime_bucket_row_count": 1 if authoritative else 0,
             "runtime_ledger_tca_authoritative_bucket_count": 1 if authoritative else 0,
+            "runtime_ledger_source_execution_materialized_bucket_count": 1
+            if authoritative
+            else 0,
+            "runtime_ledger_source_bucket_profit_proof_count": 1
+            if authoritative
+            else 0,
+            "runtime_ledger_source_materializations": ["execution_order_events"]
+            if authoritative
+            else [],
+            "runtime_ledger_materialization_pnl_derivations": [
+                "execution_order_events_runtime_ledger"
+            ]
+            if authoritative
+            else [],
+            "runtime_ledger_profit_proof_blockers": [],
             "runtime_ledger_filled_notional": "50000" if authoritative else "0",
             "runtime_ledger_net_strategy_pnl_after_costs": "650"
             if authoritative
@@ -1239,6 +1254,36 @@ class TestRuntimeLedgerProofPacket(TestCase):
         )
         self.assertTrue(materialization["materialized_targets"][0]["materialized"])
 
+    def test_packet_blocks_runtime_import_profit_proof_blockers(self) -> None:
+        runtime_import = _runtime_import()
+        observation = runtime_import["imports"][0]["summary"]["runtime_observation"]
+        assert isinstance(observation, dict)
+        observation["runtime_ledger_profit_proof_blockers"] = [
+            "runtime_ledger_source_window_missing",
+            "runtime_ledger_source_refs_missing",
+        ]
+
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=runtime_import,
+            completion_status=_completion(),
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        materialization = result["evidence"]["runtime_window_import"]["materialization"]
+        self.assertFalse(
+            result["checks"]["runtime_window_import_materialization"]["passed"]
+        )
+        self.assertEqual(materialization["materialized_target_count"], 0)
+        self.assertEqual(materialization["unmaterialized_target_count"], 1)
+        self.assertIn("runtime_ledger_source_window_missing", materialization["blockers"])
+        self.assertIn("runtime_ledger_source_refs_missing", materialization["blockers"])
+        self.assertIn(
+            "runtime_ledger_source_window_missing",
+            result["promotion_authority"]["blocking_reasons"],
+        )
+
     def test_packet_does_not_treat_promotion_only_import_metadata_as_unmaterialized(
         self,
     ) -> None:
@@ -1487,6 +1532,8 @@ class TestRuntimeLedgerProofPacket(TestCase):
                 "runtime_ledger_profit_proof_present": False,
                 "runtime_ledger_tca_profit_proof_count": 0,
                 "runtime_ledger_tca_authoritative_bucket_count": 0,
+                "runtime_ledger_source_execution_materialized_bucket_count": 0,
+                "runtime_ledger_source_bucket_profit_proof_count": 0,
             }
         )
         runtime_import["imports"].append(
