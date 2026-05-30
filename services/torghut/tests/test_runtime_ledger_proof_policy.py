@@ -20,11 +20,20 @@ class TestRuntimeLedgerProofPolicy(TestCase):
                 "min_runtime_ledger_net_pnl_after_costs": "500",
                 "min_runtime_ledger_daily_net_pnl_after_costs": "500",
                 "min_runtime_ledger_trading_days": 1,
+                "max_runtime_ledger_drawdown_pct_equity": "0.08",
+                "max_runtime_ledger_best_day_share": "0.25",
+                "max_runtime_ledger_symbol_concentration_share": "0.5",
             },
         )
         self.assertEqual(
             DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.max_drawdown_pct_equity,
             Decimal("0.08"),
+        )
+        self.assertEqual(
+            DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.target_payload("authority")[
+                "max_runtime_ledger_drawdown_pct_equity"
+            ],
+            "0.03",
         )
 
     def test_policy_can_be_overridden_without_touching_call_sites(self) -> None:
@@ -36,7 +45,9 @@ class TestRuntimeLedgerProofPolicy(TestCase):
                 "TORGHUT_RUNTIME_LEDGER_PROOF_MODE": "probation",
                 "TORGHUT_RUNTIME_LEDGER_PROOF_PROBATION_MIN_TRADING_DAYS": "6",
                 "TORGHUT_RUNTIME_LEDGER_PROOF_MAX_DRAWDOWN_PCT_EQUITY": "0.12",
+                "TORGHUT_RUNTIME_LEDGER_AUTHORITY_MAX_DRAWDOWN_PCT_EQUITY": "0.025",
                 "TORGHUT_RUNTIME_LEDGER_AUTHORITY_MIN_TRADING_DAYS": "10",
+                "TORGHUT_RUNTIME_LEDGER_AUTHORITY_MAX_SYMBOL_CONCENTRATION_SHARE": "0.30",
             }
         )
 
@@ -47,6 +58,11 @@ class TestRuntimeLedgerProofPolicy(TestCase):
         self.assertEqual(policy.probation_min_trading_days, 6)
         self.assertEqual(policy.max_drawdown_pct_equity, Decimal("0.12"))
         self.assertEqual(policy.authority_min_trading_days, 10)
+        self.assertEqual(policy.authority_max_drawdown_pct_equity, Decimal("0.025"))
+        self.assertEqual(
+            policy.authority_max_symbol_concentration_share,
+            Decimal("0.30"),
+        )
         self.assertEqual(
             policy.target_payload(),
             {
@@ -56,17 +72,23 @@ class TestRuntimeLedgerProofPolicy(TestCase):
                 "min_runtime_ledger_net_pnl_after_costs": "3750",
                 "min_runtime_ledger_daily_net_pnl_after_costs": "625",
                 "min_runtime_ledger_trading_days": 6,
+                "max_runtime_ledger_drawdown_pct_equity": "0.12",
+                "max_runtime_ledger_best_day_share": "0.25",
+                "max_runtime_ledger_symbol_concentration_share": "0.5",
             },
         )
         self.assertEqual(
-            DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.target_payload("authority"),
+            policy.target_payload("authority"),
             {
                 "proof_mode": "authority",
                 "final_authority": True,
                 "evidence_collection_only": False,
-                "min_runtime_ledger_net_pnl_after_costs": "10000",
-                "min_runtime_ledger_daily_net_pnl_after_costs": "500",
-                "min_runtime_ledger_trading_days": 20,
+                "min_runtime_ledger_net_pnl_after_costs": "6250",
+                "min_runtime_ledger_daily_net_pnl_after_costs": "625",
+                "min_runtime_ledger_trading_days": 10,
+                "max_runtime_ledger_drawdown_pct_equity": "0.025",
+                "max_runtime_ledger_best_day_share": "0.25",
+                "max_runtime_ledger_symbol_concentration_share": "0.3",
             },
         )
 

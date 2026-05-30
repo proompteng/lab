@@ -793,6 +793,9 @@ class TestPaperRouteEvidenceAudit(TestCase):
                 "min_runtime_ledger_net_pnl_after_costs": "10000",
                 "min_runtime_ledger_daily_net_pnl_after_costs": "500",
                 "min_runtime_ledger_trading_days": 20,
+                "max_runtime_ledger_drawdown_pct_equity": "0.03",
+                "max_runtime_ledger_best_day_share": "0.25",
+                "max_runtime_ledger_symbol_concentration_share": "0.35",
             },
         )
         self.assertEqual(
