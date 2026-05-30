@@ -109,7 +109,7 @@ spec:
             - name: TRADING_SIMPLE_PAPER_ROUTE_PROBE_ENABLED
               value: "true"
             - name: TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL
-              value: "63180"
+              value: "25"
             - name: TRADING_PAPER_ROUTE_TARGET_PLAN_URL
               value: http://torghut.torghut.svc.cluster.local/trading/paper-route-target-plan
             - name: TRADING_PAPER_ROUTE_TARGET_PLAN_TIMEOUT_SECONDS
