@@ -59,6 +59,14 @@ class NormalizationResult:
     drop_reason: str | None
 
 
+@dataclass(frozen=True)
+class _IngestRecordOutcome:
+    """Record-level durability and offset-commit decision."""
+
+    durable: bool
+    commit_allowed: bool = True
+
+
 class OrderFeedIngestor:
     """Consumes order updates from Kafka and persists normalized event rows."""
 
@@ -92,18 +100,21 @@ class OrderFeedIngestor:
             return counters
 
         durable_any = False
+        commit_allowed = True
         for record in records:
-            durable_any = (
-                self._ingest_record(
-                    session=session,
-                    record=record,
-                    counters=counters,
-                )
-                or durable_any
+            outcome = self._ingest_record(
+                session=session,
+                record=record,
+                counters=counters,
             )
+            durable_any = outcome.durable or durable_any
+            commit_allowed = commit_allowed and outcome.commit_allowed
+            if not outcome.commit_allowed:
+                break
 
         if durable_any:
             session.commit()
+        if durable_any and commit_allowed:
             _commit_consumer(consumer)
         return counters
 
@@ -122,6 +133,7 @@ class OrderFeedIngestor:
             "missing_identity_total": 0,
             "unlinked_execution_total": 0,
             "unlinked_decision_total": 0,
+            "failed_unhandled_total": 0,
             "apply_updates_total": 0,
             "consumer_errors_total": 0,
             "cursor_updates_total": 0,
@@ -157,7 +169,7 @@ class OrderFeedIngestor:
         session: Session,
         record: Any,
         counters: dict[str, int],
-    ) -> bool:
+    ) -> _IngestRecordOutcome:
         counters["messages_total"] += 1
         normalized = normalize_order_feed_record(
             record,
@@ -195,78 +207,125 @@ class OrderFeedIngestor:
         if source_window is not None:
             counters["source_windows_total"] += 1
 
-        if normalized.event is None:
-            counters["missing_fields_total"] += 1
-            if normalized.drop_reason:
-                logger.debug(
-                    "Dropped order-feed message reason=%s", normalized.drop_reason
+        try:
+            if normalized.event is None:
+                counters["missing_fields_total"] += 1
+                if normalized.drop_reason:
+                    logger.debug(
+                        "Dropped order-feed message reason=%s", normalized.drop_reason
+                    )
+                if source_window is None:
+                    return _IngestRecordOutcome(durable=False)
+                _classify_source_window_drop(source_window, normalized.drop_reason)
+                _increment_drop_counter(counters, normalized.drop_reason)
+                cursor_updated = _upsert_order_feed_consumer_cursor_from_source(
+                    session,
+                    source_topic=source_topic,
+                    source_partition=source_partition,
+                    source_offset=source_offset,
+                    event_fingerprint=None,
+                    event_ts=None,
+                    duplicate=False,
+                    source_window=source_window,
                 )
-            if source_window is None:
-                return False
-            _classify_source_window_drop(source_window, normalized.drop_reason)
-            _increment_drop_counter(counters, normalized.drop_reason)
-            cursor_updated = _upsert_order_feed_consumer_cursor_from_source(
+                if cursor_updated:
+                    counters["cursor_updates_total"] += 1
+                counters["classified_drops_total"] += 1
+                return _IngestRecordOutcome(durable=True)
+
+            event = normalized.event
+            persisted, duplicate = persist_order_event(
                 session,
-                source_topic=source_topic,
-                source_partition=source_partition,
-                source_offset=source_offset,
-                event_fingerprint=None,
-                event_ts=None,
+                event,
+                source_window_id=(
+                    source_window.id if source_window is not None else None
+                ),
+            )
+            if source_window is not None:
+                _classify_source_window_event(
+                    source_window,
+                    persisted=persisted,
+                    duplicate=duplicate,
+                )
+            if duplicate:
+                cursor_updated = _upsert_cursor_and_count(
+                    session=session,
+                    event=event,
+                    duplicate=True,
+                    source_window=source_window,
+                    counters=counters,
+                )
+                counters["duplicates_total"] += 1
+                return _IngestRecordOutcome(durable=cursor_updated)
+            counters["events_persisted_total"] += 1
+            if persisted.execution_id is None:
+                counters["unlinked_execution_total"] += 1
+            if persisted.trade_decision_id is None:
+                counters["unlinked_decision_total"] += 1
+
+            if persisted.execution_id is None:
+                _upsert_cursor_and_count(
+                    session=session,
+                    event=event,
+                    duplicate=False,
+                    source_window=source_window,
+                    counters=counters,
+                )
+                return _IngestRecordOutcome(durable=True)
+            execution = session.get(Execution, persisted.execution_id)
+            if execution is None:
+                _upsert_cursor_and_count(
+                    session=session,
+                    event=event,
+                    duplicate=False,
+                    source_window=source_window,
+                    counters=counters,
+                )
+                return _IngestRecordOutcome(durable=True)
+
+            updated, out_of_order = apply_order_event_to_execution(
+                execution, persisted
+            )
+            if out_of_order:
+                counters["out_of_order_total"] += 1
+            if not updated:
+                _upsert_cursor_and_count(
+                    session=session,
+                    event=event,
+                    duplicate=False,
+                    source_window=source_window,
+                    counters=counters,
+                )
+                return _IngestRecordOutcome(durable=True)
+
+            counters["apply_updates_total"] += 1
+            if execution.trade_decision_id is not None:
+                _update_trade_decision_from_execution(session, execution)
+            upsert_execution_tca_metric(session, execution)
+            session.add(execution)
+            _upsert_cursor_and_count(
+                session=session,
+                event=event,
                 duplicate=False,
                 source_window=source_window,
+                counters=counters,
             )
-            if cursor_updated:
-                counters["cursor_updates_total"] += 1
-            counters["classified_drops_total"] += 1
-            return True
-
-        event = normalized.event
-        persisted, duplicate = persist_order_event(
-            session,
-            event,
-            source_window_id=source_window.id if source_window is not None else None,
-        )
-        if source_window is not None:
-            _classify_source_window_event(
-                source_window,
-                persisted=persisted,
-                duplicate=duplicate,
+            return _IngestRecordOutcome(durable=True)
+        except Exception as exc:
+            counters["consumer_errors_total"] += 1
+            counters["failed_unhandled_total"] += 1
+            if source_window is None:
+                logger.warning(
+                    "Order-feed record failed before durable source-window classification: %s",
+                    exc,
+                )
+                return _IngestRecordOutcome(durable=False, commit_allowed=False)
+            _classify_source_window_unhandled_failure(source_window, exc)
+            logger.warning(
+                "Order-feed record failed after source-window classification; Kafka offset will not be committed: %s",
+                exc,
             )
-        cursor_updated = _upsert_order_feed_consumer_cursor(
-            session,
-            event,
-            duplicate=duplicate,
-            source_window=source_window,
-        )
-        if cursor_updated:
-            counters["cursor_updates_total"] += 1
-        if duplicate:
-            counters["duplicates_total"] += 1
-            return cursor_updated
-        counters["events_persisted_total"] += 1
-        if persisted.execution_id is None:
-            counters["unlinked_execution_total"] += 1
-        if persisted.trade_decision_id is None:
-            counters["unlinked_decision_total"] += 1
-
-        if persisted.execution_id is None:
-            return True
-        execution = session.get(Execution, persisted.execution_id)
-        if execution is None:
-            return True
-
-        updated, out_of_order = apply_order_event_to_execution(execution, persisted)
-        if out_of_order:
-            counters["out_of_order_total"] += 1
-        if not updated:
-            return True
-
-        counters["apply_updates_total"] += 1
-        if execution.trade_decision_id is not None:
-            _update_trade_decision_from_execution(session, execution)
-        upsert_execution_tca_metric(session, execution)
-        session.add(execution)
-        return True
+            return _IngestRecordOutcome(durable=True, commit_allowed=False)
 
     def close(self) -> None:
         if self._consumer is None:
@@ -479,6 +538,19 @@ def _classify_source_window_drop(
         source_window.missing_payload_count = 1
     elif drop_reason == "missing_order_identity":
         source_window.missing_identity_count = 1
+
+
+def _classify_source_window_unhandled_failure(
+    source_window: OrderFeedSourceWindow, exc: Exception
+) -> None:
+    source_window.status = "failed_unhandled"
+    source_window.status_reason = _source_window_failure_reason(exc)
+    source_window.failed_unhandled_count = 1
+
+
+def _source_window_failure_reason(exc: Exception) -> str:
+    text = f"{type(exc).__name__}: {exc}".strip()
+    return text[:128] or type(exc).__name__[:128]
 
 
 def _increment_drop_counter(counters: dict[str, int], drop_reason: str | None) -> None:
@@ -1046,6 +1118,25 @@ def _upsert_order_feed_consumer_cursor(
         duplicate=duplicate,
         source_window=source_window,
     )
+
+
+def _upsert_cursor_and_count(
+    *,
+    session: Session,
+    event: NormalizedOrderEvent,
+    duplicate: bool,
+    source_window: OrderFeedSourceWindow | None,
+    counters: dict[str, int],
+) -> bool:
+    cursor_updated = _upsert_order_feed_consumer_cursor(
+        session,
+        event,
+        duplicate=duplicate,
+        source_window=source_window,
+    )
+    if cursor_updated:
+        counters["cursor_updates_total"] += 1
+    return cursor_updated
 
 
 def _upsert_order_feed_consumer_cursor_from_source(
