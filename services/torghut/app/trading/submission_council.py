@@ -45,6 +45,7 @@ from .discovery.profit_target_oracle import evaluate_profit_target_oracle
 from .profit_windows import build_profit_window_contract
 from .profit_leases import build_profit_lease_projection
 from .runtime_ledger import POST_COST_PNL_BASIS
+from .runtime_ledger_source_authority import runtime_ledger_source_authority_blockers
 from .tca import build_tca_gate_inputs
 
 _CAPITAL_STAGE_ORDER = (
@@ -610,6 +611,15 @@ def build_hypothesis_runtime_summary(
 def _runtime_ledger_bucket_payload(
     row: StrategyRuntimeLedgerBucket,
 ) -> dict[str, object]:
+    payload_json: Mapping[str, object]
+    raw_payload_json: object = row.payload_json
+    if isinstance(raw_payload_json, Mapping):
+        payload_json = {
+            str(key): value
+            for key, value in cast(Mapping[object, object], raw_payload_json).items()
+        }
+    else:
+        payload_json = {}
     return {
         "run_id": row.run_id,
         "candidate_id": row.candidate_id,
@@ -640,6 +650,13 @@ def _runtime_ledger_bucket_payload(
         "execution_policy_hash_counts": row.execution_policy_hash_counts or {},
         "cost_model_hash_counts": row.cost_model_hash_counts or {},
         "lineage_hash_counts": row.lineage_hash_counts or {},
+        "source_window_start": payload_json.get("source_window_start")
+        or payload_json.get("runtime_ledger_source_window_start"),
+        "source_window_end": payload_json.get("source_window_end")
+        or payload_json.get("runtime_ledger_source_window_end"),
+        "source_refs": payload_json.get("source_refs") or [],
+        "source_ref": payload_json.get("source_ref"),
+        "source_row_counts": payload_json.get("source_row_counts") or {},
         "blockers": row.blockers_json or [],
     }
 
@@ -1136,6 +1153,7 @@ def _runtime_ledger_repair_reason_codes(
         for reason in cast(Sequence[object], payload.get("blockers") or [])
         if str(reason).strip()
     ]
+    reasons.extend(runtime_ledger_source_authority_blockers(payload))
     reasons.extend(_runtime_ledger_target_reason_codes(payload, manifest=manifest))
     if _safe_text(payload.get("observed_stage")) != "live":
         reasons.append("runtime_ledger_stage_not_live")
@@ -1595,6 +1613,10 @@ def _load_runtime_ledger_repair_candidates(
                 "post_cost_expectancy_bps": payload.get("post_cost_expectancy_bps"),
                 "ledger_schema_version": payload.get("ledger_schema_version"),
                 "pnl_basis": payload.get("pnl_basis"),
+                "source_window_start": payload.get("source_window_start"),
+                "source_window_end": payload.get("source_window_end"),
+                "source_refs": payload.get("source_refs"),
+                "source_row_counts": payload.get("source_row_counts"),
                 "reason_codes": reason_codes,
                 "runtime_ledger_bucket": payload,
             }
