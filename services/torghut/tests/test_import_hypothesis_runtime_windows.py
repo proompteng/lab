@@ -70,6 +70,7 @@ class _FakeCursor:
         self._results = [
             [
                 (
+                    "decision-id-1",
                     datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
                     "AAPL",
                     "TORGHUT_SIM",
@@ -80,6 +81,8 @@ class _FakeCursor:
             ],
             [
                 (
+                    "execution-id-1",
+                    "decision-id-1",
                     datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
                     datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
                     datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
@@ -104,6 +107,9 @@ class _FakeCursor:
             ],
             [
                 (
+                    "event-id-1",
+                    "decision-id-1",
+                    "execution-id-1",
                     datetime(2026, 3, 6, 14, 35, 1, tzinfo=timezone.utc),
                     "AAPL",
                     "TORGHUT_SIM",
@@ -221,6 +227,23 @@ class _SourceLedgerCursor:
                             "executions": 2,
                             "execution_order_events": 4,
                         },
+                        "trade_decision_ids": ["decision-buy", "decision-sell"],
+                        "execution_ids": ["execution-buy", "execution-sell"],
+                        "execution_order_event_ids": [
+                            "event-new-buy",
+                            "event-fill-buy",
+                            "event-new-sell",
+                            "event-fill-sell",
+                        ],
+                        "source_offsets": [
+                            {
+                                "topic": "alpaca.trade_updates",
+                                "partition": 0,
+                                "offset": 100,
+                            }
+                        ],
+                        "source_materialization": "execution_order_events",
+                        "authority_class": "runtime_order_feed_execution_source",
                         "profit_proof_eligible": True,
                     },
                 )
@@ -298,6 +321,24 @@ def _complete_runtime_ledger_bucket(**overrides: object) -> dict[str, object]:
             "executions": 2,
             "execution_order_events": 4,
         },
+        "trade_decision_ids": ["decision-buy", "decision-sell"],
+        "execution_ids": ["execution-buy", "execution-sell"],
+        "execution_order_event_ids": [
+            "event-new-buy",
+            "event-fill-buy",
+            "event-new-sell",
+            "event-fill-sell",
+        ],
+        "source_offsets": [
+            {"topic": "alpaca.trade_updates", "partition": 0, "offset": 100},
+            {"topic": "alpaca.trade_updates", "partition": 0, "offset": 101},
+            {"topic": "alpaca.trade_updates", "partition": 0, "offset": 102},
+            {"topic": "alpaca.trade_updates", "partition": 0, "offset": 103},
+        ],
+        "source_materialization": "execution_order_events",
+        "authority_class": "runtime_order_feed_execution_source",
+        "authority_reason": "event_sourced_runtime_ledger_profit_proof",
+        "pnl_derivation": "execution_order_events_runtime_ledger",
         "profit_proof_eligible": True,
         "blockers": [],
     }
@@ -698,6 +739,30 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         )
         self.assertFalse(_runtime_ledger_bucket_profit_proof_present(missing_refs))
 
+    def test_runtime_ledger_profit_proof_rejects_aggregate_only_source_refs(
+        self,
+    ) -> None:
+        aggregate_only = _complete_runtime_ledger_bucket(
+            trade_decision_ids=[],
+            execution_ids=[],
+            execution_order_event_ids=[],
+            source_offsets=[],
+            source_materialization=None,
+            authority_class=None,
+            authority_reason=None,
+            pnl_derivation=None,
+        )
+
+        blockers = _runtime_ledger_bucket_profit_proof_blockers(aggregate_only)
+
+        self.assertIn("runtime_ledger_trade_decision_refs_missing", blockers)
+        self.assertIn("runtime_ledger_execution_refs_missing", blockers)
+        self.assertIn("runtime_ledger_execution_order_event_refs_missing", blockers)
+        self.assertIn("runtime_ledger_source_offsets_missing", blockers)
+        self.assertIn("runtime_ledger_source_materialization_missing", blockers)
+        self.assertIn("runtime_ledger_authority_class_missing", blockers)
+        self.assertFalse(_runtime_ledger_bucket_profit_proof_present(aggregate_only))
+
     def test_runtime_ledger_profit_proof_rejects_modeled_cost_basis(
         self,
     ) -> None:
@@ -864,6 +929,23 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                             "executions": 2,
                             "execution_order_events": 4,
                         },
+                        "trade_decision_ids": ["decision-buy", "decision-sell"],
+                        "execution_ids": ["execution-buy", "execution-sell"],
+                        "execution_order_event_ids": [
+                            "event-new-buy",
+                            "event-fill-buy",
+                            "event-new-sell",
+                            "event-fill-sell",
+                        ],
+                        "source_offsets": [
+                            {
+                                "topic": "alpaca.trade_updates",
+                                "partition": 0,
+                                "offset": 100,
+                            }
+                        ],
+                        "source_materialization": "execution_order_events",
+                        "authority_class": "runtime_order_feed_execution_source",
                         "profit_proof_eligible": True,
                     },
                 )
@@ -921,6 +1003,96 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         assert isinstance(bucket, dict)
         self.assertEqual(bucket["run_id"], "runtime-proof-1")
         self.assertEqual(bucket["closed_trade_count"], 1)
+
+    def test_runtime_ledger_tca_rows_from_durable_buckets_block_aggregate_only_proof(
+        self,
+    ) -> None:
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+
+        with session_local() as session:
+            session.add(
+                StrategyRuntimeLedgerBucket(
+                    run_id="runtime-aggregate-only",
+                    candidate_id="H-TSMOM-LIQ-01",
+                    hypothesis_id="H-TSMOM-LIQ-01",
+                    observed_stage="paper",
+                    bucket_started_at=datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    bucket_ended_at=datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                    account_label="TORGHUT_SIM",
+                    runtime_strategy_name="intraday-tsmom-profit-v3",
+                    strategy_family="intraday_tsmom_consistent",
+                    fill_count=2,
+                    decision_count=2,
+                    submitted_order_count=2,
+                    cancelled_order_count=0,
+                    rejected_order_count=0,
+                    unfilled_order_count=0,
+                    closed_trade_count=1,
+                    open_position_count=0,
+                    filled_notional=Decimal("200"),
+                    gross_strategy_pnl=Decimal("1"),
+                    cost_amount=Decimal("0.20"),
+                    net_strategy_pnl_after_costs=Decimal("0.80"),
+                    post_cost_expectancy_bps=Decimal("40"),
+                    ledger_schema_version="torghut.exact_replay_ledger.v1",
+                    pnl_basis=POST_COST_BASIS_RUNTIME_LEDGER,
+                    execution_policy_hash_counts={"policy-sha": 2},
+                    cost_model_hash_counts={"cost-sha": 2},
+                    lineage_hash_counts={"lineage-sha": 2},
+                    blockers_json=[],
+                    payload_json={
+                        "source_decision_mode_counts": {"strategy_signal_paper": 2},
+                        "source_window_start": "2026-03-06T14:30:00+00:00",
+                        "source_window_end": "2026-03-06T15:00:00+00:00",
+                        "source_refs": [
+                            "postgres:trade_decisions",
+                            "postgres:executions",
+                            "postgres:execution_order_events",
+                        ],
+                        "source_row_counts": {
+                            "trade_decisions": 2,
+                            "executions": 2,
+                            "execution_order_events": 4,
+                        },
+                        "profit_proof_eligible": True,
+                    },
+                )
+            )
+            session.commit()
+
+            rows, metadata = _runtime_ledger_tca_rows_from_durable_buckets(
+                session=session,
+                candidate_id="H-TSMOM-LIQ-01",
+                hypothesis_id="H-TSMOM-LIQ-01",
+                observed_stage="paper",
+                strategy_names=["intraday-tsmom-profit-v3"],
+                account_label="TORGHUT_SIM",
+                window_start=datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                window_end=datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+            )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(metadata["runtime_ledger_durable_bucket_count"], 1)
+        self.assertEqual(
+            metadata["runtime_ledger_durable_bucket_profit_proof_count"],
+            0,
+        )
+        self.assertIn(
+            "runtime_ledger_execution_order_event_refs_missing",
+            metadata["runtime_ledger_durable_bucket_profit_proof_blockers"],
+        )
+        self.assertEqual(rows[0]["post_cost_promotion_eligible"], False)
+        self.assertIn(
+            "runtime_ledger_authority_class_missing",
+            rows[0]["runtime_ledger_blockers"],
+        )
 
     def test_runtime_ledger_tca_rows_from_source_dsn_queries_matching_proof(
         self,
@@ -1459,6 +1631,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         rows = _build_realized_strategy_pnl_rows(
             [
                 {
+                    "execution_id": "execution-buy",
                     "computed_at": datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
                     "symbol": "AAPL",
                     "side": "buy",
@@ -1474,6 +1647,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "lineage_hash": "lineage-sha",
                 },
                 {
+                    "execution_id": "execution-sell",
                     "computed_at": datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
                     "symbol": "AAPL",
                     "side": "sell",
@@ -1620,6 +1794,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             ],
             decision_lifecycle_rows=[
                 {
+                    "trade_decision_id": "decision-buy-id",
                     "computed_at": datetime(2026, 3, 6, 14, 34, tzinfo=timezone.utc),
                     "event_type": "decision",
                     "symbol": "AAPL",
@@ -1634,6 +1809,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "lineage_hash": "lineage-sha",
                 },
                 {
+                    "trade_decision_id": "decision-sell-id",
                     "computed_at": datetime(2026, 3, 6, 14, 39, tzinfo=timezone.utc),
                     "event_type": "decision",
                     "symbol": "AAPL",
@@ -1650,6 +1826,8 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             ],
             order_lifecycle_rows=[
                 {
+                    "execution_order_event_id": "event-new-buy",
+                    "trade_decision_id": "decision-buy-id",
                     "event_ts": datetime(2026, 3, 6, 14, 34, 1, tzinfo=timezone.utc),
                     "event_type": "new",
                     "symbol": "AAPL",
@@ -1660,8 +1838,13 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "execution_policy_hash": "policy-sha",
                     "cost_model_hash": "cost-sha",
                     "lineage_hash": "lineage-sha",
+                    "source_topic": "alpaca.trade_updates",
+                    "source_partition": 0,
+                    "source_offset": 100,
                 },
                 {
+                    "execution_order_event_id": "event-new-sell",
+                    "trade_decision_id": "decision-sell-id",
                     "event_ts": datetime(2026, 3, 6, 14, 39, 1, tzinfo=timezone.utc),
                     "event_type": "new",
                     "symbol": "AAPL",
@@ -1672,8 +1855,14 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "execution_policy_hash": "policy-sha",
                     "cost_model_hash": "cost-sha",
                     "lineage_hash": "lineage-sha",
+                    "source_topic": "alpaca.trade_updates",
+                    "source_partition": 0,
+                    "source_offset": 101,
                 },
                 {
+                    "execution_order_event_id": "event-fill-buy",
+                    "trade_decision_id": "decision-buy-id",
+                    "execution_id": "execution-buy",
                     "event_ts": datetime(2026, 3, 6, 14, 35, 1, tzinfo=timezone.utc),
                     "event_type": "filled",
                     "symbol": "AAPL",
@@ -1689,8 +1878,14 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "execution_policy_hash": "policy-sha",
                     "cost_model_hash": "cost-sha",
                     "lineage_hash": "lineage-sha",
+                    "source_topic": "alpaca.trade_updates",
+                    "source_partition": 0,
+                    "source_offset": 102,
                 },
                 {
+                    "execution_order_event_id": "event-fill-sell",
+                    "trade_decision_id": "decision-sell-id",
+                    "execution_id": "execution-sell",
                     "event_ts": datetime(2026, 3, 6, 14, 40, 1, tzinfo=timezone.utc),
                     "event_type": "filled",
                     "symbol": "AAPL",
@@ -1706,6 +1901,9 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "execution_policy_hash": "policy-sha",
                     "cost_model_hash": "cost-sha",
                     "lineage_hash": "lineage-sha",
+                    "source_topic": "alpaca.trade_updates",
+                    "source_partition": 0,
+                    "source_offset": 103,
                 },
             ],
             allow_authoritative_runtime_ledger_materialization=True,
@@ -1730,7 +1928,9 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(bucket["account_equity"], "10000")
         self.assertEqual(bucket["account_equity_source"], "equity")
         self.assertEqual(bucket["source_window_start"], "2026-03-06T14:34:00+00:00")
-        self.assertEqual(bucket["source_window_end"], "2026-03-06T14:40:01.000001+00:00")
+        self.assertEqual(
+            bucket["source_window_end"], "2026-03-06T14:40:01.000001+00:00"
+        )
         self.assertEqual(
             bucket["source_refs"],
             [
@@ -1811,6 +2011,8 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             ],
             order_lifecycle_rows=[
                 {
+                    "execution_order_event_id": "dedupe-event-new-buy",
+                    "trade_decision_id": "decision-buy",
                     "event_ts": datetime(2026, 3, 6, 14, 34, 1, tzinfo=timezone.utc),
                     "event_type": "new",
                     "symbol": "AAPL",
@@ -1821,8 +2023,13 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "execution_policy_hash": "policy-sha",
                     "cost_model_hash": "cost-sha",
                     "lineage_hash": "lineage-sha",
+                    "source_topic": "alpaca.trade_updates",
+                    "source_partition": 0,
+                    "source_offset": 110,
                 },
                 {
+                    "execution_order_event_id": "dedupe-event-new-sell",
+                    "trade_decision_id": "decision-sell",
                     "event_ts": datetime(2026, 3, 6, 14, 39, 1, tzinfo=timezone.utc),
                     "event_type": "new",
                     "symbol": "AAPL",
@@ -1833,8 +2040,14 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "execution_policy_hash": "policy-sha",
                     "cost_model_hash": "cost-sha",
                     "lineage_hash": "lineage-sha",
+                    "source_topic": "alpaca.trade_updates",
+                    "source_partition": 0,
+                    "source_offset": 111,
                 },
                 {
+                    "execution_order_event_id": "dedupe-event-fill-buy",
+                    "trade_decision_id": "decision-buy",
+                    "execution_id": "dedupe-execution-buy",
                     "event_ts": datetime(2026, 3, 6, 14, 35, 1, tzinfo=timezone.utc),
                     "event_type": "filled",
                     "symbol": "AAPL",
@@ -1845,8 +2058,14 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "execution_policy_hash": "policy-sha",
                     "cost_model_hash": "cost-sha",
                     "lineage_hash": "lineage-sha",
+                    "source_topic": "alpaca.trade_updates",
+                    "source_partition": 0,
+                    "source_offset": 112,
                 },
                 {
+                    "execution_order_event_id": "dedupe-event-fill-sell",
+                    "trade_decision_id": "decision-sell",
+                    "execution_id": "dedupe-execution-sell",
                     "event_ts": datetime(2026, 3, 6, 14, 40, 1, tzinfo=timezone.utc),
                     "event_type": "filled",
                     "symbol": "AAPL",
@@ -1857,6 +2076,9 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "execution_policy_hash": "policy-sha",
                     "cost_model_hash": "cost-sha",
                     "lineage_hash": "lineage-sha",
+                    "source_topic": "alpaca.trade_updates",
+                    "source_partition": 0,
+                    "source_offset": 113,
                 },
             ],
             allow_authoritative_runtime_ledger_materialization=True,
@@ -1952,6 +2174,8 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             ],
             order_lifecycle_rows=[
                 {
+                    "execution_order_event_id": "dedupe-event-new-buy",
+                    "trade_decision_id": "decision-buy",
                     "event_ts": datetime(2026, 3, 6, 14, 34, 1, tzinfo=timezone.utc),
                     "event_type": "new",
                     "symbol": "AAPL",
@@ -1962,8 +2186,13 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "execution_policy_hash": "policy-sha",
                     "cost_model_hash": "cost-sha",
                     "lineage_hash": "lineage-sha",
+                    "source_topic": "alpaca.trade_updates",
+                    "source_partition": 0,
+                    "source_offset": 110,
                 },
                 {
+                    "execution_order_event_id": "dedupe-event-new-sell",
+                    "trade_decision_id": "decision-sell",
                     "event_ts": datetime(2026, 3, 6, 14, 39, 1, tzinfo=timezone.utc),
                     "event_type": "new",
                     "symbol": "AAPL",
@@ -1974,8 +2203,14 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "execution_policy_hash": "policy-sha",
                     "cost_model_hash": "cost-sha",
                     "lineage_hash": "lineage-sha",
+                    "source_topic": "alpaca.trade_updates",
+                    "source_partition": 0,
+                    "source_offset": 111,
                 },
                 {
+                    "execution_order_event_id": "dedupe-event-fill-buy",
+                    "trade_decision_id": "decision-buy",
+                    "execution_id": "dedupe-execution-buy",
                     "event_ts": datetime(2026, 3, 6, 14, 35, 1, tzinfo=timezone.utc),
                     "event_type": "filled",
                     "symbol": "AAPL",
@@ -1991,8 +2226,14 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "execution_policy_hash": "policy-sha",
                     "cost_model_hash": "cost-sha",
                     "lineage_hash": "lineage-sha",
+                    "source_topic": "alpaca.trade_updates",
+                    "source_partition": 0,
+                    "source_offset": 112,
                 },
                 {
+                    "execution_order_event_id": "dedupe-event-fill-sell",
+                    "trade_decision_id": "decision-sell",
+                    "execution_id": "dedupe-execution-sell",
                     "event_ts": datetime(2026, 3, 6, 14, 40, 1, tzinfo=timezone.utc),
                     "event_type": "filled",
                     "symbol": "AAPL",
@@ -2008,6 +2249,9 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "execution_policy_hash": "policy-sha",
                     "cost_model_hash": "cost-sha",
                     "lineage_hash": "lineage-sha",
+                    "source_topic": "alpaca.trade_updates",
+                    "source_partition": 0,
+                    "source_offset": 113,
                 },
             ],
             allow_authoritative_runtime_ledger_materialization=True,
@@ -2258,6 +2502,10 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "runtime_ledger_bucket": _complete_runtime_ledger_bucket(
                         pnl_basis=POST_COST_BASIS_EXECUTION_RECONSTRUCTION,
                         blockers=["execution_reconstruction_not_runtime_ledger_proof"],
+                        source_materialization=None,
+                        authority_class=None,
+                        authority_reason=None,
+                        pnl_derivation=None,
                     ),
                 },
             ]
@@ -2278,14 +2526,18 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             metadata["runtime_ledger_materialization_blockers"],
             [
                 "execution_reconstruction_not_runtime_ledger_proof",
+                "runtime_ledger_authority_class_missing",
                 "runtime_ledger_pnl_basis_not_runtime_ledger",
+                "runtime_ledger_source_materialization_missing",
             ],
         )
         self.assertEqual(
             metadata["runtime_ledger_profit_proof_blockers"],
             [
                 "execution_reconstruction_not_runtime_ledger_proof",
+                "runtime_ledger_authority_class_missing",
                 "runtime_ledger_pnl_basis_not_runtime_ledger",
+                "runtime_ledger_source_materialization_missing",
             ],
         )
 

@@ -87,6 +87,14 @@ def _runtime_ledger_bucket(**overrides: object) -> dict[str, object]:
             "executions": 2,
             "execution_order_events": 2,
         },
+        "trade_decision_ids": ["decision-buy", "decision-sell"],
+        "execution_ids": ["execution-buy", "execution-sell"],
+        "execution_order_event_ids": ["event-fill-buy", "event-fill-sell"],
+        "source_offsets": [
+            {"topic": "alpaca.trade_updates", "partition": 0, "offset": 100}
+        ],
+        "source_materialization": "execution_order_events",
+        "authority_class": "runtime_order_feed_execution_source",
         "blockers": [],
     }
     payload.update(overrides)
@@ -502,6 +510,55 @@ class TestRuntimeWindowImport(TestCase):
         )
 
         self.assertFalse(_persisted_runtime_ledger_bucket_evidence_grade(row))
+
+    def test_persisted_runtime_ledger_bucket_evidence_grade_requires_source_proof(
+        self,
+    ) -> None:
+        source_backed_payload = _runtime_ledger_bucket()
+        aggregate_only_payload = {
+            key: value
+            for key, value in source_backed_payload.items()
+            if key
+            not in {
+                "trade_decision_ids",
+                "execution_ids",
+                "execution_order_event_ids",
+                "source_offsets",
+                "source_materialization",
+                "authority_class",
+            }
+        }
+        row = StrategyRuntimeLedgerBucket(
+            run_id="run-aggregate-only",
+            candidate_id="cand",
+            hypothesis_id="hyp",
+            observed_stage="paper",
+            bucket_started_at=datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+            bucket_ended_at=datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+            account_label="TORGHUT_SIM",
+            runtime_strategy_name="strategy",
+            fill_count=2,
+            decision_count=2,
+            submitted_order_count=2,
+            closed_trade_count=1,
+            open_position_count=0,
+            filled_notional=Decimal("200"),
+            gross_strategy_pnl=Decimal("1"),
+            cost_amount=Decimal("0.20"),
+            net_strategy_pnl_after_costs=Decimal("0.80"),
+            post_cost_expectancy_bps=Decimal("40"),
+            pnl_basis="realized_strategy_pnl_after_explicit_costs",
+            ledger_schema_version="torghut.runtime-ledger-bucket.v1",
+            execution_policy_hash_counts={"policy-sha": 2},
+            cost_model_hash_counts={"cost-sha": 2},
+            lineage_hash_counts={"lineage-sha": 2},
+            blockers_json=[],
+            payload_json=aggregate_only_payload,
+        )
+
+        self.assertFalse(_persisted_runtime_ledger_bucket_evidence_grade(row))
+        row.payload_json = source_backed_payload
+        self.assertTrue(_persisted_runtime_ledger_bucket_evidence_grade(row))
 
     def test_runtime_ledger_bucket_payloads_accept_single_bucket_payload(
         self,

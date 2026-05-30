@@ -40,7 +40,9 @@ from .runtime_decision_authority import (
     source_decision_mode_is_profit_proof_eligible,
 )
 from .runtime_ledger_proof_policy import runtime_ledger_proof_policy_from_env
-from .runtime_ledger_source_authority import runtime_ledger_source_authority_blockers
+from .runtime_ledger_source_authority import (
+    runtime_ledger_promotion_source_authority_blockers,
+)
 
 US_EQUITIES_REGULAR_TIMEZONE = "America/New_York"
 US_EQUITIES_REGULAR_OPEN = time(hour=9, minute=30)
@@ -263,6 +265,7 @@ def _persisted_runtime_ledger_bucket_evidence_grade(
     row: StrategyRuntimeLedgerBucket,
 ) -> bool:
     blockers = _string_list(row.blockers_json)
+    payload_json = _mapping(row.payload_json)
     return (
         row.pnl_basis == POST_COST_PNL_BASIS
         and int(row.fill_count or 0) > 0
@@ -275,8 +278,9 @@ def _persisted_runtime_ledger_bucket_evidence_grade(
         and _hash_count(row.cost_model_hash_counts) > 0
         and _hash_count(row.lineage_hash_counts) > 0
         and not cost_basis_counts_have_non_promotion_grade_costs(
-            _mapping(row.payload_json).get("cost_basis_counts")
+            payload_json.get("cost_basis_counts")
         )
+        and not runtime_ledger_promotion_source_authority_blockers(payload_json)
         and not blockers
     )
 
@@ -300,7 +304,7 @@ def _runtime_ledger_bucket_blockers(bucket: Mapping[str, Any]) -> list[str]:
         blockers.append("runtime_ledger_pnl_basis_missing")
     elif pnl_basis != POST_COST_PNL_BASIS:
         blockers.append("runtime_ledger_pnl_basis_invalid")
-    blockers.extend(runtime_ledger_source_authority_blockers(bucket))
+    blockers.extend(runtime_ledger_promotion_source_authority_blockers(bucket))
     if _observation_int(bucket.get("fill_count")) <= 0:
         blockers.append("runtime_fills_missing")
     if _observation_int(bucket.get("decision_count")) <= 0:
