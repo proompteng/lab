@@ -240,8 +240,8 @@ def _runtime_import(
 def _completion(
     *,
     status: str = "satisfied",
-    net_pnl: str = "650",
-    trading_days: int = 1,
+    net_pnl: str = "10000",
+    trading_days: int = 20,
     expectancy_bps: str = "13",
     drawdown_pct: str | None = "0.04",
     best_day_share: str | None = "0.20",
@@ -400,7 +400,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
             result["checks"]["runtime_ledger_post_cost_profit_target"]["observed"][
                 "daily_net_pnl_after_costs"
             ],
-            "650",
+            "500",
         )
         self.assertEqual(
             result["checks"]["runtime_ledger_risk_quality"]["observed"][
@@ -411,6 +411,36 @@ class TestRuntimeLedgerProofPacket(TestCase):
         self.assertEqual(
             result["target"]["max_runtime_ledger_drawdown_pct_equity"],
             "0.08",
+        )
+        self.assertEqual(result["proof_mode"], "authority")
+        self.assertTrue(result["final_authority_ok"])
+        self.assertFalse(result["evidence_collection_only"])
+
+    def test_smoke_packet_cannot_grant_promotion_authority(self) -> None:
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            proof_mode="smoke",
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=_runtime_import(),
+            completion_status=_completion(),
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        self.assertTrue(result["ok"], result)
+        self.assertFalse(result["final_authority_ok"])
+        self.assertEqual(result["proof_mode"], "smoke")
+        self.assertEqual(
+            result["verdict"],
+            "smoke_proof_satisfied_evidence_collection_only",
+        )
+        self.assertFalse(result["promotion_authority"]["allowed"])
+        self.assertIn(
+            "runtime_ledger_proof_mode_not_authority",
+            result["promotion_authority"]["blocking_reasons"],
+        )
+        self.assertIn(
+            "rerun_proof_packet_in_authority_mode",
+            result["required_actions"],
         )
 
     def test_packet_splits_post_cost_proof_from_capital_promotion_gate(self) -> None:
@@ -577,6 +607,8 @@ class TestRuntimeLedgerProofPacket(TestCase):
                         str(runtime_path),
                         "--completion-file",
                         str(completion_path),
+                        "--proof-mode",
+                        "authority",
                         "--output-file",
                         str(output_path),
                         "--generated-at",
@@ -1277,7 +1309,9 @@ class TestRuntimeLedgerProofPacket(TestCase):
         )
         self.assertEqual(materialization["materialized_target_count"], 0)
         self.assertEqual(materialization["unmaterialized_target_count"], 1)
-        self.assertIn("runtime_ledger_source_window_missing", materialization["blockers"])
+        self.assertIn(
+            "runtime_ledger_source_window_missing", materialization["blockers"]
+        )
         self.assertIn("runtime_ledger_source_refs_missing", materialization["blockers"])
         self.assertIn(
             "runtime_ledger_source_window_missing",
@@ -1997,6 +2031,8 @@ class TestRuntimeLedgerProofPacket(TestCase):
                         "http://torghut.local/",
                         "--runtime-window-import-file",
                         str(import_path),
+                        "--proof-mode",
+                        "authority",
                         "--output-file",
                         str(output_path),
                     ]
@@ -2063,6 +2099,8 @@ class TestRuntimeLedgerProofPacket(TestCase):
                         "http://torghut-live.local/",
                         "--runtime-window-import-file",
                         str(import_path),
+                        "--proof-mode",
+                        "authority",
                         "--output-file",
                         str(output_path),
                     ]

@@ -270,7 +270,9 @@ def _runtime_ledger_proof_packet(
     )
     return {
         "schema_version": verifier.RUNTIME_LEDGER_PROOF_PACKET_SCHEMA_VERSION,
+        "proof_mode": "authority",
         "ok": allowed,
+        "final_authority_ok": allowed,
         "verdict": "promotion_authority_allowed" if allowed else "blocked",
         "promotion_authority": {
             "allowed": allowed,
@@ -431,6 +433,30 @@ class TestVerifyTradingReadiness(TestCase):
             ],
             ["runtime_ledger_daily_net_pnl_below_target"],
         )
+
+    def test_runtime_ledger_proof_packet_rejects_smoke_mode_as_final_authority(
+        self,
+    ) -> None:
+        packet = _runtime_ledger_proof_packet()
+        packet["proof_mode"] = "smoke"
+        packet["final_authority_ok"] = False
+        packet["promotion_authority"] = {
+            "allowed": False,
+            "reason": "runtime_ledger_proof_mode_not_authority",
+            "blocking_reasons": ["runtime_ledger_proof_mode_not_authority"],
+            "failed_checks": ["runtime_ledger_proof_mode_authority_required"],
+        }
+
+        result = evaluate_trading_readiness(
+            _ready_status(),
+            runtime_ledger_proof_packet=packet,
+            require_runtime_ledger_proof_packet=True,
+        )
+
+        self.assertFalse(result["ok"])
+        observed = result["checks"]["runtime_ledger_proof_packet_authority"]["observed"]
+        self.assertEqual(observed["proof_mode"], "smoke")
+        self.assertFalse(observed["authority_allowed"])
 
     def test_runtime_ledger_profit_proof_requires_observed_days_and_daily_pnl(
         self,

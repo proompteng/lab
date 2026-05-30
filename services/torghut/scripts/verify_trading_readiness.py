@@ -706,6 +706,8 @@ def _add_runtime_ledger_proof_packet_check(
         observed={
             "present": bool(packet),
             "schema_version": schema_version,
+            "proof_mode": _text(packet.get("proof_mode")),
+            "final_authority_ok": packet.get("final_authority_ok"),
             "ok": packet.get("ok"),
             "verdict": _text(packet.get("verdict")),
             "authority_allowed": authority.get("allowed"),
