@@ -4,6 +4,7 @@ from datetime import datetime
 from unittest import TestCase
 
 from app.trading.runtime_ledger_source_authority import (
+    runtime_ledger_promotion_source_authority_blockers,
     runtime_ledger_source_authority_blockers,
     runtime_ledger_source_refs_present,
     runtime_ledger_source_window_present,
@@ -66,4 +67,48 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
                 "runtime_ledger_source_window_missing",
                 "runtime_ledger_source_refs_missing",
             ],
+        )
+
+    def test_promotion_source_authority_requires_row_level_runtime_lineage(
+        self,
+    ) -> None:
+        aggregate_only = {
+            "source_window_start": "2026-05-29T14:30:00+00:00",
+            "source_window_end": "2026-05-29T15:00:00+00:00",
+            "source_refs": [
+                "postgres:trade_decisions",
+                "postgres:executions",
+                "postgres:execution_order_events",
+            ],
+            "source_row_counts": {
+                "trade_decisions": 2,
+                "executions": 2,
+                "execution_order_events": 4,
+            },
+        }
+
+        blockers = runtime_ledger_promotion_source_authority_blockers(aggregate_only)
+
+        self.assertIn("runtime_ledger_trade_decision_refs_missing", blockers)
+        self.assertIn("runtime_ledger_execution_refs_missing", blockers)
+        self.assertIn("runtime_ledger_execution_order_event_refs_missing", blockers)
+        self.assertIn("runtime_ledger_source_offsets_missing", blockers)
+        self.assertIn("runtime_ledger_source_materialization_missing", blockers)
+        self.assertIn("runtime_ledger_authority_class_missing", blockers)
+
+        source_backed = {
+            **aggregate_only,
+            "trade_decision_ids": ["decision-1", "decision-2"],
+            "execution_ids": ["execution-1", "execution-2"],
+            "execution_order_event_ids": ["event-1", "event-2"],
+            "source_offsets": [
+                {"topic": "alpaca.trade_updates", "partition": 0, "offset": 42}
+            ],
+            "source_materialization": "execution_order_events",
+            "authority_class": "runtime_order_feed_execution_source",
+        }
+
+        self.assertEqual(
+            runtime_ledger_promotion_source_authority_blockers(source_backed),
+            [],
         )

@@ -45,7 +45,9 @@ from .discovery.profit_target_oracle import evaluate_profit_target_oracle
 from .profit_windows import build_profit_window_contract
 from .profit_leases import build_profit_lease_projection
 from .runtime_ledger import POST_COST_PNL_BASIS
-from .runtime_ledger_source_authority import runtime_ledger_source_authority_blockers
+from .runtime_ledger_source_authority import (
+    runtime_ledger_promotion_source_authority_blockers,
+)
 from .tca import build_tca_gate_inputs
 
 _CAPITAL_STAGE_ORDER = (
@@ -657,6 +659,16 @@ def _runtime_ledger_bucket_payload(
         "source_refs": payload_json.get("source_refs") or [],
         "source_ref": payload_json.get("source_ref"),
         "source_row_counts": payload_json.get("source_row_counts") or {},
+        "trade_decision_ids": payload_json.get("trade_decision_ids") or [],
+        "execution_ids": payload_json.get("execution_ids") or [],
+        "execution_order_event_ids": (
+            payload_json.get("execution_order_event_ids") or []
+        ),
+        "source_offsets": payload_json.get("source_offsets") or [],
+        "source_materialization": payload_json.get("source_materialization"),
+        "authority_class": payload_json.get("authority_class"),
+        "authority_reason": payload_json.get("authority_reason"),
+        "pnl_derivation": payload_json.get("pnl_derivation"),
         "blockers": row.blockers_json or [],
     }
 
@@ -1153,7 +1165,7 @@ def _runtime_ledger_repair_reason_codes(
         for reason in cast(Sequence[object], payload.get("blockers") or [])
         if str(reason).strip()
     ]
-    reasons.extend(runtime_ledger_source_authority_blockers(payload))
+    reasons.extend(runtime_ledger_promotion_source_authority_blockers(payload))
     reasons.extend(_runtime_ledger_target_reason_codes(payload, manifest=manifest))
     if _safe_text(payload.get("observed_stage")) != "live":
         reasons.append("runtime_ledger_stage_not_live")

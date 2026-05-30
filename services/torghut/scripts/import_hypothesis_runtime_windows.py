@@ -26,6 +26,9 @@ from app.trading.runtime_ledger import (
     RuntimeLedgerBucket,
     build_runtime_ledger_buckets,
 )
+from app.trading.runtime_ledger_source_authority import (
+    runtime_ledger_promotion_source_authority_blockers,
+)
 from app.trading.runtime_cost_authority import (
     cost_basis_counts_have_non_promotion_grade_costs,
     is_non_promotion_grade_runtime_cost_basis,
@@ -677,7 +680,8 @@ def _runtime_ledger_source_window_present(bucket: Mapping[str, object]) -> bool:
         or bucket.get("runtime_ledger_source_window_start")
     )
     end = _parse_dt_or_none(
-        bucket.get("source_window_end") or bucket.get("runtime_ledger_source_window_end")
+        bucket.get("source_window_end")
+        or bucket.get("runtime_ledger_source_window_end")
     )
     return start is not None and end is not None and end > start
 
@@ -726,10 +730,8 @@ def _runtime_ledger_bucket_profit_proof_blockers(
         add("runtime_ledger_pnl_basis_not_runtime_ledger")
     if bucket.get("ledger_schema_version") not in RUNTIME_LEDGER_BUCKET_SCHEMAS:
         add("runtime_ledger_schema_not_supported")
-    if not _runtime_ledger_source_window_present(bucket):
-        add(RUNTIME_LEDGER_SOURCE_WINDOW_MISSING_BLOCKER)
-    if not _runtime_ledger_source_refs_present(bucket):
-        add(RUNTIME_LEDGER_SOURCE_REFS_MISSING_BLOCKER)
+    for blocker in runtime_ledger_promotion_source_authority_blockers(bucket):
+        add(blocker)
     for blocker in _metadata_text_list(bucket.get("blockers")):
         add(blocker)
     if _nonnegative_int(bucket.get("fill_count")) <= 0:
@@ -871,6 +873,12 @@ def _with_runtime_ledger_source_authority_context(
     source_window_end: datetime,
     source_refs: Sequence[str],
     source_row_counts: Mapping[str, int],
+    trade_decision_ids: Sequence[object] = (),
+    execution_ids: Sequence[object] = (),
+    execution_order_event_ids: Sequence[object] = (),
+    source_offsets: Sequence[Mapping[str, object]] = (),
+    source_materialization: str | None = None,
+    authority_class: str | None = None,
 ) -> dict[str, object]:
     payload = dict(bucket)
     payload.setdefault("source_window_start", source_window_start.isoformat())
@@ -878,6 +886,54 @@ def _with_runtime_ledger_source_authority_context(
     if source_refs:
         existing_refs = _metadata_text_list(payload.get("source_refs"))
         payload["source_refs"] = list(dict.fromkeys([*existing_refs, *source_refs]))
+    for key, values in (
+        ("trade_decision_ids", trade_decision_ids),
+        ("execution_ids", execution_ids),
+        ("execution_order_event_ids", execution_order_event_ids),
+    ):
+        merged_values = _metadata_text_list(payload.get(key))
+        merged_values.extend(
+            _text for value in values if (_text := _text_or_none(value))
+        )
+        if merged_values:
+            payload[key] = list(dict.fromkeys(merged_values))
+    if source_offsets:
+        existing_offsets = [
+            dict(item)
+            for item in cast(Sequence[object], payload.get("source_offsets") or [])
+            if isinstance(item, Mapping)
+        ]
+        seen_offsets = {
+            (
+                str(item.get("topic") or ""),
+                str(item.get("partition") or ""),
+                str(item.get("offset") or ""),
+            )
+            for item in existing_offsets
+        }
+        for item in source_offsets:
+            offset = {
+                "topic": item.get("topic"),
+                "partition": item.get("partition"),
+                "offset": item.get("offset"),
+            }
+            topic = offset.get("topic")
+            partition = offset.get("partition")
+            source_offset = offset.get("offset")
+            key = (
+                str(topic or ""),
+                "" if partition is None else str(partition),
+                "" if source_offset is None else str(source_offset),
+            )
+            if all(key) and key not in seen_offsets:
+                existing_offsets.append(offset)
+                seen_offsets.add(key)
+        if existing_offsets:
+            payload["source_offsets"] = existing_offsets
+    if source_materialization:
+        payload.setdefault("source_materialization", source_materialization)
+    if authority_class:
+        payload.setdefault("authority_class", authority_class)
     existing_counts = _as_mapping(payload.get("source_row_counts"))
     merged_counts: dict[str, int] = {
         str(key): _nonnegative_int(value) for key, value in existing_counts.items()
@@ -887,6 +943,171 @@ def _with_runtime_ledger_source_authority_context(
     if merged_counts:
         payload["source_row_counts"] = dict(sorted(merged_counts.items()))
     return payload
+
+
+def _source_identifier_values(
+    rows: Sequence[Mapping[str, object]] | None,
+    *keys: str,
+) -> list[str]:
+    values: list[str] = []
+    for row in rows or ():
+        for key in keys:
+            value = _text_or_none(row.get(key))
+            if value is not None:
+                values.append(value)
+                break
+    return list(dict.fromkeys(values))
+
+
+def _source_offset_values(
+    rows: Sequence[Mapping[str, object]] | None,
+) -> list[dict[str, object]]:
+    offsets: list[dict[str, object]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for row in rows or ():
+        topic = _text_or_none(row.get("source_topic"))
+        partition = row.get("source_partition")
+        offset = row.get("source_offset")
+        if topic is None or partition is None or offset is None:
+            continue
+        key = (topic, str(partition), str(offset))
+        if key in seen:
+            continue
+        offsets.append({"topic": topic, "partition": partition, "offset": offset})
+        seen.add(key)
+    return offsets
+
+
+def _decision_lifecycle_query_row(row: Sequence[object]) -> dict[str, object]:
+    if len(row) >= 7:
+        return {
+            "trade_decision_id": str(row[0]),
+            "computed_at": row[1],
+            "event_type": "decision",
+            "symbol": row[2],
+            "account_label": row[3],
+            "strategy_id": row[4],
+            "decision_hash": row[5],
+            "decision_json": row[6],
+        }
+    return {
+        "trade_decision_id": str(row[4]),
+        "computed_at": row[0],
+        "event_type": "decision",
+        "symbol": row[1],
+        "account_label": row[2],
+        "strategy_id": row[3],
+        "decision_hash": row[4],
+        "decision_json": row[5],
+    }
+
+
+def _decision_lifecycle_query_row_has_time(row: Sequence[object]) -> bool:
+    return (row[1] if len(row) >= 7 else row[0]) is not None
+
+
+def _execution_query_row(row: Sequence[object]) -> dict[str, object]:
+    if len(row) >= 19:
+        return {
+            "execution_id": str(row[0]),
+            "trade_decision_id": str(row[1]),
+            "decision_created_at": row[2],
+            "computed_at": row[3],
+            "execution_event_at": row[3],
+            "execution_created_at": row[4],
+            "symbol": row[5],
+            "side": row[6],
+            "filled_qty": row[7],
+            "avg_fill_price": row[8],
+            "shortfall_notional": row[9],
+            "execution_audit_json": row[10],
+            "raw_order": row[11],
+            "account_label": row[12],
+            "strategy_id": row[13],
+            "decision_hash": row[14],
+            "decision_json": row[15],
+            "alpaca_order_id": row[16],
+            "client_order_id": row[17],
+            "order_status": row[18],
+        }
+    return {
+        "execution_id": None,
+        "trade_decision_id": str(row[12]),
+        "decision_created_at": row[0],
+        "computed_at": row[1],
+        "execution_event_at": row[1],
+        "execution_created_at": row[2],
+        "symbol": row[3],
+        "side": row[4],
+        "filled_qty": row[5],
+        "avg_fill_price": row[6],
+        "shortfall_notional": row[7],
+        "execution_audit_json": row[8],
+        "raw_order": row[9],
+        "account_label": row[10],
+        "strategy_id": row[11],
+        "decision_hash": row[12],
+        "decision_json": row[13],
+        "alpaca_order_id": row[14],
+        "client_order_id": row[15],
+        "order_status": row[16],
+    }
+
+
+def _execution_query_row_has_time(row: Sequence[object]) -> bool:
+    return (row[3] if len(row) >= 19 else row[1]) is not None
+
+
+def _order_lifecycle_query_row(row: Sequence[object]) -> dict[str, object]:
+    if len(row) >= 20:
+        return {
+            "execution_order_event_id": str(row[0]),
+            "trade_decision_id": str(row[1]),
+            "execution_id": str(row[2]) if row[2] is not None else None,
+            "event_ts": row[3],
+            "symbol": row[4],
+            "account_label": row[5],
+            "strategy_id": row[6],
+            "decision_hash": row[7],
+            "decision_json": row[8],
+            "alpaca_order_id": row[9],
+            "client_order_id": row[10],
+            "event_type": row[11],
+            "order_status": row[12],
+            "event_fingerprint": row[13],
+            "source_topic": row[14],
+            "source_partition": row[15],
+            "source_offset": row[16],
+            "raw_event": row[17],
+            "execution_audit_json": row[18],
+            "raw_order": row[19],
+        }
+    return {
+        "execution_order_event_id": str(row[10]),
+        "trade_decision_id": str(row[4]),
+        "execution_id": None,
+        "event_ts": row[0],
+        "symbol": row[1],
+        "account_label": row[2],
+        "strategy_id": row[3],
+        "decision_hash": row[4],
+        "decision_json": row[5],
+        "alpaca_order_id": row[6],
+        "client_order_id": row[7],
+        "event_type": row[8],
+        "order_status": row[9],
+        "event_fingerprint": row[10],
+        "source_topic": row[11],
+        "source_partition": row[12],
+        "source_offset": row[13],
+        "raw_event": row[14],
+        "execution_audit_json": row[15],
+        "raw_order": row[16],
+    }
+
+
+def _order_lifecycle_query_row_has_time(row: Sequence[object]) -> bool:
+    return (row[3] if len(row) >= 20 else row[0]) is not None
 
 
 def _mark_runtime_ledger_tca_rows_as_exact_replay_artifacts(
@@ -2051,6 +2272,22 @@ def _build_realized_strategy_pnl_rows(
         "postgres:executions",
         "postgres:execution_order_events",
     )
+    trade_decision_ids = _source_identifier_values(
+        source_decision_rows,
+        "trade_decision_id",
+        "decision_id",
+        "decision_hash",
+    )
+    execution_ids = _source_identifier_values(
+        [*execution_rows, *(order_lifecycle_rows or [])],
+        "execution_id",
+    )
+    execution_order_event_ids = _source_identifier_values(
+        order_lifecycle_rows,
+        "execution_order_event_id",
+        "event_fingerprint",
+    )
+    source_offsets = _source_offset_values(order_lifecycle_rows)
     realized_rows: list[dict[str, object]] = []
     for bucket in build_runtime_ledger_buckets(
         ledger_rows,
@@ -2105,6 +2342,20 @@ def _build_realized_strategy_pnl_rows(
                 source_window_end=bucket.bucket_ended_at,
                 source_refs=source_refs,
                 source_row_counts=source_row_counts,
+                trade_decision_ids=trade_decision_ids,
+                execution_ids=execution_ids,
+                execution_order_event_ids=execution_order_event_ids,
+                source_offsets=source_offsets,
+                source_materialization=(
+                    "execution_order_events"
+                    if source_offsets and execution_order_event_ids
+                    else None
+                ),
+                authority_class=(
+                    "runtime_order_feed_execution_source"
+                    if source_offsets and execution_order_event_ids
+                    else None
+                ),
             )
             row["runtime_ledger_bucket"] = bucket_payload
         event_sourced_runtime_ledger = (
@@ -2558,6 +2809,19 @@ def _runtime_ledger_tca_row_from_payload(
     )
     filled_notional = _decimal_or_none(payload.get("filled_notional"))
     cost_amount = _decimal_or_none(payload.get("cost_amount"))
+    proof_blockers = _runtime_ledger_bucket_profit_proof_blockers(payload)
+    runtime_ledger_blockers = list(
+        dict.fromkeys(
+            [
+                *_metadata_text_list(payload.get("blockers")),
+                *proof_blockers,
+            ]
+        )
+    )
+    bucket_payload = dict(payload)
+    if proof_blockers:
+        bucket_payload["runtime_ledger_profit_proof_blockers"] = proof_blockers
+        bucket_payload["blockers"] = runtime_ledger_blockers
     return {
         "computed_at": computed_at or datetime.now(timezone.utc),
         "abs_slippage_bps": (
@@ -2579,10 +2843,10 @@ def _runtime_ledger_tca_row_from_payload(
             payload.get("net_strategy_pnl_after_costs")
         ),
         "turnover_notional": filled_notional,
-        "runtime_ledger_blockers": payload.get("blockers") or [],
+        "runtime_ledger_blockers": runtime_ledger_blockers,
         "runtime_ledger_cost_basis_counts": payload.get("cost_basis_counts") or {},
         "runtime_ledger_pnl_basis": payload.get("pnl_basis"),
-        "runtime_ledger_bucket": dict(payload),
+        "runtime_ledger_bucket": bucket_payload,
     }
 
 
@@ -2941,6 +3205,7 @@ def _query_timestamps(
             cur.execute(
                 f"""
                 select
+                    d.id,
                     d.created_at,
                     d.symbol,
                     d.alpaca_account_label,
@@ -2967,17 +3232,9 @@ def _query_timestamps(
                 ),
             )
             decision_lifecycle_rows = [
-                {
-                    "computed_at": row[0],
-                    "event_type": "decision",
-                    "symbol": row[1],
-                    "account_label": row[2],
-                    "strategy_id": row[3],
-                    "decision_hash": row[4],
-                    "decision_json": row[5],
-                }
+                _decision_lifecycle_query_row(row)
                 for row in cur.fetchall()
-                if row[0] is not None
+                if _decision_lifecycle_query_row_has_time(row)
             ]
             if source_activity_diagnostics is not None:
                 source_activity_diagnostics["decision_rows_before_lineage_filter"] = (
@@ -3010,6 +3267,8 @@ def _query_timestamps(
             cur.execute(
                 f"""
                 select
+                    e.id,
+                    d.id,
                     d.created_at,
                     coalesce(
                         e.order_feed_last_event_ts,
@@ -3069,28 +3328,9 @@ def _query_timestamps(
                 ),
             )
             execution_rows = [
-                {
-                    "decision_created_at": row[0],
-                    "computed_at": row[1],
-                    "execution_event_at": row[1],
-                    "execution_created_at": row[2],
-                    "symbol": row[3],
-                    "side": row[4],
-                    "filled_qty": row[5],
-                    "avg_fill_price": row[6],
-                    "shortfall_notional": row[7],
-                    "execution_audit_json": row[8],
-                    "raw_order": row[9],
-                    "account_label": row[10],
-                    "strategy_id": row[11],
-                    "decision_hash": row[12],
-                    "decision_json": row[13],
-                    "alpaca_order_id": row[14],
-                    "client_order_id": row[15],
-                    "order_status": row[16],
-                }
+                _execution_query_row(row)
                 for row in cur.fetchall()
-                if row[1] is not None
+                if _execution_query_row_has_time(row)
             ]
             if source_activity_diagnostics is not None:
                 source_activity_diagnostics["execution_rows_before_lineage_filter"] = (
@@ -3129,6 +3369,9 @@ def _query_timestamps(
             cur.execute(
                 f"""
                 select
+                    oe.id,
+                    coalesce(oe.trade_decision_id, e.trade_decision_id),
+                    e.id,
                     coalesce(oe.event_ts, oe.created_at),
                     oe.symbol,
                     oe.alpaca_account_label,
@@ -3169,27 +3412,9 @@ def _query_timestamps(
                 ),
             )
             order_lifecycle_rows = [
-                {
-                    "event_ts": row[0],
-                    "symbol": row[1],
-                    "account_label": row[2],
-                    "strategy_id": row[3],
-                    "decision_hash": row[4],
-                    "decision_json": row[5],
-                    "alpaca_order_id": row[6],
-                    "client_order_id": row[7],
-                    "event_type": row[8],
-                    "order_status": row[9],
-                    "event_fingerprint": row[10],
-                    "source_topic": row[11],
-                    "source_partition": row[12],
-                    "source_offset": row[13],
-                    "raw_event": row[14],
-                    "execution_audit_json": row[15],
-                    "raw_order": row[16],
-                }
+                _order_lifecycle_query_row(row)
                 for row in cur.fetchall()
-                if row[0] is not None
+                if _order_lifecycle_query_row_has_time(row)
             ]
             if source_activity_diagnostics is not None:
                 source_activity_diagnostics[

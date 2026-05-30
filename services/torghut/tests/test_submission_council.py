@@ -222,6 +222,26 @@ class TestSubmissionCouncil(TestCase):
             "execution_policy_hash_counts": {"policy": 42},
             "cost_model_hash_counts": {"cost": 42},
             "lineage_hash_counts": {"lineage": 42},
+            "source_window_start": datetime.now(timezone.utc).isoformat(),
+            "source_window_end": datetime.now(timezone.utc).isoformat(),
+            "source_refs": [
+                "postgres:trade_decisions",
+                "postgres:executions",
+                "postgres:execution_order_events",
+            ],
+            "source_row_counts": {
+                "trade_decisions": 2,
+                "executions": 2,
+                "execution_order_events": 4,
+            },
+            "trade_decision_ids": ["decision-buy", "decision-sell"],
+            "execution_ids": ["execution-buy", "execution-sell"],
+            "execution_order_event_ids": ["event-fill-buy", "event-fill-sell"],
+            "source_offsets": [
+                {"topic": "alpaca.trade_updates", "partition": 0, "offset": 100}
+            ],
+            "source_materialization": "execution_order_events",
+            "authority_class": "runtime_order_feed_execution_source",
             "blockers": [],
         }
 
@@ -578,6 +598,17 @@ class TestSubmissionCouncil(TestCase):
                     "trade_order_events": 2,
                     "strategy_runtime_ledger_buckets": 1,
                 },
+                "trade_decision_ids": ["pairs-decision-buy", "pairs-decision-sell"],
+                "execution_ids": ["pairs-execution-buy", "pairs-execution-sell"],
+                "execution_order_event_ids": [
+                    "pairs-event-new-buy",
+                    "pairs-event-fill-buy",
+                ],
+                "source_offsets": [
+                    {"topic": "alpaca.trade_updates", "partition": 0, "offset": 100}
+                ],
+                "source_materialization": "execution_order_events",
+                "authority_class": "runtime_order_feed_execution_source",
             }
             reversal_source_payload = {
                 "source_window_start": (now - timedelta(minutes=75)).isoformat(),
@@ -590,6 +621,14 @@ class TestSubmissionCouncil(TestCase):
                     "trade_order_events": 1,
                     "strategy_runtime_ledger_buckets": 1,
                 },
+                "trade_decision_ids": ["reversal-decision"],
+                "execution_ids": ["reversal-execution"],
+                "execution_order_event_ids": ["reversal-event-fill"],
+                "source_offsets": [
+                    {"topic": "alpaca.trade_updates", "partition": 0, "offset": 200}
+                ],
+                "source_materialization": "execution_order_events",
+                "authority_class": "runtime_order_feed_execution_source",
             }
             session.add_all(
                 [
@@ -884,6 +923,8 @@ class TestSubmissionCouncil(TestCase):
 
         self.assertIn("runtime_ledger_source_window_missing", reasons)
         self.assertIn("runtime_ledger_source_refs_missing", reasons)
+        self.assertIn("runtime_ledger_execution_order_event_refs_missing", reasons)
+        self.assertIn("runtime_ledger_source_offsets_missing", reasons)
         self.assertIn("runtime_ledger_stage_not_live", reasons)
 
         source_backed_reasons = _runtime_ledger_repair_reason_codes(
@@ -899,6 +940,14 @@ class TestSubmissionCouncil(TestCase):
                     "trade_order_events": 2,
                     "strategy_runtime_ledger_buckets": 1,
                 },
+                "trade_decision_ids": ["decision-buy", "decision-sell"],
+                "execution_ids": ["execution-buy", "execution-sell"],
+                "execution_order_event_ids": ["event-fill-buy", "event-fill-sell"],
+                "source_offsets": [
+                    {"topic": "alpaca.trade_updates", "partition": 0, "offset": 100}
+                ],
+                "source_materialization": "execution_order_events",
+                "authority_class": "runtime_order_feed_execution_source",
             },
             manifest={"candidate_id": "c88421d619759b2cfaa6f4d0"},
         )
@@ -908,6 +957,10 @@ class TestSubmissionCouncil(TestCase):
             source_backed_reasons,
         )
         self.assertNotIn("runtime_ledger_source_refs_missing", source_backed_reasons)
+        self.assertNotIn(
+            "runtime_ledger_execution_order_event_refs_missing",
+            source_backed_reasons,
+        )
         self.assertEqual(source_backed_reasons, ["runtime_ledger_stage_not_live"])
 
     def test_runtime_ledger_paper_probation_import_plan_falls_back_and_skips_incomplete_targets(

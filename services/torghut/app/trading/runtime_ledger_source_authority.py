@@ -9,6 +9,36 @@ from typing import cast
 
 RUNTIME_LEDGER_SOURCE_WINDOW_MISSING_BLOCKER = "runtime_ledger_source_window_missing"
 RUNTIME_LEDGER_SOURCE_REFS_MISSING_BLOCKER = "runtime_ledger_source_refs_missing"
+RUNTIME_LEDGER_TRADE_DECISION_REFS_MISSING_BLOCKER = (
+    "runtime_ledger_trade_decision_refs_missing"
+)
+RUNTIME_LEDGER_EXECUTION_REFS_MISSING_BLOCKER = "runtime_ledger_execution_refs_missing"
+RUNTIME_LEDGER_EXECUTION_ORDER_EVENT_REFS_MISSING_BLOCKER = (
+    "runtime_ledger_execution_order_event_refs_missing"
+)
+RUNTIME_LEDGER_SOURCE_OFFSETS_MISSING_BLOCKER = "runtime_ledger_source_offsets_missing"
+RUNTIME_LEDGER_SOURCE_MATERIALIZATION_MISSING_BLOCKER = (
+    "runtime_ledger_source_materialization_missing"
+)
+RUNTIME_LEDGER_AUTHORITY_CLASS_MISSING_BLOCKER = (
+    "runtime_ledger_authority_class_missing"
+)
+
+_PROMOTION_GRADE_SOURCE_MATERIALIZATIONS = frozenset(
+    {
+        "execution_order_events",
+        "source_execution_lifecycle",
+    }
+)
+_PROMOTION_GRADE_AUTHORITY_CLASSES = frozenset(
+    {
+        "runtime_order_feed_execution_source",
+        "event_sourced_runtime_ledger_profit_proof",
+        "source_execution_runtime_ledger_materialized",
+        "execution_order_events_runtime_ledger",
+        "source_execution_lifecycle_materialized_runtime_ledger",
+    }
+)
 
 
 def _text(value: object) -> str | None:
@@ -58,6 +88,66 @@ def _positive_mapping_value_count(value: object) -> int:
     return count
 
 
+def _source_ref_present(value: object) -> bool:
+    if isinstance(value, Mapping):
+        return len(cast(Mapping[object, object], value)) > 0
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return bool(_string_list(cast(Sequence[object], value)))
+    return bool(_string_list(value) or _text(value) is not None)
+
+
+def _source_refs_present(bucket: Mapping[str, object], *keys: str) -> bool:
+    return any(_source_ref_present(bucket.get(key)) for key in keys)
+
+
+def _source_offsets_present(bucket: Mapping[str, object]) -> bool:
+    source_offsets = bucket.get("source_offsets")
+    if isinstance(source_offsets, Mapping):
+        return len(cast(Mapping[object, object], source_offsets)) > 0
+    if isinstance(source_offsets, Sequence) and not isinstance(
+        source_offsets, (str, bytes, bytearray)
+    ):
+        for item in cast(Sequence[object], source_offsets):
+            if isinstance(item, Mapping):
+                offset = cast(Mapping[object, object], item)
+                if (
+                    _text(offset.get("topic")) is not None
+                    and offset.get("partition") is not None
+                    and offset.get("offset") is not None
+                ):
+                    return True
+            elif _text(item) is not None:
+                return True
+    return (
+        _text(bucket.get("source_topic")) is not None
+        and bucket.get("source_partition") is not None
+        and bucket.get("source_offset") is not None
+    )
+
+
+def _promotion_grade_source_materialization_present(
+    bucket: Mapping[str, object],
+) -> bool:
+    source_materialization = _text(bucket.get("source_materialization"))
+    return (
+        source_materialization is not None
+        and source_materialization in _PROMOTION_GRADE_SOURCE_MATERIALIZATIONS
+    )
+
+
+def _promotion_grade_authority_class_present(bucket: Mapping[str, object]) -> bool:
+    authority_values = (
+        bucket.get("authority_class"),
+        bucket.get("authority_reason"),
+        bucket.get("pnl_derivation"),
+    )
+    for value in authority_values:
+        text = _text(value)
+        if text in _PROMOTION_GRADE_AUTHORITY_CLASSES:
+            return True
+    return False
+
+
 def runtime_ledger_source_window_present(bucket: Mapping[str, object]) -> bool:
     start = _parse_datetime(
         bucket.get("source_window_start")
@@ -97,9 +187,59 @@ def runtime_ledger_source_authority_blockers(
     return blockers
 
 
+def runtime_ledger_promotion_source_authority_blockers(
+    bucket: Mapping[str, object],
+) -> list[str]:
+    """Return blockers for promotion-grade runtime/order-feed source proof.
+
+    Aggregate bucket fields are not enough for promotion authority. The bucket must
+    also carry row-level runtime lineage back to order-feed lifecycle and execution
+    sources so durable/source imports cannot become proof by shape alone.
+    """
+
+    blockers = runtime_ledger_source_authority_blockers(bucket)
+    if not _source_refs_present(
+        bucket,
+        "trade_decision_ids",
+        "trade_decision_refs",
+        "trade_decision_id",
+        "decision_ids",
+        "decision_id",
+    ):
+        blockers.append(RUNTIME_LEDGER_TRADE_DECISION_REFS_MISSING_BLOCKER)
+    if not _source_refs_present(
+        bucket,
+        "execution_ids",
+        "execution_refs",
+        "execution_id",
+    ):
+        blockers.append(RUNTIME_LEDGER_EXECUTION_REFS_MISSING_BLOCKER)
+    if not _source_refs_present(
+        bucket,
+        "execution_order_event_ids",
+        "execution_order_event_refs",
+        "execution_order_event_id",
+    ):
+        blockers.append(RUNTIME_LEDGER_EXECUTION_ORDER_EVENT_REFS_MISSING_BLOCKER)
+    if not _source_offsets_present(bucket):
+        blockers.append(RUNTIME_LEDGER_SOURCE_OFFSETS_MISSING_BLOCKER)
+    if not _promotion_grade_source_materialization_present(bucket):
+        blockers.append(RUNTIME_LEDGER_SOURCE_MATERIALIZATION_MISSING_BLOCKER)
+    if not _promotion_grade_authority_class_present(bucket):
+        blockers.append(RUNTIME_LEDGER_AUTHORITY_CLASS_MISSING_BLOCKER)
+    return list(dict.fromkeys(blockers))
+
+
 __all__ = [
+    "RUNTIME_LEDGER_AUTHORITY_CLASS_MISSING_BLOCKER",
+    "RUNTIME_LEDGER_EXECUTION_ORDER_EVENT_REFS_MISSING_BLOCKER",
+    "RUNTIME_LEDGER_EXECUTION_REFS_MISSING_BLOCKER",
+    "RUNTIME_LEDGER_SOURCE_MATERIALIZATION_MISSING_BLOCKER",
+    "RUNTIME_LEDGER_SOURCE_OFFSETS_MISSING_BLOCKER",
     "RUNTIME_LEDGER_SOURCE_REFS_MISSING_BLOCKER",
     "RUNTIME_LEDGER_SOURCE_WINDOW_MISSING_BLOCKER",
+    "RUNTIME_LEDGER_TRADE_DECISION_REFS_MISSING_BLOCKER",
+    "runtime_ledger_promotion_source_authority_blockers",
     "runtime_ledger_source_authority_blockers",
     "runtime_ledger_source_refs_present",
     "runtime_ledger_source_window_present",
