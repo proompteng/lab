@@ -90,7 +90,7 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
         self.assertEqual(fake_session.commits, 0)
         self.assertEqual(fake_session.rollbacks, 1)
         create_engine.assert_called_once_with(
-            "postgresql://example/test",
+            "postgresql+psycopg://example/test",
             pool_pre_ping=True,
             future=True,
         )
@@ -179,3 +179,17 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
         ):
             with self.assertRaisesRegex(SystemExit, "missing DSN env var: MISSING_DSN"):
                 script.main()
+
+    def test_sqlalchemy_dsn_uses_installed_psycopg_driver(self) -> None:
+        self.assertEqual(
+            script._sqlalchemy_dsn("postgresql://user:pass@postgres/torghut"),
+            "postgresql+psycopg://user:pass@postgres/torghut",
+        )
+        self.assertEqual(
+            script._sqlalchemy_dsn("postgres://user:pass@postgres/torghut"),
+            "postgresql+psycopg://user:pass@postgres/torghut",
+        )
+        self.assertEqual(
+            script._sqlalchemy_dsn("postgresql+psycopg://user:pass@postgres/torghut"),
+            "postgresql+psycopg://user:pass@postgres/torghut",
+        )
