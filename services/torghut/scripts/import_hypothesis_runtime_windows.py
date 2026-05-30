@@ -93,6 +93,16 @@ ORDER_FEED_FILL_LIFECYCLE_ORDER_ID_MISSING_BLOCKER = (
 ORDER_FEED_UNLINKED_FILL_LIFECYCLE_PRESENT_BLOCKER = (
     "order_feed_unlinked_fill_lifecycle_present"
 )
+_RUNTIME_LIFECYCLE_IDENTIFIER_KEYS = (
+    "execution_id",
+    "trade_decision_id",
+    "decision_id",
+    "decision_hash",
+    "order_id",
+    "alpaca_order_id",
+    "client_order_id",
+    "execution_correlation_id",
+)
 ALPACA_2026_EQUITY_SEC_FEE_RATE = Decimal("20.60") / Decimal("1000000")
 ALPACA_2026_EQUITY_TAF_RATE_PER_SHARE = Decimal("0.000195")
 ALPACA_2026_EQUITY_TAF_CAP = Decimal("9.79")
@@ -2072,6 +2082,57 @@ def _execution_row_has_fill(row: Mapping[str, object]) -> bool:
     )
 
 
+def _runtime_lifecycle_identifier_values(row: Mapping[str, object]) -> set[str]:
+    values = _text_values(row, *_RUNTIME_LIFECYCLE_IDENTIFIER_KEYS)
+    return {value for value in values if value}
+
+
+def _runtime_lifecycle_strategy_identifier_values(
+    rows: Sequence[Mapping[str, object]],
+) -> set[str]:
+    identifiers: set[str] = set()
+    for row in rows:
+        identifiers.update(_runtime_lifecycle_identifier_values(row))
+    return identifiers
+
+
+def _strategy_relevant_unlinked_fill_lifecycle_rows(
+    *,
+    execution_rows: Sequence[Mapping[str, object]],
+    order_lifecycle_rows: Sequence[Mapping[str, object]] | None,
+    unlinked_order_lifecycle_rows: Sequence[Mapping[str, object]] | None,
+    candidate_id: str | None = None,
+    hypothesis_id: str | None = None,
+) -> list[dict[str, object]]:
+    strategy_identifiers = _runtime_lifecycle_strategy_identifier_values(
+        [
+            *execution_rows,
+            *(order_lifecycle_rows or ()),
+        ]
+    )
+    lineage_filter_present = candidate_id is not None or hypothesis_id is not None
+    relevant_rows: list[dict[str, object]] = []
+    for row in unlinked_order_lifecycle_rows or ():
+        normalized = {str(key): value for key, value in row.items()}
+        if _runtime_ledger_event_type(normalized) not in _RUNTIME_LEDGER_FILL_EVENTS:
+            continue
+        if lineage_filter_present and _source_row_matches_lineage(
+            normalized,
+            candidate_id=candidate_id,
+            hypothesis_id=hypothesis_id,
+            require_source_lineage=True,
+        ):
+            relevant_rows.append(normalized)
+            continue
+        if (
+            strategy_identifiers
+            and _runtime_lifecycle_identifier_values(normalized)
+            & strategy_identifiers
+        ):
+            relevant_rows.append(normalized)
+    return relevant_rows
+
+
 def _order_feed_fill_lifecycle_blockers(
     *,
     execution_rows: list[dict[str, object]],
@@ -2108,10 +2169,10 @@ def _order_feed_fill_lifecycle_blockers(
             complete_fill_order_ids.add(order_id)
 
     blockers: list[str] = []
-    if any(
-        _runtime_ledger_event_type({str(key): value for key, value in row.items()})
-        in _RUNTIME_LEDGER_FILL_EVENTS
-        for row in unlinked_order_lifecycle_rows or []
+    if _strategy_relevant_unlinked_fill_lifecycle_rows(
+        execution_rows=execution_rows,
+        order_lifecycle_rows=order_lifecycle_rows,
+        unlinked_order_lifecycle_rows=unlinked_order_lifecycle_rows,
     ):
         blockers.append(ORDER_FEED_UNLINKED_FILL_LIFECYCLE_PRESENT_BLOCKER)
     if missing_execution_order_id:
@@ -2167,6 +2228,12 @@ def _source_activity_diagnostics_blockers(
     unlinked_fill_lifecycle_count = _nonnegative_int(
         diagnostics.get("order_feed_unlinked_fill_lifecycle_count")
     )
+    if "order_feed_unlinked_strategy_fill_lifecycle_count" in diagnostics:
+        strategy_unlinked_fill_lifecycle_count = _nonnegative_int(
+            diagnostics.get("order_feed_unlinked_strategy_fill_lifecycle_count")
+        )
+    else:
+        strategy_unlinked_fill_lifecycle_count = unlinked_fill_lifecycle_count
 
     if (
         decision_query_count
@@ -2190,7 +2257,7 @@ def _source_activity_diagnostics_blockers(
         add(ORDER_FEED_FILL_LIFECYCLE_MISSING_BLOCKER)
     if execution_lineage_count > 0 and tca_lineage_count <= 0:
         add("execution_tca_rows_missing")
-    if unlinked_fill_lifecycle_count > 0:
+    if strategy_unlinked_fill_lifecycle_count > 0:
         add(ORDER_FEED_UNLINKED_FILL_LIFECYCLE_PRESENT_BLOCKER)
     if source_bucket_count <= 0:
         add("runtime_ledger_source_bucket_missing")
@@ -3759,6 +3826,36 @@ def _query_timestamps(
                     for row in cur.fetchall()
                     if _order_lifecycle_query_row_has_time(row)
                 ]
+                strategy_unlinked_order_lifecycle_rows = (
+                    _strategy_relevant_unlinked_fill_lifecycle_rows(
+                        execution_rows=execution_rows,
+                        order_lifecycle_rows=order_lifecycle_rows,
+                        unlinked_order_lifecycle_rows=unlinked_order_lifecycle_rows,
+                        candidate_id=candidate_id,
+                        hypothesis_id=hypothesis_id,
+                    )
+                )
+                strategy_unlinked_ids = set(
+                    _source_identifier_values(
+                        strategy_unlinked_order_lifecycle_rows,
+                        "execution_order_event_id",
+                        "event_fingerprint",
+                    )
+                )
+                unattributed_unlinked_order_lifecycle_rows = [
+                    row
+                    for row in unlinked_order_lifecycle_rows
+                    if not (
+                        set(
+                            _source_identifier_values(
+                                [row],
+                                "execution_order_event_id",
+                                "event_fingerprint",
+                            )
+                        )
+                        & strategy_unlinked_ids
+                    )
+                ]
                 if source_activity_diagnostics is not None:
                     source_activity_diagnostics[
                         "order_feed_unlinked_fill_lifecycle_count"
@@ -3770,6 +3867,27 @@ def _query_timestamps(
                         "execution_order_event_id",
                         "event_fingerprint",
                     )
+                    source_activity_diagnostics[
+                        "order_feed_unlinked_strategy_fill_lifecycle_count"
+                    ] = len(strategy_unlinked_order_lifecycle_rows)
+                    source_activity_diagnostics[
+                        "order_feed_unlinked_strategy_fill_lifecycle_event_ids"
+                    ] = _source_identifier_values(
+                        strategy_unlinked_order_lifecycle_rows,
+                        "execution_order_event_id",
+                        "event_fingerprint",
+                    )
+                    source_activity_diagnostics[
+                        "order_feed_unattributed_fill_lifecycle_count"
+                    ] = len(unattributed_unlinked_order_lifecycle_rows)
+                    source_activity_diagnostics[
+                        "order_feed_unattributed_fill_lifecycle_event_ids"
+                    ] = _source_identifier_values(
+                        unattributed_unlinked_order_lifecycle_rows,
+                        "execution_order_event_id",
+                        "event_fingerprint",
+                    )
+                unlinked_order_lifecycle_rows = strategy_unlinked_order_lifecycle_rows
             cur.execute(
                 f"""
                 select
