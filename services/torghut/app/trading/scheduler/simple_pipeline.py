@@ -393,6 +393,7 @@ class SimpleTradingPipeline(TradingPipeline):
             strategies = self._prepare_run_once(session)
             if not strategies:
                 return
+            self._capture_runtime_window_account_snapshot_if_due(session)
             self._warm_session_context_from_open(session, strategies=strategies)
 
             batch = self.ingestor.fetch_signals(session)

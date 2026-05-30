@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 import tempfile
@@ -19,6 +19,7 @@ from app.models import (
     Base,
     Execution,
     LLMDecisionReview,
+    PositionSnapshot,
     RejectedSignalOutcomeEvent,
     Strategy,
     StrategyHypothesis,
@@ -1898,6 +1899,164 @@ class TestTradingPipeline(TestCase):
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_live_enabled = original["trading_live_enabled"]
+
+    def test_simple_pipeline_snapshots_account_for_paper_route_window_without_signals(
+        self,
+    ) -> None:
+        from app import config
+
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_live_enabled = False
+        config.settings.trading_pipeline_mode = "simple"
+        config.settings.trading_simple_submit_enabled = True
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_paper_route_target_plan_url = ""
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL"
+        config.settings.trading_universe_static_fallback_enabled = True
+        config.settings.trading_universe_static_fallback_symbols_raw = "AAPL"
+
+        with self.session_local() as session:
+            session.add(
+                Strategy(
+                    name="paper-route-window-snapshot",
+                    description="pre-open account snapshot regression",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL"],
+                    max_notional_per_trade=Decimal("1000"),
+                )
+            )
+            session.commit()
+
+        alpaca_client = CountingAlpacaClient()
+        ingestor = FakeIngestor([])
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=alpaca_client,
+            order_firewall=OrderFirewall(alpaca_client),
+            ingestor=ingestor,
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=alpaca_client,
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="TORGHUT_SIM",
+            session_factory=self.session_local,
+        )
+        pipeline._is_market_session_open = lambda _now=None: False  # type: ignore[method-assign]
+
+        with patch(
+            "app.trading.scheduler.pipeline.trading_now",
+            return_value=datetime(2026, 3, 26, 13, 20, tzinfo=timezone.utc),
+        ):
+            pipeline.run_once()
+            pipeline.run_once()
+
+        with self.session_local() as session:
+            snapshots = session.scalars(select(PositionSnapshot)).all()
+
+        self.assertEqual(len(snapshots), 1)
+        self.assertEqual(snapshots[0].alpaca_account_label, "TORGHUT_SIM")
+        self.assertEqual(alpaca_client.account_calls, 1)
+        self.assertEqual(alpaca_client.position_calls, 1)
+        self.assertEqual(ingestor.committed_batches, 2)
+
+    def test_runtime_window_account_snapshot_skips_existing_snapshot(self) -> None:
+        from app import config
+
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_paper_route_target_plan_url = ""
+
+        alpaca_client = CountingAlpacaClient()
+        pipeline = TradingPipeline(
+            alpaca_client=alpaca_client,
+            order_firewall=OrderFirewall(alpaca_client),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=alpaca_client,
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="TORGHUT_SIM",
+            session_factory=self.session_local,
+        )
+
+        with self.session_local() as session:
+            session.add(
+                PositionSnapshot(
+                    alpaca_account_label="TORGHUT_SIM",
+                    as_of=datetime(2026, 3, 26, 13, 20, tzinfo=timezone.utc),
+                    equity=Decimal("100000"),
+                    cash=Decimal("100000"),
+                    buying_power=Decimal("200000"),
+                    positions=[],
+                )
+            )
+            session.commit()
+
+            with patch(
+                "app.trading.scheduler.pipeline.trading_now",
+                return_value=datetime(2026, 3, 26, 13, 20, tzinfo=timezone.utc),
+            ):
+                pipeline._capture_runtime_window_account_snapshot_if_due(session)
+
+        self.assertEqual(
+            pipeline._runtime_window_account_snapshot_day, date(2026, 3, 26)
+        )
+        self.assertEqual(alpaca_client.account_calls, 0)
+        self.assertEqual(alpaca_client.position_calls, 0)
+
+    def test_runtime_window_account_snapshot_rolls_back_capture_failure(self) -> None:
+        from app import config
+
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_paper_route_target_plan_url = ""
+
+        pipeline = TradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="TORGHUT_SIM",
+            session_factory=self.session_local,
+        )
+        pipeline._get_account_snapshot = Mock(  # type: ignore[method-assign]
+            side_effect=RuntimeError("broker unavailable")
+        )
+
+        with self.session_local() as session:
+            with patch(
+                "app.trading.scheduler.pipeline.trading_now",
+                return_value=datetime(2026, 3, 26, 13, 20, tzinfo=timezone.utc),
+            ):
+                with self.assertLogs(
+                    "app.trading.scheduler.pipeline",
+                    level="ERROR",
+                ) as logs:
+                    pipeline._capture_runtime_window_account_snapshot_if_due(session)
+
+            snapshot_count = session.query(PositionSnapshot).count()
+
+        self.assertEqual(snapshot_count, 0)
+        self.assertIsNone(pipeline._runtime_window_account_snapshot_day)
+        self.assertTrue(
+            any(
+                "Failed to capture runtime-window account snapshot" in message
+                for message in logs.output
+            )
+        )
 
     def test_pipeline_warms_session_context_with_bounded_replay_window(self) -> None:
         from app import config
