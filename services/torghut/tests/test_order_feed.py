@@ -930,6 +930,113 @@ class TestOrderFeed(TestCase):
         self.assertEqual(source_window.missing_identity_count, 1)
         self.assertEqual(cursor.high_watermark_offset, 18)
 
+    def test_unhandled_persist_failure_is_classified_without_cursor_or_kafka_commit(
+        self,
+    ) -> None:
+        record = FakeRecord(
+            value=(
+                b'{"channel":"trade_updates","payload":{"event":"fill","timestamp":"2026-02-01T10:00:00Z",'
+                b'"order":{"id":"order-1","client_order_id":"client-1","symbol":"AAPL","status":"filled",'
+                b'"qty":"1","filled_qty":"1","filled_avg_price":"190.2"}},"seq":10}'
+            ),
+            offset=20,
+        )
+        consumer = FakeConsumer([record])
+        ingestor = OrderFeedIngestor(consumer_factory=lambda: consumer)
+
+        with Session(self.engine) as session:
+            with patch(
+                "app.trading.order_feed.persist_order_event",
+                side_effect=RuntimeError("store failed"),
+            ):
+                counters = ingestor.ingest_once(session)
+            source_window = session.execute(select(OrderFeedSourceWindow)).scalar_one()
+            cursor_count = len(session.execute(select(OrderFeedConsumerCursor)).all())
+            event_count = len(session.execute(select(ExecutionOrderEvent)).all())
+
+        self.assertEqual(counters["messages_total"], 1)
+        self.assertEqual(counters["failed_unhandled_total"], 1)
+        self.assertEqual(counters["consumer_errors_total"], 1)
+        self.assertEqual(counters["cursor_updates_total"], 0)
+        self.assertEqual(consumer.commit_calls, 0)
+        self.assertEqual(cursor_count, 0)
+        self.assertEqual(event_count, 0)
+        self.assertEqual(source_window.status, "failed_unhandled")
+        self.assertEqual(source_window.failed_unhandled_count, 1)
+        self.assertIn("RuntimeError", source_window.status_reason or "")
+
+    def test_unhandled_apply_failure_does_not_advance_source_cursor(self) -> None:
+        record = FakeRecord(
+            value=(
+                b'{"channel":"trade_updates","payload":{"event":"fill","timestamp":"2026-02-01T10:00:00Z",'
+                b'"order":{"id":"order-1","client_order_id":"client-1","symbol":"AAPL","status":"filled",'
+                b'"qty":"1","filled_qty":"1","filled_avg_price":"190.2"}},"seq":10}'
+            ),
+            offset=21,
+        )
+        consumer = FakeConsumer([record])
+        ingestor = OrderFeedIngestor(consumer_factory=lambda: consumer)
+
+        with Session(self.engine) as session:
+            self._seed_execution(session)
+            with patch(
+                "app.trading.order_feed.apply_order_event_to_execution",
+                side_effect=RuntimeError("apply failed"),
+            ):
+                counters = ingestor.ingest_once(session)
+            source_window = session.execute(select(OrderFeedSourceWindow)).scalar_one()
+            cursor_count = len(session.execute(select(OrderFeedConsumerCursor)).all())
+            event_count = len(session.execute(select(ExecutionOrderEvent)).all())
+
+        self.assertEqual(counters["messages_total"], 1)
+        self.assertEqual(counters["events_persisted_total"], 1)
+        self.assertEqual(counters["failed_unhandled_total"], 1)
+        self.assertEqual(counters["cursor_updates_total"], 0)
+        self.assertEqual(consumer.commit_calls, 0)
+        self.assertEqual(cursor_count, 0)
+        self.assertEqual(event_count, 1)
+        self.assertEqual(source_window.status, "failed_unhandled")
+        self.assertEqual(source_window.failed_unhandled_count, 1)
+
+    def test_unhandled_failure_stops_batch_before_later_offsets(self) -> None:
+        failed = FakeRecord(
+            value=(
+                b'{"channel":"trade_updates","payload":{"event":"fill","timestamp":"2026-02-01T10:00:00Z",'
+                b'"order":{"id":"order-1","client_order_id":"client-1","symbol":"AAPL","status":"filled",'
+                b'"qty":"1","filled_qty":"1","filled_avg_price":"190.2"}},"seq":10}'
+            ),
+            offset=22,
+        )
+        later = FakeRecord(
+            value=(
+                b'{"channel":"trade_updates","payload":{"event":"fill","timestamp":"2026-02-01T10:00:05Z",'
+                b'"order":{"id":"order-2","client_order_id":"client-2","symbol":"MSFT","status":"filled",'
+                b'"qty":"1","filled_qty":"1","filled_avg_price":"405.0"}},"seq":11}'
+            ),
+            offset=23,
+        )
+        consumer = FakeConsumer([failed, later])
+        ingestor = OrderFeedIngestor(consumer_factory=lambda: consumer)
+
+        with Session(self.engine) as session:
+            with patch(
+                "app.trading.order_feed.persist_order_event",
+                side_effect=RuntimeError("store failed"),
+            ):
+                counters = ingestor.ingest_once(session)
+            source_windows = session.execute(
+                select(OrderFeedSourceWindow).order_by(
+                    OrderFeedSourceWindow.start_offset
+                )
+            ).scalars().all()
+
+        self.assertEqual(counters["messages_total"], 1)
+        self.assertEqual(counters["failed_unhandled_total"], 1)
+        self.assertEqual(consumer.commit_calls, 0)
+        self.assertEqual(len(source_windows), 1)
+        self.assertEqual(source_windows[0].start_offset, 22)
+        self.assertEqual(source_windows[0].status, "failed_unhandled")
+
     def test_unlinked_event_source_window_records_missing_lineage(self) -> None:
         record = FakeRecord(
             value=(
