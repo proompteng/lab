@@ -12349,6 +12349,174 @@ class TestTradingPipeline(TestCase):
             session_open.isoformat(),
         )
 
+    def test_resolve_execution_context_positions_tags_prior_open_strategy_exposure(
+        self,
+    ) -> None:
+        session_open = datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc)
+        prior_session_open = session_open - timedelta(days=1)
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="microbar-cross-sectional-pairs-v1",
+                description="runtime isolated paper proof",
+                enabled=True,
+                base_timeframe="1Sec",
+                universe_type="microbar_cross_sectional_pairs_v1",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+            decision = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="paper",
+                symbol="AAPL",
+                timeframe="1Sec",
+                decision_json={"action": "buy"},
+                rationale="paper-route-entry",
+                status="filled",
+                created_at=prior_session_open + timedelta(minutes=60),
+            )
+            session.add(decision)
+            session.commit()
+            session.refresh(decision)
+            session.add(
+                Execution(
+                    trade_decision_id=decision.id,
+                    alpaca_account_label="paper",
+                    alpaca_order_id="paper-aapl-prior-open",
+                    client_order_id="paper-aapl-prior-open-client",
+                    symbol="AAPL",
+                    side="buy",
+                    order_type="market",
+                    time_in_force="day",
+                    submitted_qty=Decimal("2"),
+                    filled_qty=Decimal("2"),
+                    avg_fill_price=Decimal("101"),
+                    status="filled",
+                    raw_order={},
+                    created_at=prior_session_open + timedelta(minutes=61),
+                    updated_at=prior_session_open + timedelta(minutes=61),
+                )
+            )
+            session.commit()
+
+            pipeline = TradingPipeline.__new__(TradingPipeline)
+            pipeline.account_label = "paper"
+
+            class AdapterWithoutOpenOrders:
+                name = "test"
+
+                def list_orders(self, status: str = "all") -> list[dict[str, str]]:
+                    return []
+
+            pipeline.execution_adapter = AdapterWithoutOpenOrders()
+
+            with patch(
+                "app.trading.scheduler.pipeline.trading_now",
+                return_value=session_open + timedelta(minutes=150),
+            ):
+                positions = pipeline._resolve_execution_context_positions(
+                    [
+                        {
+                            "symbol": "AAPL",
+                            "qty": "2",
+                            "side": "long",
+                            "avg_entry_price": "101",
+                        }
+                    ],
+                    session=session,
+                )
+
+        self.assertEqual(positions[0]["strategy_id"], str(strategy.id))
+        self.assertEqual(
+            positions[0]["strategy_position_source"],
+            "open_exposure_filled_executions",
+        )
+        self.assertTrue(positions[0]["strategy_position_stale_session_repair"])
+        self.assertEqual(
+            positions[0]["strategy_position_session_open"],
+            session_open.isoformat(),
+        )
+
+    def test_resolve_execution_context_positions_does_not_tag_closed_prior_exposure(
+        self,
+    ) -> None:
+        session_open = datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc)
+        prior_session_open = session_open - timedelta(days=1)
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="microbar-cross-sectional-pairs-v1",
+                description="runtime isolated paper proof",
+                enabled=True,
+                base_timeframe="1Sec",
+                universe_type="microbar_cross_sectional_pairs_v1",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+            for index, (side, created_offset) in enumerate(
+                [("buy", 60), ("sell", 120)],
+                start=1,
+            ):
+                decision = TradeDecision(
+                    strategy_id=strategy.id,
+                    alpaca_account_label="paper",
+                    symbol="AAPL",
+                    timeframe="1Sec",
+                    decision_json={"action": side},
+                    rationale="paper-route-entry" if side == "buy" else "time-exit",
+                    status="filled",
+                    created_at=prior_session_open + timedelta(minutes=created_offset),
+                )
+                session.add(decision)
+                session.commit()
+                session.refresh(decision)
+                session.add(
+                    Execution(
+                        trade_decision_id=decision.id,
+                        alpaca_account_label="paper",
+                        alpaca_order_id=f"paper-aapl-prior-closed-{index}",
+                        client_order_id=f"paper-aapl-prior-closed-{index}-client",
+                        symbol="AAPL",
+                        side=side,
+                        order_type="market",
+                        time_in_force="day",
+                        submitted_qty=Decimal("2"),
+                        filled_qty=Decimal("2"),
+                        avg_fill_price=Decimal("101"),
+                        status="filled",
+                        raw_order={},
+                        created_at=prior_session_open
+                        + timedelta(minutes=created_offset + 1),
+                        updated_at=prior_session_open
+                        + timedelta(minutes=created_offset + 1),
+                    )
+                )
+            session.commit()
+
+            pipeline = TradingPipeline.__new__(TradingPipeline)
+            pipeline.account_label = "paper"
+
+            class AdapterWithoutOpenOrders:
+                name = "test"
+
+                def list_orders(self, status: str = "all") -> list[dict[str, str]]:
+                    return []
+
+            pipeline.execution_adapter = AdapterWithoutOpenOrders()
+
+            with patch(
+                "app.trading.scheduler.pipeline.trading_now",
+                return_value=session_open + timedelta(minutes=150),
+            ):
+                positions = pipeline._resolve_execution_context_positions(
+                    [{"symbol": "AAPL", "qty": "2", "side": "long"}],
+                    session=session,
+                )
+
+        self.assertNotIn("strategy_id", positions[0])
+
     def test_resolve_execution_context_positions_does_not_tag_mismatched_fill(
         self,
     ) -> None:

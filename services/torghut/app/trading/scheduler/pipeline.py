@@ -164,10 +164,17 @@ _RUNTIME_UNCERTAINTY_DEGRADE_MAX_PARTICIPATION_RATE = Decimal("0.05")
 _RUNTIME_UNCERTAINTY_DEGRADE_MIN_EXECUTION_SECONDS = 120
 _RUNTIME_REGIME_CONFIDENCE_DEFAULT_THRESHOLDS = (Decimal("0.75"), Decimal("0.55"))
 _STRATEGY_POSITION_TAG_TOLERANCE = Decimal("0.0001")
+_STRATEGY_POSITION_TAG_LOOKBACK = timedelta(days=7)
 
 
 def _normalized_symbol(symbol: object) -> str:
     return str(symbol or "").strip().upper()
+
+
+def _aware_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 class TradingPipeline:
@@ -772,6 +779,7 @@ class TradingPipeline:
             REGULAR_OPEN_UTC,
             tzinfo=timezone.utc,
         )
+        lookback_start = session_open - _STRATEGY_POSITION_TAG_LOOKBACK
         try:
             rows = session.execute(
                 select(Execution, TradeDecision)
@@ -781,12 +789,12 @@ class TradingPipeline:
                     TradeDecision.alpaca_account_label == self.account_label,
                     Execution.status == "filled",
                     Execution.filled_qty > Decimal("0"),
-                    Execution.created_at >= session_open,
+                    Execution.created_at >= lookback_start,
                 )
             ).all()
         except Exception:
             logger.exception(
-                "Failed to resolve current-session strategy position tags account=%s",
+                "Failed to resolve strategy position tags account=%s",
                 self.account_label,
             )
             return positions
@@ -797,6 +805,7 @@ class TradingPipeline:
             strategy_id = str(decision_row.strategy_id)
             if not symbol or not strategy_id:
                 continue
+            execution_created_at = _aware_utc(execution.created_at)
             filled_qty = _optional_decimal(execution.filled_qty)
             if filled_qty is None or filled_qty <= 0:
                 continue
@@ -811,10 +820,16 @@ class TradingPipeline:
                     "qty": Decimal("0"),
                     "buy_qty": Decimal("0"),
                     "buy_notional": Decimal("0"),
+                    "session_qty": Decimal("0"),
                     "latest_execution_at": None,
+                    "earliest_execution_at": None,
                 },
             )
             exposure["qty"] = cast(Decimal, exposure["qty"]) + signed_qty
+            if execution_created_at >= session_open:
+                exposure["session_qty"] = (
+                    cast(Decimal, exposure["session_qty"]) + signed_qty
+                )
             avg_fill_price = _optional_decimal(execution.avg_fill_price)
             if side == "buy" and avg_fill_price is not None and avg_fill_price > 0:
                 exposure["buy_qty"] = cast(Decimal, exposure["buy_qty"]) + filled_qty
@@ -822,12 +837,18 @@ class TradingPipeline:
                     Decimal,
                     exposure["buy_notional"],
                 ) + (filled_qty * avg_fill_price)
+            earliest_execution_at = exposure.get("earliest_execution_at")
+            if (
+                earliest_execution_at is None
+                or execution_created_at < earliest_execution_at
+            ):
+                exposure["earliest_execution_at"] = execution_created_at
             latest_execution_at = exposure.get("latest_execution_at")
             if (
                 latest_execution_at is None
-                or execution.created_at > latest_execution_at
+                or execution_created_at > latest_execution_at
             ):
-                exposure["latest_execution_at"] = execution.created_at
+                exposure["latest_execution_at"] = execution_created_at
 
         if not exposures:
             return positions
@@ -988,8 +1009,25 @@ class TradingPipeline:
         tagged["strategy_id"] = strategy_id
         tagged["qty"] = str(qty)
         tagged["side"] = side or "long"
-        tagged["strategy_position_source"] = "current_session_filled_executions"
+        earliest_execution_at = exposure.get("earliest_execution_at")
+        stale_position = (
+            isinstance(earliest_execution_at, datetime)
+            and earliest_execution_at < session_open
+        )
+        tagged["strategy_position_source"] = (
+            "open_exposure_filled_executions"
+            if stale_position
+            else "current_session_filled_executions"
+        )
         tagged["strategy_position_session_open"] = session_open.isoformat()
+        if stale_position and isinstance(earliest_execution_at, datetime):
+            tagged["strategy_position_stale_session_repair"] = True
+            tagged["strategy_position_lookback_start"] = (
+                session_open - _STRATEGY_POSITION_TAG_LOOKBACK
+            ).isoformat()
+            tagged["strategy_position_earliest_execution_at"] = (
+                earliest_execution_at.isoformat()
+            )
         if split_from_aggregate:
             tagged["strategy_position_split_from_aggregate"] = True
         latest_execution_at = exposure.get("latest_execution_at")
