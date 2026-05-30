@@ -36,6 +36,7 @@ from app.trading.submission_council import (
     _load_profit_promotion_table_counts,
     _merge_runtime_certificate_evidence,
     _metric_window_activity_reason_codes,
+    _runtime_ledger_repair_reason_codes,
     _refresh_runtime_summary_totals,
     _runtime_ledger_paper_probation_import_plan,
     build_hypothesis_runtime_summary,
@@ -566,6 +567,30 @@ class TestSubmissionCouncil(TestCase):
         )
 
         with session_local() as session:
+            pairs_source_payload = {
+                "source_window_start": (now - timedelta(minutes=45)).isoformat(),
+                "source_window_end": (now - timedelta(minutes=30)).isoformat(),
+                "source_refs": [
+                    "strategy_runtime_ledger_buckets:pairs-realized-runtime"
+                ],
+                "source_row_counts": {
+                    "trade_decisions": 2,
+                    "trade_order_events": 2,
+                    "strategy_runtime_ledger_buckets": 1,
+                },
+            }
+            reversal_source_payload = {
+                "source_window_start": (now - timedelta(minutes=75)).isoformat(),
+                "source_window_end": (now - timedelta(minutes=60)).isoformat(),
+                "source_refs": [
+                    "strategy_runtime_ledger_buckets:pairs-reversal-runtime"
+                ],
+                "source_row_counts": {
+                    "trade_decisions": 1,
+                    "trade_order_events": 1,
+                    "strategy_runtime_ledger_buckets": 1,
+                },
+            }
             session.add_all(
                 [
                     StrategyRuntimeLedgerBucket(
@@ -627,6 +652,7 @@ class TestSubmissionCouncil(TestCase):
                         cost_model_hash_counts={"cost": 2},
                         lineage_hash_counts={"lineage": 2},
                         blockers_json=[],
+                        payload_json=pairs_source_payload,
                     ),
                     StrategyRuntimeLedgerBucket(
                         run_id="pairs-reversal-runtime",
@@ -657,6 +683,7 @@ class TestSubmissionCouncil(TestCase):
                         cost_model_hash_counts={"cost": 1},
                         lineage_hash_counts={"lineage": 1},
                         blockers_json=[],
+                        payload_json=reversal_source_payload,
                     ),
                 ]
             )
@@ -742,7 +769,19 @@ class TestSubmissionCouncil(TestCase):
         )
         self.assertIn("runtime_ledger_stage_not_live", candidates[0]["reason_codes"])
         self.assertNotIn(
+            "runtime_ledger_source_window_missing",
+            candidates[0]["reason_codes"],
+        )
+        self.assertNotIn(
+            "runtime_ledger_source_refs_missing",
+            candidates[0]["reason_codes"],
+        )
+        self.assertNotIn(
             "runtime_ledger_candidate_mismatch", candidates[0]["reason_codes"]
+        )
+        self.assertEqual(
+            candidates[0]["source_refs"],
+            ["strategy_runtime_ledger_buckets:pairs-realized-runtime"],
         )
         paper_candidates = gate["runtime_ledger_paper_probation_candidates"]
         self.assertEqual(gate["paper_probation_eligible_total"], 2)
@@ -818,6 +857,58 @@ class TestSubmissionCouncil(TestCase):
         self.assertTrue(
             any(candidate["hypothesis_id"] == "H-CONT-01" for candidate in candidates)
         )
+
+    def test_runtime_ledger_repair_reason_codes_require_source_authority(self) -> None:
+        payload = {
+            "candidate_id": "c88421d619759b2cfaa6f4d0",
+            "observed_stage": "paper",
+            "fill_count": 2,
+            "submitted_order_count": 2,
+            "closed_trade_count": 2,
+            "open_position_count": 0,
+            "filled_notional": "127090.02495200",
+            "net_strategy_pnl_after_costs": "567.44720578",
+            "post_cost_expectancy_bps": "44.64923238",
+            "ledger_schema_version": "torghut.runtime-ledger-bucket.v1",
+            "pnl_basis": "realized_strategy_pnl_after_explicit_costs",
+            "execution_policy_hash_counts": {"policy": 2},
+            "cost_model_hash_counts": {"cost": 2},
+            "lineage_hash_counts": {"lineage": 2},
+            "blockers": [],
+        }
+
+        reasons = _runtime_ledger_repair_reason_codes(
+            payload,
+            manifest={"candidate_id": "c88421d619759b2cfaa6f4d0"},
+        )
+
+        self.assertIn("runtime_ledger_source_window_missing", reasons)
+        self.assertIn("runtime_ledger_source_refs_missing", reasons)
+        self.assertIn("runtime_ledger_stage_not_live", reasons)
+
+        source_backed_reasons = _runtime_ledger_repair_reason_codes(
+            {
+                **payload,
+                "source_window_start": "2026-05-29T14:30:00+00:00",
+                "source_window_end": "2026-05-29T15:00:00+00:00",
+                "source_refs": [
+                    "strategy_runtime_ledger_buckets:pairs-realized-runtime"
+                ],
+                "source_row_counts": {
+                    "trade_decisions": 2,
+                    "trade_order_events": 2,
+                    "strategy_runtime_ledger_buckets": 1,
+                },
+            },
+            manifest={"candidate_id": "c88421d619759b2cfaa6f4d0"},
+        )
+
+        self.assertNotIn(
+            "runtime_ledger_source_window_missing",
+            source_backed_reasons,
+        )
+        self.assertNotIn("runtime_ledger_source_refs_missing", source_backed_reasons)
+        self.assertEqual(source_backed_reasons, ["runtime_ledger_stage_not_live"])
 
     def test_runtime_ledger_paper_probation_import_plan_falls_back_and_skips_incomplete_targets(
         self,
