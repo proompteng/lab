@@ -1649,6 +1649,7 @@ class SimpleTradingPipeline(TradingPipeline):
         decisions = self._paper_route_target_source_decisions(
             strategies=strategies,
             allowed_symbols=allowed_symbols,
+            positions=positions,
         )
         for decision in decisions:
             self.state.metrics.decisions_total += 1
@@ -2351,6 +2352,7 @@ class SimpleTradingPipeline(TradingPipeline):
         *,
         strategies: Sequence[Strategy],
         allowed_symbols: set[str],
+        positions: Sequence[Mapping[str, Any]] | None = None,
     ) -> list[StrategyDecision]:
         if settings.trading_mode != "paper":
             return []
@@ -2395,6 +2397,11 @@ class SimpleTradingPipeline(TradingPipeline):
             if action == "sell" and not settings.trading_allow_shorts:
                 continue
             for symbol in symbols:
+                if self._paper_route_target_symbol_has_open_position(
+                    positions,
+                    symbol,
+                ):
+                    continue
                 key = (str(strategy.id), symbol, window_start.isoformat(), action)
                 if key in seen:
                     continue
@@ -2450,6 +2457,28 @@ class SimpleTradingPipeline(TradingPipeline):
                     )
                 )
         return decisions
+
+    @staticmethod
+    def _paper_route_target_symbol_has_open_position(
+        positions: Sequence[Mapping[str, Any]] | None,
+        symbol: str,
+    ) -> bool:
+        if not positions:
+            return False
+        normalized_symbol = symbol.strip().upper()
+        if not normalized_symbol:
+            return False
+        for position in positions:
+            if str(position.get("symbol") or "").strip().upper() != normalized_symbol:
+                continue
+            for qty_key in ("qty", "quantity", "qty_available"):
+                qty = _optional_decimal(position.get(qty_key))
+                if qty is not None and qty != 0:
+                    return True
+            market_value = _optional_decimal(position.get("market_value"))
+            if market_value is not None and market_value != 0:
+                return True
+        return False
 
     def _paper_route_target_lineage_for_decision(
         self,
