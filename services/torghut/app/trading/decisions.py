@@ -73,9 +73,6 @@ _BUY_EXIT_ONLY_STRATEGY_TYPES = {
     "mean_reversion_exhaustion_short_v1",
     "microbar_cross_sectional_short_v1",
 }
-_LEGACY_BUY_EXIT_ONLY_UNIVERSE_TYPES = {
-    "microbar_cross_sectional_pairs_v1",
-}
 _MICROBAR_PAIR_EXIT_RATIONALE = "microbar_cross_sectional_pair_exit"
 
 
@@ -2195,9 +2192,16 @@ def _strategy_uses_position_isolation(strategy: Strategy) -> bool:
     if isolation_mode == "per_strategy":
         return True
     normalized = str(strategy.universe_type or "").strip().lower()
+    runtime_type = _strategy_catalog_runtime_type(strategy)
+    if (
+        normalized == "microbar_cross_sectional_pairs_v1"
+        and runtime_type != "microbar_cross_sectional_pairs_v1"
+    ):
+        return False
     return normalized in {
         "momentum_pullback_long_v1",
         "breakout_continuation_long_v1",
+        "microbar_cross_sectional_pairs_v1",
         "mean_reversion_rebound_long_v1",
         "late_day_continuation_long_v1",
         "end_of_day_reversal_long_v1",
@@ -2270,9 +2274,7 @@ def _treats_sell_as_exit_only(strategy: Strategy) -> bool:
 
 
 def _treats_buy_as_exit_only(strategy: Strategy) -> bool:
-    return _strategy_exit_semantics_type(strategy) in (
-        _BUY_EXIT_ONLY_STRATEGY_TYPES | _LEGACY_BUY_EXIT_ONLY_UNIVERSE_TYPES
-    )
+    return _strategy_exit_semantics_type(strategy) in _BUY_EXIT_ONLY_STRATEGY_TYPES
 
 
 def _strategy_exit_semantics_type(strategy: Strategy) -> str:
@@ -2284,7 +2286,6 @@ def _strategy_exit_semantics_type(strategy: Strategy) -> str:
     if universe_type in (
         _SELL_EXIT_ONLY_STRATEGY_TYPES
         | _BUY_EXIT_ONLY_STRATEGY_TYPES
-        | _LEGACY_BUY_EXIT_ONLY_UNIVERSE_TYPES
     ):
         return universe_type
     return runtime_type

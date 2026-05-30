@@ -912,11 +912,20 @@ class TradingPipeline:
             or position.get("qty_available")
             or "0"
         )
-        position_qty = _optional_decimal(raw_qty)
-        if position_qty is None or position_qty <= 0:
+        raw_position_qty = _optional_decimal(raw_qty)
+        if raw_position_qty is None or raw_position_qty == 0:
             return [position]
         side = str(position.get("side") or "").strip().lower()
-        signed_position_qty = -position_qty if side == "short" else position_qty
+        signed_position_qty = (
+            -abs(raw_position_qty)
+            if side == "short" or raw_position_qty < 0
+            else raw_position_qty
+        )
+        position_qty = abs(raw_position_qty)
+        if signed_position_qty < 0:
+            side = "short"
+        elif side not in {"long", "short"}:
+            side = "long"
         same_side_exposures = [
             (strategy_id, exposure)
             for strategy_id, exposure in symbol_exposures.items()
