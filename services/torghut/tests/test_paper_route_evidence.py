@@ -935,6 +935,13 @@ class TestPaperRouteEvidenceAudit(TestCase):
                                 "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
                                 "dataset_snapshot_ref": "portfolio-profit-autoresearch-500-v1",
                                 "paper_probation_authorized": True,
+                                "source_collection_authorized": True,
+                                "source_collection_authorization_scope": (
+                                    "source_window_evidence_collection_only"
+                                ),
+                                "source_collection_reason_codes": [
+                                    "source_window_evidence_collection_pending"
+                                ],
                                 "promotion_allowed": False,
                                 "final_promotion_authorized": False,
                                 "max_notional": "0",
@@ -990,9 +997,41 @@ class TestPaperRouteEvidenceAudit(TestCase):
             target["paper_route_probe_missing_strategy_universe_symbols"],
             [],
         )
+        self.assertEqual(target["max_notional"], "0")
+        self.assertEqual(
+            target["paper_route_probe_next_session_max_notional"], "63180"
+        )
+        self.assertEqual(target["paper_route_probe_effective_max_notional"], "63180")
+        self.assertTrue(target["bounded_evidence_collection_authorized"])
+        self.assertEqual(
+            target["bounded_evidence_collection_scope"],
+            "paper_route_probe_next_session_only",
+        )
+        self.assertEqual(target["bounded_evidence_collection_max_notional"], "63180")
+        self.assertTrue(target["source_collection_authorized"])
+        self.assertEqual(
+            target["source_collection_authorization_scope"],
+            "source_window_evidence_collection_only",
+        )
+        self.assertEqual(
+            target["source_collection_reason_codes"],
+            ["source_window_evidence_collection_pending"],
+        )
+        self.assertEqual(target["source_decision_mode"], "route_acquisition_probe")
+        self.assertFalse(target["profit_proof_eligible"])
+        self.assertFalse(target["promotion_allowed"])
+        self.assertFalse(target["final_promotion_authorized"])
+        self.assertFalse(target["final_promotion_allowed"])
         summary_target = payload["summary"]["next_paper_route_targets"][0]
         self.assertTrue(summary_target["source_decision_ready"])
         self.assertEqual(summary_target["source_decision_blockers"], [])
+        self.assertTrue(summary_target["bounded_evidence_collection_authorized"])
+        self.assertEqual(
+            summary_target["bounded_evidence_collection_max_notional"], "63180"
+        )
+        self.assertTrue(summary_target["source_collection_authorized"])
+        self.assertEqual(summary_target["source_decision_mode"], "route_acquisition_probe")
+        self.assertFalse(summary_target["profit_proof_eligible"])
 
     def test_next_paper_route_targets_use_strategy_universe_when_route_probe_empty(
         self,

@@ -5127,6 +5127,17 @@ class TestTradingPipeline(TestCase):
             "paper_route_probe_window_end": window_end.isoformat(),
             "exit_minute_after_open": "120",
             "paper_probation_authorized": True,
+            "source_collection_authorized": True,
+            "source_collection_authorization_scope": (
+                "source_window_evidence_collection_only"
+            ),
+            "source_collection_reason_codes": [
+                "source_window_evidence_collection_pending"
+            ],
+            "bounded_evidence_collection_authorized": True,
+            "bounded_evidence_collection_scope": "paper_route_probe_next_session_only",
+            "bounded_evidence_collection_max_notional": "250",
+            "max_notional": "0",
             "promotion_allowed": False,
             "final_promotion_authorized": False,
         }
@@ -5214,6 +5225,26 @@ class TestTradingPipeline(TestCase):
             )
             self.assertFalse(source_decision["profit_proof_eligible"])
             self.assertEqual(source_decision["exit_minute_after_open"], 120)
+            self.assertTrue(source_decision["source_collection_authorized"])
+            self.assertEqual(
+                source_decision["source_collection_authorization_scope"],
+                "source_window_evidence_collection_only",
+            )
+            self.assertEqual(
+                source_decision["source_collection_reason_codes"],
+                ["source_window_evidence_collection_pending"],
+            )
+            self.assertTrue(source_decision["bounded_evidence_collection_authorized"])
+            self.assertEqual(
+                source_decision["bounded_evidence_collection_scope"],
+                "paper_route_probe_next_session_only",
+            )
+            self.assertEqual(
+                source_decision["bounded_evidence_collection_max_notional"], "250"
+            )
+            self.assertEqual(
+                source_decision["paper_route_probe_effective_max_notional"], "250"
+            )
             self.assertEqual(params["exit_minute_after_open"], 120)
             self.assertEqual(params["source_candidate_ids"], ["cand-paper-route"])
             self.assertEqual(params["source_hypothesis_ids"], ["H-PAPER-ROUTE"])

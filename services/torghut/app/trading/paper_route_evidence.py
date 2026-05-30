@@ -30,6 +30,7 @@ from ..models import (
     TradeDecision,
 )
 from .runtime_cost_authority import cost_basis_counts_have_non_promotion_grade_costs
+from .runtime_decision_authority import ROUTE_ACQUISITION_SOURCE_DECISION_MODE
 from .runtime_ledger import POST_COST_PNL_BASIS
 from .runtime_ledger_proof_policy import runtime_ledger_proof_policy_from_env
 
@@ -1341,6 +1342,10 @@ def _next_paper_route_runtime_window_targets(
         )
         if strategy_universe_symbols:
             paper_route_probe_scope_authority = "strategy_universe"
+        source_collection_authorized = bool(target.get("source_collection_authorized"))
+        source_collection_reason_codes = _unique_text_items(
+            target.get("source_collection_reason_codes")
+        )
         planned_target: dict[str, object] = {
             "hypothesis_id": hypothesis_id,
             "candidate_id": candidate_id,
@@ -1385,6 +1390,7 @@ def _next_paper_route_runtime_window_targets(
                 missing_strategy_universe_symbols
             ),
             "paper_route_probe_next_session_max_notional": next_notional,
+            "paper_route_probe_effective_max_notional": next_notional,
             "paper_route_probe_window_start": _isoformat(window_start),
             "paper_route_probe_window_end": _isoformat(window_end),
             "paper_route_target_plan_source": paper_route_target_plan_source or "",
@@ -1415,11 +1421,25 @@ def _next_paper_route_runtime_window_targets(
             "paper_route_runtime_import_handoff": import_handoff,
             "paper_probation_authorized": True,
             "paper_probation_authorization_scope": "evidence_collection_only",
+            "source_collection_authorized": source_collection_authorized,
+            "source_collection_authorization_scope": (
+                "source_window_evidence_collection_only"
+                if source_collection_authorized
+                else ""
+            ),
+            "source_collection_reason_codes": source_collection_reason_codes,
+            "bounded_evidence_collection_authorized": True,
+            "bounded_evidence_collection_scope": (
+                "paper_route_probe_next_session_only"
+            ),
+            "bounded_evidence_collection_max_notional": next_notional,
             "evidence_collection_stage": "paper",
             "probation_allowed": True,
             "probation_reason": "paper_route_probe_next_session_runtime_window",
             "selection_reason": "paper_route_probe_next_session_evidence_collection",
             "selected_by": "paper_route_evidence_audit",
+            "source_decision_mode": ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
+            "profit_proof_eligible": False,
             "promotion_allowed": False,
             "final_promotion_authorized": False,
             "final_promotion_allowed": False,
@@ -3202,6 +3222,18 @@ def _next_paper_route_target_summaries(
                     target.get("paper_route_probe_next_session_max_notional")
                 )
                 or "0",
+                "bounded_evidence_collection_authorized": bool(
+                    target.get("bounded_evidence_collection_authorized")
+                ),
+                "bounded_evidence_collection_max_notional": _safe_text(
+                    target.get("bounded_evidence_collection_max_notional")
+                )
+                or "0",
+                "source_collection_authorized": bool(
+                    target.get("source_collection_authorized")
+                ),
+                "source_decision_mode": _safe_text(target.get("source_decision_mode")),
+                "profit_proof_eligible": bool(target.get("profit_proof_eligible")),
                 "import_ready": bool(target.get("paper_route_session_import_ready")),
                 "import_blockers": _unique_text_items(
                     target.get("paper_route_session_import_blockers")

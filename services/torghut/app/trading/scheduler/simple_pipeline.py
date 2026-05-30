@@ -2197,6 +2197,7 @@ class SimpleTradingPipeline(TradingPipeline):
             "paper_route_probe_window_start": window_start.isoformat(),
             "paper_route_probe_window_end": window_end.isoformat(),
             "paper_route_probe_next_session_max_notional": str(max_notional),
+            "paper_route_probe_effective_max_notional": str(max_notional),
             "paper_route_target_plan_source": "external_target_plan_url",
             "paper_route_probe_scope_authority": "external_target_plan",
             "source_decision_mode": ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
@@ -2206,6 +2207,25 @@ class SimpleTradingPipeline(TradingPipeline):
             "paper_probation_authorized": bool(
                 target.get("paper_probation_authorized")
             ),
+            "source_collection_authorized": bool(
+                target.get("source_collection_authorized")
+            ),
+            "source_collection_authorization_scope": _safe_text(
+                target.get("source_collection_authorization_scope")
+            ),
+            "source_collection_reason_codes": [
+                str(item).strip()
+                for item in _lineage_text_values(
+                    target.get("source_collection_reason_codes")
+                )
+                if str(item).strip()
+            ],
+            "bounded_evidence_collection_authorized": True,
+            "bounded_evidence_collection_scope": (
+                _safe_text(target.get("bounded_evidence_collection_scope"))
+                or "paper_route_probe_next_session_only"
+            ),
+            "bounded_evidence_collection_max_notional": str(max_notional),
             "promotion_allowed": False,
             "final_promotion_authorized": False,
             "final_promotion_allowed": False,
