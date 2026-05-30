@@ -2385,10 +2385,15 @@ def _build_realized_strategy_pnl_rows(
                 ),
             )
             row["runtime_ledger_bucket"] = bucket_payload
-        event_sourced_runtime_ledger = (
+        source_backed_runtime_ledger = (
             allow_authoritative_runtime_ledger_materialization
             and event_sourced_lifecycle_rows > 0
             and not order_feed_fill_lifecycle_blockers
+            and isinstance(bucket_payload, Mapping)
+            and not runtime_ledger_promotion_source_authority_blockers(bucket_payload)
+        )
+        event_sourced_runtime_ledger = (
+            source_backed_runtime_ledger
             and isinstance(bucket_payload, Mapping)
             and _runtime_ledger_bucket_profit_proof_present(bucket_payload)
         )
@@ -2404,6 +2409,36 @@ def _build_realized_strategy_pnl_rows(
                     **dict(bucket_payload),
                     "authoritative": True,
                     "authority_reason": "event_sourced_runtime_ledger_profit_proof",
+                    "pnl_derivation": "execution_order_events_runtime_ledger",
+                    "source_materialization": "execution_order_events",
+                }
+                if equity_denominator is not None:
+                    runtime_bucket["account_equity"] = str(equity_denominator[0])
+                    runtime_bucket["account_equity_source"] = equity_denominator[1]
+                row["runtime_ledger_bucket"] = runtime_bucket
+        elif source_backed_runtime_ledger:
+            row["post_cost_expectancy_basis"] = POST_COST_BASIS_RUNTIME_LEDGER
+            row["post_cost_promotion_eligible"] = False
+            row["authoritative"] = False
+            row["authority_reason"] = (
+                "source_execution_lifecycle_materialized_runtime_ledger"
+            )
+            row["pnl_derivation"] = "execution_order_events_runtime_ledger"
+            blockers = list(row.get("runtime_ledger_blockers") or [])
+            row["runtime_ledger_blockers"] = blockers
+            if blockers:
+                row["promotion_blocker"] = blockers[0]
+            else:
+                row.pop("promotion_blocker", None)
+            if isinstance(bucket_payload, Mapping):
+                runtime_bucket = {
+                    **dict(bucket_payload),
+                    "blockers": blockers,
+                    "pnl_basis": POST_COST_BASIS_RUNTIME_LEDGER,
+                    "authoritative": False,
+                    "authority_reason": (
+                        "source_execution_lifecycle_materialized_runtime_ledger"
+                    ),
                     "pnl_derivation": "execution_order_events_runtime_ledger",
                     "source_materialization": "execution_order_events",
                 }
