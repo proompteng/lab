@@ -1668,7 +1668,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "cost_basis": "broker_reported_commission_and_fees",
                     "decision_hash": "decision-buy",
                     "alpaca_order_id": "order-buy",
-                    "execution_policy_hash": "policy-sha",
+                    "execution_policy_hash": "policy-buy",
                     "cost_model_hash": "cost-sha",
                     "lineage_hash": "lineage-sha",
                 },
@@ -1684,7 +1684,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "cost_basis": "broker_reported_commission_and_fees",
                     "decision_hash": "decision-sell",
                     "alpaca_order_id": "order-sell",
-                    "execution_policy_hash": "policy-sha",
+                    "execution_policy_hash": "policy-sell",
                     "cost_model_hash": "cost-sha",
                     "lineage_hash": "lineage-sha",
                 },
@@ -1736,8 +1736,6 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "cost_basis": "broker_reported_commission_and_fees",
                     "decision_hash": "decision-buy",
                     "alpaca_order_id": "order-buy",
-                    "execution_policy_hash": "policy-sha",
-                    "cost_model_hash": "cost-sha",
                     "lineage_hash": "lineage-sha",
                 },
                 {
@@ -1750,8 +1748,6 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "cost_basis": "broker_reported_commission_and_fees",
                     "decision_hash": "decision-sell",
                     "alpaca_order_id": "order-sell",
-                    "execution_policy_hash": "policy-sha",
-                    "cost_model_hash": "cost-sha",
                     "lineage_hash": "lineage-sha",
                 },
             ],
@@ -1799,7 +1795,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "cost_basis": "broker_reported_commission_and_fees",
                     "decision_hash": "decision-buy",
                     "alpaca_order_id": "order-buy",
-                    "execution_policy_hash": "policy-sha",
+                    "execution_policy_hash": "policy-buy",
                     "cost_model_hash": "cost-sha",
                     "lineage_hash": "lineage-sha",
                 },
@@ -1813,7 +1809,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "cost_basis": "broker_reported_commission_and_fees",
                     "decision_hash": "decision-sell",
                     "alpaca_order_id": "order-sell",
-                    "execution_policy_hash": "policy-sha",
+                    "execution_policy_hash": "policy-sell",
                     "cost_model_hash": "cost-sha",
                     "lineage_hash": "lineage-sha",
                 },
@@ -1830,8 +1826,6 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "decision_json": {"account": {"equity": "10000"}},
                     "source_decision_mode": "strategy_signal_paper",
                     "profit_proof_eligible": True,
-                    "execution_policy_hash": "policy-sha",
-                    "cost_model_hash": "cost-sha",
                     "lineage_hash": "lineage-sha",
                 },
                 {
@@ -1845,8 +1839,6 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "decision_json": {"account": {"equity": "10000"}},
                     "source_decision_mode": "strategy_signal_paper",
                     "profit_proof_eligible": True,
-                    "execution_policy_hash": "policy-sha",
-                    "cost_model_hash": "cost-sha",
                     "lineage_hash": "lineage-sha",
                 },
             ],
@@ -1861,8 +1853,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "strategy_id": "microbar-cross-sectional-pairs-v1",
                     "decision_hash": "decision-buy",
                     "alpaca_order_id": "order-buy",
-                    "execution_policy_hash": "policy-sha",
-                    "cost_model_hash": "cost-sha",
+                    "execution_policy_hash": "policy-buy",
                     "lineage_hash": "lineage-sha",
                     "source_topic": "alpaca.trade_updates",
                     "source_partition": 0,
@@ -1879,8 +1870,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "strategy_id": "microbar-cross-sectional-pairs-v1",
                     "decision_hash": "decision-sell",
                     "alpaca_order_id": "order-sell",
-                    "execution_policy_hash": "policy-sha",
-                    "cost_model_hash": "cost-sha",
+                    "execution_policy_hash": "policy-sell",
                     "lineage_hash": "lineage-sha",
                     "source_topic": "alpaca.trade_updates",
                     "source_partition": 0,
@@ -1901,7 +1891,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "strategy_id": "microbar-cross-sectional-pairs-v1",
                     "decision_hash": "decision-buy",
                     "alpaca_order_id": "order-buy",
-                    "execution_policy_hash": "policy-sha",
+                    "execution_policy_hash": "policy-buy",
                     "cost_model_hash": "cost-sha",
                     "lineage_hash": "lineage-sha",
                     "source_topic": "alpaca.trade_updates",
@@ -1923,7 +1913,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "strategy_id": "microbar-cross-sectional-pairs-v1",
                     "decision_hash": "decision-sell",
                     "alpaca_order_id": "order-sell",
-                    "execution_policy_hash": "policy-sha",
+                    "execution_policy_hash": "policy-sell",
                     "cost_model_hash": "cost-sha",
                     "lineage_hash": "lineage-sha",
                     "source_topic": "alpaca.trade_updates",
@@ -1953,6 +1943,11 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(bucket["cost_amount"], "0.30")
         self.assertEqual(
             bucket["cost_basis_counts"], {"broker_reported_commission_and_fees": 2}
+        )
+        self.assertEqual(bucket["cost_model_hash_counts"], {"cost-sha": 2})
+        self.assertEqual(
+            bucket["execution_policy_hash_counts"],
+            {"policy-buy": 2, "policy-sell": 2},
         )
         self.assertEqual(bucket["source_materialization"], "execution_order_events")
         self.assertEqual(bucket["account_equity"], "10000")
