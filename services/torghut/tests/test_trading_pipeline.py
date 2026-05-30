@@ -56,6 +56,7 @@ from app.trading.risk import RiskEngine
 from app.trading.scheduler.pipeline import TradingPipeline
 from app.trading.scheduler.simple_pipeline import (
     SimpleTradingPipeline,
+    _paper_route_probe_lineage_from_params,
     _parse_target_datetime,
     _safe_int,
     _target_probe_action,
@@ -848,6 +849,8 @@ class TestTradingPipeline(TestCase):
         source_candidate_ids: Sequence[str] | None = None,
         source_hypothesis_ids: Sequence[str] | None = None,
         source_strategy_names: Sequence[str] | None = None,
+        source_decision_mode: str | None = None,
+        profit_proof_eligible: bool | None = None,
     ) -> None:
         with self.session_local() as session:
             strategy = Strategy(
@@ -908,6 +911,12 @@ class TestTradingPipeline(TestCase):
                 ]
             if include_decision_exit_minute:
                 params["exit_minute_after_open"] = exit_minute_after_open
+            if source_decision_mode is not None:
+                params["source_decision_mode"] = source_decision_mode
+                paper_route_probe["source_decision_mode"] = source_decision_mode
+            if profit_proof_eligible is not None:
+                params["profit_proof_eligible"] = profit_proof_eligible
+                paper_route_probe["profit_proof_eligible"] = profit_proof_eligible
             decision = StrategyDecision(
                 strategy_id=str(strategy.id),
                 symbol=symbol,
@@ -4492,6 +4501,82 @@ class TestTradingPipeline(TestCase):
             self.assertEqual(exit_row.status, "submitted")
             payload = cast(dict[str, Any], exit_row.decision_json)
             self.assertNotIn("max_notional_exceeded", payload.get("risk_reasons", []))
+
+    def test_simple_pipeline_probe_exit_inherits_profit_proof_source_mode(
+        self,
+    ) -> None:
+        self._seed_filled_paper_route_probe_entry(
+            source_candidate_ids=["cand-h-pairs"],
+            source_hypothesis_ids=["H-PAIRS-01"],
+            source_strategy_names=["microbar-cross-sectional-pairs-v1"],
+            source_decision_mode="strategy_signal_paper",
+            profit_proof_eligible=True,
+        )
+        alpaca_client = PositionedAlpacaClient(
+            [{"symbol": "AAPL", "qty": "2", "side": "long"}]
+        )
+
+        self._run_simple_paper_pipeline(
+            alpaca_client=alpaca_client,
+            now=datetime(2026, 3, 26, 15, 31, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(len(alpaca_client.submitted), 1)
+        with self.session_local() as session:
+            exit_row = (
+                session.execute(
+                    select(TradeDecision)
+                    .where(TradeDecision.symbol == "AAPL")
+                    .order_by(TradeDecision.created_at.desc())
+                )
+                .scalars()
+                .first()
+            )
+            assert exit_row is not None
+            payload = cast(dict[str, Any], exit_row.decision_json)
+            params = cast(dict[str, Any], payload["params"])
+            exit_metadata = cast(dict[str, Any], params["paper_route_probe_exit"])
+
+            self.assertEqual(params["source_decision_mode"], "strategy_signal_paper")
+            self.assertTrue(params["profit_proof_eligible"])
+            self.assertEqual(
+                exit_metadata["source_decision_mode"], "strategy_signal_paper"
+            )
+            self.assertTrue(exit_metadata["profit_proof_eligible"])
+            self.assertEqual(exit_metadata["source_candidate_ids"], ["cand-h-pairs"])
+            self.assertEqual(exit_metadata["source_hypothesis_ids"], ["H-PAIRS-01"])
+
+    def test_paper_route_probe_lineage_parses_profit_proof_eligibility(self) -> None:
+        self.assertTrue(
+            _paper_route_probe_lineage_from_params({"profit_proof_eligible": 1})[
+                "profit_proof_eligible"
+            ]
+        )
+        self.assertTrue(
+            _paper_route_probe_lineage_from_params({"profit_proof_eligible": "true"})[
+                "profit_proof_eligible"
+            ]
+        )
+        self.assertFalse(
+            _paper_route_probe_lineage_from_params({"profit_proof_eligible": "false"})[
+                "profit_proof_eligible"
+            ]
+        )
+
+    def test_paper_route_probe_lineage_falls_back_to_nested_source_mode(
+        self,
+    ) -> None:
+        lineage = _paper_route_probe_lineage_from_params(
+            {
+                "paper_route_probe": {
+                    "source_decision_mode": "strategy_signal_paper",
+                    "profit_proof_eligible": True,
+                }
+            }
+        )
+
+        self.assertEqual(lineage["source_decision_mode"], "strategy_signal_paper")
+        self.assertTrue(lineage["profit_proof_eligible"])
 
     def test_simple_pipeline_reopens_rejected_paper_route_probe_exit(
         self,
