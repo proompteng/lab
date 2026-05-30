@@ -2100,6 +2100,25 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         self.assertFalse(metadata["promotion_allowed"])
         self.assertFalse(metadata["final_promotion_authorized"])
 
+    def test_runtime_window_target_metadata_defaults_source_collection_blockers(
+        self,
+    ) -> None:
+        metadata = renewal._runtime_window_target_metadata(
+            {
+                "source_collection_authorized": True,
+            }
+        )
+
+        self.assertTrue(metadata["source_collection_authorized"])
+        self.assertEqual(
+            metadata["source_collection_authorization_scope"],
+            "source_window_evidence_collection_only",
+        )
+        self.assertEqual(metadata["evidence_collection_stage"], "paper")
+        self.assertFalse(metadata["promotion_allowed"])
+        self.assertFalse(metadata["final_promotion_authorized"])
+        self.assertFalse(metadata["final_promotion_allowed"])
+
     def test_runtime_window_import_runs_same_hypothesis_plan_candidate_lanes(
         self,
     ) -> None:
