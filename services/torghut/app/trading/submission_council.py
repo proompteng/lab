@@ -46,6 +46,15 @@ from .profit_windows import build_profit_window_contract
 from .profit_leases import build_profit_lease_projection
 from .runtime_ledger import POST_COST_PNL_BASIS
 from .runtime_ledger_source_authority import (
+    RUNTIME_LEDGER_AUTHORITY_CLASS_MISSING_BLOCKER,
+    RUNTIME_LEDGER_EXECUTION_ORDER_EVENT_REFS_MISSING_BLOCKER,
+    RUNTIME_LEDGER_EXECUTION_REFS_MISSING_BLOCKER,
+    RUNTIME_LEDGER_SOURCE_MATERIALIZATION_MISSING_BLOCKER,
+    RUNTIME_LEDGER_SOURCE_OFFSETS_MISSING_BLOCKER,
+    RUNTIME_LEDGER_SOURCE_REFS_MISSING_BLOCKER,
+    RUNTIME_LEDGER_SOURCE_WINDOW_IDS_MISSING_BLOCKER,
+    RUNTIME_LEDGER_SOURCE_WINDOW_MISSING_BLOCKER,
+    RUNTIME_LEDGER_TRADE_DECISION_REFS_MISSING_BLOCKER,
     runtime_ledger_promotion_source_authority_blockers,
 )
 from .tca import build_tca_gate_inputs
@@ -1311,6 +1320,33 @@ _RUNTIME_LEDGER_PAPER_PROBATION_PROMOTION_BLOCKERS = (
     "paper_probation_evidence_collection_only",
     "live_runtime_ledger_required",
 )
+_RUNTIME_LEDGER_SOURCE_COLLECTION_SOURCE_KIND = (
+    "runtime_ledger_source_collection_candidate"
+)
+_RUNTIME_LEDGER_SOURCE_COLLECTION_SOURCE_DSN_ENV = "SIM_DB_DSN"
+_RUNTIME_LEDGER_SOURCE_COLLECTION_TRIGGER_REASONS = frozenset(
+    {
+        RUNTIME_LEDGER_SOURCE_WINDOW_MISSING_BLOCKER,
+        RUNTIME_LEDGER_SOURCE_WINDOW_IDS_MISSING_BLOCKER,
+        RUNTIME_LEDGER_SOURCE_REFS_MISSING_BLOCKER,
+        RUNTIME_LEDGER_TRADE_DECISION_REFS_MISSING_BLOCKER,
+        RUNTIME_LEDGER_EXECUTION_REFS_MISSING_BLOCKER,
+        RUNTIME_LEDGER_EXECUTION_ORDER_EVENT_REFS_MISSING_BLOCKER,
+        RUNTIME_LEDGER_SOURCE_OFFSETS_MISSING_BLOCKER,
+        RUNTIME_LEDGER_SOURCE_MATERIALIZATION_MISSING_BLOCKER,
+        RUNTIME_LEDGER_AUTHORITY_CLASS_MISSING_BLOCKER,
+        "execution_reconstruction_not_runtime_ledger_proof",
+        "source_decision_mode_not_profit_proof_eligible",
+        "runtime_ledger_pnl_basis_invalid",
+        "runtime_ledger_pnl_basis_missing",
+        "runtime_ledger_expectancy_missing",
+    }
+)
+_RUNTIME_LEDGER_SOURCE_COLLECTION_PROMOTION_BLOCKERS = (
+    "runtime_ledger_source_collection_only",
+    "runtime_ledger_source_window_evidence_pending",
+    "live_runtime_ledger_required",
+)
 
 
 def _runtime_ledger_paper_probation_eligible(
@@ -1352,6 +1388,58 @@ def _runtime_ledger_paper_probation_candidates(
         }
         for candidate in candidates
         if _runtime_ledger_paper_probation_eligible(candidate)
+    ]
+
+
+def _runtime_ledger_source_collection_candidate(
+    candidate: Mapping[str, object],
+) -> bool:
+    if _runtime_ledger_paper_probation_eligible(candidate):
+        return False
+    reasons = {
+        str(reason).strip()
+        for reason in cast(Sequence[object], candidate.get("reason_codes") or [])
+        if str(reason).strip()
+    }
+    return (
+        _safe_text(candidate.get("observed_stage")) == "paper"
+        and bool(reasons & _RUNTIME_LEDGER_SOURCE_COLLECTION_TRIGGER_REASONS)
+        and (_safe_decimal(candidate.get("filled_notional")) or Decimal("0")) > 0
+        and _safe_int(candidate.get("fill_count")) > 0
+        and _safe_int(candidate.get("closed_trade_count")) > 0
+        and (
+            _safe_decimal(candidate.get("net_strategy_pnl_after_costs")) or Decimal("0")
+        )
+        > 0
+    )
+
+
+def _runtime_ledger_source_collection_candidates(
+    candidates: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    return [
+        {
+            **dict(candidate),
+            "source_collection_candidate": True,
+            "source_collection_authorized": True,
+            "source_collection_scope": "source_window_evidence_collection_only",
+            "source_collection_reason_codes": [
+                reason
+                for reason in _normalize_reason_codes(
+                    [
+                        str(raw_reason).strip()
+                        for raw_reason in cast(
+                            Sequence[object], candidate.get("reason_codes") or []
+                        )
+                        if str(raw_reason).strip()
+                    ]
+                )
+                if reason in _RUNTIME_LEDGER_SOURCE_COLLECTION_TRIGGER_REASONS
+            ],
+            "max_notional": "0",
+        }
+        for candidate in candidates
+        if _runtime_ledger_source_collection_candidate(candidate)
     ]
 
 
@@ -1457,6 +1545,22 @@ def _runtime_ledger_paper_probation_import_plan(
             )
             continue
 
+        source_collection = bool(candidate.get("source_collection_candidate"))
+        source_kind = (
+            _RUNTIME_LEDGER_SOURCE_COLLECTION_SOURCE_KIND
+            if source_collection
+            else _RUNTIME_LEDGER_PAPER_PROBATION_SOURCE_KIND
+        )
+        source_dsn_env = (
+            _RUNTIME_LEDGER_SOURCE_COLLECTION_SOURCE_DSN_ENV
+            if source_collection
+            else _RUNTIME_LEDGER_PAPER_PROBATION_SOURCE_DSN_ENV
+        )
+        final_blockers = list(
+            _RUNTIME_LEDGER_SOURCE_COLLECTION_PROMOTION_BLOCKERS
+            if source_collection
+            else _RUNTIME_LEDGER_PAPER_PROBATION_PROMOTION_BLOCKERS
+        )
         target_key = (
             hypothesis_id or "",
             candidate_id or "",
@@ -1465,7 +1569,7 @@ def _runtime_ledger_paper_probation_import_plan(
             account_label,
             dataset_snapshot_ref or "",
             source_manifest_ref or "",
-            _RUNTIME_LEDGER_PAPER_PROBATION_SOURCE_KIND,
+            source_kind,
             window_start or "",
             window_end or "",
         )
@@ -1505,31 +1609,59 @@ def _runtime_ledger_paper_probation_import_plan(
             "runtime_strategy_name": strategy_name,
             "strategy_lookup_names": strategy_lookup_names,
             "account_label": account_label,
-            "source_dsn_env": _RUNTIME_LEDGER_PAPER_PROBATION_SOURCE_DSN_ENV,
+            "source_dsn_env": source_dsn_env,
             "dataset_snapshot_ref": dataset_snapshot_ref or "",
             "source_manifest_ref": source_manifest_ref,
-            "source_kind": _RUNTIME_LEDGER_PAPER_PROBATION_SOURCE_KIND,
+            "source_kind": source_kind,
             "window_start": window_start,
             "window_end": window_end,
-            "paper_probation_authorized": True,
-            "paper_probation_authorization_scope": "evidence_collection_only",
+            "paper_probation_authorized": not source_collection,
+            "paper_probation_authorization_scope": (
+                "evidence_collection_only" if not source_collection else ""
+            ),
+            "source_collection_authorized": source_collection,
+            "source_collection_authorization_scope": (
+                "source_window_evidence_collection_only" if source_collection else ""
+            ),
+            "source_collection_reason_codes": (
+                list(
+                    cast(
+                        Sequence[object],
+                        candidate.get("source_collection_reason_codes") or [],
+                    )
+                )
+                if source_collection
+                else []
+            ),
             "evidence_collection_stage": "paper",
-            "probation_allowed": True,
-            "probation_reason": "paper_stage_runtime_ledger_positive_after_costs",
+            "probation_allowed": not source_collection,
+            "probation_reason": (
+                "source_window_evidence_collection_pending"
+                if source_collection
+                else "paper_stage_runtime_ledger_positive_after_costs"
+            ),
             "promotion_allowed": False,
             "final_promotion_authorized": False,
             "final_promotion_allowed": False,
-            "final_promotion_blockers": list(
-                _RUNTIME_LEDGER_PAPER_PROBATION_PROMOTION_BLOCKERS
-            ),
+            "final_promotion_blockers": final_blockers,
             "candidate_blockers": reason_codes,
-            "runtime_ledger_target_metadata_blockers": list(
-                _RUNTIME_LEDGER_PAPER_PROBATION_PROMOTION_BLOCKERS
+            "runtime_ledger_target_metadata_blockers": final_blockers,
+            "handoff": (
+                "runtime_ledger_source_collection_import"
+                if source_collection
+                else "runtime_ledger_paper_probation_import"
             ),
-            "handoff": "runtime_ledger_paper_probation_import",
             "promotion_gate": "runtime_ledger_live_or_live_paper_required",
-            "selected_by": "runtime_ledger_paper_probation",
-            "selection_reason": "positive_post_cost_runtime_ledger_bucket",
+            "selected_by": (
+                "runtime_ledger_source_collection"
+                if source_collection
+                else "runtime_ledger_paper_probation"
+            ),
+            "selection_reason": (
+                "positive_activity_needs_source_window_runtime_evidence"
+                if source_collection
+                else "positive_post_cost_runtime_ledger_bucket"
+            ),
             "max_notional": "0",
         }
         if bucket_ref:
@@ -1538,12 +1670,18 @@ def _runtime_ledger_paper_probation_import_plan(
 
     return {
         "schema_version": _RUNTIME_LEDGER_PAPER_PROBATION_IMPORT_SCHEMA_VERSION,
-        "source": "runtime_ledger_paper_probation_candidates",
-        "purpose": "paper_stage_runtime_ledger_evidence_collection",
+        "source": "runtime_ledger_paper_probation_and_source_collection_candidates",
+        "purpose": "paper_stage_runtime_ledger_source_evidence_collection",
         "promotion_allowed": False,
         "final_promotion_authorized": False,
         "final_promotion_allowed": False,
         "target_count": len(targets),
+        "paper_probation_target_count": sum(
+            1 for target in targets if bool(target.get("paper_probation_authorized"))
+        ),
+        "source_collection_target_count": sum(
+            1 for target in targets if bool(target.get("source_collection_authorized"))
+        ),
         "skipped_target_count": len(skipped_targets),
         "targets": targets,
         "skipped_targets": skipped_targets,
@@ -3144,9 +3282,15 @@ def build_live_submission_gate_payload(
     runtime_ledger_paper_probation_candidates = (
         _runtime_ledger_paper_probation_candidates(runtime_ledger_repair_candidates)
     )
+    runtime_ledger_source_collection_candidates = (
+        _runtime_ledger_source_collection_candidates(runtime_ledger_repair_candidates)
+    )
     runtime_ledger_paper_probation_import_plan = (
         _runtime_ledger_paper_probation_import_plan(
-            runtime_ledger_paper_probation_candidates
+            [
+                *runtime_ledger_paper_probation_candidates,
+                *runtime_ledger_source_collection_candidates,
+            ]
         )
     )
     evidence_rows = (
@@ -3296,6 +3440,12 @@ def build_live_submission_gate_payload(
             "runtime_ledger_paper_probation_candidates": (
                 runtime_ledger_paper_probation_candidates
             ),
+            "runtime_ledger_source_collection_candidates": (
+                runtime_ledger_source_collection_candidates
+            ),
+            "runtime_ledger_source_collection_candidate_total": len(
+                runtime_ledger_source_collection_candidates
+            ),
             "runtime_ledger_paper_probation_eligible_total": len(
                 runtime_ledger_paper_probation_candidates
             ),
@@ -3313,6 +3463,8 @@ def build_live_submission_gate_payload(
         blocked_reasons.append("alpha_readiness_not_promotion_eligible")
         if runtime_ledger_paper_probation_candidates:
             blocked_reasons.append("paper_probation_evidence_collection_only")
+        if runtime_ledger_source_collection_candidates:
+            blocked_reasons.append("runtime_ledger_source_collection_pending")
     if empirical_ready is False:
         blocked_reasons.append("empirical_jobs_not_ready")
     if dspy_live_ready is False:
@@ -3506,6 +3658,12 @@ def build_live_submission_gate_payload(
         "runtime_ledger_repair_candidates": runtime_ledger_repair_candidates,
         "runtime_ledger_paper_probation_candidates": (
             runtime_ledger_paper_probation_candidates
+        ),
+        "runtime_ledger_source_collection_candidates": (
+            runtime_ledger_source_collection_candidates
+        ),
+        "runtime_ledger_source_collection_candidate_total": len(
+            runtime_ledger_source_collection_candidates
         ),
         "runtime_ledger_paper_probation_eligible_total": len(
             runtime_ledger_paper_probation_candidates

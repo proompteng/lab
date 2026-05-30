@@ -39,6 +39,7 @@ from app.trading.submission_council import (
     _runtime_ledger_repair_reason_codes,
     _refresh_runtime_summary_totals,
     _runtime_ledger_paper_probation_import_plan,
+    _runtime_ledger_source_collection_candidates,
     build_hypothesis_runtime_summary,
     build_live_submission_gate_payload,
     load_quant_evidence_status,
@@ -1085,6 +1086,189 @@ class TestSubmissionCouncil(TestCase):
             "strategy_runtime_ledger_buckets:duplicate-runtime-ledger:"
             "2026-05-21T17:00:00+00:00:2026-05-21T17:30:00+00:00",
         )
+
+    def test_runtime_ledger_source_collection_target_does_not_grant_probation(
+        self,
+    ) -> None:
+        candidates = _runtime_ledger_source_collection_candidates(
+            [
+                {
+                    "hypothesis_id": "H-PAIRS-01",
+                    "candidate_id": "c88421d619759b2cfaa6f4d0",
+                    "strategy_id": "microbar_cross_sectional_pairs_v1@research",
+                    "strategy_family": "microbar_cross_sectional_pairs",
+                    "account": "TORGHUT_SIM",
+                    "observed_stage": "paper",
+                    "bucket_started_at": "2026-05-29T17:00:00+00:00",
+                    "bucket_ended_at": "2026-05-29T20:00:00+00:00",
+                    "fill_count": 35,
+                    "closed_trade_count": 12,
+                    "open_position_count": 4,
+                    "filled_notional": "157941.50000000",
+                    "net_strategy_pnl_after_costs": "5514.86354020",
+                    "reason_codes": [
+                        "runtime_ledger_stage_not_live",
+                        "runtime_ledger_source_window_missing",
+                        "runtime_ledger_source_refs_missing",
+                        "execution_reconstruction_not_runtime_ledger_proof",
+                        "unclosed_position",
+                    ],
+                }
+            ]
+        )
+
+        self.assertEqual(len(candidates), 1)
+        self.assertTrue(candidates[0]["source_collection_authorized"])
+        self.assertFalse(candidates[0].get("paper_probation_eligible", False))
+        plan = _runtime_ledger_paper_probation_import_plan(candidates)
+
+        self.assertEqual(plan["target_count"], 1)
+        self.assertEqual(plan["paper_probation_target_count"], 0)
+        self.assertEqual(plan["source_collection_target_count"], 1)
+        target = plan["targets"][0]
+        self.assertEqual(target["source_dsn_env"], "SIM_DB_DSN")
+        self.assertEqual(
+            target["source_kind"], "runtime_ledger_source_collection_candidate"
+        )
+        self.assertFalse(target["paper_probation_authorized"])
+        self.assertTrue(target["source_collection_authorized"])
+        self.assertFalse(target["probation_allowed"])
+        self.assertFalse(target["promotion_allowed"])
+        self.assertFalse(target["final_promotion_allowed"])
+        self.assertIn(
+            "runtime_ledger_source_window_evidence_pending",
+            target["final_promotion_blockers"],
+        )
+        self.assertIn(
+            "runtime_ledger_source_window_missing",
+            target["source_collection_reason_codes"],
+        )
+
+    def test_live_gate_marks_source_collection_pending_without_probation(
+        self,
+    ) -> None:
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        now = datetime.now(timezone.utc)
+
+        class _RegistryItem:
+            hypothesis_id = "H-PAIRS-01"
+
+            def model_dump(self, *, mode: str = "json") -> dict[str, object]:
+                return {
+                    "hypothesis_id": "H-PAIRS-01",
+                    "candidate_id": "c88421d619759b2cfaa6f4d0",
+                    "strategy_id": "microbar_cross_sectional_pairs_v1@research",
+                    "strategy_family": "microbar_cross_sectional_pairs",
+                    "lane_id": "microbar_cross_sectional_pairs",
+                    "dataset_snapshot_ref": "portfolio-profit-autoresearch-500-v1",
+                }
+
+        registry = SimpleNamespace(
+            loaded=True,
+            path="test-registry",
+            errors=[],
+            items=[_RegistryItem()],
+        )
+
+        with session_local() as session:
+            session.add(
+                StrategyRuntimeLedgerBucket(
+                    run_id="pairs-source-missing-runtime",
+                    candidate_id="c88421d619759b2cfaa6f4d0",
+                    hypothesis_id="H-PAIRS-01",
+                    observed_stage="paper",
+                    bucket_started_at=now - timedelta(hours=3),
+                    bucket_ended_at=now - timedelta(hours=1),
+                    account_label="TORGHUT_SIM",
+                    runtime_strategy_name="microbar-cross-sectional-pairs-v1",
+                    strategy_family="microbar_cross_sectional_pairs",
+                    fill_count=35,
+                    decision_count=72,
+                    submitted_order_count=35,
+                    cancelled_order_count=0,
+                    rejected_order_count=0,
+                    unfilled_order_count=0,
+                    closed_trade_count=12,
+                    open_position_count=4,
+                    filled_notional=Decimal("157941.50000000"),
+                    gross_strategy_pnl=Decimal("5530.86354020"),
+                    cost_amount=Decimal("16"),
+                    net_strategy_pnl_after_costs=Decimal("5514.86354020"),
+                    post_cost_expectancy_bps=None,
+                    ledger_schema_version="torghut.runtime-ledger-bucket.v1",
+                    pnl_basis="runtime_reconstructed_pnl",
+                    execution_policy_hash_counts={},
+                    cost_model_hash_counts={},
+                    lineage_hash_counts={},
+                    blockers_json=["execution_reconstruction_not_runtime_ledger_proof"],
+                )
+            )
+            session.commit()
+
+            with patch(
+                "app.trading.submission_council.load_hypothesis_registry",
+                return_value=registry,
+            ):
+                gate = build_live_submission_gate_payload(
+                    SimpleNamespace(
+                        market_session_open=True,
+                        last_autonomy_promotion_eligible=False,
+                        last_autonomy_promotion_action=None,
+                        drift_live_promotion_eligible=False,
+                        last_market_context_freshness_seconds=45,
+                        metrics=SimpleNamespace(
+                            feature_batch_rows_total=9,
+                            feature_null_rate={"price": 0.0},
+                            feature_staleness_ms_p95=250,
+                            feature_duplicate_ratio=0.0,
+                            decision_state_total={},
+                        ),
+                    ),
+                    hypothesis_summary={
+                        "summary": {
+                            "promotion_eligible_total": 0,
+                            "capital_stage_totals": {"shadow": 1},
+                            "dependency_quorum": {
+                                "decision": "allow",
+                                "reasons": [],
+                                "message": "ready",
+                            },
+                        },
+                        "items": [],
+                    },
+                    empirical_jobs_status={"ready": True, "status": "healthy"},
+                    dspy_runtime_status={"mode": "inactive"},
+                    quant_health_status=self._healthy_quant_status(),
+                    promotion_certificate_evidence=[],
+                    session=session,
+                )
+
+        self.assertEqual(gate["paper_probation_eligible_total"], 0)
+        self.assertEqual(gate["runtime_ledger_paper_probation_eligible_total"], 0)
+        self.assertIn(
+            "runtime_ledger_source_collection_pending", gate["blocked_reasons"]
+        )
+        self.assertEqual(gate["runtime_ledger_source_collection_candidate_total"], 1)
+        source_candidates = gate["runtime_ledger_source_collection_candidates"]
+        self.assertEqual(len(source_candidates), 1)
+        self.assertEqual(
+            source_candidates[0]["source_collection_scope"],
+            "source_window_evidence_collection_only",
+        )
+        import_plan = gate["runtime_ledger_paper_probation_import_plan"]
+        self.assertEqual(import_plan["paper_probation_target_count"], 0)
+        self.assertEqual(import_plan["source_collection_target_count"], 1)
+        target = import_plan["targets"][0]
+        self.assertFalse(target["paper_probation_authorized"])
+        self.assertTrue(target["source_collection_authorized"])
+        self.assertFalse(target["promotion_allowed"])
 
     def test_metric_window_activity_rejects_tca_proxy_expectancy(self) -> None:
         metric_window = SimpleNamespace(

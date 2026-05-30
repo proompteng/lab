@@ -711,10 +711,15 @@ def _target_allows_strategy_universe_probe_fallback(
     target: Mapping[str, object],
 ) -> bool:
     source_kind = _safe_text(target.get("source_kind"))
-    return bool(target.get("paper_probation_authorized")) or source_kind in {
-        "durable_runtime_ledger_bucket",
-        "runtime_ledger_paper_probation_candidates",
-    }
+    return (
+        bool(target.get("paper_probation_authorized"))
+        or bool(target.get("source_collection_authorized"))
+        or source_kind
+        in {
+            "durable_runtime_ledger_bucket",
+            "runtime_ledger_paper_probation_candidates",
+        }
+    )
 
 
 def _strategy_universe_symbols(

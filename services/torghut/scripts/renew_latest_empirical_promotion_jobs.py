@@ -74,6 +74,8 @@ RUNTIME_WINDOW_TARGET_METADATA_KEYS = (
     "paper_required_evidence_count",
     "paper_probation_authorized",
     "paper_probation_authorization_scope",
+    "source_collection_authorized",
+    "source_collection_authorization_scope",
     "evidence_collection_stage",
     "probation_allowed",
     "probation_reason",
@@ -936,6 +938,15 @@ def _runtime_window_target_metadata(payload: Mapping[str, Any]) -> dict[str, Any
     if bool(metadata.get("paper_probation_authorized")):
         metadata.setdefault(
             "paper_probation_authorization_scope", "evidence_collection_only"
+        )
+        metadata.setdefault("evidence_collection_stage", "paper")
+        metadata.setdefault("promotion_allowed", False)
+        metadata.setdefault("final_promotion_authorized", False)
+        metadata.setdefault("final_promotion_allowed", False)
+    if bool(metadata.get("source_collection_authorized")):
+        metadata.setdefault(
+            "source_collection_authorization_scope",
+            "source_window_evidence_collection_only",
         )
         metadata.setdefault("evidence_collection_stage", "paper")
         metadata.setdefault("promotion_allowed", False)
