@@ -221,12 +221,20 @@ class _SourceLedgerCursor:
                             "postgres:trade_decisions",
                             "postgres:executions",
                             "postgres:execution_order_events",
+                            "postgres:order_feed_source_windows",
                         ],
                         "source_row_counts": {
                             "trade_decisions": 2,
                             "executions": 2,
                             "execution_order_events": 4,
+                            "order_feed_source_windows": 4,
                         },
+                        "source_window_ids": [
+                            "source-window-new-buy",
+                            "source-window-fill-buy",
+                            "source-window-new-sell",
+                            "source-window-fill-sell",
+                        ],
                         "trade_decision_ids": ["decision-buy", "decision-sell"],
                         "execution_ids": ["execution-buy", "execution-sell"],
                         "execution_order_event_ids": [
@@ -320,7 +328,14 @@ def _complete_runtime_ledger_bucket(**overrides: object) -> dict[str, object]:
             "trade_decisions": 2,
             "executions": 2,
             "execution_order_events": 4,
+            "order_feed_source_windows": 4,
         },
+        "source_window_ids": [
+            "source-window-new-buy",
+            "source-window-fill-buy",
+            "source-window-new-sell",
+            "source-window-fill-sell",
+        ],
         "trade_decision_ids": ["decision-buy", "decision-sell"],
         "execution_ids": ["execution-buy", "execution-sell"],
         "execution_order_event_ids": [
@@ -743,6 +758,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self,
     ) -> None:
         aggregate_only = _complete_runtime_ledger_bucket(
+            source_window_ids=[],
             trade_decision_ids=[],
             execution_ids=[],
             execution_order_event_ids=[],
@@ -758,6 +774,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertIn("runtime_ledger_trade_decision_refs_missing", blockers)
         self.assertIn("runtime_ledger_execution_refs_missing", blockers)
         self.assertIn("runtime_ledger_execution_order_event_refs_missing", blockers)
+        self.assertIn("runtime_ledger_source_window_ids_missing", blockers)
         self.assertIn("runtime_ledger_source_offsets_missing", blockers)
         self.assertIn("runtime_ledger_source_materialization_missing", blockers)
         self.assertIn("runtime_ledger_authority_class_missing", blockers)
@@ -923,12 +940,20 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                             "postgres:trade_decisions",
                             "postgres:executions",
                             "postgres:execution_order_events",
+                            "postgres:order_feed_source_windows",
                         ],
                         "source_row_counts": {
                             "trade_decisions": 2,
                             "executions": 2,
                             "execution_order_events": 4,
+                            "order_feed_source_windows": 4,
                         },
+                        "source_window_ids": [
+                            "source-window-new-buy",
+                            "source-window-fill-buy",
+                            "source-window-new-sell",
+                            "source-window-fill-sell",
+                        ],
                         "trade_decision_ids": ["decision-buy", "decision-sell"],
                         "execution_ids": ["execution-buy", "execution-sell"],
                         "execution_order_event_ids": [
@@ -1841,6 +1866,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "source_topic": "alpaca.trade_updates",
                     "source_partition": 0,
                     "source_offset": 100,
+                    "source_window_id": "source-window-new-buy",
                 },
                 {
                     "execution_order_event_id": "event-new-sell",
@@ -1858,6 +1884,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "source_topic": "alpaca.trade_updates",
                     "source_partition": 0,
                     "source_offset": 101,
+                    "source_window_id": "source-window-new-sell",
                 },
                 {
                     "execution_order_event_id": "event-fill-buy",
@@ -1881,6 +1908,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "source_topic": "alpaca.trade_updates",
                     "source_partition": 0,
                     "source_offset": 102,
+                    "source_window_id": "source-window-fill-buy",
                 },
                 {
                     "execution_order_event_id": "event-fill-sell",
@@ -1904,6 +1932,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "source_topic": "alpaca.trade_updates",
                     "source_partition": 0,
                     "source_offset": 103,
+                    "source_window_id": "source-window-fill-sell",
                 },
             ],
             allow_authoritative_runtime_ledger_materialization=True,
@@ -1937,11 +1966,26 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 "postgres:trade_decisions",
                 "postgres:executions",
                 "postgres:execution_order_events",
+                "postgres:order_feed_source_windows",
             ],
         )
         self.assertEqual(
             bucket["source_row_counts"],
-            {"executions": 2, "execution_order_events": 4, "trade_decisions": 2},
+            {
+                "executions": 2,
+                "execution_order_events": 4,
+                "order_feed_source_windows": 4,
+                "trade_decisions": 2,
+            },
+        )
+        self.assertEqual(
+            bucket["source_window_ids"],
+            [
+                "source-window-new-buy",
+                "source-window-new-sell",
+                "source-window-fill-buy",
+                "source-window-fill-sell",
+            ],
         )
         self.assertTrue(_runtime_ledger_bucket_profit_proof_present(bucket))
 
@@ -2026,6 +2070,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "source_topic": "alpaca.trade_updates",
                     "source_partition": 0,
                     "source_offset": 110,
+                    "source_window_id": "source-window-dedupe-new-buy",
                 },
                 {
                     "execution_order_event_id": "dedupe-event-new-sell",
@@ -2043,6 +2088,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "source_topic": "alpaca.trade_updates",
                     "source_partition": 0,
                     "source_offset": 111,
+                    "source_window_id": "source-window-dedupe-new-sell",
                 },
                 {
                     "execution_order_event_id": "dedupe-event-fill-buy",
@@ -2061,6 +2107,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "source_topic": "alpaca.trade_updates",
                     "source_partition": 0,
                     "source_offset": 112,
+                    "source_window_id": "source-window-dedupe-fill-buy",
                 },
                 {
                     "execution_order_event_id": "dedupe-event-fill-sell",
@@ -2079,6 +2126,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "source_topic": "alpaca.trade_updates",
                     "source_partition": 0,
                     "source_offset": 113,
+                    "source_window_id": "source-window-dedupe-fill-sell",
                 },
             ],
             allow_authoritative_runtime_ledger_materialization=True,
@@ -2189,6 +2237,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "source_topic": "alpaca.trade_updates",
                     "source_partition": 0,
                     "source_offset": 110,
+                    "source_window_id": "source-window-dedupe-new-buy",
                 },
                 {
                     "execution_order_event_id": "dedupe-event-new-sell",
@@ -2206,6 +2255,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "source_topic": "alpaca.trade_updates",
                     "source_partition": 0,
                     "source_offset": 111,
+                    "source_window_id": "source-window-dedupe-new-sell",
                 },
                 {
                     "execution_order_event_id": "dedupe-event-fill-buy",
@@ -2229,6 +2279,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "source_topic": "alpaca.trade_updates",
                     "source_partition": 0,
                     "source_offset": 112,
+                    "source_window_id": "source-window-dedupe-fill-buy",
                 },
                 {
                     "execution_order_event_id": "dedupe-event-fill-sell",
@@ -2252,6 +2303,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "source_topic": "alpaca.trade_updates",
                     "source_partition": 0,
                     "source_offset": 113,
+                    "source_window_id": "source-window-dedupe-fill-sell",
                 },
             ],
             allow_authoritative_runtime_ledger_materialization=True,

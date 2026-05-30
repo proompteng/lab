@@ -228,15 +228,18 @@ class TestSubmissionCouncil(TestCase):
                 "postgres:trade_decisions",
                 "postgres:executions",
                 "postgres:execution_order_events",
+                "postgres:order_feed_source_windows",
             ],
             "source_row_counts": {
                 "trade_decisions": 2,
                 "executions": 2,
                 "execution_order_events": 4,
+                "order_feed_source_windows": 4,
             },
             "trade_decision_ids": ["decision-buy", "decision-sell"],
             "execution_ids": ["execution-buy", "execution-sell"],
             "execution_order_event_ids": ["event-fill-buy", "event-fill-sell"],
+            "source_window_ids": ["source-window-buy", "source-window-sell"],
             "source_offsets": [
                 {"topic": "alpaca.trade_updates", "partition": 0, "offset": 100}
             ],
@@ -284,6 +287,19 @@ class TestSubmissionCouncil(TestCase):
             "runtime_ledger_lineage_hash_count": 42,
             "runtime_ledger_schema_version": payload["ledger_schema_version"],
             "runtime_ledger_pnl_basis": payload["pnl_basis"],
+            "runtime_ledger_source_window_start": payload["source_window_start"],
+            "runtime_ledger_source_window_end": payload["source_window_end"],
+            "runtime_ledger_source_refs": payload["source_refs"],
+            "runtime_ledger_source_row_counts": payload["source_row_counts"],
+            "runtime_ledger_source_window_ids": payload["source_window_ids"],
+            "runtime_ledger_trade_decision_ids": payload["trade_decision_ids"],
+            "runtime_ledger_execution_ids": payload["execution_ids"],
+            "runtime_ledger_execution_order_event_ids": payload[
+                "execution_order_event_ids"
+            ],
+            "runtime_ledger_source_offsets": payload["source_offsets"],
+            "runtime_ledger_source_materialization": payload["source_materialization"],
+            "runtime_ledger_authority_class": payload["authority_class"],
         }
 
     def _runtime_ledger_bucket_row(
@@ -591,18 +607,24 @@ class TestSubmissionCouncil(TestCase):
                 "source_window_start": (now - timedelta(minutes=45)).isoformat(),
                 "source_window_end": (now - timedelta(minutes=30)).isoformat(),
                 "source_refs": [
-                    "strategy_runtime_ledger_buckets:pairs-realized-runtime"
+                    "strategy_runtime_ledger_buckets:pairs-realized-runtime",
+                    "postgres:order_feed_source_windows",
                 ],
                 "source_row_counts": {
                     "trade_decisions": 2,
                     "trade_order_events": 2,
                     "strategy_runtime_ledger_buckets": 1,
+                    "order_feed_source_windows": 2,
                 },
                 "trade_decision_ids": ["pairs-decision-buy", "pairs-decision-sell"],
                 "execution_ids": ["pairs-execution-buy", "pairs-execution-sell"],
                 "execution_order_event_ids": [
                     "pairs-event-new-buy",
                     "pairs-event-fill-buy",
+                ],
+                "source_window_ids": [
+                    "pairs-source-window-buy",
+                    "pairs-source-window-sell",
                 ],
                 "source_offsets": [
                     {"topic": "alpaca.trade_updates", "partition": 0, "offset": 100}
@@ -614,16 +636,19 @@ class TestSubmissionCouncil(TestCase):
                 "source_window_start": (now - timedelta(minutes=75)).isoformat(),
                 "source_window_end": (now - timedelta(minutes=60)).isoformat(),
                 "source_refs": [
-                    "strategy_runtime_ledger_buckets:pairs-reversal-runtime"
+                    "strategy_runtime_ledger_buckets:pairs-reversal-runtime",
+                    "postgres:order_feed_source_windows",
                 ],
                 "source_row_counts": {
                     "trade_decisions": 1,
                     "trade_order_events": 1,
                     "strategy_runtime_ledger_buckets": 1,
+                    "order_feed_source_windows": 1,
                 },
                 "trade_decision_ids": ["reversal-decision"],
                 "execution_ids": ["reversal-execution"],
                 "execution_order_event_ids": ["reversal-event-fill"],
+                "source_window_ids": ["reversal-source-window"],
                 "source_offsets": [
                     {"topic": "alpaca.trade_updates", "partition": 0, "offset": 200}
                 ],
@@ -820,7 +845,10 @@ class TestSubmissionCouncil(TestCase):
         )
         self.assertEqual(
             candidates[0]["source_refs"],
-            ["strategy_runtime_ledger_buckets:pairs-realized-runtime"],
+            [
+                "strategy_runtime_ledger_buckets:pairs-realized-runtime",
+                "postgres:order_feed_source_windows",
+            ],
         )
         paper_candidates = gate["runtime_ledger_paper_probation_candidates"]
         self.assertEqual(gate["paper_probation_eligible_total"], 2)
@@ -923,6 +951,7 @@ class TestSubmissionCouncil(TestCase):
 
         self.assertIn("runtime_ledger_source_window_missing", reasons)
         self.assertIn("runtime_ledger_source_refs_missing", reasons)
+        self.assertIn("runtime_ledger_source_window_ids_missing", reasons)
         self.assertIn("runtime_ledger_execution_order_event_refs_missing", reasons)
         self.assertIn("runtime_ledger_source_offsets_missing", reasons)
         self.assertIn("runtime_ledger_stage_not_live", reasons)
@@ -933,16 +962,19 @@ class TestSubmissionCouncil(TestCase):
                 "source_window_start": "2026-05-29T14:30:00+00:00",
                 "source_window_end": "2026-05-29T15:00:00+00:00",
                 "source_refs": [
-                    "strategy_runtime_ledger_buckets:pairs-realized-runtime"
+                    "strategy_runtime_ledger_buckets:pairs-realized-runtime",
+                    "postgres:order_feed_source_windows",
                 ],
                 "source_row_counts": {
                     "trade_decisions": 2,
                     "trade_order_events": 2,
                     "strategy_runtime_ledger_buckets": 1,
+                    "order_feed_source_windows": 2,
                 },
                 "trade_decision_ids": ["decision-buy", "decision-sell"],
                 "execution_ids": ["execution-buy", "execution-sell"],
                 "execution_order_event_ids": ["event-fill-buy", "event-fill-sell"],
+                "source_window_ids": ["source-window-buy", "source-window-sell"],
                 "source_offsets": [
                     {"topic": "alpaca.trade_updates", "partition": 0, "offset": 100}
                 ],
@@ -957,6 +989,9 @@ class TestSubmissionCouncil(TestCase):
             source_backed_reasons,
         )
         self.assertNotIn("runtime_ledger_source_refs_missing", source_backed_reasons)
+        self.assertNotIn(
+            "runtime_ledger_source_window_ids_missing", source_backed_reasons
+        )
         self.assertNotIn(
             "runtime_ledger_execution_order_event_refs_missing",
             source_backed_reasons,

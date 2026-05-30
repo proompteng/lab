@@ -876,6 +876,7 @@ def _with_runtime_ledger_source_authority_context(
     trade_decision_ids: Sequence[object] = (),
     execution_ids: Sequence[object] = (),
     execution_order_event_ids: Sequence[object] = (),
+    source_window_ids: Sequence[object] = (),
     source_offsets: Sequence[Mapping[str, object]] = (),
     source_materialization: str | None = None,
     authority_class: str | None = None,
@@ -890,6 +891,7 @@ def _with_runtime_ledger_source_authority_context(
         ("trade_decision_ids", trade_decision_ids),
         ("execution_ids", execution_ids),
         ("execution_order_event_ids", execution_order_event_ids),
+        ("source_window_ids", source_window_ids),
     ):
         merged_values = _metadata_text_list(payload.get(key))
         merged_values.extend(
@@ -1059,6 +1061,30 @@ def _execution_query_row_has_time(row: Sequence[object]) -> bool:
 
 
 def _order_lifecycle_query_row(row: Sequence[object]) -> dict[str, object]:
+    if len(row) >= 21:
+        return {
+            "execution_order_event_id": str(row[0]),
+            "trade_decision_id": str(row[1]),
+            "execution_id": str(row[2]) if row[2] is not None else None,
+            "event_ts": row[3],
+            "symbol": row[4],
+            "account_label": row[5],
+            "strategy_id": row[6],
+            "decision_hash": row[7],
+            "decision_json": row[8],
+            "alpaca_order_id": row[9],
+            "client_order_id": row[10],
+            "event_type": row[11],
+            "order_status": row[12],
+            "event_fingerprint": row[13],
+            "source_topic": row[14],
+            "source_partition": row[15],
+            "source_offset": row[16],
+            "source_window_id": str(row[17]) if row[17] is not None else None,
+            "raw_event": row[18],
+            "execution_audit_json": row[19],
+            "raw_order": row[20],
+        }
     if len(row) >= 20:
         return {
             "execution_order_event_id": str(row[0]),
@@ -1078,6 +1104,7 @@ def _order_lifecycle_query_row(row: Sequence[object]) -> dict[str, object]:
             "source_topic": row[14],
             "source_partition": row[15],
             "source_offset": row[16],
+            "source_window_id": None,
             "raw_event": row[17],
             "execution_audit_json": row[18],
             "raw_order": row[19],
@@ -1100,6 +1127,7 @@ def _order_lifecycle_query_row(row: Sequence[object]) -> dict[str, object]:
         "source_topic": row[11],
         "source_partition": row[12],
         "source_offset": row[13],
+        "source_window_id": None,
         "raw_event": row[14],
         "execution_audit_json": row[15],
         "raw_order": row[16],
@@ -2267,11 +2295,19 @@ def _build_realized_strategy_pnl_rows(
         "executions": len(execution_rows),
         "execution_order_events": len(order_lifecycle_rows or []),
     }
-    source_refs = (
+    source_window_ids = _source_identifier_values(
+        order_lifecycle_rows,
+        "source_window_id",
+    )
+    if source_window_ids:
+        source_row_counts["order_feed_source_windows"] = len(source_window_ids)
+    source_refs = [
         "postgres:trade_decisions",
         "postgres:executions",
         "postgres:execution_order_events",
-    )
+    ]
+    if source_window_ids:
+        source_refs.append("postgres:order_feed_source_windows")
     trade_decision_ids = _source_identifier_values(
         source_decision_rows,
         "trade_decision_id",
@@ -2345,6 +2381,7 @@ def _build_realized_strategy_pnl_rows(
                 trade_decision_ids=trade_decision_ids,
                 execution_ids=execution_ids,
                 execution_order_event_ids=execution_order_event_ids,
+                source_window_ids=source_window_ids,
                 source_offsets=source_offsets,
                 source_materialization=(
                     "execution_order_events"
@@ -3386,6 +3423,7 @@ def _query_timestamps(
                     oe.source_topic,
                     oe.source_partition,
                     oe.source_offset,
+                    oe.source_window_id,
                     oe.raw_event,
                     e.execution_audit_json,
                     e.raw_order

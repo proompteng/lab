@@ -92,6 +92,7 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
         self.assertIn("runtime_ledger_trade_decision_refs_missing", blockers)
         self.assertIn("runtime_ledger_execution_refs_missing", blockers)
         self.assertIn("runtime_ledger_execution_order_event_refs_missing", blockers)
+        self.assertIn("runtime_ledger_source_window_ids_missing", blockers)
         self.assertIn("runtime_ledger_source_offsets_missing", blockers)
         self.assertIn("runtime_ledger_source_materialization_missing", blockers)
         self.assertIn("runtime_ledger_authority_class_missing", blockers)
@@ -101,6 +102,7 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
             "trade_decision_ids": ["decision-1", "decision-2"],
             "execution_ids": ["execution-1", "execution-2"],
             "execution_order_event_ids": ["event-1", "event-2"],
+            "source_window_ids": ["source-window-1", "source-window-2"],
             "source_offsets": [
                 {"topic": "alpaca.trade_updates", "partition": 0, "offset": 42}
             ],

@@ -20,6 +20,7 @@ from ..models import (
     Execution,
     ExecutionOrderEvent,
     OrderFeedConsumerCursor,
+    OrderFeedSourceWindow,
     TradeDecision,
     coerce_json_payload,
 )
@@ -90,18 +91,18 @@ class OrderFeedIngestor:
         if not records:
             return counters
 
-        persisted_any = False
+        durable_any = False
         for record in records:
-            persisted_any = (
+            durable_any = (
                 self._ingest_record(
                     session=session,
                     record=record,
                     counters=counters,
                 )
-                or persisted_any
+                or durable_any
             )
 
-        if persisted_any:
+        if durable_any:
             session.commit()
             _commit_consumer(consumer)
         return counters
@@ -114,6 +115,13 @@ class OrderFeedIngestor:
             "duplicates_total": 0,
             "out_of_order_total": 0,
             "missing_fields_total": 0,
+            "classified_drops_total": 0,
+            "source_windows_total": 0,
+            "malformed_total": 0,
+            "missing_payload_total": 0,
+            "missing_identity_total": 0,
+            "unlinked_execution_total": 0,
+            "unlinked_decision_total": 0,
             "apply_updates_total": 0,
             "consumer_errors_total": 0,
             "cursor_updates_total": 0,
@@ -156,20 +164,79 @@ class OrderFeedIngestor:
             default_topic=settings.trading_order_feed_topic,
             default_account_label=self._default_account_label,
         )
+        source_topic = (
+            normalized.event.source_topic
+            if normalized.event is not None
+            else _source_topic_from_record(
+                record, default_topic=settings.trading_order_feed_topic
+            )
+        )
+        source_partition = (
+            normalized.event.source_partition
+            if normalized.event is not None
+            else _coerce_int(getattr(record, "partition", None))
+        )
+        source_offset = (
+            normalized.event.source_offset
+            if normalized.event is not None
+            else _coerce_int(getattr(record, "offset", None))
+        )
+        source_window = _create_order_feed_source_window(
+            session,
+            source_topic=source_topic,
+            source_partition=source_partition,
+            source_offset=source_offset,
+            alpaca_account_label=(
+                normalized.event.alpaca_account_label
+                if normalized.event is not None
+                else self._default_account_label
+            ),
+        )
+        if source_window is not None:
+            counters["source_windows_total"] += 1
+
         if normalized.event is None:
             counters["missing_fields_total"] += 1
             if normalized.drop_reason:
                 logger.debug(
                     "Dropped order-feed message reason=%s", normalized.drop_reason
                 )
-            return False
+            if source_window is None:
+                return False
+            _classify_source_window_drop(source_window, normalized.drop_reason)
+            _increment_drop_counter(counters, normalized.drop_reason)
+            cursor_updated = _upsert_order_feed_consumer_cursor_from_source(
+                session,
+                source_topic=source_topic,
+                source_partition=source_partition,
+                source_offset=source_offset,
+                event_fingerprint=None,
+                event_ts=None,
+                duplicate=False,
+                source_window=source_window,
+            )
+            if cursor_updated:
+                counters["cursor_updates_total"] += 1
+            counters["classified_drops_total"] += 1
+            return True
 
         event = normalized.event
-        persisted, duplicate = persist_order_event(session, event)
+        persisted, duplicate = persist_order_event(
+            session,
+            event,
+            source_window_id=source_window.id if source_window is not None else None,
+        )
+        if source_window is not None:
+            _classify_source_window_event(
+                source_window,
+                persisted=persisted,
+                duplicate=duplicate,
+            )
         cursor_updated = _upsert_order_feed_consumer_cursor(
             session,
             event,
             duplicate=duplicate,
+            source_window=source_window,
         )
         if cursor_updated:
             counters["cursor_updates_total"] += 1
@@ -177,6 +244,10 @@ class OrderFeedIngestor:
             counters["duplicates_total"] += 1
             return cursor_updated
         counters["events_persisted_total"] += 1
+        if persisted.execution_id is None:
+            counters["unlinked_execution_total"] += 1
+        if persisted.trade_decision_id is None:
+            counters["unlinked_decision_total"] += 1
 
         if persisted.execution_id is None:
             return True
@@ -343,6 +414,103 @@ class OrderFeedIngestor:
         )
 
 
+def _source_topic_from_record(record: Any, *, default_topic: str) -> str:
+    return _coerce_text(getattr(record, "topic", None)) or default_topic
+
+
+def _create_order_feed_source_window(
+    session: Session,
+    *,
+    source_topic: str,
+    source_partition: int | None,
+    source_offset: int | None,
+    alpaca_account_label: str,
+) -> OrderFeedSourceWindow | None:
+    if source_partition is None or source_offset is None:
+        return None
+    now = datetime.now(timezone.utc)
+    collector_identity = settings.trading_order_feed_client_id.strip() or None
+    source_window = OrderFeedSourceWindow(
+        consumer_group=_order_feed_cursor_consumer_group(),
+        source_topic=source_topic,
+        source_partition=source_partition,
+        alpaca_account_label=alpaca_account_label,
+        assignment_mode=settings.trading_order_feed_assignment_mode,
+        collector_identity=collector_identity,
+        source_revision="alpaca_trade_updates_v1",
+        window_started_at=now,
+        window_ended_at=now,
+        start_offset=source_offset,
+        end_offset=source_offset,
+        broker_high_watermark=None,
+        consumed_count=1,
+        inserted_count=0,
+        duplicate_count=0,
+        malformed_count=0,
+        missing_payload_count=0,
+        missing_identity_count=0,
+        out_of_scope_account_count=0,
+        unlinked_execution_count=0,
+        unlinked_decision_count=0,
+        failed_unhandled_count=0,
+        dropped_count=0,
+        gap_count=0,
+        gap_ranges=None,
+        first_event_ts=None,
+        last_event_ts=None,
+        status="classified",
+        status_reason=None,
+        payload_json=None,
+    )
+    session.add(source_window)
+    session.flush()
+    return source_window
+
+
+def _classify_source_window_drop(
+    source_window: OrderFeedSourceWindow, drop_reason: str | None
+) -> None:
+    source_window.status = "dropped"
+    source_window.status_reason = drop_reason or "unknown_drop"
+    source_window.dropped_count = 1
+    if drop_reason == "invalid_json":
+        source_window.malformed_count = 1
+    elif drop_reason == "missing_trade_update_payload":
+        source_window.missing_payload_count = 1
+    elif drop_reason == "missing_order_identity":
+        source_window.missing_identity_count = 1
+
+
+def _increment_drop_counter(counters: dict[str, int], drop_reason: str | None) -> None:
+    if drop_reason == "invalid_json":
+        counters["malformed_total"] += 1
+    elif drop_reason == "missing_trade_update_payload":
+        counters["missing_payload_total"] += 1
+    elif drop_reason == "missing_order_identity":
+        counters["missing_identity_total"] += 1
+
+
+def _classify_source_window_event(
+    source_window: OrderFeedSourceWindow,
+    *,
+    persisted: ExecutionOrderEvent,
+    duplicate: bool,
+) -> None:
+    source_window.first_event_ts = persisted.event_ts
+    source_window.last_event_ts = persisted.event_ts
+    if duplicate:
+        source_window.status = "duplicate"
+        source_window.status_reason = "duplicate_event_fingerprint"
+        source_window.duplicate_count = 1
+        return
+    source_window.status = "inserted"
+    source_window.inserted_count = 1
+    if persisted.execution_id is None:
+        source_window.unlinked_execution_count = 1
+    if persisted.trade_decision_id is None:
+        source_window.unlinked_decision_count = 1
+
+
 def normalize_order_feed_record(
     record: Any, *, default_topic: str, default_account_label: str
 ) -> NormalizationResult:
@@ -450,7 +618,10 @@ def normalize_order_feed_record(
 
 
 def persist_order_event(
-    session: Session, event: NormalizedOrderEvent
+    session: Session,
+    event: NormalizedOrderEvent,
+    *,
+    source_window_id: Any | None = None,
 ) -> tuple[ExecutionOrderEvent, bool]:
     """Persist a normalized event and link it to execution/trade_decision rows."""
 
@@ -460,6 +631,9 @@ def persist_order_event(
         )
     ).scalar_one_or_none()
     if existing is not None:
+        if existing.source_window_id is None and source_window_id is not None:
+            existing.source_window_id = source_window_id
+            session.add(existing)
         return existing, True
 
     execution = _resolve_execution(session, event)
@@ -495,6 +669,7 @@ def persist_order_event(
         raw_event=event.raw_event,
         execution_id=execution.id if execution is not None else None,
         trade_decision_id=trade_decision_id,
+        source_window_id=source_window_id,
     )
     try:
         with session.begin_nested():
@@ -508,6 +683,9 @@ def persist_order_event(
         ).scalar_one_or_none()
         if existing is None:
             raise
+        if existing.source_window_id is None and source_window_id is not None:
+            existing.source_window_id = source_window_id
+            session.add(existing)
         return existing, True
 
     return row, False
@@ -728,23 +906,23 @@ def _latest_persisted_source_offsets(session: Session) -> dict[tuple[str, int], 
         if topic is not None and partition is not None and offset is not None
     }
 
-    event_rows = session.execute(
+    source_window_rows = session.execute(
         select(
-            ExecutionOrderEvent.source_topic,
-            ExecutionOrderEvent.source_partition,
-            func.max(ExecutionOrderEvent.source_offset),
+            OrderFeedSourceWindow.source_topic,
+            OrderFeedSourceWindow.source_partition,
+            func.max(OrderFeedSourceWindow.end_offset),
         )
         .where(
-            ExecutionOrderEvent.source_topic.is_not(None),
-            ExecutionOrderEvent.source_partition.is_not(None),
-            ExecutionOrderEvent.source_offset.is_not(None),
+            OrderFeedSourceWindow.consumer_group == consumer_group,
+            OrderFeedSourceWindow.status != "failed_unhandled",
+            OrderFeedSourceWindow.end_offset.is_not(None),
         )
         .group_by(
-            ExecutionOrderEvent.source_topic,
-            ExecutionOrderEvent.source_partition,
+            OrderFeedSourceWindow.source_topic,
+            OrderFeedSourceWindow.source_partition,
         )
     ).all()
-    for topic, partition, offset in event_rows:
+    for topic, partition, offset in source_window_rows:
         if topic is None or partition is None or offset is None:
             continue
         offsets.setdefault((str(topic), int(partition)), int(offset))
@@ -756,27 +934,51 @@ def _upsert_order_feed_consumer_cursor(
     event: NormalizedOrderEvent,
     *,
     duplicate: bool,
+    source_window: OrderFeedSourceWindow | None = None,
 ) -> bool:
-    if event.source_partition is None or event.source_offset is None:
+    return _upsert_order_feed_consumer_cursor_from_source(
+        session,
+        source_topic=event.source_topic,
+        source_partition=event.source_partition,
+        source_offset=event.source_offset,
+        event_fingerprint=event.event_fingerprint,
+        event_ts=event.event_ts,
+        duplicate=duplicate,
+        source_window=source_window,
+    )
+
+
+def _upsert_order_feed_consumer_cursor_from_source(
+    session: Session,
+    *,
+    source_topic: str,
+    source_partition: int | None,
+    source_offset: int | None,
+    event_fingerprint: str | None,
+    event_ts: datetime | None,
+    duplicate: bool,
+    source_window: OrderFeedSourceWindow | None = None,
+) -> bool:
+    if source_partition is None or source_offset is None:
         return False
 
     consumer_group = _order_feed_cursor_consumer_group()
     cursor = session.execute(
         select(OrderFeedConsumerCursor).where(
             OrderFeedConsumerCursor.consumer_group == consumer_group,
-            OrderFeedConsumerCursor.source_topic == event.source_topic,
-            OrderFeedConsumerCursor.source_partition == event.source_partition,
+            OrderFeedConsumerCursor.source_topic == source_topic,
+            OrderFeedConsumerCursor.source_partition == source_partition,
         )
     ).scalar_one_or_none()
 
     if cursor is None:
         cursor = OrderFeedConsumerCursor(
             consumer_group=consumer_group,
-            source_topic=event.source_topic,
-            source_partition=event.source_partition,
-            high_watermark_offset=event.source_offset,
-            last_event_fingerprint=event.event_fingerprint,
-            last_event_ts=event.event_ts,
+            source_topic=source_topic,
+            source_partition=source_partition,
+            high_watermark_offset=source_offset,
+            last_event_fingerprint=event_fingerprint,
+            last_event_ts=event_ts,
             processed_event_count=1,
             duplicate_event_count=1 if duplicate else 0,
             offset_gap_count=0,
@@ -784,12 +986,20 @@ def _upsert_order_feed_consumer_cursor(
         session.add(cursor)
         return True
 
-    if event.source_offset > cursor.high_watermark_offset:
-        if event.source_offset > cursor.high_watermark_offset + 1:
+    if source_offset > cursor.high_watermark_offset:
+        if source_offset > cursor.high_watermark_offset + 1:
             cursor.offset_gap_count = int(cursor.offset_gap_count or 0) + 1
-        cursor.high_watermark_offset = event.source_offset
-        cursor.last_event_fingerprint = event.event_fingerprint
-        cursor.last_event_ts = event.event_ts
+            if source_window is not None:
+                source_window.gap_count = 1
+                source_window.gap_ranges = [
+                    {
+                        "start_offset": cursor.high_watermark_offset + 1,
+                        "end_offset": source_offset - 1,
+                    }
+                ]
+        cursor.high_watermark_offset = source_offset
+        cursor.last_event_fingerprint = event_fingerprint
+        cursor.last_event_ts = event_ts
 
     cursor.processed_event_count = int(cursor.processed_event_count or 0) + 1
     if duplicate:

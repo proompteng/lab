@@ -8,6 +8,9 @@ from decimal import Decimal, InvalidOperation
 from typing import cast
 
 RUNTIME_LEDGER_SOURCE_WINDOW_MISSING_BLOCKER = "runtime_ledger_source_window_missing"
+RUNTIME_LEDGER_SOURCE_WINDOW_IDS_MISSING_BLOCKER = (
+    "runtime_ledger_source_window_ids_missing"
+)
 RUNTIME_LEDGER_SOURCE_REFS_MISSING_BLOCKER = "runtime_ledger_source_refs_missing"
 RUNTIME_LEDGER_TRADE_DECISION_REFS_MISSING_BLOCKER = (
     "runtime_ledger_trade_decision_refs_missing"
@@ -200,6 +203,14 @@ def runtime_ledger_promotion_source_authority_blockers(
     blockers = runtime_ledger_source_authority_blockers(bucket)
     if not _source_refs_present(
         bucket,
+        "source_window_ids",
+        "source_window_id",
+        "runtime_ledger_source_window_ids",
+        "runtime_ledger_source_window_id",
+    ):
+        blockers.append(RUNTIME_LEDGER_SOURCE_WINDOW_IDS_MISSING_BLOCKER)
+    if not _source_refs_present(
+        bucket,
         "trade_decision_ids",
         "trade_decision_refs",
         "trade_decision_id",
@@ -237,6 +248,7 @@ __all__ = [
     "RUNTIME_LEDGER_SOURCE_MATERIALIZATION_MISSING_BLOCKER",
     "RUNTIME_LEDGER_SOURCE_OFFSETS_MISSING_BLOCKER",
     "RUNTIME_LEDGER_SOURCE_REFS_MISSING_BLOCKER",
+    "RUNTIME_LEDGER_SOURCE_WINDOW_IDS_MISSING_BLOCKER",
     "RUNTIME_LEDGER_SOURCE_WINDOW_MISSING_BLOCKER",
     "RUNTIME_LEDGER_TRADE_DECISION_REFS_MISSING_BLOCKER",
     "runtime_ledger_promotion_source_authority_blockers",
