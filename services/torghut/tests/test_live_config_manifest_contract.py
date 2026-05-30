@@ -1166,7 +1166,14 @@ class TestLiveConfigManifestContract(TestCase):
             "--completion-service-base-url http://torghut.torghut.svc.cluster.local",
             args,
         )
+        self.assertIn("--proof-mode authority", args)
         self.assertIn('--runtime-window-import-file "${RENEWAL_OUTPUT}"', args)
+        self.assertIn("--min-runtime-ledger-net-pnl 10000", args)
+        self.assertIn("--min-runtime-ledger-daily-net-pnl 500", args)
+        self.assertIn("--min-runtime-ledger-trading-days 20", args)
+        self.assertIn("--max-runtime-ledger-drawdown-pct-equity 0.03", args)
+        self.assertIn("--max-runtime-ledger-best-day-share 0.25", args)
+        self.assertIn("--max-runtime-ledger-symbol-concentration-share 0.35", args)
         self.assertIn('--output-file "${PROOF_PACKET_OUTPUT}"', args)
         self.assertIn(
             "--artifact-prefix 'runtime-ledger-proof-packets/{run_id}'",
