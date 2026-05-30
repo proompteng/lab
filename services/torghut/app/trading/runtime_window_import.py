@@ -39,15 +39,17 @@ from .runtime_decision_authority import (
     source_decision_mode_counts_have_profit_proof_modes,
     source_decision_mode_is_profit_proof_eligible,
 )
+from .runtime_ledger_proof_policy import runtime_ledger_proof_policy_from_env
 
 US_EQUITIES_REGULAR_TIMEZONE = "America/New_York"
 US_EQUITIES_REGULAR_OPEN = time(hour=9, minute=30)
 US_EQUITIES_REGULAR_CLOSE = time(hour=16, minute=0)
 PROMOTION_GRADE_POST_COST_BASES = frozenset(
     {
-        "realized_strategy_pnl_after_explicit_costs",
+        POST_COST_PNL_BASIS,
     }
 )
+RUNTIME_LEDGER_PROOF_POLICY = runtime_ledger_proof_policy_from_env()
 _RUNTIME_LEDGER_PROOF_SATISFIED_METADATA_BLOCKERS = frozenset(
     {
         "paper_route_runtime_ledger_import_pending",
@@ -84,13 +86,6 @@ RUNTIME_LEDGER_BUCKET_SCHEMAS = frozenset(
         "torghut.runtime-ledger-bucket.v1",
     }
 )
-RUNTIME_LEDGER_AUTHORITY_MIN_TRADING_DAYS = 20
-RUNTIME_LEDGER_AUTHORITY_MIN_MEAN_DAILY_NET_PNL = Decimal("500")
-RUNTIME_LEDGER_AUTHORITY_MIN_MEDIAN_DAILY_NET_PNL = Decimal("250")
-RUNTIME_LEDGER_AUTHORITY_MIN_P10_DAILY_NET_PNL = Decimal("-250")
-RUNTIME_LEDGER_AUTHORITY_MIN_WORST_DAY_NET_PNL = Decimal("-750")
-RUNTIME_LEDGER_AUTHORITY_MAX_INTRADAY_DRAWDOWN = Decimal("1500")
-RUNTIME_LEDGER_AUTHORITY_MAX_BEST_DAY_SHARE = Decimal("0.25")
 
 
 @dataclass(frozen=True)
@@ -782,28 +777,34 @@ def _runtime_ledger_authority_gate_targets(
     average_post_cost_bps: Decimal,
 ) -> dict[str, Any]:
     target_implied_notional = (
-        RUNTIME_LEDGER_AUTHORITY_MIN_MEAN_DAILY_NET_PNL
+        RUNTIME_LEDGER_PROOF_POLICY.authority_min_mean_daily_net_pnl_after_costs
         * Decimal("10000")
         / average_post_cost_bps
         if average_post_cost_bps > 0
         else None
     )
     return {
-        "min_observed_trading_days": RUNTIME_LEDGER_AUTHORITY_MIN_TRADING_DAYS,
+        "min_observed_trading_days": (
+            RUNTIME_LEDGER_PROOF_POLICY.authority_min_trading_days
+        ),
         "min_mean_daily_net_pnl_after_costs": str(
-            RUNTIME_LEDGER_AUTHORITY_MIN_MEAN_DAILY_NET_PNL
+            RUNTIME_LEDGER_PROOF_POLICY.authority_min_mean_daily_net_pnl_after_costs
         ),
         "min_median_daily_net_pnl_after_costs": str(
-            RUNTIME_LEDGER_AUTHORITY_MIN_MEDIAN_DAILY_NET_PNL
+            RUNTIME_LEDGER_PROOF_POLICY.authority_min_median_daily_net_pnl_after_costs
         ),
         "min_p10_daily_net_pnl_after_costs": str(
-            RUNTIME_LEDGER_AUTHORITY_MIN_P10_DAILY_NET_PNL
+            RUNTIME_LEDGER_PROOF_POLICY.authority_min_p10_daily_net_pnl_after_costs
         ),
         "min_worst_day_net_pnl_after_costs": str(
-            RUNTIME_LEDGER_AUTHORITY_MIN_WORST_DAY_NET_PNL
+            RUNTIME_LEDGER_PROOF_POLICY.authority_min_worst_day_net_pnl_after_costs
         ),
-        "max_intraday_drawdown": str(RUNTIME_LEDGER_AUTHORITY_MAX_INTRADAY_DRAWDOWN),
-        "max_best_day_share": str(RUNTIME_LEDGER_AUTHORITY_MAX_BEST_DAY_SHARE),
+        "max_intraday_drawdown": str(
+            RUNTIME_LEDGER_PROOF_POLICY.authority_max_intraday_drawdown
+        ),
+        "max_best_day_share": str(
+            RUNTIME_LEDGER_PROOF_POLICY.authority_max_best_day_share
+        ),
         "target_implied_avg_daily_filled_notional": (
             _decimal_text(target_implied_notional)
             if target_implied_notional is not None
@@ -914,28 +915,43 @@ def _runtime_promotion_blocking_reasons(
         "runtime_ledger_avg_daily_filled_notional",
     )
 
-    if observed_trading_days < RUNTIME_LEDGER_AUTHORITY_MIN_TRADING_DAYS:
+    if observed_trading_days < RUNTIME_LEDGER_PROOF_POLICY.authority_min_trading_days:
         reasons.append(
             "runtime_ledger_observed_trading_day_count_below_authority_minimum"
         )
-    if mean_daily_net_pnl < RUNTIME_LEDGER_AUTHORITY_MIN_MEAN_DAILY_NET_PNL:
+    if (
+        mean_daily_net_pnl
+        < RUNTIME_LEDGER_PROOF_POLICY.authority_min_mean_daily_net_pnl_after_costs
+    ):
         reasons.append("runtime_ledger_mean_daily_net_pnl_after_costs_below_target")
-    if median_daily_net_pnl < RUNTIME_LEDGER_AUTHORITY_MIN_MEDIAN_DAILY_NET_PNL:
+    if (
+        median_daily_net_pnl
+        < RUNTIME_LEDGER_PROOF_POLICY.authority_min_median_daily_net_pnl_after_costs
+    ):
         reasons.append("runtime_ledger_median_daily_net_pnl_after_costs_below_floor")
-    if p10_daily_net_pnl < RUNTIME_LEDGER_AUTHORITY_MIN_P10_DAILY_NET_PNL:
+    if (
+        p10_daily_net_pnl
+        < RUNTIME_LEDGER_PROOF_POLICY.authority_min_p10_daily_net_pnl_after_costs
+    ):
         reasons.append("runtime_ledger_p10_daily_net_pnl_after_costs_below_floor")
-    if worst_day_net_pnl < RUNTIME_LEDGER_AUTHORITY_MIN_WORST_DAY_NET_PNL:
+    if (
+        worst_day_net_pnl
+        < RUNTIME_LEDGER_PROOF_POLICY.authority_min_worst_day_net_pnl_after_costs
+    ):
         reasons.append("runtime_ledger_worst_day_net_pnl_after_costs_below_floor")
-    if max_intraday_drawdown > RUNTIME_LEDGER_AUTHORITY_MAX_INTRADAY_DRAWDOWN:
+    if (
+        max_intraday_drawdown
+        > RUNTIME_LEDGER_PROOF_POLICY.authority_max_intraday_drawdown
+    ):
         reasons.append("runtime_ledger_max_intraday_drawdown_above_limit")
     if (
         best_day_share is not None
-        and best_day_share > RUNTIME_LEDGER_AUTHORITY_MAX_BEST_DAY_SHARE
+        and best_day_share > RUNTIME_LEDGER_PROOF_POLICY.authority_max_best_day_share
     ):
         reasons.append("runtime_ledger_best_day_share_above_limit")
     if average_post_cost > 0:
         target_implied_notional = (
-            RUNTIME_LEDGER_AUTHORITY_MIN_MEAN_DAILY_NET_PNL
+            RUNTIME_LEDGER_PROOF_POLICY.authority_min_mean_daily_net_pnl_after_costs
             * Decimal("10000")
             / average_post_cost
         )

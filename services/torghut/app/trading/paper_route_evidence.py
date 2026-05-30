@@ -31,6 +31,7 @@ from ..models import (
 )
 from .runtime_cost_authority import cost_basis_counts_have_non_promotion_grade_costs
 from .runtime_ledger import POST_COST_PNL_BASIS
+from .runtime_ledger_proof_policy import runtime_ledger_proof_policy_from_env
 
 
 PAPER_ROUTE_EVIDENCE_SCHEMA_VERSION = "torghut.paper-route-evidence.v1"
@@ -61,9 +62,6 @@ RUNTIME_LEDGER_PROOF_PACKET_OUTPUT_FILE = "artifacts/runtime-ledger-proof-packet
 RUNTIME_WINDOW_IMPORT_OUTPUT_FILE = "artifacts/runtime-window-import.json"
 RUNTIME_LEDGER_PROOF_PACKET_ARTIFACT_PREFIX = "runtime-ledger-proof-packets/{run_id}"
 RUNTIME_LEDGER_SUMMARY_ROW_LIMIT = 50
-MIN_RUNTIME_LEDGER_PROOF_NET_PNL = "500"
-MIN_RUNTIME_LEDGER_PROOF_DAILY_NET_PNL = "500"
-MIN_RUNTIME_LEDGER_PROOF_TRADING_DAYS = 1
 US_EQUITIES_TIMEZONE = "America/New_York"
 US_EQUITIES_OPEN = time(hour=9, minute=30)
 US_EQUITIES_CLOSE = time(hour=16, minute=0)
@@ -3221,6 +3219,7 @@ def _runtime_ledger_proof_packet_handoff(
     next_targets: Mapping[str, object],
     runtime_window_import_audit: Mapping[str, object],
 ) -> dict[str, object]:
+    proof_policy = runtime_ledger_proof_policy_from_env()
     runtime_import_handoff = _as_mapping(
         next_targets.get("runtime_window_import_handoff")
     )
@@ -3248,11 +3247,11 @@ def _runtime_ledger_proof_packet_handoff(
         "--completion-service-base-url",
         "$TORGHUT_LIVE_SERVICE_BASE_URL",
         "--min-runtime-ledger-net-pnl",
-        MIN_RUNTIME_LEDGER_PROOF_NET_PNL,
+        str(proof_policy.min_net_pnl_after_costs),
         "--min-runtime-ledger-daily-net-pnl",
-        MIN_RUNTIME_LEDGER_PROOF_DAILY_NET_PNL,
+        str(proof_policy.min_daily_net_pnl_after_costs),
         "--min-runtime-ledger-trading-days",
-        str(MIN_RUNTIME_LEDGER_PROOF_TRADING_DAYS),
+        str(proof_policy.min_trading_days),
         "--output-file",
         RUNTIME_LEDGER_PROOF_PACKET_OUTPUT_FILE,
     ]
@@ -3291,13 +3290,7 @@ def _runtime_ledger_proof_packet_handoff(
             "completion_doc29": "/trading/completion/doc29",
         },
         "targets": {
-            "min_runtime_ledger_net_pnl_after_costs": (
-                MIN_RUNTIME_LEDGER_PROOF_NET_PNL
-            ),
-            "min_runtime_ledger_daily_net_pnl_after_costs": (
-                MIN_RUNTIME_LEDGER_PROOF_DAILY_NET_PNL
-            ),
-            "min_runtime_ledger_trading_days": MIN_RUNTIME_LEDGER_PROOF_TRADING_DAYS,
+            **proof_policy.target_payload(),
         },
         "runtime_window": {
             "import_ready": import_ready,
