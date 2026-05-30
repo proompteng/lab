@@ -877,43 +877,6 @@ def _mapping_hash_count(value: object) -> int:
     return sum(1 for key in value.keys() if str(key).strip())
 
 
-def _runtime_ledger_source_window_present(bucket: Mapping[str, object]) -> bool:
-    start = _parse_dt_or_none(
-        bucket.get("source_window_start")
-        or bucket.get("runtime_ledger_source_window_start")
-    )
-    end = _parse_dt_or_none(
-        bucket.get("source_window_end")
-        or bucket.get("runtime_ledger_source_window_end")
-    )
-    return start is not None and end is not None and end > start
-
-
-def _positive_mapping_value_count(value: object) -> int:
-    if not isinstance(value, Mapping):
-        return 0
-    count = 0
-    for item in value.values():
-        parsed = _decimal_or_none(item)
-        if parsed is not None and parsed > 0:
-            count += 1
-    return count
-
-
-def _runtime_ledger_source_refs_present(bucket: Mapping[str, object]) -> bool:
-    source_refs = _metadata_text_list(bucket.get("source_refs"))
-    source_ref = bucket.get("source_ref")
-    source_ref_present = bool(source_refs)
-    if isinstance(source_ref, Mapping):
-        source_ref_present = source_ref_present or bool(source_ref)
-    elif _text_or_none(source_ref) is not None:
-        source_ref_present = True
-    return (
-        source_ref_present
-        and _positive_mapping_value_count(bucket.get("source_row_counts")) > 0
-    )
-
-
 def _runtime_ledger_bucket_profit_proof_blockers(
     bucket: Mapping[str, object],
 ) -> list[str]:
