@@ -90,6 +90,9 @@ ORDER_FEED_FILL_LIFECYCLE_INCOMPLETE_BLOCKER = "order_feed_fill_lifecycle_incomp
 ORDER_FEED_FILL_LIFECYCLE_ORDER_ID_MISSING_BLOCKER = (
     "order_feed_fill_lifecycle_order_id_missing"
 )
+ORDER_FEED_UNLINKED_FILL_LIFECYCLE_PRESENT_BLOCKER = (
+    "order_feed_unlinked_fill_lifecycle_present"
+)
 ALPACA_2026_EQUITY_SEC_FEE_RATE = Decimal("20.60") / Decimal("1000000")
 ALPACA_2026_EQUITY_TAF_RATE_PER_SHARE = Decimal("0.000195")
 ALPACA_2026_EQUITY_TAF_CAP = Decimal("9.79")
@@ -2073,6 +2076,7 @@ def _order_feed_fill_lifecycle_blockers(
     *,
     execution_rows: list[dict[str, object]],
     order_lifecycle_rows: list[dict[str, object]] | None,
+    unlinked_order_lifecycle_rows: list[dict[str, object]] | None = None,
 ) -> list[str]:
     expected_order_ids: set[str] = set()
     missing_execution_order_id = False
@@ -2104,6 +2108,12 @@ def _order_feed_fill_lifecycle_blockers(
             complete_fill_order_ids.add(order_id)
 
     blockers: list[str] = []
+    if any(
+        _runtime_ledger_event_type({str(key): value for key, value in row.items()})
+        in _RUNTIME_LEDGER_FILL_EVENTS
+        for row in unlinked_order_lifecycle_rows or []
+    ):
+        blockers.append(ORDER_FEED_UNLINKED_FILL_LIFECYCLE_PRESENT_BLOCKER)
     if missing_execution_order_id:
         blockers.append(ORDER_FEED_FILL_LIFECYCLE_ORDER_ID_MISSING_BLOCKER)
     if not observed_fill_order_ids:
@@ -2154,6 +2164,9 @@ def _source_activity_diagnostics_blockers(
     source_bucket_profit_proof_count = _nonnegative_int(
         diagnostics.get("runtime_ledger_source_bucket_profit_proof_count")
     )
+    unlinked_fill_lifecycle_count = _nonnegative_int(
+        diagnostics.get("order_feed_unlinked_fill_lifecycle_count")
+    )
 
     if (
         decision_query_count
@@ -2177,6 +2190,8 @@ def _source_activity_diagnostics_blockers(
         add(ORDER_FEED_FILL_LIFECYCLE_MISSING_BLOCKER)
     if execution_lineage_count > 0 and tca_lineage_count <= 0:
         add("execution_tca_rows_missing")
+    if unlinked_fill_lifecycle_count > 0:
+        add(ORDER_FEED_UNLINKED_FILL_LIFECYCLE_PRESENT_BLOCKER)
     if source_bucket_count <= 0:
         add("runtime_ledger_source_bucket_missing")
     elif source_bucket_profit_proof_count <= 0:
@@ -2200,6 +2215,7 @@ def _build_realized_strategy_pnl_rows(
     *,
     decision_lifecycle_rows: list[dict[str, object]] | None = None,
     order_lifecycle_rows: list[dict[str, object]] | None = None,
+    unlinked_order_lifecycle_rows: list[dict[str, object]] | None = None,
     allow_authoritative_runtime_ledger_materialization: bool = False,
     split_mixed_source_decision_modes: bool = True,
 ) -> list[dict[str, object]]:
@@ -2221,6 +2237,7 @@ def _build_realized_strategy_pnl_rows(
                     partition_execution_rows,
                     decision_lifecycle_rows=partition_decision_rows,
                     order_lifecycle_rows=partition_order_rows,
+                    unlinked_order_lifecycle_rows=unlinked_order_lifecycle_rows,
                     allow_authoritative_runtime_ledger_materialization=(
                         allow_authoritative_runtime_ledger_materialization
                     ),
@@ -2242,6 +2259,7 @@ def _build_realized_strategy_pnl_rows(
     order_feed_fill_lifecycle_blockers = _order_feed_fill_lifecycle_blockers(
         execution_rows=execution_rows,
         order_lifecycle_rows=order_lifecycle_rows,
+        unlinked_order_lifecycle_rows=unlinked_order_lifecycle_rows,
     )
     for row in decision_lifecycle_rows or []:
         lifecycle_row = _runtime_lifecycle_ledger_row(row, event_type="decision")
@@ -3390,6 +3408,7 @@ def _query_timestamps(
     execution_rows: list[dict[str, object]] = []
     decision_lifecycle_rows: list[dict[str, object]] = []
     order_lifecycle_rows: list[dict[str, object]] = []
+    unlinked_order_lifecycle_rows: list[dict[str, object]] = []
     symbol_filter = _metadata_symbol_list(symbols or ())
     if source_activity_diagnostics is not None:
         source_activity_diagnostics.update(
@@ -3422,6 +3441,9 @@ def _query_timestamps(
         "\n                  and upper(coalesce(oe.symbol, e.symbol, d.symbol)) = any(%s)"
         if symbol_filter
         else ""
+    )
+    unlinked_order_event_symbol_clause = (
+        "\n                  and upper(oe.symbol) = any(%s)" if symbol_filter else ""
     )
     decision_symbol_params: tuple[object, ...] = (
         (symbol_filter,) if symbol_filter else ()
@@ -3686,6 +3708,68 @@ def _query_timestamps(
                 candidate_id=candidate_id,
                 hypothesis_id=hypothesis_id,
             )
+            if symbol_filter:
+                cur.execute(
+                    f"""
+                    select
+                        oe.id,
+                        oe.trade_decision_id,
+                        oe.execution_id,
+                        coalesce(oe.event_ts, oe.created_at),
+                        oe.symbol,
+                        oe.alpaca_account_label,
+                        null,
+                        null,
+                        null,
+                        oe.alpaca_order_id,
+                        oe.client_order_id,
+                        oe.event_type,
+                        oe.status,
+                        oe.event_fingerprint,
+                        oe.source_topic,
+                        oe.source_partition,
+                        oe.source_offset,
+                        oe.source_window_id,
+                        oe.raw_event,
+                        null,
+                        null
+                    from execution_order_events oe
+                    where oe.alpaca_account_label = %s
+                      and coalesce(oe.event_ts, oe.created_at) >= %s
+                      and coalesce(oe.event_ts, oe.created_at) < %s
+                      and (oe.execution_id is null or oe.trade_decision_id is null)
+                      and (
+                            lower(coalesce(oe.event_type, oe.status, '')) in (
+                                'fill', 'filled', 'partial_fill', 'partially_filled'
+                            )
+                            or coalesce(oe.filled_qty, 0) > 0
+                          )
+                      {unlinked_order_event_symbol_clause}
+                    order by coalesce(oe.event_ts, oe.created_at), oe.created_at
+                    """,
+                    (
+                        account_label,
+                        window_start,
+                        window_end,
+                        *([symbol_filter] if symbol_filter else []),
+                    ),
+                )
+                unlinked_order_lifecycle_rows = [
+                    _order_lifecycle_query_row(row)
+                    for row in cur.fetchall()
+                    if _order_lifecycle_query_row_has_time(row)
+                ]
+                if source_activity_diagnostics is not None:
+                    source_activity_diagnostics[
+                        "order_feed_unlinked_fill_lifecycle_count"
+                    ] = len(unlinked_order_lifecycle_rows)
+                    source_activity_diagnostics[
+                        "order_feed_unlinked_fill_lifecycle_event_ids"
+                    ] = _source_identifier_values(
+                        unlinked_order_lifecycle_rows,
+                        "execution_order_event_id",
+                        "event_fingerprint",
+                    )
             cur.execute(
                 f"""
                 select
@@ -3771,6 +3855,7 @@ def _query_timestamps(
                 lifecycle_blockers = _order_feed_fill_lifecycle_blockers(
                     execution_rows=execution_rows,
                     order_lifecycle_rows=order_lifecycle_rows,
+                    unlinked_order_lifecycle_rows=unlinked_order_lifecycle_rows,
                 )
                 source_activity_diagnostics["order_feed_fill_lifecycle_blockers"] = (
                     lifecycle_blockers
@@ -3800,6 +3885,7 @@ def _query_timestamps(
             execution_rows,
             decision_lifecycle_rows=decision_lifecycle_rows,
             order_lifecycle_rows=order_lifecycle_rows,
+            unlinked_order_lifecycle_rows=unlinked_order_lifecycle_rows,
             allow_authoritative_runtime_ledger_materialization=(
                 allow_authoritative_runtime_ledger_materialization
             ),

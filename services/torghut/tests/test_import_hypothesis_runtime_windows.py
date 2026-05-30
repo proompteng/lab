@@ -3276,6 +3276,180 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         )
         self.assertTrue(_runtime_ledger_bucket_profit_proof_present(signal_bucket))
 
+    def test_build_realized_strategy_pnl_rows_blocks_unlinked_fill_lifecycle(
+        self,
+    ) -> None:
+        execution_rows = [
+            {
+                "execution_id": "exec-buy",
+                "trade_decision_id": "decision-buy",
+                "computed_at": datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                "execution_event_at": datetime(
+                    2026, 3, 6, 14, 35, 2, tzinfo=timezone.utc
+                ),
+                "symbol": "AAPL",
+                "side": "buy",
+                "filled_qty": Decimal("1"),
+                "avg_fill_price": Decimal("100"),
+                "cost_amount": Decimal("0.10"),
+                "cost_basis": "broker_reported_commission_and_fees",
+                "account_label": "TORGHUT_SIM",
+                "strategy_id": "microbar-cross-sectional-pairs-v1",
+                "decision_hash": "decision-buy-hash",
+                "alpaca_order_id": "order-buy",
+                "execution_policy_hash": "policy-sha",
+                "cost_model_hash": "cost-sha",
+                "lineage_hash": "lineage-sha",
+                "source_decision_mode": "strategy_signal_paper",
+                "profit_proof_eligible": True,
+            },
+            {
+                "execution_id": "exec-sell",
+                "trade_decision_id": "decision-sell",
+                "computed_at": datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
+                "execution_event_at": datetime(
+                    2026, 3, 6, 14, 40, 2, tzinfo=timezone.utc
+                ),
+                "symbol": "AAPL",
+                "side": "sell",
+                "filled_qty": Decimal("1"),
+                "avg_fill_price": Decimal("101"),
+                "cost_amount": Decimal("0.10"),
+                "cost_basis": "broker_reported_commission_and_fees",
+                "account_label": "TORGHUT_SIM",
+                "strategy_id": "microbar-cross-sectional-pairs-v1",
+                "decision_hash": "decision-sell-hash",
+                "alpaca_order_id": "order-sell",
+                "execution_policy_hash": "policy-sha",
+                "cost_model_hash": "cost-sha",
+                "lineage_hash": "lineage-sha",
+                "source_decision_mode": "strategy_signal_paper",
+                "profit_proof_eligible": True,
+            },
+        ]
+        order_lifecycle_rows = [
+            {
+                "execution_order_event_id": "event-new-buy",
+                "trade_decision_id": "decision-buy",
+                "execution_id": "exec-buy",
+                "event_ts": datetime(2026, 3, 6, 14, 35, 1, tzinfo=timezone.utc),
+                "symbol": "AAPL",
+                "account_label": "TORGHUT_SIM",
+                "strategy_id": "microbar-cross-sectional-pairs-v1",
+                "decision_hash": "decision-buy-hash",
+                "alpaca_order_id": "order-buy",
+                "event_type": "new",
+                "source_topic": "alpaca-trade-updates",
+                "source_partition": 0,
+                "source_offset": 11,
+                "source_window_id": "source-window-buy",
+                "execution_policy_hash": "policy-sha",
+                "cost_model_hash": "cost-sha",
+                "lineage_hash": "lineage-sha",
+                "source_decision_mode": "strategy_signal_paper",
+                "profit_proof_eligible": True,
+            },
+            {
+                "execution_order_event_id": "event-fill-buy",
+                "trade_decision_id": "decision-buy",
+                "execution_id": "exec-buy",
+                "event_ts": datetime(2026, 3, 6, 14, 35, 2, tzinfo=timezone.utc),
+                "symbol": "AAPL",
+                "account_label": "TORGHUT_SIM",
+                "strategy_id": "microbar-cross-sectional-pairs-v1",
+                "decision_hash": "decision-buy-hash",
+                "alpaca_order_id": "order-buy",
+                "event_type": "fill",
+                "source_topic": "alpaca-trade-updates",
+                "source_partition": 0,
+                "source_offset": 12,
+                "source_window_id": "source-window-buy",
+                "lineage_hash": "lineage-sha",
+                "source_decision_mode": "strategy_signal_paper",
+                "profit_proof_eligible": True,
+            },
+            {
+                "execution_order_event_id": "event-new-sell",
+                "trade_decision_id": "decision-sell",
+                "execution_id": "exec-sell",
+                "event_ts": datetime(2026, 3, 6, 14, 40, 1, tzinfo=timezone.utc),
+                "symbol": "AAPL",
+                "account_label": "TORGHUT_SIM",
+                "strategy_id": "microbar-cross-sectional-pairs-v1",
+                "decision_hash": "decision-sell-hash",
+                "alpaca_order_id": "order-sell",
+                "event_type": "new",
+                "source_topic": "alpaca-trade-updates",
+                "source_partition": 0,
+                "source_offset": 13,
+                "source_window_id": "source-window-sell",
+                "execution_policy_hash": "policy-sha",
+                "cost_model_hash": "cost-sha",
+                "lineage_hash": "lineage-sha",
+                "source_decision_mode": "strategy_signal_paper",
+                "profit_proof_eligible": True,
+            },
+            {
+                "execution_order_event_id": "event-fill-sell",
+                "trade_decision_id": "decision-sell",
+                "execution_id": "exec-sell",
+                "event_ts": datetime(2026, 3, 6, 14, 40, 2, tzinfo=timezone.utc),
+                "symbol": "AAPL",
+                "account_label": "TORGHUT_SIM",
+                "strategy_id": "microbar-cross-sectional-pairs-v1",
+                "decision_hash": "decision-sell-hash",
+                "alpaca_order_id": "order-sell",
+                "event_type": "fill",
+                "source_topic": "alpaca-trade-updates",
+                "source_partition": 0,
+                "source_offset": 14,
+                "source_window_id": "source-window-sell",
+                "lineage_hash": "lineage-sha",
+                "source_decision_mode": "strategy_signal_paper",
+                "profit_proof_eligible": True,
+            },
+        ]
+
+        rows = _build_realized_strategy_pnl_rows(
+            execution_rows,
+            order_lifecycle_rows=order_lifecycle_rows,
+            unlinked_order_lifecycle_rows=[
+                {
+                    "execution_order_event_id": "unlinked-fill",
+                    "event_ts": datetime(
+                        2026, 3, 6, 14, 41, 2, tzinfo=timezone.utc
+                    ),
+                    "symbol": "AAPL",
+                    "account_label": "TORGHUT_SIM",
+                    "alpaca_order_id": "external-close-order",
+                    "event_type": "fill",
+                    "source_topic": "alpaca-trade-updates",
+                    "source_partition": 0,
+                    "source_offset": 15,
+                    "source_window_id": "source-window-external",
+                }
+            ],
+            allow_authoritative_runtime_ledger_materialization=True,
+        )
+
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertFalse(row["post_cost_promotion_eligible"])
+        self.assertFalse(row["authoritative"])
+        self.assertIn(
+            "order_feed_unlinked_fill_lifecycle_present",
+            row["runtime_ledger_blockers"],
+        )
+        self.assertEqual(
+            row["promotion_blocker"],
+            "execution_reconstruction_not_runtime_ledger_proof",
+        )
+        bucket = cast(Mapping[str, object], row["runtime_ledger_bucket"])
+        self.assertIn(
+            "order_feed_unlinked_fill_lifecycle_present", bucket["blockers"]
+        )
+        self.assertFalse(_runtime_ledger_bucket_profit_proof_present(bucket))
+
     def test_build_realized_strategy_pnl_rows_preserves_source_backed_blocked_basis(
         self,
     ) -> None:
@@ -3650,6 +3824,77 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(diagnostics["order_lifecycle_rows_before_lineage_filter"], 1)
         self.assertEqual(diagnostics["tca_rows_before_lineage_filter"], 1)
 
+    def test_query_timestamps_records_unlinked_fill_lifecycle_diagnostics(
+        self,
+    ) -> None:
+        cursor = _FakeCursor()
+        cursor._results = [
+            [],
+            [],
+            [],
+            [
+                (
+                    "unlinked-event-id",
+                    None,
+                    None,
+                    datetime(2026, 3, 6, 14, 41, tzinfo=timezone.utc),
+                    "AAPL",
+                    "TORGHUT_SIM",
+                    None,
+                    None,
+                    None,
+                    "external-close-order",
+                    "external-close-client",
+                    "fill",
+                    "filled",
+                    "unlinked-event-fingerprint",
+                    "alpaca-trade-updates",
+                    0,
+                    42,
+                    "source-window-external",
+                    {},
+                    None,
+                    None,
+                )
+            ],
+            [],
+        ]
+        connection = _FakeConnection(cursor)
+        diagnostics: dict[str, object] = {}
+
+        with patch(
+            "scripts.import_hypothesis_runtime_windows.psycopg.connect",
+            return_value=connection,
+        ):
+            _query_timestamps(
+                dsn="postgresql://example",
+                strategy_names=["microbar-cross-sectional-pairs-v1"],
+                account_label="TORGHUT_SIM",
+                window_start=datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                window_end=datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                symbols=["AAPL"],
+                source_activity_diagnostics=diagnostics,
+            )
+
+        self.assertEqual(len(cursor.executed), 5)
+        unlinked_query, unlinked_params = cursor.executed[3]
+        self.assertIn("from execution_order_events oe", unlinked_query)
+        self.assertIn(
+            "and (oe.execution_id is null or oe.trade_decision_id is null)",
+            unlinked_query,
+        )
+        self.assertIn("upper(oe.symbol) = any(%s)", unlinked_query)
+        self.assertEqual(unlinked_params[-1], ["AAPL"])
+        self.assertEqual(diagnostics["order_feed_unlinked_fill_lifecycle_count"], 1)
+        self.assertEqual(
+            diagnostics["order_feed_unlinked_fill_lifecycle_event_ids"],
+            ["unlinked-event-id"],
+        )
+        self.assertIn(
+            "order_feed_unlinked_fill_lifecycle_present",
+            _source_activity_diagnostics_blockers(diagnostics),
+        )
+
     def test_query_timestamps_uses_source_account_but_materializes_target_account(
         self,
     ) -> None:
@@ -3754,6 +3999,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self,
     ) -> None:
         cursor = _FakeCursor()
+        cursor._results.insert(3, [])
         connection = _FakeConnection(cursor)
         window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
         window_end = datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc)
@@ -3771,11 +4017,12 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 symbols=[" aapl ", "AAPL"],
             )
 
-        self.assertEqual(len(cursor.executed), 4)
+        self.assertEqual(len(cursor.executed), 5)
         decision_query, decision_params = cursor.executed[0]
         execution_query, execution_params = cursor.executed[1]
         order_event_query, order_event_params = cursor.executed[2]
-        tca_query, tca_params = cursor.executed[3]
+        unlinked_query, unlinked_params = cursor.executed[3]
+        tca_query, tca_params = cursor.executed[4]
         self.assertIn("upper(d.symbol) = any(%s)", decision_query)
         self.assertEqual(decision_params[-1], ["AAPL"])
         self.assertIn("upper(d.symbol) = any(%s)", execution_query)
@@ -3787,6 +4034,13 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             order_event_query,
         )
         self.assertEqual(order_event_params[-2:], (["AAPL"], ["AAPL"]))
+        self.assertIn("from execution_order_events oe", unlinked_query)
+        self.assertIn(
+            "and (oe.execution_id is null or oe.trade_decision_id is null)",
+            unlinked_query,
+        )
+        self.assertIn("upper(oe.symbol) = any(%s)", unlinked_query)
+        self.assertEqual(unlinked_params[-1], ["AAPL"])
         self.assertIn("upper(d.symbol) = any(%s)", tca_query)
         self.assertIn("upper(e.symbol) = any(%s)", tca_query)
         self.assertEqual(tca_params[-2:], (["AAPL"], ["AAPL"]))
