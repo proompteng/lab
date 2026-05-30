@@ -23,15 +23,12 @@ from typing import Any, Protocol, cast
 from urllib.parse import urljoin
 from urllib.request import urlopen
 
+from app.trading.runtime_ledger_proof_policy import runtime_ledger_proof_policy_from_env
+
 
 SCHEMA_VERSION = "torghut.runtime-ledger-live-paper-proof-packet.v1"
 DOC29_LIVE_SCALE_GATE = "live_scale_observed"
-DEFAULT_MIN_RUNTIME_LEDGER_NET_PNL = Decimal("500")
-DEFAULT_MIN_RUNTIME_LEDGER_DAILY_NET_PNL = Decimal("500")
-DEFAULT_MIN_RUNTIME_LEDGER_TRADING_DAYS = 1
-DEFAULT_MAX_RUNTIME_LEDGER_DRAWDOWN_PCT_EQUITY = Decimal("0.08")
-DEFAULT_MAX_RUNTIME_LEDGER_BEST_DAY_SHARE = Decimal("0.25")
-DEFAULT_MAX_RUNTIME_LEDGER_SYMBOL_CONCENTRATION_SHARE = Decimal("0.50")
+DEFAULT_RUNTIME_LEDGER_PROOF_POLICY = runtime_ledger_proof_policy_from_env()
 STATUS_ENDPOINT = "/trading/status"
 PAPER_ROUTE_EVIDENCE_ENDPOINT = "/trading/paper-route-evidence"
 COMPLETION_DOC29_ENDPOINT = "/trading/completion/doc29"
@@ -1227,17 +1224,23 @@ def build_runtime_ledger_proof_packet(
     paper_route_evidence: Mapping[str, Any] | None = None,
     runtime_window_import: Mapping[str, Any] | None = None,
     completion_status: Mapping[str, Any] | None = None,
-    min_runtime_ledger_net_pnl: Decimal = DEFAULT_MIN_RUNTIME_LEDGER_NET_PNL,
-    min_runtime_ledger_daily_net_pnl: Decimal = DEFAULT_MIN_RUNTIME_LEDGER_DAILY_NET_PNL,
-    min_runtime_ledger_trading_days: int = DEFAULT_MIN_RUNTIME_LEDGER_TRADING_DAYS,
+    min_runtime_ledger_net_pnl: Decimal = (
+        DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.min_net_pnl_after_costs
+    ),
+    min_runtime_ledger_daily_net_pnl: Decimal = (
+        DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.min_daily_net_pnl_after_costs
+    ),
+    min_runtime_ledger_trading_days: int = (
+        DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.min_trading_days
+    ),
     max_runtime_ledger_drawdown_pct_equity: Decimal = (
-        DEFAULT_MAX_RUNTIME_LEDGER_DRAWDOWN_PCT_EQUITY
+        DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.max_drawdown_pct_equity
     ),
     max_runtime_ledger_best_day_share: Decimal = (
-        DEFAULT_MAX_RUNTIME_LEDGER_BEST_DAY_SHARE
+        DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.max_best_day_share
     ),
     max_runtime_ledger_symbol_concentration_share: Decimal = (
-        DEFAULT_MAX_RUNTIME_LEDGER_SYMBOL_CONCENTRATION_SHARE
+        DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.max_symbol_concentration_share
     ),
     generated_at: str | None = None,
 ) -> dict[str, Any]:
@@ -1911,33 +1914,33 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--min-runtime-ledger-net-pnl",
-        default=str(DEFAULT_MIN_RUNTIME_LEDGER_NET_PNL),
+        default=str(DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.min_net_pnl_after_costs),
         help="Minimum total runtime-ledger net strategy PnL after costs.",
     )
     parser.add_argument(
         "--min-runtime-ledger-daily-net-pnl",
-        default=str(DEFAULT_MIN_RUNTIME_LEDGER_DAILY_NET_PNL),
+        default=str(DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.min_daily_net_pnl_after_costs),
         help="Minimum runtime-ledger net strategy PnL after costs per observed trading day.",
     )
     parser.add_argument(
         "--min-runtime-ledger-trading-days",
         type=int,
-        default=DEFAULT_MIN_RUNTIME_LEDGER_TRADING_DAYS,
+        default=DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.min_trading_days,
         help="Minimum observed runtime-ledger trading days.",
     )
     parser.add_argument(
         "--max-runtime-ledger-drawdown-pct-equity",
-        default=str(DEFAULT_MAX_RUNTIME_LEDGER_DRAWDOWN_PCT_EQUITY),
+        default=str(DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.max_drawdown_pct_equity),
         help="Maximum observed runtime-ledger drawdown as a fraction of equity.",
     )
     parser.add_argument(
         "--max-runtime-ledger-best-day-share",
-        default=str(DEFAULT_MAX_RUNTIME_LEDGER_BEST_DAY_SHARE),
+        default=str(DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.max_best_day_share),
         help="Maximum share of post-cost runtime-ledger PnL attributable to one trading day.",
     )
     parser.add_argument(
         "--max-runtime-ledger-symbol-concentration-share",
-        default=str(DEFAULT_MAX_RUNTIME_LEDGER_SYMBOL_CONCENTRATION_SHARE),
+        default=str(DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.max_symbol_concentration_share),
         help="Maximum share of post-cost runtime-ledger PnL attributable to one symbol.",
     )
     parser.add_argument("--generated-at", default=None)

@@ -44,6 +44,7 @@ from .market_context_domains import (
 from .discovery.profit_target_oracle import evaluate_profit_target_oracle
 from .profit_windows import build_profit_window_contract
 from .profit_leases import build_profit_lease_projection
+from .runtime_ledger import POST_COST_PNL_BASIS
 from .tca import build_tca_gate_inputs
 
 _CAPITAL_STAGE_ORDER = (
@@ -81,7 +82,6 @@ _AUTORESEARCH_PORTFOLIO_READY_STATUSES = (
     "accepted",
     "promoted",
 )
-_PROMOTION_GRADE_RUNTIME_LEDGER_PNL_BASIS = "realized_strategy_pnl_after_explicit_costs"
 _RUNTIME_LEDGER_REPAIR_SCAN_LIMIT = 256
 _RUNTIME_LEDGER_REPAIR_CANDIDATE_LIMIT = 8
 _RUNTIME_WINDOW_IMPORT_CONTINUITY_READY_STATES = frozenset(
@@ -860,10 +860,7 @@ def _certificate_runtime_ledger_reason_codes(
     ]
     reasons.extend(blockers)
 
-    if (
-        _safe_text(ledger_payload.get("pnl_basis"))
-        != "realized_strategy_pnl_after_explicit_costs"
-    ):
+    if _safe_text(ledger_payload.get("pnl_basis")) != POST_COST_PNL_BASIS:
         reasons.append("runtime_ledger_pnl_basis_missing")
 
     filled_notional = _safe_decimal(ledger_payload.get("filled_notional"))
@@ -1031,10 +1028,7 @@ def _runtime_ledger_selection_score(payload: Mapping[str, object] | None) -> int
     ]
     if not blockers:
         score += 1
-    if (
-        _safe_text(payload.get("pnl_basis"))
-        == "realized_strategy_pnl_after_explicit_costs"
-    ):
+    if _safe_text(payload.get("pnl_basis")) == POST_COST_PNL_BASIS:
         score += 1
     if (_safe_decimal(payload.get("filled_notional")) or Decimal("0")) > 0:
         score += 1
@@ -1145,10 +1139,7 @@ def _runtime_ledger_repair_reason_codes(
     reasons.extend(_runtime_ledger_target_reason_codes(payload, manifest=manifest))
     if _safe_text(payload.get("observed_stage")) != "live":
         reasons.append("runtime_ledger_stage_not_live")
-    if (
-        _safe_text(payload.get("pnl_basis"))
-        != _PROMOTION_GRADE_RUNTIME_LEDGER_PNL_BASIS
-    ):
+    if _safe_text(payload.get("pnl_basis")) != POST_COST_PNL_BASIS:
         reasons.append("runtime_ledger_pnl_basis_missing")
     if (_safe_decimal(payload.get("filled_notional")) or Decimal("0")) <= 0:
         reasons.append("runtime_ledger_filled_notional_missing")
@@ -1273,8 +1264,7 @@ def _runtime_ledger_paper_probation_eligible(
     return (
         _safe_text(candidate.get("observed_stage")) == "paper"
         and reasons == _RUNTIME_LEDGER_PAPER_PROBATION_ALLOWED_REASONS
-        and _safe_text(candidate.get("pnl_basis"))
-        == _PROMOTION_GRADE_RUNTIME_LEDGER_PNL_BASIS
+        and _safe_text(candidate.get("pnl_basis")) == POST_COST_PNL_BASIS
         and (_safe_decimal(candidate.get("filled_notional")) or Decimal("0")) > 0
         and _safe_int(candidate.get("fill_count")) > 0
         and _safe_int(candidate.get("closed_trade_count")) > 0

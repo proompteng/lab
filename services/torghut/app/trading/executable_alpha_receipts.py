@@ -9,6 +9,8 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal, cast
 
+from .runtime_ledger import POST_COST_PNL_BASIS
+
 CAPITAL_REPLAY_BOARD_SCHEMA_VERSION = "torghut.capital-replay-board.v1"
 EXECUTABLE_ALPHA_RECEIPTS_SCHEMA_VERSION = "torghut.executable-alpha-receipts.v1"
 EXECUTABLE_ALPHA_REPAIR_RECEIPT_SCHEMA_VERSION = (
@@ -158,7 +160,6 @@ _RUNTIME_LEDGER_PAPER_PROBATION_REASON = "runtime_ledger_stage_not_live"
 _RUNTIME_LEDGER_PAPER_PROBATION_ALLOWED_REASONS = {
     _RUNTIME_LEDGER_PAPER_PROBATION_REASON
 }
-_RUNTIME_LEDGER_PROMOTION_PNL_BASIS = "realized_strategy_pnl_after_explicit_costs"
 _ZERO_RUNTIME_EVIDENCE_REASONS = {
     "hypothesis_window_decisions_missing",
     "hypothesis_window_orders_missing",
@@ -1400,7 +1401,7 @@ def _runtime_ledger_paper_probation_eligible(
     return (
         _text(item.get("observed_stage")) == "paper"
         and reasons == _RUNTIME_LEDGER_PAPER_PROBATION_ALLOWED_REASONS
-        and _text(item.get("pnl_basis")) == _RUNTIME_LEDGER_PROMOTION_PNL_BASIS
+        and _text(item.get("pnl_basis")) == POST_COST_PNL_BASIS
         and (_float(item.get("filled_notional")) or 0.0) > 0.0
         and _int(item.get("fill_count")) > 0
         and _int(item.get("closed_trade_count")) > 0
@@ -1568,7 +1569,7 @@ def _runtime_ledger_economic_repair_item(
                 "status": "blocked",
                 "required_stage": "live",
                 "observed_stage": item.get("observed_stage"),
-                "required_basis": "realized_strategy_pnl_after_explicit_costs",
+                "required_basis": POST_COST_PNL_BASIS,
             },
             {
                 "code": "promotion_certificate_required",
