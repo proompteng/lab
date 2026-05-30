@@ -1896,8 +1896,6 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "side": "buy",
                     "filled_qty": Decimal("1"),
                     "avg_fill_price": Decimal("100"),
-                    "cost_amount": Decimal("0.20"),
-                    "cost_basis": "broker_reported_commission_and_fees",
                     "account_label": "TORGHUT_SIM",
                     "strategy_id": "microbar-cross-sectional-pairs-v1",
                     "decision_hash": "decision-buy",
@@ -1920,8 +1918,6 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "side": "sell",
                     "filled_qty": Decimal("1"),
                     "avg_fill_price": Decimal("101"),
-                    "cost_amount": Decimal("0.10"),
-                    "cost_basis": "broker_reported_commission_and_fees",
                     "account_label": "TORGHUT_SIM",
                     "strategy_id": "microbar-cross-sectional-pairs-v1",
                     "decision_hash": "decision-sell",
@@ -1953,6 +1949,10 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         assert isinstance(bucket, dict)
         self.assertEqual(bucket["blockers"], [])
         self.assertEqual(bucket["pnl_basis"], POST_COST_BASIS_RUNTIME_LEDGER)
+        self.assertEqual(bucket["cost_amount"], "0.30")
+        self.assertEqual(
+            bucket["cost_basis_counts"], {"broker_reported_commission_and_fees": 2}
+        )
         self.assertEqual(bucket["source_materialization"], "execution_order_events")
         self.assertEqual(bucket["account_equity"], "10000")
         self.assertEqual(bucket["account_equity_source"], "equity")
@@ -2119,7 +2119,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "account_label": "TORGHUT_SIM",
                     "strategy_id": "microbar-cross-sectional-pairs-v1",
                     "decision_hash": "decision-sell",
-                    "alpaca_order_id": "order-sell",
+                    "alpaca_order_id": "order-unmatched",
                     "execution_policy_hash": "policy-sha",
                     "cost_model_hash": "cost-sha",
                     "lineage_hash": "lineage-sha",
@@ -2150,7 +2150,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(bucket["pnl_basis"], POST_COST_BASIS_EXECUTION_RECONSTRUCTION)
         self.assertEqual(bucket["authoritative"], False)
 
-    def test_build_realized_strategy_pnl_rows_materializes_order_feed_fills_once(
+    def test_build_realized_strategy_pnl_rows_does_not_count_order_feed_fill_economics(
         self,
     ) -> None:
         rows = _build_realized_strategy_pnl_rows(
@@ -2165,7 +2165,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "filled_qty": Decimal("1"),
                     "avg_fill_price": Decimal("100"),
                     "cost_amount": Decimal("0.20"),
-                    "cost_basis": "execution_reconstruction_should_not_count",
+                    "cost_basis": "modeled_paper_cost_budget",
                     "decision_hash": "decision-buy",
                     "alpaca_order_id": "order-buy",
                     "execution_policy_hash": "policy-sha",
@@ -2182,7 +2182,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "filled_qty": Decimal("1"),
                     "avg_fill_price": Decimal("101"),
                     "cost_amount": Decimal("0.10"),
-                    "cost_basis": "execution_reconstruction_should_not_count",
+                    "cost_basis": "modeled_paper_cost_budget",
                     "decision_hash": "decision-sell",
                     "alpaca_order_id": "order-sell",
                     "execution_policy_hash": "policy-sha",
@@ -2314,16 +2314,22 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             rows[0]["computed_at"],
             datetime(2026, 3, 6, 14, 40, 1, tzinfo=timezone.utc),
         )
-        self.assertEqual(rows[0]["realized_net_pnl"], Decimal("0.70"))
+        self.assertEqual(rows[0]["realized_net_pnl"], Decimal("0"))
+        self.assertEqual(rows[0]["post_cost_promotion_eligible"], False)
+        self.assertEqual(rows[0]["authoritative"], False)
         bucket = rows[0]["runtime_ledger_bucket"]
         self.assertIsInstance(bucket, dict)
         assert isinstance(bucket, dict)
-        self.assertEqual(bucket["fill_count"], 2)
-        self.assertEqual(
-            bucket["cost_basis_counts"],
-            {"broker_reported_commission_and_fees": 2},
+        self.assertEqual(bucket["fill_count"], 0)
+        self.assertEqual(bucket["cost_basis_counts"], {})
+        self.assertIn(
+            "runtime_ledger_cost_basis_non_promotion_grade",
+            bucket["blockers"],
         )
-        self.assertEqual(bucket["blockers"], [])
+        self.assertNotIn(
+            "broker_reported_commission_and_fees",
+            bucket["cost_basis_counts"],
+        )
         self.assertEqual(bucket["source_materialization"], "execution_order_events")
 
     def test_order_event_lifecycle_uses_execution_raw_order_metadata(self) -> None:

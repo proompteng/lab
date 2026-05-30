@@ -1971,14 +1971,7 @@ def _order_feed_fill_lifecycle_blockers(
         if order_id is None:
             continue
         observed_fill_order_ids.add(order_id)
-        if (
-            _runtime_lifecycle_ledger_row(
-                row,
-                event_type=event_type,
-                require_complete_fill=True,
-            )
-            is not None
-        ):
+        if _runtime_ledger_row_time(row) is not None:
             complete_fill_order_ids.add(order_id)
 
     blockers: list[str] = []
@@ -2083,7 +2076,6 @@ def _build_realized_strategy_pnl_rows(
     ledger_rows: list[RuntimeLedgerFill | dict[str, object]] = []
     event_times: list[datetime] = []
     event_sourced_lifecycle_rows = 0
-    materialized_order_fill_ids: set[str] = set()
     order_feed_fill_lifecycle_blockers = _order_feed_fill_lifecycle_blockers(
         execution_rows=execution_rows,
         order_lifecycle_rows=order_lifecycle_rows,
@@ -2101,19 +2093,19 @@ def _build_realized_strategy_pnl_rows(
         event_type = _runtime_ledger_event_type(
             {str(key): value for key, value in row.items()}
         )
+        if event_type in _RUNTIME_LEDGER_FILL_EVENTS:
+            event_time = _runtime_ledger_row_time(row)
+            if isinstance(event_time, datetime):
+                event_times.append(event_time)
+            continue
         lifecycle_row = _runtime_lifecycle_ledger_row(
             row,
             event_type=event_type,
-            require_complete_fill=event_type in _RUNTIME_LEDGER_FILL_EVENTS,
         )
         if lifecycle_row is None:
             continue
         ledger_rows.append(lifecycle_row)
         event_sourced_lifecycle_rows += 1
-        if event_type in _RUNTIME_LEDGER_FILL_EVENTS:
-            order_id = _runtime_order_id(lifecycle_row)
-            if order_id is not None:
-                materialized_order_fill_ids.add(order_id)
         event_time = lifecycle_row.get("executed_at")
         if isinstance(event_time, datetime):
             event_times.append(event_time)
@@ -2164,8 +2156,6 @@ def _build_realized_strategy_pnl_rows(
             "client_order_id",
             "execution_correlation_id",
         )
-        if order_id is not None and order_id in materialized_order_fill_ids:
-            continue
         event_times.append(ledger_computed_at)
         if isinstance(fill_event_at, datetime):
             event_times.append(fill_event_at)
