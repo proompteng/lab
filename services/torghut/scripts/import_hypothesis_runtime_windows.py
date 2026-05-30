@@ -74,6 +74,8 @@ EXACT_REPLAY_ARTIFACT_AUTHORITY_BLOCKERS = (
     "runtime_ledger_source_window_missing",
     "runtime_ledger_source_refs_missing",
 )
+RUNTIME_LEDGER_SOURCE_WINDOW_MISSING_BLOCKER = "runtime_ledger_source_window_missing"
+RUNTIME_LEDGER_SOURCE_REFS_MISSING_BLOCKER = "runtime_ledger_source_refs_missing"
 _RUNTIME_LEDGER_DECISION_EVENTS = frozenset(
     {"decision", "trade_decision", "signal_decision"}
 )
@@ -669,6 +671,42 @@ def _mapping_hash_count(value: object) -> int:
     return sum(1 for key in value.keys() if str(key).strip())
 
 
+def _runtime_ledger_source_window_present(bucket: Mapping[str, object]) -> bool:
+    start = _parse_dt_or_none(
+        bucket.get("source_window_start")
+        or bucket.get("runtime_ledger_source_window_start")
+    )
+    end = _parse_dt_or_none(
+        bucket.get("source_window_end") or bucket.get("runtime_ledger_source_window_end")
+    )
+    return start is not None and end is not None and end > start
+
+
+def _positive_mapping_value_count(value: object) -> int:
+    if not isinstance(value, Mapping):
+        return 0
+    count = 0
+    for item in value.values():
+        parsed = _decimal_or_none(item)
+        if parsed is not None and parsed > 0:
+            count += 1
+    return count
+
+
+def _runtime_ledger_source_refs_present(bucket: Mapping[str, object]) -> bool:
+    source_refs = _metadata_text_list(bucket.get("source_refs"))
+    source_ref = bucket.get("source_ref")
+    source_ref_present = bool(source_refs)
+    if isinstance(source_ref, Mapping):
+        source_ref_present = source_ref_present or bool(source_ref)
+    elif _text_or_none(source_ref) is not None:
+        source_ref_present = True
+    return (
+        source_ref_present
+        and _positive_mapping_value_count(bucket.get("source_row_counts")) > 0
+    )
+
+
 def _runtime_ledger_bucket_profit_proof_blockers(
     bucket: Mapping[str, object],
 ) -> list[str]:
@@ -688,6 +726,10 @@ def _runtime_ledger_bucket_profit_proof_blockers(
         add("runtime_ledger_pnl_basis_not_runtime_ledger")
     if bucket.get("ledger_schema_version") not in RUNTIME_LEDGER_BUCKET_SCHEMAS:
         add("runtime_ledger_schema_not_supported")
+    if not _runtime_ledger_source_window_present(bucket):
+        add(RUNTIME_LEDGER_SOURCE_WINDOW_MISSING_BLOCKER)
+    if not _runtime_ledger_source_refs_present(bucket):
+        add(RUNTIME_LEDGER_SOURCE_REFS_MISSING_BLOCKER)
     for blocker in _metadata_text_list(bucket.get("blockers")):
         add(blocker)
     if _nonnegative_int(bucket.get("fill_count")) <= 0:
@@ -820,6 +862,31 @@ def _append_runtime_ledger_tca_row_blocker(
         row["runtime_ledger_bucket"] = bucket_payload
         row["runtime_ledger_blockers"] = blockers
         row["post_cost_promotion_eligible"] = False
+
+
+def _with_runtime_ledger_source_authority_context(
+    bucket: Mapping[str, object],
+    *,
+    source_window_start: datetime,
+    source_window_end: datetime,
+    source_refs: Sequence[str],
+    source_row_counts: Mapping[str, int],
+) -> dict[str, object]:
+    payload = dict(bucket)
+    payload.setdefault("source_window_start", source_window_start.isoformat())
+    payload.setdefault("source_window_end", source_window_end.isoformat())
+    if source_refs:
+        existing_refs = _metadata_text_list(payload.get("source_refs"))
+        payload["source_refs"] = list(dict.fromkeys([*existing_refs, *source_refs]))
+    existing_counts = _as_mapping(payload.get("source_row_counts"))
+    merged_counts: dict[str, int] = {
+        str(key): _nonnegative_int(value) for key, value in existing_counts.items()
+    }
+    for key, value in source_row_counts.items():
+        merged_counts.setdefault(str(key), max(0, int(value)))
+    if merged_counts:
+        payload["source_row_counts"] = dict(sorted(merged_counts.items()))
+    return payload
 
 
 def _mark_runtime_ledger_tca_rows_as_exact_replay_artifacts(
@@ -1974,6 +2041,16 @@ def _build_realized_strategy_pnl_rows(
     source_decision_profit_proof_eligible = _source_decision_rows_profit_proof_eligible(
         source_decision_rows
     )
+    source_row_counts = {
+        "trade_decisions": len(decision_lifecycle_rows or []),
+        "executions": len(execution_rows),
+        "execution_order_events": len(order_lifecycle_rows or []),
+    }
+    source_refs = (
+        "postgres:trade_decisions",
+        "postgres:executions",
+        "postgres:execution_order_events",
+    )
     realized_rows: list[dict[str, object]] = []
     for bucket in build_runtime_ledger_buckets(
         ledger_rows,
@@ -2021,6 +2098,15 @@ def _build_realized_strategy_pnl_rows(
                         SOURCE_DECISION_MODE_NOT_PROFIT_PROOF_ELIGIBLE_BLOCKER
                     )
                 row["runtime_ledger_bucket"] = bucket_payload
+        if isinstance(bucket_payload, Mapping):
+            bucket_payload = _with_runtime_ledger_source_authority_context(
+                bucket_payload,
+                source_window_start=bucket.bucket_started_at,
+                source_window_end=bucket.bucket_ended_at,
+                source_refs=source_refs,
+                source_row_counts=source_row_counts,
+            )
+            row["runtime_ledger_bucket"] = bucket_payload
         event_sourced_runtime_ledger = (
             allow_authoritative_runtime_ledger_materialization
             and event_sourced_lifecycle_rows > 0

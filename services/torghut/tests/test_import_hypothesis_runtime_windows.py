@@ -209,6 +209,18 @@ class _SourceLedgerCursor:
                     {
                         "cost_basis_counts": {"broker_reported_commission_and_fees": 2},
                         "source_decision_mode_counts": {"strategy_signal_paper": 2},
+                        "source_window_start": "2026-03-06T14:30:00+00:00",
+                        "source_window_end": "2026-03-06T15:00:00+00:00",
+                        "source_refs": [
+                            "postgres:trade_decisions",
+                            "postgres:executions",
+                            "postgres:execution_order_events",
+                        ],
+                        "source_row_counts": {
+                            "trade_decisions": 2,
+                            "executions": 2,
+                            "execution_order_events": 4,
+                        },
                         "profit_proof_eligible": True,
                     },
                 )
@@ -274,6 +286,18 @@ def _complete_runtime_ledger_bucket(**overrides: object) -> dict[str, object]:
         "cost_model_hash_counts": {"cost-sha": 2},
         "lineage_hash_counts": {"lineage-sha": 2},
         "source_decision_mode_counts": {"strategy_signal_paper": 2},
+        "source_window_start": "2026-03-06T14:30:00+00:00",
+        "source_window_end": "2026-03-06T15:00:00+00:00",
+        "source_refs": [
+            "postgres:trade_decisions",
+            "postgres:executions",
+            "postgres:execution_order_events",
+        ],
+        "source_row_counts": {
+            "trade_decisions": 2,
+            "executions": 2,
+            "execution_order_events": 4,
+        },
         "profit_proof_eligible": True,
         "blockers": [],
     }
@@ -650,6 +674,30 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         )
         self.assertFalse(_runtime_ledger_bucket_profit_proof_present(bucket))
 
+    def test_runtime_ledger_profit_proof_rejects_missing_source_window_or_refs(
+        self,
+    ) -> None:
+        missing_window = _complete_runtime_ledger_bucket(
+            source_window_start=None,
+            source_window_end=None,
+        )
+        missing_refs = _complete_runtime_ledger_bucket(
+            source_refs=[],
+            source_ref=None,
+            source_row_counts={},
+        )
+
+        self.assertIn(
+            "runtime_ledger_source_window_missing",
+            _runtime_ledger_bucket_profit_proof_blockers(missing_window),
+        )
+        self.assertFalse(_runtime_ledger_bucket_profit_proof_present(missing_window))
+        self.assertIn(
+            "runtime_ledger_source_refs_missing",
+            _runtime_ledger_bucket_profit_proof_blockers(missing_refs),
+        )
+        self.assertFalse(_runtime_ledger_bucket_profit_proof_present(missing_refs))
+
     def test_runtime_ledger_profit_proof_rejects_modeled_cost_basis(
         self,
     ) -> None:
@@ -804,6 +852,18 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     blockers_json=[],
                     payload_json={
                         "source_decision_mode_counts": {"strategy_signal_paper": 2},
+                        "source_window_start": "2026-03-06T14:30:00+00:00",
+                        "source_window_end": "2026-03-06T15:00:00+00:00",
+                        "source_refs": [
+                            "postgres:trade_decisions",
+                            "postgres:executions",
+                            "postgres:execution_order_events",
+                        ],
+                        "source_row_counts": {
+                            "trade_decisions": 2,
+                            "executions": 2,
+                            "execution_order_events": 4,
+                        },
                         "profit_proof_eligible": True,
                     },
                 )
@@ -1669,6 +1729,20 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(bucket["source_materialization"], "execution_order_events")
         self.assertEqual(bucket["account_equity"], "10000")
         self.assertEqual(bucket["account_equity_source"], "equity")
+        self.assertEqual(bucket["source_window_start"], "2026-03-06T14:34:00+00:00")
+        self.assertEqual(bucket["source_window_end"], "2026-03-06T14:40:01.000001+00:00")
+        self.assertEqual(
+            bucket["source_refs"],
+            [
+                "postgres:trade_decisions",
+                "postgres:executions",
+                "postgres:execution_order_events",
+            ],
+        )
+        self.assertEqual(
+            bucket["source_row_counts"],
+            {"executions": 2, "execution_order_events": 4, "trade_decisions": 2},
+        )
         self.assertTrue(_runtime_ledger_bucket_profit_proof_present(bucket))
 
     def test_build_realized_strategy_pnl_rows_requires_order_feed_fill_lifecycle(
