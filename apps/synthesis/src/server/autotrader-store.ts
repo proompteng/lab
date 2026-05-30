@@ -108,6 +108,85 @@ const scorecardKeyFor = (value: {
     .digest('base64url')
     .slice(0, 32)
 
+type FinalizationWarning = {
+  type: 'detached_unknown_ticket_id' | 'detached_cross_session_ticket_id'
+  ticketId: string
+  observationIndex: number
+  sessionId: string
+  ticketSessionId?: string | null
+  symbol?: string | null
+  setupType: string
+}
+
+const stableJson = (value: unknown): string => {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
+  if (!value || typeof value !== 'object') return JSON.stringify(value)
+  return `{${Object.entries(value)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, entry]) => `${JSON.stringify(key)}:${stableJson(entry)}`)
+    .join(',')}}`
+}
+
+const scorecardExampleIdFor = (sessionId: string, observation: AutotraderScorecardObservation) =>
+  createHash('sha256')
+    .update(
+      stableJson({
+        sessionId,
+        key: scorecardKeyFor(observation),
+        ticketId: observation.ticketId ?? null,
+        outcome: observation.outcome,
+        realizedR: observation.realizedR ?? null,
+        notes: observation.notes ?? null,
+        mistakeTags: observation.mistakeTags,
+        payload: observation.payload,
+      }),
+    )
+    .digest('base64url')
+    .slice(0, 40)
+
+const sanitizeScorecardObservations = (
+  sessionId: string,
+  observations: AutotraderScorecardObservation[],
+  ticketSessionById: Map<string, string>,
+) => {
+  const warnings: FinalizationWarning[] = []
+  const sanitized = observations.map((observation, index): AutotraderScorecardObservation => {
+    if (!observation.ticketId) return observation
+    const ticketSessionId = ticketSessionById.get(observation.ticketId)
+    if (ticketSessionId === sessionId) return observation
+    const type = ticketSessionId ? 'detached_cross_session_ticket_id' : 'detached_unknown_ticket_id'
+    const warning: FinalizationWarning = {
+      type,
+      ticketId: observation.ticketId,
+      observationIndex: index,
+      sessionId,
+      ticketSessionId: ticketSessionId ?? null,
+      symbol: normalizedSymbol(observation.symbol),
+      setupType: observation.setupType,
+    }
+    warnings.push(warning)
+    return {
+      ...observation,
+      ticketId: undefined,
+      payload: {
+        ...observation.payload,
+        detachedTicketId: observation.ticketId,
+        finalizationWarning: type,
+      },
+    }
+  })
+  return { observations: sanitized, warnings }
+}
+
+const summaryWithFinalizationWarnings = (
+  summary: Record<string, unknown>,
+  warnings: FinalizationWarning[],
+): Record<string, unknown> => {
+  if (!warnings.length) return summary
+  const existing = Array.isArray(summary.finalizationWarnings) ? summary.finalizationWarnings : []
+  return { ...summary, finalizationWarnings: [...existing, ...warnings] }
+}
+
 const asNumber = (value: string | number | null | undefined) => {
   if (value == null) return 0
   const parsed = Number(value)
@@ -170,7 +249,7 @@ const exampleFromObservation = (
   sessionId: string,
   observation: AutotraderScorecardObservation,
 ): AutotraderSetupExample => ({
-  id: randomUUID(),
+  id: scorecardExampleIdFor(sessionId, observation),
   scorecardKey: scorecardKeyFor(observation),
   sessionId,
   ticketId: observation.ticketId ?? null,
@@ -417,34 +496,38 @@ class InMemoryAutotraderStore implements AutotraderStore {
 
   async finalizeSession(input: AutotraderFinalizeSessionInput): Promise<AutotraderSessionDetail> {
     const session = this.requireSession(input.sessionId)
+    const ticketSessionById = new Map([...this.tickets.values()].map((ticket) => [ticket.id, ticket.sessionId]))
+    const finalization = sanitizeScorecardObservations(input.sessionId, input.scorecardObservations, ticketSessionById)
+    const summary = summaryWithFinalizationWarnings(input.summary, finalization.warnings)
     const updatedSession: AutotraderSession = {
       ...session,
       finalizedAt: nowIso(),
       terminalReason: input.terminalReason,
       openingEquity:
         input.openingEquity ??
-        numericFromPayload(input.summary, ['openingEquity', 'opening_equity']) ??
+        numericFromPayload(summary, ['openingEquity', 'opening_equity']) ??
         session.openingEquity,
       closingEquity:
         input.closingEquity ??
-        numericFromPayload(input.summary, ['closingEquity', 'closing_equity', 'accountEquity', 'equity']) ??
+        numericFromPayload(summary, ['closingEquity', 'closing_equity', 'accountEquity', 'equity']) ??
         session.closingEquity,
       realizedPnl:
         input.realizedPnl ??
-        numericFromPayload(input.summary, ['realizedPnl', 'realized_pnl', 'realizedPnL']) ??
+        numericFromPayload(summary, ['realizedPnl', 'realized_pnl', 'realizedPnL']) ??
         session.realizedPnl,
       maxDrawdown:
-        input.maxDrawdown ?? numericFromPayload(input.summary, ['maxDrawdown', 'max_drawdown']) ?? session.maxDrawdown,
-      summary: input.summary,
+        input.maxDrawdown ?? numericFromPayload(summary, ['maxDrawdown', 'max_drawdown']) ?? session.maxDrawdown,
+      summary,
     }
     this.sessions.set(updatedSession.id, updatedSession)
-    for (const observation of input.scorecardObservations) {
+    for (const observation of finalization.observations) {
+      const example = exampleFromObservation(input.sessionId, observation)
+      if (this.examples.has(example.id)) continue
       const key = scorecardKeyFor(observation)
       this.scorecards.set(
         key,
         updateScorecardWithObservation(this.scorecards.get(key) ?? null, input.sessionId, observation),
       )
-      const example = exampleFromObservation(input.sessionId, observation)
       this.examples.set(example.id, example)
     }
     const detail = await this.getSessionDetail(input.sessionId)
@@ -479,8 +562,10 @@ class InMemoryAutotraderStore implements AutotraderStore {
     const session = this.sessions.get(sessionId)
     if (!session) return null
     const sessionTickets = [...this.tickets.values()].filter((ticket) => ticket.sessionId === sessionId)
-    const ticketScorecardKeys = new Set(
-      sessionTickets.map((ticket) =>
+    const sessionExamples = [...this.examples.values()].filter((example) => example.sessionId === sessionId)
+    const sessionScorecardKeys = new Set([
+      ...sessionExamples.map((example) => example.scorecardKey),
+      ...sessionTickets.map((ticket) =>
         scorecardKeyFor({
           symbol: ticket.symbol,
           setupType: ticket.setupType,
@@ -489,7 +574,7 @@ class InMemoryAutotraderStore implements AutotraderStore {
           timeBucket: ticket.timeBucket ?? 'unknown',
         }),
       ),
-    )
+    ])
     return {
       session,
       status: this.statuses.get(sessionId) ?? null,
@@ -503,8 +588,8 @@ class InMemoryAutotraderStore implements AutotraderStore {
       positionSnapshots: [...this.positions.values()]
         .filter((snapshot) => snapshot.sessionId === sessionId)
         .sort((left, right) => Date.parse(right.capturedAt) - Date.parse(left.capturedAt)),
-      scorecards: [...this.scorecards.values()].filter((scorecard) => ticketScorecardKeys.has(scorecard.key)),
-      setupExamples: [...this.examples.values()].filter((example) => example.sessionId === sessionId),
+      scorecards: [...this.scorecards.values()].filter((scorecard) => sessionScorecardKeys.has(scorecard.key)),
+      setupExamples: sessionExamples,
     }
   }
 
@@ -1245,6 +1330,13 @@ class PostgresAutotraderStore implements AutotraderStore {
     const maxDrawdown = input.maxDrawdown ?? numericFromPayload(input.summary, ['maxDrawdown', 'max_drawdown'])
     try {
       await client.query('BEGIN')
+      const ticketSessionById = await this.ticketSessionLookup(client, input.scorecardObservations)
+      const finalization = sanitizeScorecardObservations(
+        input.sessionId,
+        input.scorecardObservations,
+        ticketSessionById,
+      )
+      const summary = summaryWithFinalizationWarnings(input.summary, finalization.warnings)
       await client.query(
         `UPDATE autotrader.sessions
          SET finalized_at = now(),
@@ -1258,14 +1350,14 @@ class PostgresAutotraderStore implements AutotraderStore {
         [
           input.sessionId,
           input.terminalReason,
-          toJson(input.summary),
+          toJson(summary),
           numericOrNull(openingEquity),
           numericOrNull(closingEquity),
           numericOrNull(realizedPnl),
           numericOrNull(maxDrawdown),
         ],
       )
-      for (const observation of input.scorecardObservations) {
+      for (const observation of finalization.observations) {
         await this.recordScorecardObservation(client, input.sessionId, observation)
       }
       await client.query('COMMIT')
@@ -1279,6 +1371,25 @@ class PostgresAutotraderStore implements AutotraderStore {
     const detail = await this.getSessionDetail(input.sessionId)
     if (!detail) throw new Error(`Unknown autotrader session: ${input.sessionId}`)
     return detail
+  }
+
+  private async ticketSessionLookup(
+    client: PoolClient,
+    observations: AutotraderScorecardObservation[],
+  ): Promise<Map<string, string>> {
+    const ticketIds = [
+      ...new Set(
+        observations
+          .map((observation) => observation.ticketId)
+          .filter((ticketId): ticketId is string => Boolean(ticketId)),
+      ),
+    ]
+    if (!ticketIds.length) return new Map()
+    const result = await client.query<{ id: string; session_id: string }>(
+      `SELECT id, session_id FROM autotrader.trade_tickets WHERE id = ANY($1::text[])`,
+      [ticketIds],
+    )
+    return new Map(result.rows.map((row) => [row.id, row.session_id]))
   }
 
   async getScorecard(input: AutotraderGetScorecardInput) {
@@ -1409,6 +1520,9 @@ class PostgresAutotraderStore implements AutotraderStore {
     observation: AutotraderScorecardObservation,
   ) {
     const key = scorecardKeyFor(observation)
+    const example = exampleFromObservation(sessionId, observation)
+    const existingExample = await client.query(`SELECT id FROM autotrader.setup_examples WHERE id = $1`, [example.id])
+    if (existingExample.rowCount) return
     const existingResult = await client.query<ScorecardRow>(`SELECT * FROM autotrader.scorecards WHERE key = $1`, [key])
     const updated = updateScorecardWithObservation(
       existingResult.rows[0] ? mapScorecard(existingResult.rows[0]) : null,
@@ -1465,13 +1579,13 @@ class PostgresAutotraderStore implements AutotraderStore {
         sessionId,
       ],
     )
-    const example = exampleFromObservation(sessionId, observation)
     await client.query(
       `INSERT INTO autotrader.setup_examples (
         id, scorecard_key, session_id, ticket_id, symbol, setup_type, setup_grade, regime, time_bucket, outcome,
         realized_r, notes, mistake_tags, payload
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb)`,
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb)
+      ON CONFLICT (id) DO NOTHING`,
       [
         example.id,
         example.scorecardKey,
