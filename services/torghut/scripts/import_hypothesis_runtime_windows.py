@@ -121,6 +121,7 @@ SOURCE_LINEAGE_HYPOTHESIS_KEYS = (
     "source_hypothesis_id",
     "source_hypothesis_ids",
 )
+SOURCE_DECISION_MODE_MISSING_PARTITION = "source_decision_mode_missing"
 
 
 def _parse_args() -> argparse.Namespace:
@@ -381,6 +382,134 @@ def _source_decision_mode_counts(
             continue
         counts[mode] = counts.get(mode, 0) + 1
     return dict(sorted(counts.items()))
+
+
+def _source_decision_identifier_values(row: Mapping[str, object]) -> set[str]:
+    return _text_values(
+        row,
+        "trade_decision_id",
+        "decision_id",
+        "decision_hash",
+    )
+
+
+def _source_decision_mode_lookup(
+    rows: Sequence[Mapping[str, object]],
+) -> dict[str, str]:
+    modes_by_identifier: dict[str, str] = {}
+    conflicting_identifiers: set[str] = set()
+    for row in rows:
+        mode = _source_decision_mode(row)
+        if mode is None:
+            continue
+        for identifier in _source_decision_identifier_values(row):
+            existing = modes_by_identifier.get(identifier)
+            if existing is not None and existing != mode:
+                conflicting_identifiers.add(identifier)
+                continue
+            modes_by_identifier[identifier] = mode
+    for identifier in conflicting_identifiers:
+        modes_by_identifier.pop(identifier, None)
+    return modes_by_identifier
+
+
+def _source_decision_mode_partition_key(
+    row: Mapping[str, object],
+    *,
+    modes_by_identifier: Mapping[str, str],
+) -> str:
+    explicit = _source_decision_mode(row)
+    if explicit is not None:
+        return explicit
+    inferred_modes = {
+        modes_by_identifier[identifier]
+        for identifier in _source_decision_identifier_values(row)
+        if identifier in modes_by_identifier
+    }
+    if len(inferred_modes) == 1:
+        return next(iter(inferred_modes))
+    return SOURCE_DECISION_MODE_MISSING_PARTITION
+
+
+def _partition_runtime_source_rows_by_decision_mode(
+    *,
+    execution_rows: list[dict[str, object]],
+    decision_lifecycle_rows: list[dict[str, object]] | None,
+    order_lifecycle_rows: list[dict[str, object]] | None,
+) -> (
+    list[
+        tuple[
+            str,
+            list[dict[str, object]],
+            list[dict[str, object]] | None,
+            list[dict[str, object]] | None,
+        ]
+    ]
+    | None
+):
+    source_rows: list[dict[str, object]] = [
+        *execution_rows,
+        *(decision_lifecycle_rows or []),
+        *(order_lifecycle_rows or []),
+    ]
+    if not source_rows:
+        return None
+    modes_by_identifier = _source_decision_mode_lookup(source_rows)
+    mode_keys = {
+        _source_decision_mode_partition_key(
+            row,
+            modes_by_identifier=modes_by_identifier,
+        )
+        for row in source_rows
+    }
+    if len(mode_keys) <= 1:
+        return None
+
+    partitions: list[
+        tuple[
+            str,
+            list[dict[str, object]],
+            list[dict[str, object]] | None,
+            list[dict[str, object]] | None,
+        ]
+    ] = []
+    for mode_key in sorted(mode_keys):
+        partition_execution_rows = [
+            row
+            for row in execution_rows
+            if _source_decision_mode_partition_key(
+                row,
+                modes_by_identifier=modes_by_identifier,
+            )
+            == mode_key
+        ]
+        partition_decision_rows = [
+            row
+            for row in decision_lifecycle_rows or []
+            if _source_decision_mode_partition_key(
+                row,
+                modes_by_identifier=modes_by_identifier,
+            )
+            == mode_key
+        ]
+        partition_order_rows = [
+            row
+            for row in order_lifecycle_rows or []
+            if _source_decision_mode_partition_key(
+                row,
+                modes_by_identifier=modes_by_identifier,
+            )
+            == mode_key
+        ]
+        partitions.append(
+            (
+                mode_key,
+                partition_execution_rows,
+                partition_decision_rows or None,
+                partition_order_rows or None,
+            )
+        )
+    return partitions
 
 
 def _source_decision_rows_profit_proof_eligible(
@@ -2072,7 +2201,41 @@ def _build_realized_strategy_pnl_rows(
     decision_lifecycle_rows: list[dict[str, object]] | None = None,
     order_lifecycle_rows: list[dict[str, object]] | None = None,
     allow_authoritative_runtime_ledger_materialization: bool = False,
+    split_mixed_source_decision_modes: bool = True,
 ) -> list[dict[str, object]]:
+    if split_mixed_source_decision_modes:
+        partitions = _partition_runtime_source_rows_by_decision_mode(
+            execution_rows=execution_rows,
+            decision_lifecycle_rows=decision_lifecycle_rows,
+            order_lifecycle_rows=order_lifecycle_rows,
+        )
+        if partitions is not None:
+            partition_rows: list[dict[str, object]] = []
+            for (
+                mode_key,
+                partition_execution_rows,
+                partition_decision_rows,
+                partition_order_rows,
+            ) in partitions:
+                for row in _build_realized_strategy_pnl_rows(
+                    partition_execution_rows,
+                    decision_lifecycle_rows=partition_decision_rows,
+                    order_lifecycle_rows=partition_order_rows,
+                    allow_authoritative_runtime_ledger_materialization=(
+                        allow_authoritative_runtime_ledger_materialization
+                    ),
+                    split_mixed_source_decision_modes=False,
+                ):
+                    row["source_decision_mode_partition"] = mode_key
+                    bucket = row.get("runtime_ledger_bucket")
+                    if isinstance(bucket, Mapping):
+                        row["runtime_ledger_bucket"] = {
+                            **dict(bucket),
+                            "source_decision_mode_partition": mode_key,
+                        }
+                    partition_rows.append(row)
+            return partition_rows
+
     ledger_rows: list[RuntimeLedgerFill | dict[str, object]] = []
     event_times: list[datetime] = []
     event_sourced_lifecycle_rows = 0
@@ -2340,11 +2503,18 @@ def _build_realized_strategy_pnl_rows(
             row["source_decision_mode_counts"] = source_decision_mode_counts
             row["profit_proof_eligible"] = source_decision_profit_proof_eligible
             if isinstance(bucket_payload, Mapping):
+                source_decision_mode = next(
+                    iter(source_decision_mode_counts),
+                    None,
+                )
                 bucket_payload = {
                     **dict(bucket_payload),
                     "source_decision_mode_counts": source_decision_mode_counts,
                     "profit_proof_eligible": source_decision_profit_proof_eligible,
                 }
+                if len(source_decision_mode_counts) == 1:
+                    row["source_decision_mode"] = source_decision_mode
+                    bucket_payload["source_decision_mode"] = source_decision_mode
                 if not source_decision_profit_proof_eligible:
                     blockers = list(bucket_payload.get("blockers") or [])
                     if (
