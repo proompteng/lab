@@ -933,6 +933,83 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("--apply", args)
         self.assertIn("--json", args)
 
+    def test_order_feed_source_window_repair_cronjob_is_bounded_sim_only(
+        self,
+    ) -> None:
+        spec, container = _load_cronjob_container(
+            "argocd/applications/torghut/order-feed-source-window-repair-cronjob.yaml"
+        )
+
+        self.assertEqual(spec.get("schedule"), "13,28,43,58 * * * *")
+        self.assertEqual(spec.get("concurrencyPolicy"), "Forbid")
+        self.assertEqual(spec.get("startingDeadlineSeconds"), 300)
+        job_spec = cast(
+            Mapping[str, object],
+            cast(Mapping[str, object], spec.get("jobTemplate", {})).get("spec", {}),
+        )
+        template = cast(
+            Mapping[str, object],
+            cast(Mapping[str, object], job_spec.get("template", {})),
+        )
+        pod_spec = cast(Mapping[str, object], template.get("spec", {}))
+        self.assertEqual(job_spec.get("activeDeadlineSeconds"), 180)
+        self.assertEqual(pod_spec.get("serviceAccountName"), "torghut-runtime")
+        self.assertEqual(
+            pod_spec.get("nodeSelector"),
+            {"kubernetes.io/arch": "arm64"},
+        )
+        resources = cast(Mapping[str, object], container.get("resources", {}))
+        self.assertEqual(
+            resources,
+            {
+                "requests": {
+                    "cpu": "50m",
+                    "memory": "128Mi",
+                    "ephemeral-storage": "128Mi",
+                },
+                "limits": {
+                    "cpu": "250m",
+                    "memory": "256Mi",
+                    "ephemeral-storage": "512Mi",
+                },
+            },
+        )
+        self.assertIn(
+            "registry.ide-newton.ts.net/lab/torghut@sha256:",
+            str(container.get("image")),
+        )
+
+        env = {
+            item.get("name"): item
+            for item in cast(list[Mapping[str, object]], container.get("env", []))
+        }
+        self.assertEqual(
+            env["SIM_DB_DSN"].get("value"),
+            "postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@"
+            "$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default",
+        )
+        self.assertNotIn("DB_DSN", env)
+        for name, key in {
+            "TORGHUT_SIM_DB_HOST": "host",
+            "TORGHUT_SIM_DB_PORT": "port",
+            "TORGHUT_SIM_DB_USER": "username",
+            "TORGHUT_SIM_DB_PASSWORD": "password",
+        }.items():
+            value_from = cast(Mapping[str, object], env[name].get("valueFrom", {}))
+            self.assertEqual(
+                value_from.get("secretKeyRef"),
+                {"name": "torghut-db-app", "key": key},
+            )
+
+        args = "\n".join(str(item) for item in container.get("args", []))
+        self.assertIn("scripts/repair_order_feed_source_windows.py", args)
+        self.assertIn("--dsn-env SIM_DB_DSN", args)
+        self.assertIn("--account-label TORGHUT_SIM", args)
+        self.assertIn("--batch-size 500", args)
+        self.assertIn("--max-batches 1", args)
+        self.assertIn("--apply", args)
+        self.assertIn("--json", args)
+
     def test_empirical_promotion_renewal_imports_authoritative_sim_paper_plan_and_sim_db(
         self,
     ) -> None:

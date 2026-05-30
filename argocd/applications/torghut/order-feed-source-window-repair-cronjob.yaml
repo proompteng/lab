@@ -1,0 +1,74 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: torghut-order-feed-source-window-repair
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut
+    app.kubernetes.io/component: order-feed-source-window-repair
+spec:
+  schedule: "13,28,43,58 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  startingDeadlineSeconds: 300
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 180
+      template:
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: torghut-runtime
+          nodeSelector:
+            kubernetes.io/arch: arm64
+          containers:
+            - name: repair-source-windows
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:808ec6bab34ba6ee3565bfd7b291969cacfd106134eb0808d01b4a1d5c2dbe74
+              imagePullPolicy: IfNotPresent
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                  ephemeral-storage: 128Mi
+                limits:
+                  cpu: 250m
+                  memory: 256Mi
+                  ephemeral-storage: 512Mi
+              command:
+                - /bin/bash
+                - -lc
+              args:
+                - |
+                  set -euo pipefail
+                  cd /app
+                  /opt/venv/bin/python scripts/repair_order_feed_source_windows.py \
+                    --dsn-env SIM_DB_DSN \
+                    --account-label TORGHUT_SIM \
+                    --batch-size 500 \
+                    --max-batches 1 \
+                    --apply \
+                    --json
+              env:
+                - name: TORGHUT_SIM_DB_HOST
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: host
+                - name: TORGHUT_SIM_DB_PORT
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: port
+                - name: TORGHUT_SIM_DB_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: username
+                - name: TORGHUT_SIM_DB_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: password
+                - name: SIM_DB_DSN
+                  value: postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default
