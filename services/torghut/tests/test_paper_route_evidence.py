@@ -979,6 +979,18 @@ class TestPaperRouteEvidenceAudit(TestCase):
         readiness = target["source_decision_readiness"]
         self.assertTrue(readiness["ready"])
         self.assertEqual(readiness["blockers"], [])
+        self.assertEqual(target["strategy_name"], "microbar-cross-sectional-pairs-v1")
+        self.assertEqual(
+            target["runtime_strategy_name"], "microbar-cross-sectional-pairs-v1"
+        )
+        self.assertEqual(
+            target["source_strategy_name"],
+            "69cf50e3-4815-47c2-b802-1efbaac09ecb",
+        )
+        self.assertEqual(
+            target["source_runtime_strategy_name"],
+            "69cf50e3-4815-47c2-b802-1efbaac09ecb",
+        )
         self.assertEqual(
             readiness["matched_strategy"]["strategy_name"],
             "microbar-cross-sectional-pairs-v1",

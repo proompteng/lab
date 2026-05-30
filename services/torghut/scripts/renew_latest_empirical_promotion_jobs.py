@@ -62,6 +62,11 @@ RUNTIME_WINDOW_TARGET_METADATA_KEYS = (
     "runtime_window_import_health_gate",
     "runtime_window_import_health_gate_blockers",
     "runtime_window_import_promotion_blockers",
+    "strategy_id",
+    "runtime_strategy_name",
+    "source_strategy_name",
+    "source_runtime_strategy_name",
+    "strategy_lookup_names",
     "window_start",
     "window_end",
     "max_notional",
@@ -668,6 +673,61 @@ def _strategy_name_from_strategy_id(strategy_id: str) -> str | None:
     return base.replace("_", "-") if base else None
 
 
+def _looks_like_uuid_text(value: object) -> bool:
+    text = _as_text(value)
+    if text is None:
+        return False
+    parts = text.split("-")
+    if [len(part) for part in parts] != [8, 4, 4, 4, 12]:
+        return False
+    return all(
+        part and all(char in "0123456789abcdefABCDEF" for char in part)
+        for part in parts
+    )
+
+
+def _strategy_lookup_names(*values: object) -> list[str]:
+    names: list[str] = []
+    for value in values:
+        raw_items: Sequence[object]
+        if isinstance(value, Sequence) and not isinstance(
+            value, (str, bytes, bytearray)
+        ):
+            raw_items = value
+        else:
+            raw_items = (value,)
+        for raw_item in raw_items:
+            text = _as_text(raw_item)
+            if text is not None and text not in names:
+                names.append(text)
+    return names
+
+
+def _canonical_runtime_strategy_name(
+    *,
+    strategy_name: object,
+    runtime_strategy_name: object,
+    strategy_id: object,
+    strategy_lookup_names: object,
+) -> str | None:
+    strategy_id_text = _as_text(strategy_id)
+    derived_name = (
+        _strategy_name_from_strategy_id(strategy_id_text)
+        if strategy_id_text is not None
+        else None
+    )
+    preferred = _strategy_lookup_names(
+        runtime_strategy_name,
+        strategy_name,
+        derived_name,
+        strategy_lookup_names,
+    )
+    for name in preferred:
+        if not _looks_like_uuid_text(name):
+            return name
+    return preferred[0] if preferred else None
+
+
 def _registry_runtime_window_targets(
     args: argparse.Namespace,
 ) -> list[RuntimeWindowImportTarget]:
@@ -827,7 +887,16 @@ def _runtime_window_targets_from_plan(
         hypothesis_id = value("hypothesis_id", "runtime_window_hypothesis_id")
         candidate_id = value("candidate_id", "runtime_window_candidate_id")
         strategy_family = value("strategy_family", "runtime_window_strategy_family")
-        strategy_name = value("strategy_name", "runtime_window_strategy_name")
+        raw_strategy_name = value("strategy_name", "runtime_window_strategy_name")
+        strategy_name = (
+            _canonical_runtime_strategy_name(
+                strategy_name=raw_strategy_name,
+                runtime_strategy_name=payload.get("runtime_strategy_name"),
+                strategy_id=payload.get("strategy_id"),
+                strategy_lookup_names=payload.get("strategy_lookup_names"),
+            )
+            or raw_strategy_name
+        )
         missing = [
             field
             for field, item in (

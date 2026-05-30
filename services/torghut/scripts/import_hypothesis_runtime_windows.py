@@ -4145,12 +4145,15 @@ def main() -> int:
         hypothesis_id=args.hypothesis_id,
         strategy_family=args.strategy_family.strip() or None,
     )
-    strategy_names = _strategy_name_candidates(
-        args.strategy_name,
-        getattr(manifest, "strategy_id", None),
-    )
     target_metadata = _parse_target_metadata(
         str(getattr(args, "target_metadata_json", "") or "")
+    )
+    strategy_names = _strategy_name_candidates(
+        args.strategy_name,
+        _text_or_none(target_metadata.get("runtime_strategy_name")),
+        _text_or_none(target_metadata.get("strategy_name")),
+        *_metadata_text_list(target_metadata.get("strategy_lookup_names")),
+        getattr(manifest, "strategy_id", None),
     )
     source_activity_symbols = _target_metadata_source_symbols(target_metadata)
     source_kind = args.source_kind.strip() or (
