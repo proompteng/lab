@@ -27,6 +27,7 @@ from app.models import (
 from app.trading.order_feed import (
     OrderFeedIngestor,
     apply_order_event_to_execution,
+    latest_order_event_for_execution,
     merge_execution_raw_order_update,
     normalize_order_feed_record,
     persist_order_event,
@@ -371,6 +372,39 @@ class TestOrderFeed(TestCase):
         self.assertEqual(counters["events_persisted_total"], 1)
         self.assertEqual(counters["duplicates_total"], 1)
         self.assertEqual(len(rows), 1)
+
+    def test_latest_order_event_for_execution_ignores_unrelated_same_account_event(
+        self,
+    ) -> None:
+        own_payload = (
+            b'{"channel":"trade_updates","payload":{"event":"accepted","timestamp":"2026-02-01T10:00:00Z",'
+            b'"order":{"id":"order-1","client_order_id":"client-1","symbol":"AAPL","status":"accepted",'
+            b'"qty":"1","filled_qty":"0"}},"seq":10}'
+        )
+        unrelated_payload = (
+            b'{"channel":"trade_updates","payload":{"event":"fill","timestamp":"2026-02-01T10:05:00Z",'
+            b'"order":{"id":"order-2","client_order_id":"client-2","symbol":"MSFT","status":"filled",'
+            b'"qty":"1","filled_qty":"1","filled_avg_price":"405.0"}},"seq":11}'
+        )
+
+        with Session(self.engine) as session:
+            execution = self._seed_execution(session)
+            for payload, offset in ((own_payload, 1), (unrelated_payload, 2)):
+                normalized = normalize_order_feed_record(
+                    FakeRecord(value=payload, offset=offset),
+                    default_topic="torghut.trade-updates.v1",
+                    default_account_label="paper",
+                )
+                assert normalized.event is not None
+                persist_order_event(session, normalized.event)
+            session.commit()
+
+            latest = latest_order_event_for_execution(session, execution)
+
+        self.assertIsNotNone(latest)
+        assert latest is not None
+        self.assertEqual(latest.alpaca_order_id, "order-1")
+        self.assertEqual(latest.client_order_id, "client-1")
 
     def test_out_of_order_event_does_not_regress_execution(self) -> None:
         with Session(self.engine) as session:
