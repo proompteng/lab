@@ -60,6 +60,17 @@ def _payload(
     }
 
 
+def _sqlalchemy_dsn(dsn: str) -> str:
+    text = dsn.strip()
+    if text.startswith("postgresql+psycopg://"):
+        return text
+    if text.startswith("postgres://"):
+        return text.replace("postgres://", "postgresql+psycopg://", 1)
+    if text.startswith("postgresql://"):
+        return text.replace("postgresql://", "postgresql+psycopg://", 1)
+    return text
+
+
 def main() -> int:
     args = _parse_args()
     dsn = os.environ.get(str(args.dsn_env).strip())
@@ -69,7 +80,7 @@ def main() -> int:
     started_at = datetime.now(timezone.utc)
     batch_size = max(1, min(int(args.batch_size), 5000))
     max_batches = max(1, int(args.max_batches))
-    engine = create_engine(dsn, pool_pre_ping=True, future=True)
+    engine = create_engine(_sqlalchemy_dsn(dsn), pool_pre_ping=True, future=True)
     session_factory = sessionmaker(
         bind=engine,
         autoflush=False,
