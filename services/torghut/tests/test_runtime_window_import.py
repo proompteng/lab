@@ -1300,6 +1300,33 @@ class TestRuntimeWindowImport(TestCase):
             _runtime_ledger_bucket_blockers(missing_source_window_ids),
         )
 
+    def test_runtime_ledger_bucket_requires_structured_source_offsets(self) -> None:
+        for malformed_offsets in (
+            ["alpaca.trade_updates:0:100"],
+            [{"topic": "alpaca.trade_updates", "offset": 100}],
+            [{"topic": "alpaca.trade_updates", "partition": 0}],
+            {"topic": "alpaca.trade_updates", "offset": 100},
+        ):
+            bucket = _runtime_ledger_bucket(source_offsets=malformed_offsets)
+            self.assertIn(
+                "runtime_ledger_source_offsets_missing",
+                _runtime_ledger_bucket_blockers(bucket),
+            )
+
+    def test_runtime_ledger_bucket_requires_explicit_source_authority_class(
+        self,
+    ) -> None:
+        bucket = _runtime_ledger_bucket(
+            authority_class=None,
+            authority_reason=None,
+            pnl_derivation="execution_order_events_runtime_ledger",
+        )
+
+        self.assertIn(
+            "runtime_ledger_authority_class_missing",
+            _runtime_ledger_bucket_blockers(bucket),
+        )
+
     def test_persist_observed_runtime_windows_allows_authority_grade_live_ledger(
         self,
     ) -> None:

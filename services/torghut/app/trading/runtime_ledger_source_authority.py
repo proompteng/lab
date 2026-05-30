@@ -42,6 +42,14 @@ _PROMOTION_GRADE_AUTHORITY_CLASSES = frozenset(
         "source_execution_lifecycle_materialized_runtime_ledger",
     }
 )
+_PROMOTION_GRADE_SOURCE_REF_TABLES = frozenset(
+    {
+        "trade_decisions",
+        "executions",
+        "execution_order_events",
+        "order_feed_source_windows",
+    }
+)
 
 
 def _text(value: object) -> str | None:
@@ -103,24 +111,61 @@ def _source_refs_present(bucket: Mapping[str, object], *keys: str) -> bool:
     return any(_source_ref_present(bucket.get(key)) for key in keys)
 
 
+def _source_ref_table_names(value: object) -> set[str]:
+    refs = _string_list(value)
+    table_names: set[str] = set()
+    for ref in refs:
+        normalized = ref.strip().lower()
+        if normalized:
+            table_names.add(normalized)
+        if ":" in normalized:
+            tail = normalized.rsplit(":", maxsplit=1)[-1]
+            if tail:
+                table_names.add(tail)
+    return table_names
+
+
+def _source_row_counts_have_positive_rows(
+    bucket: Mapping[str, object], table_name: str
+) -> bool:
+    source_row_counts = bucket.get("source_row_counts")
+    if not isinstance(source_row_counts, Mapping):
+        return False
+    value = cast(Mapping[object, object], source_row_counts).get(table_name)
+    try:
+        parsed = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return False
+    return parsed.is_finite() and parsed > 0
+
+
+def _promotion_grade_source_refs_present(bucket: Mapping[str, object]) -> bool:
+    source_ref_tables = _source_ref_table_names(bucket.get("source_refs"))
+    return all(
+        table_name in source_ref_tables
+        and _source_row_counts_have_positive_rows(bucket, table_name)
+        for table_name in _PROMOTION_GRADE_SOURCE_REF_TABLES
+    )
+
+
 def _source_offsets_present(bucket: Mapping[str, object]) -> bool:
+    def has_source_offset_triplet(value: Mapping[object, object]) -> bool:
+        return (
+            _text(value.get("topic")) is not None
+            and value.get("partition") is not None
+            and value.get("offset") is not None
+        )
+
     source_offsets = bucket.get("source_offsets")
     if isinstance(source_offsets, Mapping):
-        return len(cast(Mapping[object, object], source_offsets)) > 0
+        return has_source_offset_triplet(cast(Mapping[object, object], source_offsets))
     if isinstance(source_offsets, Sequence) and not isinstance(
         source_offsets, (str, bytes, bytearray)
     ):
         for item in cast(Sequence[object], source_offsets):
             if isinstance(item, Mapping):
-                offset = cast(Mapping[object, object], item)
-                if (
-                    _text(offset.get("topic")) is not None
-                    and offset.get("partition") is not None
-                    and offset.get("offset") is not None
-                ):
+                if has_source_offset_triplet(cast(Mapping[object, object], item)):
                     return True
-            elif _text(item) is not None:
-                return True
     return (
         _text(bucket.get("source_topic")) is not None
         and bucket.get("source_partition") is not None
@@ -142,7 +187,6 @@ def _promotion_grade_authority_class_present(bucket: Mapping[str, object]) -> bo
     authority_values = (
         bucket.get("authority_class"),
         bucket.get("authority_reason"),
-        bucket.get("pnl_derivation"),
     )
     for value in authority_values:
         text = _text(value)
@@ -201,6 +245,8 @@ def runtime_ledger_promotion_source_authority_blockers(
     """
 
     blockers = runtime_ledger_source_authority_blockers(bucket)
+    if not _promotion_grade_source_refs_present(bucket):
+        blockers.append(RUNTIME_LEDGER_SOURCE_REFS_MISSING_BLOCKER)
     if not _source_refs_present(
         bucket,
         "source_window_ids",
