@@ -2106,6 +2106,17 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         metadata = renewal._runtime_window_target_metadata(
             {
                 "source_collection_authorized": True,
+                "source_collection_reason_codes": [
+                    "source_window_evidence_collection_pending"
+                ],
+                "bounded_evidence_collection_authorized": True,
+                "bounded_evidence_collection_scope": (
+                    "paper_route_probe_next_session_only"
+                ),
+                "bounded_evidence_collection_max_notional": "63180",
+                "paper_route_probe_effective_max_notional": "63180",
+                "source_decision_mode": "route_acquisition_probe",
+                "profit_proof_eligible": False,
             }
         )
 
@@ -2115,6 +2126,19 @@ class TestRunEmpiricalPromotionJobs(TestCase):
             "source_window_evidence_collection_only",
         )
         self.assertEqual(metadata["evidence_collection_stage"], "paper")
+        self.assertEqual(
+            metadata["source_collection_reason_codes"],
+            ["source_window_evidence_collection_pending"],
+        )
+        self.assertTrue(metadata["bounded_evidence_collection_authorized"])
+        self.assertEqual(
+            metadata["bounded_evidence_collection_scope"],
+            "paper_route_probe_next_session_only",
+        )
+        self.assertEqual(metadata["bounded_evidence_collection_max_notional"], "63180")
+        self.assertEqual(metadata["paper_route_probe_effective_max_notional"], "63180")
+        self.assertEqual(metadata["source_decision_mode"], "route_acquisition_probe")
+        self.assertFalse(metadata["profit_proof_eligible"])
         self.assertFalse(metadata["promotion_allowed"])
         self.assertFalse(metadata["final_promotion_authorized"])
         self.assertFalse(metadata["final_promotion_allowed"])
