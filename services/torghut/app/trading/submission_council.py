@@ -659,6 +659,11 @@ def _runtime_ledger_bucket_payload(
         "source_refs": payload_json.get("source_refs") or [],
         "source_ref": payload_json.get("source_ref"),
         "source_row_counts": payload_json.get("source_row_counts") or {},
+        "source_window_ids": payload_json.get("source_window_ids")
+        or payload_json.get("runtime_ledger_source_window_ids")
+        or [],
+        "source_window_id": payload_json.get("source_window_id")
+        or payload_json.get("runtime_ledger_source_window_id"),
         "trade_decision_ids": payload_json.get("trade_decision_ids") or [],
         "execution_ids": payload_json.get("execution_ids") or [],
         "execution_order_event_ids": (
@@ -694,6 +699,9 @@ def _runtime_ledger_hash_count(
             if count > 0:
                 total += count
         return total
+    payload_count = _safe_int(payload_counts)
+    if payload_count > 0:
+        return payload_count
     return _safe_int(observed.get(observed_key))
 
 
@@ -729,6 +737,28 @@ def _runtime_ledger_payload_from_runtime_item(
         "blockers": observed.get("runtime_ledger_blockers"),
         "ledger_schema_version": observed.get("runtime_ledger_schema_version"),
         "pnl_basis": observed.get("runtime_ledger_pnl_basis"),
+        "source_window_start": observed.get("runtime_ledger_source_window_start"),
+        "source_window_end": observed.get("runtime_ledger_source_window_end"),
+        "source_refs": observed.get("runtime_ledger_source_refs") or [],
+        "source_ref": observed.get("runtime_ledger_source_ref"),
+        "source_row_counts": observed.get("runtime_ledger_source_row_counts") or {},
+        "source_window_ids": observed.get("runtime_ledger_source_window_ids") or [],
+        "source_window_id": observed.get("runtime_ledger_source_window_id"),
+        "trade_decision_ids": observed.get("runtime_ledger_trade_decision_ids") or [],
+        "execution_ids": observed.get("runtime_ledger_execution_ids") or [],
+        "execution_order_event_ids": (
+            observed.get("runtime_ledger_execution_order_event_ids") or []
+        ),
+        "source_offsets": observed.get("runtime_ledger_source_offsets") or [],
+        "source_materialization": observed.get("runtime_ledger_source_materialization"),
+        "authority_class": observed.get("runtime_ledger_authority_class"),
+        "authority_reason": observed.get("runtime_ledger_authority_reason"),
+        "pnl_derivation": observed.get("runtime_ledger_pnl_derivation"),
+        "execution_policy_hash_counts": observed.get(
+            "runtime_ledger_execution_policy_hash_counts"
+        ),
+        "cost_model_hash_counts": observed.get("runtime_ledger_cost_model_hash_counts"),
+        "lineage_hash_counts": observed.get("runtime_ledger_lineage_hash_counts"),
     }
 
 

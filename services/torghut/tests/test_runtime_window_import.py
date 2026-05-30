@@ -81,15 +81,18 @@ def _runtime_ledger_bucket(**overrides: object) -> dict[str, object]:
             "postgres:trade_decisions",
             "postgres:executions",
             "postgres:execution_order_events",
+            "postgres:order_feed_source_windows",
         ],
         "source_row_counts": {
             "trade_decisions": 2,
             "executions": 2,
             "execution_order_events": 2,
+            "order_feed_source_windows": 2,
         },
         "trade_decision_ids": ["decision-buy", "decision-sell"],
         "execution_ids": ["execution-buy", "execution-sell"],
         "execution_order_event_ids": ["event-fill-buy", "event-fill-sell"],
+        "source_window_ids": ["source-window-buy", "source-window-sell"],
         "source_offsets": [
             {"topic": "alpaca.trade_updates", "partition": 0, "offset": 100}
         ],
@@ -523,6 +526,7 @@ class TestRuntimeWindowImport(TestCase):
                 "trade_decision_ids",
                 "execution_ids",
                 "execution_order_event_ids",
+                "source_window_ids",
                 "source_offsets",
                 "source_materialization",
                 "authority_class",
@@ -1288,6 +1292,12 @@ class TestRuntimeWindowImport(TestCase):
         self.assertNotIn(
             "runtime_ledger_source_refs_missing",
             _runtime_ledger_bucket_blockers(complete),
+        )
+
+        missing_source_window_ids = _runtime_ledger_bucket(source_window_ids=[])
+        self.assertIn(
+            "runtime_ledger_source_window_ids_missing",
+            _runtime_ledger_bucket_blockers(missing_source_window_ids),
         )
 
     def test_persist_observed_runtime_windows_allows_authority_grade_live_ledger(
