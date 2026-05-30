@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+"""Repair source-window lineage for persisted order-feed events."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from datetime import datetime, timezone
+from typing import Any
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from app.trading.order_feed import backfill_order_feed_source_windows
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Attach non-cursor-authoritative source-window rows to existing order-feed events.",
+    )
+    parser.add_argument("--dsn-env", default="DB_DSN")
+    parser.add_argument("--account-label", default=None)
+    parser.add_argument("--batch-size", type=int, default=1000)
+    parser.add_argument("--max-batches", type=int, default=1)
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Commit repaired source-window links. Default is dry-run.",
+    )
+    parser.add_argument("--json", action="store_true")
+    return parser.parse_args()
+
+
+def _payload(
+    *,
+    args: argparse.Namespace,
+    started_at: datetime,
+    batches: list[dict[str, int]],
+) -> dict[str, Any]:
+    totals = {
+        "selected": sum(batch["selected"] for batch in batches),
+        "source_windows_created": sum(
+            batch["source_windows_created"] for batch in batches
+        ),
+        "source_windows_reused": sum(batch["source_windows_reused"] for batch in batches),
+        "events_linked": sum(batch["events_linked"] for batch in batches),
+    }
+    return {
+        "status": "ok",
+        "apply": bool(args.apply),
+        "dsn_env": args.dsn_env,
+        "account_label": args.account_label,
+        "batch_size": max(1, min(int(args.batch_size), 5000)),
+        "max_batches": max(1, int(args.max_batches)),
+        "started_at": started_at.isoformat(),
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+        **totals,
+        "batches": batches,
+    }
+
+
+def main() -> int:
+    args = _parse_args()
+    dsn = os.environ.get(str(args.dsn_env).strip())
+    if not dsn:
+        raise SystemExit(f"missing DSN env var: {args.dsn_env}")
+
+    started_at = datetime.now(timezone.utc)
+    batch_size = max(1, min(int(args.batch_size), 5000))
+    max_batches = max(1, int(args.max_batches))
+    engine = create_engine(dsn, pool_pre_ping=True, future=True)
+    session_factory = sessionmaker(
+        bind=engine,
+        autoflush=False,
+        autocommit=False,
+        expire_on_commit=False,
+        future=True,
+    )
+    batches: list[dict[str, int]] = []
+    with session_factory() as session:
+        for _ in range(max_batches):
+            batch = backfill_order_feed_source_windows(
+                session,
+                account_label=args.account_label,
+                limit=batch_size,
+            )
+            batches.append(batch)
+            if args.apply:
+                session.commit()
+            else:
+                session.rollback()
+                break
+            if int(batch.get("selected") or 0) < batch_size:
+                break
+
+    payload = _payload(args=args, started_at=started_at, batches=batches)
+    print(
+        json.dumps(payload, separators=(",", ":"))
+        if args.json
+        else json.dumps(payload, indent=2, default=str)
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

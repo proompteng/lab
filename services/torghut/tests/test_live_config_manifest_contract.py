@@ -992,6 +992,11 @@ class TestLiveConfigManifestContract(TestCase):
             )
 
         args = "\n".join(str(item) for item in container.get("args", []))
+        self.assertIn("scripts/repair_order_feed_source_windows.py", args)
+        self.assertIn("--dsn-env SIM_DB_DSN", args)
+        self.assertIn("--account-label TORGHUT_SIM", args)
+        self.assertIn("--batch-size 1000", args)
+        self.assertIn("--max-batches 2", args)
         self.assertIn("scripts/renew_latest_empirical_promotion_jobs.py", args)
         self.assertIn(
             "--runtime-window-target-plan-url "

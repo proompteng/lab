@@ -28,6 +28,11 @@ from .tca import upsert_execution_tca_metric
 
 logger = logging.getLogger(__name__)
 
+ORDER_FEED_SOURCE_REVISION = "alpaca_trade_updates_v1"
+HISTORICAL_ORDER_EVENT_SOURCE_WINDOW_REVISION = (
+    "execution_order_events_existing_source_offsets_v1"
+)
+
 
 @dataclass(frozen=True)
 class NormalizedOrderEvent:
@@ -496,7 +501,7 @@ def _create_order_feed_source_window(
         alpaca_account_label=alpaca_account_label,
         assignment_mode=settings.trading_order_feed_assignment_mode,
         collector_identity=collector_identity,
-        source_revision="alpaca_trade_updates_v1",
+        source_revision=ORDER_FEED_SOURCE_REVISION,
         window_started_at=now,
         window_ended_at=now,
         start_offset=source_offset,
@@ -954,6 +959,59 @@ def link_order_events_to_execution(session: Session, execution: Execution) -> in
     return linked
 
 
+def backfill_order_feed_source_windows(
+    session: Session,
+    *,
+    account_label: str | None = None,
+    limit: int = 1000,
+) -> dict[str, int]:
+    """Attach source-window rows to persisted order events that already have offsets.
+
+    These windows are audit lineage for old already-consumed events. They are not
+    Kafka cursor authority, so manual assignment will not use them to skip offsets.
+    """
+
+    bounded_limit = max(1, min(int(limit), 5000))
+    stmt = (
+        select(ExecutionOrderEvent)
+        .where(
+            ExecutionOrderEvent.source_window_id.is_(None),
+            ExecutionOrderEvent.source_topic.is_not(None),
+            ExecutionOrderEvent.source_partition.is_not(None),
+            ExecutionOrderEvent.source_offset.is_not(None),
+        )
+        .order_by(
+            ExecutionOrderEvent.source_topic.asc(),
+            ExecutionOrderEvent.source_partition.asc().nullsfirst(),
+            ExecutionOrderEvent.source_offset.asc().nullsfirst(),
+            ExecutionOrderEvent.created_at.asc(),
+        )
+        .limit(bounded_limit)
+    )
+    if account_label:
+        stmt = stmt.where(ExecutionOrderEvent.alpaca_account_label == account_label)
+
+    events = session.execute(stmt).scalars().all()
+    counters = {
+        "selected": len(events),
+        "source_windows_created": 0,
+        "source_windows_reused": 0,
+        "events_linked": 0,
+    }
+    for event in events:
+        source_window = _find_existing_source_window_for_event(session, event)
+        if source_window is None:
+            source_window = _create_historical_source_window_for_event(session, event)
+            counters["source_windows_created"] += 1
+        else:
+            counters["source_windows_reused"] += 1
+        event.source_window_id = source_window.id
+        session.add(event)
+        _refresh_source_window_linkage_counts(session, event)
+        counters["events_linked"] += 1
+    return counters
+
+
 def _resolve_execution(
     session: Session, event: NormalizedOrderEvent
 ) -> Execution | None:
@@ -971,6 +1029,86 @@ def _resolve_execution(
     if not clauses:
         return None
     return session.execute(select(Execution).where(or_(*clauses))).scalar_one_or_none()
+
+
+def _find_existing_source_window_for_event(
+    session: Session,
+    event: ExecutionOrderEvent,
+) -> OrderFeedSourceWindow | None:
+    if event.source_partition is None or event.source_offset is None:
+        return None
+    return (
+        session.execute(
+            select(OrderFeedSourceWindow)
+            .where(
+                OrderFeedSourceWindow.source_topic == event.source_topic,
+                OrderFeedSourceWindow.source_partition == event.source_partition,
+                OrderFeedSourceWindow.alpaca_account_label
+                == event.alpaca_account_label,
+                OrderFeedSourceWindow.start_offset <= event.source_offset,
+                OrderFeedSourceWindow.end_offset >= event.source_offset,
+            )
+            .order_by(OrderFeedSourceWindow.created_at.desc())
+            .limit(1)
+        )
+        .scalars()
+        .first()
+    )
+
+
+def _create_historical_source_window_for_event(
+    session: Session,
+    event: ExecutionOrderEvent,
+) -> OrderFeedSourceWindow:
+    if event.source_partition is None or event.source_offset is None:
+        raise ValueError("historical_source_window_requires_source_offset")
+    event_ts = _event_timestamp_for_source_window(event)
+    source_window = OrderFeedSourceWindow(
+        consumer_group=_order_feed_cursor_consumer_group(),
+        source_topic=event.source_topic,
+        source_partition=event.source_partition,
+        alpaca_account_label=event.alpaca_account_label,
+        assignment_mode=settings.trading_order_feed_assignment_mode,
+        collector_identity=settings.trading_order_feed_client_id.strip() or None,
+        source_revision=HISTORICAL_ORDER_EVENT_SOURCE_WINDOW_REVISION,
+        window_started_at=event_ts,
+        window_ended_at=event_ts,
+        start_offset=event.source_offset,
+        end_offset=event.source_offset,
+        broker_high_watermark=None,
+        consumed_count=1,
+        inserted_count=1,
+        duplicate_count=0,
+        malformed_count=0,
+        missing_payload_count=0,
+        missing_identity_count=0,
+        out_of_scope_account_count=0,
+        unlinked_execution_count=0 if event.execution_id is not None else 1,
+        unlinked_decision_count=0 if event.trade_decision_id is not None else 1,
+        failed_unhandled_count=0,
+        dropped_count=0,
+        gap_count=0,
+        gap_ranges=None,
+        first_event_ts=event.event_ts,
+        last_event_ts=event.event_ts,
+        status="inserted",
+        status_reason="historical_execution_order_event_backfill",
+        payload_json={
+            "cursor_authority": False,
+            "source": "execution_order_events",
+            "execution_order_event_id": str(event.id),
+        },
+    )
+    session.add(source_window)
+    session.flush()
+    return source_window
+
+
+def _event_timestamp_for_source_window(event: ExecutionOrderEvent) -> datetime:
+    event_ts = event.event_ts or event.created_at or datetime.now(timezone.utc)
+    if event_ts.tzinfo is None:
+        return event_ts.replace(tzinfo=timezone.utc)
+    return event_ts.astimezone(timezone.utc)
 
 
 def _refresh_source_window_linkage_counts(
@@ -1086,6 +1224,7 @@ def _latest_persisted_source_offsets(session: Session) -> dict[tuple[str, int], 
         )
         .where(
             OrderFeedSourceWindow.consumer_group == consumer_group,
+            OrderFeedSourceWindow.source_revision == ORDER_FEED_SOURCE_REVISION,
             OrderFeedSourceWindow.status != "failed_unhandled",
             OrderFeedSourceWindow.end_offset.is_not(None),
         )
@@ -1294,9 +1433,12 @@ __all__ = [
     "NormalizedOrderEvent",
     "NormalizationResult",
     "OrderFeedIngestor",
+    "HISTORICAL_ORDER_EVENT_SOURCE_WINDOW_REVISION",
+    "ORDER_FEED_SOURCE_REVISION",
     "normalize_order_feed_record",
     "persist_order_event",
     "apply_order_event_to_execution",
+    "backfill_order_feed_source_windows",
     "link_order_events_to_execution",
     "latest_order_event_for_execution",
 ]
