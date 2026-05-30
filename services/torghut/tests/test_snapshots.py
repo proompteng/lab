@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, List
 from unittest import TestCase
@@ -8,7 +9,7 @@ from unittest import TestCase
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from app.models import Base
+from app.models import Base, ExecutionOrderEvent, OrderFeedSourceWindow, Strategy, TradeDecision
 from app.snapshots import (
     _runtime_cost_payload_from_mapping,
     snapshot_account_and_positions,
@@ -128,6 +129,108 @@ class TestSnapshots(TestCase):
             self.assertEqual(first.id, updated.id)
             self.assertEqual(updated.filled_qty, Decimal("1"))
             self.assertEqual(updated.avg_fill_price, Decimal("10.50"))
+
+    def test_sync_order_to_db_links_prior_order_feed_event(self) -> None:
+        with Session(self.engine) as session:
+            strategy = Strategy(
+                name="demo",
+                description="demo",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="symbols_list",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.flush()
+            decision = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="paper",
+                symbol="AAPL",
+                timeframe="1Min",
+                decision_json={"side": "buy"},
+                decision_hash="client-linked",
+                status="submitted",
+            )
+            session.add(decision)
+            session.flush()
+            source_window = OrderFeedSourceWindow(
+                consumer_group="paper-route-client",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                alpaca_account_label="paper",
+                assignment_mode="manual",
+                collector_identity="paper-route-client",
+                source_revision="alpaca_trade_updates_v1",
+                window_started_at=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+                window_ended_at=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+                start_offset=12,
+                end_offset=12,
+                consumed_count=1,
+                inserted_count=1,
+                duplicate_count=0,
+                malformed_count=0,
+                missing_payload_count=0,
+                missing_identity_count=0,
+                out_of_scope_account_count=0,
+                unlinked_execution_count=1,
+                unlinked_decision_count=1,
+                failed_unhandled_count=0,
+                dropped_count=0,
+                gap_count=0,
+                status="inserted",
+            )
+            session.add(source_window)
+            session.flush()
+            event = ExecutionOrderEvent(
+                event_fingerprint="order-linked-fill",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=12,
+                alpaca_account_label="paper",
+                feed_seq=10,
+                event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+                symbol="AAPL",
+                alpaca_order_id="order-linked",
+                client_order_id="client-linked",
+                event_type="fill",
+                status="filled",
+                qty=Decimal("1"),
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("190.20"),
+                raw_event={"channel": "trade_updates"},
+                source_window_id=source_window.id,
+            )
+            session.add(event)
+            session.commit()
+
+            execution = sync_order_to_db(
+                session,
+                {
+                    "id": "order-linked",
+                    "client_order_id": "client-linked",
+                    "symbol": "AAPL",
+                    "side": "buy",
+                    "type": "market",
+                    "time_in_force": "day",
+                    "qty": "1",
+                    "filled_qty": "0",
+                    "status": "accepted",
+                },
+                trade_decision_id=str(decision.id),
+                alpaca_account_label="paper",
+            )
+            session.refresh(event)
+            session.refresh(source_window)
+            session.refresh(decision)
+
+            self.assertEqual(event.execution_id, execution.id)
+            self.assertEqual(event.trade_decision_id, decision.id)
+            self.assertEqual(source_window.unlinked_execution_count, 0)
+            self.assertEqual(source_window.unlinked_decision_count, 0)
+            self.assertEqual(execution.status, "filled")
+            self.assertEqual(execution.filled_qty, Decimal("1"))
+            self.assertEqual(execution.avg_fill_price, Decimal("190.20"))
+            self.assertEqual(decision.status, "filled")
 
     def test_sync_order_to_db_serializes_uuid_payloads(self) -> None:
         sample_id = uuid.uuid4()

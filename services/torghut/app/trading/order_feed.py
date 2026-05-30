@@ -776,13 +776,25 @@ def latest_order_event_for_execution(
     """Fetch newest persisted order event linked to an execution."""
 
     filters: list[ColumnElement[bool]] = [
-        ExecutionOrderEvent.execution_id == execution.id,
-        ExecutionOrderEvent.alpaca_account_label == execution.alpaca_account_label,
+        (ExecutionOrderEvent.execution_id == execution.id)
+        & (ExecutionOrderEvent.alpaca_account_label == execution.alpaca_account_label)
     ]
     if execution.alpaca_order_id:
-        filters.append(ExecutionOrderEvent.alpaca_order_id == execution.alpaca_order_id)
+        filters.append(
+            (ExecutionOrderEvent.alpaca_order_id == execution.alpaca_order_id)
+            & (
+                ExecutionOrderEvent.alpaca_account_label
+                == execution.alpaca_account_label
+            )
+        )
     if execution.client_order_id:
-        filters.append(ExecutionOrderEvent.client_order_id == execution.client_order_id)
+        filters.append(
+            (ExecutionOrderEvent.client_order_id == execution.client_order_id)
+            & (
+                ExecutionOrderEvent.alpaca_account_label
+                == execution.alpaca_account_label
+            )
+        )
 
     stmt = (
         select(ExecutionOrderEvent)
@@ -795,6 +807,79 @@ def latest_order_event_for_execution(
         .limit(1)
     )
     return session.execute(stmt).scalar_one_or_none()
+
+
+def link_order_events_to_execution(session: Session, execution: Execution) -> int:
+    """Attach previously ingested order-feed events once their Execution exists."""
+
+    clauses: list[ColumnElement[bool]] = []
+    if execution.alpaca_order_id:
+        clauses.append(
+            (ExecutionOrderEvent.alpaca_order_id == execution.alpaca_order_id)
+            & (
+                ExecutionOrderEvent.alpaca_account_label
+                == execution.alpaca_account_label
+            )
+        )
+    if execution.client_order_id:
+        clauses.append(
+            (ExecutionOrderEvent.client_order_id == execution.client_order_id)
+            & (
+                ExecutionOrderEvent.alpaca_account_label
+                == execution.alpaca_account_label
+            )
+        )
+    if not clauses:
+        return 0
+
+    events = (
+        session.execute(
+            select(ExecutionOrderEvent)
+            .where(
+                or_(*clauses),
+                (
+                    (ExecutionOrderEvent.execution_id.is_(None))
+                    | (ExecutionOrderEvent.trade_decision_id.is_(None))
+                ),
+            )
+            .order_by(
+                ExecutionOrderEvent.event_ts.asc().nullsfirst(),
+                ExecutionOrderEvent.feed_seq.asc().nullsfirst(),
+                ExecutionOrderEvent.created_at.asc(),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not events:
+        return 0
+
+    linked = 0
+    latest_event: ExecutionOrderEvent | None = None
+    for event in events:
+        changed = False
+        if event.execution_id is None:
+            event.execution_id = execution.id
+            changed = True
+        if event.trade_decision_id is None and execution.trade_decision_id is not None:
+            event.trade_decision_id = execution.trade_decision_id
+            changed = True
+        if not changed:
+            continue
+        session.add(event)
+        _refresh_source_window_linkage_counts(session, event)
+        latest_event = event
+        linked += 1
+
+    if linked == 0 or latest_event is None:
+        return 0
+
+    updated, _ = apply_order_event_to_execution(execution, latest_event)
+    if updated:
+        _update_trade_decision_from_execution(session, execution)
+        upsert_execution_tca_metric(session, execution)
+        session.add(execution)
+    return linked
 
 
 def _resolve_execution(
@@ -814,6 +899,21 @@ def _resolve_execution(
     if not clauses:
         return None
     return session.execute(select(Execution).where(or_(*clauses))).scalar_one_or_none()
+
+
+def _refresh_source_window_linkage_counts(
+    session: Session, event: ExecutionOrderEvent
+) -> None:
+    if event.source_window_id is None:
+        return
+    source_window = session.get(OrderFeedSourceWindow, event.source_window_id)
+    if source_window is None:
+        return
+    source_window.unlinked_execution_count = 0 if event.execution_id is not None else 1
+    source_window.unlinked_decision_count = (
+        0 if event.trade_decision_id is not None else 1
+    )
+    session.add(source_window)
 
 
 def _extract_trade_update_payload(payload: Any) -> Mapping[str, Any] | None:
@@ -1106,5 +1206,6 @@ __all__ = [
     "normalize_order_feed_record",
     "persist_order_event",
     "apply_order_event_to_execution",
+    "link_order_events_to_execution",
     "latest_order_event_for_execution",
 ]
