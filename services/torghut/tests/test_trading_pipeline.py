@@ -30,7 +30,12 @@ from app.models import (
     VNextDatasetSnapshot,
 )
 from app import config
-from app.trading.decisions import DecisionEngine
+from app.trading.decisions import (
+    DecisionEngine,
+    _is_entry_action_for_strategies,
+    _is_exit_action_for_strategies,
+    _strategy_uses_position_isolation,
+)
 from app.trading.execution_adapters import SimulationExecutionAdapter
 from app.trading.execution import OrderExecutor
 from app.trading.firewall import OrderFirewall
@@ -13092,6 +13097,48 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(
             tagged["strategy_position_latest_execution_at"],
             (session_open + timedelta(minutes=1)).isoformat(),
+        )
+
+    def test_attach_strategy_position_tag_handles_signed_short_qty(self) -> None:
+        session_open = datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc)
+        tagged = TradingPipeline._attach_strategy_position_tag(
+            {"symbol": "AMZN", "qty": "-41"},
+            exposures={
+                "AMZN": {
+                    "strategy-pairs": {
+                        "qty": Decimal("-41"),
+                        "latest_execution_at": session_open + timedelta(minutes=61),
+                    }
+                }
+            },
+            session_open=session_open,
+        )
+
+        self.assertEqual(tagged["strategy_id"], "strategy-pairs")
+        self.assertEqual(tagged["qty"], "41")
+        self.assertEqual(tagged["side"], "short")
+
+    def test_microbar_pairs_are_symmetric_entries_with_position_isolation(self) -> None:
+        strategy = Strategy(
+            name="microbar-cross-sectional-pairs-v1",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="microbar_cross_sectional_pairs_v1",
+            universe_symbols=["AAPL", "AMZN"],
+        )
+
+        self.assertTrue(_strategy_uses_position_isolation(strategy))
+        self.assertTrue(
+            _is_entry_action_for_strategies(strategies=[strategy], action="buy")
+        )
+        self.assertTrue(
+            _is_entry_action_for_strategies(strategies=[strategy], action="sell")
+        )
+        self.assertFalse(
+            _is_exit_action_for_strategies(strategies=[strategy], action="buy")
+        )
+        self.assertFalse(
+            _is_exit_action_for_strategies(strategies=[strategy], action="sell")
         )
 
     def test_pipeline_runtime_uncertainty_rechecks_after_llm_adjustment(self) -> None:
