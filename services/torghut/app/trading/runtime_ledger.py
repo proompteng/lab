@@ -283,10 +283,11 @@ def _build_bucket(
     for row in lifecycle_rows:
         if row.execution_policy_hash is not None:
             execution_policy_hash_counter[row.execution_policy_hash] += 1
-        if row.cost_model_hash is not None:
-            cost_model_hash_counter[row.cost_model_hash] += 1
         if (lineage_hash := row.lineage_hash or row.replay_data_hash) is not None:
             lineage_hash_counter[lineage_hash] += 1
+    for row in usable_fills:
+        if row.cost_model_hash is not None:
+            cost_model_hash_counter[row.cost_model_hash] += 1
 
     positions: dict[tuple[str | None, str | None, str | None], _PositionState] = (
         carried_positions if carried_positions is not None else {}
@@ -424,19 +425,15 @@ def _order_lifecycle_blockers(
     if unfilled_order_count > 0:
         blockers.append("unfilled_order_present")
 
-    if any(row.execution_policy_hash is None for row in lifecycle_rows):
+    if not usable_fills or any(row.execution_policy_hash is None for row in usable_fills):
         blockers.append("execution_policy_hash_missing")
-    if any(row.cost_model_hash is None for row in lifecycle_rows):
+    if not usable_fills or any(row.cost_model_hash is None for row in usable_fills):
         blockers.append("cost_model_hash_missing")
     if any(
         row.lineage_hash is None and row.replay_data_hash is None
         for row in lifecycle_rows
     ):
         blockers.append("proof_lineage_hash_missing")
-    if len(execution_policy_hash_counter) > 1:
-        blockers.append("execution_policy_hash_ambiguous")
-    if len(cost_model_hash_counter) > 1:
-        blockers.append("cost_model_hash_ambiguous")
     if len(lineage_hash_counter) > 1:
         blockers.append("proof_lineage_hash_ambiguous")
     return blockers

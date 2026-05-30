@@ -582,7 +582,7 @@ def test_exact_replay_ledger_requires_order_lifecycle_and_hash_lineage() -> None
     assert bucket.fill_count == 2
     assert bucket.net_strategy_pnl_after_costs == Decimal("97")
     assert bucket.execution_policy_hash_counts == {"policy-sha": 6}
-    assert bucket.cost_model_hash_counts == {"cost-sha": 6}
+    assert bucket.cost_model_hash_counts == {"cost-sha": 2}
     assert bucket.lineage_hash_counts == {"lineage-sha": 6}
     assert bucket.post_cost_expectancy_bps is not None
 
@@ -659,8 +659,85 @@ def test_exact_replay_ledger_does_not_use_idempotency_key_as_policy_hash() -> No
     assert bucket.execution_policy_hash_counts == {}
     assert "execution_policy_hash_missing" in bucket.blockers
     assert "execution_policy_hash_ambiguous" not in bucket.blockers
-    assert bucket.cost_model_hash_counts == {"cost-sha": 6}
+    assert bucket.cost_model_hash_counts == {"cost-sha": 2}
     assert bucket.lineage_hash_counts == {"lineage-sha": 6}
+
+
+def test_runtime_ledger_cost_hash_belongs_to_fill_economics_not_lifecycle() -> None:
+    lifecycle_common = {
+        "account_label": "paper",
+        "strategy_id": "strategy-1",
+        "symbol": "NVDA",
+        "lineage_hash": "lineage-sha",
+    }
+    bucket = build_runtime_ledger_buckets(
+        [
+            {
+                **lifecycle_common,
+                "event_type": "decision",
+                "executed_at": _ts(1),
+                "decision_id": "decision-buy",
+            },
+            {
+                **lifecycle_common,
+                "event_type": "order_submitted",
+                "executed_at": _ts(2),
+                "decision_id": "decision-buy",
+                "order_id": "order-buy",
+                "execution_policy_hash": "policy-buy",
+            },
+            {
+                **lifecycle_common,
+                "event_type": "fill",
+                "executed_at": _ts(3),
+                "decision_id": "decision-buy",
+                "order_id": "order-buy",
+                "side": "buy",
+                "filled_qty": "10",
+                "avg_fill_price": "100",
+                "cost_amount": "1",
+                "cost_basis": "broker_reported_commission_and_fees",
+                "execution_policy_hash": "policy-buy",
+                "cost_model_hash": "cost-sha",
+            },
+            {
+                **lifecycle_common,
+                "event_type": "decision",
+                "executed_at": _ts(10),
+                "decision_id": "decision-sell",
+            },
+            {
+                **lifecycle_common,
+                "event_type": "order_submitted",
+                "executed_at": _ts(11),
+                "decision_id": "decision-sell",
+                "order_id": "order-sell",
+                "execution_policy_hash": "policy-sell",
+            },
+            {
+                **lifecycle_common,
+                "event_type": "fill",
+                "executed_at": _ts(12),
+                "decision_id": "decision-sell",
+                "order_id": "order-sell",
+                "side": "sell",
+                "filled_qty": "10",
+                "avg_fill_price": "110",
+                "cost_amount": "2",
+                "cost_basis": "broker_reported_commission_and_fees",
+                "execution_policy_hash": "policy-sell",
+                "cost_model_hash": "cost-sha",
+            },
+        ],
+        bucket_ranges=[(_ts(), _ts(60))],
+        require_order_lifecycle=True,
+    )[0]
+
+    assert bucket.blockers == []
+    assert bucket.execution_policy_hash_counts == {"policy-buy": 2, "policy-sell": 2}
+    assert bucket.cost_model_hash_counts == {"cost-sha": 2}
+    assert bucket.lineage_hash_counts == {"lineage-sha": 6}
+    assert bucket.post_cost_expectancy_bps is not None
 
 
 def test_runtime_ledger_blocks_non_promotion_grade_cost_basis_at_builder() -> None:
