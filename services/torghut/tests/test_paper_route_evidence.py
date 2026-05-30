@@ -787,9 +787,12 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(
             proof_handoff["targets"],
             {
-                "min_runtime_ledger_net_pnl_after_costs": "500",
+                "proof_mode": "authority",
+                "final_authority": True,
+                "evidence_collection_only": False,
+                "min_runtime_ledger_net_pnl_after_costs": "10000",
                 "min_runtime_ledger_daily_net_pnl_after_costs": "500",
-                "min_runtime_ledger_trading_days": 1,
+                "min_runtime_ledger_trading_days": 20,
             },
         )
         self.assertEqual(
@@ -832,10 +835,16 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertIn("--completion-service-base-url", waiting_argv)
         self.assertIn("$TORGHUT_LIVE_SERVICE_BASE_URL", waiting_argv)
         self.assertIn("$TORGHUT_PAPER_ROUTE_SERVICE_BASE_URL", waiting_argv)
+        self.assertIn("--proof-mode", waiting_argv)
+        self.assertIn("smoke", waiting_argv)
         self.assertIn("--min-runtime-ledger-net-pnl", waiting_argv)
         authority_argv = proof_handoff["commands"]["authority_packet_after_import"][
             "argv"
         ]
+        self.assertIn("--proof-mode", authority_argv)
+        self.assertIn("authority", authority_argv)
+        self.assertIn("10000", authority_argv)
+        self.assertIn("20", authority_argv)
         self.assertIn("--runtime-window-import-file", authority_argv)
         self.assertIn("artifacts/runtime-window-import.json", authority_argv)
         self.assertIn("--artifact-prefix", authority_argv)

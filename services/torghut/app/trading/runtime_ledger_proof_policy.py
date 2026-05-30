@@ -6,13 +6,25 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
+from typing import Literal
+
+
+RuntimeLedgerProofMode = Literal["smoke", "probation", "authority"]
+RUNTIME_LEDGER_PROOF_MODES: tuple[RuntimeLedgerProofMode, ...] = (
+    "smoke",
+    "probation",
+    "authority",
+)
+DEFAULT_RUNTIME_LEDGER_PROOF_MODE: RuntimeLedgerProofMode = "smoke"
 
 
 @dataclass(frozen=True)
 class RuntimeLedgerProofPolicy:
+    proof_mode: RuntimeLedgerProofMode = DEFAULT_RUNTIME_LEDGER_PROOF_MODE
     min_net_pnl_after_costs: Decimal = Decimal("500")
     min_daily_net_pnl_after_costs: Decimal = Decimal("500")
     min_trading_days: int = 1
+    probation_min_trading_days: int = 5
     max_drawdown_pct_equity: Decimal = Decimal("0.08")
     max_best_day_share: Decimal = Decimal("0.25")
     max_symbol_concentration_share: Decimal = Decimal("0.50")
@@ -24,15 +36,46 @@ class RuntimeLedgerProofPolicy:
     authority_max_intraday_drawdown: Decimal = Decimal("1500")
     authority_max_best_day_share: Decimal = Decimal("0.25")
 
-    def target_payload(self) -> dict[str, object]:
+    def target_payload(
+        self,
+        proof_mode: str | None = None,
+    ) -> dict[str, object]:
+        targets = self.targets_for_mode(proof_mode or self.proof_mode)
         return {
+            "proof_mode": targets["proof_mode"],
+            "final_authority": targets["final_authority"],
+            "evidence_collection_only": targets["evidence_collection_only"],
             "min_runtime_ledger_net_pnl_after_costs": _decimal_text(
-                self.min_net_pnl_after_costs
+                _target_decimal(targets, "min_net_pnl_after_costs")
             ),
             "min_runtime_ledger_daily_net_pnl_after_costs": _decimal_text(
-                self.min_daily_net_pnl_after_costs
+                _target_decimal(targets, "min_daily_net_pnl_after_costs")
             ),
-            "min_runtime_ledger_trading_days": self.min_trading_days,
+            "min_runtime_ledger_trading_days": targets["min_trading_days"],
+        }
+
+    def targets_for_mode(self, proof_mode: str) -> dict[str, object]:
+        mode = normalize_runtime_ledger_proof_mode(proof_mode)
+        min_days = self.min_trading_days
+        min_daily = self.min_daily_net_pnl_after_costs
+        min_net = self.min_net_pnl_after_costs
+        if mode == "probation":
+            min_days = max(min_days, self.probation_min_trading_days)
+            min_net = max(min_net, min_daily * Decimal(min_days))
+        elif mode == "authority":
+            min_days = max(min_days, self.authority_min_trading_days)
+            min_daily = max(
+                min_daily,
+                self.authority_min_mean_daily_net_pnl_after_costs,
+            )
+            min_net = max(min_net, min_daily * Decimal(min_days))
+        return {
+            "proof_mode": mode,
+            "final_authority": mode == "authority",
+            "evidence_collection_only": mode != "authority",
+            "min_net_pnl_after_costs": min_net,
+            "min_daily_net_pnl_after_costs": min_daily,
+            "min_trading_days": min_days,
         }
 
 
@@ -69,6 +112,9 @@ _DECIMAL_ENV_FIELDS = {
 }
 _INT_ENV_FIELDS = {
     "TORGHUT_RUNTIME_LEDGER_PROOF_MIN_TRADING_DAYS": "min_trading_days",
+    "TORGHUT_RUNTIME_LEDGER_PROOF_PROBATION_MIN_TRADING_DAYS": (
+        "probation_min_trading_days"
+    ),
     "TORGHUT_RUNTIME_LEDGER_AUTHORITY_MIN_TRADING_DAYS": ("authority_min_trading_days"),
 }
 
@@ -78,6 +124,9 @@ def runtime_ledger_proof_policy_from_env(
 ) -> RuntimeLedgerProofPolicy:
     source = os.environ if environ is None else environ
     values = DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.__dict__.copy()
+    raw_mode = source.get("TORGHUT_RUNTIME_LEDGER_PROOF_MODE")
+    if raw_mode is not None and raw_mode.strip():
+        values["proof_mode"] = normalize_runtime_ledger_proof_mode(raw_mode)
     for env_name, field_name in _DECIMAL_ENV_FIELDS.items():
         raw_value = source.get(env_name)
         if raw_value is None or not raw_value.strip():
@@ -89,6 +138,25 @@ def runtime_ledger_proof_policy_from_env(
             continue
         values[field_name] = _parse_int_env(env_name, raw_value)
     return RuntimeLedgerProofPolicy(**values)
+
+
+def normalize_runtime_ledger_proof_mode(value: str) -> RuntimeLedgerProofMode:
+    mode = value.strip().lower().replace("_", "-")
+    if mode in {"paper-probation", "paper"}:
+        mode = "probation"
+    if mode not in RUNTIME_LEDGER_PROOF_MODES:
+        allowed = ", ".join(RUNTIME_LEDGER_PROOF_MODES)
+        raise ValueError(
+            f"TORGHUT_RUNTIME_LEDGER_PROOF_MODE must be one of {allowed}: {value!r}"
+        )
+    return mode
+
+
+def _target_decimal(targets: Mapping[str, object], key: str) -> Decimal:
+    value = targets[key]
+    if isinstance(value, Decimal):
+        return value
+    raise TypeError(f"{key} must be Decimal")
 
 
 def _parse_decimal_env(name: str, value: str) -> Decimal:
@@ -114,7 +182,11 @@ def _decimal_text(value: Decimal) -> str:
 
 
 __all__ = [
+    "DEFAULT_RUNTIME_LEDGER_PROOF_MODE",
     "DEFAULT_RUNTIME_LEDGER_PROOF_POLICY",
+    "RUNTIME_LEDGER_PROOF_MODES",
     "RuntimeLedgerProofPolicy",
+    "RuntimeLedgerProofMode",
+    "normalize_runtime_ledger_proof_mode",
     "runtime_ledger_proof_policy_from_env",
 ]

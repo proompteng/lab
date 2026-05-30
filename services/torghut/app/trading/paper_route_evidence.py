@@ -3234,29 +3234,55 @@ def _runtime_ledger_proof_packet_handoff(
         for blocker in _unique_text_items(runtime_import_handoff.get("import_blockers"))
         if blocker not in _unique_text_items(session_readiness.get("import_blockers"))
     ]
-    base_args = [
-        "uv",
-        "run",
-        "--frozen",
-        "python",
-        "scripts/assemble_runtime_ledger_proof_packet.py",
+    smoke_targets = proof_policy.target_payload("smoke")
+    authority_targets = proof_policy.target_payload("authority")
+    smoke_threshold_args = [
+        "--proof-mode",
+        "smoke",
+        "--min-runtime-ledger-net-pnl",
+        str(smoke_targets["min_runtime_ledger_net_pnl_after_costs"]),
+        "--min-runtime-ledger-daily-net-pnl",
+        str(smoke_targets["min_runtime_ledger_daily_net_pnl_after_costs"]),
+        "--min-runtime-ledger-trading-days",
+        str(smoke_targets["min_runtime_ledger_trading_days"]),
+    ]
+    authority_threshold_args = [
+        "--proof-mode",
+        "authority",
+        "--min-runtime-ledger-net-pnl",
+        str(authority_targets["min_runtime_ledger_net_pnl_after_costs"]),
+        "--min-runtime-ledger-daily-net-pnl",
+        str(authority_targets["min_runtime_ledger_daily_net_pnl_after_costs"]),
+        "--min-runtime-ledger-trading-days",
+        str(authority_targets["min_runtime_ledger_trading_days"]),
+    ]
+    service_args = [
         "--status-service-base-url",
         "$TORGHUT_LIVE_SERVICE_BASE_URL",
         "--paper-route-service-base-url",
         "$TORGHUT_PAPER_ROUTE_SERVICE_BASE_URL",
         "--completion-service-base-url",
         "$TORGHUT_LIVE_SERVICE_BASE_URL",
-        "--min-runtime-ledger-net-pnl",
-        str(proof_policy.min_net_pnl_after_costs),
-        "--min-runtime-ledger-daily-net-pnl",
-        str(proof_policy.min_daily_net_pnl_after_costs),
-        "--min-runtime-ledger-trading-days",
-        str(proof_policy.min_trading_days),
+    ]
+    base_args = [
+        "uv",
+        "run",
+        "--frozen",
+        "python",
+        "scripts/assemble_runtime_ledger_proof_packet.py",
+        *service_args,
+        *smoke_threshold_args,
         "--output-file",
         RUNTIME_LEDGER_PROOF_PACKET_OUTPUT_FILE,
     ]
     authority_args = [
-        *base_args[:-2],
+        "uv",
+        "run",
+        "--frozen",
+        "python",
+        "scripts/assemble_runtime_ledger_proof_packet.py",
+        *service_args,
+        *authority_threshold_args,
         "--runtime-window-import-file",
         RUNTIME_WINDOW_IMPORT_OUTPUT_FILE,
         "--output-file",
@@ -3290,7 +3316,7 @@ def _runtime_ledger_proof_packet_handoff(
             "completion_doc29": "/trading/completion/doc29",
         },
         "targets": {
-            **proof_policy.target_payload(),
+            **authority_targets,
         },
         "runtime_window": {
             "import_ready": import_ready,

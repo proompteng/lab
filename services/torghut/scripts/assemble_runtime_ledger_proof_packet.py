@@ -23,12 +23,20 @@ from typing import Any, Protocol, cast
 from urllib.parse import urljoin
 from urllib.request import urlopen
 
-from app.trading.runtime_ledger_proof_policy import runtime_ledger_proof_policy_from_env
+from app.trading.runtime_ledger_proof_policy import (
+    DEFAULT_RUNTIME_LEDGER_PROOF_MODE,
+    RUNTIME_LEDGER_PROOF_MODES,
+    normalize_runtime_ledger_proof_mode,
+    runtime_ledger_proof_policy_from_env,
+)
 
 
 SCHEMA_VERSION = "torghut.runtime-ledger-live-paper-proof-packet.v1"
 DOC29_LIVE_SCALE_GATE = "live_scale_observed"
 DEFAULT_RUNTIME_LEDGER_PROOF_POLICY = runtime_ledger_proof_policy_from_env()
+RUNTIME_LEDGER_PROOF_MODE_NOT_AUTHORITY_BLOCKER = (
+    "runtime_ledger_proof_mode_not_authority"
+)
 STATUS_ENDPOINT = "/trading/status"
 PAPER_ROUTE_EVIDENCE_ENDPOINT = "/trading/paper-route-evidence"
 COMPLETION_DOC29_ENDPOINT = "/trading/completion/doc29"
@@ -1184,6 +1192,8 @@ def _required_actions(blockers: Sequence[str], *, verdict: str) -> list[str]:
                 actions,
                 ["improve_runtime_ledger_drawdown_concentration_or_position_sizing"],
             )
+        elif blocker == RUNTIME_LEDGER_PROOF_MODE_NOT_AUTHORITY_BLOCKER:
+            _extend_unique(actions, ["rerun_proof_packet_in_authority_mode"])
         elif blocker.startswith("runtime_ledger_") or blocker in {
             "filled_notional_missing",
             "closed_round_trip_missing",
@@ -1229,6 +1239,7 @@ def _required_actions(blockers: Sequence[str], *, verdict: str) -> list[str]:
 def build_runtime_ledger_proof_packet(
     status: Mapping[str, Any],
     *,
+    proof_mode: str = "authority",
     paper_route_evidence: Mapping[str, Any] | None = None,
     runtime_window_import: Mapping[str, Any] | None = None,
     completion_status: Mapping[str, Any] | None = None,
@@ -1255,6 +1266,43 @@ def build_runtime_ledger_proof_packet(
     checks: dict[str, dict[str, Any]] = {}
     blockers: list[str] = []
     generated_at = generated_at or _utc_now()
+    resolved_proof_mode = normalize_runtime_ledger_proof_mode(proof_mode)
+    proof_mode_targets = DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.targets_for_mode(
+        resolved_proof_mode
+    )
+    min_runtime_ledger_net_pnl = max(
+        min_runtime_ledger_net_pnl,
+        cast(Decimal, proof_mode_targets["min_net_pnl_after_costs"]),
+    )
+    min_runtime_ledger_daily_net_pnl = max(
+        min_runtime_ledger_daily_net_pnl,
+        cast(Decimal, proof_mode_targets["min_daily_net_pnl_after_costs"]),
+    )
+    min_runtime_ledger_trading_days = max(
+        min_runtime_ledger_trading_days,
+        cast(int, proof_mode_targets["min_trading_days"]),
+    )
+    final_authority_mode = bool(proof_mode_targets["final_authority"])
+    mode_authority_blockers = (
+        []
+        if final_authority_mode
+        else [RUNTIME_LEDGER_PROOF_MODE_NOT_AUTHORITY_BLOCKER]
+    )
+    mode_authority_failed_checks = (
+        [] if final_authority_mode else ["runtime_ledger_proof_mode_authority_required"]
+    )
+    _check(
+        checks,
+        "runtime_ledger_proof_mode_contract",
+        passed=True,
+        observed={
+            "proof_mode": resolved_proof_mode,
+            "final_authority": final_authority_mode,
+            "evidence_collection_only": not final_authority_mode,
+        },
+        expected="explicit proof mode; only authority mode can grant promotion authority",
+        blockers=[],
+    )
 
     status_gate = _status_gate_blocker_summary(status)
     raw_live_blockers = status_gate["raw_blockers"]
@@ -1730,13 +1778,25 @@ def build_runtime_ledger_proof_packet(
     _extend_unique(blockers, risk_blockers)
 
     failed_checks = [key for key, value in checks.items() if not value["passed"]]
-    post_cost_proof_allowed = not failed_checks
-    promotion_prerequisite_blockers = list(capital_status_blockers)
+    post_cost_proof_satisfied = not failed_checks
+    post_cost_proof_authority_allowed = (
+        post_cost_proof_satisfied and final_authority_mode
+    )
+    authority_blockers = list(blockers)
+    _extend_unique(authority_blockers, mode_authority_blockers)
+    authority_failed_checks = list(failed_checks)
+    _extend_unique(authority_failed_checks, mode_authority_failed_checks)
+    promotion_prerequisite_blockers = list(mode_authority_blockers)
+    _extend_unique(promotion_prerequisite_blockers, capital_status_blockers)
     _extend_unique(promotion_prerequisite_blockers, health_gate_promotion_blockers)
     capital_promotion_allowed = (
-        post_cost_proof_allowed and not promotion_prerequisite_blockers
+        post_cost_proof_authority_allowed and not promotion_prerequisite_blockers
     )
     capital_promotion_failed_checks: list[str] = []
+    if mode_authority_blockers:
+        capital_promotion_failed_checks.append(
+            "runtime_ledger_proof_mode_authority_required"
+        )
     if capital_status_blockers:
         capital_promotion_failed_checks.append("capital_promotion_gate")
     if health_gate_promotion_blockers:
@@ -1751,12 +1811,12 @@ def build_runtime_ledger_proof_packet(
         "paper_route_session_settlement_pending",
         "paper_route_import_not_ready",
     }
-    if post_cost_proof_allowed and not promotion_prerequisite_blockers:
+    if post_cost_proof_authority_allowed and not promotion_prerequisite_blockers:
         verdict = "promotion_authority_allowed"
         reason = "runtime_ledger_live_paper_post_cost_proof_satisfied"
         promotion_reason = reason
         capital_reason = "live_capital_promotion_gate_clear"
-    elif post_cost_proof_allowed:
+    elif post_cost_proof_authority_allowed:
         verdict = "post_cost_proof_authority_allowed_capital_promotion_blocked"
         reason = (
             "runtime_ledger_live_paper_post_cost_proof_satisfied_"
@@ -1764,6 +1824,11 @@ def build_runtime_ledger_proof_packet(
         )
         promotion_reason = "live_capital_promotion_gate_blocked"
         capital_reason = "live_capital_promotion_gate_blocked"
+    elif post_cost_proof_satisfied and not final_authority_mode:
+        verdict = f"{resolved_proof_mode}_proof_satisfied_evidence_collection_only"
+        reason = f"runtime_ledger_{resolved_proof_mode}_proof_satisfied"
+        promotion_reason = RUNTIME_LEDGER_PROOF_MODE_NOT_AUTHORITY_BLOCKER
+        capital_reason = RUNTIME_LEDGER_PROOF_MODE_NOT_AUTHORITY_BLOCKER
     elif set(blockers).issubset(waiting_blockers):
         verdict = "waiting_for_runtime_window"
         reason = "paper_route_runtime_window_not_importable_yet"
@@ -1778,21 +1843,25 @@ def build_runtime_ledger_proof_packet(
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": generated_at,
+        "proof_mode": resolved_proof_mode,
         "verdict": verdict,
-        "ok": post_cost_proof_allowed,
+        "ok": post_cost_proof_satisfied,
+        "final_authority_ok": post_cost_proof_authority_allowed,
+        "evidence_collection_only": not final_authority_mode,
         "post_cost_proof_authority": {
-            "allowed": post_cost_proof_allowed,
+            "allowed": post_cost_proof_authority_allowed,
+            "proof_satisfied": post_cost_proof_satisfied,
             "reason": reason,
-            "blocking_reasons": blockers,
-            "failed_checks": failed_checks,
+            "blocking_reasons": authority_blockers,
+            "failed_checks": authority_failed_checks,
         },
         "capital_promotion_authority": {
             "allowed": capital_promotion_allowed,
             "reason": capital_reason,
             "blocking_reasons": promotion_prerequisite_blockers,
-            "proof_prerequisite_blocking_reasons": blockers,
+            "proof_prerequisite_blocking_reasons": authority_blockers,
             "failed_checks": capital_promotion_failed_checks
-            if post_cost_proof_allowed
+            if post_cost_proof_authority_allowed
             else promotion_failed_checks,
         },
         "promotion_authority": {
@@ -1802,6 +1871,9 @@ def build_runtime_ledger_proof_packet(
             "failed_checks": promotion_failed_checks,
         },
         "target": {
+            "proof_mode": resolved_proof_mode,
+            "final_authority": final_authority_mode,
+            "evidence_collection_only": not final_authority_mode,
             "min_runtime_ledger_net_pnl_after_costs": _decimal_text(
                 min_runtime_ledger_net_pnl
             ),
@@ -1919,6 +1991,15 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--completion-url", help="URL returning /trading/completion/doc29 JSON."
+    )
+    parser.add_argument(
+        "--proof-mode",
+        choices=RUNTIME_LEDGER_PROOF_MODES,
+        default=DEFAULT_RUNTIME_LEDGER_PROOF_MODE,
+        help=(
+            "Proof packet mode. smoke/probation prove plumbing or bounded "
+            "evidence collection only; authority is required for promotion."
+        ),
     )
     parser.add_argument(
         "--min-runtime-ledger-net-pnl",
@@ -2060,6 +2141,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     assert status is not None
     packet = build_runtime_ledger_proof_packet(
         status,
+        proof_mode=args.proof_mode,
         paper_route_evidence=paper_route_evidence,
         runtime_window_import=runtime_window_import,
         completion_status=completion_status,

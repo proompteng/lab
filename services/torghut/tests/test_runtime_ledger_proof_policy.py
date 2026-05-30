@@ -14,6 +14,9 @@ class TestRuntimeLedgerProofPolicy(TestCase):
         self.assertEqual(
             DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.target_payload(),
             {
+                "proof_mode": "smoke",
+                "final_authority": False,
+                "evidence_collection_only": True,
                 "min_runtime_ledger_net_pnl_after_costs": "500",
                 "min_runtime_ledger_daily_net_pnl_after_costs": "500",
                 "min_runtime_ledger_trading_days": 1,
@@ -30,6 +33,8 @@ class TestRuntimeLedgerProofPolicy(TestCase):
                 "TORGHUT_RUNTIME_LEDGER_PROOF_MIN_NET_PNL_AFTER_COSTS": "750",
                 "TORGHUT_RUNTIME_LEDGER_PROOF_MIN_DAILY_NET_PNL_AFTER_COSTS": "625",
                 "TORGHUT_RUNTIME_LEDGER_PROOF_MIN_TRADING_DAYS": "3",
+                "TORGHUT_RUNTIME_LEDGER_PROOF_MODE": "probation",
+                "TORGHUT_RUNTIME_LEDGER_PROOF_PROBATION_MIN_TRADING_DAYS": "6",
                 "TORGHUT_RUNTIME_LEDGER_PROOF_MAX_DRAWDOWN_PCT_EQUITY": "0.12",
                 "TORGHUT_RUNTIME_LEDGER_AUTHORITY_MIN_TRADING_DAYS": "10",
             }
@@ -38,8 +43,32 @@ class TestRuntimeLedgerProofPolicy(TestCase):
         self.assertEqual(policy.min_net_pnl_after_costs, Decimal("750"))
         self.assertEqual(policy.min_daily_net_pnl_after_costs, Decimal("625"))
         self.assertEqual(policy.min_trading_days, 3)
+        self.assertEqual(policy.proof_mode, "probation")
+        self.assertEqual(policy.probation_min_trading_days, 6)
         self.assertEqual(policy.max_drawdown_pct_equity, Decimal("0.12"))
         self.assertEqual(policy.authority_min_trading_days, 10)
+        self.assertEqual(
+            policy.target_payload(),
+            {
+                "proof_mode": "probation",
+                "final_authority": False,
+                "evidence_collection_only": True,
+                "min_runtime_ledger_net_pnl_after_costs": "3750",
+                "min_runtime_ledger_daily_net_pnl_after_costs": "625",
+                "min_runtime_ledger_trading_days": 6,
+            },
+        )
+        self.assertEqual(
+            DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.target_payload("authority"),
+            {
+                "proof_mode": "authority",
+                "final_authority": True,
+                "evidence_collection_only": False,
+                "min_runtime_ledger_net_pnl_after_costs": "10000",
+                "min_runtime_ledger_daily_net_pnl_after_costs": "500",
+                "min_runtime_ledger_trading_days": 20,
+            },
+        )
 
     def test_invalid_policy_env_fails_closed(self) -> None:
         with self.assertRaisesRegex(ValueError, "must be a decimal"):
@@ -53,5 +82,12 @@ class TestRuntimeLedgerProofPolicy(TestCase):
             runtime_ledger_proof_policy_from_env(
                 {
                     "TORGHUT_RUNTIME_LEDGER_PROOF_MIN_TRADING_DAYS": "-1",
+                }
+            )
+
+        with self.assertRaisesRegex(ValueError, "must be one of"):
+            runtime_ledger_proof_policy_from_env(
+                {
+                    "TORGHUT_RUNTIME_LEDGER_PROOF_MODE": "pretend",
                 }
             )
