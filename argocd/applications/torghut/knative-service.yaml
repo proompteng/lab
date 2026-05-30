@@ -92,7 +92,7 @@ spec:
             - name: TRADING_SIMPLE_PAPER_ROUTE_PROBE_ENABLED
               value: "true"
             - name: TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL
-              value: "25"
+              value: "75000"
             - name: TRADING_MARKET_CONTEXT_URL
               value: http://jangar.jangar.svc.cluster.local/api/torghut/market-context
             - name: TRADING_JANGAR_CONTROL_PLANE_STATUS_URL

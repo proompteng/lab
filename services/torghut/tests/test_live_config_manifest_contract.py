@@ -393,7 +393,7 @@ class TestLiveConfigManifestContract(TestCase):
                 self.assertEqual(
                     tuple(str(symbol) for symbol in cast(list[object], raw_symbols)),
                     ("AAPL", "AMZN"),
-                    f"{name} must stay aligned to the active H-PAIRS paper-route probe symbols",
+                    f"{name} must stay aligned to the active H-PAIRS candidate pair",
                 )
             else:
                 self.assertIn("$300/day", description)
@@ -419,17 +419,26 @@ class TestLiveConfigManifestContract(TestCase):
                 self.assertEqual(name, "microbar-cross-sectional-pairs-v1")
                 self.assertEqual(
                     _strategy_decimal(strategy, "max_notional_per_trade"),
-                    Decimal("31590"),
+                    Decimal("75000"),
                 )
                 self.assertEqual(
                     _strategy_decimal(strategy, "max_position_pct_equity"),
-                    Decimal("1.0"),
+                    Decimal("6.0"),
                 )
                 self.assertEqual(params.get("position_isolation_mode"), "per_strategy")
-                self.assertEqual(params.get("max_gross_exposure_pct_equity"), "2.0")
+                self.assertEqual(params.get("max_gross_exposure_pct_equity"), "4.0")
                 self.assertEqual(params.get("max_pair_legs"), "2")
+                self.assertEqual(params.get("top_n"), "1")
+                self.assertEqual(params.get("min_cross_section_continuation_rank"), "0.55")
                 self.assertEqual(params.get("entry_minute_after_open"), "60")
                 self.assertEqual(params.get("exit_minute_after_open"), "120")
+                self.assertEqual(params.get("long_stop_loss_bps"), "10")
+                self.assertEqual(params.get("long_trailing_stop_activation_profit_bps"), "8")
+                self.assertEqual(params.get("long_trailing_stop_drawdown_bps"), "4")
+                self.assertEqual(params.get("max_hold_seconds"), "7200")
+                self.assertEqual(params.get("max_session_negative_exit_bps"), "10")
+                self.assertEqual(params.get("max_stop_loss_exits_per_session"), "1")
+                self.assertEqual(params.get("stop_loss_lockout_seconds"), "1800")
             elif str(strategy.get("strategy_type")) == "intraday_tsmom_v1":
                 self.assertEqual(name, "intraday-tsmom-profit-v3")
                 self.assertEqual(
@@ -609,7 +618,7 @@ class TestLiveConfigManifestContract(TestCase):
         )
         self.assertEqual(
             sim_env.get("TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL"),
-            "25",
+            "75000",
         )
         self.assertEqual(
             sim_env.get("TRADING_PAPER_ROUTE_TARGET_PLAN_URL"),
@@ -1352,7 +1361,7 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertFalse(_manifest_bool(env, "TRADING_SIMPLE_SUBMIT_ENABLED"))
         self.assertTrue(_manifest_bool(env, "TRADING_SIMPLE_PAPER_ROUTE_PROBE_ENABLED"))
         self.assertEqual(
-            env.get("TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL"), "25"
+            env.get("TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL"), "75000"
         )
         self.assertTrue(_manifest_bool(env, "TRADING_ALPACA_QUOTE_FALLBACK_ENABLED"))
         self.assertEqual(env.get("TRADING_ALPACA_QUOTE_FEED"), "iex")

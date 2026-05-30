@@ -19,7 +19,7 @@
   "max_allowed_slippage_bps": "8",
   "min_sample_count_for_live_canary": 60,
   "min_sample_count_for_scale_up": 120,
-  "max_rolling_drawdown_bps": "1000",
+  "max_rolling_drawdown_bps": "300",
   "rollback_triggers": [
     "required_feature_set_unavailable",
     "drift_checks_missing",
