@@ -2592,6 +2592,121 @@ class TestDecisionEngine(TestCase):
         self.assertEqual(position_exit.get("type"), "runtime_signal_exit")
         self.assertEqual(position_exit.get("position_side"), "short")
 
+    def test_scheduler_runtime_microbar_pairs_signal_exit_uses_isolated_short_when_account_long(
+        self,
+    ) -> None:
+        strategy_id = uuid.uuid4()
+        engine = DecisionEngine(price_fetcher=None)
+        strategy = Strategy(
+            id=strategy_id,
+            name="microbar-pairs-runtime",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="microbar-pairs-runtime",
+                    strategy_id="microbar_cross_sectional_pairs_v1@research",
+                    strategy_type="microbar_cross_sectional_pairs_v1",
+                    version="1.0.0",
+                    base_timeframe="1Sec",
+                    universe_type="microbar_cross_sectional_pairs_v1",
+                    universe_symbols=["AAPL", "AMZN"],
+                    max_position_pct_equity=Decimal("1.0"),
+                    max_notional_per_trade=Decimal("100"),
+                    params={
+                        "entry_minute_after_open": "60",
+                        "exit_minute_after_open": "120",
+                        "signal_motif": "vwap_close_continuation",
+                        "rank_feature": "cross_section_vwap_w5m_rank",
+                        "selection_mode": "continuation",
+                        "max_pair_legs": "2",
+                        "position_isolation_mode": "per_strategy",
+                    },
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="microbar_cross_sectional_pairs_v1",
+            universe_symbols=["AAPL", "AMZN"],
+            max_position_pct_equity=Decimal("1.0"),
+            max_notional_per_trade=Decimal("100"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 15, 30, 0, tzinfo=timezone.utc),
+            symbol="AMZN",
+            timeframe="1Sec",
+            seq=1,
+            payload={
+                "price": 99,
+                "spread": 0.02,
+                "imbalance_bid_px": 98.99,
+                "imbalance_ask_px": 99.01,
+                "macd": 0.010,
+                "macd_signal": 0.008,
+                "rsi14": 56.4,
+                "vwap_w5m": 100,
+                "session_minutes_elapsed": 120,
+                "cross_section_continuation_breadth": 0.5,
+                "cross_section_session_open_rank": 0.5,
+                "cross_section_vwap_w5m_rank": 0.5,
+            },
+        )
+
+        with (
+            patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
+            patch.object(settings, "trading_strategy_scheduler_enabled", True),
+            patch.object(settings, "trading_fractional_equities_enabled", True),
+            patch.object(settings, "trading_allow_shorts", True),
+        ):
+            engine.evaluate(
+                signal.model_copy(
+                    update={
+                        "symbol": "AAPL",
+                        "payload": {
+                            **signal.payload,
+                            "price": 101,
+                            "imbalance_bid_px": 100.99,
+                            "imbalance_ask_px": 101.01,
+                            "vwap_w5m": 100,
+                        },
+                    }
+                ),
+                [strategy],
+                positions=[],
+            )
+            decisions = engine.evaluate(
+                signal,
+                [strategy],
+                positions=[
+                    {
+                        "strategy_id": "route-acquisition-probe",
+                        "symbol": "AMZN",
+                        "qty": "1.00",
+                        "side": "long",
+                        "market_value": "99",
+                        "avg_entry_price": "99",
+                    },
+                    {
+                        "strategy_id": str(strategy_id),
+                        "symbol": "AMZN",
+                        "qty": "0.25",
+                        "side": "short",
+                        "market_value": "-24.75",
+                        "avg_entry_price": "100",
+                    },
+                ],
+            )
+
+        self.assertEqual(len(decisions), 1)
+        self.assertEqual(decisions[0].action, "buy")
+        self.assertEqual(decisions[0].qty, Decimal("0.25"))
+        self.assertIn("microbar_cross_sectional_pair_exit", decisions[0].rationale)
+        position_exit = decisions[0].params.get("position_exit")
+        assert isinstance(position_exit, dict)
+        self.assertEqual(position_exit.get("type"), "runtime_signal_exit")
+        self.assertEqual(position_exit.get("position_side"), "short")
+        runtime_params = decisions[0].params.get("strategy_runtime")
+        assert isinstance(runtime_params, dict)
+        self.assertEqual(runtime_params.get("position_isolation_mode"), "per_strategy")
+
     def test_scheduler_runtime_isolated_buy_cooldown_is_scoped_per_strategy(
         self,
     ) -> None:
