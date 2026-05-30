@@ -343,6 +343,35 @@ def _first_text(row: Mapping[str, object], *keys: str) -> str | None:
     return None
 
 
+def _direct_text(row: Mapping[str, object], *keys: str) -> str | None:
+    for key in keys:
+        text = str(row.get(key) or "").strip()
+        if text:
+            return text
+    return None
+
+
+def _bool_value(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int | float | Decimal):
+        return bool(value)
+    text = str(value or "").strip().lower()
+    if text in {"1", "true", "yes", "on", "pass", "passed", "ok"}:
+        return True
+    if text in {"0", "false", "no", "off", "fail", "failed", "blocked"}:
+        return False
+    return None
+
+
+def _direct_bool(row: Mapping[str, object], *keys: str) -> bool | None:
+    for key in keys:
+        value = row.get(key)
+        if (parsed := _bool_value(value)) is not None:
+            return parsed
+    return None
+
+
 def _text_values(row: Mapping[str, object], *keys: str) -> set[str]:
     values: set[str] = set()
     for payload in _row_payloads(row):
@@ -365,24 +394,60 @@ def _text_values(row: Mapping[str, object], *keys: str) -> set[str]:
 def _first_bool(row: Mapping[str, object], *keys: str) -> bool | None:
     for payload in _row_payloads(row):
         for key in keys:
-            value = payload.get(key)
-            if isinstance(value, bool):
-                return value
-            if isinstance(value, int | float | Decimal):
-                return bool(value)
-            text = str(value or "").strip().lower()
-            if text in {"1", "true", "yes", "on", "pass", "passed", "ok"}:
-                return True
-            if text in {"0", "false", "no", "off", "fail", "failed", "blocked"}:
-                return False
+            if (parsed := _bool_value(payload.get(key))) is not None:
+                return parsed
     return None
 
 
+def _source_decision_priority_payloads(
+    row: Mapping[str, object],
+) -> list[Mapping[str, object]]:
+    payloads: list[Mapping[str, object]] = [row]
+    decision_json = _as_mapping(row.get("decision_json"))
+    if decision_json:
+        payloads.append(decision_json)
+        for key in (
+            "strategy_signal_paper",
+            "paper_route_target_plan",
+            "paper_route_target",
+        ):
+            if nested := _as_mapping(decision_json.get(key)):
+                payloads.append(nested)
+        params = _as_mapping(decision_json.get("params"))
+        if params:
+            for key in (
+                "strategy_signal_paper",
+                "paper_route_target_plan",
+                "paper_route_target",
+            ):
+                if nested := _as_mapping(params.get(key)):
+                    payloads.append(nested)
+    return payloads
+
+
 def _source_decision_mode(row: Mapping[str, object]) -> str | None:
+    for payload in _source_decision_priority_payloads(row):
+        explicit = normalize_source_decision_mode(
+            _direct_text(payload, "source_decision_mode")
+        )
+        if explicit is not None:
+            return explicit
     explicit = normalize_source_decision_mode(_first_text(row, "source_decision_mode"))
     if explicit is not None:
         return explicit
     return normalize_source_decision_mode(row.get("mode"))
+
+
+def _source_decision_profit_proof_flag(row: Mapping[str, object]) -> bool | None:
+    for payload in _source_decision_priority_payloads(row):
+        value = _direct_bool(
+            payload,
+            "profit_proof_eligible",
+            "post_cost_promotion_eligible",
+        )
+        if value is not None:
+            return value
+    return _first_bool(row, "profit_proof_eligible", "post_cost_promotion_eligible")
 
 
 def _source_decision_mode_counts(
@@ -533,11 +598,7 @@ def _source_decision_rows_profit_proof_eligible(
         return False
     explicit: list[bool] = []
     for row in rows:
-        value = _first_bool(
-            row,
-            "profit_proof_eligible",
-            "post_cost_promotion_eligible",
-        )
+        value = _source_decision_profit_proof_flag(row)
         if value is not None:
             explicit.append(value)
     if any(value is False for value in explicit):

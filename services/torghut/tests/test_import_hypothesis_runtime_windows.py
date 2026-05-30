@@ -890,6 +890,43 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             )
         )
 
+    def test_source_decision_helpers_prefer_strategy_signal_over_nested_probe(
+        self,
+    ) -> None:
+        row = {
+            "decision_json": {
+                "params": {
+                    "paper_route_probe": {
+                        "source_decision_mode": "route_acquisition_probe",
+                        "profit_proof_eligible": False,
+                    }
+                },
+                "source_decision_mode": "strategy_signal_paper",
+                "profit_proof_eligible": True,
+                "source_candidate_ids": ["c88421d619759b2cfaa6f4d0"],
+                "source_hypothesis_ids": ["H-PAIRS-01"],
+                "strategy_signal_paper": {
+                    "source_decision_mode": "strategy_signal_paper",
+                    "profit_proof_eligible": True,
+                },
+            }
+        }
+
+        self.assertEqual(_source_decision_mode(row), "strategy_signal_paper")
+        self.assertEqual(
+            _source_decision_mode_counts([row]),
+            {"strategy_signal_paper": 1},
+        )
+        self.assertTrue(_source_decision_rows_profit_proof_eligible([row]))
+        self.assertTrue(
+            _source_row_matches_lineage(
+                row,
+                candidate_id="c88421d619759b2cfaa6f4d0",
+                hypothesis_id="H-PAIRS-01",
+                require_source_lineage=True,
+            )
+        )
+
     def test_runtime_ledger_tca_rows_from_durable_buckets_queries_matching_proof(
         self,
     ) -> None:
