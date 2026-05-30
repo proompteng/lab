@@ -609,11 +609,15 @@ class TestSubmissionCouncil(TestCase):
                 "source_window_end": (now - timedelta(minutes=30)).isoformat(),
                 "source_refs": [
                     "strategy_runtime_ledger_buckets:pairs-realized-runtime",
+                    "postgres:trade_decisions",
+                    "postgres:executions",
+                    "postgres:execution_order_events",
                     "postgres:order_feed_source_windows",
                 ],
                 "source_row_counts": {
                     "trade_decisions": 2,
-                    "trade_order_events": 2,
+                    "executions": 2,
+                    "execution_order_events": 2,
                     "strategy_runtime_ledger_buckets": 1,
                     "order_feed_source_windows": 2,
                 },
@@ -638,11 +642,15 @@ class TestSubmissionCouncil(TestCase):
                 "source_window_end": (now - timedelta(minutes=60)).isoformat(),
                 "source_refs": [
                     "strategy_runtime_ledger_buckets:pairs-reversal-runtime",
+                    "postgres:trade_decisions",
+                    "postgres:executions",
+                    "postgres:execution_order_events",
                     "postgres:order_feed_source_windows",
                 ],
                 "source_row_counts": {
                     "trade_decisions": 1,
-                    "trade_order_events": 1,
+                    "executions": 1,
+                    "execution_order_events": 1,
                     "strategy_runtime_ledger_buckets": 1,
                     "order_feed_source_windows": 1,
                 },
@@ -848,6 +856,9 @@ class TestSubmissionCouncil(TestCase):
             candidates[0]["source_refs"],
             [
                 "strategy_runtime_ledger_buckets:pairs-realized-runtime",
+                "postgres:trade_decisions",
+                "postgres:executions",
+                "postgres:execution_order_events",
                 "postgres:order_feed_source_windows",
             ],
         )
@@ -964,11 +975,15 @@ class TestSubmissionCouncil(TestCase):
                 "source_window_end": "2026-05-29T15:00:00+00:00",
                 "source_refs": [
                     "strategy_runtime_ledger_buckets:pairs-realized-runtime",
+                    "postgres:trade_decisions",
+                    "postgres:executions",
+                    "postgres:execution_order_events",
                     "postgres:order_feed_source_windows",
                 ],
                 "source_row_counts": {
                     "trade_decisions": 2,
-                    "trade_order_events": 2,
+                    "executions": 2,
+                    "execution_order_events": 2,
                     "strategy_runtime_ledger_buckets": 1,
                     "order_feed_source_windows": 2,
                 },

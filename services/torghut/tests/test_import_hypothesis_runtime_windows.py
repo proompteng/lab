@@ -323,6 +323,7 @@ def _complete_runtime_ledger_bucket(**overrides: object) -> dict[str, object]:
             "postgres:trade_decisions",
             "postgres:executions",
             "postgres:execution_order_events",
+            "postgres:order_feed_source_windows",
         ],
         "source_row_counts": {
             "trade_decisions": 2,
