@@ -478,6 +478,12 @@ class TestRunEmpiricalPromotionJobs(TestCase):
                                     "observed_stage": "paper",
                                     "strategy_family": "microbar_cross_sectional_pairs",
                                     "strategy_name": "69cf50e3-4815-47c2-b802-1efbaac09ecb",
+                                    "runtime_strategy_name": "69cf50e3-4815-47c2-b802-1efbaac09ecb",
+                                    "strategy_id": "microbar_cross_sectional_pairs_v1@research",
+                                    "strategy_lookup_names": [
+                                        "69cf50e3-4815-47c2-b802-1efbaac09ecb",
+                                        "microbar-cross-sectional-pairs-v1",
+                                    ],
                                     "account_label": "TORGHUT_REPLAY",
                                     "source_dsn_env": "TORGHUT_DURABLE_RUNTIME_LEDGER_SOURCE_DSN",
                                     "source_kind": "durable_runtime_ledger_bucket",
@@ -498,6 +504,12 @@ class TestRunEmpiricalPromotionJobs(TestCase):
                                     "observed_stage": "paper",
                                     "strategy_family": "microbar_cross_sectional_pairs",
                                     "strategy_name": "69cf50e3-4815-47c2-b802-1efbaac09ecb",
+                                    "runtime_strategy_name": "69cf50e3-4815-47c2-b802-1efbaac09ecb",
+                                    "strategy_id": "microbar_cross_sectional_pairs_v1@research",
+                                    "strategy_lookup_names": [
+                                        "69cf50e3-4815-47c2-b802-1efbaac09ecb",
+                                        "microbar-cross-sectional-pairs-v1",
+                                    ],
                                     "account_label": "TORGHUT_REPLAY",
                                     "source_dsn_env": "TORGHUT_DURABLE_RUNTIME_LEDGER_SOURCE_DSN",
                                     "source_kind": "durable_runtime_ledger_bucket",
@@ -553,7 +565,12 @@ class TestRunEmpiricalPromotionJobs(TestCase):
             targets[0].source_dsn_env,
             "TORGHUT_DURABLE_RUNTIME_LEDGER_SOURCE_DSN",
         )
+        self.assertEqual(targets[0].strategy_name, "microbar-cross-sectional-pairs-v1")
         assert targets[0].target_metadata is not None
+        self.assertEqual(
+            targets[0].target_metadata["runtime_strategy_name"],
+            "69cf50e3-4815-47c2-b802-1efbaac09ecb",
+        )
         self.assertEqual(
             targets[0].target_metadata["runtime_ledger_bucket_ref"], "bucket:first"
         )

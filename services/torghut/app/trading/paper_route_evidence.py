@@ -232,6 +232,19 @@ def _strategy_name_from_strategy_id(strategy_id: object) -> str | None:
     return base.replace("_", "-") if base else None
 
 
+def _looks_like_uuid_text(value: object) -> bool:
+    text = _safe_text(value)
+    if text is None:
+        return False
+    parts = text.split("-")
+    if [len(part) for part in parts] != [8, 4, 4, 4, 12]:
+        return False
+    return all(
+        part and all(char in "0123456789abcdefABCDEF" for char in part)
+        for part in parts
+    )
+
+
 def _strategy_lookup_names(*values: object) -> list[str]:
     names: list[str] = []
     for value in values:
@@ -247,6 +260,29 @@ def _strategy_lookup_names(*values: object) -> list[str]:
             if text is not None and text not in names:
                 names.append(text)
     return names
+
+
+def _canonical_runtime_strategy_name(
+    *,
+    strategy_name: object,
+    runtime_strategy_name: object,
+    strategy_id: object,
+    strategy_lookup_names: object,
+    matched_strategy: Mapping[str, object] | None = None,
+) -> str | None:
+    matched_name = _safe_text((matched_strategy or {}).get("strategy_name"))
+    derived_name = _strategy_name_from_strategy_id(strategy_id)
+    preferred = _strategy_lookup_names(
+        matched_name,
+        runtime_strategy_name,
+        strategy_name,
+        derived_name,
+        _strategy_lookup_names(strategy_lookup_names),
+    )
+    for name in preferred:
+        if not _looks_like_uuid_text(name):
+            return name
+    return preferred[0] if preferred else None
 
 
 def _health_gate_bool_text(value: object) -> str | None:
@@ -1205,6 +1241,21 @@ def _next_paper_route_runtime_window_targets(
             raw_probe_symbols=source_readiness_raw_probe_symbols,
             scoped_probe_symbols=target_probe_symbols,
         )
+        matched_strategy = _as_mapping(source_decision_readiness.get("matched_strategy"))
+        canonical_strategy_name = _canonical_runtime_strategy_name(
+            strategy_name=strategy_name,
+            runtime_strategy_name=runtime_strategy_name,
+            strategy_id=strategy_id,
+            strategy_lookup_names=strategy_lookup_names,
+            matched_strategy=matched_strategy,
+        )
+        strategy_lookup_names = _strategy_lookup_names(
+            canonical_strategy_name,
+            strategy_lookup_names,
+            runtime_strategy_name,
+            strategy_name,
+            _strategy_name_from_strategy_id(strategy_id),
+        )
         target_probe_ready = (
             bool(probe.get("configured_enabled"))
             and _safe_decimal(next_notional) > 0
@@ -1217,7 +1268,7 @@ def _next_paper_route_runtime_window_targets(
                 ("hypothesis_id", hypothesis_id),
                 ("candidate_id", candidate_id),
                 ("strategy_family", strategy_family),
-                ("strategy_name", strategy_name),
+                ("strategy_name", canonical_strategy_name),
                 ("source_manifest_ref", source_manifest_ref),
             )
             if value is None
@@ -1271,7 +1322,7 @@ def _next_paper_route_runtime_window_targets(
             hypothesis_id,
             candidate_id,
             strategy_family,
-            strategy_name,
+            canonical_strategy_name,
             PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
             source_manifest_ref,
             _isoformat(window_start),
@@ -1294,8 +1345,8 @@ def _next_paper_route_runtime_window_targets(
             strategy_family=strategy_family,
             strategy_id=strategy_id,
             strategy_lookup_names=strategy_lookup_names,
-            strategy_name=strategy_name,
-            runtime_strategy_name=runtime_strategy_name,
+            strategy_name=canonical_strategy_name,
+            runtime_strategy_name=canonical_strategy_name,
             account_label=PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
             source_manifest_ref=source_manifest_ref,
             window_start=window_start,
@@ -1351,9 +1402,11 @@ def _next_paper_route_runtime_window_targets(
             "candidate_id": candidate_id,
             "observed_stage": "paper",
             "strategy_family": strategy_family,
-            "strategy_name": strategy_name,
+            "strategy_name": canonical_strategy_name,
             "strategy_id": strategy_id or "",
-            "runtime_strategy_name": runtime_strategy_name or "",
+            "runtime_strategy_name": canonical_strategy_name or "",
+            "source_strategy_name": strategy_name or "",
+            "source_runtime_strategy_name": runtime_strategy_name or "",
             "strategy_lookup_names": strategy_lookup_names,
             "account_label": PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
             "source_account_label": source_account_label or "",
