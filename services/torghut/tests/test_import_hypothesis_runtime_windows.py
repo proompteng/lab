@@ -3026,6 +3026,202 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         )
         self.assertFalse(_runtime_ledger_bucket_profit_proof_present(bucket))
 
+    def test_build_realized_strategy_pnl_rows_preserves_source_backed_blocked_basis(
+        self,
+    ) -> None:
+        rows = _build_realized_strategy_pnl_rows(
+            [
+                {
+                    "execution_id": "exec-buy",
+                    "computed_at": datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                    "symbol": "AAPL",
+                    "side": "buy",
+                    "filled_qty": Decimal("1"),
+                    "avg_fill_price": Decimal("100"),
+                    "cost_amount": Decimal("0.20"),
+                    "cost_basis": "broker_reported_commission_and_fees",
+                    "decision_hash": "decision-buy",
+                    "alpaca_order_id": "order-buy",
+                    "execution_policy_hash": "policy-sha",
+                    "cost_model_hash": "cost-sha",
+                    "lineage_hash": "lineage-sha",
+                    "source_decision_mode": "route_acquisition_probe",
+                },
+                {
+                    "execution_id": "exec-sell",
+                    "computed_at": datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
+                    "symbol": "AAPL",
+                    "side": "sell",
+                    "filled_qty": Decimal("1"),
+                    "avg_fill_price": Decimal("101"),
+                    "cost_amount": Decimal("0.10"),
+                    "cost_basis": "broker_reported_commission_and_fees",
+                    "decision_hash": "decision-sell",
+                    "alpaca_order_id": "order-sell",
+                    "execution_policy_hash": "policy-sha",
+                    "cost_model_hash": "cost-sha",
+                    "lineage_hash": "lineage-sha",
+                    "source_decision_mode": "route_acquisition_probe",
+                },
+            ],
+            decision_lifecycle_rows=[
+                {
+                    "trade_decision_id": "decision-buy",
+                    "executed_at": datetime(
+                        2026, 3, 6, 14, 35, tzinfo=timezone.utc
+                    ),
+                    "symbol": "AAPL",
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_id": "microbar-cross-sectional-pairs-v1",
+                    "decision_hash": "decision-buy",
+                    "event_type": "decision",
+                    "execution_policy_hash": "policy-sha",
+                    "cost_model_hash": "cost-sha",
+                    "lineage_hash": "lineage-sha",
+                    "source_decision_mode": "route_acquisition_probe",
+                },
+                {
+                    "trade_decision_id": "decision-sell",
+                    "executed_at": datetime(
+                        2026, 3, 6, 14, 40, tzinfo=timezone.utc
+                    ),
+                    "symbol": "AAPL",
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_id": "microbar-cross-sectional-pairs-v1",
+                    "decision_hash": "decision-sell",
+                    "event_type": "decision",
+                    "execution_policy_hash": "policy-sha",
+                    "cost_model_hash": "cost-sha",
+                    "lineage_hash": "lineage-sha",
+                    "source_decision_mode": "route_acquisition_probe",
+                },
+            ],
+            order_lifecycle_rows=[
+                {
+                    "execution_order_event_id": "event-new-buy",
+                    "trade_decision_id": "decision-buy",
+                    "execution_id": "exec-buy",
+                    "event_ts": datetime(
+                        2026, 3, 6, 14, 35, 1, tzinfo=timezone.utc
+                    ),
+                    "symbol": "AAPL",
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_id": "microbar-cross-sectional-pairs-v1",
+                    "decision_hash": "decision-buy",
+                    "alpaca_order_id": "order-buy",
+                    "event_type": "new",
+                    "source_topic": "alpaca-trade-updates",
+                    "source_partition": 0,
+                    "source_offset": 11,
+                    "source_window_id": "source-window-buy",
+                    "execution_policy_hash": "policy-sha",
+                    "cost_model_hash": "cost-sha",
+                    "lineage_hash": "lineage-sha",
+                    "source_decision_mode": "route_acquisition_probe",
+                },
+                {
+                    "execution_order_event_id": "event-fill-buy",
+                    "trade_decision_id": "decision-buy",
+                    "execution_id": "exec-buy",
+                    "event_ts": datetime(
+                        2026, 3, 6, 14, 35, 2, tzinfo=timezone.utc
+                    ),
+                    "symbol": "AAPL",
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_id": "microbar-cross-sectional-pairs-v1",
+                    "decision_hash": "decision-buy",
+                    "alpaca_order_id": "order-buy",
+                    "event_type": "fill",
+                    "source_topic": "alpaca-trade-updates",
+                    "source_partition": 0,
+                    "source_offset": 12,
+                    "source_window_id": "source-window-buy",
+                    "source_decision_mode": "route_acquisition_probe",
+                },
+                {
+                    "execution_order_event_id": "event-new-sell",
+                    "trade_decision_id": "decision-sell",
+                    "execution_id": "exec-sell",
+                    "event_ts": datetime(
+                        2026, 3, 6, 14, 40, 1, tzinfo=timezone.utc
+                    ),
+                    "symbol": "AAPL",
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_id": "microbar-cross-sectional-pairs-v1",
+                    "decision_hash": "decision-sell",
+                    "alpaca_order_id": "order-sell",
+                    "event_type": "new",
+                    "source_topic": "alpaca-trade-updates",
+                    "source_partition": 0,
+                    "source_offset": 13,
+                    "source_window_id": "source-window-sell",
+                    "execution_policy_hash": "policy-sha",
+                    "cost_model_hash": "cost-sha",
+                    "lineage_hash": "lineage-sha",
+                    "source_decision_mode": "route_acquisition_probe",
+                },
+                {
+                    "execution_order_event_id": "event-fill-sell",
+                    "trade_decision_id": "decision-sell",
+                    "execution_id": "exec-sell",
+                    "event_ts": datetime(
+                        2026, 3, 6, 14, 40, 2, tzinfo=timezone.utc
+                    ),
+                    "symbol": "AAPL",
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_id": "microbar-cross-sectional-pairs-v1",
+                    "decision_hash": "decision-sell",
+                    "alpaca_order_id": "order-sell",
+                    "event_type": "fill",
+                    "source_topic": "alpaca-trade-updates",
+                    "source_partition": 0,
+                    "source_offset": 14,
+                    "source_window_id": "source-window-sell",
+                    "source_decision_mode": "route_acquisition_probe",
+                },
+            ],
+            allow_authoritative_runtime_ledger_materialization=True,
+        )
+
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertFalse(row["post_cost_promotion_eligible"])
+        self.assertFalse(row["authoritative"])
+        self.assertEqual(
+            row["authority_reason"],
+            "source_execution_lifecycle_materialized_runtime_ledger",
+        )
+        self.assertEqual(row["pnl_derivation"], "execution_order_events_runtime_ledger")
+        self.assertEqual(
+            row["promotion_blocker"],
+            "source_decision_mode_not_profit_proof_eligible",
+        )
+        self.assertNotIn(
+            "execution_reconstruction_not_runtime_ledger_proof",
+            row["runtime_ledger_blockers"],
+        )
+
+        bucket = row["runtime_ledger_bucket"]
+        self.assertIsInstance(bucket, dict)
+        assert isinstance(bucket, dict)
+        self.assertEqual(bucket["pnl_basis"], POST_COST_BASIS_RUNTIME_LEDGER)
+        self.assertEqual(bucket["source_materialization"], "execution_order_events")
+        self.assertEqual(
+            bucket["authority_reason"],
+            "source_execution_lifecycle_materialized_runtime_ledger",
+        )
+        self.assertEqual(
+            bucket["source_decision_mode_counts"], {"route_acquisition_probe": 8}
+        )
+        self.assertIn(
+            "source_decision_mode_not_profit_proof_eligible", bucket["blockers"]
+        )
+        self.assertNotIn(
+            "runtime_ledger_pnl_basis_not_runtime_ledger",
+            _runtime_ledger_bucket_profit_proof_blockers(bucket),
+        )
+        self.assertFalse(_runtime_ledger_bucket_profit_proof_present(bucket))
+
     def test_runtime_ledger_tca_row_separates_explicit_cost_from_slippage(
         self,
     ) -> None:
