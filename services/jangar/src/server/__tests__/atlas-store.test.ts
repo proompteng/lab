@@ -445,7 +445,7 @@ describe('atlas store', () => {
     expect(matches[0]?.signals.matchedIdentifiers).toEqual(['BUMBA_ATLAS_CHUNK_INDEXING'])
   })
 
-  it('applies latest file version filter in code search queries', async () => {
+  it('applies indexed latest file version filter in code search queries', async () => {
     const now = new Date('2020-01-01T00:00:00.000Z')
     const lexicalRow = {
       chunk_id: 'chunk-1',
@@ -502,18 +502,16 @@ describe('atlas store', () => {
     expect(lexicalSql).toBeTruthy()
 
     const normalized = String(lexicalSql).toLowerCase().replace(/\s+/g, ' ')
-    expect(normalized).toContain('file_versions.id in ( select ranked.id from ( select fv.id')
-    expect(normalized).toContain('row_number() over ( partition by fv.file_key_id, fv.repository_ref')
-    expect(normalized).toContain('order by fv.updated_at desc, fv.created_at desc, fv.id desc')
-    expect(normalized).toContain('from atlas.file_versions as fv')
-    expect(normalized).toContain('inner join atlas.file_keys as file_keys_scope on file_keys_scope.id = fv.file_key_id')
+    expect(normalized).toContain('not exists ( select 1 from atlas.file_versions as newer_file_versions')
+    expect(normalized).toContain('newer_file_versions.file_key_id = file_versions.file_key_id')
+    expect(normalized).toContain('newer_file_versions.repository_ref = file_versions.repository_ref')
+    expect(normalized).toContain('newer_file_versions.language =')
     expect(normalized).toContain(
-      'inner join atlas.repositories as repositories_scope on repositories_scope.id = file_keys_scope.repository_id',
+      '( newer_file_versions.updated_at, newer_file_versions.created_at, newer_file_versions.id ) >',
     )
-    expect(normalized).toContain('where repositories_scope.name =')
-    expect(normalized).toContain('fv.repository_ref =')
-    expect(normalized).toContain('file_keys_scope.path like')
-    expect(normalized).toContain('fv.language =')
-    expect(normalized).toContain('where ranked.latest_rank = 1 )')
+    expect(normalized).toContain('"repositories"."name" =')
+    expect(normalized).toContain('"file_versions"."repository_ref" =')
+    expect(normalized).toContain('"file_keys"."path" like')
+    expect(normalized).toContain('"file_versions"."language" =')
   })
 })
