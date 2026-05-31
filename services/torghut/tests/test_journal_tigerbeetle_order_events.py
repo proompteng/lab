@@ -228,6 +228,29 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
         self.assertEqual(payload["batch_size"], 5000)
         self.assertEqual(payload["max_batches"], 1)
 
+    def test_payload_degrades_when_reconciliation_fails(self) -> None:
+        args = argparse.Namespace(
+            dry_run=False,
+            dsn_env="SIM_DB_DSN",
+            account_label="paper",
+            batch_size=500,
+            max_batches=1,
+            fail_on_degraded=True,
+        )
+
+        payload = script._payload(
+            args=args,
+            started_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            batches=[
+                {"selected": 1, "journaled": 1, "skipped": 0, "failed": 0},
+            ],
+            reconciliation={"ok": False, "blockers": ["tigerbeetle_transfer_missing"]},
+        )
+
+        self.assertEqual(payload["status"], "degraded")
+        self.assertEqual(payload["failed"], 0)
+        self.assertTrue(payload["fail_on_degraded"])
+
     def test_select_unlinked_events_filters_to_journalable_account_rows(self) -> None:
         settings_obj = Settings(TORGHUT_TIGERBEETLE_ENABLED=True)
         with Session(self.engine) as session:
@@ -452,6 +475,48 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
         payload = json.loads(stdout.getvalue())
         self.assertEqual(exit_code, 1)
         self.assertTrue(payload["fail_on_degraded"])
+
+    def test_main_can_fail_closed_for_degraded_reconciliation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "torghut.db")
+            dsn = f"sqlite+pysqlite:///{db_path}"
+            engine = create_engine(dsn, future=True)
+            Base.metadata.create_all(engine)
+            with Session(engine) as session:
+                _add_order_event(session, fingerprint="selected", source_offset=1)
+                session.commit()
+
+            stdout = io.StringIO()
+            with (
+                patch.dict(os.environ, {"TEST_DB_DSN": dsn}),
+                patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "journal_tigerbeetle_order_events.py",
+                        "--dsn-env",
+                        "TEST_DB_DSN",
+                        "--batch-size",
+                        "10",
+                        "--fail-on-degraded",
+                        "--json",
+                    ],
+                ),
+                patch.object(script, "TigerBeetleLedgerJournal", FakeJournal),
+                patch.object(
+                    script,
+                    "reconcile_tigerbeetle_transfers",
+                    return_value={"ok": False, "blockers": ["missing"]},
+                ),
+                redirect_stdout(stdout),
+            ):
+                exit_code = script.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(payload["status"], "degraded")
+        self.assertEqual(payload["failed"], 0)
+        self.assertEqual(payload["journaled"], 1)
 
     def test_main_requires_dsn_env_var(self) -> None:
         with (

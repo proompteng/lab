@@ -1,0 +1,104 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: torghut-tigerbeetle-journal-order-events
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut
+    app.kubernetes.io/component: tigerbeetle-journal-order-events
+spec:
+  schedule: "6,21,36,51 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 300
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 600
+      template:
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: torghut-runtime
+          nodeSelector:
+            kubernetes.io/arch: arm64
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: journal-order-events
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:a904379e06a65aff4b57bd7dae923475e175789ae14d64f26cf913441c501a0a
+              imagePullPolicy: IfNotPresent
+              securityContext:
+                seccompProfile:
+                  type: Unconfined
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop:
+                    - ALL
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                  ephemeral-storage: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+                  ephemeral-storage: 512Mi
+              command:
+                - /bin/bash
+                - -lc
+              args:
+                - |
+                  set -euo pipefail
+                  cd /app
+                  /opt/venv/bin/python scripts/journal_tigerbeetle_order_events.py \
+                    --dsn-env SIM_DB_DSN \
+                    --account-label TORGHUT_SIM \
+                    --batch-size 500 \
+                    --max-batches 2 \
+                    --reconcile-limit 1000 \
+                    --fail-on-degraded \
+                    --json
+              env:
+                - name: TORGHUT_SIM_DB_HOST
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: host
+                - name: TORGHUT_SIM_DB_PORT
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: port
+                - name: TORGHUT_SIM_DB_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: username
+                - name: TORGHUT_SIM_DB_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: password
+                - name: SIM_DB_DSN
+                  value: postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default
+                - name: TORGHUT_TIGERBEETLE_ENABLED
+                  value: "true"
+                - name: TORGHUT_TIGERBEETLE_REQUIRED
+                  value: "false"
+                - name: TORGHUT_TIGERBEETLE_CLUSTER_ID
+                  value: "2001"
+                - name: TORGHUT_TIGERBEETLE_REPLICA_ADDRESSES
+                  value: torghut-tigerbeetle.torghut.svc.cluster.local:3000
+                - name: TORGHUT_TIGERBEETLE_HEALTH_TIMEOUT_SECONDS
+                  value: "5"
+                - name: TORGHUT_TIGERBEETLE_JOURNAL_ENABLED
+                  value: "true"
+                - name: TORGHUT_TIGERBEETLE_RECONCILE_REQUIRED
+                  value: "false"
+                - name: TORGHUT_IMAGE_DIGEST
+                  value: sha256:a904379e06a65aff4b57bd7dae923475e175789ae14d64f26cf913441c501a0a

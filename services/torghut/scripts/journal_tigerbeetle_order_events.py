@@ -252,8 +252,14 @@ def _payload(
     journaled = sum(batch["journaled"] for batch in batches)
     skipped = sum(batch["skipped"] for batch in batches)
     failed = sum(batch["failed"] for batch in batches)
+    reconciliation_ok = (
+        True
+        if reconciliation is None
+        else bool(reconciliation.get("ok", reconciliation.get("status") == "ok"))
+    )
+    status = "ok" if failed == 0 and reconciliation_ok else "degraded"
     return {
-        "status": "ok" if failed == 0 else "degraded",
+        "status": status,
         "fail_on_degraded": bool(args.fail_on_degraded),
         "dry_run": bool(args.dry_run),
         "dsn_env": args.dsn_env,
