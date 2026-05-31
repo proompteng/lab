@@ -7755,6 +7755,48 @@ class TestTradingApi(TestCase):
 
         self.assertEqual(plan["targets"][0]["candidate_id"], "c88421d619759b2cfaa6f4d0")
 
+    def test_paper_route_target_plan_payload_prefers_next_window_over_closed_import(
+        self,
+    ) -> None:
+        plan = _paper_route_target_plan_from_payload(
+            {
+                "schema_version": "torghut.paper-route-target-plan.v1",
+                "runtime_window_import_plan": {
+                    "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                    "target_count": 1,
+                    "purpose": "latest_closed_session_paper_route_runtime_window_import",
+                    "targets": [
+                        {
+                            "hypothesis_id": "H-PAIRS-01",
+                            "candidate_id": "closed-window-target",
+                            "window_start": "2026-05-29T13:30:00+00:00",
+                            "window_end": "2026-05-29T20:00:00+00:00",
+                            "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                        }
+                    ],
+                },
+                "next_paper_route_runtime_window_targets": {
+                    "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                    "target_count": 1,
+                    "purpose": "next_paper_route_runtime_window_import",
+                    "targets": [
+                        {
+                            "hypothesis_id": "H-PAIRS-01",
+                            "candidate_id": "next-window-target",
+                            "window_start": "2026-06-01T13:30:00+00:00",
+                            "window_end": "2026-06-01T20:00:00+00:00",
+                            "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                        }
+                    ],
+                },
+            }
+        )
+
+        self.assertEqual(plan["targets"][0]["candidate_id"], "next-window-target")
+        self.assertEqual(
+            plan["targets"][0]["window_start"], "2026-06-01T13:30:00+00:00"
+        )
+
     def test_paper_route_target_plan_from_payload_falls_back_to_source_plan(
         self,
     ) -> None:
