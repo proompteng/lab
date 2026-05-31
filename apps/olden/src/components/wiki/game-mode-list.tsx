@@ -2,7 +2,7 @@ import { gameModes } from '@/src/data/olden/game-modes'
 
 export function GameModeList() {
   return (
-    <div className="not-prose grid gap-4 lg:grid-cols-2">
+    <div className="olden-lg-grid-cols-2 not-prose grid gap-4 lg:grid-cols-2">
       {gameModes.map((mode) => (
         <section key={mode.id} className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
           <h2 className="text-base font-semibold text-zinc-950 dark:text-zinc-50">{mode.name}</h2>

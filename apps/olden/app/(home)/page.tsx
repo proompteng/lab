@@ -44,10 +44,12 @@ export default function HomePage() {
   return (
     <main className="flex flex-1 flex-col">
       <section className="border-b border-zinc-200 bg-zinc-950 text-zinc-50 dark:border-zinc-800">
-        <div className="mx-auto grid min-h-[68vh] w-full max-w-6xl items-center gap-10 px-6 py-16 sm:px-8 lg:grid-cols-[1.05fr_0.95fr] lg:px-12">
+        <div className="olden-lg-grid-home olden-lg-px-12 mx-auto grid min-h-[68vh] w-full max-w-6xl items-center gap-10 px-6 py-16 sm:px-8 lg:grid-cols-[1.05fr_0.95fr] lg:px-12">
           <div className="flex flex-col gap-6">
             <div className="flex flex-col gap-4">
-              <h1 className="max-w-3xl text-balance text-4xl font-semibold sm:text-5xl lg:text-6xl">Olden Era Wiki</h1>
+              <h1 className="olden-lg-text-6xl max-w-3xl text-balance text-4xl font-semibold sm:text-5xl lg:text-6xl">
+                Olden Era Wiki
+              </h1>
               <p className="max-w-2xl text-base leading-7 text-zinc-300 sm:text-lg">
                 An unofficial player wiki for Heroes of Might and Magic: Olden Era, focused on the practical knowledge
                 needed to route the map, build towns, preserve armies, and understand every faction.
@@ -97,7 +99,7 @@ export default function HomePage() {
           </div>
         </div>
       </section>
-      <section className="mx-auto grid w-full max-w-6xl gap-4 px-6 py-12 sm:px-8 md:grid-cols-2 lg:grid-cols-3 lg:px-12">
+      <section className="olden-md-grid-cols-2 olden-lg-grid-cols-3 olden-lg-px-12 mx-auto grid w-full max-w-6xl gap-4 px-6 py-12 sm:px-8 md:grid-cols-2 lg:grid-cols-3 lg:px-12">
         {entryPoints.map((item) => (
           <Link
             key={item.href}

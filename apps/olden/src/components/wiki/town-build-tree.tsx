@@ -35,7 +35,7 @@ export function TownBuildTree() {
               <h3 className="text-base font-semibold text-fd-foreground">{branch.faction}</h3>
               <p className="mt-1 text-sm text-fd-muted-foreground">{branch.identity}</p>
             </div>
-            <div className="grid gap-4 p-4 lg:grid-cols-[1fr_1.4fr]">
+            <div className="olden-lg-grid-town grid gap-4 p-4 lg:grid-cols-[1fr_1.4fr]">
               <div className="space-y-3">
                 <div>
                   <p className="text-xs font-semibold uppercase text-fd-muted-foreground">Opening priorities</p>

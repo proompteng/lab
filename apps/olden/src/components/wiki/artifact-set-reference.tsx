@@ -14,7 +14,7 @@ export function ArtifactSetReference() {
         </p>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-2">
+      <div className="olden-xl-grid-cols-2 grid gap-4 xl:grid-cols-2">
         {artifactSetEntries.map((set) => (
           <section key={set.id} className="rounded-lg border border-fd-border bg-fd-card p-4">
             <div className="grid gap-4 sm:grid-cols-[80px_1fr]">
@@ -42,7 +42,7 @@ export function ArtifactSetReference() {
               </div>
             </div>
 
-            <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_1.15fr]">
+            <div className="olden-lg-grid-artifact-set mt-4 grid gap-3 lg:grid-cols-[1fr_1.15fr]">
               <div>
                 <p className="text-xs font-semibold uppercase text-fd-muted-foreground">Threshold effects</p>
                 <ul className="mt-2 space-y-2 text-sm text-fd-foreground">

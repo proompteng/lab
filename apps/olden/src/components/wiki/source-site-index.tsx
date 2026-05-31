@@ -10,7 +10,7 @@ export function SourceSiteIndex() {
           laws, spells, heroes, classes, factions, objects, resources, and buildings.
         </p>
       </div>
-      <div className="grid gap-3 md:grid-cols-2">
+      <div className="olden-md-grid-cols-2 grid gap-3 md:grid-cols-2">
         {sourceSiteNavEntries.map((entry) => (
           <article key={entry.id} className="rounded-lg border border-fd-border bg-fd-card p-4">
             <div className="flex items-start justify-between gap-3">
