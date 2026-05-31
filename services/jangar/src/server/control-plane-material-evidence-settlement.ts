@@ -144,13 +144,13 @@ const revenueRepairToplineStatus = (
   if (input.torghutConsumerEvidence.status === 'stale') return 'stale'
   if (input.torghutConsumerEvidence.status === 'schema_mismatch') return 'schema_mismatch'
   if (input.torghutConsumerEvidence.status === 'missing') return 'missing'
+  if (input.torghutConsumerEvidence.revenue_repair_queue?.[0]) return 'queue_head_inferred'
   if (
     input.torghutConsumerEvidence.status === 'unavailable' ||
     input.torghutConsumerEvidence.status === 'route_missing'
   ) {
     return 'unavailable'
   }
-  if (input.torghutConsumerEvidence.revenue_repair_queue?.[0]) return 'queue_head_inferred'
   if (
     input.torghutConsumerEvidence.revenue_repair_business_state ||
     input.torghutConsumerEvidence.revenue_repair_ready !== undefined

@@ -946,6 +946,120 @@ describe('getReadyHandler', () => {
     })
   })
 
+  it('keeps ready revenue topline when consumer evidence transport drops but revenue-repair is current', async () => {
+    process.env.JANGAR_TORGHUT_STATUS_URL = 'http://torghut.torghut.svc.cluster.local/trading/consumer-evidence'
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(buildJsonResponse({ detail: 'consumer evidence temporarily unavailable' }, 503))
+      .mockResolvedValueOnce(
+        buildJsonResponse({
+          schema_version: 'torghut.revenue-repair-digest.v1',
+          business_state: 'repair_only',
+          revenue_ready: false,
+          repair_queue: [
+            {
+              code: 'repair_alpha_readiness',
+              reason: 'alpha_readiness_not_promotion_eligible',
+              dimension: 'alpha_readiness',
+              action: 'clear_hypothesis_blockers_before_capital',
+              priority: 70,
+              expected_unblock_value: 2,
+              source: 'proof_floor.repair_ladder',
+              value_gate: 'routeable_candidate_count',
+              required_output_receipt: 'torghut.executable-alpha-receipts.v1',
+              required_receipts: ['alpha_readiness_receipt', 'hypothesis_promotion_receipt', 'capital_replay_board'],
+              max_notional: '0',
+              capital_rule: 'zero_notional_repair_only',
+              observed_count: 1,
+            },
+          ],
+          alpha_readiness_settlement_conveyor: {
+            schema_version: 'torghut.alpha-readiness-settlement-conveyor.v1',
+            conveyor_id: 'alpha-readiness-settlement-conveyor:ready-fallback',
+            generated_at: '2026-05-15T01:30:00.000Z',
+            fresh_until: '2026-05-15T01:45:00.000Z',
+            status: 'no_delta',
+            settlement_state: 'no_delta',
+            reason_codes: ['active_no_delta_lease'],
+            selected_lane: {
+              hypothesis_id: 'H-MICRO-01',
+              no_delta_release_key: 'alpha-readiness-no-delta:H-MICRO-01:window-a',
+              repeat_launch_decision: 'deny',
+            },
+            selected_value_gate: 'routeable_candidate_count',
+            routeable_candidate_count_before: 0,
+            routeable_candidate_count_after: 0,
+            measured_routeable_candidate_delta: 0,
+            active_no_delta_leases: [{ lease_id: 'alpha-readiness-no-delta-lease:ready-fallback' }],
+            required_output_receipt: 'torghut.alpha-readiness-settlement-receipt.v1',
+            validation_commands: [
+              'uv run --frozen pytest services/torghut/tests/test_alpha_readiness_settlement_conveyor.py',
+            ],
+            max_notional: '0',
+            capital_rule: 'zero_notional_repair_only',
+            rollback_target: 'stop emitting alpha_readiness_settlement_conveyor and keep Torghut max_notional=0',
+          },
+        }),
+      )
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
+
+    const { getReadyHandler } = await import('./ready')
+
+    const response = await getReadyHandler()
+
+    expect(response.status).toBe(200)
+    const body = await response.json()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(body).toMatchObject({
+      status: 'ok',
+      business_state: 'repair_only',
+      revenue_ready: false,
+      affected_value_gate: 'routeable_candidate_count',
+      top_repair_queue_item: expect.objectContaining({
+        code: 'repair_alpha_readiness',
+        value_gate: 'routeable_candidate_count',
+        max_notional: '0',
+      }),
+      torghut_consumer_evidence: {
+        status: 'unavailable',
+        revenue_repair_business_state: 'repair_only',
+        revenue_repair_ready: false,
+        revenue_repair_queue: [expect.objectContaining({ code: 'repair_alpha_readiness' })],
+        alpha_readiness_settlement_conveyor: expect.objectContaining({
+          conveyor_id: 'alpha-readiness-settlement-conveyor:ready-fallback',
+        }),
+      },
+      revenue_repair_settlement_custody: {
+        torghut_conveyor_ref: 'alpha-readiness-settlement-conveyor:ready-fallback',
+        selected_hypothesis_id: 'H-MICRO-01',
+        selected_value_gate: 'routeable_candidate_count',
+      },
+      material_evidence_settlement_spine: {
+        transport_truth: {
+          consumer_evidence_status: 'unavailable',
+          revenue_repair_topline_status: 'queue_head_inferred',
+          revenue_repair_topline_source: 'revenue_repair_queue_head',
+        },
+        business_truth: {
+          business_state: 'repair_only',
+          revenue_ready: false,
+          top_repair_queue_item: expect.objectContaining({ code: 'repair_alpha_readiness' }),
+          selected_value_gate: 'routeable_candidate_count',
+          max_notional: '0',
+        },
+      },
+    })
+    expect(body.material_evidence_settlement_spine.reason_codes).toEqual(
+      expect.arrayContaining(['torghut_consumer_evidence_unavailable', 'topline_inferred_from_queue_head']),
+    )
+    expect(body.material_evidence_settlement_spine.reason_codes).not.toEqual(
+      expect.arrayContaining(['business_state_missing', 'revenue_repair_top_item_missing']),
+    )
+    expect(body.revenue_repair_settlement_custody.reason_codes).not.toEqual(
+      expect.arrayContaining(['business_state_missing', 'revenue_repair_top_item_missing']),
+    )
+  })
+
   it('returns 200 and exposes a serving passport when only collaboration runtime debt is blocked', async () => {
     agentsControlPlaneClientMocks.getAgentsControlPlaneStatusSnapshot.mockResolvedValue(
       buildAgentsControlPlaneStatusSnapshot({
