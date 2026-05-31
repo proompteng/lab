@@ -25,7 +25,7 @@ spec:
             kubernetes.io/arch: arm64
           containers:
             - name: flatten-paper-account
-              image: registry.ide-newton.ts.net/lab/torghut@sha256:477471dba8261202da6e6de62782285e6a515ce32592e27ff586e124545ca9f5
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:8653bb9356dab575a8b88eae36e988e81ce6aef301ad3af2d520992ec4b292f4
               imagePullPolicy: IfNotPresent
               resources:
                 requests:
