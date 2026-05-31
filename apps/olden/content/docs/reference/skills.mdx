@@ -3,6 +3,8 @@ title: Skills Reference
 description: Skill evaluation for main heroes, scouts, magic heroes, and economy support.
 ---
 
+import { skillEntries } from '@/src/data/olden/encyclopedia'
+
 # Skills Reference
 
 Skills are a commitment. A hero with scattered skills is rarely better than a hero with one clear job.
@@ -24,4 +26,15 @@ Skills are a commitment. A hero with scattered skills is rarely better than a he
 
 Economy skills are strongest when they accelerate a real build timing. If they pay back after the decisive fight, they were probably too slow.
 
-<SourceNote ids={['official-wiki-main-page']} />
+## Skill index
+
+<EncyclopediaEntryTable
+  entries={skillEntries}
+  title="Skill index"
+  description="All public skill rows grouped by base category."
+  groupBy="Base Skill / Category"
+  defaultOpenGroups={10}
+  sourceLabel="Skill page"
+/>
+
+<SourceNote ids={['community-olden-era-skills', 'official-wiki-main-page']} />

@@ -3,7 +3,25 @@ import { join, relative } from 'node:path'
 import { describe, expect, it } from 'bun:test'
 
 import { artifactReferences } from '@/src/data/olden/artifacts'
+import {
+  artifactSetEntries,
+  mechanicsFormulaEntries,
+  sourceSiteNavEntries,
+  unitAssetEntries,
+} from '@/src/data/olden/assets'
 import { creatureStats } from '@/src/data/olden/creatures'
+import {
+  artifactDirectoryEntries,
+  buildingEntries,
+  classEntries,
+  combatObjectEntries,
+  heroEntries,
+  lawEntries,
+  neutralObjectEntries,
+  resourceEntries,
+  skillEntries,
+  spellEntries,
+} from '@/src/data/olden/encyclopedia'
 import { factions } from '@/src/data/olden/factions'
 import { gameModes } from '@/src/data/olden/game-modes'
 import { referenceCategories } from '@/src/data/olden/reference'
@@ -50,6 +68,8 @@ describe('Olden Era wiki data', () => {
       ...roadmapItems.map((item) => item.verification.sourceIds),
       ...creatureStats.map((creature) => creature.sourceIds),
       ...artifactReferences.map((artifact) => artifact.sourceIds),
+      ...artifactSetEntries.map((set) => set.sourceIds),
+      ...mechanicsFormulaEntries.map((mechanic) => mechanic.sourceIds),
       ...videoTranscriptAudits.map((video) => [video.sourceId]),
     ]
 
@@ -94,6 +114,50 @@ describe('Olden Era wiki data', () => {
       expect(artifact.effect).toBeTruthy()
       expect(['common', 'rare', 'epic', 'legendary']).toContain(artifact.rarity)
       expect(artifact.sourceIds.length).toBeGreaterThan(0)
+    }
+  })
+
+  it('keeps the high-volume encyclopedia rows visible from source snapshots', () => {
+    expect(artifactDirectoryEntries.length).toBeGreaterThanOrEqual(150)
+    expect(artifactSetEntries.length).toBeGreaterThanOrEqual(24)
+    expect(unitAssetEntries.length).toBeGreaterThanOrEqual(144)
+    expect(sourceSiteNavEntries.length).toBeGreaterThanOrEqual(14)
+    expect(mechanicsFormulaEntries.length).toBeGreaterThanOrEqual(7)
+    expect(heroEntries.length).toBeGreaterThanOrEqual(50)
+    expect(skillEntries.length).toBeGreaterThanOrEqual(90)
+    expect(lawEntries.length).toBeGreaterThanOrEqual(190)
+    expect(spellEntries.length).toBeGreaterThanOrEqual(90)
+    expect(classEntries.length).toBeGreaterThanOrEqual(12)
+    expect(buildingEntries.length).toBeGreaterThanOrEqual(190)
+    expect(neutralObjectEntries.length).toBeGreaterThanOrEqual(50)
+    expect(combatObjectEntries.length).toBeGreaterThanOrEqual(20)
+    expect(resourceEntries.length).toBeGreaterThanOrEqual(7)
+
+    for (const entry of [
+      ...artifactDirectoryEntries,
+      ...heroEntries,
+      ...skillEntries,
+      ...lawEntries,
+      ...spellEntries,
+      ...classEntries,
+      ...buildingEntries,
+      ...neutralObjectEntries,
+      ...combatObjectEntries,
+      ...resourceEntries,
+      ...unitAssetEntries,
+    ]) {
+      expect(entry.name).toBeTruthy()
+      expect(entry.description).toBeTruthy()
+      expect(entry.url).toMatch(/^https:\/\//)
+    }
+
+    for (const set of artifactSetEntries) {
+      expect(set.name).toBeTruthy()
+      expect(set.url).toMatch(/^https:\/\//)
+      expect(set.image).toMatch(/^https:\/\//)
+      expect(set.items.length).toBeGreaterThan(0)
+      expect(set.effects.length).toBeGreaterThan(0)
+      expect(set.playPattern).toBeTruthy()
     }
   })
 })
@@ -157,6 +221,13 @@ describe('Olden Era MDX content', () => {
       'reference/index.mdx',
       'reference/units.mdx',
       'reference/artifacts.mdx',
+      'items.mdx',
+      'stats.mdx',
+      'heroes.mdx',
+      'sets.mdx',
+      'towns-build-tree.mdx',
+      'mechanics.mdx',
+      'source-database.mdx',
       'strategy/index.mdx',
       'meta/legal.mdx',
       'meta/sources.mdx',
@@ -176,7 +247,14 @@ describe('Olden Era MDX content', () => {
     })
 
     expect(imageReferences.map((reference) => reference.src)).toEqual(
-      expect.arrayContaining(['/visuals/creature-stat-board.svg', '/visuals/artifact-slot-map.svg']),
+      expect.arrayContaining([
+        '/visuals/generated/olden-complete-wiki-hero.png',
+        '/visuals/generated/olden-artifact-inventory.png',
+        '/visuals/generated/olden-creature-bestiary.png',
+        '/visuals/generated/olden-hero-roster.png',
+        '/visuals/generated/olden-mechanics-map.png',
+        '/visuals/generated/olden-town-build-tree.png',
+      ]),
     )
 
     for (const reference of imageReferences) {

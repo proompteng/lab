@@ -1,4 +1,5 @@
 import { artifactReferences } from '@/src/data/olden/artifacts'
+import { artifactDirectoryEntries } from '@/src/data/olden/encyclopedia'
 import type { ArtifactReference } from '@/src/data/olden/schema'
 
 const slotLabels: Record<string, string> = {
@@ -24,6 +25,8 @@ const rarityLabels: Record<ArtifactReference['rarity'], string> = {
 const slotOrder = ['main_hand', 'off_hand', 'head', 'chest', 'back', 'waist', 'feet', 'rings', 'items', 'relics']
 
 const normalizeSet = (set: string) => (set ? set.replaceAll('_', ' ') : '-')
+
+const directoryByName = new Map(artifactDirectoryEntries.map((artifact) => [artifact.name.toLowerCase(), artifact]))
 
 const useText = (artifact: ArtifactReference) => {
   const effect = artifact.effect.toLowerCase()
@@ -78,8 +81,8 @@ export function ArtifactReferenceTable() {
       <div className="rounded-lg border border-fd-border bg-fd-card p-4">
         <p className="text-sm font-semibold text-fd-foreground">Artifact coverage</p>
         <p className="mt-1 text-sm text-fd-muted-foreground">
-          {artifactReferences.length} listed artifacts across {grouped.length} slots. Every row includes slot, rarity,
-          effect, set membership when known, and a practical assignment note.
+          {artifactReferences.length} listed artifacts across {grouped.length} slots. Every row includes source imagery
+          when available, slot, rarity, effect, set membership when known, and a practical assignment note.
         </p>
       </div>
 
@@ -96,7 +99,7 @@ export function ArtifactReferenceTable() {
             <table className="min-w-[980px] text-left text-xs">
               <thead className="bg-fd-muted/40 text-fd-foreground">
                 <tr>
-                  <th className="px-3 py-2 font-semibold">Artifact</th>
+                  <th className="px-3 py-2 font-semibold">Artifact / item</th>
                   <th className="px-3 py-2 font-semibold">Rarity</th>
                   <th className="px-3 py-2 font-semibold">Effect</th>
                   <th className="px-3 py-2 font-semibold">Set</th>
@@ -106,7 +109,22 @@ export function ArtifactReferenceTable() {
               <tbody className="divide-y divide-fd-border text-fd-muted-foreground">
                 {rows.map((artifact) => (
                   <tr key={artifact.id}>
-                    <td className="px-3 py-2 font-medium text-fd-foreground">{artifact.name}</td>
+                    <td className="px-3 py-2 font-medium text-fd-foreground">
+                      <div className="flex items-center gap-3">
+                        {directoryByName.get(artifact.name.toLowerCase())?.image ? (
+                          <img
+                            className="h-10 w-10 shrink-0 rounded border border-fd-border bg-fd-muted object-contain"
+                            src={directoryByName.get(artifact.name.toLowerCase())?.image}
+                            alt=""
+                            loading="lazy"
+                            referrerPolicy="no-referrer"
+                          />
+                        ) : (
+                          <span className="h-10 w-10 shrink-0 rounded border border-fd-border bg-fd-muted" />
+                        )}
+                        <span>{artifact.name}</span>
+                      </div>
+                    </td>
                     <td className="px-3 py-2">{rarityLabels[artifact.rarity]}</td>
                     <td className="max-w-[360px] px-3 py-2">{artifact.effect}</td>
                     <td className="px-3 py-2 capitalize">{normalizeSet(artifact.set)}</td>

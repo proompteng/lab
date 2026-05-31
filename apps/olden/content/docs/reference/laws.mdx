@@ -3,6 +3,8 @@ title: Laws Reference
 description: How to use faction laws to reinforce town, hero, and army plans.
 ---
 
+import { lawEntries } from '@/src/data/olden/encyclopedia'
+
 # Laws Reference
 
 Laws are faction-specific development choices. They should reinforce the game you are actually playing, not an ideal game that the map did not offer.
@@ -18,4 +20,15 @@ Laws are faction-specific development choices. They should reinforce the game yo
 
 Choosing a law because it sounds powerful while ignoring the map. A law that helps a late army does not save an opening that lacks mines or growth.
 
-<SourceNote ids={['official-wiki-main-page']} />
+## Law index
+
+<EncyclopediaEntryTable
+  entries={lawEntries}
+  title="Law index"
+  description="All public law rows grouped by faction or alignment."
+  groupBy="Faction / Alignment"
+  defaultOpenGroups={10}
+  sourceLabel="Law page"
+/>
+
+<SourceNote ids={['community-olden-era-laws', 'official-wiki-main-page']} />

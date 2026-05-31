@@ -3,6 +3,8 @@ title: Spells Reference
 description: Spell evaluation by combat role, mana value, timing, and army preservation.
 ---
 
+import { spellEntries } from '@/src/data/olden/encyclopedia'
+
 # Spells Reference
 
 A spell is worth casting when it changes the fight or route. The visible effect matters less than the army saved, target killed, action denied, or movement unlocked.
@@ -19,4 +21,15 @@ A spell is worth casting when it changes the fight or route. The visible effect 
 
 Do not spend mana just because a spell is available. Spend it when the current fight would otherwise cost important army or when the map reward is decisive.
 
-<SourceNote ids={['official-wiki-main-page']} />
+## Spell index
+
+<EncyclopediaEntryTable
+  entries={spellEntries}
+  title="Spell index"
+  description="All public spell rows grouped by magic school."
+  groupBy="Magic School"
+  defaultOpenGroups={8}
+  sourceLabel="Spell page"
+/>
+
+<SourceNote ids={['community-olden-era-spells', 'official-wiki-main-page']} />

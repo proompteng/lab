@@ -3,6 +3,8 @@ title: Map Objects Reference
 description: Mines, dwellings, banks, shrines, roads, portals, and other map object priorities.
 ---
 
+import { combatObjectEntries, neutralObjectEntries, resourceEntries } from '@/src/data/olden/encyclopedia'
+
 # Map Objects Reference
 
 Map objects are the route puzzle. Each one should be judged by reward, guard cost, movement cost, and timing.
@@ -19,4 +21,15 @@ Map objects are the route puzzle. Each one should be judged by reward, guard cos
 
 Mines and dwellings usually matter because they pay repeatedly. Banks and guarded rewards matter when the army can clear them without losing the next route. Shrines and stat objects matter when they support the hero's real job.
 
-<SourceNote ids={['official-wiki-main-page']} />
+## Object and resource index
+
+<EncyclopediaEntryTable
+  entries={[...neutralObjectEntries, ...combatObjectEntries, ...resourceEntries]}
+  title="Map objects and resources"
+  description="Neutral objects, combat objects, and resources from public source pages."
+  groupBy="Kind"
+  defaultOpenGroups={3}
+  sourceLabel="Source page"
+/>
+
+<SourceNote ids={['community-olden-era-objects', 'official-wiki-main-page']} />
