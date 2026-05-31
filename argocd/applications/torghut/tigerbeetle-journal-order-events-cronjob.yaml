@@ -60,6 +60,7 @@ spec:
                     --account-label TORGHUT_SIM \
                     --batch-size 500 \
                     --max-batches 2 \
+                    --event-scan-limit 1000 \
                     --reconcile-limit 1000 \
                     --fail-on-degraded \
                     --json
