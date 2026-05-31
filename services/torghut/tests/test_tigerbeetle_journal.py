@@ -177,6 +177,44 @@ class TestTigerBeetleLedgerJournal(TestCase):
             self.assertIsNone(ref)
             self.assertEqual(client.transfers, {})
 
+    def test_source_journals_skip_disabled_and_unamounted_rows(self) -> None:
+        with Session(self.engine) as session:
+            event = _create_fill_event(session, fingerprint="fingerprint-source-noop")
+            execution = event.execution
+            self.assertIsNotNone(execution)
+            assert execution is not None
+            metric = ExecutionTCAMetric(
+                execution_id=execution.id,
+                alpaca_account_label="paper",
+                symbol="AAPL",
+                side="buy",
+                filled_qty=Decimal("1"),
+                signed_qty=Decimal("1"),
+                shortfall_notional=Decimal("0"),
+                computed_at=datetime.now(timezone.utc),
+            )
+            bucket = _runtime_bucket()
+            bucket.net_strategy_pnl_after_costs = Decimal("0")
+            bucket.cost_amount = Decimal("0")
+            session.add_all([metric, bucket])
+            session.flush()
+            client = FakeTigerBeetleClient()
+            disabled = TigerBeetleLedgerJournal(
+                settings_obj=_settings(enabled=False),
+                client=client,
+            )
+
+            self.assertIsNone(disabled.journal_execution(session, execution))
+            self.assertIsNone(disabled.journal_execution_tca_metric(session, metric))
+            self.assertIsNone(disabled.journal_runtime_ledger_bucket(session, bucket))
+
+            enabled = TigerBeetleLedgerJournal(settings_obj=_settings(), client=client)
+            execution.avg_fill_price = None
+            self.assertIsNone(enabled.journal_execution(session, execution))
+            self.assertIsNone(enabled.journal_execution_tca_metric(session, metric))
+            self.assertIsNone(enabled.journal_runtime_ledger_bucket(session, bucket))
+            self.assertEqual(client.transfers, {})
+
     def test_repeated_same_event_creates_one_transfer_ref(self) -> None:
         with Session(self.engine) as session:
             event = _create_fill_event(session)

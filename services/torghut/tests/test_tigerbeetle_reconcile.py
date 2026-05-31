@@ -32,6 +32,7 @@ from app.trading.tigerbeetle_reconcile import (
     BLOCKER_DEBIT_ACCOUNT_MISMATCH,
     BLOCKER_LEDGER_MISMATCH,
     BLOCKER_POSTGRES_REF_MISMATCH,
+    BLOCKER_SOURCE_ROW_MISSING,
     BLOCKER_UNLINKED_COST,
     BLOCKER_UNLINKED_EXECUTION,
     BLOCKER_SOURCE_AMOUNT_MISMATCH,
@@ -39,6 +40,13 @@ from app.trading.tigerbeetle_reconcile import (
     BLOCKER_TRANSFER_MISSING,
     BLOCKER_UNLINKED_EVENT,
     _attr,
+    _cost_amount_micros,
+    _expected_source_amount_micros,
+    _execution_amount_micros,
+    _payload_int,
+    _runtime_ledger_amount_micros,
+    _usd_to_micros,
+    _uuid_or_none,
     latest_tigerbeetle_reconciliation_payload,
     reconcile_tigerbeetle_transfers,
 )
@@ -188,6 +196,42 @@ class TestTigerBeetleReconcile(TestCase):
             self.assertFalse(payload["ok"])
             self.assertIn(BLOCKER_SOURCE_AMOUNT_MISMATCH, payload["blockers"])
             self.assertEqual(payload["source_amount_mismatch_count"], 1)
+
+    def test_reconciliation_blocks_source_row_missing(self) -> None:
+        with Session(self.engine) as session:
+            missing_id = "6f767a53-6b44-428a-bd85-2f662642f637"
+            session.add(
+                TigerBeetleTransferRef(
+                    cluster_id=2001,
+                    transfer_id="1003",
+                    transfer_kind="execution_fill",
+                    ledger=LEDGER_USD_MICRO,
+                    code=TRANSFER_CODE_EXECUTION_FILL,
+                    amount=Decimal("190250000"),
+                    status="created",
+                    source_type="execution",
+                    source_id=missing_id,
+                )
+            )
+            session.flush()
+            client = FakeTigerBeetleClient()
+            client.transfers[1003] = TigerBeetleTransferSpec(
+                transfer_id=1003,
+                transfer_kind="execution_fill",
+                debit_account_id=11,
+                credit_account_id=12,
+                amount=190250000,
+                ledger=LEDGER_USD_MICRO,
+                code=TRANSFER_CODE_EXECUTION_FILL,
+            )
+
+            payload = reconcile_tigerbeetle_transfers(
+                session, settings_obj=_settings(), client=client
+            )
+
+            self.assertFalse(payload["ok"])
+            self.assertIn(BLOCKER_SOURCE_ROW_MISSING, payload["blockers"])
+            self.assertEqual(payload["source_row_missing_count"], 1)
 
     def test_reconciliation_blocks_code_and_ledger_mismatch(self) -> None:
         with Session(self.engine) as session:
@@ -508,3 +552,126 @@ class TestTigerBeetleReconcile(TestCase):
         self.assertEqual(_attr(type("TransferId", (), {"transfer_id": 45})(), "id"), 45)
         with self.assertRaises(AttributeError):
             _attr(object(), "id")
+
+    def test_source_amount_helpers_handle_invalid_and_zero_values(self) -> None:
+        self.assertEqual(_payload_int({"value": "42"}, "value"), 42)
+        self.assertEqual(_payload_int({"value": object()}, "value"), 0)
+        self.assertEqual(_payload_int({}, "value"), 0)
+        self.assertIsNone(_uuid_or_none(None))
+        self.assertIsNone(_uuid_or_none("not-a-uuid"))
+        self.assertIsNone(_usd_to_micros(None))
+        self.assertIsNone(_usd_to_micros(Decimal("0")))
+        self.assertIsNone(_usd_to_micros(Decimal("0.0000001")))
+        self.assertEqual(_usd_to_micros(Decimal("-1.25")), Decimal("1250000"))
+        self.assertIsNone(_execution_amount_micros(None))
+        self.assertIsNone(_cost_amount_micros(None))
+        self.assertIsNone(_runtime_ledger_amount_micros(None))
+
+    def test_expected_source_amount_supports_cost_and_runtime_refs(self) -> None:
+        with Session(self.engine) as session:
+            execution = Execution(
+                alpaca_account_label="paper",
+                alpaca_order_id="order-source-helper",
+                client_order_id="client-source-helper",
+                symbol="AAPL",
+                side="buy",
+                order_type="market",
+                time_in_force="day",
+                submitted_qty=Decimal("1"),
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("190.25"),
+                status="filled",
+                raw_order={"id": "order-source-helper"},
+            )
+            session.add(execution)
+            session.flush()
+            metric = ExecutionTCAMetric(
+                execution_id=execution.id,
+                alpaca_account_label="paper",
+                symbol="AAPL",
+                side="buy",
+                filled_qty=Decimal("1"),
+                signed_qty=Decimal("1"),
+                shortfall_notional=Decimal("-0.25"),
+                computed_at=datetime.now(timezone.utc),
+            )
+            observed_at = datetime.now(timezone.utc)
+            bucket = StrategyRuntimeLedgerBucket(
+                run_id="runtime-run-helper",
+                candidate_id="candidate",
+                hypothesis_id="hypothesis",
+                observed_stage="paper",
+                bucket_started_at=observed_at,
+                bucket_ended_at=observed_at,
+                account_label="paper",
+                runtime_strategy_name="demo",
+                strategy_family="demo",
+                fill_count=1,
+                decision_count=1,
+                submitted_order_count=1,
+                cancelled_order_count=0,
+                rejected_order_count=0,
+                unfilled_order_count=0,
+                closed_trade_count=1,
+                open_position_count=0,
+                filled_notional=Decimal("190.25"),
+                gross_strategy_pnl=Decimal("0"),
+                cost_amount=Decimal("-0.50"),
+                net_strategy_pnl_after_costs=Decimal("0"),
+                post_cost_expectancy_bps=Decimal("12.50"),
+                ledger_schema_version="torghut.runtime-ledger.v1",
+                pnl_basis="post_cost",
+                payload_json={"source": "helper"},
+            )
+            session.add_all([metric, bucket])
+            session.flush()
+
+            cost_ref = TigerBeetleTransferRef(
+                cluster_id=2001,
+                transfer_id="2001",
+                transfer_kind="execution_cost",
+                ledger=LEDGER_USD_MICRO,
+                code=TRANSFER_CODE_EXECUTION_FILL,
+                amount=Decimal("250000"),
+                status="created",
+                source_type="execution_tca_metric",
+                source_id=str(metric.id),
+            )
+            runtime_ref = TigerBeetleTransferRef(
+                cluster_id=2001,
+                transfer_id="2002",
+                transfer_kind="runtime_net_pnl",
+                ledger=LEDGER_USD_MICRO,
+                code=TRANSFER_CODE_EXECUTION_FILL,
+                amount=Decimal("500000"),
+                status="created",
+                source_type="strategy_runtime_ledger_bucket",
+                source_id=str(bucket.id),
+            )
+            unknown_ref = TigerBeetleTransferRef(
+                cluster_id=2001,
+                transfer_id="2003",
+                transfer_kind="runtime_net_pnl",
+                ledger=LEDGER_USD_MICRO,
+                code=TRANSFER_CODE_EXECUTION_FILL,
+                amount=Decimal("500000"),
+                status="created",
+                source_type="untracked",
+                source_id=str(bucket.id),
+            )
+            invalid_ref = TigerBeetleTransferRef(
+                cluster_id=2001,
+                transfer_id="2004",
+                transfer_kind="runtime_net_pnl",
+                ledger=LEDGER_USD_MICRO,
+                code=TRANSFER_CODE_EXECUTION_FILL,
+                amount=Decimal("500000"),
+                status="created",
+                source_type="strategy_runtime_ledger_bucket",
+                source_id="not-a-uuid",
+            )
+
+            self.assertEqual(_expected_source_amount_micros(session, cost_ref), Decimal("250000"))
+            self.assertEqual(_expected_source_amount_micros(session, runtime_ref), Decimal("500000"))
+            self.assertIsNone(_expected_source_amount_micros(session, unknown_ref))
+            self.assertIsNone(_expected_source_amount_micros(session, invalid_ref))
