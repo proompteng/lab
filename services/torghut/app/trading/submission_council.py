@@ -1401,16 +1401,13 @@ def _runtime_ledger_source_collection_candidate(
         for reason in cast(Sequence[object], candidate.get("reason_codes") or [])
         if str(reason).strip()
     }
+    filled_notional = _safe_decimal(candidate.get("filled_notional")) or Decimal("0")
     return (
         _safe_text(candidate.get("observed_stage")) == "paper"
         and bool(reasons & _RUNTIME_LEDGER_SOURCE_COLLECTION_TRIGGER_REASONS)
-        and (_safe_decimal(candidate.get("filled_notional")) or Decimal("0")) > 0
+        and filled_notional > 0
         and _safe_int(candidate.get("fill_count")) > 0
-        and _safe_int(candidate.get("closed_trade_count")) > 0
-        and (
-            _safe_decimal(candidate.get("net_strategy_pnl_after_costs")) or Decimal("0")
-        )
-        > 0
+        and _safe_int(candidate.get("submitted_order_count")) > 0
     )
 
 
