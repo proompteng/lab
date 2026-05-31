@@ -1,0 +1,9 @@
+image:
+  repository: registry.ide-newton.ts.net/lab/tigresse
+  tag: v0.1.2
+  digest: sha256:e601cc8202a704bbb6134542b95bae2c9015b4bd6d733f92a885f23fafd253d5
+  pullPolicy: IfNotPresent
+
+podSecurityContext:
+  seccompProfile:
+    type: RuntimeDefault

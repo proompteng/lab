@@ -44,6 +44,18 @@ spec:
                   argocd.argoproj.io/sync-wave: "-1"
                 automation: auto
                 enabled: "true"
+              - name: tigresse
+                path: argocd/applications/tigresse
+                namespace: tigresse-system
+                annotations:
+                  argocd.argoproj.io/sync-wave: "-1"
+                automation: auto
+                enabled: "true"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: restricted
+                    pod-security.kubernetes.io/audit: restricted
+                    pod-security.kubernetes.io/warn: restricted
               - name: metrics-server
                 path: manifests/overlays/release-ha-1.21+
                 repoURL: https://github.com/kubernetes-sigs/metrics-server.git
