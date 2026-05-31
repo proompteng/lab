@@ -1223,6 +1223,21 @@ def _runtime_ledger_bucket_replacement_scopes(
 ) -> list[tuple[datetime, datetime, str | None, str | None]]:
     scopes: list[tuple[datetime, datetime, str | None, str | None]] = []
     seen: set[tuple[datetime, datetime, str | None, str | None]] = set()
+
+    def add_scope(
+        *,
+        started_at: datetime,
+        ended_at: datetime,
+        account_label: str | None,
+        runtime_strategy_name: str | None,
+    ) -> None:
+        if ended_at <= started_at:
+            return
+        scope = (started_at, ended_at, account_label, runtime_strategy_name)
+        if scope not in seen:
+            seen.add(scope)
+            scopes.append(scope)
+
     for bucket in buckets:
         for ledger_payload in _runtime_ledger_bucket_payloads(bucket.payload_json):
             bucket_started_at = (
@@ -1239,15 +1254,28 @@ def _runtime_ledger_bucket_replacement_scopes(
             runtime_strategy_name = _text(ledger_payload.get("strategy_id")) or _text(
                 runtime_payload.get("strategy_name")
             )
-            scope = (
-                bucket_started_at,
-                bucket_ended_at,
-                account_label,
-                runtime_strategy_name,
+            add_scope(
+                started_at=bucket_started_at,
+                ended_at=bucket_ended_at,
+                account_label=account_label,
+                runtime_strategy_name=runtime_strategy_name,
             )
-            if scope not in seen:
-                seen.add(scope)
-                scopes.append(scope)
+            source_window_started_at = _parse_observation_datetime(
+                ledger_payload.get("source_window_start")
+            )
+            source_window_ended_at = _parse_observation_datetime(
+                ledger_payload.get("source_window_end")
+            )
+            if (
+                source_window_started_at is not None
+                and source_window_ended_at is not None
+            ):
+                add_scope(
+                    started_at=source_window_started_at,
+                    ended_at=source_window_ended_at,
+                    account_label=account_label,
+                    runtime_strategy_name=runtime_strategy_name,
+                )
     return scopes
 
 
