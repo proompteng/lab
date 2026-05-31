@@ -63,20 +63,6 @@ spec:
                   key: password
             - name: DB_DSN
               value: postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default
-            - name: TORGHUT_TIGERBEETLE_ENABLED
-              value: "true"
-            - name: TORGHUT_TIGERBEETLE_REQUIRED
-              value: "false"
-            - name: TORGHUT_TIGERBEETLE_CLUSTER_ID
-              value: "2001"
-            - name: TORGHUT_TIGERBEETLE_REPLICA_ADDRESSES
-              value: torghut-tigerbeetle.torghut.svc.cluster.local:3000
-            - name: TORGHUT_TIGERBEETLE_HEALTH_TIMEOUT_SECONDS
-              value: "2"
-            - name: TORGHUT_TIGERBEETLE_JOURNAL_ENABLED
-              value: "true"
-            - name: TORGHUT_TIGERBEETLE_RECONCILE_REQUIRED
-              value: "false"
             - name: APCA_API_KEY_ID
               valueFrom:
                 secretKeyRef:
