@@ -27,6 +27,7 @@ from app.trading.paper_route_evidence import (
     _next_regular_equities_session_window,
     _normalized_open_positions,
     _paper_route_probe_summary,
+    _runtime_ledger_non_evidence_diagnostic_summary,
     _runtime_ledger_row_diagnostic_expectancy_bps,
     build_paper_route_evidence_audit,
     build_paper_route_target_plan_payload,
@@ -420,6 +421,93 @@ class TestPaperRouteEvidenceAudit(TestCase):
         )
 
         self.assertIsNone(_runtime_ledger_row_diagnostic_expectancy_bps(row))
+
+    def test_runtime_ledger_diagnostic_splits_route_probe_from_profit_source(
+        self,
+    ) -> None:
+        strategy_row = StrategyRuntimeLedgerBucket(
+            run_id="diagnostic-runtime-ledger-run",
+            candidate_id="candidate-diagnostic",
+            hypothesis_id="H-DIAGNOSTIC",
+            observed_stage="paper",
+            bucket_started_at=datetime(2026, 5, 28, 14, 30, tzinfo=timezone.utc),
+            bucket_ended_at=datetime(2026, 5, 28, 15, 30, tzinfo=timezone.utc),
+            account_label="TORGHUT_SIM",
+            runtime_strategy_name="diagnostic-strategy",
+            strategy_family="microbar_pairs",
+            fill_count=2,
+            decision_count=1,
+            submitted_order_count=1,
+            closed_trade_count=1,
+            open_position_count=1,
+            filled_notional=Decimal("1000"),
+            gross_strategy_pnl=Decimal("20"),
+            cost_amount=Decimal("1"),
+            net_strategy_pnl_after_costs=Decimal("19"),
+            post_cost_expectancy_bps=None,
+            ledger_schema_version="torghut.runtime-ledger-bucket.v1",
+            pnl_basis="realized_strategy_pnl_after_explicit_costs",
+            execution_policy_hash_counts={"policy-a": 1},
+            cost_model_hash_counts={"cost-a": 1},
+            lineage_hash_counts={"lineage-a": 1},
+            blockers_json=["unclosed_position"],
+            payload_json={"source_decision_mode_counts": {"strategy_signal_paper": 1}},
+        )
+        route_probe_row = StrategyRuntimeLedgerBucket(
+            run_id="diagnostic-runtime-ledger-run",
+            candidate_id="candidate-diagnostic",
+            hypothesis_id="H-DIAGNOSTIC",
+            observed_stage="paper",
+            bucket_started_at=datetime(2026, 5, 28, 14, 30, tzinfo=timezone.utc),
+            bucket_ended_at=datetime(2026, 5, 28, 15, 30, tzinfo=timezone.utc),
+            account_label="TORGHUT_SIM",
+            runtime_strategy_name="diagnostic-strategy",
+            strategy_family="microbar_pairs",
+            fill_count=10,
+            decision_count=10,
+            submitted_order_count=10,
+            closed_trade_count=10,
+            open_position_count=1,
+            filled_notional=Decimal("1000000"),
+            gross_strategy_pnl=Decimal("100001"),
+            cost_amount=Decimal("1"),
+            net_strategy_pnl_after_costs=Decimal("100000"),
+            post_cost_expectancy_bps=None,
+            ledger_schema_version="torghut.runtime-ledger-bucket.v1",
+            pnl_basis="realized_strategy_pnl_after_explicit_costs",
+            execution_policy_hash_counts={"policy-a": 1},
+            cost_model_hash_counts={"cost-a": 1},
+            lineage_hash_counts={"lineage-a": 1},
+            blockers_json=["unclosed_position"],
+            payload_json={"source_decision_mode_counts": {"route_acquisition_probe": 10}},
+        )
+
+        summary = _runtime_ledger_non_evidence_diagnostic_summary(
+            [strategy_row, route_probe_row]
+        )
+
+        self.assertEqual(
+            summary["source_decision_mode_counts"],
+            {"route_acquisition_probe": 10, "strategy_signal_paper": 1},
+        )
+        self.assertEqual(
+            summary["source_decision_mode_bucket_counts"],
+            {"route_acquisition_probe": 1, "strategy_signal_paper": 1},
+        )
+        self.assertEqual(
+            summary["profit_proof_eligible_diagnostic"][
+                "net_strategy_pnl_after_costs"
+            ],
+            "19",
+        )
+        self.assertEqual(
+            summary["non_profit_proof_diagnostic"]["net_strategy_pnl_after_costs"],
+            "100000",
+        )
+        self.assertEqual(
+            summary["non_profit_proof_diagnostic"]["source_decision_modes"],
+            ["route_acquisition_probe"],
+        )
 
     def test_next_paper_route_window_stays_on_current_session_for_import(
         self,

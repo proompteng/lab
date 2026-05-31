@@ -30,7 +30,11 @@ from ..models import (
     TradeDecision,
 )
 from .runtime_cost_authority import cost_basis_counts_have_non_promotion_grade_costs
-from .runtime_decision_authority import ROUTE_ACQUISITION_SOURCE_DECISION_MODE
+from .runtime_decision_authority import (
+    ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
+    normalize_source_decision_mode,
+    source_decision_mode_is_profit_proof_eligible,
+)
 from .runtime_ledger import POST_COST_PNL_BASIS
 from .runtime_ledger_proof_policy import runtime_ledger_proof_policy_from_env
 from .runtime_strategy_resolution import (
@@ -2415,6 +2419,71 @@ def _runtime_ledger_row_diagnostic_expectancy_bps(
     )
 
 
+def _runtime_ledger_row_source_decision_mode_counts(
+    row: StrategyRuntimeLedgerBucket,
+) -> Counter[str]:
+    payload = _as_mapping(row.payload_json)
+    counts: Counter[str] = Counter()
+    raw_counts = _as_mapping(payload.get("source_decision_mode_counts"))
+    for raw_mode, raw_count in raw_counts.items():
+        mode = normalize_source_decision_mode(raw_mode) or "missing"
+        count = _safe_int(raw_count)
+        if count > 0:
+            counts[mode] += count
+    if counts:
+        return counts
+
+    mode = normalize_source_decision_mode(payload.get("source_decision_mode"))
+    if mode is not None:
+        counts[mode] += max(
+            1,
+            _safe_int(row.decision_count),
+            _safe_int(row.fill_count),
+        )
+    else:
+        counts["missing"] += max(1, _safe_int(row.decision_count))
+    return counts
+
+
+def _runtime_ledger_row_source_decision_modes_are_profit_proof_eligible(
+    row: StrategyRuntimeLedgerBucket,
+) -> bool:
+    counts = _runtime_ledger_row_source_decision_mode_counts(row)
+    return bool(counts) and all(
+        source_decision_mode_is_profit_proof_eligible(mode) for mode in counts
+    )
+
+
+def _runtime_ledger_diagnostic_totals(
+    rows: Sequence[StrategyRuntimeLedgerBucket],
+) -> dict[str, object]:
+    filled_notional = sum(
+        (_safe_decimal(row.filled_notional) for row in rows), Decimal("0")
+    )
+    net_pnl = sum(
+        (_safe_decimal(row.net_strategy_pnl_after_costs) for row in rows),
+        Decimal("0"),
+    )
+    return {
+        "bucket_count": len(rows),
+        "fill_count": sum(max(0, _safe_int(row.fill_count)) for row in rows),
+        "decision_count": sum(max(0, _safe_int(row.decision_count)) for row in rows),
+        "closed_trade_count": sum(
+            max(0, _safe_int(row.closed_trade_count)) for row in rows
+        ),
+        "open_position_count": sum(
+            max(0, _safe_int(row.open_position_count)) for row in rows
+        ),
+        "filled_notional": _decimal_text(filled_notional),
+        "net_strategy_pnl_after_costs": _decimal_text(net_pnl),
+        "diagnostic_closed_trade_expectancy_bps": _decimal_text(
+            (net_pnl / filled_notional * Decimal("10000"))
+            if filled_notional > 0
+            else Decimal("0")
+        ),
+    }
+
+
 def _runtime_ledger_non_evidence_diagnostic_summary(
     rows: Sequence[StrategyRuntimeLedgerBucket],
 ) -> dict[str, object]:
@@ -2435,6 +2504,26 @@ def _runtime_ledger_non_evidence_diagnostic_summary(
         for row in rows
         for item in _as_sequence(row.blockers_json)
         if str(item).strip()
+    )
+    source_decision_mode_counts: Counter[str] = Counter()
+    source_decision_mode_bucket_counts: Counter[str] = Counter()
+    for row in rows:
+        row_mode_counts = _runtime_ledger_row_source_decision_mode_counts(row)
+        source_decision_mode_counts.update(row_mode_counts)
+        source_decision_mode_bucket_counts.update(row_mode_counts.keys())
+    profit_proof_diagnostic_rows = [
+        row
+        for row in diagnostic_rows
+        if _runtime_ledger_row_source_decision_modes_are_profit_proof_eligible(row)
+    ]
+    profit_proof_diagnostic_row_ids = {id(row) for row in profit_proof_diagnostic_rows}
+    non_profit_proof_diagnostic_rows = [
+        row for row in diagnostic_rows if id(row) not in profit_proof_diagnostic_row_ids
+    ]
+    non_profit_proof_source_decision_modes = sorted(
+        mode
+        for mode in source_decision_mode_counts
+        if not source_decision_mode_is_profit_proof_eligible(mode)
     )
     return {
         "scope": (
@@ -2461,6 +2550,18 @@ def _runtime_ledger_non_evidence_diagnostic_summary(
             else Decimal("0")
         ),
         "blocker_counts": dict(sorted(blocker_counts.items())),
+        "source_decision_mode_counts": dict(sorted(source_decision_mode_counts.items())),
+        "source_decision_mode_bucket_counts": dict(
+            sorted(source_decision_mode_bucket_counts.items())
+        ),
+        "profit_proof_eligible_diagnostic": _runtime_ledger_diagnostic_totals(
+            profit_proof_diagnostic_rows
+        ),
+        "non_profit_proof_diagnostic": {
+            **_runtime_ledger_diagnostic_totals(non_profit_proof_diagnostic_rows),
+            "source_decision_modes": non_profit_proof_source_decision_modes,
+            "reason": "source_decision_mode_not_profit_proof_eligible",
+        },
         "latest_bucket_ended_at": _isoformat(rows[0].bucket_ended_at if rows else None),
         "db_row_refs": [str(row.id) for row in rows],
     }
