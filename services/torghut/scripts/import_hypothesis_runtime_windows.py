@@ -2150,8 +2150,7 @@ def _strategy_relevant_unlinked_fill_lifecycle_rows(
             continue
         if (
             strategy_identifiers
-            and _runtime_lifecycle_identifier_values(normalized)
-            & strategy_identifiers
+            and _runtime_lifecycle_identifier_values(normalized) & strategy_identifiers
         ):
             relevant_rows.append(normalized)
     return relevant_rows
@@ -2178,7 +2177,6 @@ def _order_feed_fill_lifecycle_blockers(
         return []
 
     observed_fill_order_ids: set[str] = set()
-    complete_fill_order_ids: set[str] = set()
     for row in order_lifecycle_rows or []:
         event_type = _runtime_ledger_event_type(
             {str(key): value for key, value in row.items()}
@@ -2189,15 +2187,6 @@ def _order_feed_fill_lifecycle_blockers(
         if order_id is None:
             continue
         observed_fill_order_ids.add(order_id)
-        if (
-            _runtime_lifecycle_ledger_row(
-                row,
-                event_type=event_type,
-                require_complete_fill=True,
-            )
-            is not None
-        ):
-            complete_fill_order_ids.add(order_id)
 
     blockers: list[str] = []
     if _strategy_relevant_unlinked_fill_lifecycle_rows(
@@ -2211,8 +2200,6 @@ def _order_feed_fill_lifecycle_blockers(
     if not observed_fill_order_ids:
         blockers.append(ORDER_FEED_FILL_LIFECYCLE_MISSING_BLOCKER)
     elif expected_order_ids - observed_fill_order_ids:
-        blockers.append(ORDER_FEED_FILL_LIFECYCLE_INCOMPLETE_BLOCKER)
-    elif expected_order_ids - complete_fill_order_ids:
         blockers.append(ORDER_FEED_FILL_LIFECYCLE_INCOMPLETE_BLOCKER)
     return blockers
 
@@ -2356,6 +2343,8 @@ def _build_realized_strategy_pnl_rows(
     event_sourced_lifecycle_rows = 0
     event_sourced_fill_economics_rows = 0
     event_sourced_fill_economics_order_ids: set[str] = set()
+    execution_fill_economics_rows = 0
+    execution_fill_economics_order_ids: set[str] = set()
     expected_execution_fill_order_ids: set[str] = set()
     order_feed_fill_lifecycle_blockers = _order_feed_fill_lifecycle_blockers(
         execution_rows=execution_rows,
@@ -2526,6 +2515,10 @@ def _build_realized_strategy_pnl_rows(
             filled_qty=filled_qty,
             filled_notional=filled_notional,
         )
+        if cost_amount is not None and cost_amount >= 0 and cost_basis is not None:
+            execution_fill_economics_rows += 1
+            if order_id is not None:
+                execution_fill_economics_order_ids.add(order_id)
         if _cost_basis_is_alpaca_fee_schedule(cost_basis):
             common_ledger_fields["cost_model_hash"] = (
                 _alpaca_2026_equity_fee_schedule_hash()
@@ -2616,11 +2609,16 @@ def _build_realized_strategy_pnl_rows(
         "event_fingerprint",
     )
     source_offsets = _source_offset_values(order_lifecycle_rows)
-    order_feed_fill_economics_complete = (
-        bool(expected_execution_fill_order_ids)
-        and expected_execution_fill_order_ids.issubset(
-            event_sourced_fill_economics_order_ids
-        )
+    order_feed_fill_economics_complete = bool(
+        expected_execution_fill_order_ids
+    ) and expected_execution_fill_order_ids.issubset(
+        event_sourced_fill_economics_order_ids
+    )
+    execution_fill_economics_complete = bool(
+        expected_execution_fill_order_ids
+    ) and expected_execution_fill_order_ids.issubset(execution_fill_economics_order_ids)
+    fill_economics_complete = (
+        order_feed_fill_economics_complete or execution_fill_economics_complete
     )
     source_materialization = None
     authority_class = None
@@ -2628,6 +2626,13 @@ def _build_realized_strategy_pnl_rows(
         if event_sourced_fill_economics_rows > 0 and order_feed_fill_economics_complete:
             source_materialization = "execution_order_events"
             authority_class = "runtime_order_feed_execution_source"
+        elif (
+            event_sourced_lifecycle_rows > 0
+            and execution_fill_economics_rows > 0
+            and execution_fill_economics_complete
+        ):
+            source_materialization = "source_execution_lifecycle"
+            authority_class = "source_execution_lifecycle_materialized_runtime_ledger"
         elif event_sourced_lifecycle_rows > 0:
             source_materialization = "source_execution_lifecycle"
             authority_class = "source_execution_lifecycle_materialized_runtime_ledger"
@@ -2703,8 +2708,7 @@ def _build_realized_strategy_pnl_rows(
             row["runtime_ledger_bucket"] = bucket_payload
         source_backed_runtime_ledger = (
             allow_authoritative_runtime_ledger_materialization
-            and event_sourced_fill_economics_rows > 0
-            and order_feed_fill_economics_complete
+            and fill_economics_complete
             and not order_feed_fill_lifecycle_blockers
             and isinstance(bucket_payload, Mapping)
             and not runtime_ledger_promotion_source_authority_blockers(bucket_payload)
@@ -2727,7 +2731,9 @@ def _build_realized_strategy_pnl_rows(
                     "authoritative": True,
                     "authority_reason": "event_sourced_runtime_ledger_profit_proof",
                     "pnl_derivation": "execution_order_events_runtime_ledger",
-                    "source_materialization": "execution_order_events",
+                    "source_materialization": (
+                        source_materialization or "source_execution_lifecycle"
+                    ),
                 }
                 if equity_denominator is not None:
                     runtime_bucket["account_equity"] = str(equity_denominator[0])
@@ -2757,7 +2763,9 @@ def _build_realized_strategy_pnl_rows(
                         "source_execution_lifecycle_materialized_runtime_ledger"
                     ),
                     "pnl_derivation": "execution_order_events_runtime_ledger",
-                    "source_materialization": "execution_order_events",
+                    "source_materialization": (
+                        source_materialization or "source_execution_lifecycle"
+                    ),
                 }
                 if equity_denominator is not None:
                     runtime_bucket["account_equity"] = str(equity_denominator[0])
