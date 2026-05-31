@@ -2189,7 +2189,14 @@ def _order_feed_fill_lifecycle_blockers(
         if order_id is None:
             continue
         observed_fill_order_ids.add(order_id)
-        if _runtime_ledger_row_time(row) is not None:
+        if (
+            _runtime_lifecycle_ledger_row(
+                row,
+                event_type=event_type,
+                require_complete_fill=True,
+            )
+            is not None
+        ):
             complete_fill_order_ids.add(order_id)
 
     blockers: list[str] = []
@@ -2347,6 +2354,9 @@ def _build_realized_strategy_pnl_rows(
     ledger_rows: list[RuntimeLedgerFill | dict[str, object]] = []
     event_times: list[datetime] = []
     event_sourced_lifecycle_rows = 0
+    event_sourced_fill_economics_rows = 0
+    event_sourced_fill_economics_order_ids: set[str] = set()
+    expected_execution_fill_order_ids: set[str] = set()
     order_feed_fill_lifecycle_blockers = _order_feed_fill_lifecycle_blockers(
         execution_rows=execution_rows,
         order_lifecycle_rows=order_lifecycle_rows,
@@ -2366,6 +2376,22 @@ def _build_realized_strategy_pnl_rows(
             {str(key): value for key, value in row.items()}
         )
         if event_type in _RUNTIME_LEDGER_FILL_EVENTS:
+            lifecycle_row = _runtime_lifecycle_ledger_row(
+                row,
+                event_type=event_type,
+                require_complete_fill=True,
+            )
+            if lifecycle_row is not None:
+                ledger_rows.append(lifecycle_row)
+                event_sourced_lifecycle_rows += 1
+                event_sourced_fill_economics_rows += 1
+                order_id = _runtime_order_id(row)
+                if order_id is not None:
+                    event_sourced_fill_economics_order_ids.add(order_id)
+                event_time = lifecycle_row.get("executed_at")
+                if isinstance(event_time, datetime):
+                    event_times.append(event_time)
+                continue
             event_time = _runtime_ledger_row_time(row)
             if isinstance(event_time, datetime):
                 event_times.append(event_time)
@@ -2428,9 +2454,6 @@ def _build_realized_strategy_pnl_rows(
             "client_order_id",
             "execution_correlation_id",
         )
-        event_times.append(ledger_computed_at)
-        if isinstance(fill_event_at, datetime):
-            event_times.append(fill_event_at)
         common_ledger_fields = {
             "executed_at": ledger_computed_at,
             "account_label": str(row.get("account_label") or "") or None,
@@ -2481,6 +2504,13 @@ def _build_realized_strategy_pnl_rows(
         }
         if price is None or price <= 0 or signed_qty == 0:
             continue
+        if order_id is not None:
+            expected_execution_fill_order_ids.add(order_id)
+            if order_id in event_sourced_fill_economics_order_ids:
+                continue
+        event_times.append(ledger_computed_at)
+        if isinstance(fill_event_at, datetime):
+            event_times.append(fill_event_at)
         filled_qty = abs(signed_qty)
         filled_notional = filled_qty * price
         cost_amount = _runtime_execution_cost_amount(
@@ -2586,6 +2616,21 @@ def _build_realized_strategy_pnl_rows(
         "event_fingerprint",
     )
     source_offsets = _source_offset_values(order_lifecycle_rows)
+    order_feed_fill_economics_complete = (
+        bool(expected_execution_fill_order_ids)
+        and expected_execution_fill_order_ids.issubset(
+            event_sourced_fill_economics_order_ids
+        )
+    )
+    source_materialization = None
+    authority_class = None
+    if source_offsets and execution_order_event_ids:
+        if event_sourced_fill_economics_rows > 0 and order_feed_fill_economics_complete:
+            source_materialization = "execution_order_events"
+            authority_class = "runtime_order_feed_execution_source"
+        elif event_sourced_lifecycle_rows > 0:
+            source_materialization = "source_execution_lifecycle"
+            authority_class = "source_execution_lifecycle_materialized_runtime_ledger"
     realized_rows: list[dict[str, object]] = []
     for bucket in build_runtime_ledger_buckets(
         ledger_rows,
@@ -2652,21 +2697,14 @@ def _build_realized_strategy_pnl_rows(
                 execution_order_event_ids=execution_order_event_ids,
                 source_window_ids=source_window_ids,
                 source_offsets=source_offsets,
-                source_materialization=(
-                    "execution_order_events"
-                    if source_offsets and execution_order_event_ids
-                    else None
-                ),
-                authority_class=(
-                    "runtime_order_feed_execution_source"
-                    if source_offsets and execution_order_event_ids
-                    else None
-                ),
+                source_materialization=source_materialization,
+                authority_class=authority_class,
             )
             row["runtime_ledger_bucket"] = bucket_payload
         source_backed_runtime_ledger = (
             allow_authoritative_runtime_ledger_materialization
-            and event_sourced_lifecycle_rows > 0
+            and event_sourced_fill_economics_rows > 0
+            and order_feed_fill_economics_complete
             and not order_feed_fill_lifecycle_blockers
             and isinstance(bucket_payload, Mapping)
             and not runtime_ledger_promotion_source_authority_blockers(bucket_payload)
