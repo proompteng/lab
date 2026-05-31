@@ -1,11 +1,23 @@
-export type SourceKind = 'official-wiki' | 'steam' | 'ubisoft-news' | 'manual-verification'
+export type SourceKind =
+  | 'official-wiki'
+  | 'steam'
+  | 'ubisoft-news'
+  | 'manual-verification'
+  | 'community-database'
+  | 'youtube-video'
 
 export type WikiSource = {
   id: string
   kind: SourceKind
   title: string
   url: string
-  license: 'CC-BY-SA-4.0' | 'Steam Subscriber Agreement' | 'Ubisoft News Terms' | 'Original'
+  license:
+    | 'CC-BY-SA-4.0'
+    | 'Steam Subscriber Agreement'
+    | 'Ubisoft News Terms'
+    | 'YouTube Terms'
+    | 'Community Site Terms'
+    | 'Original'
   retrievedAt: string
 }
 
@@ -55,4 +67,51 @@ export type ReferenceCategory = {
   gameplayUse: string
   beginnerPriority: string
   verification: Verification
+}
+
+export type CreatureFactionId = FactionId | 'neutral'
+
+export type CreatureStat = {
+  id: string
+  name: string
+  faction: CreatureFactionId
+  tier: number
+  creatureType: string
+  attackType: 'Melee Attack' | 'Ranged Attack' | 'Long Reach'
+  movement: 'Ground' | 'Flying'
+  health: number
+  attack: number
+  defense: number
+  damage: string
+  speed: number
+  initiative: number
+  morale: number
+  luck: number
+  weeklyGrowth: number
+  cost: string
+  experience: number
+  keyAbilities: string[]
+  sourceIds: string[]
+}
+
+export type ArtifactReference = {
+  id: string
+  name: string
+  slot: string
+  rarity: 'common' | 'rare' | 'epic' | 'legendary'
+  effect: string
+  set: string
+  sourceIds: string[]
+}
+
+export type VideoTranscriptAudit = {
+  id: string
+  title: string
+  channel: string
+  duration: string
+  url: string
+  focus: 'beginner' | 'early-game' | 'combat' | 'magic' | 'faction' | 'pitfalls'
+  transcriptStatus: 'blocked-by-youtube-bot-check'
+  sourceId: string
+  gameplayTakeaway: string
 }

@@ -1,3 +1,5 @@
+import type { CSSProperties } from 'react'
+
 import { wikiSources } from '@/src/data/olden/sources'
 
 type SourceNoteProps = {
@@ -5,26 +7,34 @@ type SourceNoteProps = {
 }
 
 export const sourceNoteClassNames = {
-  aside: 'not-prose rounded-lg border border-fd-border bg-fd-card p-3 text-sm text-fd-muted-foreground',
-  title: 'mb-2 text-xs font-semibold text-fd-foreground',
-  list: 'space-y-1.5',
-  link: 'font-medium text-fd-foreground underline decoration-fd-muted-foreground underline-offset-2 transition hover:text-fd-primary hover:decoration-fd-primary',
-  meta: 'text-fd-muted-foreground',
+  aside: 'not-prose my-6 rounded-md border px-3 py-2 text-xs leading-6 text-zinc-400 shadow-sm',
+  label: 'mr-2 font-medium text-zinc-200',
+  list: 'm-0 inline list-none p-0',
+  item: 'inline',
+  link: 'font-medium text-zinc-100 underline decoration-zinc-500 underline-offset-2 transition hover:text-white hover:decoration-zinc-200',
+  meta: 'text-zinc-500',
+  separator: 'mx-2 text-zinc-700',
 } as const
+
+export const sourceNoteStyles = {
+  backgroundColor: '#09090b',
+  borderColor: '#27272a',
+} satisfies CSSProperties
 
 export function SourceNote({ ids }: SourceNoteProps) {
   const sources = wikiSources.filter((source) => ids.includes(source.id))
 
   return (
-    <aside className={sourceNoteClassNames.aside} aria-label="Sources">
-      <p className={sourceNoteClassNames.title}>Sources</p>
+    <aside className={sourceNoteClassNames.aside} style={sourceNoteStyles} aria-label="Sources">
+      <span className={sourceNoteClassNames.label}>Sources:</span>
       <ul className={sourceNoteClassNames.list}>
-        {sources.map((source) => (
-          <li key={source.id}>
+        {sources.map((source, index) => (
+          <li key={source.id} className={sourceNoteClassNames.item}>
             <a className={sourceNoteClassNames.link} href={source.url}>
               {source.title}
             </a>
             <span className={sourceNoteClassNames.meta}> - retrieved {source.retrievedAt}</span>
+            {index < sources.length - 1 ? <span className={sourceNoteClassNames.separator}>/</span> : null}
           </li>
         ))}
       </ul>
