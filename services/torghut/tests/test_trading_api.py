@@ -7211,6 +7211,36 @@ class TestTradingApi(TestCase):
                 cost_model_hash_counts={"cost-a": 4},
                 lineage_hash_counts={"lineage-a": 4},
                 blockers_json=[],
+                payload_json={
+                    "source_window_start": window_start.isoformat(),
+                    "source_window_end": window_end.isoformat(),
+                    "source_refs": [
+                        "postgres:trade_decisions",
+                        "postgres:executions",
+                        "postgres:execution_order_events",
+                        "postgres:order_feed_source_windows",
+                    ],
+                    "source_row_counts": {
+                        "trade_decisions": 5,
+                        "executions": 4,
+                        "execution_order_events": 4,
+                        "order_feed_source_windows": 1,
+                    },
+                    "trade_decision_ids": ["paper-route-decision"],
+                    "execution_ids": ["paper-route-execution"],
+                    "execution_order_event_ids": ["paper-route-order-event"],
+                    "source_window_ids": ["paper-route-source-window"],
+                    "source_offsets": [
+                        {
+                            "topic": "alpaca.trade_updates",
+                            "partition": 0,
+                            "offset": 100,
+                        }
+                    ],
+                    "source_materialization": "execution_order_events",
+                    "authority_class": "runtime_order_feed_execution_source",
+                    "source_decision_mode_counts": {"strategy_signal_paper": 5},
+                },
             )
             metric_window = StrategyHypothesisMetricWindow(
                 run_id="paper-route-run-1",

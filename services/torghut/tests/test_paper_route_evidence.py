@@ -27,6 +27,7 @@ from app.trading.paper_route_evidence import (
     _next_regular_equities_session_window,
     _normalized_open_positions,
     _paper_route_probe_summary,
+    _runtime_ledger_bucket_evidence_grade,
     _runtime_ledger_non_evidence_diagnostic_summary,
     _runtime_ledger_row_diagnostic_expectancy_bps,
     build_paper_route_evidence_audit,
@@ -43,6 +44,47 @@ class TestPaperRouteEvidenceAudit(TestCase):
             poolclass=StaticPool,
         )
         Base.metadata.create_all(self.engine)
+
+    def _runtime_ledger_source_authority_payload(
+        self,
+        *,
+        window_start: datetime,
+        window_end: datetime,
+        suffix: str = "fixture",
+    ) -> dict[str, object]:
+        return {
+            "source_window_start": window_start.isoformat(),
+            "source_window_end": window_end.isoformat(),
+            "source_refs": [
+                "postgres:trade_decisions",
+                "postgres:executions",
+                "postgres:execution_order_events",
+                "postgres:order_feed_source_windows",
+            ],
+            "source_row_counts": {
+                "trade_decisions": 1,
+                "executions": 1,
+                "execution_order_events": 2,
+                "order_feed_source_windows": 1,
+            },
+            "trade_decision_ids": [f"decision-{suffix}"],
+            "execution_ids": [f"execution-{suffix}"],
+            "execution_order_event_ids": [
+                f"event-new-{suffix}",
+                f"event-fill-{suffix}",
+            ],
+            "source_window_ids": [f"source-window-{suffix}"],
+            "source_offsets": [
+                {
+                    "topic": "alpaca.trade_updates",
+                    "partition": 0,
+                    "offset": 100,
+                }
+            ],
+            "source_materialization": "execution_order_events",
+            "authority_class": "runtime_order_feed_execution_source",
+            "source_decision_mode_counts": {"strategy_signal_paper": 1},
+        }
 
     def _add_flat_account_start_snapshot(
         self,
@@ -426,6 +468,61 @@ class TestPaperRouteEvidenceAudit(TestCase):
         )
 
         self.assertIsNone(_runtime_ledger_row_diagnostic_expectancy_bps(row))
+
+    def test_runtime_ledger_evidence_grade_requires_source_authority_payload(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 5, 28, 14, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 28, 15, 30, tzinfo=timezone.utc)
+        row = StrategyRuntimeLedgerBucket(
+            run_id="aggregate-only-runtime-ledger-run",
+            candidate_id="candidate-aggregate-only",
+            hypothesis_id="H-AGGREGATE-ONLY",
+            observed_stage="paper",
+            bucket_started_at=window_start,
+            bucket_ended_at=window_end,
+            account_label="TORGHUT_SIM",
+            runtime_strategy_name="aggregate-only-strategy",
+            strategy_family="microbar_pairs",
+            fill_count=2,
+            decision_count=1,
+            submitted_order_count=1,
+            closed_trade_count=1,
+            open_position_count=0,
+            filled_notional=Decimal("1000"),
+            gross_strategy_pnl=Decimal("20"),
+            cost_amount=Decimal("1"),
+            net_strategy_pnl_after_costs=Decimal("19"),
+            post_cost_expectancy_bps=Decimal("190"),
+            ledger_schema_version="torghut.runtime-ledger-bucket.v1",
+            pnl_basis="realized_strategy_pnl_after_explicit_costs",
+            execution_policy_hash_counts={"policy-a": 1},
+            cost_model_hash_counts={"cost-a": 1},
+            lineage_hash_counts={"lineage-a": 1},
+            blockers_json=[],
+            payload_json={},
+        )
+
+        self.assertFalse(_runtime_ledger_bucket_evidence_grade(row))
+        diagnostic = _runtime_ledger_non_evidence_diagnostic_summary([row])
+        blocker_counts = diagnostic["blocker_counts"]
+        self.assertIn("runtime_ledger_source_window_missing", blocker_counts)
+        self.assertIn("runtime_ledger_source_refs_missing", blocker_counts)
+        self.assertIn("runtime_ledger_trade_decision_refs_missing", blocker_counts)
+        self.assertIn("runtime_ledger_execution_refs_missing", blocker_counts)
+        self.assertIn(
+            "runtime_ledger_execution_order_event_refs_missing", blocker_counts
+        )
+        self.assertIn("runtime_ledger_source_offsets_missing", blocker_counts)
+        self.assertIn("runtime_ledger_source_materialization_missing", blocker_counts)
+        self.assertIn("runtime_ledger_authority_class_missing", blocker_counts)
+
+        row.payload_json = self._runtime_ledger_source_authority_payload(
+            window_start=window_start,
+            window_end=window_end,
+            suffix="aggregate-source",
+        )
+        self.assertTrue(_runtime_ledger_bucket_evidence_grade(row))
 
     def test_runtime_ledger_diagnostic_splits_route_probe_from_profit_source(
         self,
@@ -2017,6 +2114,11 @@ class TestPaperRouteEvidenceAudit(TestCase):
                     cost_model_hash_counts={"cost-a": 1},
                     lineage_hash_counts={"lineage-a": 1},
                     blockers_json=["open_position_count_nonzero"],
+                    payload_json=self._runtime_ledger_source_authority_payload(
+                        window_start=window_start,
+                        window_end=window_end,
+                        suffix="ledger-audit-open",
+                    ),
                 )
             )
             session.commit()
@@ -3282,6 +3384,11 @@ class TestPaperRouteEvidenceAudit(TestCase):
                         cost_model_hash_counts={"cost-a": 1},
                         lineage_hash_counts={"lineage-a": 1},
                         blockers_json=[],
+                        payload_json=self._runtime_ledger_source_authority_payload(
+                            window_start=window_start,
+                            window_end=window_end,
+                            suffix="active-grade",
+                        ),
                     ),
                     StrategyRuntimeLedgerBucket(
                         run_id="paper-route-run-2",
@@ -3309,6 +3416,11 @@ class TestPaperRouteEvidenceAudit(TestCase):
                         cost_model_hash_counts={"cost-a": 25},
                         lineage_hash_counts={"lineage-a": 25},
                         blockers_json=["open_position_count_nonzero"],
+                        payload_json=self._runtime_ledger_source_authority_payload(
+                            window_start=window_start,
+                            window_end=window_end,
+                            suffix="active-open",
+                        ),
                     ),
                     StrategyHypothesisMetricWindow(
                         run_id="paper-route-run-2",
@@ -4357,6 +4469,11 @@ class TestPaperRouteEvidenceAudit(TestCase):
                         cost_model_hash_counts={"cost-a": 1},
                         lineage_hash_counts={"lineage-a": 1},
                         blockers_json=[],
+                        payload_json=self._runtime_ledger_source_authority_payload(
+                            window_start=window_start,
+                            window_end=window_end,
+                            suffix="selected-grade",
+                        ),
                     ),
                 ]
             )
