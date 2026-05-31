@@ -1116,6 +1116,7 @@ class TestSubmissionCouncil(TestCase):
                     "observed_stage": "paper",
                     "bucket_started_at": "2026-05-29T17:00:00+00:00",
                     "bucket_ended_at": "2026-05-29T20:00:00+00:00",
+                    "submitted_order_count": 8,
                     "fill_count": 35,
                     "closed_trade_count": 12,
                     "open_position_count": 4,
@@ -1158,6 +1159,93 @@ class TestSubmissionCouncil(TestCase):
             "runtime_ledger_source_window_missing",
             target["source_collection_reason_codes"],
         )
+
+    def test_runtime_ledger_source_collection_allows_unclosed_or_losing_activity(
+        self,
+    ) -> None:
+        candidates = _runtime_ledger_source_collection_candidates(
+            [
+                {
+                    "hypothesis_id": "H-PAIRS-01",
+                    "candidate_id": "c88421d619759b2cfaa6f4d0",
+                    "strategy_id": "microbar_cross_sectional_pairs_v1@research",
+                    "strategy_family": "microbar_cross_sectional_pairs",
+                    "account": "TORGHUT_SIM",
+                    "observed_stage": "paper",
+                    "bucket_started_at": "2026-05-29T14:30:00+00:00",
+                    "bucket_ended_at": "2026-05-29T20:00:00+00:00",
+                    "submitted_order_count": 6,
+                    "fill_count": 12,
+                    "closed_trade_count": 0,
+                    "open_position_count": 1,
+                    "filled_notional": "1087.98000000",
+                    "net_strategy_pnl_after_costs": "-0.31170732",
+                    "reason_codes": [
+                        "runtime_ledger_stage_not_live",
+                        "runtime_ledger_source_window_missing",
+                        "runtime_ledger_source_refs_missing",
+                        "execution_reconstruction_not_runtime_ledger_proof",
+                        "unclosed_position",
+                        "post_cost_pnl_non_positive",
+                    ],
+                }
+            ]
+        )
+
+        self.assertEqual(len(candidates), 1)
+        source_candidate = candidates[0]
+        self.assertTrue(source_candidate["source_collection_authorized"])
+        self.assertFalse(source_candidate.get("paper_probation_eligible", False))
+        self.assertEqual(
+            source_candidate["source_collection_scope"],
+            "source_window_evidence_collection_only",
+        )
+        self.assertIn(
+            "runtime_ledger_source_window_missing",
+            source_candidate["source_collection_reason_codes"],
+        )
+
+        plan = _runtime_ledger_paper_probation_import_plan(candidates)
+
+        self.assertEqual(plan["target_count"], 1)
+        target = plan["targets"][0]
+        self.assertFalse(target["paper_probation_authorized"])
+        self.assertTrue(target["source_collection_authorized"])
+        self.assertFalse(target["probation_allowed"])
+        self.assertFalse(target["promotion_allowed"])
+        self.assertFalse(target["final_promotion_allowed"])
+        self.assertIn("post_cost_pnl_non_positive", target["candidate_blockers"])
+        self.assertIn("unclosed_position", target["candidate_blockers"])
+
+    def test_runtime_ledger_source_collection_requires_real_fill_activity(
+        self,
+    ) -> None:
+        candidates = _runtime_ledger_source_collection_candidates(
+            [
+                {
+                    "hypothesis_id": "H-PAIRS-01",
+                    "candidate_id": "c88421d619759b2cfaa6f4d0",
+                    "strategy_id": "microbar_cross_sectional_pairs_v1@research",
+                    "strategy_family": "microbar_cross_sectional_pairs",
+                    "account": "TORGHUT_SIM",
+                    "observed_stage": "paper",
+                    "bucket_started_at": "2026-05-29T14:30:00+00:00",
+                    "bucket_ended_at": "2026-05-29T20:00:00+00:00",
+                    "submitted_order_count": 6,
+                    "fill_count": 0,
+                    "closed_trade_count": 0,
+                    "open_position_count": 0,
+                    "filled_notional": "0",
+                    "net_strategy_pnl_after_costs": "0",
+                    "reason_codes": [
+                        "runtime_ledger_source_window_missing",
+                        "execution_reconstruction_not_runtime_ledger_proof",
+                    ],
+                }
+            ]
+        )
+
+        self.assertEqual(candidates, [])
 
     def test_live_gate_marks_source_collection_pending_without_probation(
         self,
