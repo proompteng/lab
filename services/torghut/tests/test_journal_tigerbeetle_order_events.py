@@ -42,6 +42,7 @@ def _add_order_event(
     status: str = "filled",
     source_offset: int = 1,
     has_amount: bool = True,
+    avg_fill_price: Decimal = Decimal("190.25"),
 ) -> ExecutionOrderEvent:
     event = ExecutionOrderEvent(
         event_fingerprint=fingerprint,
@@ -57,7 +58,7 @@ def _add_order_event(
         status=status,
         qty=Decimal("1") if has_amount else None,
         filled_qty=Decimal("1") if has_amount else None,
-        avg_fill_price=Decimal("190.25") if has_amount else None,
+        avg_fill_price=avg_fill_price if has_amount else None,
         raw_event={"event": event_type},
     )
     session.add(event)
@@ -309,23 +310,23 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
         self.assertEqual([event.id for event in events.rows], [selected.id])
         self.assertEqual(events.scan_failed, 0)
 
-    def test_select_unlinked_events_degrades_bad_amount_rows(self) -> None:
+    def test_select_unlinked_events_rounds_high_precision_amount_rows(self) -> None:
         settings_obj = Settings(TORGHUT_TIGERBEETLE_ENABLED=True)
         with Session(self.engine) as session:
-            bad = _add_order_event(
+            rounded = _add_order_event(
                 session,
-                fingerprint="bad-precision",
+                fingerprint="rounded-precision",
                 account_label="paper",
                 source_offset=1,
             )
-            bad.avg_fill_price = Decimal("190.2500001")
+            rounded.avg_fill_price = Decimal("190.2500001")
             selected = _add_order_event(
                 session,
                 fingerprint="selected",
                 account_label="paper",
                 source_offset=2,
             )
-            session.add_all([bad, selected])
+            session.add_all([rounded, selected])
             session.flush()
 
             events = script._select_unlinked_events(
@@ -337,27 +338,28 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
             )
 
         self.assertEqual(
-            [event.event_fingerprint for event in events.rows], ["selected"]
+            [event.event_fingerprint for event in events.rows],
+            ["rounded-precision", "selected"],
         )
-        self.assertEqual(events.scan_failed, 1)
+        self.assertEqual(events.scan_failed, 0)
 
     def test_select_unlinked_events_honors_scan_limit(self) -> None:
         settings_obj = Settings(TORGHUT_TIGERBEETLE_ENABLED=True)
         with Session(self.engine) as session:
-            bad = _add_order_event(
+            rounded = _add_order_event(
                 session,
-                fingerprint="bad-precision",
+                fingerprint="rounded-precision",
                 account_label="paper",
                 source_offset=1,
             )
-            bad.avg_fill_price = Decimal("190.2500001")
+            rounded.avg_fill_price = Decimal("190.2500001")
             _add_order_event(
                 session,
                 fingerprint="selected",
                 account_label="paper",
                 source_offset=2,
             )
-            session.add(bad)
+            session.add(rounded)
             session.flush()
 
             events = script._select_unlinked_events(
@@ -368,8 +370,10 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
                 event_scan_limit=1,
             )
 
-        self.assertEqual(events.rows, [])
-        self.assertEqual(events.scan_failed, 1)
+        self.assertEqual(
+            [event.event_fingerprint for event in events.rows], ["rounded-precision"]
+        )
+        self.assertEqual(events.scan_failed, 0)
 
     def test_select_unlinked_events_stops_after_limit(self) -> None:
         settings_obj = Settings(TORGHUT_TIGERBEETLE_ENABLED=True)
@@ -397,6 +401,26 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
             )
 
         self.assertEqual([event.id for event in events.rows], [first.id])
+        self.assertEqual(events.scan_failed, 0)
+
+    def test_select_unlinked_events_accepts_sub_micro_notional_rows(self) -> None:
+        settings_obj = Settings(TORGHUT_TIGERBEETLE_ENABLED=True)
+        with Session(self.engine) as session:
+            selected = _add_order_event(
+                session,
+                fingerprint="sub-micro-notional",
+                account_label="paper",
+                avg_fill_price=Decimal("1.0000005"),
+            )
+
+            events = script._select_unlinked_events(
+                session,
+                settings_obj=settings_obj,
+                account_label="paper",
+                limit=10,
+            )
+
+        self.assertEqual([event.id for event in events.rows], [selected.id])
         self.assertEqual(events.scan_failed, 0)
 
     def test_main_journals_selected_events_and_reconciles(self) -> None:
@@ -500,6 +524,18 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
                 _add_order_event(session, fingerprint="selected", source_offset=2)
                 session.commit()
 
+            real_build_plan = script.build_order_event_transfer_plan
+
+            def build_plan_with_failure(
+                session: Session,
+                event: ExecutionOrderEvent,
+                *,
+                settings_obj: Settings,
+            ) -> object:
+                if event.event_fingerprint == "bad":
+                    raise RuntimeError("scan failed")
+                return real_build_plan(session, event, settings_obj=settings_obj)
+
             stdout = io.StringIO()
             with (
                 patch.dict(os.environ, {"TEST_DB_DSN": dsn}),
@@ -520,6 +556,11 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
                     script,
                     "reconcile_tigerbeetle_transfers",
                     return_value={"ok": True},
+                ),
+                patch.object(
+                    script,
+                    "build_order_event_transfer_plan",
+                    side_effect=build_plan_with_failure,
                 ),
                 redirect_stdout(stdout),
             ):

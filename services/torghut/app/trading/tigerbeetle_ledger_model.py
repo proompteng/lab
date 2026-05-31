@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 
 LEDGER_USD_MICRO = 840001
@@ -85,6 +85,13 @@ def decimal_usd_to_micros(value: Decimal) -> int:
     if scaled < 0:
         raise ValueError("usd_amount_negative")
     return int(scaled)
+
+
+def decimal_usd_to_nearest_micros(value: Decimal) -> int:
+    scaled = value * USD_MICRO_SCALE
+    if scaled < 0:
+        raise ValueError("usd_amount_negative")
+    return int(scaled.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
 def transfer_kind_for_event(event_type: str | None, status: str | None) -> str | None:

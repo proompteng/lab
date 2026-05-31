@@ -145,6 +145,10 @@ class TestTigerBeetleReconcile(TestCase):
             self.assertFalse(payload["ok"])
             self.assertIn(BLOCKER_AMOUNT_MISMATCH, payload["blockers"])
 
+    def test_source_amount_micros_rounds_real_broker_notional(self) -> None:
+        self.assertEqual(_usd_to_micros(Decimal("1.0000004")), Decimal("1000000"))
+        self.assertEqual(_usd_to_micros(Decimal("1.0000005")), Decimal("1000001"))
+
     def test_reconciliation_blocks_source_amount_mismatch(self) -> None:
         with Session(self.engine) as session:
             execution = Execution(

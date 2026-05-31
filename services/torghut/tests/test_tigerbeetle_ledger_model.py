@@ -20,6 +20,7 @@ from app.trading.tigerbeetle_ledger_model import (
     TRANSFER_KIND_REJECT_VOID,
     TRANSFER_KIND_SUBMITTED_PENDING,
     decimal_usd_to_micros,
+    decimal_usd_to_nearest_micros,
     transfer_code_for_kind,
     transfer_kind_for_event,
 )
@@ -35,6 +36,13 @@ class TestTigerBeetleLedgerModel(TestCase):
             decimal_usd_to_micros(Decimal("1.0000001"))
         with self.assertRaisesRegex(ValueError, "usd_amount_negative"):
             decimal_usd_to_micros(Decimal("-0.01"))
+
+    def test_decimal_usd_to_nearest_micros_rounds_real_broker_notional(self) -> None:
+        self.assertEqual(decimal_usd_to_nearest_micros(Decimal("1.0000004")), 1000000)
+        self.assertEqual(decimal_usd_to_nearest_micros(Decimal("1.0000005")), 1000001)
+        self.assertEqual(decimal_usd_to_nearest_micros(Decimal("1.234567")), 1234567)
+        with self.assertRaisesRegex(ValueError, "usd_amount_negative"):
+            decimal_usd_to_nearest_micros(Decimal("-0.01"))
 
     def test_account_and_transfer_codes_do_not_overlap(self) -> None:
         account_codes = {

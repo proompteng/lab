@@ -36,6 +36,7 @@ from app.trading.tigerbeetle_ledger_model import (
     TRANSFER_KIND_EXECUTION_COST,
     TRANSFER_KIND_EXECUTION_FILL,
     TRANSFER_KIND_RUNTIME_NET_PNL,
+    decimal_usd_to_nearest_micros,
 )
 
 
@@ -54,7 +55,6 @@ BLOCKER_UNLINKED_RUNTIME_LEDGER = "tigerbeetle_unlinked_runtime_ledger"
 BLOCKER_SOURCE_ROW_MISSING = "tigerbeetle_source_row_missing"
 BLOCKER_SOURCE_AMOUNT_MISMATCH = "tigerbeetle_source_amount_mismatch"
 BLOCKER_CLIENT_UNAVAILABLE = "tigerbeetle_client_unavailable"
-USD_MICRO_SCALE = Decimal("1000000")
 
 
 def _attr(value: object, name: str) -> Any:
@@ -132,10 +132,10 @@ def _uuid_or_none(value: str | None) -> UUID | None:
 def _usd_to_micros(value: Decimal | None) -> Decimal | None:
     if value is None:
         return None
-    scaled = abs(Decimal(str(value))) * USD_MICRO_SCALE
-    if scaled != scaled.to_integral_value() or scaled <= 0:
+    scaled = Decimal(decimal_usd_to_nearest_micros(abs(Decimal(str(value)))))
+    if scaled <= 0:
         return None
-    return Decimal(int(scaled))
+    return scaled
 
 
 def _execution_amount_micros(execution: Execution | None) -> Decimal | None:
