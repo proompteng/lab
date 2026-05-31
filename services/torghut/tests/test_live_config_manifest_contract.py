@@ -1125,7 +1125,7 @@ class TestLiveConfigManifestContract(TestCase):
             "argocd/applications/torghut/paper-account-flatten-cronjob.yaml"
         )
 
-        self.assertEqual(spec.get("schedule"), "5,20 9 * * 1-5")
+        self.assertEqual(spec.get("schedule"), "5,20,25 9 * * 1-5")
         self.assertEqual(spec.get("timeZone"), "America/New_York")
         self.assertEqual(spec.get("concurrencyPolicy"), "Forbid")
         job_spec = cast(
