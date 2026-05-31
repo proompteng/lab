@@ -56,6 +56,7 @@ from app.trading.llm.schema import (
 from app.trading.models import SignalEnvelope, StrategyDecision
 from app.trading.prices import MarketSnapshot, PriceFetcher
 from app.trading.ingest import SignalBatch
+from app.trading.paper_route_target_plan import paper_route_target_plan_from_payload
 from app.trading.reconcile import Reconciler
 from app.trading.runtime_decision_authority import (
     ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
@@ -7255,6 +7256,137 @@ class TestTradingPipeline(TestCase):
         self.assertTrue(target_plan.get("profit_proof_eligible"))
         self.assertNotIn("paper_route_probe", params)
         self.assertNotIn("paper_route_target_plan_source_decision", params)
+
+    def test_strategy_signal_paper_uses_next_target_plan_over_closed_import_plan(
+        self,
+    ) -> None:
+        from app import config
+
+        closed_window_start = datetime(2026, 5, 29, 13, 30, tzinfo=timezone.utc)
+        closed_window_end = datetime(2026, 5, 29, 20, 0, tzinfo=timezone.utc)
+        next_window_start = datetime(2026, 6, 1, 13, 30, tzinfo=timezone.utc)
+        next_window_end = datetime(2026, 6, 1, 20, 0, tzinfo=timezone.utc)
+        config.settings.trading_mode = "paper"
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_paper_route_target_plan_url = (
+            "http://torghut.local/trading/paper-route-target-plan"
+        )
+        config.settings.trading_paper_route_target_plan_timeout_seconds = 1.0
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="paper",
+            session_factory=self.session_local,
+        )
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="microbar-cross-sectional-pairs-v1",
+                enabled=True,
+                base_timeframe="1Sec",
+                universe_type="static",
+                universe_symbols=["AAPL", "AMZN"],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+            target_plan_payload = {
+                "schema_version": "torghut.paper-route-target-plan.v1",
+                "runtime_window_import_plan": {
+                    "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                    "purpose": "latest_closed_session_paper_route_runtime_window_import",
+                    "target_count": 1,
+                    "targets": [
+                        {
+                            "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                            "paper_route_probe_window_start": (
+                                closed_window_start.isoformat()
+                            ),
+                            "paper_route_probe_window_end": (
+                                closed_window_end.isoformat()
+                            ),
+                            "candidate_id": "closed-friday-candidate",
+                            "hypothesis_id": "H-PAIRS-01",
+                            "observed_stage": "paper",
+                            "strategy_family": "microbar_cross_sectional_pairs",
+                            "strategy_name": "microbar-cross-sectional-pairs-v1",
+                            "source_kind": "paper_route_probe_runtime_observed",
+                            "paper_probation_authorized": True,
+                        }
+                    ],
+                },
+                "next_paper_route_runtime_window_targets": {
+                    "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                    "purpose": "next_session_paper_route_runtime_window_evidence_collection",
+                    "target_count": 1,
+                    "targets": [
+                        {
+                            "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                            "paper_route_probe_window_start": (
+                                next_window_start.isoformat()
+                            ),
+                            "paper_route_probe_window_end": next_window_end.isoformat(),
+                            "candidate_id": "candidate-pairs-monday",
+                            "hypothesis_id": "H-PAIRS-01",
+                            "observed_stage": "paper",
+                            "strategy_family": "microbar_cross_sectional_pairs",
+                            "strategy_name": "microbar-cross-sectional-pairs-v1",
+                            "strategy_lookup_names": [
+                                str(strategy.id),
+                                "microbar-cross-sectional-pairs-v1",
+                            ],
+                            "source_kind": "paper_route_probe_runtime_observed",
+                            "source_manifest_ref": (
+                                "config/trading/hypotheses/h-pairs-01.json"
+                            ),
+                            "dataset_snapshot_ref": (
+                                "portfolio-profit-autoresearch-500-v1"
+                            ),
+                            "paper_probation_authorized": True,
+                        }
+                    ],
+                },
+            }
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=datetime(2026, 6, 1, 15, 30, tzinfo=timezone.utc),
+                timeframe="1Sec",
+                action="sell",
+                qty=Decimal("1"),
+                params={"price": "100"},
+            )
+            with patch(
+                "app.trading.scheduler.simple_pipeline.fetch_paper_route_target_plan_url",
+                return_value=paper_route_target_plan_from_payload(target_plan_payload),
+            ):
+                row = pipeline._ensure_pending_decision_row(
+                    session=session,
+                    decision=decision,
+                    strategy=strategy,
+                )
+
+            self.assertIsNotNone(row)
+            assert row is not None
+            payload = cast(dict[str, Any], row.decision_json)
+            params = cast(dict[str, Any], payload.get("params"))
+            authority = cast(dict[str, Any], params.get("strategy_signal_paper"))
+
+        self.assertEqual(params.get("source_decision_mode"), "strategy_signal_paper")
+        self.assertTrue(params.get("profit_proof_eligible"))
+        self.assertEqual(authority.get("candidate_id"), "candidate-pairs-monday")
+        self.assertNotEqual(authority.get("candidate_id"), "closed-friday-candidate")
+        self.assertEqual(
+            authority.get("paper_route_probe_window_start"),
+            next_window_start.isoformat(),
+        )
 
     def test_strategy_signal_paper_target_rejects_unqualified_targets(
         self,
