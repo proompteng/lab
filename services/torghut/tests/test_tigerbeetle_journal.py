@@ -30,6 +30,7 @@ from app.trading.tigerbeetle_journal import (
     _transfer_attr,
     _transfer_flag,
     _transfer_spec,
+    build_order_event_transfer_plan,
     submitted_pending_transfer_id,
     event_transfer_id,
 )
@@ -367,6 +368,70 @@ class TestTigerBeetleLedgerJournal(TestCase):
         self.assertEqual(submitted.transfer_kind, TRANSFER_KIND_SUBMITTED_PENDING)
         self.assertEqual(canceled.transfer_kind, TRANSFER_KIND_CANCEL_VOID)
         self.assertNotEqual(canceled.pending_id, 0)
+
+    def test_void_transfer_requires_pending_mode(self) -> None:
+        with Session(self.engine) as session:
+            event = _create_fill_event(session, fingerprint="fingerprint-void-required")
+            accounts = {spec.account_key: spec for spec in _account_specs(event)}
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "tigerbeetle_pending_transfer_required_for_void",
+            ):
+                _transfer_spec(
+                    event,
+                    transfer_kind=TRANSFER_KIND_CANCEL_VOID,
+                    amount=100,
+                    accounts=accounts,
+                    use_pending_transfer=False,
+                )
+
+    def test_transfer_plan_derives_void_amount_from_pending_ref(self) -> None:
+        with Session(self.engine) as session:
+            event = _create_fill_event(session, fingerprint="fingerprint-void-amount")
+            event.event_type = "canceled"
+            event.status = "canceled"
+            event.qty = None
+            event.filled_qty = None
+            event.avg_fill_price = None
+            event.raw_event = {"event": "canceled"}
+            session.add(
+                TigerBeetleTransferRef(
+                    cluster_id=_settings().tigerbeetle_cluster_id,
+                    transfer_id=str(submitted_pending_transfer_id(event)),
+                    transfer_kind=TRANSFER_KIND_SUBMITTED_PENDING,
+                    ledger=LEDGER_USD_MICRO,
+                    code=2000,
+                    amount=Decimal("123000000"),
+                    status="created",
+                    event_fingerprint="fingerprint-void-amount-submitted",
+                )
+            )
+            session.flush()
+
+            plan = build_order_event_transfer_plan(
+                session,
+                event,
+                settings_obj=_settings(),
+            )
+
+            self.assertIsNotNone(plan)
+            assert plan is not None
+            self.assertEqual(plan.transfer_spec.amount, 123000000)
+
+    def test_transfer_plan_skips_void_without_pending_ref(self) -> None:
+        with Session(self.engine) as session:
+            event = _create_fill_event(session, fingerprint="fingerprint-void-skip")
+            event.event_type = "canceled"
+            event.status = "canceled"
+
+            self.assertIsNone(
+                build_order_event_transfer_plan(
+                    session,
+                    event,
+                    settings_obj=_settings(),
+                )
+            )
 
     def test_transfer_flag_handles_missing_module_and_missing_flags(self) -> None:
         with patch.dict(sys.modules, {"tigerbeetle": None}):
