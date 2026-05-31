@@ -6060,6 +6060,115 @@ class TestTradingPipeline(TestCase):
 
         self.assertEqual([decision.symbol for decision in decisions], ["AMZN"])
 
+    def test_paper_route_target_profit_proof_exposure_helper_fails_closed(
+        self,
+    ) -> None:
+        strategy = Strategy(
+            id=uuid4(),
+            name="paper-route-candidate-v1",
+            description="paper route candidate",
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="static",
+            universe_symbols=["AAPL"],
+            max_notional_per_trade=Decimal("1000"),
+        )
+        mock_session = Mock(spec=Session)
+        mock_session.execute.side_effect = RuntimeError("database offline")
+
+        self.assertTrue(
+            SimpleTradingPipeline._paper_route_target_symbol_has_open_profit_proof_exposure(
+                session=cast(Session, mock_session),
+                strategy=strategy,
+                symbol="AAPL",
+                account_label="paper",
+                window_start=datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc),
+            )
+        )
+
+    def test_paper_route_target_profit_proof_exposure_helper_ignores_noise(
+        self,
+    ) -> None:
+        strategy = Strategy(
+            id=uuid4(),
+            name="paper-route-candidate-v1",
+            description="paper route candidate",
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="static",
+            universe_symbols=["AAPL"],
+            max_notional_per_trade=Decimal("1000"),
+        )
+        result = Mock()
+        result.all.return_value = [
+            ("buy", Decimal("1"), ["not-a-decision-mapping"]),
+            ("buy", Decimal("1"), {"params": "not-a-param-mapping"}),
+            (
+                "buy",
+                Decimal("1"),
+                {
+                    "params": {
+                        "source_decision_mode": ROUTE_ACQUISITION_SOURCE_DECISION_MODE
+                    }
+                },
+            ),
+            ("buy", None, {"params": {"profit_proof_eligible": True}}),
+            (
+                "sell",
+                Decimal("2"),
+                {
+                    "params": {
+                        "source_decision_mode": STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE,
+                    }
+                },
+            ),
+        ]
+        mock_session = Mock(spec=Session)
+        mock_session.execute.return_value = result
+
+        self.assertTrue(
+            SimpleTradingPipeline._paper_route_target_symbol_has_open_profit_proof_exposure(
+                session=cast(Session, mock_session),
+                strategy=strategy,
+                symbol="aapl",
+                account_label="paper",
+                window_start=datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc),
+            )
+        )
+
+    def test_paper_route_target_profit_proof_exposure_helper_returns_false_without_key(
+        self,
+    ) -> None:
+        strategy = Strategy(
+            name="paper-route-candidate-v1",
+            description="paper route candidate",
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="static",
+            universe_symbols=["AAPL"],
+            max_notional_per_trade=Decimal("1000"),
+        )
+        mock_session = Mock(spec=Session)
+
+        self.assertFalse(
+            SimpleTradingPipeline._paper_route_target_symbol_has_open_profit_proof_exposure(
+                session=cast(Session, mock_session),
+                strategy=strategy,
+                symbol="AAPL",
+                account_label="paper",
+                window_start=datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc),
+            )
+        )
+        self.assertFalse(
+            SimpleTradingPipeline._paper_route_target_symbol_has_open_profit_proof_exposure(
+                session=cast(Session, mock_session),
+                strategy=strategy,
+                symbol=" ",
+                account_label="paper",
+                window_start=datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc),
+            )
+        )
+
     def test_process_paper_route_target_source_decisions_records_submit_failure(
         self,
     ) -> None:
