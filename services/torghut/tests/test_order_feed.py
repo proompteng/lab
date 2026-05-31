@@ -38,6 +38,7 @@ from app.trading.order_feed import (
     merge_execution_raw_order_update,
     normalize_order_feed_record,
     persist_order_event,
+    repair_order_feed_execution_links,
 )
 
 
@@ -1232,6 +1233,81 @@ class TestOrderFeed(TestCase):
         self.assertEqual(source_window.start_offset, 188)
         self.assertEqual(source_window.end_offset, 188)
         self.assertEqual(source_window.inserted_count, 1)
+        self.assertEqual(source_window.unlinked_execution_count, 0)
+        self.assertEqual(source_window.unlinked_decision_count, 0)
+
+    def test_repair_order_feed_execution_links_links_matching_lifecycle_rows(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            execution = self._seed_execution(session)
+            execution_id = execution.id
+            trade_decision_id = execution.trade_decision_id
+            linkable_event = ExecutionOrderEvent(
+                event_fingerprint="repair-linkable-fill",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=288,
+                alpaca_account_label="paper",
+                event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+                symbol="AAPL",
+                alpaca_order_id=execution.alpaca_order_id,
+                client_order_id=execution.client_order_id,
+                event_type="fill",
+                status="filled",
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("191.25"),
+                raw_event={"event": "fill"},
+            )
+            unmatched_event = ExecutionOrderEvent(
+                event_fingerprint="repair-unmatched-fill",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=289,
+                alpaca_account_label="paper",
+                event_ts=datetime(2026, 2, 1, 10, 1, tzinfo=timezone.utc),
+                symbol="MSFT",
+                alpaca_order_id="missing-order",
+                client_order_id="missing-client",
+                event_type="fill",
+                status="filled",
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("320.00"),
+                raw_event={"event": "fill"},
+            )
+            session.add_all([linkable_event, unmatched_event])
+            session.commit()
+
+            result = repair_order_feed_execution_links(
+                session,
+                account_label="paper",
+                limit=10,
+            )
+            session.commit()
+            session.refresh(linkable_event)
+            session.refresh(unmatched_event)
+            session.refresh(execution)
+            source_window = session.execute(select(OrderFeedSourceWindow)).scalar_one()
+            tca_metric = session.execute(select(ExecutionTCAMetric)).scalar_one()
+
+        self.assertEqual(
+            result,
+            {
+                "selected": 2,
+                "executions_matched": 1,
+                "executions_linked": 1,
+                "events_linked": 1,
+                "events_without_execution": 1,
+            },
+        )
+        self.assertEqual(linkable_event.execution_id, execution_id)
+        self.assertEqual(linkable_event.trade_decision_id, trade_decision_id)
+        self.assertEqual(linkable_event.source_window_id, source_window.id)
+        self.assertIsNone(unmatched_event.execution_id)
+        self.assertIsNone(unmatched_event.trade_decision_id)
+        self.assertEqual(execution.status, "filled")
+        self.assertEqual(execution.filled_qty, Decimal("1.00000000"))
+        self.assertEqual(tca_metric.execution_id, execution_id)
         self.assertEqual(source_window.unlinked_execution_count, 0)
         self.assertEqual(source_window.unlinked_decision_count, 0)
 

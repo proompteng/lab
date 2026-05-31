@@ -12,7 +12,10 @@ from typing import Any
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.trading.order_feed import backfill_order_feed_source_windows
+from app.trading.order_feed import (
+    backfill_order_feed_source_windows,
+    repair_order_feed_execution_links,
+)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -45,6 +48,21 @@ def _payload(
         ),
         "source_windows_reused": sum(batch["source_windows_reused"] for batch in batches),
         "events_linked": sum(batch["events_linked"] for batch in batches),
+        "execution_link_candidates": sum(
+            batch["execution_link_candidates"] for batch in batches
+        ),
+        "execution_link_executions_matched": sum(
+            batch["execution_link_executions_matched"] for batch in batches
+        ),
+        "execution_link_executions_linked": sum(
+            batch["execution_link_executions_linked"] for batch in batches
+        ),
+        "execution_link_events_linked": sum(
+            batch["execution_link_events_linked"] for batch in batches
+        ),
+        "execution_link_events_without_execution": sum(
+            batch["execution_link_events_without_execution"] for batch in batches
+        ),
     }
     return {
         "status": "ok",
@@ -91,18 +109,40 @@ def main() -> int:
     batches: list[dict[str, int]] = []
     with session_factory() as session:
         for _ in range(max_batches):
-            batch = backfill_order_feed_source_windows(
+            source_window_batch = backfill_order_feed_source_windows(
                 session,
                 account_label=args.account_label,
                 limit=batch_size,
             )
+            execution_link_batch = repair_order_feed_execution_links(
+                session,
+                account_label=args.account_label,
+                limit=batch_size,
+            )
+            batch = {
+                **source_window_batch,
+                "execution_link_candidates": execution_link_batch["selected"],
+                "execution_link_executions_matched": execution_link_batch[
+                    "executions_matched"
+                ],
+                "execution_link_executions_linked": execution_link_batch[
+                    "executions_linked"
+                ],
+                "execution_link_events_linked": execution_link_batch["events_linked"],
+                "execution_link_events_without_execution": execution_link_batch[
+                    "events_without_execution"
+                ],
+            }
             batches.append(batch)
             if args.apply:
                 session.commit()
             else:
                 session.rollback()
                 break
-            if int(batch.get("selected") or 0) < batch_size:
+            if (
+                int(source_window_batch.get("selected") or 0) < batch_size
+                and int(execution_link_batch.get("selected") or 0) < batch_size
+            ):
                 break
 
     payload = _payload(args=args, started_at=started_at, batches=batches)

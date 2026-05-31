@@ -984,6 +984,68 @@ def link_order_events_to_execution(session: Session, execution: Execution) -> in
     return linked
 
 
+def repair_order_feed_execution_links(
+    session: Session,
+    *,
+    account_label: str | None = None,
+    limit: int = 1000,
+) -> dict[str, int]:
+    """Attach unlinked order-feed lifecycle rows to matching executions.
+
+    This is a bounded repair for already-consumed broker events. It preserves
+    fail-closed proof semantics: if no matching execution exists, the event stays
+    unlinked and remains a runtime-ledger/source-authority blocker.
+    """
+
+    bounded_limit = max(1, min(int(limit), 5000))
+    stmt = (
+        select(ExecutionOrderEvent)
+        .where(
+            (
+                (ExecutionOrderEvent.execution_id.is_(None))
+                | (ExecutionOrderEvent.trade_decision_id.is_(None))
+            ),
+            (
+                (ExecutionOrderEvent.alpaca_order_id.is_not(None))
+                | (ExecutionOrderEvent.client_order_id.is_not(None))
+            ),
+        )
+        .order_by(
+            ExecutionOrderEvent.event_ts.asc().nullsfirst(),
+            ExecutionOrderEvent.feed_seq.asc().nullsfirst(),
+            ExecutionOrderEvent.created_at.asc(),
+        )
+        .limit(bounded_limit)
+    )
+    if account_label:
+        stmt = stmt.where(ExecutionOrderEvent.alpaca_account_label == account_label)
+
+    events = session.execute(stmt).scalars().all()
+    processed_execution_ids: set[object] = set()
+    counters = {
+        "selected": len(events),
+        "executions_matched": 0,
+        "executions_linked": 0,
+        "events_linked": 0,
+        "events_without_execution": 0,
+    }
+    for event in events:
+        execution = _execution_for_order_event(session, event)
+        if execution is None:
+            counters["events_without_execution"] += 1
+            continue
+        if execution.id in processed_execution_ids:
+            continue
+        processed_execution_ids.add(execution.id)
+        counters["executions_matched"] += 1
+        linked = link_order_events_to_execution(session, execution)
+        if linked <= 0:
+            continue
+        counters["executions_linked"] += 1
+        counters["events_linked"] += linked
+    return counters
+
+
 def backfill_order_feed_source_windows(
     session: Session,
     *,
@@ -1035,6 +1097,39 @@ def backfill_order_feed_source_windows(
         _refresh_source_window_linkage_counts(session, event)
         counters["events_linked"] += 1
     return counters
+
+
+def _execution_for_order_event(
+    session: Session,
+    event: ExecutionOrderEvent,
+) -> Execution | None:
+    clauses: list[ColumnElement[bool]] = []
+    if event.alpaca_order_id:
+        clauses.append(
+            (Execution.alpaca_order_id == event.alpaca_order_id)
+            & (Execution.alpaca_account_label == event.alpaca_account_label)
+        )
+    if event.client_order_id:
+        clauses.append(
+            (Execution.client_order_id == event.client_order_id)
+            & (Execution.alpaca_account_label == event.alpaca_account_label)
+        )
+    if not clauses:
+        return None
+    return (
+        session.execute(
+            select(Execution)
+            .where(or_(*clauses))
+            .order_by(
+                Execution.order_feed_last_event_ts.desc().nullslast(),
+                Execution.last_update_at.desc().nullslast(),
+                Execution.created_at.desc(),
+            )
+            .limit(1)
+        )
+        .scalars()
+        .first()
+    )
 
 
 def _ensure_source_window_for_event(
@@ -1506,5 +1601,6 @@ __all__ = [
     "apply_order_event_to_execution",
     "backfill_order_feed_source_windows",
     "link_order_events_to_execution",
+    "repair_order_feed_execution_links",
     "latest_order_event_for_execution",
 ]

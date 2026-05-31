@@ -73,6 +73,17 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
                     "events_linked": 5,
                 },
             ) as backfill,
+            patch.object(
+                script,
+                "repair_order_feed_execution_links",
+                return_value={
+                    "selected": 4,
+                    "executions_matched": 3,
+                    "executions_linked": 2,
+                    "events_linked": 3,
+                    "events_without_execution": 1,
+                },
+            ) as repair_links,
             patch("sys.stdout", stdout),
         ):
             exit_code = script.main()
@@ -87,6 +98,11 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
         self.assertEqual(payload["source_windows_created"], 3)
         self.assertEqual(payload["source_windows_reused"], 2)
         self.assertEqual(payload["events_linked"], 5)
+        self.assertEqual(payload["execution_link_candidates"], 4)
+        self.assertEqual(payload["execution_link_executions_matched"], 3)
+        self.assertEqual(payload["execution_link_executions_linked"], 2)
+        self.assertEqual(payload["execution_link_events_linked"], 3)
+        self.assertEqual(payload["execution_link_events_without_execution"], 1)
         self.assertEqual(fake_session.commits, 0)
         self.assertEqual(fake_session.rollbacks, 1)
         create_engine.assert_called_once_with(
@@ -95,6 +111,11 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
             future=True,
         )
         backfill.assert_called_once_with(
+            fake_session,
+            account_label=None,
+            limit=5000,
+        )
+        repair_links.assert_called_once_with(
             fake_session,
             account_label=None,
             limit=5000,
@@ -146,6 +167,26 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
                     },
                 ],
             ) as backfill,
+            patch.object(
+                script,
+                "repair_order_feed_execution_links",
+                side_effect=[
+                    {
+                        "selected": 2,
+                        "executions_matched": 2,
+                        "executions_linked": 1,
+                        "events_linked": 2,
+                        "events_without_execution": 0,
+                    },
+                    {
+                        "selected": 0,
+                        "executions_matched": 0,
+                        "executions_linked": 0,
+                        "events_linked": 0,
+                        "events_without_execution": 0,
+                    },
+                ],
+            ) as repair_links,
             patch("sys.stdout", stdout),
         ):
             exit_code = script.main()
@@ -158,11 +199,19 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
         self.assertEqual(payload["source_windows_created"], 2)
         self.assertEqual(payload["source_windows_reused"], 1)
         self.assertEqual(payload["events_linked"], 3)
+        self.assertEqual(payload["execution_link_candidates"], 2)
+        self.assertEqual(payload["execution_link_executions_matched"], 2)
+        self.assertEqual(payload["execution_link_executions_linked"], 1)
+        self.assertEqual(payload["execution_link_events_linked"], 2)
+        self.assertEqual(payload["execution_link_events_without_execution"], 0)
         self.assertEqual(fake_session.commits, 2)
         self.assertEqual(fake_session.rollbacks, 0)
         self.assertEqual(backfill.call_count, 2)
         self.assertEqual(backfill.call_args.kwargs["account_label"], "TORGHUT_SIM")
         self.assertEqual(backfill.call_args.kwargs["limit"], 2)
+        self.assertEqual(repair_links.call_count, 2)
+        self.assertEqual(repair_links.call_args.kwargs["account_label"], "TORGHUT_SIM")
+        self.assertEqual(repair_links.call_args.kwargs["limit"], 2)
 
     def test_main_requires_configured_dsn_env(self) -> None:
         with (

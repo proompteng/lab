@@ -1637,6 +1637,15 @@ def build_runtime_ledger_proof_packet(
         if net_pnl is not None and trading_days > 0
         else None
     )
+    median_daily_net_pnl = _decimal(
+        runtime_summary.get("runtime_ledger_median_daily_net_pnl_after_costs")
+    )
+    p10_daily_net_pnl = _decimal(
+        runtime_summary.get("runtime_ledger_p10_daily_net_pnl_after_costs")
+    )
+    worst_day_net_pnl = _decimal(
+        runtime_summary.get("runtime_ledger_worst_day_net_pnl_after_costs")
+    )
     drawdown_pct, drawdown_source = _first_decimal(
         runtime_summary,
         (
@@ -1644,6 +1653,13 @@ def build_runtime_ledger_proof_packet(
             "runtime_ledger_drawdown_pct_equity",
             "max_drawdown_pct_equity",
             "drawdown_pct_equity",
+        ),
+    )
+    max_intraday_drawdown, max_intraday_drawdown_source = _first_decimal(
+        runtime_summary,
+        (
+            "runtime_ledger_max_intraday_drawdown",
+            "max_intraday_drawdown",
         ),
     )
     best_day_share, best_day_share_source = _first_decimal(
@@ -1661,6 +1677,14 @@ def build_runtime_ledger_proof_packet(
             "runtime_ledger_symbol_concentration_share",
             "symbol_concentration_share",
         ),
+    )
+    avg_daily_filled_notional = _decimal(
+        runtime_summary.get("runtime_ledger_avg_daily_filled_notional")
+    )
+    target_implied_avg_daily_filled_notional = (
+        min_runtime_ledger_daily_net_pnl * Decimal("10000") / expectancy_bps
+        if expectancy_bps is not None and expectancy_bps > 0
+        else None
     )
     _check(
         checks,
@@ -1737,6 +1761,110 @@ def build_runtime_ledger_proof_packet(
         status=None if runtime_import_due else deferred_until_runtime_import_due,
     )
     _extend_unique(blockers, pnl_blockers)
+    daily_distribution_blockers: list[str] = []
+    if runtime_import_due and final_authority_mode:
+        if median_daily_net_pnl is None:
+            daily_distribution_blockers.append(
+                "runtime_ledger_median_daily_net_pnl_after_costs_missing"
+            )
+        elif (
+            median_daily_net_pnl
+            < DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.authority_min_median_daily_net_pnl_after_costs
+        ):
+            daily_distribution_blockers.append(
+                "runtime_ledger_median_daily_net_pnl_after_costs_below_floor"
+            )
+        if p10_daily_net_pnl is None:
+            daily_distribution_blockers.append(
+                "runtime_ledger_p10_daily_net_pnl_after_costs_missing"
+            )
+        elif (
+            p10_daily_net_pnl
+            < DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.authority_min_p10_daily_net_pnl_after_costs
+        ):
+            daily_distribution_blockers.append(
+                "runtime_ledger_p10_daily_net_pnl_after_costs_below_floor"
+            )
+        if worst_day_net_pnl is None:
+            daily_distribution_blockers.append(
+                "runtime_ledger_worst_day_net_pnl_after_costs_missing"
+            )
+        elif (
+            worst_day_net_pnl
+            < DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.authority_min_worst_day_net_pnl_after_costs
+        ):
+            daily_distribution_blockers.append(
+                "runtime_ledger_worst_day_net_pnl_after_costs_below_floor"
+            )
+    _check(
+        checks,
+        "runtime_ledger_daily_distribution_authority",
+        passed=not daily_distribution_blockers,
+        observed={
+            "runtime_import_due": runtime_import_due,
+            "final_authority": final_authority_mode,
+            "median_daily_net_pnl_after_costs": _decimal_text(median_daily_net_pnl),
+            "p10_daily_net_pnl_after_costs": _decimal_text(p10_daily_net_pnl),
+            "worst_day_net_pnl_after_costs": _decimal_text(worst_day_net_pnl),
+        },
+        expected={
+            "min_median_daily_net_pnl_after_costs": _decimal_text(
+                DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.authority_min_median_daily_net_pnl_after_costs
+            ),
+            "min_p10_daily_net_pnl_after_costs": _decimal_text(
+                DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.authority_min_p10_daily_net_pnl_after_costs
+            ),
+            "min_worst_day_net_pnl_after_costs": _decimal_text(
+                DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.authority_min_worst_day_net_pnl_after_costs
+            ),
+        },
+        blockers=daily_distribution_blockers,
+        status=None if runtime_import_due else deferred_until_runtime_import_due,
+    )
+    _extend_unique(blockers, daily_distribution_blockers)
+    scale_blockers: list[str] = []
+    if runtime_import_due and final_authority_mode:
+        if avg_daily_filled_notional is None:
+            scale_blockers.append("runtime_ledger_avg_daily_filled_notional_missing")
+        elif (
+            target_implied_avg_daily_filled_notional is not None
+            and avg_daily_filled_notional < target_implied_avg_daily_filled_notional
+        ):
+            scale_blockers.append(
+                "runtime_ledger_avg_daily_filled_notional_below_target_implied_floor"
+            )
+    _check(
+        checks,
+        "runtime_ledger_target_implied_scale",
+        passed=not scale_blockers,
+        observed={
+            "runtime_import_due": runtime_import_due,
+            "final_authority": final_authority_mode,
+            "post_cost_expectancy_bps": _decimal_text(expectancy_bps),
+            "avg_daily_filled_notional": _decimal_text(avg_daily_filled_notional),
+            "target_implied_avg_daily_filled_notional": _decimal_text(
+                target_implied_avg_daily_filled_notional
+            ),
+            "target_implied_avg_daily_filled_notional_basis": (
+                "min_runtime_ledger_daily_net_pnl_after_costs / "
+                "observed_post_cost_expectancy_bps"
+                if target_implied_avg_daily_filled_notional is not None
+                else None
+            ),
+        },
+        expected={
+            "min_runtime_ledger_daily_net_pnl_after_costs": _decimal_text(
+                min_runtime_ledger_daily_net_pnl
+            ),
+            "formula": (
+                "required_daily_notional = min_daily_net_pnl_after_costs "
+                "/ (observed_post_cost_expectancy_bps / 10000)"
+            ),
+        },
+        blockers=scale_blockers,
+        status=None if runtime_import_due else deferred_until_runtime_import_due,
+    )
+    _extend_unique(blockers, scale_blockers)
     risk_blockers: list[str] = []
     if runtime_import_due and drawdown_pct is None:
         risk_blockers.append("runtime_ledger_drawdown_pct_equity_missing")
@@ -1746,6 +1874,16 @@ def build_runtime_ledger_proof_packet(
         and drawdown_pct > max_runtime_ledger_drawdown_pct_equity
     ):
         risk_blockers.append("runtime_ledger_drawdown_pct_equity_above_limit")
+    if runtime_import_due and final_authority_mode and max_intraday_drawdown is None:
+        risk_blockers.append("runtime_ledger_max_intraday_drawdown_missing")
+    elif (
+        runtime_import_due
+        and final_authority_mode
+        and max_intraday_drawdown is not None
+        and max_intraday_drawdown
+        > DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.authority_max_intraday_drawdown
+    ):
+        risk_blockers.append("runtime_ledger_max_intraday_drawdown_above_limit")
     if runtime_import_due and best_day_share is None:
         risk_blockers.append("runtime_ledger_best_day_share_missing")
     elif (
@@ -1770,6 +1908,8 @@ def build_runtime_ledger_proof_packet(
             "runtime_import_due": runtime_import_due,
             "drawdown_pct_equity": _decimal_text(drawdown_pct),
             "drawdown_pct_equity_source": drawdown_source,
+            "max_intraday_drawdown": _decimal_text(max_intraday_drawdown),
+            "max_intraday_drawdown_source": max_intraday_drawdown_source,
             "best_day_share": _decimal_text(best_day_share),
             "best_day_share_source": best_day_share_source,
             "symbol_concentration_share": _decimal_text(symbol_concentration_share),
@@ -1778,6 +1918,9 @@ def build_runtime_ledger_proof_packet(
         expected={
             "max_drawdown_pct_equity": _decimal_text(
                 max_runtime_ledger_drawdown_pct_equity
+            ),
+            "max_intraday_drawdown": _decimal_text(
+                DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.authority_max_intraday_drawdown
             ),
             "max_best_day_share": _decimal_text(max_runtime_ledger_best_day_share),
             "max_symbol_concentration_share": _decimal_text(
@@ -1893,14 +2036,29 @@ def build_runtime_ledger_proof_packet(
                 min_runtime_ledger_daily_net_pnl
             ),
             "min_runtime_ledger_trading_days": min_runtime_ledger_trading_days,
+            "min_runtime_ledger_median_daily_net_pnl_after_costs": _decimal_text(
+                DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.authority_min_median_daily_net_pnl_after_costs
+            ),
+            "min_runtime_ledger_p10_daily_net_pnl_after_costs": _decimal_text(
+                DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.authority_min_p10_daily_net_pnl_after_costs
+            ),
+            "min_runtime_ledger_worst_day_net_pnl_after_costs": _decimal_text(
+                DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.authority_min_worst_day_net_pnl_after_costs
+            ),
             "max_runtime_ledger_drawdown_pct_equity": _decimal_text(
                 max_runtime_ledger_drawdown_pct_equity
+            ),
+            "max_runtime_ledger_intraday_drawdown": _decimal_text(
+                DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.authority_max_intraday_drawdown
             ),
             "max_runtime_ledger_best_day_share": _decimal_text(
                 max_runtime_ledger_best_day_share
             ),
             "max_runtime_ledger_symbol_concentration_share": _decimal_text(
                 max_runtime_ledger_symbol_concentration_share
+            ),
+            "target_implied_avg_daily_filled_notional": _decimal_text(
+                target_implied_avg_daily_filled_notional
             ),
         },
         "candidate": _first_identity(
