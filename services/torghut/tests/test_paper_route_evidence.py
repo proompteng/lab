@@ -254,6 +254,127 @@ class TestPaperRouteEvidenceAudit(TestCase):
             ["paper_route_account_window_start_snapshot_stale"],
         )
 
+    def test_account_window_start_snapshot_audit_defers_future_window(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        generated_at = window_start - timedelta(hours=1)
+        with Session(self.engine) as session:
+            self._add_account_position_snapshot(
+                session,
+                account_label="TORGHUT_SIM",
+                as_of=generated_at - timedelta(seconds=30),
+                positions=[
+                    {
+                        "symbol": "AAPL",
+                        "qty": "1",
+                        "side": "long",
+                        "market_value": "200",
+                    }
+                ],
+            )
+            session.commit()
+
+            audit = _account_window_start_snapshot_audit(
+                session,
+                account_label="TORGHUT_SIM",
+                symbols=["AAPL"],
+                window_start=window_start,
+                generated_at=generated_at,
+            )
+
+        self.assertEqual(audit["state"], "pending_until_window_start")
+        self.assertFalse(audit["required"])
+        self.assertIsNone(audit["flat"])
+        self.assertEqual(audit["position_count"], 0)
+        self.assertEqual(audit["sample_positions"], [])
+        self.assertEqual(audit["blockers"], [])
+
+    def test_future_runtime_window_defers_stale_account_state_blockers(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, tzinfo=timezone.utc)
+        generated_at = window_start - timedelta(hours=1)
+        with Session(self.engine) as session:
+            self._add_account_position_snapshot(
+                session,
+                account_label="TORGHUT_SIM",
+                as_of=generated_at - timedelta(seconds=30),
+                positions=[
+                    {
+                        "symbol": "AAPL",
+                        "qty": "1",
+                        "side": "long",
+                        "market_value": "200",
+                    }
+                ],
+            )
+            session.commit()
+
+            payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "paper_route_probe_only",
+                    "blocked_reasons": [],
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "target_count": 1,
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-FUTURE-ACCOUNT",
+                                "candidate_id": "candidate-future-account",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_pairs",
+                                "strategy_name": "future-account-state-strategy",
+                                "account_label": "TORGHUT_SIM",
+                                "source_kind": "paper_route_probe_runtime_observed",
+                                "source_manifest_ref": "config/trading/hypotheses/h-future-account.json",
+                                "window_start": window_start.isoformat(),
+                                "window_end": window_end.isoformat(),
+                                "paper_probation_authorized": True,
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "summary": {
+                        "paper_route_probe_eligible_symbols": ["AAPL"],
+                        "paper_route_probe_active_symbols": [],
+                    },
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": False,
+                        "next_session_max_notional": "25",
+                        "eligible_symbol_count": 1,
+                        "blocking_reasons": ["market_session_closed"],
+                    },
+                },
+                generated_at=generated_at,
+            )
+
+        audit = payload["next_runtime_window_target_audits"][0]
+        self.assertEqual(audit["account_state"]["state"], "pending_until_window_start")
+        self.assertEqual(audit["account_state"]["blockers"], [])
+        self.assertNotIn(
+            "paper_route_account_window_start_not_flat",
+            audit["readiness"]["blockers"],
+        )
+        self.assertNotIn(
+            "paper_route_account_window_start_positions_present",
+            audit["readiness"]["evidence_collection_blockers"],
+        )
+        import_audit = payload["runtime_window_import_audit"]
+        self.assertNotEqual(
+            import_audit["state"], "import_due_account_state_not_clean"
+        )
+        self.assertEqual(
+            import_audit["diagnostics"]["account_state_blockers"], []
+        )
+
     def test_pre_session_dirty_account_skips_next_paper_route_target(self) -> None:
         generated_at = datetime(2026, 5, 26, 13, 20, tzinfo=timezone.utc)
         with Session(self.engine) as session:

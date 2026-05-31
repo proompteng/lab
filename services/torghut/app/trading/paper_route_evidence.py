@@ -2101,21 +2101,26 @@ def _account_window_start_snapshot_audit(
     account_label: str | None,
     symbols: Sequence[str],
     window_start: datetime,
+    generated_at: datetime | None = None,
 ) -> dict[str, object]:
     symbol_filters = {
         str(item).strip().upper() for item in symbols if str(item).strip()
     }
+    required = generated_at is None or generated_at >= window_start
     base_payload: dict[str, object] = {
         "schema_version": "torghut.paper-route-account-window-start-snapshot-audit.v1",
         "scope": "account_position_snapshot_at_runtime_window_start",
         "account_label": account_label,
         "symbols": sorted(symbol_filters),
+        "generated_at": _isoformat(generated_at) if generated_at is not None else None,
         "window_start": _isoformat(window_start),
+        "required": required,
+        "state": "required" if required else "pending_until_window_start",
         "snapshot_id": None,
         "snapshot_as_of": None,
         "snapshot_source": None,
         "snapshot_offset_seconds": None,
-        "flat": False,
+        "flat": False if required else None,
         "position_count": 0,
         "target_symbol_position_count": 0,
         "non_target_symbol_position_count": 0,
@@ -2126,8 +2131,12 @@ def _account_window_start_snapshot_audit(
     if account_label is None:
         return {
             **base_payload,
+            "required": False,
+            "state": "not_applicable",
             "flat": True,
         }
+    if not required:
+        return base_payload
 
     before_snapshot = session.execute(
         select(PositionSnapshot)
@@ -2202,6 +2211,7 @@ def _account_window_start_snapshot_audit(
             else "first_after_window_start"
         ),
         "snapshot_offset_seconds": offset_seconds,
+        "state": "blocked" if blockers else "clean",
         "flat": not positions and not blockers,
         "position_count": len(positions),
         "target_symbol_position_count": target_position_count,
@@ -2985,6 +2995,7 @@ def _target_audit(
         account_label=cast(str | None, target.get("account_label")),
         symbols=_target_probe_symbols(target, probe),
         window_start=window_start,
+        generated_at=generated_at,
     )
     rejected_signal_activity = _rejected_signal_activity(
         session,
@@ -3370,7 +3381,14 @@ def _runtime_window_target_blockers(
                     ),
                 },
                 "account_state": {
-                    "flat": bool(account_state.get("flat")),
+                    "state": _safe_text(account_state.get("state")),
+                    "required": bool(account_state.get("required")),
+                    "flat": (
+                        account_state.get("flat")
+                        if isinstance(account_state.get("flat"), bool)
+                        else None
+                    ),
+                    "generated_at": _safe_text(account_state.get("generated_at")),
                     "snapshot_id": _safe_text(account_state.get("snapshot_id")),
                     "snapshot_as_of": _safe_text(account_state.get("snapshot_as_of")),
                     "snapshot_source": _safe_text(account_state.get("snapshot_source")),
