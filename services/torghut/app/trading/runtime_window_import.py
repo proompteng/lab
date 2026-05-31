@@ -9,7 +9,7 @@ from decimal import Decimal
 from typing import Any, Mapping, Sequence, cast
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import delete, select
+from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.orm import Session
 
 from ..models import (
@@ -1213,6 +1213,78 @@ def _runtime_ledger_bucket_payloads(payload: Mapping[str, Any]) -> list[dict[str
     return [single_payload] if single_payload else []
 
 
+def _runtime_ledger_bucket_replacement_scopes(
+    *,
+    buckets: Sequence[ObservedRuntimeBucket],
+    runtime_payload: Mapping[str, Any],
+) -> list[tuple[datetime, datetime, str | None, str | None]]:
+    scopes: list[tuple[datetime, datetime, str | None, str | None]] = []
+    seen: set[tuple[datetime, datetime, str | None, str | None]] = set()
+    for bucket in buckets:
+        for ledger_payload in _runtime_ledger_bucket_payloads(bucket.payload_json):
+            bucket_started_at = (
+                _parse_observation_datetime(ledger_payload.get("bucket_started_at"))
+                or bucket.window_started_at
+            )
+            bucket_ended_at = (
+                _parse_observation_datetime(ledger_payload.get("bucket_ended_at"))
+                or bucket.window_ended_at
+            )
+            account_label = _text(ledger_payload.get("account_label")) or _text(
+                runtime_payload.get("account_label")
+            )
+            runtime_strategy_name = _text(ledger_payload.get("strategy_id")) or _text(
+                runtime_payload.get("strategy_name")
+            )
+            scope = (
+                bucket_started_at,
+                bucket_ended_at,
+                account_label,
+                runtime_strategy_name,
+            )
+            if scope not in seen:
+                seen.add(scope)
+                scopes.append(scope)
+    return scopes
+
+
+def _delete_replaced_runtime_ledger_buckets(
+    *,
+    session: Session,
+    run_id: str,
+    candidate_id: str | None,
+    hypothesis_id: str,
+    observed_stage: str,
+    replacement_scopes: Sequence[tuple[datetime, datetime, str | None, str | None]],
+) -> int:
+    if not replacement_scopes:
+        return 0
+    overlap_predicates = [
+        and_(
+            StrategyRuntimeLedgerBucket.bucket_started_at < bucket_ended_at,
+            StrategyRuntimeLedgerBucket.bucket_ended_at > bucket_started_at,
+            StrategyRuntimeLedgerBucket.account_label == account_label,
+            StrategyRuntimeLedgerBucket.runtime_strategy_name == runtime_strategy_name,
+        )
+        for (
+            bucket_started_at,
+            bucket_ended_at,
+            account_label,
+            runtime_strategy_name,
+        ) in replacement_scopes
+    ]
+    result = session.execute(
+        delete(StrategyRuntimeLedgerBucket).where(
+            StrategyRuntimeLedgerBucket.run_id != run_id,
+            StrategyRuntimeLedgerBucket.candidate_id == candidate_id,
+            StrategyRuntimeLedgerBucket.hypothesis_id == hypothesis_id,
+            StrategyRuntimeLedgerBucket.observed_stage == observed_stage,
+            or_(*overlap_predicates),
+        )
+    )
+    return int(getattr(result, "rowcount", 0) or 0)
+
+
 def _runtime_ledger_post_cost_from_observed_buckets(
     buckets: Sequence[ObservedRuntimeBucket],
 ) -> tuple[Decimal | None, Decimal, Decimal, int]:
@@ -1583,6 +1655,17 @@ def persist_observed_runtime_windows(
         for bucket in raw_buckets
         if bucket.decision_count > 0 or bucket.trade_count > 0 or bucket.order_count > 0
     ]
+    replaced_runtime_ledger_bucket_count = _delete_replaced_runtime_ledger_buckets(
+        session=session,
+        run_id=run_id,
+        candidate_id=candidate_id,
+        hypothesis_id=hypothesis_id,
+        observed_stage=observed_stage,
+        replacement_scopes=_runtime_ledger_bucket_replacement_scopes(
+            buckets=sorted_buckets,
+            runtime_payload=runtime_payload,
+        ),
+    )
     raw_window_count = len(raw_buckets)
     skipped_zero_activity_window_count = raw_window_count - len(sorted_buckets)
     runtime_ledger_daily_summary = _runtime_ledger_daily_summary_from_observed_buckets(
@@ -1958,6 +2041,7 @@ def persist_observed_runtime_windows(
         "evidence_grade_runtime_ledger_bucket_count": len(
             evidence_grade_runtime_ledger_rows
         ),
+        "replaced_runtime_ledger_bucket_count": replaced_runtime_ledger_bucket_count,
         "runtime_ledger_fill_count": sum(
             max(0, int(row.fill_count or 0)) for row in runtime_ledger_rows
         ),
@@ -2022,6 +2106,9 @@ def persist_observed_runtime_windows(
             "evidence_grade_runtime_ledger_bucket_ids": [
                 str(row.id) for row in evidence_grade_runtime_ledger_rows
             ],
+            "replaced_runtime_ledger_bucket_count": (
+                replaced_runtime_ledger_bucket_count
+            ),
         }
     )
     return {
@@ -2054,6 +2141,7 @@ def persist_observed_runtime_windows(
         "evidence_blocking_reasons": evidence_blocking_reasons,
         "proof_status": proof_status,
         "proof_blockers": proof_blockers,
+        "replaced_runtime_ledger_bucket_count": replaced_runtime_ledger_bucket_count,
         "runtime_materialization_target": runtime_materialization_target,
         "runtime_observation": runtime_payload,
         "delay_adjusted_depth_stress": delay_depth_stress_summary,
