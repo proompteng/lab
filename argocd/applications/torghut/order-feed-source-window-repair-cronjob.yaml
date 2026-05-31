@@ -50,15 +50,6 @@ spec:
                     --max-batches 1 \
                     --apply \
                     --json
-                  echo "stage=journal_tigerbeetle_order_events started_at=$(date -Iseconds)"
-                  /opt/venv/bin/python scripts/journal_tigerbeetle_order_events.py \
-                    --dsn-env SIM_DB_DSN \
-                    --account-label TORGHUT_SIM \
-                    --batch-size 500 \
-                    --max-batches 2 \
-                    --event-scan-limit 1000 \
-                    --reconcile-limit 1000 \
-                    --json
                   echo "stage=order_feed_source_window_repair completed_at=$(date -Iseconds)"
               securityContext:
                 seccompProfile:

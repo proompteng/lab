@@ -1267,9 +1267,8 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("--batch-size 500", args)
         self.assertIn("--max-batches 1", args)
         self.assertIn("--apply", args)
-        self.assertIn("scripts/journal_tigerbeetle_order_events.py", args)
-        self.assertIn("--max-batches 2", args)
-        self.assertIn("--reconcile-limit 1000", args)
+        self.assertNotIn("scripts/journal_tigerbeetle_order_events.py", args)
+        self.assertNotIn("--reconcile-limit 1000", args)
         self.assertIn("--json", args)
         security_context = cast(
             Mapping[str, object],
@@ -1369,6 +1368,7 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("--account-label TORGHUT_SIM", args)
         self.assertIn("--batch-size 500", args)
         self.assertIn("--max-batches 2", args)
+        self.assertIn("--event-scan-limit 1000", args)
         self.assertIn("--reconcile-limit 1000", args)
         self.assertIn("--fail-on-degraded", args)
         self.assertIn("--json", args)
