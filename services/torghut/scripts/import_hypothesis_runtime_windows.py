@@ -515,6 +515,7 @@ def _partition_runtime_source_rows_by_decision_mode(
     execution_rows: list[dict[str, object]],
     decision_lifecycle_rows: list[dict[str, object]] | None,
     order_lifecycle_rows: list[dict[str, object]] | None,
+    unlinked_order_lifecycle_rows: list[dict[str, object]] | None = None,
     carry_in_execution_rows: list[dict[str, object]] | None = None,
     carry_in_decision_lifecycle_rows: list[dict[str, object]] | None = None,
     carry_in_order_lifecycle_rows: list[dict[str, object]] | None = None,
@@ -528,6 +529,7 @@ def _partition_runtime_source_rows_by_decision_mode(
             list[dict[str, object]] | None,
             list[dict[str, object]] | None,
             list[dict[str, object]] | None,
+            list[dict[str, object]] | None,
         ]
     ]
     | None
@@ -536,6 +538,7 @@ def _partition_runtime_source_rows_by_decision_mode(
         *execution_rows,
         *(decision_lifecycle_rows or []),
         *(order_lifecycle_rows or []),
+        *(unlinked_order_lifecycle_rows or []),
         *(carry_in_execution_rows or []),
         *(carry_in_decision_lifecycle_rows or []),
         *(carry_in_order_lifecycle_rows or []),
@@ -557,6 +560,7 @@ def _partition_runtime_source_rows_by_decision_mode(
         tuple[
             str,
             list[dict[str, object]],
+            list[dict[str, object]] | None,
             list[dict[str, object]] | None,
             list[dict[str, object]] | None,
             list[dict[str, object]] | None,
@@ -592,6 +596,17 @@ def _partition_runtime_source_rows_by_decision_mode(
             )
             == mode_key
         ]
+        partition_unlinked_order_rows = []
+        for row in unlinked_order_lifecycle_rows or []:
+            partition_key = _source_decision_mode_partition_key(
+                row,
+                modes_by_identifier=modes_by_identifier,
+            )
+            if partition_key == mode_key or (
+                partition_key == SOURCE_DECISION_MODE_MISSING_PARTITION
+                and mode_key != SOURCE_DECISION_MODE_MISSING_PARTITION
+            ):
+                partition_unlinked_order_rows.append(row)
         partition_carry_in_execution_rows = [
             row
             for row in carry_in_execution_rows or []
@@ -625,6 +640,7 @@ def _partition_runtime_source_rows_by_decision_mode(
                 partition_execution_rows,
                 partition_decision_rows or None,
                 partition_order_rows or None,
+                partition_unlinked_order_rows or None,
                 partition_carry_in_execution_rows or None,
                 partition_carry_in_decision_rows or None,
                 partition_carry_in_order_rows or None,
@@ -2939,6 +2955,7 @@ def _build_realized_strategy_pnl_rows(
             execution_rows=execution_rows,
             decision_lifecycle_rows=decision_lifecycle_rows,
             order_lifecycle_rows=order_lifecycle_rows,
+            unlinked_order_lifecycle_rows=unlinked_order_lifecycle_rows,
             carry_in_execution_rows=carry_in_execution_rows,
             carry_in_decision_lifecycle_rows=carry_in_decision_lifecycle_rows,
             carry_in_order_lifecycle_rows=carry_in_order_lifecycle_rows,
@@ -2950,6 +2967,7 @@ def _build_realized_strategy_pnl_rows(
                 partition_execution_rows,
                 partition_decision_rows,
                 partition_order_rows,
+                partition_unlinked_order_rows,
                 partition_carry_in_execution_rows,
                 partition_carry_in_decision_rows,
                 partition_carry_in_order_rows,
@@ -2958,7 +2976,7 @@ def _build_realized_strategy_pnl_rows(
                     partition_execution_rows,
                     decision_lifecycle_rows=partition_decision_rows,
                     order_lifecycle_rows=partition_order_rows,
-                    unlinked_order_lifecycle_rows=unlinked_order_lifecycle_rows,
+                    unlinked_order_lifecycle_rows=partition_unlinked_order_rows,
                     carry_in_execution_rows=partition_carry_in_execution_rows,
                     carry_in_decision_lifecycle_rows=partition_carry_in_decision_rows,
                     carry_in_order_lifecycle_rows=partition_carry_in_order_rows,

@@ -4103,6 +4103,17 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     minute=50,
                 ),
             ],
+            unlinked_order_lifecycle_rows=[
+                order_event_row(
+                    decision_id="route-buy",
+                    execution_id="route-unlinked-exec",
+                    mode="route_acquisition_probe",
+                    event_id="route-unlinked-fill",
+                    event_type="fill",
+                    offset=31,
+                    minute=46,
+                )
+            ],
             allow_authoritative_runtime_ledger_materialization=True,
         )
 
@@ -4130,6 +4141,10 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(
             signal_bucket["source_decision_mode_counts"],
             {"strategy_signal_paper": 8},
+        )
+        self.assertNotIn(
+            "order_feed_unlinked_fill_lifecycle_present",
+            signal_bucket["blockers"],
         )
         self.assertEqual(
             signal_bucket["source_materialization"], "execution_order_events"
