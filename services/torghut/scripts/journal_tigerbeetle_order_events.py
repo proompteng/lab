@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -36,6 +37,12 @@ from app.trading.tigerbeetle_ledger_model import (
 from app.trading.tigerbeetle_reconcile import reconcile_tigerbeetle_transfers
 
 
+@dataclass(frozen=True)
+class OrderEventSelection:
+    rows: list[ExecutionOrderEvent]
+    scan_failed: int
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Journal unlinked Torghut order-feed lifecycle events into TigerBeetle.",
@@ -44,6 +51,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--account-label", default=None)
     parser.add_argument("--batch-size", type=int, default=500)
     parser.add_argument("--max-batches", type=int, default=1)
+    parser.add_argument(
+        "--event-scan-limit",
+        type=int,
+        default=None,
+        help="Maximum candidate order-feed events to inspect when looking for journalable lifecycle rows.",
+    )
     parser.add_argument("--reconcile-limit", type=int, default=1000)
     parser.add_argument(
         "--fail-on-degraded",
@@ -72,7 +85,8 @@ def _select_unlinked_events(
     settings_obj: Settings,
     account_label: str | None,
     limit: int,
-) -> list[ExecutionOrderEvent]:
+    event_scan_limit: int | None = None,
+) -> OrderEventSelection:
     linked_ref = (
         select(TigerBeetleTransferRef.id)
         .where(
@@ -92,18 +106,29 @@ def _select_unlinked_events(
     )
     if account_label:
         stmt = stmt.where(ExecutionOrderEvent.alpaca_account_label == account_label)
-    scan_limit = max(limit, min(limit * 20, 10000))
+    if event_scan_limit is None:
+        scan_limit = max(limit, min(limit * 20, 10000))
+    else:
+        scan_limit = max(limit, min(int(event_scan_limit), 10000))
     candidates = session.execute(stmt.limit(scan_limit)).scalars().all()
-    return [
-        event
-        for event in candidates
-        if build_order_event_transfer_plan(
-            session,
-            event,
-            settings_obj=settings_obj,
-        )
-        is not None
-    ][:limit]
+    events: list[ExecutionOrderEvent] = []
+    scan_failed = 0
+    for event in candidates:
+        try:
+            plan = build_order_event_transfer_plan(
+                session,
+                event,
+                settings_obj=settings_obj,
+            )
+        except Exception:
+            scan_failed += 1
+            continue
+        if plan is None:
+            continue
+        events.append(event)
+        if len(events) >= limit:
+            break
+    return OrderEventSelection(rows=events, scan_failed=scan_failed)
 
 
 def _source_ref_exists(
@@ -245,13 +270,13 @@ def _payload(
     *,
     args: argparse.Namespace,
     started_at: datetime,
-    batches: list[dict[str, int]],
+    batches: list[dict[str, int | str]],
     reconciliation: dict[str, object] | None,
 ) -> dict[str, Any]:
-    selected = sum(batch["selected"] for batch in batches)
-    journaled = sum(batch["journaled"] for batch in batches)
-    skipped = sum(batch["skipped"] for batch in batches)
-    failed = sum(batch["failed"] for batch in batches)
+    selected = sum(int(batch["selected"]) for batch in batches)
+    journaled = sum(int(batch["journaled"]) for batch in batches)
+    skipped = sum(int(batch["skipped"]) for batch in batches)
+    failed = sum(int(batch["failed"]) for batch in batches)
     reconciliation_ok = (
         True
         if reconciliation is None
@@ -266,6 +291,7 @@ def _payload(
         "account_label": args.account_label,
         "batch_size": max(1, min(int(args.batch_size), 5000)),
         "max_batches": max(1, int(args.max_batches)),
+        "event_scan_limit": getattr(args, "event_scan_limit", None),
         "started_at": started_at.isoformat(),
         "completed_at": datetime.now(timezone.utc).isoformat(),
         "selected": selected,
@@ -299,7 +325,7 @@ def main() -> int:
         expire_on_commit=False,
         future=True,
     )
-    batches: list[dict[str, int]] = []
+    batches: list[dict[str, int | str]] = []
     reconciliation: dict[str, object] | None = None
 
     with session_factory() as session:
@@ -310,6 +336,7 @@ def main() -> int:
                 settings_obj=settings_obj,
                 account_label=args.account_label,
                 limit=batch_size,
+                event_scan_limit=args.event_scan_limit,
             )
             executions = _select_unlinked_executions(
                 session,
@@ -329,18 +356,22 @@ def main() -> int:
                 account_label=args.account_label,
                 limit=batch_size,
             )
+            event_batch = _journal_source_batch(
+                session,
+                args=args,
+                source=SOURCE_TYPE_EXECUTION_ORDER_EVENT,
+                rows=events.rows,
+                journal_one=lambda event: journal.journal_order_event(
+                    session,
+                    event,
+                ),
+            )
+            if events.scan_failed:
+                event_batch["failed"] = int(event_batch["failed"]) + events.scan_failed
+                event_batch["scan_failed"] = events.scan_failed
             batches.extend(
                 [
-                    _journal_source_batch(
-                        session,
-                        args=args,
-                        source=SOURCE_TYPE_EXECUTION_ORDER_EVENT,
-                        rows=events,
-                        journal_one=lambda event: journal.journal_order_event(
-                            session,
-                            event,
-                        ),
-                    ),
+                    event_batch,
                     _journal_source_batch(
                         session,
                         args=args,
@@ -381,7 +412,7 @@ def main() -> int:
             session.commit()
             if all(
                 len(rows) < batch_size
-                for rows in (events, executions, tca_metrics, runtime_buckets)
+                for rows in (events.rows, executions, tca_metrics, runtime_buckets)
             ):
                 break
 

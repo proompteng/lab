@@ -18,7 +18,7 @@ spec:
       activeDeadlineSeconds: 180
       template:
         spec:
-          restartPolicy: OnFailure
+          restartPolicy: Never
           serviceAccountName: torghut-runtime
           nodeSelector:
             kubernetes.io/arch: arm64
@@ -42,6 +42,7 @@ spec:
                 - |
                   set -euo pipefail
                   cd /app
+                  echo "stage=repair_order_feed_source_windows started_at=$(date -Iseconds)"
                   /opt/venv/bin/python scripts/repair_order_feed_source_windows.py \
                     --dsn-env SIM_DB_DSN \
                     --account-label TORGHUT_SIM \
@@ -49,13 +50,16 @@ spec:
                     --max-batches 1 \
                     --apply \
                     --json
+                  echo "stage=journal_tigerbeetle_order_events started_at=$(date -Iseconds)"
                   /opt/venv/bin/python scripts/journal_tigerbeetle_order_events.py \
                     --dsn-env SIM_DB_DSN \
                     --account-label TORGHUT_SIM \
                     --batch-size 500 \
                     --max-batches 2 \
+                    --event-scan-limit 1000 \
                     --reconcile-limit 1000 \
                     --json
+                  echo "stage=order_feed_source_window_repair completed_at=$(date -Iseconds)"
               securityContext:
                 seccompProfile:
                   type: Unconfined
@@ -82,3 +86,5 @@ spec:
                       key: password
                 - name: SIM_DB_DSN
                   value: postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default
+                - name: PYTHONUNBUFFERED
+                  value: "1"
