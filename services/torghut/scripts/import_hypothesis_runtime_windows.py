@@ -2471,6 +2471,38 @@ def _event_sourced_fill_economics_order_ids(
     return order_ids
 
 
+def _source_backed_fill_lifecycle_rows(
+    rows: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    source_backed_rows: list[dict[str, object]] = []
+    for row in rows:
+        normalized = {str(key): value for key, value in row.items()}
+        if _runtime_ledger_event_type(normalized) not in _RUNTIME_LEDGER_FILL_EVENTS:
+            continue
+        if _runtime_order_id(normalized) is None:
+            continue
+        if not _source_identifier_values(
+            [normalized], "execution_order_event_id", "event_fingerprint"
+        ):
+            continue
+        if not _source_identifier_values([normalized], "source_window_id"):
+            continue
+        if not _source_offset_values([normalized]):
+            continue
+        source_backed_rows.append(dict(normalized))
+    return source_backed_rows
+
+
+def _source_backed_fill_lifecycle_order_ids(
+    rows: Sequence[Mapping[str, object]],
+) -> set[str]:
+    return {
+        order_id
+        for row in _source_backed_fill_lifecycle_rows(rows)
+        if (order_id := _runtime_order_id(row)) is not None
+    }
+
+
 def _execution_fill_economics_order_ids(
     rows: Sequence[Mapping[str, object]],
 ) -> set[str]:
@@ -2597,14 +2629,17 @@ def _runtime_source_context_for_bucket(
         )
         is not None
     ]
+    source_backed_fill_lifecycle_rows = _source_backed_fill_lifecycle_rows(
+        bucket_order_rows
+    )
     source_window_ids = _source_identifier_values(
-        bucket_order_rows,
+        source_backed_fill_lifecycle_rows,
         "source_window_id",
     )
     source_row_counts = {
         "trade_decisions": len(bucket_decision_rows),
         "executions": len(bucket_execution_rows),
-        "execution_order_events": len(bucket_order_rows),
+        "execution_order_events": len(source_backed_fill_lifecycle_rows),
     }
     if source_window_ids:
         source_row_counts["order_feed_source_windows"] = len(source_window_ids)
@@ -2628,8 +2663,11 @@ def _runtime_source_context_for_bucket(
     for row in bucket_order_rows:
         if (order_id := _runtime_order_id(row)) is not None:
             expected_execution_fill_order_ids.add(order_id)
+    source_backed_fill_lifecycle_order_ids = (
+        _source_backed_fill_lifecycle_order_ids(source_backed_fill_lifecycle_rows)
+    )
     event_sourced_fill_order_ids = _event_sourced_fill_economics_order_ids(
-        bucket_order_rows
+        source_backed_fill_lifecycle_rows
     )
     execution_fill_order_ids = _execution_fill_economics_order_ids(
         bucket_execution_rows
@@ -2640,11 +2678,16 @@ def _runtime_source_context_for_bucket(
     execution_fill_economics_complete = bool(
         expected_execution_fill_order_ids
     ) and expected_execution_fill_order_ids.issubset(execution_fill_order_ids)
+    source_backed_fill_lifecycle_complete = bool(
+        expected_execution_fill_order_ids
+    ) and expected_execution_fill_order_ids.issubset(
+        source_backed_fill_lifecycle_order_ids
+    )
     source_materialization = None
     authority_class = None
-    source_offsets = _source_offset_values(bucket_order_rows)
+    source_offsets = _source_offset_values(source_backed_fill_lifecycle_rows)
     execution_order_event_ids = _source_identifier_values(
-        bucket_order_rows,
+        source_backed_fill_lifecycle_rows,
         "execution_order_event_id",
         "event_fingerprint",
     )
@@ -2652,7 +2695,10 @@ def _runtime_source_context_for_bucket(
         if order_feed_fill_economics_complete:
             source_materialization = "execution_order_events"
             authority_class = "runtime_order_feed_execution_source"
-        elif execution_fill_economics_complete:
+        elif (
+            execution_fill_economics_complete
+            and source_backed_fill_lifecycle_complete
+        ):
             source_materialization = "source_execution_lifecycle"
             authority_class = "source_execution_lifecycle_materialized_runtime_ledger"
     return {
