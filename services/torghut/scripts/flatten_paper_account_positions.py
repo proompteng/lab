@@ -5,21 +5,27 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation
-from typing import Any, Protocol
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from typing import Any, Protocol, cast
 
 from app.alpaca_client import TorghutAlpacaClient
 from app.config import settings
+from app.db import SessionLocal
+from app.snapshots import snapshot_account_and_positions
 from app.trading.firewall import OrderFirewall
 
 DEFAULT_ACCOUNT_LABEL = "TORGHUT_SIM"
 DEFAULT_PAPER_BASE_URL = "https://paper-api.alpaca.markets"
 DEFAULT_MAX_GROSS_MARKET_VALUE = Decimal("100000")
 DEFAULT_MAX_POSITION_COUNT = 25
-TERMINAL_CLEAN_STATUSES = frozenset({"clean", "dry_run", "submitted"})
+DEFAULT_EXTENDED_HOURS_LIMIT_AWAY_BPS = Decimal("200")
+DEFAULT_WAIT_FLAT_SECONDS = 0.0
+DEFAULT_POLL_SECONDS = 5.0
+TERMINAL_CLEAN_STATUSES = frozenset({"clean", "dry_run", "submitted", "flattened"})
 
 
 class PaperFlattenClient(Protocol):
@@ -46,6 +52,7 @@ class FlattenPosition:
     qty: Decimal
     side: str
     market_value: Decimal
+    reference_price: Decimal | None
 
     @property
     def close_side(self) -> str:
@@ -87,6 +94,39 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Submit flatten orders. Without this flag, only report the plan.",
     )
+    parser.add_argument(
+        "--extended-hours-limit",
+        action="store_true",
+        help=(
+            "Use aggressive extended-hours limit orders instead of regular-session "
+            "market orders. Still paper-only and account-label guarded."
+        ),
+    )
+    parser.add_argument(
+        "--limit-away-bps",
+        default=str(DEFAULT_EXTENDED_HOURS_LIMIT_AWAY_BPS),
+        help=(
+            "Basis points away from the position reference price for extended-hours "
+            "limit closes: sells below reference, buys above reference."
+        ),
+    )
+    parser.add_argument(
+        "--wait-flat-seconds",
+        type=float,
+        default=DEFAULT_WAIT_FLAT_SECONDS,
+        help="Poll the account after submitting close orders and fail if positions remain after this many seconds.",
+    )
+    parser.add_argument(
+        "--poll-seconds",
+        type=float,
+        default=DEFAULT_POLL_SECONDS,
+        help="Polling interval used with --wait-flat-seconds.",
+    )
+    parser.add_argument(
+        "--persist-snapshot",
+        action="store_true",
+        help="Persist a fresh PositionSnapshot after the flatten attempt for runtime-window readiness gates.",
+    )
     parser.add_argument("--json", action="store_true")
     return parser.parse_args()
 
@@ -118,6 +158,26 @@ def _position_market_value(position: Mapping[str, Any], qty: Decimal) -> Decimal
     return abs(qty) * abs(price)
 
 
+def _position_reference_price(
+    position: Mapping[str, Any], qty: Decimal, market_value: Decimal
+) -> Decimal | None:
+    for key in (
+        "current_price",
+        "currentPrice",
+        "lastday_price",
+        "lastdayPrice",
+        "avg_entry_price",
+        "avgEntryPrice",
+    ):
+        price = _decimal(position.get(key))
+        if price > 0:
+            return price
+    abs_qty = abs(qty)
+    if abs_qty > 0 and market_value > 0:
+        return market_value / abs_qty
+    return None
+
+
 def _normalize_positions(
     raw_positions: Sequence[Mapping[str, Any]] | None,
 ) -> list[FlattenPosition]:
@@ -132,26 +192,69 @@ def _normalize_positions(
         side = str(raw.get("side") or "").strip().lower()
         if side not in {"long", "short"}:
             side = "short" if qty < 0 else "long"
+        market_value = _position_market_value(raw, qty)
         normalized.append(
             FlattenPosition(
                 symbol=symbol,
                 qty=qty,
                 side=side,
-                market_value=_position_market_value(raw, qty),
+                market_value=market_value,
+                reference_price=_position_reference_price(raw, qty, market_value),
             )
         )
     return sorted(normalized, key=lambda item: item.symbol)
 
 
-def _position_payload(position: FlattenPosition) -> dict[str, str]:
+def _position_payload(position: FlattenPosition) -> dict[str, str | None]:
     return {
         "symbol": position.symbol,
         "qty": str(position.qty),
         "side": position.side,
         "market_value": str(position.market_value),
+        "reference_price": str(position.reference_price)
+        if position.reference_price is not None
+        else None,
         "close_side": position.close_side,
         "close_qty": str(position.close_qty),
     }
+
+
+def _quantize_price(price: Decimal) -> Decimal:
+    quantum = Decimal("0.01") if price >= Decimal("1") else Decimal("0.0001")
+    return price.quantize(quantum, rounding=ROUND_HALF_UP)
+
+
+def _extended_hours_limit_price(
+    position: FlattenPosition, limit_away_bps: Decimal
+) -> Decimal | None:
+    reference = position.reference_price
+    if reference is None or reference <= 0:
+        return None
+    away = max(Decimal("0"), limit_away_bps) / Decimal("10000")
+    if position.close_side == "sell":
+        raw_price = reference * (Decimal("1") - away)
+    else:
+        raw_price = reference * (Decimal("1") + away)
+    if raw_price <= 0:
+        raw_price = Decimal("0.0001")
+    return _quantize_price(raw_price)
+
+
+def _wait_until_flat(
+    *,
+    client: PaperFlattenClient,
+    deadline_seconds: float,
+    poll_seconds: float,
+) -> tuple[str, list[FlattenPosition]]:
+    deadline = time.monotonic() + max(0.0, deadline_seconds)
+    latest_positions = _normalize_positions(client.list_positions())
+    while latest_positions:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return "submitted_not_flat", latest_positions
+        time.sleep(min(max(0.1, poll_seconds), remaining))
+        latest_positions = _normalize_positions(client.list_positions())
+    return "flattened", []
 
 
 def flatten_paper_account_positions(
@@ -163,6 +266,10 @@ def flatten_paper_account_positions(
     apply: bool,
     max_gross_market_value: Decimal,
     max_position_count: int,
+    extended_hours_limit: bool = False,
+    limit_away_bps: Decimal = DEFAULT_EXTENDED_HOURS_LIMIT_AWAY_BPS,
+    wait_flat_seconds: float = DEFAULT_WAIT_FLAT_SECONDS,
+    poll_seconds: float = DEFAULT_POLL_SECONDS,
     generated_at: datetime | None = None,
 ) -> dict[str, Any]:
     generated_at = generated_at or datetime.now(timezone.utc)
@@ -185,10 +292,22 @@ def flatten_paper_account_positions(
         blockers.append("paper_account_flatten_position_count_above_limit")
     if gross_market_value > max_gross_market_value:
         blockers.append("paper_account_flatten_gross_market_value_above_limit")
+    extended_limit_prices: dict[str, Decimal] = {}
+    missing_limit_symbols: list[str] = []
+    if extended_hours_limit:
+        for position in positions:
+            limit_price = _extended_hours_limit_price(position, limit_away_bps)
+            if limit_price is None:
+                missing_limit_symbols.append(position.symbol)
+            else:
+                extended_limit_prices[position.symbol] = limit_price
+        if missing_limit_symbols:
+            blockers.append("paper_account_flatten_extended_hours_limit_price_missing")
 
     status = "clean" if not positions and not blockers else "blocked"
     cancelled_orders: list[dict[str, Any]] = []
     submitted_orders: list[dict[str, Any]] = []
+    final_positions = positions
     if blockers:
         status = "blocked"
     elif not apply:
@@ -196,38 +315,58 @@ def flatten_paper_account_positions(
     elif positions:
         cancelled_orders = client.cancel_all_orders()
         for position in positions:
+            order_type = "limit" if extended_hours_limit else "market"
+            limit_price = extended_limit_prices.get(position.symbol)
+            extra_params: dict[str, Any] = {
+                "client_order_id": (
+                    "torghut-paper-flatten-"
+                    f"{generated_at.strftime('%Y%m%d%H%M%S')}-"
+                    f"{position.symbol.lower()}"
+                )
+            }
+            if extended_hours_limit:
+                extra_params["extended_hours"] = True
             submitted_orders.append(
                 client.submit_order(
                     symbol=position.symbol,
                     side=position.close_side,
                     qty=float(position.close_qty),
-                    order_type="market",
+                    order_type=order_type,
                     time_in_force="day",
-                    extra_params={
-                        "client_order_id": (
-                            "torghut-paper-flatten-"
-                            f"{generated_at.strftime('%Y%m%d%H%M%S')}-"
-                            f"{position.symbol.lower()}"
-                        )
-                    },
+                    limit_price=float(limit_price) if limit_price is not None else None,
+                    extra_params=extra_params,
                 )
             )
-        status = "submitted"
+        if wait_flat_seconds > 0:
+            status, final_positions = _wait_until_flat(
+                client=client,
+                deadline_seconds=wait_flat_seconds,
+                poll_seconds=poll_seconds,
+            )
+        else:
+            status = "submitted"
 
     return {
         "schema_version": "torghut.paper-account-flatten.v1",
         "status": status,
         "apply": apply,
+        "extended_hours_limit": extended_hours_limit,
+        "limit_away_bps": str(limit_away_bps),
+        "wait_flat_seconds": wait_flat_seconds,
+        "poll_seconds": poll_seconds,
         "generated_at": generated_at.isoformat(),
         "account_label": normalized_label,
         "expected_account_label": expected_label,
         "trading_mode": normalized_mode,
         "position_count": len(positions),
+        "final_position_count": len(final_positions),
         "gross_market_value": str(gross_market_value),
         "max_gross_market_value": str(max_gross_market_value),
         "max_position_count": max_position_count,
         "blockers": blockers,
+        "extended_hours_limit_missing_symbols": missing_limit_symbols,
         "positions": [_position_payload(position) for position in positions],
+        "final_positions": [_position_payload(position) for position in final_positions],
         "cancelled_order_count": len(cancelled_orders),
         "cancelled_orders": cancelled_orders,
         "submitted_order_count": len(submitted_orders),
@@ -241,6 +380,10 @@ def main() -> int:
         args.max_gross_market_value,
         default=DEFAULT_MAX_GROSS_MARKET_VALUE,
     )
+    limit_away_bps = _decimal(
+        args.limit_away_bps,
+        default=DEFAULT_EXTENDED_HOURS_LIMIT_AWAY_BPS,
+    )
     client = TorghutAlpacaClient(paper=True, base_url=str(args.paper_base_url or ""))
     firewall = OrderFirewall(client)
     payload = flatten_paper_account_positions(
@@ -251,7 +394,28 @@ def main() -> int:
         apply=bool(args.apply),
         max_gross_market_value=max_gross_market_value,
         max_position_count=max(0, int(args.max_position_count)),
+        extended_hours_limit=bool(args.extended_hours_limit),
+        limit_away_bps=limit_away_bps,
+        wait_flat_seconds=max(0.0, float(args.wait_flat_seconds or 0.0)),
+        poll_seconds=max(0.1, float(args.poll_seconds or DEFAULT_POLL_SECONDS)),
     )
+    if args.persist_snapshot:
+        if (
+            payload["trading_mode"] == "paper"
+            and payload["account_label"] == payload["expected_account_label"]
+        ):
+            with SessionLocal() as session:
+                snapshot = snapshot_account_and_positions(
+                    session,
+                    cast(Any, firewall),
+                    str(args.account_label or ""),
+                )
+            payload["position_snapshot_id"] = str(snapshot.id)
+            payload["position_snapshot_as_of"] = snapshot.as_of.isoformat()
+        else:
+            payload["position_snapshot_skipped"] = (
+                "paper_account_label_or_mode_guard_failed"
+            )
     if args.json:
         print(json.dumps(payload, sort_keys=True))
     else:
