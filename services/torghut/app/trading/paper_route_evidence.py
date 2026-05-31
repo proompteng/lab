@@ -3769,10 +3769,40 @@ def build_paper_route_target_plan_payload(
         target_audits=source_target_audits,
         next_target_audits=runtime_window_import_target_audits,
     )
+    effective_target_plan: Mapping[str, Any] = {}
+    for candidate_plan in (
+        next_targets,
+        source_targets,
+        runtime_window_import_plan,
+        plan,
+    ):
+        if _as_mapping_items(candidate_plan.get("targets")):
+            effective_target_plan = candidate_plan
+            break
+    effective_targets = _as_mapping_items(effective_target_plan.get("targets"))
+    effective_skipped_targets = _as_mapping_items(
+        effective_target_plan.get("skipped_targets")
+    )
+    effective_target_count = max(
+        _safe_int(effective_target_plan.get("target_count")),
+        len(effective_targets),
+    )
+    effective_skipped_target_count = max(
+        _safe_int(effective_target_plan.get("skipped_target_count")),
+        len(effective_skipped_targets),
+    )
     return {
         "schema_version": PAPER_ROUTE_TARGET_PLAN_PAYLOAD_SCHEMA_VERSION,
         "generated_at": _isoformat(resolved_generated_at),
         "source": "paper_route_target_plan_endpoint",
+        "purpose": _safe_text(effective_target_plan.get("purpose"))
+        or "next_session_paper_route_runtime_window_evidence_collection",
+        "promotion_allowed": False,
+        "final_promotion_allowed": False,
+        "target_count": effective_target_count,
+        "skipped_target_count": effective_skipped_target_count,
+        "targets": effective_targets,
+        "skipped_targets": effective_skipped_targets,
         "live_submission_gate": {
             "allowed": bool(live_submission_gate.get("allowed")),
             "reason": _safe_text(live_submission_gate.get("reason")),

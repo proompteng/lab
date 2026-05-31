@@ -7508,6 +7508,8 @@ class TestTradingApi(TestCase):
             self.assertEqual(
                 payload["next_paper_route_runtime_window_targets"]["target_count"], 1
             )
+            self.assertEqual(payload["target_count"], 1)
+            self.assertEqual(payload["skipped_target_count"], 0)
             self.assertEqual(
                 plan["runtime_window_import_handoff"]["target_plan_endpoint"],
                 "/trading/paper-route-target-plan",
@@ -7516,6 +7518,20 @@ class TestTradingApi(TestCase):
             self.assertEqual(plan["targets"][0]["paper_route_probe_symbols"], ["AAPL"])
             self.assertFalse(plan["targets"][0]["promotion_allowed"])
             self.assertFalse(plan["targets"][0]["final_promotion_allowed"])
+            next_plan = payload["next_paper_route_runtime_window_targets"]
+            next_target = next_plan["targets"][0]
+            self.assertEqual(payload["purpose"], next_plan["purpose"])
+            self.assertEqual(
+                payload["targets"][0]["candidate_id"], target["candidate_id"]
+            )
+            self.assertEqual(
+                payload["targets"][0]["paper_route_probe_symbols"], ["AAPL"]
+            )
+            self.assertEqual(
+                payload["targets"][0]["window_start"], next_target["window_start"]
+            )
+            self.assertFalse(payload["targets"][0]["promotion_allowed"])
+            self.assertFalse(payload["targets"][0]["final_promotion_allowed"])
         finally:
             if original_scheduler is None:
                 if hasattr(app.state, "trading_scheduler"):
@@ -7587,6 +7603,10 @@ class TestTradingApi(TestCase):
             )
             self.assertEqual(
                 payload["paper_route_probe"]["next_session_max_notional"], "75000"
+            )
+            self.assertEqual(payload["target_count"], 1)
+            self.assertEqual(
+                payload["targets"][0]["paper_route_probe_symbols"], ["AAPL", "AMZN"]
             )
             self.assertFalse(payload["summary"]["promotion_authority"]["allowed"])
         finally:
