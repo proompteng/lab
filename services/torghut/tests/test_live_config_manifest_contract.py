@@ -80,7 +80,15 @@ def _load_knative_env(relative_path: str) -> dict[str, object]:
             continue
         if "value" in item:
             raw_value = item["value"]
-            env[name] = raw_value if isinstance(raw_value, str) else str(raw_value)
+            env[name] = (
+                raw_value
+                if isinstance(raw_value, str)
+                else ""
+                if raw_value is None
+                else str(raw_value)
+            )
+        elif "valueFrom" not in item:
+            env[name] = ""
     return env
 
 
