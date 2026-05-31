@@ -3814,7 +3814,33 @@ def _query_timestamps(
                     e.execution_audit_json,
                     e.raw_order
                 from execution_order_events oe
-                left join executions e on e.id = oe.execution_id
+                left join lateral (
+                    select matched.*
+                    from (
+                        select
+                            array_agg(e_match.id order by e_match.created_at, e_match.id) as ids,
+                            count(*) as match_count
+                        from executions e_match
+                        where coalesce(e_match.alpaca_account_label, oe.alpaca_account_label)
+                              = oe.alpaca_account_label
+                          and (
+                                (
+                                    oe.execution_id is not null
+                                    and e_match.id = oe.execution_id
+                                )
+                                or (
+                                    nullif(oe.alpaca_order_id, '') is not null
+                                    and e_match.alpaca_order_id = oe.alpaca_order_id
+                                )
+                                or (
+                                    nullif(oe.client_order_id, '') is not null
+                                    and e_match.client_order_id = oe.client_order_id
+                                )
+                              )
+                    ) exact_match
+                    join executions matched on matched.id = exact_match.ids[1]
+                    where exact_match.match_count = 1
+                ) e on true
                 join trade_decisions d
                   on d.id = coalesce(oe.trade_decision_id, e.trade_decision_id)
                 join strategies s on s.id = d.strategy_id
@@ -3882,8 +3908,8 @@ def _query_timestamps(
                     f"""
                     select
                         oe.id,
-                        oe.trade_decision_id,
-                        oe.execution_id,
+                        coalesce(oe.trade_decision_id, e.trade_decision_id),
+                        e.id,
                         coalesce(oe.event_ts, oe.created_at),
                         oe.symbol,
                         oe.alpaca_account_label,
@@ -3894,7 +3920,7 @@ def _query_timestamps(
                         oe.client_order_id,
                         oe.event_type,
                         oe.status,
-                        null,
+                        e.side,
                         oe.qty,
                         oe.filled_qty,
                         oe.avg_fill_price,
@@ -3904,13 +3930,43 @@ def _query_timestamps(
                         oe.source_offset,
                         oe.source_window_id,
                         oe.raw_event,
-                        null,
-                        null
+                        e.execution_audit_json,
+                        e.raw_order
                     from execution_order_events oe
+                    left join lateral (
+                        select matched.*
+                        from (
+                            select
+                                array_agg(e_match.id order by e_match.created_at, e_match.id) as ids,
+                                count(*) as match_count
+                            from executions e_match
+                            where coalesce(e_match.alpaca_account_label, oe.alpaca_account_label)
+                                  = oe.alpaca_account_label
+                              and (
+                                    (
+                                        oe.execution_id is not null
+                                        and e_match.id = oe.execution_id
+                                    )
+                                    or (
+                                        nullif(oe.alpaca_order_id, '') is not null
+                                        and e_match.alpaca_order_id = oe.alpaca_order_id
+                                    )
+                                    or (
+                                        nullif(oe.client_order_id, '') is not null
+                                        and e_match.client_order_id = oe.client_order_id
+                                    )
+                                  )
+                        ) exact_match
+                        join executions matched on matched.id = exact_match.ids[1]
+                        where exact_match.match_count = 1
+                    ) e on true
                     where oe.alpaca_account_label = %s
                       and coalesce(oe.event_ts, oe.created_at) >= %s
                       and coalesce(oe.event_ts, oe.created_at) < %s
-                      and (oe.execution_id is null or oe.trade_decision_id is null)
+                      and (
+                            e.id is null
+                            or coalesce(oe.trade_decision_id, e.trade_decision_id) is null
+                          )
                       and (
                             lower(coalesce(oe.event_type, oe.status, '')) in (
                                 'fill', 'filled', 'partial_fill', 'partially_filled'

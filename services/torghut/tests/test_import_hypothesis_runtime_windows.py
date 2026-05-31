@@ -4200,8 +4200,10 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(len(cursor.executed), 5)
         unlinked_query, unlinked_params = cursor.executed[3]
         self.assertIn("from execution_order_events oe", unlinked_query)
+        self.assertIn("left join lateral", unlinked_query)
+        self.assertIn("exact_match.match_count = 1", unlinked_query)
         self.assertIn(
-            "and (oe.execution_id is null or oe.trade_decision_id is null)",
+            "or coalesce(oe.trade_decision_id, e.trade_decision_id) is null",
             unlinked_query,
         )
         self.assertIn("upper(oe.symbol) = any(%s)", unlinked_query)
@@ -4291,6 +4293,101 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         )
         self.assertEqual(diagnostics["order_feed_unattributed_fill_lifecycle_count"], 0)
         self.assertIn(
+            "order_feed_unlinked_fill_lifecycle_present",
+            _source_activity_diagnostics_blockers(diagnostics),
+        )
+
+    def test_query_timestamps_materializes_exact_order_identity_lifecycle(
+        self,
+    ) -> None:
+        cursor = _FakeCursor()
+        cursor._results = [
+            [
+                (
+                    "decision-id-1",
+                    datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                    "AAPL",
+                    "TORGHUT_SIM",
+                    "microbar-cross-sectional-pairs-v1",
+                    "decision-sha",
+                    {},
+                )
+            ],
+            [_FakeCursor()._results[1][0]],
+            [
+                (
+                    "source-event-id-1",
+                    "decision-id-1",
+                    "execution-id-1",
+                    datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "AAPL",
+                    "TORGHUT_SIM",
+                    "microbar-cross-sectional-pairs-v1",
+                    "decision-sha",
+                    {},
+                    "alpaca-order-1",
+                    "client-order-1",
+                    "fill",
+                    "filled",
+                    "buy",
+                    Decimal("1"),
+                    Decimal("1"),
+                    Decimal("100"),
+                    "source-event-fingerprint-1",
+                    "torghut.trade-updates.v1",
+                    0,
+                    35803,
+                    "source-window-1",
+                    {},
+                    {
+                        "cost_amount": "0.01",
+                        "cost_basis": "broker_reported_commission_and_fees",
+                    },
+                    {
+                        "execution_policy_hash": "policy-sha",
+                        "cost_model_hash": "cost-sha",
+                        "lineage_hash": "lineage-sha",
+                    },
+                )
+            ],
+            [],
+            [],
+        ]
+        connection = _FakeConnection(cursor)
+        diagnostics: dict[str, object] = {}
+
+        with patch(
+            "scripts.import_hypothesis_runtime_windows.psycopg.connect",
+            return_value=connection,
+        ):
+            _query_timestamps(
+                dsn="postgresql://example",
+                strategy_names=["microbar-cross-sectional-pairs-v1"],
+                account_label="TORGHUT_SIM",
+                window_start=datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                window_end=datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                symbols=["AAPL"],
+                source_activity_diagnostics=diagnostics,
+            )
+
+        order_event_query, _ = cursor.executed[2]
+        unlinked_query, _ = cursor.executed[3]
+        self.assertIn("left join lateral", order_event_query)
+        self.assertIn("exact_match.match_count = 1", order_event_query)
+        self.assertIn(
+            "coalesce(oe.trade_decision_id, e.trade_decision_id)",
+            order_event_query,
+        )
+        self.assertIn("left join lateral", unlinked_query)
+        self.assertIn("exact_match.match_count = 1", unlinked_query)
+        self.assertEqual(diagnostics["order_feed_unlinked_fill_lifecycle_count"], 0)
+        self.assertEqual(
+            diagnostics["order_feed_unlinked_strategy_fill_lifecycle_count"], 0
+        )
+        self.assertEqual(
+            diagnostics["fill_order_lifecycle_rows_after_lineage_filter"], 1
+        )
+        self.assertNotIn(
             "order_feed_unlinked_fill_lifecycle_present",
             _source_activity_diagnostics_blockers(diagnostics),
         )
@@ -4435,8 +4532,10 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         )
         self.assertEqual(order_event_params[-2:], (["AAPL"], ["AAPL"]))
         self.assertIn("from execution_order_events oe", unlinked_query)
+        self.assertIn("left join lateral", unlinked_query)
+        self.assertIn("exact_match.match_count = 1", unlinked_query)
         self.assertIn(
-            "and (oe.execution_id is null or oe.trade_decision_id is null)",
+            "or coalesce(oe.trade_decision_id, e.trade_decision_id) is null",
             unlinked_query,
         )
         self.assertIn("upper(oe.symbol) = any(%s)", unlinked_query)
