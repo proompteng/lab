@@ -32,6 +32,7 @@ from app.trading.order_feed import (
     apply_order_event_to_execution,
     backfill_order_feed_source_windows,
     latest_order_event_for_execution,
+    link_order_events_to_execution,
     merge_execution_raw_order_update,
     normalize_order_feed_record,
     persist_order_event,
@@ -985,6 +986,85 @@ class TestOrderFeed(TestCase):
         )
         self.assertEqual(event.source_window_id, source_window_id)
 
+    def test_linking_one_event_keeps_source_window_unlinked_counts_aggregate(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            execution = self._seed_execution(session)
+            execution_id = execution.id
+            trade_decision_id = execution.trade_decision_id
+            source_window = OrderFeedSourceWindow(
+                consumer_group="torghut-order-feed-v1",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                alpaca_account_label="paper",
+                assignment_mode="manual",
+                source_revision=ORDER_FEED_SOURCE_REVISION,
+                window_started_at=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+                window_ended_at=datetime(2026, 2, 1, 10, 1, tzinfo=timezone.utc),
+                start_offset=88,
+                end_offset=89,
+                consumed_count=2,
+                inserted_count=2,
+                unlinked_execution_count=2,
+                unlinked_decision_count=2,
+                status="inserted",
+            )
+            session.add(source_window)
+            session.flush()
+
+            linkable_event = ExecutionOrderEvent(
+                event_fingerprint="legacy-fill-linkable-source-window",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=88,
+                alpaca_account_label="paper",
+                event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+                symbol="AAPL",
+                alpaca_order_id=execution.alpaca_order_id,
+                client_order_id=execution.client_order_id,
+                event_type="fill",
+                status="filled",
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("191.25"),
+                raw_event={"event": "fill"},
+                source_window_id=source_window.id,
+            )
+            still_unlinked_event = ExecutionOrderEvent(
+                event_fingerprint="legacy-fill-still-unlinked-source-window",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=89,
+                alpaca_account_label="paper",
+                event_ts=datetime(2026, 2, 1, 10, 1, tzinfo=timezone.utc),
+                symbol="MSFT",
+                alpaca_order_id="other-order",
+                client_order_id="other-client",
+                event_type="fill",
+                status="filled",
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("320.00"),
+                raw_event={"event": "fill"},
+                source_window_id=source_window.id,
+            )
+            session.add_all([linkable_event, still_unlinked_event])
+            session.commit()
+
+            linked = link_order_events_to_execution(session, execution)
+            session.commit()
+            session.refresh(source_window)
+            session.refresh(linkable_event)
+            session.refresh(still_unlinked_event)
+
+        self.assertEqual(linked, 1)
+        self.assertEqual(linkable_event.execution_id, execution_id)
+        self.assertEqual(linkable_event.trade_decision_id, trade_decision_id)
+        self.assertIsNone(still_unlinked_event.execution_id)
+        self.assertIsNone(still_unlinked_event.trade_decision_id)
+        self.assertEqual(source_window.inserted_count, 2)
+        self.assertEqual(source_window.unlinked_execution_count, 1)
+        self.assertEqual(source_window.unlinked_decision_count, 1)
+
     def test_historical_source_window_helpers_handle_missing_and_aware_offsets(
         self,
     ) -> None:
@@ -1209,11 +1289,15 @@ class TestOrderFeed(TestCase):
                 side_effect=RuntimeError("store failed"),
             ):
                 counters = ingestor.ingest_once(session)
-            source_windows = session.execute(
-                select(OrderFeedSourceWindow).order_by(
-                    OrderFeedSourceWindow.start_offset
+            source_windows = (
+                session.execute(
+                    select(OrderFeedSourceWindow).order_by(
+                        OrderFeedSourceWindow.start_offset
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
 
         self.assertEqual(counters["messages_total"], 1)
         self.assertEqual(counters["failed_unhandled_total"], 1)
