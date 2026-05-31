@@ -175,7 +175,10 @@ from .trading.simulation_progress import (
 )
 from .trading.time_source import trading_time_status
 from .trading.tigerbeetle_client import check_tigerbeetle_health
-from .trading.tigerbeetle_reconcile import latest_tigerbeetle_reconciliation_payload
+from .trading.tigerbeetle_reconcile import (
+    latest_tigerbeetle_reconciliation_payload,
+    tigerbeetle_ref_counts,
+)
 from .trading.zero_notional_repair_executor import run_zero_notional_repair
 from .whitepapers import (
     WhitepaperKafkaWorker,
@@ -5149,6 +5152,10 @@ def _build_tigerbeetle_ledger_status(session: Session) -> dict[str, object]:
         session,
         cluster_id=settings.tigerbeetle_cluster_id,
     )
+    ref_counts = tigerbeetle_ref_counts(
+        session,
+        cluster_id=settings.tigerbeetle_cluster_id,
+    )
     blockers: list[str] = []
     if settings.tigerbeetle_enabled and not bool(protocol.get("protocol_ok")):
         blockers.append("tigerbeetle_protocol_unhealthy")
@@ -5180,6 +5187,7 @@ def _build_tigerbeetle_ledger_status(session: Session) -> dict[str, object]:
         "cluster_id": settings.tigerbeetle_cluster_id,
         "replica_addresses": protocol.get("replica_addresses", []),
         "last_error": protocol.get("last_error"),
+        "ref_counts": ref_counts,
         "latest_reconciliation": latest_reconciliation,
         "blockers": sorted(set(blockers)),
     }

@@ -15,7 +15,9 @@ from app.models import (
     Base,
     Execution,
     ExecutionOrderEvent,
+    ExecutionTCAMetric,
     Strategy,
+    StrategyRuntimeLedgerBucket,
     TigerBeetleAccountRef,
     TigerBeetleTransferRef,
     TradeDecision,
@@ -33,11 +35,17 @@ from app.trading.tigerbeetle_journal import (
     build_order_event_transfer_plan,
     submitted_pending_transfer_id,
     event_transfer_id,
+    execution_cost_transfer_id,
+    execution_transfer_id,
+    runtime_ledger_transfer_id,
 )
 from app.trading.tigerbeetle_ledger_model import (
     LEDGER_USD_MICRO,
     TRANSFER_KIND_CANCEL_VOID,
+    TRANSFER_KIND_EXECUTION_COST,
+    TRANSFER_KIND_EXECUTION_FILL,
     TRANSFER_KIND_FILL_POST,
+    TRANSFER_KIND_RUNTIME_NET_PNL,
     TRANSFER_KIND_SUBMITTED_PENDING,
     TigerBeetleTransferSpec,
     decimal_usd_to_micros,
@@ -118,6 +126,37 @@ def _create_fill_event(
     return event
 
 
+def _runtime_bucket() -> StrategyRuntimeLedgerBucket:
+    observed_at = datetime.now(timezone.utc)
+    return StrategyRuntimeLedgerBucket(
+        run_id="runtime-run-1",
+        candidate_id="candidate-1",
+        hypothesis_id="hypothesis-1",
+        observed_stage="paper",
+        bucket_started_at=observed_at,
+        bucket_ended_at=observed_at,
+        account_label="paper",
+        runtime_strategy_name="demo-runtime",
+        strategy_family="demo",
+        fill_count=1,
+        decision_count=1,
+        submitted_order_count=1,
+        cancelled_order_count=0,
+        rejected_order_count=0,
+        unfilled_order_count=0,
+        closed_trade_count=1,
+        open_position_count=0,
+        filled_notional=Decimal("190.25"),
+        gross_strategy_pnl=Decimal("3.00"),
+        cost_amount=Decimal("0.50"),
+        net_strategy_pnl_after_costs=Decimal("2.50"),
+        post_cost_expectancy_bps=Decimal("12.50"),
+        ledger_schema_version="torghut.runtime-ledger.v1",
+        pnl_basis="post_cost",
+        payload_json={"source": "representative-runtime-ledger"},
+    )
+
+
 class TestTigerBeetleLedgerJournal(TestCase):
     def setUp(self) -> None:
         self.engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
@@ -136,6 +175,44 @@ class TestTigerBeetleLedgerJournal(TestCase):
             )
 
             self.assertIsNone(ref)
+            self.assertEqual(client.transfers, {})
+
+    def test_source_journals_skip_disabled_and_unamounted_rows(self) -> None:
+        with Session(self.engine) as session:
+            event = _create_fill_event(session, fingerprint="fingerprint-source-noop")
+            execution = event.execution
+            self.assertIsNotNone(execution)
+            assert execution is not None
+            metric = ExecutionTCAMetric(
+                execution_id=execution.id,
+                alpaca_account_label="paper",
+                symbol="AAPL",
+                side="buy",
+                filled_qty=Decimal("1"),
+                signed_qty=Decimal("1"),
+                shortfall_notional=Decimal("0"),
+                computed_at=datetime.now(timezone.utc),
+            )
+            bucket = _runtime_bucket()
+            bucket.net_strategy_pnl_after_costs = Decimal("0")
+            bucket.cost_amount = Decimal("0")
+            session.add_all([metric, bucket])
+            session.flush()
+            client = FakeTigerBeetleClient()
+            disabled = TigerBeetleLedgerJournal(
+                settings_obj=_settings(enabled=False),
+                client=client,
+            )
+
+            self.assertIsNone(disabled.journal_execution(session, execution))
+            self.assertIsNone(disabled.journal_execution_tca_metric(session, metric))
+            self.assertIsNone(disabled.journal_runtime_ledger_bucket(session, bucket))
+
+            enabled = TigerBeetleLedgerJournal(settings_obj=_settings(), client=client)
+            execution.avg_fill_price = None
+            self.assertIsNone(enabled.journal_execution(session, execution))
+            self.assertIsNone(enabled.journal_execution_tca_metric(session, metric))
+            self.assertIsNone(enabled.journal_runtime_ledger_bucket(session, bucket))
             self.assertEqual(client.transfers, {})
 
     def test_repeated_same_event_creates_one_transfer_ref(self) -> None:
@@ -214,6 +291,173 @@ class TestTigerBeetleLedgerJournal(TestCase):
             self.assertEqual(
                 fill_ref.payload_json["pending_mode"], "pending_transfer_ref"
             )
+
+    def test_execution_source_writes_real_execution_ref(self) -> None:
+        with Session(self.engine) as session:
+            event = _create_fill_event(session, fingerprint="fingerprint-execution")
+            execution = event.execution
+            self.assertIsNotNone(execution)
+            assert execution is not None
+            client = FakeTigerBeetleClient()
+
+            ref = TigerBeetleLedgerJournal(
+                settings_obj=_settings(),
+                client=client,
+            ).journal_execution(session, execution)
+
+            self.assertIsNotNone(ref)
+            assert ref is not None
+            self.assertEqual(ref.source_type, "execution")
+            self.assertEqual(ref.source_id, str(execution.id))
+            self.assertEqual(ref.execution_id, execution.id)
+            self.assertEqual(ref.transfer_kind, TRANSFER_KIND_EXECUTION_FILL)
+            self.assertEqual(ref.transfer_id, str(execution_transfer_id(execution)))
+            self.assertEqual(ref.amount, Decimal("190250000"))
+            self.assertIn(int(ref.transfer_id), client.transfers)
+
+    def test_cost_source_writes_real_tca_metric_ref(self) -> None:
+        with Session(self.engine) as session:
+            event = _create_fill_event(session, fingerprint="fingerprint-cost")
+            metric = ExecutionTCAMetric(
+                execution_id=event.execution_id,
+                trade_decision_id=event.trade_decision_id,
+                strategy_id=event.trade_decision.strategy_id
+                if event.trade_decision
+                else None,
+                alpaca_account_label="paper",
+                symbol="AAPL",
+                side="buy",
+                filled_qty=Decimal("1"),
+                signed_qty=Decimal("1"),
+                shortfall_notional=Decimal("0.25"),
+                realized_shortfall_bps=Decimal("1.3"),
+                computed_at=datetime.now(timezone.utc),
+            )
+            session.add(metric)
+            session.flush()
+            client = FakeTigerBeetleClient()
+
+            ref = TigerBeetleLedgerJournal(
+                settings_obj=_settings(),
+                client=client,
+            ).journal_execution_tca_metric(session, metric)
+
+            self.assertIsNotNone(ref)
+            assert ref is not None
+            self.assertEqual(ref.source_type, "execution_tca_metric")
+            self.assertEqual(ref.source_id, str(metric.id))
+            self.assertEqual(ref.execution_tca_metric_id, metric.id)
+            self.assertEqual(ref.transfer_kind, TRANSFER_KIND_EXECUTION_COST)
+            self.assertEqual(ref.transfer_id, str(execution_cost_transfer_id(metric)))
+            self.assertEqual(ref.amount, Decimal("250000"))
+
+    def test_runtime_bucket_source_writes_real_runtime_ledger_ref(self) -> None:
+        with Session(self.engine) as session:
+            bucket = _runtime_bucket()
+            session.add(bucket)
+            session.flush()
+            client = FakeTigerBeetleClient()
+
+            ref = TigerBeetleLedgerJournal(
+                settings_obj=_settings(),
+                client=client,
+            ).journal_runtime_ledger_bucket(session, bucket)
+
+            self.assertIsNotNone(ref)
+            assert ref is not None
+            self.assertEqual(ref.source_type, "strategy_runtime_ledger_bucket")
+            self.assertEqual(ref.source_id, str(bucket.id))
+            self.assertEqual(ref.runtime_ledger_bucket_id, bucket.id)
+            self.assertEqual(ref.transfer_kind, TRANSFER_KIND_RUNTIME_NET_PNL)
+            self.assertEqual(ref.transfer_id, str(runtime_ledger_transfer_id(bucket)))
+            self.assertEqual(ref.amount, Decimal("2500000"))
+
+    def test_source_journals_noop_when_disabled_or_amount_missing(self) -> None:
+        with Session(self.engine) as session:
+            event = _create_fill_event(session, fingerprint="fingerprint-noop-sources")
+            execution = event.execution
+            self.assertIsNotNone(execution)
+            assert execution is not None
+            metric = ExecutionTCAMetric(
+                execution_id=execution.id,
+                trade_decision_id=event.trade_decision_id,
+                strategy_id=event.trade_decision.strategy_id
+                if event.trade_decision
+                else None,
+                alpaca_account_label="paper",
+                symbol="AAPL",
+                side="buy",
+                filled_qty=Decimal("1"),
+                signed_qty=Decimal("1"),
+                shortfall_notional=Decimal("0"),
+                computed_at=datetime.now(timezone.utc),
+            )
+            bucket = _runtime_bucket()
+            bucket.net_strategy_pnl_after_costs = Decimal("0")
+            bucket.cost_amount = Decimal("0")
+            session.add_all([metric, bucket])
+            session.flush()
+
+            disabled = TigerBeetleLedgerJournal(
+                settings_obj=_settings(enabled=False),
+                client=FakeTigerBeetleClient(),
+            )
+            self.assertIsNone(disabled.journal_execution(session, execution))
+            self.assertIsNone(disabled.journal_execution_tca_metric(session, metric))
+            self.assertIsNone(disabled.journal_runtime_ledger_bucket(session, bucket))
+
+            execution.avg_fill_price = None
+            enabled = TigerBeetleLedgerJournal(
+                settings_obj=_settings(),
+                client=FakeTigerBeetleClient(),
+            )
+            self.assertIsNone(enabled.journal_execution(session, execution))
+            self.assertIsNone(enabled.journal_execution_tca_metric(session, metric))
+            self.assertIsNone(enabled.journal_runtime_ledger_bucket(session, bucket))
+
+    def test_existing_transfer_ref_backfills_source_metadata(self) -> None:
+        with Session(self.engine) as session:
+            event = _create_fill_event(session, fingerprint="fingerprint-backfill-ref")
+            amount = decimal_usd_to_micros(
+                _event_amount_usd(event, TRANSFER_KIND_FILL_POST) or Decimal("0")
+            )
+            accounts = {spec.account_key: spec for spec in _account_specs(event)}
+            expected = _transfer_spec(
+                event,
+                transfer_kind=TRANSFER_KIND_FILL_POST,
+                amount=amount,
+                accounts=accounts,
+                use_pending_transfer=False,
+            )
+            existing = TigerBeetleTransferRef(
+                cluster_id=2001,
+                transfer_id=str(expected.transfer_id),
+                transfer_kind=expected.transfer_kind,
+                ledger=expected.ledger,
+                code=expected.code,
+                amount=Decimal(expected.amount),
+                status="created",
+                payload_json={"legacy": "ref"},
+            )
+            session.add(existing)
+            session.flush()
+
+            ref = TigerBeetleLedgerJournal(
+                settings_obj=_settings(),
+                client=FakeTigerBeetleClient(),
+            ).journal_order_event(session, event)
+
+            self.assertIsNotNone(ref)
+            assert ref is not None
+            self.assertEqual(ref.id, existing.id)
+            self.assertEqual(ref.trade_decision_id, event.trade_decision_id)
+            self.assertEqual(ref.execution_id, event.execution_id)
+            self.assertEqual(ref.execution_order_event_id, event.id)
+            self.assertEqual(ref.source_type, "execution_order_event")
+            self.assertEqual(ref.source_id, str(event.id))
+            self.assertEqual(ref.event_fingerprint, event.event_fingerprint)
+            self.assertEqual(ref.payload_json["legacy"], "ref")
+            self.assertEqual(ref.payload_json["source"], "execution_order_event")
 
     def test_duplicate_transfer_exists_is_verified_before_ref_persist(self) -> None:
         with Session(self.engine) as session:

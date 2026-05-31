@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -11,8 +12,12 @@ from typing import Any, Optional, cast
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+from ..config import settings
 from ..models import Execution, ExecutionTCAMetric, TradeDecision
 from .prices import resolve_execution_reference_price
+from .tigerbeetle_journal import TigerBeetleLedgerJournal
+
+logger = logging.getLogger(__name__)
 
 ADAPTIVE_LOOKBACK_WINDOW = 24
 ADAPTIVE_MIN_SAMPLE_SIZE = 6
@@ -168,6 +173,7 @@ def upsert_execution_tca_metric(
             computed_at=computed_at,
         )
         session.add(row)
+        _journal_tigerbeetle_execution_cost(session, execution, row)
         return row
 
     existing.trade_decision_id = execution.trade_decision_id
@@ -190,7 +196,32 @@ def upsert_execution_tca_metric(
     existing.churn_ratio = churn_ratio
     existing.computed_at = computed_at
     session.add(existing)
+    _journal_tigerbeetle_execution_cost(session, execution, existing)
     return existing
+
+
+def _journal_tigerbeetle_execution_cost(
+    session: Session,
+    execution: Execution,
+    metric: ExecutionTCAMetric,
+) -> None:
+    if not settings.tigerbeetle_enabled or not settings.tigerbeetle_journal_enabled:
+        return
+    session.flush()
+    journal = TigerBeetleLedgerJournal()
+    try:
+        with session.begin_nested():
+            journal.journal_execution(session, execution)
+            journal.journal_execution_tca_metric(session, metric)
+    except Exception as exc:
+        if settings.tigerbeetle_required:
+            raise
+        logger.warning(
+            "TigerBeetle execution/TCA journal failed for execution_id=%s metric_id=%s: %s",
+            execution.id,
+            metric.id,
+            exc,
+        )
 
 
 def refresh_execution_tca_metrics(

@@ -6,13 +6,17 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, cast
+from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import Settings, settings
 from app.models import (
+    Execution,
     ExecutionOrderEvent,
+    ExecutionTCAMetric,
+    StrategyRuntimeLedgerBucket,
     TigerBeetleReconciliationRun,
     TigerBeetleTransferRef,
     coerce_json_payload,
@@ -21,7 +25,18 @@ from app.trading.tigerbeetle_client import (
     TigerBeetleClientProtocol,
     create_tigerbeetle_client,
 )
-from app.trading.tigerbeetle_journal import build_order_event_transfer_plan
+from app.trading.tigerbeetle_journal import (
+    SOURCE_TYPE_EXECUTION,
+    SOURCE_TYPE_EXECUTION_ORDER_EVENT,
+    SOURCE_TYPE_EXECUTION_TCA_METRIC,
+    SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+    build_order_event_transfer_plan,
+)
+from app.trading.tigerbeetle_ledger_model import (
+    TRANSFER_KIND_EXECUTION_COST,
+    TRANSFER_KIND_EXECUTION_FILL,
+    TRANSFER_KIND_RUNTIME_NET_PNL,
+)
 
 
 SCHEMA_VERSION = "torghut.tigerbeetle-reconciliation.v1"
@@ -33,7 +48,13 @@ BLOCKER_DEBIT_ACCOUNT_MISMATCH = "tigerbeetle_transfer_debit_account_mismatch"
 BLOCKER_CREDIT_ACCOUNT_MISMATCH = "tigerbeetle_transfer_credit_account_mismatch"
 BLOCKER_POSTGRES_REF_MISMATCH = "tigerbeetle_postgres_ref_mismatch"
 BLOCKER_UNLINKED_EVENT = "tigerbeetle_unlinked_order_event"
+BLOCKER_UNLINKED_EXECUTION = "tigerbeetle_unlinked_execution"
+BLOCKER_UNLINKED_COST = "tigerbeetle_unlinked_execution_cost"
+BLOCKER_UNLINKED_RUNTIME_LEDGER = "tigerbeetle_unlinked_runtime_ledger"
+BLOCKER_SOURCE_ROW_MISSING = "tigerbeetle_source_row_missing"
+BLOCKER_SOURCE_AMOUNT_MISMATCH = "tigerbeetle_source_amount_mismatch"
 BLOCKER_CLIENT_UNAVAILABLE = "tigerbeetle_client_unavailable"
+USD_MICRO_SCALE = Decimal("1000000")
 
 
 def _attr(value: object, name: str) -> Any:
@@ -89,6 +110,111 @@ def _ref_matches_expected_event(
     )
 
 
+def _payload_int(payload: Mapping[str, object], key: str) -> int:
+    value = payload.get(key)
+    if value is None:
+        return 0
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _uuid_or_none(value: str | None) -> UUID | None:
+    if not value:
+        return None
+    try:
+        return UUID(value)
+    except ValueError:
+        return None
+
+
+def _usd_to_micros(value: Decimal | None) -> Decimal | None:
+    if value is None:
+        return None
+    scaled = abs(Decimal(str(value))) * USD_MICRO_SCALE
+    if scaled != scaled.to_integral_value() or scaled <= 0:
+        return None
+    return Decimal(int(scaled))
+
+
+def _execution_amount_micros(execution: Execution | None) -> Decimal | None:
+    if execution is None or execution.avg_fill_price is None:
+        return None
+    return _usd_to_micros(
+        Decimal(str(execution.filled_qty)) * Decimal(str(execution.avg_fill_price))
+    )
+
+
+def _cost_amount_micros(metric: ExecutionTCAMetric | None) -> Decimal | None:
+    if metric is None:
+        return None
+    return _usd_to_micros(metric.shortfall_notional)
+
+
+def _runtime_ledger_amount_micros(
+    bucket: StrategyRuntimeLedgerBucket | None,
+) -> Decimal | None:
+    if bucket is None:
+        return None
+    amount_source = (
+        bucket.net_strategy_pnl_after_costs
+        if bucket.net_strategy_pnl_after_costs != Decimal("0")
+        else bucket.cost_amount
+    )
+    return _usd_to_micros(amount_source)
+
+
+def _expected_source_amount_micros(
+    session: Session,
+    ref: TigerBeetleTransferRef,
+) -> Decimal | None:
+    source_uuid = _uuid_or_none(ref.source_id)
+    if source_uuid is None:
+        return None
+    if ref.source_type == SOURCE_TYPE_EXECUTION:
+        return _execution_amount_micros(session.get(Execution, source_uuid))
+    if ref.source_type == SOURCE_TYPE_EXECUTION_TCA_METRIC:
+        return _cost_amount_micros(session.get(ExecutionTCAMetric, source_uuid))
+    if ref.source_type == SOURCE_TYPE_RUNTIME_LEDGER_BUCKET:
+        return _runtime_ledger_amount_micros(
+            session.get(StrategyRuntimeLedgerBucket, source_uuid)
+        )
+    return None
+
+
+def tigerbeetle_ref_counts(session: Session, *, cluster_id: int) -> dict[str, object]:
+    source_rows = session.execute(
+        select(
+            TigerBeetleTransferRef.source_type,
+            func.count(TigerBeetleTransferRef.id),
+        )
+        .where(TigerBeetleTransferRef.cluster_id == cluster_id)
+        .group_by(TigerBeetleTransferRef.source_type)
+    ).all()
+    by_source = {
+        str(source_type or "unknown"): int(count) for source_type, count in source_rows
+    }
+    total = session.scalar(
+        select(func.count(TigerBeetleTransferRef.id)).where(
+            TigerBeetleTransferRef.cluster_id == cluster_id
+        )
+    )
+    return {
+        "schema_version": "torghut.tigerbeetle-ref-counts.v1",
+        "cluster_id": cluster_id,
+        "transfer_ref_count": int(total or 0),
+        "by_source_type": by_source,
+        "order_event_ref_count": by_source.get(SOURCE_TYPE_EXECUTION_ORDER_EVENT, 0),
+        "execution_ref_count": by_source.get(SOURCE_TYPE_EXECUTION, 0),
+        "cost_ref_count": by_source.get(SOURCE_TYPE_EXECUTION_TCA_METRIC, 0),
+        "runtime_ledger_ref_count": by_source.get(
+            SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+            0,
+        ),
+    }
+
+
 def _latest_run_payload(
     row: TigerBeetleReconciliationRun | None,
 ) -> dict[str, object] | None:
@@ -115,6 +241,18 @@ def _latest_run_payload(
         "checked_transfer_count": row.checked_transfer_count,
         "missing_transfer_count": row.missing_transfer_count,
         "mismatched_transfer_count": row.mismatched_transfer_count,
+        "source_missing_count": row.source_missing_count,
+        "source_row_missing_count": _payload_int(payload, "source_row_missing_count"),
+        "source_amount_mismatch_count": _payload_int(
+            payload, "source_amount_mismatch_count"
+        ),
+        "unlinked_event_count": _payload_int(payload, "unlinked_event_count"),
+        "unlinked_execution_count": _payload_int(payload, "unlinked_execution_count"),
+        "unlinked_cost_count": _payload_int(payload, "unlinked_cost_count"),
+        "unlinked_runtime_ledger_count": int(
+            _payload_int(payload, "unlinked_runtime_ledger_count")
+        ),
+        "ref_counts": payload.get("ref_counts") or {},
         "started_at": row.started_at.isoformat(),
         "finished_at": row.finished_at.isoformat() if row.finished_at else None,
         "blockers": blockers,
@@ -163,6 +301,8 @@ def reconcile_tigerbeetle_transfers(
     checked_transfer_count = len(refs)
     missing_transfer_count = 0
     mismatched_transfer_count = 0
+    source_row_missing_count = 0
+    source_amount_mismatch_count = 0
     blockers: list[str] = []
 
     transfer_lookup: dict[str, object] = {}
@@ -208,6 +348,18 @@ def reconcile_tigerbeetle_transfers(
         ):
             mismatched_transfer_count += 1
             blockers.append(BLOCKER_POSTGRES_REF_MISMATCH)
+        if ref.source_type in {
+            SOURCE_TYPE_EXECUTION,
+            SOURCE_TYPE_EXECUTION_TCA_METRIC,
+            SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+        }:
+            expected_source_amount = _expected_source_amount_micros(session, ref)
+            if expected_source_amount is None:
+                source_row_missing_count += 1
+                blockers.append(BLOCKER_SOURCE_ROW_MISSING)
+            elif ref.amount != expected_source_amount:
+                source_amount_mismatch_count += 1
+                blockers.append(BLOCKER_SOURCE_AMOUNT_MISMATCH)
 
     event_ids_with_refs = {
         item
@@ -243,9 +395,121 @@ def reconcile_tigerbeetle_transfers(
     if unlinked_event_count:
         blockers.append(BLOCKER_UNLINKED_EVENT)
 
+    execution_ids_with_refs = {
+        str(item)
+        for item in session.execute(
+            select(TigerBeetleTransferRef.source_id).where(
+                TigerBeetleTransferRef.cluster_id
+                == settings_obj.tigerbeetle_cluster_id,
+                TigerBeetleTransferRef.source_type == SOURCE_TYPE_EXECUTION,
+                TigerBeetleTransferRef.transfer_kind == TRANSFER_KIND_EXECUTION_FILL,
+                TigerBeetleTransferRef.source_id.is_not(None),
+            )
+        ).scalars()
+        if item is not None
+    }
+    recent_executions = (
+        session.execute(
+            select(Execution)
+            .where(
+                Execution.avg_fill_price.is_not(None),
+                Execution.filled_qty > 0,
+            )
+            .order_by(Execution.created_at.desc())
+            .limit(limit)
+        )
+        .scalars()
+        .all()
+    )
+    unlinked_execution_count = sum(
+        1
+        for execution in recent_executions
+        if str(execution.id) not in execution_ids_with_refs
+    )
+    if unlinked_execution_count:
+        blockers.append(BLOCKER_UNLINKED_EXECUTION)
+
+    cost_ids_with_refs = {
+        str(item)
+        for item in session.execute(
+            select(TigerBeetleTransferRef.source_id).where(
+                TigerBeetleTransferRef.cluster_id
+                == settings_obj.tigerbeetle_cluster_id,
+                TigerBeetleTransferRef.source_type == SOURCE_TYPE_EXECUTION_TCA_METRIC,
+                TigerBeetleTransferRef.transfer_kind == TRANSFER_KIND_EXECUTION_COST,
+                TigerBeetleTransferRef.source_id.is_not(None),
+            )
+        ).scalars()
+        if item is not None
+    }
+    recent_cost_metrics = (
+        session.execute(
+            select(ExecutionTCAMetric)
+            .where(
+                ExecutionTCAMetric.shortfall_notional.is_not(None),
+                ExecutionTCAMetric.shortfall_notional != 0,
+            )
+            .order_by(ExecutionTCAMetric.computed_at.desc())
+            .limit(limit)
+        )
+        .scalars()
+        .all()
+    )
+    unlinked_cost_count = sum(
+        1 for metric in recent_cost_metrics if str(metric.id) not in cost_ids_with_refs
+    )
+    if unlinked_cost_count:
+        blockers.append(BLOCKER_UNLINKED_COST)
+
+    runtime_ids_with_refs = {
+        str(item)
+        for item in session.execute(
+            select(TigerBeetleTransferRef.source_id).where(
+                TigerBeetleTransferRef.cluster_id
+                == settings_obj.tigerbeetle_cluster_id,
+                TigerBeetleTransferRef.source_type == SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                TigerBeetleTransferRef.transfer_kind == TRANSFER_KIND_RUNTIME_NET_PNL,
+                TigerBeetleTransferRef.source_id.is_not(None),
+            )
+        ).scalars()
+        if item is not None
+    }
+    recent_runtime_buckets = (
+        session.execute(
+            select(StrategyRuntimeLedgerBucket)
+            .where(
+                (StrategyRuntimeLedgerBucket.net_strategy_pnl_after_costs != 0)
+                | (StrategyRuntimeLedgerBucket.cost_amount != 0)
+            )
+            .order_by(StrategyRuntimeLedgerBucket.bucket_ended_at.desc())
+            .limit(limit)
+        )
+        .scalars()
+        .all()
+    )
+    unlinked_runtime_ledger_count = sum(
+        1
+        for bucket in recent_runtime_buckets
+        if str(bucket.id) not in runtime_ids_with_refs
+    )
+    if unlinked_runtime_ledger_count:
+        blockers.append(BLOCKER_UNLINKED_RUNTIME_LEDGER)
+
     unique_blockers = sorted(set(blockers))
     ok = not unique_blockers
     finished_at = datetime.now(timezone.utc)
+    source_missing_count = (
+        unlinked_event_count
+        + unlinked_execution_count
+        + unlinked_cost_count
+        + unlinked_runtime_ledger_count
+        + source_row_missing_count
+        + source_amount_mismatch_count
+    )
+    ref_counts = tigerbeetle_ref_counts(
+        session,
+        cluster_id=settings_obj.tigerbeetle_cluster_id,
+    )
     payload: dict[str, object] = {
         "schema_version": SCHEMA_VERSION,
         "ok": ok,
@@ -253,7 +517,14 @@ def reconcile_tigerbeetle_transfers(
         "checked_transfer_count": checked_transfer_count,
         "missing_transfer_count": missing_transfer_count,
         "mismatched_transfer_count": mismatched_transfer_count,
+        "source_missing_count": source_missing_count,
+        "source_row_missing_count": source_row_missing_count,
+        "source_amount_mismatch_count": source_amount_mismatch_count,
         "unlinked_event_count": unlinked_event_count,
+        "unlinked_execution_count": unlinked_execution_count,
+        "unlinked_cost_count": unlinked_cost_count,
+        "unlinked_runtime_ledger_count": unlinked_runtime_ledger_count,
+        "ref_counts": ref_counts,
         "blockers": unique_blockers,
     }
     if persist:
@@ -266,6 +537,7 @@ def reconcile_tigerbeetle_transfers(
                 checked_transfer_count=checked_transfer_count,
                 missing_transfer_count=missing_transfer_count,
                 mismatched_transfer_count=mismatched_transfer_count,
+                source_missing_count=source_missing_count,
                 payload_json=coerce_json_payload(payload),
             )
         )

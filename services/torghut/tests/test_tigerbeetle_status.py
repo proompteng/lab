@@ -47,6 +47,7 @@ class TestTigerBeetleStatus(TestCase):
         self.assertFalse(payload["enabled"])
         self.assertTrue(payload["protocol_ok"])
         self.assertEqual(payload["blockers"], [])
+        self.assertEqual(payload["ref_counts"]["transfer_ref_count"], 0)
 
     def test_required_protocol_failure_blocks_readiness_dependency(self) -> None:
         settings.tigerbeetle_enabled = True
@@ -123,7 +124,11 @@ class TestTigerBeetleStatus(TestCase):
                     checked_transfer_count=1,
                     missing_transfer_count=0,
                     mismatched_transfer_count=1,
-                    payload_json={"blockers": ["tigerbeetle_transfer_code_mismatch"]},
+                    source_missing_count=0,
+                    payload_json={
+                        "blockers": ["tigerbeetle_transfer_code_mismatch"],
+                        "ref_counts": {"transfer_ref_count": 1},
+                    },
                 )
             )
             session.flush()
@@ -133,3 +138,6 @@ class TestTigerBeetleStatus(TestCase):
         self.assertFalse(payload["ok"])
         self.assertFalse(payload["reconciliation_ok"])
         self.assertIn("tigerbeetle_transfer_code_mismatch", payload["blockers"])
+        latest_reconciliation = payload["latest_reconciliation"]
+        assert isinstance(latest_reconciliation, dict)
+        self.assertEqual(latest_reconciliation["ref_counts"], {"transfer_ref_count": 1})

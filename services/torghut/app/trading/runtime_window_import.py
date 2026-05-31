@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
@@ -14,6 +15,7 @@ from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
+from ..config import settings
 from ..models import (
     StrategyCapitalAllocation,
     StrategyHypothesis,
@@ -47,6 +49,9 @@ from .runtime_ledger_proof_policy import runtime_ledger_proof_policy_from_env
 from .runtime_ledger_source_authority import (
     runtime_ledger_promotion_source_authority_blockers,
 )
+from .tigerbeetle_journal import TigerBeetleLedgerJournal
+
+logger = logging.getLogger(__name__)
 
 US_EQUITIES_REGULAR_TIMEZONE = "America/New_York"
 US_EQUITIES_REGULAR_OPEN = time(hour=9, minute=30)
@@ -1611,6 +1616,27 @@ def _ledger_payload_with_tigerbeetle_refs(
     }
 
 
+def _journal_tigerbeetle_runtime_ledger_bucket(
+    session: Session,
+    row: StrategyRuntimeLedgerBucket,
+) -> None:
+    if not settings.tigerbeetle_enabled or not settings.tigerbeetle_journal_enabled:
+        return
+    session.flush()
+    try:
+        with session.begin_nested():
+            TigerBeetleLedgerJournal().journal_runtime_ledger_bucket(session, row)
+    except Exception as exc:
+        if settings.tigerbeetle_required:
+            raise
+        logger.warning(
+            "TigerBeetle runtime-ledger journal failed for bucket_id=%s run_id=%s: %s",
+            row.id,
+            row.run_id,
+            exc,
+        )
+
+
 def _runtime_ledger_daily_summary_from_observed_buckets(
     buckets: Sequence[ObservedRuntimeBucket],
 ) -> dict[str, Any]:
@@ -2158,6 +2184,7 @@ def persist_observed_runtime_windows(
                 },
             )
             session.add(runtime_ledger_row)
+            _journal_tigerbeetle_runtime_ledger_bucket(session, runtime_ledger_row)
             runtime_ledger_rows.append(runtime_ledger_row)
 
     final_capital_stage = _capital_stage_for_runtime_import(

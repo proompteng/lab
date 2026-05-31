@@ -28,6 +28,14 @@ from app.models import (
 )
 from app.trading import order_feed as order_feed_module
 from app.trading.tigerbeetle_client import FakeTigerBeetleClient
+from app.trading.tigerbeetle_journal import (
+    SOURCE_TYPE_EXECUTION,
+    SOURCE_TYPE_EXECUTION_ORDER_EVENT,
+)
+from app.trading.tigerbeetle_ledger_model import (
+    TRANSFER_KIND_EXECUTION_FILL,
+    TRANSFER_KIND_FILL_POST,
+)
 from app.trading.order_feed import (
     HISTORICAL_ORDER_EVENT_SOURCE_WINDOW_REVISION,
     ORDER_FEED_SOURCE_REVISION,
@@ -422,7 +430,21 @@ class TestOrderFeed(TestCase):
 
             self.assertEqual(counters["events_persisted_total"], 1)
             refs = session.execute(select(TigerBeetleTransferRef)).scalars().all()
-            self.assertEqual(len(refs), 1)
+            self.assertEqual(len(refs), 2)
+            event = session.execute(select(ExecutionOrderEvent)).scalar_one()
+            refs_by_kind = {ref.transfer_kind: ref for ref in refs}
+            self.assertEqual(
+                set(refs_by_kind),
+                {TRANSFER_KIND_FILL_POST, TRANSFER_KIND_EXECUTION_FILL},
+            )
+            order_ref = refs_by_kind[TRANSFER_KIND_FILL_POST]
+            self.assertEqual(order_ref.execution_order_event_id, event.id)
+            self.assertEqual(order_ref.source_type, SOURCE_TYPE_EXECUTION_ORDER_EVENT)
+            self.assertEqual(order_ref.source_id, str(event.id))
+            execution_ref = refs_by_kind[TRANSFER_KIND_EXECUTION_FILL]
+            self.assertEqual(execution_ref.execution_id, event.execution_id)
+            self.assertEqual(execution_ref.source_type, SOURCE_TYPE_EXECUTION)
+            self.assertEqual(execution_ref.source_id, str(event.execution_id))
             runs = session.execute(select(TigerBeetleReconciliationRun)).scalars().all()
             self.assertEqual(len(runs), 1)
             self.assertEqual(runs[0].status, "ok")

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from unittest import TestCase
+from unittest.mock import patch
 from uuid import uuid4
 
 from sqlalchemy import create_engine, select
@@ -27,8 +28,10 @@ from app.trading.runtime_cost_authority import (
 from app.trading.runtime_decision_authority import (
     source_decision_mode_counts_have_non_profit_proof_modes,
 )
+from app.trading import runtime_window_import as runtime_window_import_module
 from app.trading.runtime_window_import import (
     _delay_adjusted_depth_stress_blocking_reasons,
+    _journal_tigerbeetle_runtime_ledger_bucket,
     _observation_bool,
     _observation_decimal,
     _observation_int,
@@ -152,6 +155,87 @@ class TestRuntimeWindowImport(TestCase):
         )
         self.assertEqual(blockers[0]["promotion_authority"], "blocked")
         self.assertFalse(blockers[0]["runtime_ledger_profit_proof_present"])
+
+    def test_runtime_ledger_bucket_journal_failure_respects_required_flag(
+        self,
+    ) -> None:
+        with self.session_local() as session:
+            row = StrategyRuntimeLedgerBucket(
+                run_id="run-journal-failure",
+                candidate_id="cand",
+                hypothesis_id="hyp",
+                observed_stage="paper",
+                bucket_started_at=datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                bucket_ended_at=datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                account_label="TORGHUT_SIM",
+                runtime_strategy_name="strategy",
+                fill_count=2,
+                decision_count=2,
+                submitted_order_count=2,
+                closed_trade_count=1,
+                open_position_count=0,
+                filled_notional=Decimal("200"),
+                gross_strategy_pnl=Decimal("1"),
+                cost_amount=Decimal("0.20"),
+                net_strategy_pnl_after_costs=Decimal("0.80"),
+                post_cost_expectancy_bps=Decimal("40"),
+                pnl_basis="realized_strategy_pnl_after_explicit_costs",
+                ledger_schema_version="torghut.runtime-ledger-bucket.v1",
+                payload_json={},
+            )
+            session.add(row)
+            session.flush()
+
+            with (
+                patch.object(
+                    runtime_window_import_module.settings,
+                    "tigerbeetle_enabled",
+                    True,
+                ),
+                patch.object(
+                    runtime_window_import_module.settings,
+                    "tigerbeetle_journal_enabled",
+                    True,
+                ),
+                patch.object(
+                    runtime_window_import_module.settings,
+                    "tigerbeetle_required",
+                    False,
+                ),
+                patch(
+                    "app.trading.runtime_window_import.TigerBeetleLedgerJournal.journal_runtime_ledger_bucket",
+                    side_effect=RuntimeError("journal failed"),
+                ),
+            ):
+                with self.assertLogs(
+                    runtime_window_import_module.logger,
+                    level="WARNING",
+                ):
+                    _journal_tigerbeetle_runtime_ledger_bucket(session, row)
+
+            with (
+                patch.object(
+                    runtime_window_import_module.settings,
+                    "tigerbeetle_enabled",
+                    True,
+                ),
+                patch.object(
+                    runtime_window_import_module.settings,
+                    "tigerbeetle_journal_enabled",
+                    True,
+                ),
+                patch.object(
+                    runtime_window_import_module.settings,
+                    "tigerbeetle_required",
+                    True,
+                ),
+                patch(
+                    "app.trading.runtime_window_import.TigerBeetleLedgerJournal.journal_runtime_ledger_bucket",
+                    side_effect=RuntimeError("journal failed"),
+                ),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "journal failed"):
+                    _journal_tigerbeetle_runtime_ledger_bucket(session, row)
 
     def test_build_regular_session_buckets_counts_session_samples(self) -> None:
         buckets = build_regular_session_buckets(
