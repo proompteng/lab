@@ -33,6 +33,7 @@ from ..runtime_decision_authority import (
     ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
     STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE,
     normalize_source_decision_mode,
+    source_decision_mode_is_profit_proof_eligible,
 )
 from ..session_context import regular_session_open_utc_for
 from ..simple_risk import (
@@ -76,6 +77,8 @@ _PAPER_ROUTE_PROBE_QTY_STEP = Decimal("0.0001")
 _REGULAR_SESSION_MINUTES = 390
 _PAPER_ROUTE_TARGET_PLAN_CACHE_SECONDS = 60
 _PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS = 600
+_PAPER_ROUTE_TARGET_PROFIT_PROOF_EXPOSURE_LOOKBACK = timedelta(days=7)
+_PAPER_ROUTE_TARGET_OPEN_EXPOSURE_EPSILON = Decimal("0.00000001")
 
 
 def _safe_int(value: object) -> int:
@@ -1642,6 +1645,7 @@ class SimpleTradingPipeline(TradingPipeline):
             strategies=strategies,
             allowed_symbols=allowed_symbols,
             positions=positions,
+            session=session,
         )
         for decision in decisions:
             self.state.metrics.decisions_total += 1
@@ -2383,6 +2387,7 @@ class SimpleTradingPipeline(TradingPipeline):
         strategies: Sequence[Strategy],
         allowed_symbols: set[str],
         positions: Sequence[Mapping[str, Any]] | None = None,
+        session: Session | None = None,
     ) -> list[StrategyDecision]:
         if settings.trading_mode != "paper":
             return []
@@ -2430,6 +2435,17 @@ class SimpleTradingPipeline(TradingPipeline):
                 if self._paper_route_target_symbol_has_open_position(
                     positions,
                     symbol,
+                ):
+                    continue
+                if (
+                    session is not None
+                    and self._paper_route_target_symbol_has_open_profit_proof_exposure(
+                        session=session,
+                        strategy=strategy,
+                        symbol=symbol,
+                        account_label=self.account_label,
+                        window_start=window_start,
+                    )
                 ):
                     continue
                 key = (str(strategy.id), symbol, window_start.isoformat(), action)
@@ -2487,6 +2503,79 @@ class SimpleTradingPipeline(TradingPipeline):
                     )
                 )
         return decisions
+
+    @staticmethod
+    def _paper_route_target_symbol_has_open_profit_proof_exposure(
+        *,
+        session: Session,
+        strategy: Strategy,
+        symbol: str,
+        account_label: str,
+        window_start: datetime,
+    ) -> bool:
+        strategy_id = getattr(strategy, "id", None)
+        normalized_symbol = symbol.strip().upper()
+        if strategy_id is None or not normalized_symbol:
+            return False
+
+        guard_start = window_start - _PAPER_ROUTE_TARGET_PROFIT_PROOF_EXPOSURE_LOOKBACK
+        try:
+            rows = session.execute(
+                select(
+                    Execution.side,
+                    Execution.filled_qty,
+                    TradeDecision.decision_json,
+                )
+                .join(TradeDecision, Execution.trade_decision_id == TradeDecision.id)
+                .where(
+                    Execution.alpaca_account_label == account_label,
+                    TradeDecision.alpaca_account_label == account_label,
+                    TradeDecision.strategy_id == strategy_id,
+                    Execution.symbol == normalized_symbol,
+                    TradeDecision.symbol == normalized_symbol,
+                    Execution.filled_qty > 0,
+                    Execution.status.in_(("filled", "partially_filled")),
+                    Execution.created_at >= guard_start,
+                )
+            ).all()
+        except Exception:
+            logger.exception(
+                "Failed to inspect paper-route target source proof exposure "
+                "strategy_id=%s symbol=%s account_label=%s",
+                strategy_id,
+                normalized_symbol,
+                account_label,
+            )
+            return True
+
+        signed_qty = Decimal("0")
+        for side, filled_qty, raw_decision_json in rows:
+            if not isinstance(raw_decision_json, Mapping):
+                continue
+            decision_json = cast(Mapping[str, Any], raw_decision_json)
+            raw_params = decision_json.get("params")
+            if not isinstance(raw_params, Mapping):
+                continue
+            params = cast(Mapping[str, Any], raw_params)
+            lineage = _paper_route_probe_lineage_from_params(params)
+            profit_proof_eligible = _target_bool(lineage.get("profit_proof_eligible"))
+            if profit_proof_eligible is False:
+                continue
+            if (
+                profit_proof_eligible is not True
+                and not source_decision_mode_is_profit_proof_eligible(
+                    lineage.get("source_decision_mode")
+                )
+            ):
+                continue
+            qty = _optional_decimal(filled_qty)
+            if qty is None or qty <= 0:
+                continue
+            if str(side or "").strip().lower() == "sell":
+                signed_qty -= qty
+            else:
+                signed_qty += qty
+        return abs(signed_qty) > _PAPER_ROUTE_TARGET_OPEN_EXPOSURE_EPSILON
 
     @staticmethod
     def _paper_route_target_symbol_has_open_position(
@@ -3108,12 +3197,9 @@ class SimpleTradingPipeline(TradingPipeline):
         )
         paper_route_probe_applied = False
         if proof_floor_block_reason is not None:
-            if (
-                settings.trading_mode == "paper"
-                and (
-                    self._paper_route_probe_exit_metadata(decision) is not None
-                    or _paper_route_probe_entry_metadata(decision.params) is not None
-                )
+            if settings.trading_mode == "paper" and (
+                self._paper_route_probe_exit_metadata(decision) is not None
+                or _paper_route_probe_entry_metadata(decision.params) is not None
             ):
                 paper_route_probe_applied = True
             if not paper_route_probe_applied:
