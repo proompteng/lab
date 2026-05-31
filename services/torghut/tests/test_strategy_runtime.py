@@ -5872,6 +5872,36 @@ class TestStrategyRuntimeMicrobarCoverage(TestCase):
             executable_universe_buy.trace.gates[0].context["universe_size"], 5
         )
 
+        clusterlob_rank_buy = _evaluate_microbar_cross_sectional(
+            context=self._context(
+                params={
+                    "entry_minute_after_open": "60",
+                    "signal_motif": "clusterlob_directional_ofi_continuation",
+                    "rank_feature": "cross_section_clusterlob_directional_ofi_rank",
+                    "gate_feature": "clusterlob_event_cluster_stability_score",
+                    "gate_min": "0.60",
+                    "selection_mode": "continuation",
+                    "top_n": "2",
+                    "universe_size": "6",
+                }
+            ),
+            features=_test_feature_vector(
+                {
+                    "session_minutes_elapsed": 60,
+                    "cross_section_clusterlob_directional_ofi_rank": Decimal("0.90"),
+                    "clusterlob_event_cluster_stability_score": Decimal("0.72"),
+                }
+            ),
+            entry_action="buy",
+            exit_action="sell",
+        )
+        self.assertIsNotNone(clusterlob_rank_buy.intent)
+        assert clusterlob_rank_buy.intent is not None
+        self.assertIn(
+            "rank_feature:cross_section_clusterlob_directional_ofi_rank",
+            clusterlob_rank_buy.intent.rationale,
+        )
+
         reversal_buy = _evaluate_microbar_cross_sectional(
             context=self._context(
                 params={

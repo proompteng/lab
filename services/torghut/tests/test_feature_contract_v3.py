@@ -207,6 +207,11 @@ class TestFeatureContractV3(TestCase):
                 'recent_microprice_bias_bps_avg': '0.85',
                 'recent_15m_return_bps': '54',
                 'microbar_volume': '18200',
+                'clusterlob_directional_ofi': '0.18',
+                'clusterlob_opportunistic_ofi': '0.04',
+                'clusterlob_market_making_ofi': '-0.02',
+                'clusterlob_event_cluster_stability_score': '0.74',
+                'cross_section_clusterlob_directional_ofi_rank': '0.82',
                 'cross_section_prev_session_close_rank': '0.91',
                 'cross_section_positive_session_open_ratio': '0.58',
                 'cross_section_positive_prev_session_close_ratio': '0.75',
@@ -248,6 +253,12 @@ class TestFeatureContractV3(TestCase):
         )
         self.assertEqual(fv.values['price_vs_opening_window_close_bps'], Decimal('29.73'))
         self.assertEqual(fv.values['recent_spread_bps_avg'], Decimal('0.75'))
+        self.assertEqual(fv.values['clusterlob_directional_ofi'], Decimal('0.18'))
+        self.assertEqual(fv.values['clusterlob_event_cluster_stability_score'], Decimal('0.74'))
+        self.assertEqual(
+            fv.values['cross_section_clusterlob_directional_ofi_rank'],
+            Decimal('0.82'),
+        )
         self.assertEqual(fv.values['recent_quote_invalid_ratio'], Decimal('0.04'))
         self.assertEqual(fv.values['recent_quote_jump_bps_max'], Decimal('18.2'))
         self.assertEqual(fv.values['recent_microprice_bias_bps_avg'], Decimal('0.85'))

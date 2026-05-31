@@ -303,6 +303,50 @@ def test_positions_carry_across_bucket_boundaries() -> None:
     )
 
 
+def test_grouped_positions_carry_across_bucket_boundaries() -> None:
+    buckets = build_runtime_ledger_buckets(
+        [
+            RuntimeLedgerFill(
+                executed_at=_ts(1),
+                account_label="paper",
+                strategy_id="strategy-1",
+                symbol="NVDA",
+                side="buy",
+                filled_qty=Decimal("10"),
+                avg_fill_price=Decimal("100"),
+                cost_amount=Decimal("1"),
+                cost_basis="broker_reported_commission_and_fees",
+            ),
+            RuntimeLedgerFill(
+                executed_at=_ts(35),
+                account_label="paper",
+                strategy_id="strategy-1",
+                symbol="NVDA",
+                side="sell",
+                filled_qty=Decimal("10"),
+                avg_fill_price=Decimal("110"),
+                cost_amount=Decimal("2"),
+                cost_basis="broker_reported_commission_and_fees",
+            ),
+        ],
+        bucket_ranges=[(_ts(), _ts(30)), (_ts(30), _ts(60))],
+        group_by=("strategy_id", "symbol"),
+    )
+
+    assert len(buckets) == 2
+    assert buckets[0].closed_trade_count == 0
+    assert "unclosed_position" in buckets[0].blockers
+    assert buckets[1].blockers == []
+    assert buckets[1].closed_trade_count == 1
+    assert buckets[1].open_position_count == 0
+    assert buckets[1].filled_notional == Decimal("2100")
+    assert buckets[1].net_strategy_pnl_after_costs == Decimal("97")
+    _assert_decimal_close(
+        buckets[1].post_cost_expectancy_bps,
+        (Decimal("97") / Decimal("2100")) * Decimal("10000"),
+    )
+
+
 def test_tca_shortfall_rows_do_not_count_as_strategy_pnl() -> None:
     bucket = _bucket(
         [

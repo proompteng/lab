@@ -12,6 +12,8 @@ required_features:
   - cross_section_prev_session_close_rank
   - cross_section_opening_window_return_from_prev_close_rank
   - cross_section_positive_opening_window_return_from_prev_close_ratio
+  - clusterlob_directional_ofi
+  - cross_section_clusterlob_directional_ofi_rank
 allowed_normalizations:
   - market_neutral_gross_scaled
 entry_motifs:
@@ -28,6 +30,7 @@ risk_controls:
   - market_neutral_pairing
   - gross_notional_cap
   - transaction_cost_stress
+  - clusterlob_event_stream_prefilter
 activity_model:
   min_active_day_ratio: '1.0'
   min_daily_notional: '300000'

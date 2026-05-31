@@ -218,6 +218,10 @@ def build_runtime_ledger_buckets(
             )
         return buckets
 
+    grouped_positions: dict[
+        tuple[str | None, ...],
+        dict[tuple[str | None, str | None, str | None], _PositionState],
+    ] = {}
     for bucket_start, bucket_end in normalized_ranges:
         bucket_rows = [
             row
@@ -236,6 +240,7 @@ def build_runtime_ledger_buckets(
                     rows=grouped_rows[key],
                     group_by=group_by,
                     group_key=key,
+                    carried_positions=grouped_positions.setdefault(key, {}),
                     require_order_lifecycle=require_order_lifecycle,
                 )
             )
@@ -425,7 +430,9 @@ def _order_lifecycle_blockers(
     if unfilled_order_count > 0:
         blockers.append("unfilled_order_present")
 
-    if not usable_fills or any(row.execution_policy_hash is None for row in usable_fills):
+    if not usable_fills or any(
+        row.execution_policy_hash is None for row in usable_fills
+    ):
         blockers.append("execution_policy_hash_missing")
     if not usable_fills or any(row.cost_model_hash is None for row in usable_fills):
         blockers.append("cost_model_hash_missing")

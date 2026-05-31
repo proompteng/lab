@@ -25,6 +25,8 @@ def _signal(
     rsi14: str | None = None,
     macd_hist: str | None = None,
     microbar_volume: str | None = None,
+    clusterlob_directional_ofi: str | None = None,
+    clusterlob_event_cluster_stability_score: str | None = None,
 ) -> SignalEnvelope:
     price_value = Decimal(price)
     spread_value = Decimal(spread)
@@ -48,6 +50,14 @@ def _signal(
             "macd_hist": Decimal(macd_hist) if macd_hist is not None else None,
             "microbar_volume": Decimal(microbar_volume)
             if microbar_volume is not None
+            else None,
+            "clusterlob_directional_ofi": Decimal(clusterlob_directional_ofi)
+            if clusterlob_directional_ofi is not None
+            else None,
+            "clusterlob_event_cluster_stability_score": Decimal(
+                clusterlob_event_cluster_stability_score
+            )
+            if clusterlob_event_cluster_stability_score is not None
             else None,
         },
     )
@@ -435,6 +445,8 @@ class TestSessionContextTracker(TestCase):
                 rsi14="66",
                 macd_hist="0.040",
                 microbar_volume="1800",
+                clusterlob_directional_ofi="0.12",
+                clusterlob_event_cluster_stability_score="0.71",
             )
         )
         tracker.enrich_signal_payload(
@@ -449,6 +461,8 @@ class TestSessionContextTracker(TestCase):
                 rsi14="38",
                 macd_hist="-0.020",
                 microbar_volume="1100",
+                clusterlob_directional_ofi="-0.04",
+                clusterlob_event_cluster_stability_score="0.65",
             )
         )
 
@@ -464,6 +478,8 @@ class TestSessionContextTracker(TestCase):
                 rsi14="71",
                 macd_hist="0.055",
                 microbar_volume="2100",
+                clusterlob_directional_ofi="0.18",
+                clusterlob_event_cluster_stability_score="0.78",
             )
         )
         loser_payload = tracker.enrich_signal_payload(
@@ -478,6 +494,8 @@ class TestSessionContextTracker(TestCase):
                 rsi14="35",
                 macd_hist="-0.030",
                 microbar_volume="900",
+                clusterlob_directional_ofi="-0.08",
+                clusterlob_event_cluster_stability_score="0.69",
             )
         )
         leader_payload = tracker.enrich_signal_payload(
@@ -492,6 +510,8 @@ class TestSessionContextTracker(TestCase):
                 rsi14="73",
                 macd_hist="0.060",
                 microbar_volume="2400",
+                clusterlob_directional_ofi="0.21",
+                clusterlob_event_cluster_stability_score="0.81",
             )
         )
 
@@ -530,6 +550,10 @@ class TestSessionContextTracker(TestCase):
         self.assertEqual(
             loser_payload["cross_section_microbar_volume_rank"], Decimal("0")
         )
+        self.assertEqual(
+            loser_payload["cross_section_clusterlob_directional_ofi_rank"],
+            Decimal("0"),
+        )
         self.assertLess(
             cast(Decimal, loser_payload["recent_15m_return_bps"]), Decimal("0")
         )
@@ -540,6 +564,20 @@ class TestSessionContextTracker(TestCase):
         )
         self.assertEqual(
             leader_payload["cross_section_microbar_volume_rank"], Decimal("1")
+        )
+        self.assertEqual(
+            leader_payload["cross_section_clusterlob_directional_ofi_rank"],
+            Decimal("1"),
+        )
+        self.assertEqual(
+            leader_payload[
+                "cross_section_clusterlob_directional_ofi_rank_universe_size"
+            ],
+            2,
+        )
+        self.assertEqual(
+            leader_payload["clusterlob_event_cluster_stability_score"],
+            Decimal("0.81"),
         )
         self.assertEqual(
             leader_payload["cross_section_microbar_volume_rank_universe_size"], 2

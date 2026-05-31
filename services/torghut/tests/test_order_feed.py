@@ -1065,6 +1065,52 @@ class TestOrderFeed(TestCase):
         self.assertEqual(source_window.unlinked_execution_count, 1)
         self.assertEqual(source_window.unlinked_decision_count, 1)
 
+    def test_linking_legacy_offset_event_creates_source_window_lineage(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            execution = self._seed_execution(session)
+            execution_id = execution.id
+            trade_decision_id = execution.trade_decision_id
+            linkable_event = ExecutionOrderEvent(
+                event_fingerprint="legacy-fill-linkable-missing-source-window",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=188,
+                alpaca_account_label="paper",
+                event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+                symbol="AAPL",
+                alpaca_order_id=execution.alpaca_order_id,
+                client_order_id=execution.client_order_id,
+                event_type="fill",
+                status="filled",
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("191.25"),
+                raw_event={"event": "fill"},
+            )
+            session.add(linkable_event)
+            session.commit()
+
+            linked = link_order_events_to_execution(session, execution)
+            session.commit()
+            session.refresh(linkable_event)
+            source_window = session.execute(select(OrderFeedSourceWindow)).scalar_one()
+
+        self.assertEqual(linked, 1)
+        self.assertEqual(linkable_event.execution_id, execution_id)
+        self.assertEqual(linkable_event.trade_decision_id, trade_decision_id)
+        self.assertEqual(linkable_event.source_window_id, source_window.id)
+        self.assertEqual(
+            source_window.source_revision,
+            HISTORICAL_ORDER_EVENT_SOURCE_WINDOW_REVISION,
+        )
+        self.assertEqual(source_window.status, "inserted")
+        self.assertEqual(source_window.start_offset, 188)
+        self.assertEqual(source_window.end_offset, 188)
+        self.assertEqual(source_window.inserted_count, 1)
+        self.assertEqual(source_window.unlinked_execution_count, 0)
+        self.assertEqual(source_window.unlinked_decision_count, 0)
+
     def test_historical_source_window_helpers_handle_missing_and_aware_offsets(
         self,
     ) -> None:

@@ -941,6 +941,7 @@ def link_order_events_to_execution(session: Session, execution: Execution) -> in
             changed = True
         if not changed:
             continue
+        _ensure_source_window_for_event(session, event)
         session.add(event)
         _refresh_source_window_linkage_counts(session, event)
         latest_event = event
@@ -997,17 +998,35 @@ def backfill_order_feed_source_windows(
         "events_linked": 0,
     }
     for event in events:
-        source_window = _find_existing_source_window_for_event(session, event)
+        source_window, created = _ensure_source_window_for_event(session, event)
         if source_window is None:
-            source_window = _create_historical_source_window_for_event(session, event)
+            continue
+        if created:
             counters["source_windows_created"] += 1
         else:
             counters["source_windows_reused"] += 1
-        event.source_window_id = source_window.id
         session.add(event)
         _refresh_source_window_linkage_counts(session, event)
         counters["events_linked"] += 1
     return counters
+
+
+def _ensure_source_window_for_event(
+    session: Session,
+    event: ExecutionOrderEvent,
+) -> tuple[OrderFeedSourceWindow | None, bool]:
+    if event.source_window_id is not None:
+        source_window = session.get(OrderFeedSourceWindow, event.source_window_id)
+        return source_window, False
+    if event.source_partition is None or event.source_offset is None:
+        return None, False
+    source_window = _find_existing_source_window_for_event(session, event)
+    created = False
+    if source_window is None:
+        source_window = _create_historical_source_window_for_event(session, event)
+        created = True
+    event.source_window_id = source_window.id
+    return source_window, created
 
 
 def _resolve_execution(
