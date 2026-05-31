@@ -481,6 +481,7 @@ class TestLiveConfigManifestContract(TestCase):
                 )
                 self.assertEqual(params.get("entry_minute_after_open"), "60")
                 self.assertEqual(params.get("exit_minute_after_open"), "120")
+                self.assertEqual(params.get("session_flatten_start_minute_utc"), "1170")
                 self.assertEqual(params.get("long_stop_loss_bps"), "10")
                 self.assertEqual(
                     params.get("long_trailing_stop_activation_profit_bps"), "8"
