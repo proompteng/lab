@@ -1699,6 +1699,28 @@ class SimpleTradingPipeline(TradingPipeline):
         decision, snapshot = self._ensure_decision_price(
             decision, signal_price=decision.params.get("price")
         )
+        proof_floor = self._profitability_proof_floor(session=session)
+        proof_floor_block_reason = self._proof_floor_submission_block_reason(
+            proof_floor
+        )
+        if (
+            proof_floor_block_reason is not None
+            and settings.trading_mode == "paper"
+            and self._paper_route_probe_exit_metadata(decision) is None
+            and _paper_route_probe_entry_metadata(decision.params) is None
+        ):
+            probe_context = self._paper_route_probe_context(
+                proof_floor=proof_floor,
+                decision=decision,
+                strategy=strategy,
+            )
+            capped_decision = self._paper_route_probe_capped_decision(
+                decision=decision,
+                proof_floor=proof_floor,
+                context=probe_context or {},
+            )
+            if capped_decision is not None:
+                decision = capped_decision
         max_notional_per_order = _min_optional_decimal(
             _optional_decimal(settings.trading_simple_max_notional_per_order),
             _optional_decimal(settings.trading_max_notional_per_trade),
@@ -1730,22 +1752,25 @@ class SimpleTradingPipeline(TradingPipeline):
             )
             or Decimal("0"),
         )
-        self.executor.sync_decision_state(session, decision_row, preparation.decision)
+        prepared_decision = self._align_prechecked_paper_route_probe_cap(
+            preparation.decision
+        )
+        self.executor.sync_decision_state(session, decision_row, prepared_decision)
         if preparation.diagnostics:
-            params_update = dict(preparation.decision.params)
+            params_update = dict(prepared_decision.params)
             params_update["simple_lane_precheck"] = preparation.diagnostics
             self.executor.update_decision_params(session, decision_row, params_update)
         if not preparation.approved or preparation.reject_reason is not None:
             reason = preparation.reject_reason or "broker_precheck_failed"
             self._record_decision_rejection(
                 session=session,
-                decision=preparation.decision,
+                decision=prepared_decision,
                 decision_row=decision_row,
                 reasons=[reason],
                 log_template="Simple-lane decision rejected strategy_id=%s symbol=%s reason=%s",
             )
             return None
-        return preparation.decision, snapshot
+        return prepared_decision, snapshot
 
     def _passes_risk_verdict(
         self,
@@ -2951,26 +2976,24 @@ class SimpleTradingPipeline(TradingPipeline):
         )
         return decision_row
 
-    def _apply_paper_route_probe_cap(
+    def _paper_route_probe_capped_decision(
         self,
         *,
-        session: Session,
         decision: StrategyDecision,
-        decision_row: TradeDecision,
         proof_floor: Mapping[str, object],
         context: Mapping[str, object],
-    ) -> bool:
+    ) -> StrategyDecision | None:
         cap = _optional_decimal(context.get("max_notional"))
         price = self._paper_route_probe_reference_price(decision)
         if cap is None or cap <= 0 or price is None or price <= 0:
-            return False
+            return None
 
         capped_qty = (cap / price).quantize(
             _PAPER_ROUTE_PROBE_QTY_STEP,
             rounding=ROUND_DOWN,
         )
         if capped_qty <= 0:
-            return False
+            return None
         target_source_authorized = bool(context.get("target_source_authorized"))
         if decision.qty > 0 and not target_source_authorized:
             capped_qty = min(decision.qty, capped_qty)
@@ -2992,19 +3015,36 @@ class SimpleTradingPipeline(TradingPipeline):
             "capital_stage": str(proof_floor.get("capital_state") or "zero_notional"),
             "target_source_notional_sized": target_source_authorized,
         }
-        decision.qty = capped_qty
-        decision.params = params
-        self.executor.sync_decision_state(session, decision_row, decision)
-        self.executor.update_decision_params(session, decision_row, params)
-        logger.warning(
-            "Allowing bounded paper route-acquisition probe strategy_id=%s symbol=%s qty=%s notional=%s reasons=%s",
-            decision.strategy_id,
-            decision.symbol,
-            capped_qty,
-            capped_notional,
-            ",".join(cast(list[str], context.get("blocking_reasons") or [])),
-        )
-        return True
+        return decision.model_copy(update={"qty": capped_qty, "params": params})
+
+    def _align_prechecked_paper_route_probe_cap(
+        self,
+        decision: StrategyDecision,
+    ) -> StrategyDecision:
+        metadata = _paper_route_probe_entry_metadata(decision.params)
+        if metadata is None:
+            return decision
+        price = self._paper_route_probe_reference_price(decision)
+        if price is None or price <= 0:
+            return decision
+
+        notional = decision.qty * price
+        params = dict(decision.params)
+        simple_lane = dict(cast(Mapping[str, Any], params.get("simple_lane") or {}))
+        simple_lane["final_qty"] = str(decision.qty)
+        simple_lane["notional"] = str(notional)
+        simple_lane["paper_route_probe_cap_applied"] = True
+        if bool(metadata.get("target_source_authorized")):
+            simple_lane["target_source_notional_sized"] = True
+
+        probe_metadata = dict(metadata)
+        probe_metadata["reference_price"] = str(price)
+        probe_metadata["capped_qty"] = str(decision.qty)
+        probe_metadata["capped_notional"] = str(notional)
+
+        params["simple_lane"] = simple_lane
+        params["paper_route_probe"] = probe_metadata
+        return decision.model_copy(update={"params": params})
 
     @staticmethod
     def _proof_floor_symbol_block_reason(
@@ -3070,27 +3110,12 @@ class SimpleTradingPipeline(TradingPipeline):
         if proof_floor_block_reason is not None:
             if (
                 settings.trading_mode == "paper"
-                and self._paper_route_probe_exit_metadata(decision) is not None
+                and (
+                    self._paper_route_probe_exit_metadata(decision) is not None
+                    or _paper_route_probe_entry_metadata(decision.params) is not None
+                )
             ):
                 paper_route_probe_applied = True
-            else:
-                strategy = self._paper_route_probe_strategy(
-                    session=session,
-                    decision=decision,
-                )
-                probe_context = self._paper_route_probe_context(
-                    proof_floor=proof_floor,
-                    decision=decision,
-                    strategy=strategy,
-                )
-                if probe_context is not None and self._apply_paper_route_probe_cap(
-                    session=session,
-                    decision=decision,
-                    decision_row=decision_row,
-                    proof_floor=proof_floor,
-                    context=probe_context,
-                ):
-                    paper_route_probe_applied = True
             if not paper_route_probe_applied:
                 self._block_decision_submission(
                     session=session,
