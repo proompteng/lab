@@ -116,7 +116,7 @@ const DEFAULT_CODE_SEARCH_SEMANTIC_CANDIDATE_LIMIT = 100
 const DEFAULT_CODE_SEARCH_SEMANTIC_CANDIDATE_LIMIT_CAP = 500
 const DEFAULT_CODE_SEARCH_SEMANTIC_CANDIDATE_MULTIPLIER = 20
 const MAX_CODE_SEARCH_SEMANTIC_CANDIDATE_LIMIT = 50_000
-const DEFAULT_CODE_SEARCH_HEALTH_SAMPLE_LIMIT = 500
+const DEFAULT_CODE_SEARCH_HEALTH_SAMPLE_LIMIT = 50
 const MAX_CODE_SEARCH_HEALTH_SAMPLE_LIMIT = 5_000
 const DEFAULT_MIN_SEMANTIC_COVERAGE = 0.95
 
@@ -193,7 +193,12 @@ const normalizeCoverageThreshold = (value: number | undefined) => {
 }
 
 const normalizeHealthSampleLimit = (value: number | undefined) => {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_CODE_SEARCH_HEALTH_SAMPLE_LIMIT
+  const defaultLimit = parsePositiveIntEnv(
+    'ATLAS_CODE_SEARCH_HEALTH_SAMPLE_LIMIT',
+    DEFAULT_CODE_SEARCH_HEALTH_SAMPLE_LIMIT,
+    MAX_CODE_SEARCH_HEALTH_SAMPLE_LIMIT,
+  )
+  if (typeof value !== 'number' || !Number.isFinite(value)) return defaultLimit
   return Math.max(1, Math.min(MAX_CODE_SEARCH_HEALTH_SAMPLE_LIMIT, Math.floor(value)))
 }
 
