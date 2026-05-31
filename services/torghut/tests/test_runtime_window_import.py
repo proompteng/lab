@@ -804,6 +804,88 @@ class TestRuntimeWindowImport(TestCase):
         self.assertEqual(decisions[0].allowed, False)
         self.assertEqual(decisions[0].state, "shadow")
 
+    def test_persist_observed_runtime_windows_replaces_overlapping_ledger_buckets(
+        self,
+    ) -> None:
+        def buckets_for(net_pnl: str):
+            return build_observed_runtime_buckets(
+                bucket_ranges=[
+                    (
+                        datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                        datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                        6,
+                    )
+                ],
+                decision_times=[datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)],
+                execution_times=[datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc)],
+                tca_rows=[
+                    {
+                        "computed_at": datetime(
+                            2026, 3, 6, 14, 36, tzinfo=timezone.utc
+                        ),
+                        "abs_slippage_bps": Decimal("1"),
+                        "post_cost_expectancy_bps": Decimal("40"),
+                        "runtime_ledger_bucket": _runtime_ledger_bucket(
+                            bucket_started_at="2026-03-06T14:35:00+00:00",
+                            bucket_ended_at="2026-03-06T14:36:00+00:00",
+                            account_label="TORGHUT_SIM",
+                            strategy_id="microbar-cross-sectional-pairs-v1",
+                            net_strategy_pnl_after_costs=net_pnl,
+                        ),
+                        **_runtime_pnl_basis(),
+                    }
+                ],
+                continuity_ok=True,
+                drift_ok=True,
+                dependency_quorum_decision="allow",
+            )
+
+        with self.session_local() as session:
+            old_summary = persist_observed_runtime_windows(
+                session=session,
+                run_id="import-live-dedupe-old",
+                candidate_id="cand-dedupe",
+                hypothesis_id="H-PAIRS-01",
+                observed_stage="paper",
+                strategy_family="microbar_cross_sectional_pairs",
+                source_manifest_ref="config/trading/hypotheses/h-pairs-01.json",
+                buckets=buckets_for("0.80"),
+                runtime_observation_payload={
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_name": "microbar-cross-sectional-pairs-v1",
+                },
+            )
+            new_summary = persist_observed_runtime_windows(
+                session=session,
+                run_id="import-live-dedupe-new",
+                candidate_id="cand-dedupe",
+                hypothesis_id="H-PAIRS-01",
+                observed_stage="paper",
+                strategy_family="microbar_cross_sectional_pairs",
+                source_manifest_ref="config/trading/hypotheses/h-pairs-01.json",
+                buckets=buckets_for("1.25"),
+                runtime_observation_payload={
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_name": "microbar-cross-sectional-pairs-v1",
+                },
+            )
+            session.commit()
+            ledger_rows = (
+                session.execute(
+                    select(StrategyRuntimeLedgerBucket).order_by(
+                        StrategyRuntimeLedgerBucket.created_at
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+        self.assertEqual(old_summary["replaced_runtime_ledger_bucket_count"], 0)
+        self.assertEqual(new_summary["replaced_runtime_ledger_bucket_count"], 1)
+        self.assertEqual(len(ledger_rows), 1)
+        self.assertEqual(ledger_rows[0].run_id, "import-live-dedupe-new")
+        self.assertEqual(ledger_rows[0].net_strategy_pnl_after_costs, Decimal("1.25"))
+
     def test_persist_observed_runtime_windows_uses_notional_weighted_ledger_summary(
         self,
     ) -> None:
