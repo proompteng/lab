@@ -78,6 +78,50 @@ def _promotion_decision(
     )
 
 
+def _runtime_ledger_source_authority_payload(
+    *,
+    cost_basis: str | None = 'alpaca_2026_equity_fee_schedule',
+    cost_basis_counts: dict[str, int] | None = None,
+    extra: dict[str, object] | None = None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        'source': 'runtime-order-feed',
+        'source_window_start': '2026-03-06T14:30:00+00:00',
+        'source_window_end': '2026-03-06T15:00:00+00:00',
+        'source_refs': [
+            'postgres:trade_decisions',
+            'postgres:executions',
+            'postgres:execution_order_events',
+            'postgres:order_feed_source_windows',
+        ],
+        'source_row_counts': {
+            'trade_decisions': 24,
+            'executions': 12,
+            'execution_order_events': 12,
+            'order_feed_source_windows': 12,
+        },
+        'source_window_ids': ['source-window-1'],
+        'trade_decision_ids': ['trade-decision-1'],
+        'execution_ids': ['execution-1'],
+        'execution_order_event_ids': ['execution-order-event-1'],
+        'source_offsets': [
+            {
+                'topic': 'torghut.trade-updates.v2',
+                'partition': 0,
+                'offset': 42,
+            }
+        ],
+        'source_materialization': 'execution_order_events',
+        'authority_class': 'runtime_order_feed_execution_source',
+    }
+    if cost_basis is not None:
+        payload['cost_basis'] = cost_basis
+        payload['cost_basis_counts'] = cost_basis_counts or {cost_basis: 12}
+    if extra:
+        payload.update(extra)
+    return payload
+
+
 def _runtime_ledger_bucket(
     *,
     run_id: str,
@@ -117,7 +161,7 @@ def _runtime_ledger_bucket(
         cost_model_hash_counts={'cost-hash': 12},
         lineage_hash_counts={'lineage-hash': 12},
         blockers_json=[],
-        payload_json=payload_json or {'source': 'test-runtime-ledger'},
+        payload_json=_runtime_ledger_source_authority_payload() if payload_json is None else payload_json,
     )
 
 
@@ -638,10 +682,9 @@ class TestCompletionTrace(TestCase):
                         run_id=run_id,
                         bucket_started_at=live_window_start,
                         bucket_ended_at=live_window_end,
-                        payload_json={
-                            'source': 'test-runtime-ledger',
-                            'runtime_ledger_daily_summary': runtime_daily_summary,
-                        },
+                        payload_json=_runtime_ledger_source_authority_payload(
+                            extra={'runtime_ledger_daily_summary': runtime_daily_summary}
+                        ),
                     )
                 )
             session.commit()
@@ -806,6 +849,73 @@ class TestCompletionTrace(TestCase):
         self.assertEqual(backed_windows, [window])
         self.assertEqual(matched_buckets, [exact])
         self.assertEqual(unbacked_window_refs, [])
+
+    def test_runtime_ledger_window_refs_reject_legacy_aggregate_only_bucket(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc)
+        with self.session_local() as session:
+            window = StrategyHypothesisMetricWindow(
+                run_id='legacy-aggregate-run',
+                candidate_id='cand-1',
+                hypothesis_id='legacy_macd_rsi',
+                observed_stage='live',
+                window_started_at=window_start,
+                window_ended_at=window_end,
+            )
+            source_less = _runtime_ledger_bucket(
+                run_id='legacy-aggregate-run',
+                bucket_started_at=window_start,
+                bucket_ended_at=window_end,
+                payload_json={'source': 'legacy-aggregate-runtime-ledger'},
+            )
+            session.add_all([window, source_less])
+            session.commit()
+
+            backed_windows, matched_buckets, unbacked_window_refs = _runtime_ledger_bucket_refs_for_windows(
+                session,
+                [window],
+            )
+
+        self.assertEqual(backed_windows, [])
+        self.assertEqual(matched_buckets, [])
+        self.assertEqual(unbacked_window_refs, [str(window.id)])
+
+    def test_runtime_ledger_window_refs_reject_non_promotion_cost_basis(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc)
+        with self.session_local() as session:
+            window = StrategyHypothesisMetricWindow(
+                run_id='modeled-cost-run',
+                candidate_id='cand-1',
+                hypothesis_id='legacy_macd_rsi',
+                observed_stage='live',
+                window_started_at=window_start,
+                window_ended_at=window_end,
+            )
+            modeled_cost = _runtime_ledger_bucket(
+                run_id='modeled-cost-run',
+                bucket_started_at=window_start,
+                bucket_ended_at=window_end,
+                payload_json=_runtime_ledger_source_authority_payload(
+                    cost_basis='modeled_paper_cost_budget',
+                    cost_basis_counts={'modeled_paper_cost_budget': 12},
+                ),
+            )
+            session.add_all([window, modeled_cost])
+            session.commit()
+
+            backed_windows, matched_buckets, unbacked_window_refs = _runtime_ledger_bucket_refs_for_windows(
+                session,
+                [window],
+            )
+
+        self.assertEqual(backed_windows, [])
+        self.assertEqual(matched_buckets, [])
+        self.assertEqual(unbacked_window_refs, [str(window.id)])
 
     def test_doc29_live_scale_blocks_non_runtime_ledger_window_pnl(self) -> None:
         trace = build_completion_trace(
