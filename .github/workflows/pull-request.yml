@@ -23,6 +23,7 @@ jobs:
       app: ${{ steps.filter.outputs.app }}
       cms: ${{ steps.filter.outputs.cms }}
       docs: ${{ steps.filter.outputs.docs }}
+      olden: ${{ steps.filter.outputs.olden }}
       kitty-krew: ${{ steps.filter.outputs.kitty-krew }}
       reviseur: ${{ steps.filter.outputs.reviseur }}
       bonjour: ${{ steps.filter.outputs.bonjour }}
@@ -70,6 +71,7 @@ jobs:
           output_flag cms '^apps/cms/'
           output_flag bonjour '^services/bonjour/'
           output_flag docs '^apps/docs/'
+          output_flag olden '^apps/olden/'
           output_flag kitty-krew '^apps/kitty-krew/'
           output_flag reviseur '^apps/reviseur/'
           output_flag codex '^packages/codex/'
@@ -121,6 +123,55 @@ jobs:
         run: bun run --cwd apps/docs lint:oxlint:type
 
       - run: bun run --filter docs build
+
+  olden:
+    needs: check_changed_files
+    if: ${{ needs.check_changed_files.outputs.olden == 'true' }}
+    runs-on: arc-arm64
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/apps/olden/.next/cache
+          key: ${{ runner.os }}-nextjs-olden-${{ hashFiles('**/bun.lock') }}-${{ hashFiles('apps/olden/**/*.[jt]s?(x)', 'packages/**/*.[jt]s?(x)') }}
+          restore-keys: |
+            ${{ runner.os }}-nextjs-olden-${{ hashFiles('**/bun.lock') }}-
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.11.1
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-1.3.14-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-1.3.14-
+
+      - run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter olden --filter @proompteng/design
+
+      - name: Oxlint (non-blocking)
+        continue-on-error: true
+        run: bun run --cwd apps/olden lint:oxlint
+
+      - name: Oxlint (type-aware, non-blocking)
+        continue-on-error: true
+        run: bun run --cwd apps/olden lint:oxlint:type
+
+      - run: bun run --filter olden test
+
+      - run: bun run --filter olden build
 
   proompteng:
     needs: check_changed_files

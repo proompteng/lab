@@ -1,6 +1,6 @@
 # Release Branch Auto-PR Workflow
 
-This workflow opens pull requests whenever Argo CD Image Updater commits to a `release/<app>` branch or when a maintainer triggers the `workflow_dispatch` input. The automation relies on standard GitHub Actions branching semantics and the release workflow documented in GitHub’s [manual dispatch guide](https://docs.github.com/actions/using-workflows/events-that-trigger-workflows#workflow_dispatch).
+This workflow opens pull requests whenever Argo CD Image Updater commits to a `release/<sha256>` branch or when a maintainer triggers the `workflow_dispatch` input. The automation relies on standard GitHub Actions branching semantics and the release workflow documented in GitHub’s [manual dispatch guide](https://docs.github.com/actions/using-workflows/events-that-trigger-workflows#workflow_dispatch).
 
 ## Release PR Automerge
 
@@ -14,7 +14,12 @@ PRs created from release branches can be auto-merged by [`.github/workflows/rele
 - Label `do-not-automerge` is not present.
 - All changed files are allowlisted release artifacts (currently:
   - `argocd/applications/proompteng/kustomization.yaml`
+  - `argocd/applications/synthesis/kustomization.yaml`
+  - `argocd/applications/bumba/kustomization.yaml`
+  - `argocd/applications/khoshut/kustomization.yaml`
+  - `argocd/applications/analysis/kustomization.yaml`
   - `argocd/applications/bilig/kustomization.yaml`
+  - `argocd/applications/olden/kustomization.yaml`
     ).
 
 The workflow enables squash auto-merge (`gh pr merge --auto --squash`) only after all eligibility checks pass. GitHub still enforces required checks and merge rules before the merge actually executes.
@@ -29,11 +34,10 @@ The workflow enables squash auto-merge (`gh pr merge --auto --squash`) only afte
 
 ## Enrolling a New Application
 
-1. Configure the application's Argo CD manifests with the Image Updater annotations that target a `release/<app>` branch.
-2. Update [`.github/workflows/auto-pr-release-branches.yml`](../.github/workflows/auto-pr-release-branches.yml):
-   - Add the application name to the `workflow_dispatch.inputs.app.options` list so the manual release action can target it.
-   - Confirm any branch-specific logic in the shell script recognizes the new branch (most simply follow the `release/<app>` naming convention).
-3. Push a change to the `release/<app>` branch (or trigger the workflow manually) to verify that a pull request is created.
+1. Add the app to the `product-image-updater` ImageUpdater resource with a `writeBackTarget` that points at its Kustomize directory.
+2. Confirm [`.github/workflows/auto-pr-release-branches.yml`](../.github/workflows/auto-pr-release-branches.yml) still watches `release/**` branches and `argocd/applications/*/kustomization.yaml`.
+3. Add the app Kustomization file to the allowlist in [`.github/workflows/release-pr-automerge.yml`](../.github/workflows/release-pr-automerge.yml) if its release PRs should auto-merge.
+4. Push an Image Updater-style change to a `release/<sha256>` branch or trigger the workflow manually with `head_branch=release/<sha256>` to verify that a pull request is created.
 
 ## Enabling Docker Image Publishing
 
