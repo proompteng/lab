@@ -94,6 +94,8 @@ ORDER_FEED_FILL_LIFECYCLE_ORDER_ID_MISSING_BLOCKER = (
 ORDER_FEED_UNLINKED_FILL_LIFECYCLE_PRESENT_BLOCKER = (
     "order_feed_unlinked_fill_lifecycle_present"
 )
+ORDER_FEED_FILL_DELTA_BASIS_MISSING_BLOCKER = "order_feed_fill_delta_basis_missing"
+ORDER_FEED_FILL_DELTA_MISSING_BLOCKER = "order_feed_fill_delta_missing"
 _RUNTIME_LIFECYCLE_IDENTIFIER_KEYS = (
     "execution_id",
     "trade_decision_id",
@@ -1296,6 +1298,37 @@ def _execution_query_row_has_time(row: Sequence[object]) -> bool:
 
 
 def _order_lifecycle_query_row(row: Sequence[object]) -> dict[str, object]:
+    if len(row) >= 28:
+        return {
+            "execution_order_event_id": str(row[0]),
+            "trade_decision_id": str(row[1]),
+            "execution_id": str(row[2]) if row[2] is not None else None,
+            "event_ts": row[3],
+            "symbol": row[4],
+            "account_label": row[5],
+            "strategy_id": row[6],
+            "decision_hash": row[7],
+            "decision_json": row[8],
+            "alpaca_order_id": row[9],
+            "client_order_id": row[10],
+            "event_type": row[11],
+            "order_status": row[12],
+            "side": row[13],
+            "qty": row[14],
+            "filled_qty": row[15],
+            "filled_qty_delta": row[16],
+            "avg_fill_price": row[17],
+            "filled_notional_delta": row[18],
+            "fill_quantity_basis": row[19],
+            "event_fingerprint": row[20],
+            "source_topic": row[21],
+            "source_partition": row[22],
+            "source_offset": row[23],
+            "source_window_id": str(row[24]) if row[24] is not None else None,
+            "raw_event": row[25],
+            "execution_audit_json": row[26],
+            "raw_order": row[27],
+        }
     if len(row) >= 25:
         return {
             "execution_order_event_id": str(row[0]),
@@ -2125,6 +2158,14 @@ def _runtime_lifecycle_ledger_row(
     }
     if event_type in _RUNTIME_LEDGER_FILL_EVENTS:
         side = _first_text(row, "side", "action", "order_side")
+        source_authority_order_event = _source_authority_order_event_row(row)
+        fill_quantity_basis = _fill_quantity_basis(row)
+        filled_qty_delta = _first_positive_decimal(
+            row,
+            "filled_qty_delta",
+            "fill_qty_delta",
+            "delta_filled_qty",
+        )
         filled_qty = _first_positive_decimal(
             row,
             "filled_qty",
@@ -2142,12 +2183,34 @@ def _runtime_lifecycle_ledger_row(
             "filled_price",
             "price",
         )
+        if (
+            source_authority_order_event
+            and fill_quantity_basis in {"delta", "cumulative_to_delta"}
+            and filled_qty_delta is not None
+        ):
+            filled_qty = filled_qty_delta
         filled_notional = _first_positive_decimal(
             row,
+            "filled_notional_delta",
+            "fill_notional_delta",
+            "delta_filled_notional",
             "filled_notional",
             "notional",
             "fill_notional",
         )
+        if source_authority_order_event and fill_quantity_basis not in {
+            "delta",
+            "cumulative_to_delta",
+        }:
+            filled_qty = None
+            filled_notional = None
+        elif (
+            source_authority_order_event
+            and fill_quantity_basis in {"delta", "cumulative_to_delta"}
+            and filled_qty_delta is None
+        ):
+            filled_qty = None
+            filled_notional = None
         if (
             filled_notional is None
             and filled_qty is not None
@@ -2192,6 +2255,18 @@ def _runtime_lifecycle_ledger_row(
             ledger_row["avg_fill_price"] = avg_fill_price
         if filled_notional is not None:
             ledger_row["filled_notional"] = filled_notional
+        if filled_qty_delta is not None:
+            ledger_row["filled_qty_delta"] = filled_qty_delta
+        filled_notional_delta = _first_positive_decimal(
+            row,
+            "filled_notional_delta",
+            "fill_notional_delta",
+            "delta_filled_notional",
+        )
+        if filled_notional_delta is not None:
+            ledger_row["filled_notional_delta"] = filled_notional_delta
+        if fill_quantity_basis is not None:
+            ledger_row["fill_quantity_basis"] = fill_quantity_basis
         if cost_amount is not None:
             ledger_row["cost_amount"] = cost_amount
         if cost_basis is not None:
@@ -2309,9 +2384,8 @@ def _order_feed_fill_lifecycle_blockers(
 
     observed_fill_order_ids: set[str] = set()
     for row in order_lifecycle_rows or []:
-        event_type = _runtime_ledger_event_type(
-            {str(key): value for key, value in row.items()}
-        )
+        normalized = {str(key): value for key, value in row.items()}
+        event_type = _runtime_ledger_event_type(normalized)
         if event_type not in _RUNTIME_LEDGER_FILL_EVENTS:
             continue
         order_id = _runtime_order_id(row)
@@ -2333,6 +2407,52 @@ def _order_feed_fill_lifecycle_blockers(
     elif expected_order_ids - observed_fill_order_ids:
         blockers.append(ORDER_FEED_FILL_LIFECYCLE_INCOMPLETE_BLOCKER)
     return blockers
+
+
+def _source_authority_order_event_row(row: Mapping[str, object]) -> bool:
+    return any(
+        row.get(key) is not None
+        for key in (
+            "execution_order_event_id",
+            "source_window_id",
+            "source_offset",
+        )
+    )
+
+
+def _fill_quantity_basis(row: Mapping[str, object]) -> str | None:
+    raw = _first_text(row, "fill_quantity_basis", "quantity_basis")
+    if raw is None:
+        return None
+    normalized = raw.strip().lower().replace("-", "_").replace(" ", "_")
+    if normalized in {"delta", "fill_delta", "filled_delta"}:
+        return "delta"
+    if normalized in {"cumulative_to_delta", "cumulative_delta", "cum_to_delta"}:
+        return "cumulative_to_delta"
+    if normalized in {"cumulative", "cum"}:
+        return "cumulative"
+    if normalized in {"unknown", "cumulative_non_increasing"}:
+        return normalized
+    return normalized or None
+
+
+def _order_feed_fill_delta_blockers(row: Mapping[str, object]) -> list[str]:
+    if not _source_authority_order_event_row(row):
+        return []
+    basis = _fill_quantity_basis(row)
+    if basis not in {"delta", "cumulative_to_delta"}:
+        return [ORDER_FEED_FILL_DELTA_BASIS_MISSING_BLOCKER]
+    if (
+        _first_positive_decimal(
+            row,
+            "filled_qty_delta",
+            "fill_qty_delta",
+            "delta_filled_qty",
+        )
+        is None
+    ):
+        return [ORDER_FEED_FILL_DELTA_MISSING_BLOCKER]
+    return []
 
 
 def _runtime_source_row_symbol(row: Mapping[str, object]) -> str | None:
@@ -4355,7 +4475,10 @@ def _query_timestamps(
                     e.side,
                     oe.qty,
                     oe.filled_qty,
+                    oe.filled_qty_delta,
                     oe.avg_fill_price,
+                    oe.filled_notional_delta,
+                    oe.fill_quantity_basis,
                     oe.event_fingerprint,
                     oe.source_topic,
                     oe.source_partition,
@@ -4650,7 +4773,10 @@ def _query_timestamps(
                         e.side,
                         oe.qty,
                         oe.filled_qty,
+                        oe.filled_qty_delta,
                         oe.avg_fill_price,
+                        oe.filled_notional_delta,
+                        oe.fill_quantity_basis,
                         oe.event_fingerprint,
                         oe.source_topic,
                         oe.source_partition,
@@ -4785,7 +4911,10 @@ def _query_timestamps(
                         e.side,
                         oe.qty,
                         oe.filled_qty,
+                        oe.filled_qty_delta,
                         oe.avg_fill_price,
+                        oe.filled_notional_delta,
+                        oe.fill_quantity_basis,
                         oe.event_fingerprint,
                         oe.source_topic,
                         oe.source_partition,
