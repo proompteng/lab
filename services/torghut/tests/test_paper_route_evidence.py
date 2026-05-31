@@ -3555,47 +3555,56 @@ class TestPaperRouteEvidenceAudit(TestCase):
             )
             session.commit()
 
+            live_submission_gate = {
+                "allowed": False,
+                "reason": "paper_route_probe_only",
+                "blocked_reasons": [],
+                "runtime_ledger_paper_probation_import_plan": {
+                    "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                    "target_count": "1",
+                    "targets": [
+                        {
+                            "hypothesis_id": "H-CONTAMINATION",
+                            "candidate_id": "candidate-contamination",
+                            "observed_stage": "paper",
+                            "strategy_family": "microbar_pairs",
+                            "strategy_name": "contamination-proof-strategy",
+                            "strategy_id": "contamination_proof_strategy@research",
+                            "account_label": "TORGHUT_SIM",
+                            "source_kind": "paper_route_probe_runtime_observed",
+                            "source_manifest_ref": "config/trading/hypotheses/h-contamination.json",
+                            "window_start": window_start.isoformat(),
+                            "window_end": window_end.isoformat(),
+                            "paper_probation_authorized": True,
+                        }
+                    ],
+                },
+            }
+            route_reacquisition_book = {
+                "schema_version": "torghut.route-reacquisition-book.v1",
+                "state": "repair_only",
+                "summary": {
+                    "paper_route_probe_eligible_symbols": ["AAPL"],
+                    "paper_route_probe_active_symbols": ["AAPL"],
+                },
+                "paper_route_probe": {
+                    "configured_enabled": True,
+                    "active": True,
+                    "effective_max_notional": 25,
+                    "next_session_max_notional": 25,
+                },
+            }
+
             payload = build_paper_route_evidence_audit(
                 session,
-                live_submission_gate={
-                    "allowed": False,
-                    "reason": "paper_route_probe_only",
-                    "blocked_reasons": [],
-                    "runtime_ledger_paper_probation_import_plan": {
-                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
-                        "target_count": "1",
-                        "targets": [
-                            {
-                                "hypothesis_id": "H-CONTAMINATION",
-                                "candidate_id": "candidate-contamination",
-                                "observed_stage": "paper",
-                                "strategy_family": "microbar_pairs",
-                                "strategy_name": "contamination-proof-strategy",
-                                "strategy_id": "contamination_proof_strategy@research",
-                                "account_label": "TORGHUT_SIM",
-                                "source_kind": "paper_route_probe_runtime_observed",
-                                "source_manifest_ref": "config/trading/hypotheses/h-contamination.json",
-                                "window_start": window_start.isoformat(),
-                                "window_end": window_end.isoformat(),
-                                "paper_probation_authorized": True,
-                            }
-                        ],
-                    },
-                },
-                route_reacquisition_book={
-                    "schema_version": "torghut.route-reacquisition-book.v1",
-                    "state": "repair_only",
-                    "summary": {
-                        "paper_route_probe_eligible_symbols": ["AAPL"],
-                        "paper_route_probe_active_symbols": ["AAPL"],
-                    },
-                    "paper_route_probe": {
-                        "configured_enabled": True,
-                        "active": True,
-                        "effective_max_notional": 25,
-                        "next_session_max_notional": 25,
-                    },
-                },
+                live_submission_gate=live_submission_gate,
+                route_reacquisition_book=route_reacquisition_book,
+                generated_at=now,
+            )
+            target_plan_payload = build_paper_route_target_plan_payload(
+                session,
+                live_submission_gate=live_submission_gate,
+                route_reacquisition_book=route_reacquisition_book,
                 generated_at=now,
             )
 
@@ -3625,6 +3634,15 @@ class TestPaperRouteEvidenceAudit(TestCase):
                 "client_order_id_count"
             ],
             1,
+        )
+        target_plan_import_audit = target_plan_payload["runtime_window_import_audit"]
+        self.assertEqual(
+            target_plan_import_audit["state"],
+            "import_due_account_contamination_detected",
+        )
+        self.assertIn(
+            "unlinked_order_events_present",
+            target_plan_payload["summary"]["runtime_window_import_audit_blockers"],
         )
 
     def test_account_window_start_positions_block_runtime_window_import(
