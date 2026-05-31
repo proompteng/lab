@@ -29,12 +29,19 @@ const MCP_SESSION_HEADER = 'Mcp-Session-Id'
 const MCP_PROTOCOL_VERSION = '2024-11-05'
 const MCP_SERVER_INFO = { name: 'jangar-atlas', version: '0.1.0' } as const
 
+const headersToRecord = (headers?: HeadersInit) => {
+  if (!headers) return {}
+  if (headers instanceof Headers) return Object.fromEntries(headers.entries())
+  if (Array.isArray(headers)) return Object.fromEntries(headers)
+  return headers
+}
+
 const jsonResponse = (payload: unknown, init: ResponseInit = {}) =>
   new Response(JSON.stringify(payload), {
     ...init,
     headers: {
       'content-type': 'application/json',
-      ...init.headers,
+      ...headersToRecord(init.headers),
     },
   })
 
@@ -49,7 +56,7 @@ const withMcpSessionHeaders = (request: Request, init: ResponseInit = {}): Respo
   return {
     ...init,
     headers: {
-      ...init.headers,
+      ...headersToRecord(init.headers),
       [MCP_SESSION_HEADER]: sessionId,
     },
   }
@@ -114,6 +121,22 @@ const toolsListResult = {
           ref: { type: 'string', description: 'Filter by repository ref.' },
           pathPrefix: { type: 'string', description: 'Filter by file path prefix.' },
           language: { type: 'string', description: 'Filter by language (e.g. typescript, go).' },
+          requireSemanticCoverage: {
+            type: 'boolean',
+            description: 'Fail the request when sampled chunk embedding coverage is below the threshold.',
+          },
+          minSemanticCoverage: {
+            type: 'number',
+            description: 'Minimum sampled chunk embedding coverage required when gating is enabled.',
+            minimum: 0,
+            maximum: 1,
+          },
+          healthSampleLimit: {
+            type: 'integer',
+            description: 'Number of latest chunks to sample for semantic coverage health.',
+            minimum: 1,
+            maximum: 5000,
+          },
         },
         required: ['query'],
         additionalProperties: false,
@@ -345,6 +368,28 @@ const handleJsonRpcMessageEffect = (request: Request, raw: unknown) =>
             return invalidParams(id, parsed.message)
           }
 
+          const healthResult = yield* Effect.either(
+            atlas.codeSearchHealth({
+              repository: parsed.value.repository,
+              ref: parsed.value.ref,
+              pathPrefix: parsed.value.pathPrefix,
+              language: parsed.value.language,
+              minSemanticCoverage: parsed.value.minSemanticCoverage,
+              healthSampleLimit: parsed.value.healthSampleLimit,
+            }),
+          )
+          if (healthResult._tag === 'Left') {
+            if (isNotification) return null
+            return toolError(id, healthResult.left.message, { tool: toolName })
+          }
+          if (parsed.value.requireSemanticCoverage && healthResult.right.status !== 'ok') {
+            if (isNotification) return null
+            return toolError(id, healthResult.right.message, {
+              tool: toolName,
+              indexHealth: healthResult.right,
+            })
+          }
+
           const matchesResult = yield* Effect.either(atlas.codeSearch(parsed.value))
           if (matchesResult._tag === 'Left') {
             if (isNotification) return null
@@ -355,7 +400,12 @@ const handleJsonRpcMessageEffect = (request: Request, raw: unknown) =>
             id,
             toTextToolResult(
               JSON.stringify(
-                { ok: true, matches: matchesResult.right, mcp: { server: baseUrl.origin, tool: toolName } },
+                {
+                  ok: true,
+                  matches: matchesResult.right,
+                  indexHealth: healthResult.right,
+                  mcp: { server: baseUrl.origin, tool: toolName },
+                },
                 null,
                 2,
               ),

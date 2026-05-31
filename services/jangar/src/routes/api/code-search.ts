@@ -13,6 +13,9 @@ type CodeSearchPayload = {
   ref?: string
   pathPrefix?: string
   language?: string
+  requireSemanticCoverage?: boolean
+  minSemanticCoverage?: number
+  healthSampleLimit?: number
 }
 
 export const Route = createFileRoute('/api/code-search')({
@@ -92,6 +95,26 @@ export const postCodeSearchHandlerEffect = (request: Request) =>
       const ref = parsed.value.ref ?? DEFAULT_REF
 
       const atlas = yield* Atlas
+      const indexHealth = yield* atlas.codeSearchHealth({
+        repository: parsed.value.repository,
+        ref,
+        pathPrefix: parsed.value.pathPrefix,
+        language: parsed.value.language,
+        minSemanticCoverage: parsed.value.minSemanticCoverage,
+        healthSampleLimit: parsed.value.healthSampleLimit,
+      })
+
+      if (parsed.value.requireSemanticCoverage && indexHealth.status !== 'ok') {
+        return jsonResponse(
+          {
+            ok: false,
+            message: indexHealth.message,
+            error: indexHealth.message,
+            indexHealth,
+          },
+          503,
+        )
+      }
 
       let matches: AtlasCodeSearchMatch[]
       try {
@@ -120,7 +143,7 @@ export const postCodeSearchHandlerEffect = (request: Request) =>
       }
 
       const items = matches.map(toItem)
-      return jsonResponse({ ok: true, matches, items, total: items.length })
+      return jsonResponse({ ok: true, matches, items, total: items.length, indexHealth })
     }),
     Effect.catchAll((error) => Effect.succeed(resolveRequestError(error.message))),
   )
