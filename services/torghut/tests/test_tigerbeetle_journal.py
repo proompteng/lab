@@ -233,6 +233,24 @@ class TestTigerBeetleLedgerJournal(TestCase):
             self.assertEqual(refs[0].ledger, LEDGER_USD_MICRO)
             self.assertEqual(len(client.transfers), 1)
 
+    def test_real_fractional_notional_rounds_to_nearest_micro(self) -> None:
+        with Session(self.engine) as session:
+            event = _create_fill_event(session, fingerprint="fractional-notional")
+            event.filled_qty = Decimal("1")
+            event.qty = Decimal("1")
+            event.avg_fill_price = Decimal("1.0000005")
+            client = FakeTigerBeetleClient()
+
+            ref = TigerBeetleLedgerJournal(
+                settings_obj=_settings(), client=client
+            ).journal_order_event(session, event)
+
+            self.assertIsNotNone(ref)
+            assert ref is not None
+            self.assertEqual(ref.amount, Decimal("1000001"))
+            transfer = client.transfers[int(ref.transfer_id)]
+            self.assertEqual(getattr(transfer, "amount"), 1000001)
+
     def test_fill_without_pending_ref_uses_standalone_transfer(self) -> None:
         with Session(self.engine) as session:
             event = _create_fill_event(session, fingerprint="fingerprint-standalone")

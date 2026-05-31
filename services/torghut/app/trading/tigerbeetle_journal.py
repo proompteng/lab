@@ -44,7 +44,7 @@ from app.trading.tigerbeetle_ledger_model import (
     TRANSFER_KIND_SUBMITTED_PENDING,
     TigerBeetleAccountSpec,
     TigerBeetleTransferSpec,
-    decimal_usd_to_micros,
+    decimal_usd_to_nearest_micros,
     transfer_code_for_kind,
     transfer_kind_for_event,
 )
@@ -537,7 +537,9 @@ def build_order_event_transfer_plan(
         else None
     )
     amount_usd = _event_amount_usd(event, transfer_kind, session=session)
-    amount = decimal_usd_to_micros(amount_usd) if amount_usd is not None else None
+    amount = (
+        decimal_usd_to_nearest_micros(amount_usd) if amount_usd is not None else None
+    )
     if amount is None and pending_ref is not None:
         amount = int(pending_ref.amount)
     if amount is None or amount <= 0:
@@ -650,7 +652,7 @@ def _execution_notional_usd(execution: Execution) -> Decimal | None:
 def _amount_to_micros(value: Decimal | None) -> int | None:
     if value is None:
         return None
-    amount = decimal_usd_to_micros(abs(Decimal(str(value))))
+    amount = decimal_usd_to_nearest_micros(abs(Decimal(str(value))))
     return amount if amount > 0 else None
 
 
