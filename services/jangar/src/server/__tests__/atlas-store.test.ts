@@ -210,6 +210,7 @@ describe('atlas store', () => {
       'OPENAI_EMBEDDING_TIMEOUT_MS',
       'ATLAS_CODE_SEARCH_SEMANTIC_TIMEOUT_MS',
       'ATLAS_CODE_SEARCH_QUERY_EMBEDDING_CACHE_TTL_MS',
+      'ATLAS_CODE_SEARCH_SEMANTIC_CANDIDATE_LIMIT',
     ]) {
       previousEnv[key] = process.env[key]
     }
@@ -384,6 +385,28 @@ describe('atlas store', () => {
           ? firstCall[0].toString()
           : firstCall[0].url
     expect(requestUrl).toBe('http://embedding.local/v1/embeddings')
+  })
+
+  it('keeps the default semantic code-search candidate set bounded', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      Response.json({
+        data: [{ embedding: [0.1, 0.2, 0.3] }],
+      }),
+    )
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    const { db, calls } = makeFakeDb({ selectRows: [] })
+    const store = createPostgresAtlasStore({
+      url: 'postgresql://user:pass@localhost:5432/db',
+      createDb: () => db,
+    })
+
+    await store.codeSearch({ query: 'where is source search implemented', limit: 5 })
+
+    const semanticSql = calls.find((call) => call.sql.toLowerCase().includes('with candidate_chunks'))
+    expect(semanticSql).toBeDefined()
+    expect(semanticSql?.params).toContain(100)
+    expect(semanticSql?.params).not.toContain(5_000)
   })
 
   it('reports sampled semantic code-search coverage health', async () => {

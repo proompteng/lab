@@ -354,6 +354,8 @@ spec:
               value: "4096"
             - name: OPENAI_EMBEDDING_TIMEOUT_MS
               value: "60000"
+            - name: ATLAS_CODE_SEARCH_SEMANTIC_CANDIDATE_LIMIT
+              value: "100"
             - name: JANGAR_SOURCE_CI_RUN_ID
               value: "26707664123"
             - name: JANGAR_SOURCE_CI_CONCLUSION
