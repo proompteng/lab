@@ -30,7 +30,9 @@ from scripts.import_hypothesis_runtime_windows import (
     _load_json_artifact,
     _load_report_post_cost_expectancy_bps,
     _nonnegative_int,
+    _fill_quantity_basis,
     _order_lifecycle_query_row,
+    _order_feed_fill_delta_blockers,
     _parse_args,
     _parse_dt_or_none,
     _parse_target_metadata,
@@ -1964,7 +1966,10 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "symbol": "AAPL",
                     "side": "buy",
                     "filled_qty": Decimal("1"),
+                    "filled_qty_delta": Decimal("1"),
                     "avg_fill_price": Decimal("100"),
+                    "filled_notional_delta": Decimal("100"),
+                    "fill_quantity_basis": "cumulative_to_delta",
                     "cost_amount": Decimal("0.20"),
                     "cost_basis": "broker_reported_commission_and_fees",
                     "decision_hash": "decision-buy",
@@ -1976,7 +1981,10 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "symbol": "AAPL",
                     "side": "sell",
                     "filled_qty": Decimal("1"),
+                    "filled_qty_delta": Decimal("1"),
                     "avg_fill_price": Decimal("101"),
+                    "filled_notional_delta": Decimal("101"),
+                    "fill_quantity_basis": "cumulative_to_delta",
                     "cost_amount": Decimal("0.10"),
                     "cost_basis": "broker_reported_commission_and_fees",
                     "decision_hash": "decision-sell",
@@ -2023,7 +2031,10 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "symbol": "AAPL",
                     "side": "buy",
                     "filled_qty": Decimal("1"),
+                    "filled_qty_delta": Decimal("1"),
                     "avg_fill_price": Decimal("100"),
+                    "filled_notional_delta": Decimal("100"),
+                    "fill_quantity_basis": "cumulative_to_delta",
                     "cost_amount": Decimal("0.20"),
                     "cost_basis": "broker_reported_commission_and_fees",
                     "decision_hash": "decision-buy",
@@ -2037,7 +2048,10 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "symbol": "AAPL",
                     "side": "sell",
                     "filled_qty": Decimal("1"),
+                    "filled_qty_delta": Decimal("1"),
                     "avg_fill_price": Decimal("101"),
+                    "filled_notional_delta": Decimal("101"),
+                    "fill_quantity_basis": "cumulative_to_delta",
                     "cost_amount": Decimal("0.10"),
                     "cost_basis": "broker_reported_commission_and_fees",
                     "decision_hash": "decision-sell",
@@ -2119,7 +2133,10 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "symbol": "AAPL",
                     "side": "buy",
                     "filled_qty": Decimal("1"),
+                    "filled_qty_delta": Decimal("1"),
                     "avg_fill_price": Decimal("100"),
+                    "filled_notional_delta": Decimal("100"),
+                    "fill_quantity_basis": "cumulative_to_delta",
                     "cost_amount": Decimal("0.20"),
                     "cost_basis": "broker_reported_commission_and_fees",
                     "account_label": "TORGHUT_SIM",
@@ -2143,7 +2160,10 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "symbol": "AAPL",
                     "side": "sell",
                     "filled_qty": Decimal("1"),
+                    "filled_qty_delta": Decimal("1"),
                     "avg_fill_price": Decimal("101"),
+                    "filled_notional_delta": Decimal("101"),
+                    "fill_quantity_basis": "cumulative_to_delta",
                     "cost_amount": Decimal("0.10"),
                     "cost_basis": "broker_reported_commission_and_fees",
                     "account_label": "TORGHUT_SIM",
@@ -2374,7 +2394,10 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "symbol": "AAPL",
                     "side": "buy",
                     "filled_qty": Decimal("1"),
+                    "filled_qty_delta": Decimal("1"),
                     "avg_fill_price": Decimal("100"),
+                    "filled_notional_delta": Decimal("100"),
+                    "fill_quantity_basis": "cumulative_to_delta",
                     "cost_amount": Decimal("0.20"),
                     "cost_basis": "broker_reported_commission_and_fees",
                     "account_label": "TORGHUT_SIM",
@@ -3225,7 +3248,10 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "symbol": "AAPL",
                     "side": "buy",
                     "filled_qty": Decimal("1"),
+                    "filled_qty_delta": Decimal("1"),
                     "avg_fill_price": Decimal("100"),
+                    "filled_notional_delta": Decimal("100"),
+                    "fill_quantity_basis": "cumulative_to_delta",
                     "cost_amount": Decimal("0.20"),
                     "cost_basis": "broker_reported_commission_and_fees",
                     "account_label": "TORGHUT_SIM",
@@ -3249,7 +3275,10 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "symbol": "AAPL",
                     "side": "sell",
                     "filled_qty": Decimal("1"),
+                    "filled_qty_delta": Decimal("1"),
                     "avg_fill_price": Decimal("101"),
+                    "filled_notional_delta": Decimal("101"),
+                    "fill_quantity_basis": "cumulative_to_delta",
                     "cost_amount": Decimal("0.10"),
                     "cost_basis": "broker_reported_commission_and_fees",
                     "account_label": "TORGHUT_SIM",
@@ -3837,6 +3866,174 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(ledger_row["filled_qty"], Decimal("1"))
         self.assertEqual(ledger_row["cost_amount"], Decimal("0.20"))
 
+    def test_source_authority_order_event_lifecycle_requires_fill_delta_basis(
+        self,
+    ) -> None:
+        row = {
+            "execution_order_event_id": "event-buy",
+            "source_window_id": "source-window-buy",
+            "source_offset": 10,
+            "event_ts": datetime(2026, 3, 6, 14, 35, 1, tzinfo=timezone.utc),
+            "event_type": "filled",
+            "symbol": "AAPL",
+            "account_label": "TORGHUT_SIM",
+            "strategy_id": "microbar-cross-sectional-pairs-v1",
+            "decision_hash": "decision-buy",
+            "alpaca_order_id": "order-buy",
+            "filled_qty": Decimal("2"),
+            "avg_fill_price": Decimal("100"),
+            "raw_order": {
+                "side": "buy",
+                "runtime_ledger_cost": {
+                    "cost_amount": "0.20",
+                    "cost_basis": "broker_reported_commission_and_fees",
+                },
+            },
+        }
+
+        ledger_row = _runtime_lifecycle_ledger_row(
+            row,
+            event_type="filled",
+            require_complete_fill=True,
+        )
+
+        self.assertIsNone(ledger_row)
+
+    def test_source_authority_order_event_lifecycle_requires_present_delta(
+        self,
+    ) -> None:
+        row = {
+            "execution_order_event_id": "event-buy",
+            "source_window_id": "source-window-buy",
+            "source_offset": 10,
+            "event_ts": datetime(2026, 3, 6, 14, 35, 1, tzinfo=timezone.utc),
+            "event_type": "filled",
+            "symbol": "AAPL",
+            "account_label": "TORGHUT_SIM",
+            "strategy_id": "microbar-cross-sectional-pairs-v1",
+            "decision_hash": "decision-buy",
+            "alpaca_order_id": "order-buy",
+            "filled_qty": Decimal("2"),
+            "fill_quantity_basis": "cumulative-to-delta",
+            "avg_fill_price": Decimal("100"),
+            "raw_order": {
+                "side": "buy",
+                "runtime_ledger_cost": {
+                    "cost_amount": "0.20",
+                    "cost_basis": "broker_reported_commission_and_fees",
+                },
+            },
+        }
+
+        incomplete = _runtime_lifecycle_ledger_row(
+            row,
+            event_type="filled",
+            require_complete_fill=False,
+        )
+        complete = _runtime_lifecycle_ledger_row(
+            row,
+            event_type="filled",
+            require_complete_fill=True,
+        )
+
+        self.assertIsNotNone(incomplete)
+        assert incomplete is not None
+        self.assertNotIn("filled_qty", incomplete)
+        self.assertNotIn("filled_notional", incomplete)
+        self.assertIsNone(complete)
+
+    def test_source_authority_order_event_lifecycle_uses_fill_delta(
+        self,
+    ) -> None:
+        row = {
+            "execution_order_event_id": "event-buy",
+            "source_window_id": "source-window-buy",
+            "source_offset": 10,
+            "event_ts": datetime(2026, 3, 6, 14, 35, 1, tzinfo=timezone.utc),
+            "event_type": "filled",
+            "symbol": "AAPL",
+            "account_label": "TORGHUT_SIM",
+            "strategy_id": "microbar-cross-sectional-pairs-v1",
+            "decision_hash": "decision-buy",
+            "alpaca_order_id": "order-buy",
+            "filled_qty": Decimal("2"),
+            "filled_qty_delta": Decimal("1"),
+            "filled_notional_delta": Decimal("100"),
+            "fill_quantity_basis": "cumulative_to_delta",
+            "avg_fill_price": Decimal("100"),
+            "raw_order": {
+                "side": "buy",
+                "runtime_ledger_cost": {
+                    "cost_amount": "0.20",
+                    "cost_basis": "broker_reported_commission_and_fees",
+                },
+            },
+        }
+
+        ledger_row = _runtime_lifecycle_ledger_row(
+            row,
+            event_type="filled",
+            require_complete_fill=True,
+        )
+
+        self.assertIsNotNone(ledger_row)
+        assert ledger_row is not None
+        self.assertEqual(ledger_row["filled_qty"], Decimal("1"))
+        self.assertEqual(ledger_row["filled_notional"], Decimal("100"))
+        self.assertEqual(ledger_row["filled_qty_delta"], Decimal("1"))
+        self.assertEqual(ledger_row["fill_quantity_basis"], "cumulative_to_delta")
+
+    def test_fill_quantity_basis_and_delta_blocker_helpers_cover_source_authority(
+        self,
+    ) -> None:
+        self.assertEqual(
+            _fill_quantity_basis({"fill_quantity_basis": "fill-delta"}), "delta"
+        )
+        self.assertEqual(
+            _fill_quantity_basis({"fill_quantity_basis": "cum"}), "cumulative"
+        )
+        self.assertEqual(
+            _fill_quantity_basis({"fill_quantity_basis": "cumulative_non_increasing"}),
+            "cumulative_non_increasing",
+        )
+        self.assertEqual(
+            _fill_quantity_basis({"fill_quantity_basis": "broker_reported_delta"}),
+            "broker_reported_delta",
+        )
+
+        self.assertEqual(_order_feed_fill_delta_blockers({"event_type": "filled"}), [])
+        self.assertEqual(
+            _order_feed_fill_delta_blockers(
+                {
+                    "execution_order_event_id": "event-buy",
+                    "event_type": "filled",
+                    "fill_quantity_basis": "cumulative",
+                }
+            ),
+            ["order_feed_fill_delta_basis_missing"],
+        )
+        self.assertEqual(
+            _order_feed_fill_delta_blockers(
+                {
+                    "execution_order_event_id": "event-buy",
+                    "event_type": "filled",
+                    "fill_quantity_basis": "cumulative_to_delta",
+                }
+            ),
+            ["order_feed_fill_delta_missing"],
+        )
+        self.assertEqual(
+            _order_feed_fill_delta_blockers(
+                {
+                    "execution_order_event_id": "event-buy",
+                    "event_type": "filled",
+                    "fill_quantity_basis": "cumulative_to_delta",
+                    "filled_qty_delta": "1",
+                }
+            ),
+            [],
+        )
+
     def test_order_event_lifecycle_materializes_alpaca_fee_schedule_costs(self) -> None:
         row = {
             "event_ts": datetime(2026, 3, 6, 14, 35, 1, tzinfo=timezone.utc),
@@ -3913,7 +4110,10 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             "sell",
             Decimal("10"),
             Decimal("10"),
+            Decimal("10"),
             Decimal("100"),
+            Decimal("1000"),
+            "cumulative_to_delta",
             "fingerprint-1",
             "torghut.trade-updates.v1",
             2,
@@ -3995,7 +4195,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                         "filled_avg_price": nested_avg_price,
                     }
                 )
-            return {
+            row: dict[str, object] = {
                 **common,
                 "execution_order_event_id": event_id,
                 "trade_decision_id": decision_id,
@@ -4012,6 +4212,16 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 "raw_event": {"event": event_type, "order": raw_event_order},
                 "raw_order": raw_order,
             }
+            if nested_filled_qty is not None and nested_avg_price is not None:
+                row.update(
+                    {
+                        "filled_qty_delta": Decimal(nested_filled_qty),
+                        "filled_notional_delta": Decimal(nested_filled_qty)
+                        * Decimal(nested_avg_price),
+                        "fill_quantity_basis": "cumulative_to_delta",
+                    }
+                )
+            return row
 
         rows = _build_realized_strategy_pnl_rows(
             [
@@ -4771,18 +4981,22 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 "source_decision_mode": mode,
             }
             if event_type in {"fill", "filled", "partial_fill"}:
+                avg_fill_price = Decimal(
+                    {
+                        "route-buy": "100",
+                        "route-sell": "101",
+                        "signal-buy": "110",
+                        "signal-sell": "112",
+                    }[decision_id]
+                )
                 row.update(
                     {
                         "side": "sell" if "sell" in decision_id else "buy",
                         "filled_qty": Decimal("1"),
-                        "avg_fill_price": Decimal(
-                            {
-                                "route-buy": "100",
-                                "route-sell": "101",
-                                "signal-buy": "110",
-                                "signal-sell": "112",
-                            }[decision_id]
-                        ),
+                        "filled_qty_delta": Decimal("1"),
+                        "avg_fill_price": avg_fill_price,
+                        "filled_notional_delta": avg_fill_price,
+                        "fill_quantity_basis": "cumulative_to_delta",
                         "cost_amount": Decimal("0.10"),
                         "cost_basis": "broker_reported_commission_and_fees",
                     }
@@ -5268,7 +5482,10 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "event_type": "fill",
                     "side": "buy",
                     "filled_qty": Decimal("1"),
+                    "filled_qty_delta": Decimal("1"),
                     "avg_fill_price": Decimal("100"),
+                    "filled_notional_delta": Decimal("100"),
+                    "fill_quantity_basis": "cumulative_to_delta",
                     "cost_amount": Decimal("0.20"),
                     "cost_basis": "broker_reported_commission_and_fees",
                     "source_topic": "alpaca-trade-updates",
@@ -5313,7 +5530,10 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "event_type": "fill",
                     "side": "sell",
                     "filled_qty": Decimal("1"),
+                    "filled_qty_delta": Decimal("1"),
                     "avg_fill_price": Decimal("101"),
+                    "filled_notional_delta": Decimal("101"),
+                    "fill_quantity_basis": "cumulative_to_delta",
                     "cost_amount": Decimal("0.10"),
                     "cost_basis": "broker_reported_commission_and_fees",
                     "source_topic": "alpaca-trade-updates",

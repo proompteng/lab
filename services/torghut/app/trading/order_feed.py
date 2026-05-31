@@ -6,7 +6,7 @@ import hashlib
 import json
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Callable, Mapping, cast
 
@@ -34,6 +34,9 @@ ORDER_FEED_SOURCE_REVISION = "alpaca_trade_updates_v1"
 HISTORICAL_ORDER_EVENT_SOURCE_WINDOW_REVISION = (
     "execution_order_events_existing_source_offsets_v1"
 )
+FILL_QUANTITY_BASIS_CUMULATIVE_TO_DELTA = "cumulative_to_delta"
+FILL_QUANTITY_BASIS_CUMULATIVE_NON_INCREASING = "cumulative_non_increasing"
+_FILL_EVENT_TYPES = frozenset({"fill", "filled", "partial_fill", "partially_filled"})
 
 
 @dataclass(frozen=True)
@@ -54,7 +57,10 @@ class NormalizedOrderEvent:
     status: str | None
     qty: Decimal | None
     filled_qty: Decimal | None
+    filled_qty_delta: Decimal | None
     avg_fill_price: Decimal | None
+    filled_notional_delta: Decimal | None
+    fill_quantity_basis: str | None
     raw_event: dict[str, Any]
 
 
@@ -701,7 +707,10 @@ def normalize_order_feed_record(
         status=status,
         qty=qty,
         filled_qty=filled_qty,
+        filled_qty_delta=None,
         avg_fill_price=avg_fill_price,
+        filled_notional_delta=None,
+        fill_quantity_basis=None,
         raw_event=coerce_json_payload(payload),
     )
     return NormalizationResult(event=event, drop_reason=None)
@@ -724,9 +733,13 @@ def persist_order_event(
         if existing.source_window_id is None and source_window_id is not None:
             existing.source_window_id = source_window_id
             session.add(existing)
+            _refresh_source_window_linkage_counts(session, existing)
         _journal_tigerbeetle_order_event(session, existing)
         return existing, True
 
+    filled_qty_delta, filled_notional_delta, fill_quantity_basis = _fill_delta_fields(
+        session, event
+    )
     execution = _resolve_execution(session, event)
     trade_decision_id = None
     if execution is not None:
@@ -756,7 +769,10 @@ def persist_order_event(
         status=event.status,
         qty=event.qty,
         filled_qty=event.filled_qty,
+        filled_qty_delta=filled_qty_delta,
         avg_fill_price=event.avg_fill_price,
+        filled_notional_delta=filled_notional_delta,
+        fill_quantity_basis=fill_quantity_basis,
         raw_event=event.raw_event,
         execution_id=execution.id if execution is not None else None,
         trade_decision_id=trade_decision_id,
@@ -779,6 +795,7 @@ def persist_order_event(
         if existing.source_window_id is None and source_window_id is not None:
             existing.source_window_id = source_window_id
             session.add(existing)
+            _refresh_source_window_linkage_counts(session, existing)
         _journal_tigerbeetle_order_event(session, existing)
         return existing, True
 
@@ -849,6 +866,59 @@ def apply_order_event_to_execution(
         update_key="_order_feed_last_event",
     )
     return updated, False
+
+
+def _fill_delta_fields(
+    session: Session,
+    event: NormalizedOrderEvent,
+) -> tuple[Decimal | None, Decimal | None, str | None]:
+    if not _is_fill_event(event.event_type, event.status) or event.filled_qty is None:
+        return None, None, None
+
+    identity_clauses: list[ColumnElement[bool]] = []
+    if event.alpaca_order_id:
+        identity_clauses.append(
+            ExecutionOrderEvent.alpaca_order_id == event.alpaca_order_id
+        )
+    if event.client_order_id:
+        identity_clauses.append(
+            ExecutionOrderEvent.client_order_id == event.client_order_id
+        )
+    if not identity_clauses:
+        return None, None, FILL_QUANTITY_BASIS_CUMULATIVE_NON_INCREASING
+
+    previous_filled_qty = session.scalar(
+        select(func.max(ExecutionOrderEvent.filled_qty)).where(
+            ExecutionOrderEvent.alpaca_account_label == event.alpaca_account_label,
+            or_(*identity_clauses),
+            ExecutionOrderEvent.filled_qty.is_not(None),
+        )
+    )
+    previous_qty = (
+        Decimal("0")
+        if previous_filled_qty is None
+        else Decimal(str(previous_filled_qty))
+    )
+    filled_qty_delta = Decimal(str(event.filled_qty)) - previous_qty
+    if filled_qty_delta <= 0:
+        return None, None, FILL_QUANTITY_BASIS_CUMULATIVE_NON_INCREASING
+
+    filled_notional_delta = (
+        filled_qty_delta * Decimal(str(event.avg_fill_price))
+        if event.avg_fill_price is not None
+        else None
+    )
+    return (
+        filled_qty_delta,
+        filled_notional_delta,
+        FILL_QUANTITY_BASIS_CUMULATIVE_TO_DELTA,
+    )
+
+
+def _is_fill_event(event_type: str | None, status: str | None) -> bool:
+    return (event_type or "").strip().lower() in _FILL_EVENT_TYPES or (
+        status or ""
+    ).strip().lower() in _FILL_EVENT_TYPES
 
 
 def merge_execution_raw_order_update(
@@ -1224,7 +1294,7 @@ def _create_historical_source_window_for_event(
         collector_identity=settings.trading_order_feed_client_id.strip() or None,
         source_revision=HISTORICAL_ORDER_EVENT_SOURCE_WINDOW_REVISION,
         window_started_at=event_ts,
-        window_ended_at=event_ts,
+        window_ended_at=event_ts + timedelta(microseconds=1),
         start_offset=event.source_offset,
         end_offset=event.source_offset,
         broker_high_watermark=None,

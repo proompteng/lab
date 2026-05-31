@@ -37,9 +37,12 @@ from app.trading.tigerbeetle_ledger_model import (
     TRANSFER_KIND_FILL_POST,
 )
 from app.trading.order_feed import (
+    FILL_QUANTITY_BASIS_CUMULATIVE_NON_INCREASING,
     HISTORICAL_ORDER_EVENT_SOURCE_WINDOW_REVISION,
+    NormalizedOrderEvent,
     ORDER_FEED_SOURCE_REVISION,
     OrderFeedIngestor,
+    _fill_delta_fields,
     apply_order_event_to_execution,
     backfill_order_feed_source_windows,
     latest_order_event_for_execution,
@@ -221,6 +224,83 @@ class TestOrderFeed(TestCase):
         session.commit()
         session.refresh(execution)
         return execution
+
+    def test_fill_delta_fields_requires_order_identity(self) -> None:
+        event = NormalizedOrderEvent(
+            event_fingerprint="event-no-identity",
+            source_topic="torghut.trade-updates.v1",
+            source_partition=0,
+            source_offset=1,
+            alpaca_account_label="paper",
+            feed_seq=1,
+            event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+            symbol="AAPL",
+            alpaca_order_id=None,
+            client_order_id=None,
+            event_type="fill",
+            status="filled",
+            qty=Decimal("2"),
+            filled_qty=Decimal("1"),
+            filled_qty_delta=None,
+            avg_fill_price=Decimal("190.25"),
+            filled_notional_delta=None,
+            fill_quantity_basis=None,
+            raw_event={},
+        )
+
+        with Session(self.engine) as session:
+            self.assertEqual(
+                _fill_delta_fields(session, event),
+                (None, None, FILL_QUANTITY_BASIS_CUMULATIVE_NON_INCREASING),
+            )
+
+    def test_fill_delta_fields_rejects_non_increasing_cumulative_quantity(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            existing = ExecutionOrderEvent(
+                event_fingerprint="event-existing-fill",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=1,
+                alpaca_account_label="paper",
+                alpaca_order_id="order-1",
+                client_order_id="client-1",
+                event_type="fill",
+                status="filled",
+                symbol="AAPL",
+                filled_qty=Decimal("2"),
+                avg_fill_price=Decimal("190.25"),
+                raw_event={},
+            )
+            session.add(existing)
+            session.flush()
+            event = NormalizedOrderEvent(
+                event_fingerprint="event-duplicate-cumulative-fill",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=2,
+                alpaca_account_label="paper",
+                feed_seq=2,
+                event_ts=datetime(2026, 2, 1, 10, 1, tzinfo=timezone.utc),
+                symbol="AAPL",
+                alpaca_order_id="order-1",
+                client_order_id="client-1",
+                event_type="fill",
+                status="filled",
+                qty=Decimal("2"),
+                filled_qty=Decimal("2"),
+                filled_qty_delta=None,
+                avg_fill_price=Decimal("190.50"),
+                filled_notional_delta=None,
+                fill_quantity_basis=None,
+                raw_event={},
+            )
+
+            self.assertEqual(
+                _fill_delta_fields(session, event),
+                (None, None, FILL_QUANTITY_BASIS_CUMULATIVE_NON_INCREASING),
+            )
 
     def test_runtime_symbol_columns_allow_occ_option_contracts(self) -> None:
         for model in (
@@ -1124,6 +1204,10 @@ class TestOrderFeed(TestCase):
             HISTORICAL_ORDER_EVENT_SOURCE_WINDOW_REVISION,
         )
         self.assertEqual(source_window.status, "inserted")
+        self.assertGreater(
+            source_window.window_ended_at,
+            source_window.window_started_at,
+        )
         self.assertEqual(
             source_window.status_reason, "historical_execution_order_event_backfill"
         )
@@ -1319,6 +1403,10 @@ class TestOrderFeed(TestCase):
         self.assertEqual(source_window.status, "inserted")
         self.assertEqual(source_window.start_offset, 188)
         self.assertEqual(source_window.end_offset, 188)
+        self.assertGreater(
+            source_window.window_ended_at,
+            source_window.window_started_at,
+        )
         self.assertEqual(source_window.inserted_count, 1)
         self.assertEqual(source_window.unlinked_execution_count, 0)
         self.assertEqual(source_window.unlinked_decision_count, 0)
@@ -1734,6 +1822,15 @@ class TestOrderFeed(TestCase):
             self._seed_execution(session)
             counters = ingestor.ingest_once(session)
             cursor = session.execute(select(OrderFeedConsumerCursor)).scalar_one()
+            events = (
+                session.execute(
+                    select(ExecutionOrderEvent).order_by(
+                        ExecutionOrderEvent.source_offset.asc()
+                    )
+                )
+                .scalars()
+                .all()
+            )
 
         self.assertEqual(counters["events_persisted_total"], 2)
         self.assertEqual(counters["cursor_updates_total"], 2)
@@ -1744,6 +1841,78 @@ class TestOrderFeed(TestCase):
             cursor.last_event_ts,
             datetime(2026, 2, 1, 10, 0, 5),
         )
+        self.assertEqual(
+            [event.filled_qty for event in events], [Decimal("1"), Decimal("2")]
+        )
+        self.assertEqual(
+            [event.filled_qty_delta for event in events],
+            [Decimal("1"), Decimal("1")],
+        )
+        self.assertEqual(
+            [event.fill_quantity_basis for event in events],
+            ["cumulative_to_delta", "cumulative_to_delta"],
+        )
+        self.assertEqual(
+            [event.filled_notional_delta for event in events],
+            [Decimal("190.20000000"), Decimal("190.40000000")],
+        )
+
+    def test_duplicate_event_source_window_attach_refreshes_linkage_counts(
+        self,
+    ) -> None:
+        payload = (
+            b'{"channel":"trade_updates","payload":{"event":"fill","timestamp":"2026-02-01T10:00:00Z",'
+            b'"order":{"id":"order-1","client_order_id":"client-1","symbol":"AAPL","status":"filled",'
+            b'"qty":"1","filled_qty":"1","filled_avg_price":"190.2"}},"seq":10}'
+        )
+        record = FakeRecord(value=payload, offset=11)
+
+        with Session(self.engine) as session:
+            self._seed_execution(session)
+            normalized = normalize_order_feed_record(
+                record,
+                default_topic="torghut.trade-updates.v1",
+                default_account_label="paper",
+            )
+            assert normalized.event is not None
+            persisted, duplicate = persist_order_event(session, normalized.event)
+            self.assertFalse(duplicate)
+            persisted_id = persisted.id
+            source_window = OrderFeedSourceWindow(
+                consumer_group="torghut-order-feed-v1",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                alpaca_account_label="paper",
+                assignment_mode="manual",
+                source_revision=ORDER_FEED_SOURCE_REVISION,
+                window_started_at=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+                window_ended_at=datetime(2026, 2, 1, 10, 1, tzinfo=timezone.utc),
+                start_offset=11,
+                end_offset=11,
+                consumed_count=1,
+                inserted_count=1,
+                unlinked_execution_count=1,
+                unlinked_decision_count=1,
+                status="inserted",
+            )
+            session.add(source_window)
+            session.flush()
+            persisted.source_window_id = None
+            session.flush()
+
+            persisted_again, duplicate_again = persist_order_event(
+                session,
+                normalized.event,
+                source_window_id=source_window.id,
+            )
+            persisted_again_id = persisted_again.id
+            session.commit()
+            session.refresh(source_window)
+
+        self.assertTrue(duplicate_again)
+        self.assertEqual(persisted_again_id, persisted_id)
+        self.assertEqual(source_window.unlinked_execution_count, 0)
+        self.assertEqual(source_window.unlinked_decision_count, 0)
 
     def test_duplicate_event_advances_cursor_accounting_and_commits(self) -> None:
         record = FakeRecord(

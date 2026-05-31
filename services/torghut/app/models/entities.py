@@ -359,8 +359,17 @@ class ExecutionOrderEvent(Base, CreatedAtMixin):
     status: Mapped[Optional[str]] = mapped_column(String(length=32), nullable=True)
     qty: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
     filled_qty: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+    filled_qty_delta: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
     avg_fill_price: Mapped[Optional[Decimal]] = mapped_column(
         Numeric(20, 8), nullable=True
+    )
+    filled_notional_delta: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
+    fill_quantity_basis: Mapped[Optional[str]] = mapped_column(
+        String(length=32), nullable=True
     )
     raw_event: Mapped[Any] = mapped_column(JSONType, nullable=False)
     execution_id: Mapped[Optional[uuid.UUID]] = mapped_column(

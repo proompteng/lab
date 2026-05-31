@@ -52,6 +52,8 @@ _DIAGNOSTIC_EXPECTANCY_SUPPRESSING_BLOCKERS = frozenset(
         "closed_round_trip_missing",
         "filled_notional_missing",
         "filled_qty_missing_or_non_positive",
+        "fill_quantity_delta_basis_missing",
+        "fill_quantity_delta_missing",
         "fill_price_missing",
         "side_missing_or_invalid",
         "explicit_cost_missing",
@@ -71,6 +73,9 @@ class RuntimeLedgerFill:
     filled_qty: Decimal
     avg_fill_price: Decimal | None = None
     filled_notional: Decimal | None = None
+    filled_qty_delta: Decimal | None = None
+    filled_notional_delta: Decimal | None = None
+    fill_quantity_basis: str | None = None
     cost_amount: Decimal | None = None
     cost_basis: str | None = None
     account_label: str | None = None
@@ -139,6 +144,9 @@ class _NormalizedFill:
     lineage_hash: str | None
     replay_data_hash: str | None
     blockers: tuple[str, ...]
+    filled_qty_delta: Decimal | None = None
+    filled_notional_delta: Decimal | None = None
+    fill_quantity_basis: str | None = None
 
     @property
     def is_usable_fill(self) -> bool:
@@ -628,6 +636,32 @@ def _normalize_fill_row(
     filled_notional = _positive_decimal(
         _row_value(row, "filled_notional", "notional", "fill_notional")
     )
+    filled_qty_delta = _positive_decimal(
+        _row_value(row, "filled_qty_delta", "fill_qty_delta", "delta_filled_qty")
+    )
+    filled_notional_delta = _positive_decimal(
+        _row_value(
+            row,
+            "filled_notional_delta",
+            "fill_notional_delta",
+            "delta_filled_notional",
+        )
+    )
+    fill_quantity_basis = _coerce_fill_quantity_basis(
+        _row_value(row, "fill_quantity_basis", "quantity_basis")
+    )
+    order_feed_source_fill = _is_order_feed_source_fill(row)
+    if event_type in _FILL_EVENTS and order_feed_source_fill:
+        if fill_quantity_basis in {"delta", "cumulative_to_delta"}:
+            if filled_qty_delta is not None:
+                filled_qty = filled_qty_delta
+                if filled_notional_delta is not None:
+                    filled_notional = filled_notional_delta
+                elif avg_fill_price is not None:
+                    filled_notional = filled_qty_delta * avg_fill_price
+        else:
+            filled_qty = None
+            filled_notional = None
     if (
         filled_notional is None
         and filled_qty is not None
@@ -699,6 +733,17 @@ def _normalize_fill_row(
             blockers.append("side_missing_or_invalid")
         if filled_qty is None:
             blockers.append("filled_qty_missing_or_non_positive")
+        if order_feed_source_fill and fill_quantity_basis not in {
+            "delta",
+            "cumulative_to_delta",
+        }:
+            blockers.append("fill_quantity_delta_basis_missing")
+        elif (
+            order_feed_source_fill
+            and fill_quantity_basis in {"delta", "cumulative_to_delta"}
+            and filled_qty_delta is None
+        ):
+            blockers.append("fill_quantity_delta_missing")
         if avg_fill_price is None:
             blockers.append("fill_price_missing")
         if filled_notional is None:
@@ -720,6 +765,9 @@ def _normalize_fill_row(
         filled_qty=filled_qty,
         avg_fill_price=avg_fill_price,
         filled_notional=filled_notional,
+        filled_qty_delta=filled_qty_delta,
+        filled_notional_delta=filled_notional_delta,
+        fill_quantity_basis=fill_quantity_basis,
         cost_amount=cost_amount,
         cost_basis=cost_basis,
         event_type=event_type,
@@ -793,6 +841,51 @@ def _row_value(
         if value is not None:
             return value
     return None
+
+
+def _coerce_fill_quantity_basis(value: object | None) -> str | None:
+    text = _coerce_text(value)
+    if text is None:
+        return None
+    normalized = text.lower().replace("-", "_").replace(" ", "_")
+    if normalized in {"delta", "fill_delta", "filled_delta"}:
+        return "delta"
+    if normalized in {"cumulative_to_delta", "cumulative_delta", "cum_to_delta"}:
+        return "cumulative_to_delta"
+    if normalized in {"cumulative", "cum"}:
+        return "cumulative"
+    if normalized in {"unknown", "cumulative_non_increasing"}:
+        return normalized
+    return normalized or None
+
+
+def _is_order_feed_source_fill(row: RuntimeLedgerFill | Mapping[str, object]) -> bool:
+    source = _coerce_text(
+        _row_value(row, "source", "pnl_derivation", "source_materialization")
+    )
+    authority_class = _coerce_text(_row_value(row, "authority_class"))
+    if source in {
+        "execution_order_event",
+        "execution_order_events",
+        "execution_order_events_runtime_ledger",
+        "runtime_order_feed_execution_source",
+        "source_execution_lifecycle",
+    }:
+        return True
+    if authority_class in {
+        "runtime_order_feed_execution_source",
+        "source_execution_lifecycle_materialized_runtime_ledger",
+    }:
+        return True
+    return any(
+        _row_value(row, key) is not None
+        for key in (
+            "execution_order_event_id",
+            "event_fingerprint",
+            "source_window_id",
+            "source_offset",
+        )
+    )
 
 
 def _has_tca_pnl_shortcut(row: RuntimeLedgerFill | Mapping[str, object]) -> bool:

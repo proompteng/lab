@@ -711,6 +711,202 @@ def test_invalid_runtime_fill_fields_fail_closed() -> None:
     assert "runtime_fills_missing" in bucket.blockers
 
 
+def test_order_feed_source_fill_requires_delta_basis() -> None:
+    bucket = _bucket(
+        [
+            {
+                "event_type": "fill",
+                "executed_at": _ts(1),
+                "source": "execution_order_event",
+                "execution_order_event_id": "event-1",
+                "source_window_id": "window-1",
+                "source_offset": 7,
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "symbol": "NVDA",
+                "side": "buy",
+                "filled_qty": "1",
+                "avg_fill_price": "100",
+                "cost_amount": "0",
+                "cost_basis": "broker_reported_zero_cost",
+            }
+        ]
+    )
+
+    assert bucket.fill_count == 0
+    assert "fill_quantity_delta_basis_missing" in bucket.blockers
+    assert "runtime_fills_missing" in bucket.blockers
+
+
+def test_order_feed_source_fill_requires_present_delta_quantity() -> None:
+    bucket = _bucket(
+        [
+            {
+                "event_type": "fill",
+                "executed_at": _ts(1),
+                "source": "execution_order_event",
+                "execution_order_event_id": "event-1",
+                "source_window_id": "window-1",
+                "source_offset": 7,
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "symbol": "NVDA",
+                "side": "buy",
+                "filled_qty": "2",
+                "fill_quantity_basis": "cumulative-to-delta",
+                "avg_fill_price": "100",
+                "cost_amount": "0",
+                "cost_basis": "broker_reported_zero_cost",
+            }
+        ]
+    )
+
+    assert bucket.fill_count == 0
+    assert "fill_quantity_delta_missing" in bucket.blockers
+    assert "runtime_fills_missing" in bucket.blockers
+
+
+def test_order_feed_source_fill_uses_delta_not_cumulative_quantity() -> None:
+    bucket = _bucket(
+        [
+            {
+                "event_type": "fill",
+                "executed_at": _ts(1),
+                "source": "execution_order_event",
+                "execution_order_event_id": "event-buy",
+                "source_window_id": "window-buy",
+                "source_offset": 7,
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "symbol": "NVDA",
+                "side": "buy",
+                "filled_qty": "2",
+                "filled_qty_delta": "1",
+                "fill_quantity_basis": "cumulative_to_delta",
+                "avg_fill_price": "100",
+                "cost_amount": "0",
+                "cost_basis": "broker_reported_zero_cost",
+            },
+            {
+                "event_type": "fill",
+                "executed_at": _ts(2),
+                "source": "execution_order_event",
+                "execution_order_event_id": "event-sell",
+                "source_window_id": "window-sell",
+                "source_offset": 8,
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "symbol": "NVDA",
+                "side": "sell",
+                "filled_qty": "2",
+                "filled_qty_delta": "1",
+                "fill_quantity_basis": "cumulative_to_delta",
+                "avg_fill_price": "101",
+                "cost_amount": "0",
+                "cost_basis": "broker_reported_zero_cost",
+            },
+        ]
+    )
+
+    assert bucket.fill_count == 2
+    assert bucket.closed_trade_count == 1
+    assert bucket.open_position_count == 0
+    assert bucket.filled_notional == Decimal("201")
+    assert bucket.gross_strategy_pnl == Decimal("1")
+
+
+def test_order_feed_source_fill_accepts_delta_alias_and_authority_class() -> None:
+    bucket = _bucket(
+        [
+            {
+                "event_type": "fill",
+                "executed_at": _ts(1),
+                "authority_class": "runtime_order_feed_execution_source",
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "symbol": "NVDA",
+                "side": "buy",
+                "filled_qty": "2",
+                "filled_qty_delta": "1",
+                "fill_quantity_basis": "fill delta",
+                "avg_fill_price": "100",
+                "cost_amount": "0",
+                "cost_basis": "broker_reported_zero_cost",
+            }
+        ]
+    )
+
+    assert "fill_quantity_delta_basis_missing" not in bucket.blockers
+    assert "fill_quantity_delta_missing" not in bucket.blockers
+    assert "unclosed_position" in bucket.blockers
+
+
+def test_order_feed_source_fill_blocks_cumulative_and_unknown_quantity_basis() -> None:
+    cumulative_bucket = _bucket(
+        [
+            {
+                "event_type": "fill",
+                "executed_at": _ts(1),
+                "source": "execution_order_events_runtime_ledger",
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "symbol": "NVDA",
+                "side": "buy",
+                "filled_qty": "2",
+                "fill_quantity_basis": "cum",
+                "avg_fill_price": "100",
+                "cost_amount": "0",
+                "cost_basis": "broker_reported_zero_cost",
+            }
+        ]
+    )
+    unknown_bucket = _bucket(
+        [
+            {
+                "event_type": "fill",
+                "executed_at": _ts(1),
+                "source": "execution_order_event",
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "symbol": "NVDA",
+                "side": "buy",
+                "filled_qty": "2",
+                "fill_quantity_basis": "unknown",
+                "avg_fill_price": "100",
+                "cost_amount": "0",
+                "cost_basis": "broker_reported_zero_cost",
+            }
+        ]
+    )
+
+    assert "fill_quantity_delta_basis_missing" in cumulative_bucket.blockers
+    assert "fill_quantity_delta_basis_missing" in unknown_bucket.blockers
+
+
+def test_order_feed_source_fill_blocks_unrecognized_quantity_basis() -> None:
+    bucket = _bucket(
+        [
+            {
+                "event_type": "fill",
+                "executed_at": _ts(1),
+                "source": "execution_order_event",
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "symbol": "NVDA",
+                "side": "buy",
+                "filled_qty": "2",
+                "filled_qty_delta": "1",
+                "fill_quantity_basis": "broker_reported_delta",
+                "avg_fill_price": "100",
+                "cost_amount": "0",
+                "cost_basis": "broker_reported_zero_cost",
+            }
+        ]
+    )
+
+    assert "fill_quantity_delta_basis_missing" in bucket.blockers
+
+
 def test_exact_replay_ledger_requires_order_lifecycle_and_hash_lineage() -> None:
     common = {
         "account_label": "paper",
