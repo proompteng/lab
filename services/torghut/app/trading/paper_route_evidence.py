@@ -37,6 +37,9 @@ from .runtime_decision_authority import (
 )
 from .runtime_ledger import POST_COST_PNL_BASIS
 from .runtime_ledger_proof_policy import runtime_ledger_proof_policy_from_env
+from .runtime_ledger_source_authority import (
+    runtime_ledger_promotion_source_authority_blockers,
+)
 from .runtime_strategy_resolution import (
     derived_strategy_name_from_strategy_id,
     explicit_runtime_strategy_name_or_family_harness,
@@ -2430,6 +2433,9 @@ def _runtime_ledger_bucket_evidence_grade(row: StrategyRuntimeLedgerBucket) -> b
         for item in _as_sequence(row.blockers_json)
         if str(item).strip()
     ]
+    source_authority_blockers = runtime_ledger_promotion_source_authority_blockers(
+        _as_mapping(row.payload_json)
+    )
     return (
         row.pnl_basis == POST_COST_PNL_BASIS
         and _safe_int(row.fill_count) > 0
@@ -2444,7 +2450,22 @@ def _runtime_ledger_bucket_evidence_grade(row: StrategyRuntimeLedgerBucket) -> b
             _as_mapping(row.payload_json).get("cost_basis_counts")
         )
         and not blockers
+        and not source_authority_blockers
     )
+
+
+def _runtime_ledger_bucket_diagnostic_blockers(
+    row: StrategyRuntimeLedgerBucket,
+) -> list[str]:
+    blockers = [
+        str(item).strip()
+        for item in _as_sequence(row.blockers_json)
+        if str(item).strip()
+    ]
+    blockers.extend(
+        runtime_ledger_promotion_source_authority_blockers(_as_mapping(row.payload_json))
+    )
+    return list(dict.fromkeys(blockers))
 
 
 def _runtime_ledger_row_diagnostic_expectancy_bps(
@@ -2546,10 +2567,9 @@ def _runtime_ledger_non_evidence_diagnostic_summary(
         Decimal("0"),
     )
     blocker_counts: Counter[str] = Counter(
-        str(item).strip()
+        blocker
         for row in rows
-        for item in _as_sequence(row.blockers_json)
-        if str(item).strip()
+        for blocker in _runtime_ledger_bucket_diagnostic_blockers(row)
     )
     source_decision_mode_counts: Counter[str] = Counter()
     source_decision_mode_bucket_counts: Counter[str] = Counter()
@@ -2713,10 +2733,9 @@ def _runtime_ledger_summary(
         "db_row_refs": [str(row.id) for row in rows],
         "blockers": sorted(
             {
-                str(item).strip()
+                blocker
                 for row in rows
-                for item in _as_sequence(row.blockers_json)
-                if str(item).strip()
+                for blocker in _runtime_ledger_bucket_diagnostic_blockers(row)
             }
         ),
         "non_evidence_grade_diagnostic": (
