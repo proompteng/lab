@@ -8,6 +8,9 @@ type Options = {
   apply: boolean
   limit: number
   batchSize: number
+  continueOnError: boolean
+  maxErrors: number
+  sleepMs: number
   repository?: string
   ref?: string
   pathPrefix?: string
@@ -52,6 +55,9 @@ Options:
       --apply                Write embeddings. Without this, only reports matching chunks.
       --limit <n>            Max chunks to inspect/backfill (default: 100)
       --batch-size <n>       Embedding request batch size (default: 16)
+      --continue-on-error    Mark failed chunks and keep processing remaining batches.
+      --max-errors <n>       Stop after this many failed chunks when continuing (default: 25).
+      --sleep-ms <n>         Sleep between batches (default: 0).
       --repository <name>    Repository filter (e.g. proompteng/lab)
       --ref <ref>            Ref filter (e.g. main)
       --path-prefix <path>   Path prefix filter
@@ -78,11 +84,20 @@ const parsePositiveInt = (name: string, raw: string) => {
   return Math.floor(parsed)
 }
 
+const parseNonNegativeInt = (name: string, raw: string) => {
+  const parsed = Number.parseInt(raw, 10)
+  if (!Number.isFinite(parsed) || parsed < 0) fatal(`${name} must be a non-negative integer`)
+  return Math.floor(parsed)
+}
+
 const parseArgs = (argv: string[]): Options => {
   const options: Options = {
     apply: false,
     limit: 100,
     batchSize: 16,
+    continueOnError: false,
+    maxErrors: 25,
+    sleepMs: 0,
     json: false,
   }
 
@@ -102,6 +117,33 @@ const parseArgs = (argv: string[]): Options => {
 
     if (arg === '--json') {
       options.json = true
+      continue
+    }
+
+    if (arg === '--continue-on-error') {
+      options.continueOnError = true
+      continue
+    }
+
+    if (arg === '--max-errors') {
+      options.maxErrors = parsePositiveInt('--max-errors', readValue(arg, argv, i))
+      i += 1
+      continue
+    }
+
+    if (arg.startsWith('--max-errors=')) {
+      options.maxErrors = parsePositiveInt('--max-errors', arg.slice('--max-errors='.length))
+      continue
+    }
+
+    if (arg === '--sleep-ms') {
+      options.sleepMs = parseNonNegativeInt('--sleep-ms', readValue(arg, argv, i))
+      i += 1
+      continue
+    }
+
+    if (arg.startsWith('--sleep-ms=')) {
+      options.sleepMs = parseNonNegativeInt('--sleep-ms', arg.slice('--sleep-ms='.length))
       continue
     }
 
@@ -271,6 +313,24 @@ const withDefaultSslMode = (rawUrl: string) => {
 }
 
 const vectorToPgArray = (values: number[]) => `[${values.join(',')}]`
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+const formatUnknownError = (error: unknown) => {
+  if (error instanceof Error) return error.message
+  if (typeof error === 'string') return error
+  if (error == null) return 'Unknown error'
+  try {
+    return JSON.stringify(error) ?? 'Unknown error'
+  } catch {
+    return 'Unknown error'
+  }
+}
+
+const truncateError = (error: unknown) => {
+  const message = formatUnknownError(error)
+  return message.length > 500 ? `${message.slice(0, 500)}...` : message
+}
 
 const normalizeEmbeddings = (raw: unknown): number[][] | null => {
   if (!Array.isArray(raw)) return null
@@ -457,15 +517,44 @@ const main = async () => {
     }
 
     let embedded = 0
+    let failed = 0
     for (let index = 0; index < rows.length; index += options.batchSize) {
       const batch = rows.slice(index, index + options.batchSize)
-      const embeddings = await requestEmbeddings(
-        batch.map((row) => row.content),
-        config,
-      )
-      await upsertEmbeddings(db, batch, embeddings, config)
-      embedded += batch.length
-      console.error(`embedded ${embedded}/${rows.length} chunks`)
+      const batchIds = batch.map((row) => row.id)
+      await markChunks(db, batchIds, {
+        embeddingStatus: 'pending',
+        embeddingFailureReason: null,
+        embeddingError: null,
+        embeddingModel: config.model,
+        embeddingDimension: config.dimension,
+      })
+
+      try {
+        const embeddings = await requestEmbeddings(
+          batch.map((row) => row.content),
+          config,
+        )
+        await upsertEmbeddings(db, batch, embeddings, config)
+        embedded += batch.length
+        console.error(`embedded ${embedded}/${rows.length} chunks; failed ${failed}`)
+      } catch (error) {
+        failed += batch.length
+        await markChunks(db, batchIds, {
+          embeddingStatus: 'failed',
+          embeddingFailureReason: 'backfill_embedding_failed',
+          embeddingError: truncateError(error),
+          embeddingModel: config.model,
+          embeddingDimension: config.dimension,
+        })
+        console.error(`failed ${failed}/${rows.length} chunks: ${truncateError(error)}`)
+        if (!options.continueOnError || failed >= options.maxErrors) {
+          throw error
+        }
+      }
+
+      if (options.sleepMs > 0 && index + options.batchSize < rows.length) {
+        await sleep(options.sleepMs)
+      }
     }
 
     const payload = {
@@ -473,6 +562,7 @@ const main = async () => {
       dryRun: false,
       candidates: rows.length,
       embedded,
+      failed,
       model: config.model,
       dimension: config.dimension,
     }

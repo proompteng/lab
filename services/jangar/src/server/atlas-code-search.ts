@@ -112,6 +112,8 @@ const DEFAULT_SEARCH_LIMIT = 10
 const MAX_SEARCH_LIMIT = 200
 const DEFAULT_CODE_SEARCH_SEMANTIC_TIMEOUT_MS = 12_000
 const DEFAULT_CODE_SEARCH_QUERY_EMBEDDING_CACHE_TTL_MS = 60_000
+const DEFAULT_CODE_SEARCH_SEMANTIC_CANDIDATE_LIMIT = 5_000
+const MAX_CODE_SEARCH_SEMANTIC_CANDIDATE_LIMIT = 50_000
 const DEFAULT_CODE_SEARCH_HEALTH_SAMPLE_LIMIT = 500
 const MAX_CODE_SEARCH_HEALTH_SAMPLE_LIMIT = 5_000
 const DEFAULT_MIN_SEMANTIC_COVERAGE = 0.95
@@ -193,6 +195,15 @@ const normalizeHealthSampleLimit = (value: number | undefined) => {
   return Math.max(1, Math.min(MAX_CODE_SEARCH_HEALTH_SAMPLE_LIMIT, Math.floor(value)))
 }
 
+const resolveSemanticCandidateLimit = (resultLimit: number) => {
+  const fallback = Math.max(DEFAULT_CODE_SEARCH_SEMANTIC_CANDIDATE_LIMIT, resultLimit * 100)
+  return parsePositiveIntEnv(
+    'ATLAS_CODE_SEARCH_SEMANTIC_CANDIDATE_LIMIT',
+    fallback,
+    MAX_CODE_SEARCH_SEMANTIC_CANDIDATE_LIMIT,
+  )
+}
+
 const withTimeout = async <T>(input: Promise<T>, timeoutMs: number, message: string): Promise<T> => {
   let timeout: ReturnType<typeof setTimeout> | undefined
   try {
@@ -239,45 +250,32 @@ const applyCodeSearchFilters = <T extends { where: (...args: unknown[]) => T }>(
   return next
 }
 
-const latestFileVersionIdsExpr = (filters: CodeSearchFilters) => {
-  const conditions: Array<ReturnType<typeof sql>> = []
-  if (filters.repository) {
-    conditions.push(sql`repositories_scope.name = ${filters.repository}`)
-  }
-  if (filters.ref) {
-    conditions.push(sql`fv.repository_ref = ${filters.ref}`)
-  }
-  if (filters.pathPrefix) {
-    conditions.push(sql`file_keys_scope.path LIKE ${`${filters.pathPrefix}%`}`)
-  }
-  if (filters.language) {
-    conditions.push(sql`fv.language = ${filters.language}`)
-  }
-
-  const whereClause = conditions.length ? sql`WHERE ${sql.join(conditions, sql` AND `)}` : sql``
-
-  return sql<string>`
-    SELECT ranked.id
-    FROM (
-      SELECT
-        fv.id,
-        ROW_NUMBER() OVER (
-          PARTITION BY fv.file_key_id, fv.repository_ref
-          ORDER BY fv.updated_at DESC, fv.created_at DESC, fv.id DESC
-        ) AS latest_rank
-      FROM atlas.file_versions AS fv
-      INNER JOIN atlas.file_keys AS file_keys_scope ON file_keys_scope.id = fv.file_key_id
-      INNER JOIN atlas.repositories AS repositories_scope ON repositories_scope.id = file_keys_scope.repository_id
-      ${whereClause}
-    ) AS ranked
-    WHERE ranked.latest_rank = 1
+const latestFileVersionPredicate = (filters: CodeSearchFilters) => {
+  const languageClause = filters.language ? sql`AND newer_file_versions.language = ${filters.language}` : sql``
+  return sql<boolean>`
+    NOT EXISTS (
+      SELECT 1
+      FROM atlas.file_versions AS newer_file_versions
+      WHERE newer_file_versions.file_key_id = file_versions.file_key_id
+        AND newer_file_versions.repository_ref = file_versions.repository_ref
+        ${languageClause}
+        AND (
+          newer_file_versions.updated_at,
+          newer_file_versions.created_at,
+          newer_file_versions.id
+        ) > (
+          file_versions.updated_at,
+          file_versions.created_at,
+          file_versions.id
+        )
+    )
   `
 }
 
 const applyLatestFileVersionFilter = <T extends { where: (...args: unknown[]) => T }>(
   query: T,
   filters: CodeSearchFilters,
-) => query.where(sql<boolean>`file_versions.id IN (${latestFileVersionIdsExpr(filters)})`)
+) => query.where(latestFileVersionPredicate(filters))
 
 const toIso = (value: Date | string) => (value instanceof Date ? value.toISOString() : String(value))
 
@@ -373,6 +371,25 @@ const codeSearchSelectColumns = [
   'repositories.created_at as repository_created_at',
   'repositories.updated_at as repository_updated_at',
 ] as const
+
+const codeSearchRawSelectColumns = codeSearchSelectColumns.join(',\n')
+
+const semanticCandidateWhereClause = (filters: CodeSearchFilters) => {
+  const conditions: Array<ReturnType<typeof sql>> = [latestFileVersionPredicate(filters)]
+  if (filters.repository) {
+    conditions.push(sql`repositories.name = ${filters.repository}`)
+  }
+  if (filters.ref) {
+    conditions.push(sql`file_versions.repository_ref = ${filters.ref}`)
+  }
+  if (filters.pathPrefix) {
+    conditions.push(sql`file_keys.path LIKE ${`${filters.pathPrefix}%`}`)
+  }
+  if (filters.language) {
+    conditions.push(sql`file_versions.language = ${filters.language}`)
+  }
+  return sql`WHERE ${sql.join(conditions, sql` AND `)}`
+}
 
 export const createAtlasCodeSearchHandlers = ({
   db,
@@ -523,23 +540,35 @@ export const createAtlasCodeSearchHandlers = ({
                 const vectorString = vectorToPgArray(embedding)
                 const semanticDistanceExpr = sql<number>`chunk_embeddings.embedding <=> ${vectorString}::vector`
 
-                let semanticQuery = db
-                  .selectFrom('atlas.chunk_embeddings as chunk_embeddings')
-                  .innerJoin('atlas.file_chunks as file_chunks', 'file_chunks.id', 'chunk_embeddings.chunk_id')
-                  .innerJoin('atlas.file_versions as file_versions', 'file_versions.id', 'file_chunks.file_version_id')
-                  .innerJoin('atlas.file_keys as file_keys', 'file_keys.id', 'file_versions.file_key_id')
-                  .innerJoin('atlas.repositories as repositories', 'repositories.id', 'file_keys.repository_id')
-                  .select([...codeSearchSelectColumns, semanticDistanceExpr.as('semantic_distance')])
-                  .where('chunk_embeddings.model', '=', embeddingConfig.model)
-                  .where('chunk_embeddings.dimension', '=', embeddingConfig.dimension)
+                const semanticCandidateLimit = resolveSemanticCandidateLimit(resolvedLimit)
+                const whereClause = semanticCandidateWhereClause(filters)
+                const { rows } = await sql<AtlasCodeSearchRow>`
+                  WITH candidate_chunks AS MATERIALIZED (
+                    SELECT ${sql.raw(codeSearchRawSelectColumns)}
+                    FROM atlas.file_chunks AS file_chunks
+                    INNER JOIN atlas.file_versions AS file_versions
+                      ON file_versions.id = file_chunks.file_version_id
+                    INNER JOIN atlas.file_keys AS file_keys
+                      ON file_keys.id = file_versions.file_key_id
+                    INNER JOIN atlas.repositories AS repositories
+                      ON repositories.id = file_keys.repository_id
+                    ${whereClause}
+                    ORDER BY file_chunks.created_at DESC
+                    LIMIT ${semanticCandidateLimit}
+                  )
+                  SELECT
+                    candidate_chunks.*,
+                    ${semanticDistanceExpr} AS semantic_distance
+                  FROM candidate_chunks
+                  INNER JOIN atlas.chunk_embeddings AS chunk_embeddings
+                    ON chunk_embeddings.chunk_id = candidate_chunks.chunk_id
+                   AND chunk_embeddings.model = ${embeddingConfig.model}
+                   AND chunk_embeddings.dimension = ${embeddingConfig.dimension}
+                  ORDER BY semantic_distance
+                  LIMIT ${semanticLimit};
+                `.execute(db)
 
-                semanticQuery = applyCodeSearchFilters(semanticQuery, filters)
-                semanticQuery = applyLatestFileVersionFilter(semanticQuery, filters)
-
-                return (await semanticQuery
-                  .orderBy(semanticDistanceExpr)
-                  .limit(semanticLimit)
-                  .execute()) as AtlasCodeSearchRow[]
+                return rows as AtlasCodeSearchRow[]
               })(),
               semanticTimeoutMs,
               `semantic code search timed out after ${semanticTimeoutMs}ms`,
