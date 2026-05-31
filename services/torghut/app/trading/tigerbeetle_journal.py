@@ -9,6 +9,7 @@ from types import TracebackType
 from typing import Any, Self, cast
 
 from sqlalchemy import or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import Settings, settings
@@ -615,27 +616,60 @@ def _persist_account_refs(
     account_specs: Sequence[TigerBeetleAccountSpec],
 ) -> None:
     for spec in account_specs:
+        account_id = u128_decimal(spec.account_id)
         existing = session.execute(
             select(TigerBeetleAccountRef).where(
                 TigerBeetleAccountRef.cluster_id == cluster_id,
-                TigerBeetleAccountRef.account_key == spec.account_key,
+                or_(
+                    TigerBeetleAccountRef.account_key == spec.account_key,
+                    TigerBeetleAccountRef.account_id == account_id,
+                ),
             )
         ).scalar_one_or_none()
         if existing is not None:
+            if (
+                existing.account_id != account_id
+                or existing.account_key != spec.account_key
+                or existing.ledger != spec.ledger
+                or existing.code != spec.code
+            ):
+                raise RuntimeError("tigerbeetle_account_ref_conflict")
             continue
-        session.add(
-            TigerBeetleAccountRef(
-                cluster_id=cluster_id,
-                account_id=u128_decimal(spec.account_id),
-                account_key=spec.account_key,
-                ledger=spec.ledger,
-                code=spec.code,
-                account_label=spec.account_label,
-                symbol=spec.symbol,
-                strategy_id=spec.strategy_id,
-            )
-        )
-    session.flush()
+
+        try:
+            with session.begin_nested():
+                session.add(
+                    TigerBeetleAccountRef(
+                        cluster_id=cluster_id,
+                        account_id=account_id,
+                        account_key=spec.account_key,
+                        ledger=spec.ledger,
+                        code=spec.code,
+                        account_label=spec.account_label,
+                        symbol=spec.symbol,
+                        strategy_id=spec.strategy_id,
+                    )
+                )
+                session.flush()
+        except IntegrityError:
+            existing = session.execute(
+                select(TigerBeetleAccountRef).where(
+                    TigerBeetleAccountRef.cluster_id == cluster_id,
+                    or_(
+                        TigerBeetleAccountRef.account_key == spec.account_key,
+                        TigerBeetleAccountRef.account_id == account_id,
+                    ),
+                )
+            ).scalar_one_or_none()
+            if existing is None:
+                raise
+            if (
+                existing.account_id != account_id
+                or existing.account_key != spec.account_key
+                or existing.ledger != spec.ledger
+                or existing.code != spec.code
+            ):
+                raise RuntimeError("tigerbeetle_account_ref_conflict") from None
 
 
 def _transfer_matches(
