@@ -2,7 +2,7 @@ replicaCount: 1
 
 image:
   repository: ghcr.io/proompteng/tigresse
-  tag: "v0.1.3"
+  tag: "v0.1.4"
   digest: ""
   pullPolicy: IfNotPresent
 
