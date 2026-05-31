@@ -242,13 +242,15 @@ def _journal_source_batch(
     source: str,
     rows: list[Any],
     journal_one: Any,
-) -> dict[str, int | str]:
-    batch: dict[str, int | str] = {
+) -> dict[str, Any]:
+    batch: dict[str, Any] = {
         "source": source,
         "selected": len(rows),
         "journaled": 0,
         "skipped": 0,
         "failed": 0,
+        "error_counts": {},
+        "sample_errors": [],
     }
     for row in rows:
         try:
@@ -261,16 +263,36 @@ def _journal_source_batch(
                 batch["skipped"] = int(batch["skipped"]) + 1
             else:
                 batch["journaled"] = int(batch["journaled"]) + 1
-        except Exception:
+        except Exception as exc:
             batch["failed"] = int(batch["failed"]) + 1
+            error_counts = batch["error_counts"]
+            if isinstance(error_counts, dict):
+                error_key = _error_summary(exc)
+                error_counts[error_key] = int(error_counts.get(error_key, 0)) + 1
+            sample_errors = batch["sample_errors"]
+            if isinstance(sample_errors, list) and len(sample_errors) < 5:
+                sample_errors.append(
+                    {
+                        "row_id": str(getattr(row, "id", "unknown")),
+                        "error_type": type(exc).__name__,
+                        "error": str(exc),
+                    }
+                )
     return batch
+
+
+def _error_summary(exc: Exception) -> str:
+    message = str(exc).strip()
+    if len(message) > 160:
+        message = f"{message[:157]}..."
+    return f"{type(exc).__name__}:{message}"
 
 
 def _payload(
     *,
     args: argparse.Namespace,
     started_at: datetime,
-    batches: list[dict[str, int | str]],
+    batches: list[dict[str, Any]],
     reconciliation: dict[str, object] | None,
 ) -> dict[str, Any]:
     selected = sum(int(batch["selected"]) for batch in batches)
@@ -325,7 +347,7 @@ def main() -> int:
         expire_on_commit=False,
         future=True,
     )
-    batches: list[dict[str, int | str]] = []
+    batches: list[dict[str, Any]] = []
     reconciliation: dict[str, object] | None = None
 
     with (
