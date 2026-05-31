@@ -34,7 +34,7 @@ from ..runtime_decision_authority import (
     STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE,
     normalize_source_decision_mode,
 )
-from ..session_context import REGULAR_OPEN_UTC
+from ..session_context import regular_session_open_utc_for
 from ..simple_risk import (
     position_qty_for_symbol,
     prepare_simple_decision,
@@ -762,7 +762,7 @@ class SimpleTradingPipeline(TradingPipeline):
 
     def _paper_route_probe_retry_session_open(self) -> datetime:
         now = trading_now(account_label=self.account_label).astimezone(timezone.utc)
-        return datetime.combine(now.date(), REGULAR_OPEN_UTC, tzinfo=timezone.utc)
+        return regular_session_open_utc_for(now)
 
     @staticmethod
     def _paper_route_probe_strategy(
@@ -836,7 +836,7 @@ class SimpleTradingPipeline(TradingPipeline):
         ts = (
             value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
         ).astimezone(timezone.utc)
-        return datetime.combine(ts.date(), REGULAR_OPEN_UTC, tzinfo=timezone.utc)
+        return regular_session_open_utc_for(ts)
 
     @staticmethod
     def _paper_route_probe_exit_session_open(
@@ -875,11 +875,7 @@ class SimpleTradingPipeline(TradingPipeline):
         if exit_minute is None:
             return False
         now = trading_now(account_label=self.account_label).astimezone(timezone.utc)
-        session_open = datetime.combine(
-            now.date(),
-            REGULAR_OPEN_UTC,
-            tzinfo=timezone.utc,
-        )
+        session_open = regular_session_open_utc_for(now)
         minutes_elapsed = int((now - session_open).total_seconds() // 60)
         return minutes_elapsed >= exit_minute
 
@@ -979,11 +975,7 @@ class SimpleTradingPipeline(TradingPipeline):
         if not self._is_market_session_open(now):
             return []
 
-        session_open = datetime.combine(
-            now.date(),
-            REGULAR_OPEN_UTC,
-            tzinfo=timezone.utc,
-        )
+        session_open = regular_session_open_utc_for(now)
         exit_lookback_hours = max(
             0,
             _safe_int(settings.trading_simple_paper_route_probe_exit_lookback_hours),
@@ -2751,11 +2743,7 @@ class SimpleTradingPipeline(TradingPipeline):
         if exit_minute is not None:
             effective_exit_minute = min(exit_minute, _REGULAR_SESSION_MINUTES - 1)
             now = trading_now(account_label=self.account_label).astimezone(timezone.utc)
-            session_open = datetime.combine(
-                now.date(),
-                REGULAR_OPEN_UTC,
-                tzinfo=timezone.utc,
-            )
+            session_open = regular_session_open_utc_for(now)
             exit_due_at = (
                 session_open + timedelta(minutes=effective_exit_minute)
             ).isoformat()

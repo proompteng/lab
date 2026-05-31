@@ -4428,6 +4428,12 @@ class TestTradingPipeline(TestCase):
             ),
             datetime(2026, 3, 27, 13, 30, tzinfo=timezone.utc),
         )
+        self.assertEqual(
+            SimpleTradingPipeline._paper_route_probe_session_open(
+                datetime(2026, 1, 5, 15, 31, tzinfo=timezone.utc)
+            ),
+            datetime(2026, 1, 5, 14, 30, tzinfo=timezone.utc),
+        )
 
     def test_simple_pipeline_does_not_close_paper_route_probe_before_exit_minute(
         self,
@@ -4530,7 +4536,9 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(alpaca_client.submitted, [])
         with self.session_local() as session:
             decisions = (
-                session.execute(select(TradeDecision).order_by(TradeDecision.created_at))
+                session.execute(
+                    select(TradeDecision).order_by(TradeDecision.created_at)
+                )
                 .scalars()
                 .all()
             )

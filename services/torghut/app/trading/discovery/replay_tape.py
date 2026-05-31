@@ -7,19 +7,21 @@ import hashlib
 import json
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, TextIO, cast
 
 from app.trading.models import SignalEnvelope
+from app.trading.session_context import (
+    regular_session_close_utc_for,
+    regular_session_open_utc_for,
+)
 
 REPLAY_TAPE_SCHEMA_VERSION = "torghut.replay-tape.v1"
 REPLAY_TAPE_MANIFEST_SCHEMA_VERSION = "torghut.replay-tape-manifest.v1"
 _DECIMAL_TAG = "__torghut_decimal__"
 _DATETIME_TAG = "__torghut_datetime__"
-_REGULAR_OPEN_UTC = time(hour=13, minute=30)
-_REGULAR_CLOSE_UTC = time(hour=20, minute=0)
 
 
 def _empty_row_count_by_trading_day() -> dict[str, int]:
@@ -242,8 +244,8 @@ def materialize_signal_tape(
             content_hash.update(b"\n")
             handle.write(f"{line}\n")
 
-    start_ts = datetime.combine(start_date, _REGULAR_OPEN_UTC, tzinfo=timezone.utc)
-    end_ts = datetime.combine(end_date, _REGULAR_CLOSE_UTC, tzinfo=timezone.utc)
+    start_ts = regular_session_open_utc_for(start_date)
+    end_ts = regular_session_close_utc_for(end_date)
     resolved_artifact_refs = {
         "tape_path": str(tape_path),
         **dict(artifact_refs or {}),
