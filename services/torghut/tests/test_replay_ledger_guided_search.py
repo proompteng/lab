@@ -144,3 +144,45 @@ class TestReplayLedgerGuidedSearch(TestCase):
                 }
             ],
         )
+
+    def test_microbar_notional_blocker_adds_pair_breadth_when_missing(self) -> None:
+        result = apply_replay_ledger_remediation_guidance(
+            sweep_config={
+                "schema_version": "torghut.replay-frontier-sweep.v1",
+                "family_template_id": "microbar_cross_sectional_pairs_v1",
+                "parameters": {
+                    "top_n": ["1"],
+                    "max_entries_per_session": ["1"],
+                },
+            },
+            remediation_report={
+                "status": "blocked_pending_search_remediation",
+                "candidate_id": "hpairs-candidate",
+                "promotion_blockers": ["avg_filled_notional_per_day_below_min"],
+                "runtime_ledger_blockers": [],
+                "recommended_search_actions": [
+                    {
+                        "action": "increase_tradeable_pair_breadth",
+                        "required_multiplier": "2.0",
+                    }
+                ],
+            },
+        )
+
+        self.assertTrue(result.applied)
+        self.assertEqual(result.sweep_config["parameters"]["top_n"], ["1", "2"])
+        self.assertEqual(
+            result.sweep_config["parameters"]["max_entries_per_session"],
+            ["1", "2"],
+        )
+        self.assertEqual(result.sweep_config["parameters"]["max_pair_legs"], ["2", "4"])
+        self.assertIn(
+            {
+                "key": "parameters.max_pair_legs",
+                "before": "",
+                "after": "2,4",
+            },
+            result.sweep_config["metadata"]["replay_ledger_guided_search"][
+                "parameter_changes"
+            ],
+        )

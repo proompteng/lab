@@ -260,7 +260,52 @@ def _expand_breadth_parameters(
         )
     if changed:
         payload["parameters"] = parameters
+    if _is_microbar_pairs_sweep(payload):
+        changed |= _ensure_microbar_pair_breadth_grid(
+            parameters=parameters,
+            factor=factor,
+            parameter_changes=parameter_changes,
+        )
+        if changed:
+            payload["parameters"] = parameters
     return changed
+
+
+def _is_microbar_pairs_sweep(payload: Mapping[str, Any]) -> bool:
+    return (
+        _string(payload.get("family_template_id"))
+        == "microbar_cross_sectional_pairs_v1"
+    )
+
+
+def _ensure_microbar_pair_breadth_grid(
+    *,
+    parameters: dict[str, Any],
+    factor: int,
+    parameter_changes: list[dict[str, str]],
+) -> bool:
+    if "max_pair_legs" in parameters:
+        return False
+    seed_values = (
+        _positive_decimal_grid_values(parameters.get("top_n"))
+        or _positive_decimal_grid_values(parameters.get("max_entries_per_session"))
+        or (Decimal("2"),)
+    )
+    seed = max(2, _ceil_to_int(max(seed_values)))
+    values = _expanded_positive_int_grid(
+        [str(seed)], factor=factor, maximum=_MAX_ENTRY_COUNT
+    )
+    if not values:
+        return False
+    parameters["max_pair_legs"] = values
+    parameter_changes.append(
+        {
+            "key": "parameters.max_pair_legs",
+            "before": "",
+            "after": ",".join(values),
+        }
+    )
+    return True
 
 
 def _expanded_positive_int_grid(
