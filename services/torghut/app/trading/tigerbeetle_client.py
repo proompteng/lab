@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import ipaddress
+import socket
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from app.config import Settings
 from app.trading.tigerbeetle_ledger_model import (
@@ -49,16 +51,75 @@ def parse_replica_addresses(raw: str) -> list[str]:
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
+def _is_ip_literal(value: str) -> bool:
+    try:
+        ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _split_host_port(address: str) -> tuple[str, str | None]:
+    if address.count(":") != 1:
+        return address, None
+
+    host, port = address.rsplit(":", 1)
+    if not host or not port:
+        return address, None
+    return host, port
+
+
+def _resolve_replica_address(address: str) -> list[str]:
+    host, port = _split_host_port(address)
+    if address.isdigit() or _is_ip_literal(host):
+        return [address]
+
+    try:
+        infos = socket.getaddrinfo(
+            host,
+            port,
+            family=socket.AF_INET,
+            type=socket.SOCK_STREAM,
+        )
+    except socket.gaierror as exc:
+        raise ValueError(
+            f"could not resolve TigerBeetle replica address {address!r}"
+        ) from exc
+
+    resolved: list[str] = []
+    for info in infos:
+        sockaddr = cast(tuple[str, int], info[4])
+        resolved_address = f"{sockaddr[0]}:{port}" if port is not None else sockaddr[0]
+        if resolved_address not in resolved:
+            resolved.append(resolved_address)
+
+    if not resolved:
+        raise ValueError(f"could not resolve TigerBeetle replica address {address!r}")
+    return resolved
+
+
+def resolve_replica_addresses(replica_addresses: Sequence[str]) -> list[str]:
+    resolved: list[str] = []
+    for address in replica_addresses:
+        for resolved_address in _resolve_replica_address(address):
+            if resolved_address not in resolved:
+                resolved.append(resolved_address)
+    return resolved
+
+
 class RealTigerBeetleClient:
     """Small wrapper around the official synchronous TigerBeetle client."""
 
     def __init__(self, *, cluster_id: int, replica_addresses: Sequence[str]) -> None:
         import tigerbeetle as tb
 
+        # The official client validates endpoint syntax before dialing and
+        # accepts IP endpoints, not Kubernetes DNS service names.
+        official_addresses = resolve_replica_addresses(replica_addresses)
         self._tb: Any = tb
         self._client: Any = tb.ClientSync(
             cluster_id=cluster_id,
-            replica_addresses=",".join(replica_addresses),
+            replica_addresses=",".join(official_addresses),
         )
 
     def close(self) -> None:
