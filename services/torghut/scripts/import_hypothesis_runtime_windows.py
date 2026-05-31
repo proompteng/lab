@@ -1945,13 +1945,13 @@ def _strategy_name_candidates(*values: str | None) -> list[str]:
 
 
 def _execution_signed_qty(*, side: Any, qty: Any) -> Decimal:
-    normalized_side = str(side or "").strip().lower()
+    normalized_side = str(side or "").strip().lower().replace("-", "_")
     quantity = _decimal_or_none(qty)
     if quantity is None or quantity <= 0:
         return Decimal("0")
-    if normalized_side == "buy":
+    if normalized_side in {"buy", "buy_to_cover", "cover"}:
         return quantity
-    if normalized_side == "sell":
+    if normalized_side in {"sell", "sell_short", "short"}:
         return -quantity
     return Decimal("0")
 
