@@ -211,6 +211,7 @@ describe('atlas store', () => {
       'ATLAS_CODE_SEARCH_SEMANTIC_TIMEOUT_MS',
       'ATLAS_CODE_SEARCH_QUERY_EMBEDDING_CACHE_TTL_MS',
       'ATLAS_CODE_SEARCH_SEMANTIC_CANDIDATE_LIMIT',
+      'ATLAS_CODE_SEARCH_HEALTH_SAMPLE_LIMIT',
     ]) {
       previousEnv[key] = process.env[key]
     }
@@ -433,6 +434,27 @@ describe('atlas store', () => {
     expect(health.sample).toMatchObject({ chunks: 2, embedded: 1, missing: 1, coverage: 0.5 })
     expect(health.model).toBe('test-embedding')
     expect(health.dimension).toBe(3)
+  })
+
+  it('keeps default semantic code-search health sampling bounded', async () => {
+    const { db, calls } = makeFakeDb({
+      selectRows: [{ chunk_id: 'chunk-1', embedded_chunk_id: 'chunk-1' }],
+    })
+    const store = createPostgresAtlasStore({
+      url: 'postgresql://user:pass@localhost:5432/db',
+      createDb: () => db,
+    })
+
+    const health = await store.codeSearchHealth({
+      repository: 'proompteng/lab',
+      ref: 'main',
+      pathPrefix: 'services/jangar',
+    })
+
+    const healthSql = calls.find((call) => call.sql.toLowerCase().includes('left join "atlas"."chunk_embeddings"'))
+    expect(health.sample.limit).toBe(50)
+    expect(healthSql?.params).toContain(50)
+    expect(healthSql?.params).not.toContain(500)
   })
 
   it('ranks exact identifier matches above weaker lexical-only matches', async () => {
