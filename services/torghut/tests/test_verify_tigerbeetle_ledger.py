@@ -22,7 +22,9 @@ class MissingTransferLookupClient(FakeTigerBeetleClient):
 
 
 class TestVerifyTigerBeetleLedger(TestCase):
-    def test_run_smoke_proves_nop_idempotent_writes_and_lookup(self) -> None:
+    def test_run_smoke_proves_protocol_probe_idempotent_writes_and_lookup(
+        self,
+    ) -> None:
         client = FakeTigerBeetleClient()
         out = io.StringIO()
 
@@ -37,7 +39,7 @@ class TestVerifyTigerBeetleLedger(TestCase):
         self.assertEqual(len(client.accounts), 2)
         self.assertEqual(len(client.transfers), 1)
         output = out.getvalue()
-        self.assertIn("nop ok", output)
+        self.assertIn("protocol probe ok", output)
         self.assertIn("create_accounts idempotent ok", output)
         self.assertIn("create_transfers idempotent ok", output)
         self.assertIn("lookup_transfers ok", output)

@@ -62,7 +62,7 @@ def run_smoke(settings: Settings) -> dict[str, Any]:
     )
 
     client.nop()
-    print("nop ok")
+    print("protocol probe ok")
     client.create_accounts(accounts)
     client.create_accounts(accounts)
     looked_up_accounts = client.lookup_accounts([item.account_id for item in accounts])

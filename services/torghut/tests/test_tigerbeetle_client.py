@@ -9,6 +9,7 @@ from unittest.mock import patch
 from app.config import Settings
 from app.trading.tigerbeetle_client import (
     FakeTigerBeetleClient,
+    HEALTH_PROBE_ACCOUNT_ID,
     RealTigerBeetleClient,
     check_tigerbeetle_health,
     create_tigerbeetle_client,
@@ -168,14 +169,12 @@ class TestTigerBeetleClient(TestCase):
                 self.replica_addresses = replica_addresses
                 self.created_accounts: list[object] = []
                 self.created_transfers: list[object] = []
+                self.lookup_account_requests: list[list[int]] = []
                 self.closed = False
                 instances.append(self)
 
             def close(self) -> None:
                 self.closed = True
-
-            def nop(self) -> None:
-                return None
 
             def create_accounts(
                 self, accounts: list[object]
@@ -184,6 +183,7 @@ class TestTigerBeetleClient(TestCase):
                 return [{"status": "created"}]
 
             def lookup_accounts(self, ids: list[int]) -> list[object]:
+                self.lookup_account_requests.append(ids)
                 return [{"id": item} for item in ids]
 
             def create_transfers(
@@ -252,6 +252,7 @@ class TestTigerBeetleClient(TestCase):
         self.assertEqual(sync.replica_addresses, "10.99.251.1:3000")
         self.assertEqual(sync.created_accounts[0].id, 11)
         self.assertEqual(sync.created_transfers[0].id, 22)
+        self.assertEqual(sync.lookup_account_requests[-1], [HEALTH_PROBE_ACCOUNT_ID])
         self.assertTrue(sync.closed)
 
     def test_real_client_close_uses_exit_when_close_missing(self) -> None:
