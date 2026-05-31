@@ -16,7 +16,7 @@ spec:
   template:
     metadata:
       annotations:
-        client.knative.dev/updateTimestamp: "2026-05-31T22:57:17Z"
+        client.knative.dev/updateTimestamp: "2026-05-31T23:18:02Z"
         autoscaling.knative.dev/minScale: "1"
         autoscaling.knative.dev/maxScale: "1"
         autoscaling.knative.dev/target: "80"
@@ -31,7 +31,7 @@ spec:
           securityContext:
             seccompProfile:
               type: Unconfined
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:a6c9d5fd7fb3530daa371215815305992dc4faa887c54fc06e92b2087b224d44
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:6243f2144fde10c8a0629a5e413da16089fa8fd158dca7ec0b40a44f50fb44f1
           ports:
             - name: http1
               containerPort: 8181
@@ -371,11 +371,11 @@ spec:
             - name: TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS
               value: "10"
             - name: TORGHUT_VERSION
-              value: v0.586.0-19-gb9d85c010
+              value: v0.586.0-24-gb558dc794
             - name: TORGHUT_COMMIT
-              value: b9d85c01041442797a181a685f2fcd0b6072218d
+              value: b558dc7940c162bc4a6d6e3f5cd3b766f8212f1e
             - name: TORGHUT_IMAGE_DIGEST
-              value: sha256:a6c9d5fd7fb3530daa371215815305992dc4faa887c54fc06e92b2087b224d44
+              value: sha256:6243f2144fde10c8a0629a5e413da16089fa8fd158dca7ec0b40a44f50fb44f1
           livenessProbe:
             httpGet:
               path: /healthz
