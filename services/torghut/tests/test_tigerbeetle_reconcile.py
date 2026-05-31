@@ -232,6 +232,7 @@ class TestTigerBeetleReconcile(TestCase):
             self.assertFalse(payload["ok"])
             self.assertIn(BLOCKER_SOURCE_ROW_MISSING, payload["blockers"])
             self.assertEqual(payload["source_row_missing_count"], 1)
+            self.assertEqual(payload["source_missing_count"], 1)
 
     def test_reconciliation_blocks_code_and_ledger_mismatch(self) -> None:
         with Session(self.engine) as session:
@@ -671,7 +672,11 @@ class TestTigerBeetleReconcile(TestCase):
                 source_id="not-a-uuid",
             )
 
-            self.assertEqual(_expected_source_amount_micros(session, cost_ref), Decimal("250000"))
-            self.assertEqual(_expected_source_amount_micros(session, runtime_ref), Decimal("500000"))
+            self.assertEqual(
+                _expected_source_amount_micros(session, cost_ref), Decimal("250000")
+            )
+            self.assertEqual(
+                _expected_source_amount_micros(session, runtime_ref), Decimal("500000")
+            )
             self.assertIsNone(_expected_source_amount_micros(session, unknown_ref))
             self.assertIsNone(_expected_source_amount_micros(session, invalid_ref))
