@@ -424,6 +424,7 @@ def main() -> int:
             reconciliation = reconcile_tigerbeetle_transfers(
                 session,
                 settings_obj=settings_obj,
+                client=journal.client_for_reconciliation(),
                 limit=max(1, int(args.reconcile_limit)),
                 persist=True,
             )

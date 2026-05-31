@@ -260,6 +260,38 @@ class TestTigerBeetleLedgerJournal(TestCase):
             self.assertEqual(client.close_count, 1)
             self.assertEqual(len(client.transfers), 2)
 
+    def test_reconciliation_client_is_disabled_when_journal_is_disabled(
+        self,
+    ) -> None:
+        client = FakeTigerBeetleClient()
+
+        self.assertIsNone(
+            TigerBeetleLedgerJournal(
+                settings_obj=_settings(enabled=False),
+                client=client,
+            ).client_for_reconciliation()
+        )
+        self.assertIsNone(
+            TigerBeetleLedgerJournal(
+                settings_obj=_settings(journal_enabled=False),
+                client=client,
+            ).client_for_reconciliation()
+        )
+
+    def test_reconciliation_client_reuses_owned_journal_client(self) -> None:
+        client = ClosableFakeTigerBeetleClient()
+
+        with patch(
+            "app.trading.tigerbeetle_journal.create_tigerbeetle_client",
+            return_value=client,
+        ) as factory:
+            with TigerBeetleLedgerJournal(settings_obj=_settings()) as journal:
+                self.assertIs(journal.client_for_reconciliation(), client)
+                self.assertIs(journal.client_for_reconciliation(), client)
+
+        self.assertEqual(factory.call_count, 1)
+        self.assertEqual(client.close_count, 1)
+
     def test_real_fractional_notional_rounds_to_nearest_micro(self) -> None:
         with Session(self.engine) as session:
             event = _create_fill_event(session, fingerprint="fractional-notional")

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal
 from unittest import TestCase
+from unittest.mock import patch
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -55,6 +56,15 @@ from app.trading.tigerbeetle_reconcile import (
 class FailingLookupClient(FakeTigerBeetleClient):
     def lookup_transfers(self, ids: list[int]) -> list[object]:
         raise RuntimeError("lookup failed")
+
+
+class CloseTrackingClient(FakeTigerBeetleClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
 
 
 def _settings() -> Settings:
@@ -118,6 +128,39 @@ class TestTigerBeetleReconcile(TestCase):
             self.assertTrue(payload["ok"])
             self.assertEqual(payload["blockers"], [])
             self.assertEqual(payload["checked_transfer_count"], 1)
+
+    def test_reconciliation_closes_owned_tigerbeetle_client(self) -> None:
+        with Session(self.engine) as session:
+            _add_ref(session)
+            client = CloseTrackingClient()
+            client.transfers[1001] = _transfer()
+
+            with patch(
+                "app.trading.tigerbeetle_reconcile.create_tigerbeetle_client",
+                return_value=client,
+            ):
+                payload = reconcile_tigerbeetle_transfers(
+                    session,
+                    settings_obj=_settings(),
+                )
+
+            self.assertTrue(payload["ok"])
+            self.assertTrue(client.closed)
+
+    def test_reconciliation_does_not_close_injected_tigerbeetle_client(self) -> None:
+        with Session(self.engine) as session:
+            _add_ref(session)
+            client = CloseTrackingClient()
+            client.transfers[1001] = _transfer()
+
+            payload = reconcile_tigerbeetle_transfers(
+                session,
+                settings_obj=_settings(),
+                client=client,
+            )
+
+            self.assertTrue(payload["ok"])
+            self.assertFalse(client.closed)
 
     def test_reconciliation_blocks_missing_tigerbeetle_transfer(self) -> None:
         with Session(self.engine) as session:

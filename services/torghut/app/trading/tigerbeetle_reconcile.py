@@ -306,6 +306,8 @@ def reconcile_tigerbeetle_transfers(
     blockers: list[str] = []
 
     transfer_lookup: dict[str, object] = {}
+    owned_client = client is None
+    tb_client: TigerBeetleClientProtocol | None = None
     try:
         if refs:
             tb_client = client or create_tigerbeetle_client(settings_obj)
@@ -315,6 +317,11 @@ def reconcile_tigerbeetle_transfers(
             transfer_lookup = {str(_attr(item, "id")): item for item in looked_up}
     except Exception:
         blockers.append(BLOCKER_CLIENT_UNAVAILABLE)
+    finally:
+        if owned_client and tb_client is not None:
+            close = getattr(tb_client, "close", None)
+            if callable(close):
+                close()
 
     for ref in refs:
         actual = transfer_lookup.get(ref.transfer_id)

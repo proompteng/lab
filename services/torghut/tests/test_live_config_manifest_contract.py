@@ -1199,7 +1199,7 @@ class TestLiveConfigManifestContract(TestCase):
             "argocd/applications/torghut/order-feed-source-window-repair-cronjob.yaml"
         )
 
-        self.assertEqual(spec.get("schedule"), "13,28,43,58 * * * *")
+        self.assertEqual(spec.get("schedule"), "13,43 * * * *")
         self.assertEqual(spec.get("concurrencyPolicy"), "Forbid")
         self.assertEqual(spec.get("startingDeadlineSeconds"), 300)
         job_spec = cast(
@@ -1228,7 +1228,7 @@ class TestLiveConfigManifestContract(TestCase):
                 },
                 "limits": {
                     "cpu": "250m",
-                    "memory": "256Mi",
+                    "memory": "512Mi",
                     "ephemeral-storage": "512Mi",
                 },
             },
@@ -1264,7 +1264,7 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("scripts/repair_order_feed_source_windows.py", args)
         self.assertIn("--dsn-env SIM_DB_DSN", args)
         self.assertIn("--account-label TORGHUT_SIM", args)
-        self.assertIn("--batch-size 500", args)
+        self.assertIn("--batch-size 250", args)
         self.assertIn("--max-batches 1", args)
         self.assertIn("--apply", args)
         self.assertNotIn("scripts/journal_tigerbeetle_order_events.py", args)
@@ -1294,7 +1294,7 @@ class TestLiveConfigManifestContract(TestCase):
             metadata.get("name"),
             "torghut-tigerbeetle-journal-order-events",
         )
-        self.assertEqual(spec.get("schedule"), "6,21,36,51 * * * *")
+        self.assertEqual(spec.get("schedule"), "6,36 * * * *")
         self.assertEqual(spec.get("concurrencyPolicy"), "Forbid")
         self.assertEqual(spec.get("startingDeadlineSeconds"), 300)
         self.assertEqual(spec.get("successfulJobsHistoryLimit"), 2)
@@ -1368,10 +1368,10 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertNotIn("scripts/repair_order_feed_source_windows.py", args)
         self.assertIn("--dsn-env SIM_DB_DSN", args)
         self.assertIn("--account-label TORGHUT_SIM", args)
-        self.assertIn("--batch-size 500", args)
-        self.assertIn("--max-batches 2", args)
-        self.assertIn("--event-scan-limit 1000", args)
-        self.assertIn("--reconcile-limit 1000", args)
+        self.assertIn("--batch-size 100", args)
+        self.assertIn("--max-batches 1", args)
+        self.assertIn("--event-scan-limit 250", args)
+        self.assertIn("--reconcile-limit 250", args)
         self.assertNotIn("--fail-on-degraded", args)
         self.assertIn("--json", args)
         security_context = cast(

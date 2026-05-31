@@ -136,6 +136,7 @@ class FakeJournal:
         self.executions: list[str] = []
         self.tca_metrics: list[str] = []
         self.runtime_buckets: list[str] = []
+        self.reconciliation_client = SimpleNamespace(name="shared-tigerbeetle-client")
         self.closed = False
         FakeJournal.instances.append(self)
 
@@ -183,6 +184,9 @@ class FakeJournal:
         del session
         self.runtime_buckets.append(bucket.run_id)
         return SimpleNamespace(transfer_id="4")
+
+    def client_for_reconciliation(self) -> object:
+        return self.reconciliation_client
 
 
 class TestJournalTigerBeetleOrderEventsScript(TestCase):
@@ -483,6 +487,10 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
             ["runtime-run-source"],
         )
         reconcile.assert_called_once()
+        self.assertIs(
+            reconcile.call_args.kwargs["client"],
+            FakeJournal.instances[0].reconciliation_client,
+        )
 
     def test_main_dry_run_rolls_back_without_reconcile(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
