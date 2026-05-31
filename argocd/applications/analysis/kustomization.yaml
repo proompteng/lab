@@ -7,4 +7,4 @@ resources:
 images:
   - name: registry.ide-newton.ts.net/lab/analysis
     newName: registry.ide-newton.ts.net/lab/analysis
-    newTag: a242d305282584782217f37036af2f032b9cee2a
+    newTag: 1a0ee33e47c744e91e2e5657bf21b018e7636050
