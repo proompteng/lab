@@ -14,11 +14,11 @@ spec:
   startingDeadlineSeconds: 300
   jobTemplate:
     spec:
-      backoffLimit: 1
+      backoffLimit: 0
       activeDeadlineSeconds: 600
       template:
         spec:
-          restartPolicy: OnFailure
+          restartPolicy: Never
           serviceAccountName: torghut-runtime
           nodeSelector:
             kubernetes.io/arch: arm64
@@ -62,7 +62,6 @@ spec:
                     --max-batches 2 \
                     --event-scan-limit 1000 \
                     --reconcile-limit 1000 \
-                    --fail-on-degraded \
                     --json
               env:
                 - name: TORGHUT_SIM_DB_HOST
@@ -103,3 +102,5 @@ spec:
                   value: "false"
                 - name: TORGHUT_IMAGE_DIGEST
                   value: sha256:cc3fc1095b90378a3b1e0655309b128935eaa02bc555fa61f6ee058046362d61
+                - name: PYTHONUNBUFFERED
+                  value: "1"
