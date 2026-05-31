@@ -12,7 +12,10 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings, settings
 from app.models import (
+    Execution,
     ExecutionOrderEvent,
+    ExecutionTCAMetric,
+    StrategyRuntimeLedgerBucket,
     TigerBeetleAccountRef,
     TigerBeetleTransferRef,
     coerce_json_payload,
@@ -24,14 +27,20 @@ from app.trading.tigerbeetle_client import (
 from app.trading.tigerbeetle_ids import stable_u128, u128_decimal
 from app.trading.tigerbeetle_ledger_model import (
     ACCOUNT_CODE_CASH_CONTROL,
+    ACCOUNT_CODE_EVIDENCE_CONTROL,
     ACCOUNT_CODE_EXECUTION_COST,
+    ACCOUNT_CODE_EXECUTION_EVIDENCE,
     ACCOUNT_CODE_FILL_NOTIONAL,
     ACCOUNT_CODE_ORDER_HOLD,
     ACCOUNT_CODE_REALIZED_PNL,
+    ACCOUNT_CODE_RUNTIME_LEDGER_EVIDENCE,
     LEDGER_USD_MICRO,
     TRANSFER_KIND_CANCEL_VOID,
+    TRANSFER_KIND_EXECUTION_COST,
+    TRANSFER_KIND_EXECUTION_FILL,
     TRANSFER_KIND_FILL_POST,
     TRANSFER_KIND_REJECT_VOID,
+    TRANSFER_KIND_RUNTIME_NET_PNL,
     TRANSFER_KIND_SUBMITTED_PENDING,
     TigerBeetleAccountSpec,
     TigerBeetleTransferSpec,
@@ -39,6 +48,11 @@ from app.trading.tigerbeetle_ledger_model import (
     transfer_code_for_kind,
     transfer_kind_for_event,
 )
+
+SOURCE_TYPE_EXECUTION = "execution"
+SOURCE_TYPE_EXECUTION_ORDER_EVENT = "execution_order_event"
+SOURCE_TYPE_EXECUTION_TCA_METRIC = "execution_tca_metric"
+SOURCE_TYPE_RUNTIME_LEDGER_BUCKET = "strategy_runtime_ledger_bucket"
 
 
 def _result_status(result: object) -> str:
@@ -148,6 +162,18 @@ def event_transfer_id(event: ExecutionOrderEvent, transfer_kind: str) -> int:
     )
 
 
+def execution_transfer_id(execution: Execution) -> int:
+    return stable_u128("torghut.tigerbeetle.execution_fill", str(execution.id))
+
+
+def execution_cost_transfer_id(metric: ExecutionTCAMetric) -> int:
+    return stable_u128("torghut.tigerbeetle.execution_cost", str(metric.id))
+
+
+def runtime_ledger_transfer_id(bucket: StrategyRuntimeLedgerBucket) -> int:
+    return stable_u128("torghut.tigerbeetle.runtime_ledger", str(bucket.id))
+
+
 def _account_specs(event: ExecutionOrderEvent) -> list[TigerBeetleAccountSpec]:
     account_label = event.alpaca_account_label
     symbol = event.symbol
@@ -207,6 +233,71 @@ def _account_specs(event: ExecutionOrderEvent) -> list[TigerBeetleAccountSpec]:
         ),
     ]
     return specs
+
+
+def _evidence_account_specs(
+    *,
+    account_label: str | None,
+    symbol: str | None,
+    strategy_id: str | None,
+    runtime_key: str | None = None,
+) -> list[TigerBeetleAccountSpec]:
+    normalized_account_label = account_label or "unknown"
+    normalized_symbol = symbol or "UNKNOWN"
+    normalized_strategy_id = strategy_id or "unknown"
+    runtime_identity = runtime_key or normalized_strategy_id
+    return [
+        TigerBeetleAccountSpec(
+            account_id=_account_id(f"evidence_control:{normalized_account_label}:usd"),
+            account_key=f"evidence_control:{normalized_account_label}:usd",
+            ledger=LEDGER_USD_MICRO,
+            code=ACCOUNT_CODE_EVIDENCE_CONTROL,
+            account_label=account_label,
+            symbol=symbol,
+            strategy_id=strategy_id,
+        ),
+        TigerBeetleAccountSpec(
+            account_id=_account_id(
+                "execution_evidence:"
+                f"{normalized_account_label}:{normalized_symbol}:{normalized_strategy_id}"
+            ),
+            account_key=(
+                "execution_evidence:"
+                f"{normalized_account_label}:{normalized_symbol}:{normalized_strategy_id}"
+            ),
+            ledger=LEDGER_USD_MICRO,
+            code=ACCOUNT_CODE_EXECUTION_EVIDENCE,
+            account_label=account_label,
+            symbol=symbol,
+            strategy_id=strategy_id,
+        ),
+        TigerBeetleAccountSpec(
+            account_id=_account_id(
+                "execution_cost:"
+                f"{normalized_account_label}:{normalized_symbol}:{normalized_strategy_id}"
+            ),
+            account_key=(
+                "execution_cost:"
+                f"{normalized_account_label}:{normalized_symbol}:{normalized_strategy_id}"
+            ),
+            ledger=LEDGER_USD_MICRO,
+            code=ACCOUNT_CODE_EXECUTION_COST,
+            account_label=account_label,
+            symbol=symbol,
+            strategy_id=strategy_id,
+        ),
+        TigerBeetleAccountSpec(
+            account_id=_account_id(
+                f"runtime_ledger:{normalized_account_label}:{runtime_identity}"
+            ),
+            account_key=f"runtime_ledger:{normalized_account_label}:{runtime_identity}",
+            ledger=LEDGER_USD_MICRO,
+            code=ACCOUNT_CODE_RUNTIME_LEDGER_EVIDENCE,
+            account_label=account_label,
+            symbol=symbol,
+            strategy_id=strategy_id,
+        ),
+    ]
 
 
 def _transfer_flag(flag_name: str) -> int:
@@ -422,6 +513,39 @@ def _transfer_matches(
     )
 
 
+def _source_transfer_spec(
+    *,
+    transfer_id: int,
+    transfer_kind: str,
+    amount: int,
+    debit: TigerBeetleAccountSpec,
+    credit: TigerBeetleAccountSpec,
+) -> TigerBeetleTransferSpec:
+    return TigerBeetleTransferSpec(
+        transfer_id=transfer_id,
+        transfer_kind=transfer_kind,
+        debit_account_id=debit.account_id,
+        credit_account_id=credit.account_id,
+        amount=amount,
+        ledger=LEDGER_USD_MICRO,
+        code=transfer_code_for_kind(transfer_kind),
+    )
+
+
+def _execution_notional_usd(execution: Execution) -> Decimal | None:
+    if execution.avg_fill_price is None:
+        return None
+    amount = Decimal(str(execution.filled_qty)) * Decimal(str(execution.avg_fill_price))
+    return abs(amount)
+
+
+def _amount_to_micros(value: Decimal | None) -> int | None:
+    if value is None:
+        return None
+    amount = decimal_usd_to_micros(abs(Decimal(str(value))))
+    return amount if amount > 0 else None
+
+
 class TigerBeetleLedgerJournal:
     def __init__(
         self,
@@ -435,24 +559,22 @@ class TigerBeetleLedgerJournal:
     def _client_for_write(self) -> TigerBeetleClientProtocol:
         return self._client or create_tigerbeetle_client(self._settings)
 
-    def journal_order_event(
-        self, session: Session, event: ExecutionOrderEvent
-    ) -> TigerBeetleTransferRef | None:
-        if (
-            not self._settings.tigerbeetle_enabled
-            or not self._settings.tigerbeetle_journal_enabled
-        ):
-            return None
-        plan = build_order_event_transfer_plan(
-            session,
-            event,
-            settings_obj=self._settings,
-        )
-        if plan is None:
-            return None
-
-        account_specs = plan.account_specs
-        transfer_spec = plan.transfer_spec
+    def _persist_transfer(
+        self,
+        session: Session,
+        *,
+        account_specs: Sequence[TigerBeetleAccountSpec],
+        transfer_spec: TigerBeetleTransferSpec,
+        trade_decision_id: object | None = None,
+        execution_id: object | None = None,
+        execution_order_event_id: object | None = None,
+        execution_tca_metric_id: object | None = None,
+        runtime_ledger_bucket_id: object | None = None,
+        event_fingerprint: str | None = None,
+        source_type: str,
+        source_id: str,
+        payload_json: Mapping[str, object],
+    ) -> TigerBeetleTransferRef:
         transfer_id_text = u128_decimal(transfer_spec.transfer_id)
         existing = session.execute(
             select(TigerBeetleTransferRef).where(
@@ -463,10 +585,50 @@ class TigerBeetleLedgerJournal:
         ).scalar_one_or_none()
         if existing is not None:
             if (
-                existing.amount == Decimal(transfer_spec.amount)
+                existing.transfer_kind == transfer_spec.transfer_kind
+                and existing.amount == Decimal(transfer_spec.amount)
                 and existing.code == transfer_spec.code
                 and existing.ledger == transfer_spec.ledger
             ):
+                if existing.trade_decision_id is None:
+                    existing.trade_decision_id = cast(Any, trade_decision_id)
+                if existing.execution_id is None:
+                    existing.execution_id = cast(Any, execution_id)
+                if existing.execution_order_event_id is None:
+                    existing.execution_order_event_id = cast(
+                        Any,
+                        execution_order_event_id,
+                    )
+                if existing.execution_tca_metric_id is None:
+                    existing.execution_tca_metric_id = cast(
+                        Any,
+                        execution_tca_metric_id,
+                    )
+                if existing.runtime_ledger_bucket_id is None:
+                    existing.runtime_ledger_bucket_id = cast(
+                        Any,
+                        runtime_ledger_bucket_id,
+                    )
+                if existing.source_type is None:
+                    existing.source_type = source_type
+                if existing.source_id is None:
+                    existing.source_id = source_id
+                if existing.event_fingerprint is None:
+                    existing.event_fingerprint = event_fingerprint
+                raw_existing_payload: object = existing.payload_json
+                existing_payload: Mapping[str, object] = (
+                    cast(Mapping[str, object], raw_existing_payload)
+                    if isinstance(raw_existing_payload, Mapping)
+                    else {}
+                )
+                existing.payload_json = coerce_json_payload(
+                    {
+                        **existing_payload,
+                        **payload_json,
+                    }
+                )
+                session.add(existing)
+                session.flush()
                 return existing
             raise RuntimeError("tigerbeetle_transfer_ref_conflict")
 
@@ -493,28 +655,223 @@ class TigerBeetleLedgerJournal:
         ref = TigerBeetleTransferRef(
             cluster_id=self._settings.tigerbeetle_cluster_id,
             transfer_id=transfer_id_text,
-            transfer_kind=plan.transfer_kind,
+            transfer_kind=transfer_spec.transfer_kind,
             ledger=transfer_spec.ledger,
             code=transfer_spec.code,
             amount=Decimal(transfer_spec.amount),
             status=status,
             result_code=status,
-            trade_decision_id=event.trade_decision_id,
-            execution_id=event.execution_id,
-            execution_order_event_id=event.id,
-            event_fingerprint=event.event_fingerprint,
-            payload_json=coerce_json_payload(
-                {
-                    "debit_account_id": u128_decimal(transfer_spec.debit_account_id),
-                    "credit_account_id": u128_decimal(transfer_spec.credit_account_id),
-                    "pending_id": u128_decimal(transfer_spec.pending_id)
-                    if transfer_spec.pending_id
-                    else None,
-                    "pending_mode": plan.pending_mode,
-                    "source": "execution_order_event",
-                }
-            ),
+            trade_decision_id=trade_decision_id,
+            execution_id=execution_id,
+            execution_order_event_id=execution_order_event_id,
+            execution_tca_metric_id=execution_tca_metric_id,
+            runtime_ledger_bucket_id=runtime_ledger_bucket_id,
+            source_type=source_type,
+            source_id=source_id,
+            event_fingerprint=event_fingerprint,
+            payload_json=coerce_json_payload(payload_json),
         )
         session.add(ref)
         session.flush()
         return ref
+
+    def journal_order_event(
+        self, session: Session, event: ExecutionOrderEvent
+    ) -> TigerBeetleTransferRef | None:
+        if (
+            not self._settings.tigerbeetle_enabled
+            or not self._settings.tigerbeetle_journal_enabled
+        ):
+            return None
+        plan = build_order_event_transfer_plan(
+            session,
+            event,
+            settings_obj=self._settings,
+        )
+        if plan is None:
+            return None
+
+        transfer_spec = plan.transfer_spec
+        return self._persist_transfer(
+            session,
+            account_specs=plan.account_specs,
+            transfer_spec=transfer_spec,
+            trade_decision_id=event.trade_decision_id,
+            execution_id=event.execution_id,
+            execution_order_event_id=event.id,
+            source_type=SOURCE_TYPE_EXECUTION_ORDER_EVENT,
+            source_id=str(event.id),
+            event_fingerprint=event.event_fingerprint,
+            payload_json={
+                "debit_account_id": u128_decimal(transfer_spec.debit_account_id),
+                "credit_account_id": u128_decimal(transfer_spec.credit_account_id),
+                "pending_id": u128_decimal(transfer_spec.pending_id)
+                if transfer_spec.pending_id
+                else None,
+                "pending_mode": plan.pending_mode,
+                "source": SOURCE_TYPE_EXECUTION_ORDER_EVENT,
+            },
+        )
+
+    def journal_execution(
+        self, session: Session, execution: Execution
+    ) -> TigerBeetleTransferRef | None:
+        if (
+            not self._settings.tigerbeetle_enabled
+            or not self._settings.tigerbeetle_journal_enabled
+        ):
+            return None
+        amount = _amount_to_micros(_execution_notional_usd(execution))
+        if amount is None:
+            return None
+        strategy_id = (
+            str(execution.trade_decision_id) if execution.trade_decision_id else None
+        )
+        account_specs = _evidence_account_specs(
+            account_label=execution.alpaca_account_label,
+            symbol=execution.symbol,
+            strategy_id=strategy_id,
+        )
+        accounts = {spec.account_key: spec for spec in account_specs}
+        control = accounts[f"evidence_control:{execution.alpaca_account_label}:usd"]
+        execution_account = accounts[
+            f"execution_evidence:{execution.alpaca_account_label}:{execution.symbol}:{strategy_id or 'unknown'}"
+        ]
+        transfer_spec = _source_transfer_spec(
+            transfer_id=execution_transfer_id(execution),
+            transfer_kind=TRANSFER_KIND_EXECUTION_FILL,
+            amount=amount,
+            debit=control,
+            credit=execution_account,
+        )
+        return self._persist_transfer(
+            session,
+            account_specs=account_specs,
+            transfer_spec=transfer_spec,
+            trade_decision_id=execution.trade_decision_id,
+            execution_id=execution.id,
+            source_type=SOURCE_TYPE_EXECUTION,
+            source_id=str(execution.id),
+            payload_json={
+                "source": SOURCE_TYPE_EXECUTION,
+                "alpaca_order_id": execution.alpaca_order_id,
+                "client_order_id": execution.client_order_id,
+                "filled_qty": str(execution.filled_qty),
+                "avg_fill_price": str(execution.avg_fill_price),
+                "notional_micros": amount,
+                "debit_account_id": u128_decimal(transfer_spec.debit_account_id),
+                "credit_account_id": u128_decimal(transfer_spec.credit_account_id),
+            },
+        )
+
+    def journal_execution_tca_metric(
+        self, session: Session, metric: ExecutionTCAMetric
+    ) -> TigerBeetleTransferRef | None:
+        if (
+            not self._settings.tigerbeetle_enabled
+            or not self._settings.tigerbeetle_journal_enabled
+        ):
+            return None
+        amount = _amount_to_micros(metric.shortfall_notional)
+        if amount is None:
+            return None
+        strategy_id = str(metric.strategy_id) if metric.strategy_id else None
+        account_specs = _evidence_account_specs(
+            account_label=metric.alpaca_account_label,
+            symbol=metric.symbol,
+            strategy_id=strategy_id,
+        )
+        account_label = metric.alpaca_account_label or "unknown"
+        accounts = {spec.account_key: spec for spec in account_specs}
+        control = accounts[f"evidence_control:{account_label}:usd"]
+        cost_account = accounts[
+            f"execution_cost:{account_label}:{metric.symbol}:{strategy_id or 'unknown'}"
+        ]
+        transfer_spec = _source_transfer_spec(
+            transfer_id=execution_cost_transfer_id(metric),
+            transfer_kind=TRANSFER_KIND_EXECUTION_COST,
+            amount=amount,
+            debit=control,
+            credit=cost_account,
+        )
+        return self._persist_transfer(
+            session,
+            account_specs=account_specs,
+            transfer_spec=transfer_spec,
+            trade_decision_id=metric.trade_decision_id,
+            execution_id=metric.execution_id,
+            execution_tca_metric_id=metric.id,
+            source_type=SOURCE_TYPE_EXECUTION_TCA_METRIC,
+            source_id=str(metric.id),
+            payload_json={
+                "source": SOURCE_TYPE_EXECUTION_TCA_METRIC,
+                "shortfall_notional": str(metric.shortfall_notional),
+                "realized_shortfall_bps": str(metric.realized_shortfall_bps),
+                "simulator_version": metric.simulator_version,
+                "cost_micros": amount,
+                "debit_account_id": u128_decimal(transfer_spec.debit_account_id),
+                "credit_account_id": u128_decimal(transfer_spec.credit_account_id),
+            },
+        )
+
+    def journal_runtime_ledger_bucket(
+        self, session: Session, bucket: StrategyRuntimeLedgerBucket
+    ) -> TigerBeetleTransferRef | None:
+        if (
+            not self._settings.tigerbeetle_enabled
+            or not self._settings.tigerbeetle_journal_enabled
+        ):
+            return None
+        amount_source = (
+            bucket.net_strategy_pnl_after_costs
+            if bucket.net_strategy_pnl_after_costs != Decimal("0")
+            else bucket.cost_amount
+        )
+        amount = _amount_to_micros(amount_source)
+        if amount is None:
+            return None
+        runtime_key = f"{bucket.hypothesis_id}:{bucket.run_id}:{bucket.bucket_started_at.isoformat()}"
+        account_specs = _evidence_account_specs(
+            account_label=bucket.account_label,
+            symbol=None,
+            strategy_id=bucket.hypothesis_id,
+            runtime_key=runtime_key,
+        )
+        account_label = bucket.account_label or "unknown"
+        accounts = {spec.account_key: spec for spec in account_specs}
+        control = accounts[f"evidence_control:{account_label}:usd"]
+        runtime_account = accounts[f"runtime_ledger:{account_label}:{runtime_key}"]
+        transfer_spec = _source_transfer_spec(
+            transfer_id=runtime_ledger_transfer_id(bucket),
+            transfer_kind=TRANSFER_KIND_RUNTIME_NET_PNL,
+            amount=amount,
+            debit=control,
+            credit=runtime_account,
+        )
+        return self._persist_transfer(
+            session,
+            account_specs=account_specs,
+            transfer_spec=transfer_spec,
+            runtime_ledger_bucket_id=bucket.id,
+            source_type=SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+            source_id=str(bucket.id),
+            payload_json={
+                "source": SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                "run_id": bucket.run_id,
+                "candidate_id": bucket.candidate_id,
+                "hypothesis_id": bucket.hypothesis_id,
+                "observed_stage": bucket.observed_stage,
+                "pnl_basis": bucket.pnl_basis,
+                "ledger_schema_version": bucket.ledger_schema_version,
+                "filled_notional": str(bucket.filled_notional),
+                "gross_strategy_pnl": str(bucket.gross_strategy_pnl),
+                "cost_amount": str(bucket.cost_amount),
+                "net_strategy_pnl_after_costs": str(
+                    bucket.net_strategy_pnl_after_costs
+                ),
+                "amount_source": str(amount_source),
+                "amount_micros": amount,
+                "debit_account_id": u128_decimal(transfer_spec.debit_account_id),
+                "credit_account_id": u128_decimal(transfer_spec.credit_account_id),
+            },
+        )

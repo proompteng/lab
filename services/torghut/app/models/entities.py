@@ -490,9 +490,7 @@ class TigerBeetleTransferRef(Base, TimestampMixin):
     code: Mapped[int] = mapped_column(BigInteger(), nullable=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(39, 0), nullable=False)
     status: Mapped[str] = mapped_column(String(length=32), nullable=False)
-    result_code: Mapped[Optional[str]] = mapped_column(
-        String(length=64), nullable=True
-    )
+    result_code: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
     trade_decision_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         GUID(), ForeignKey("trade_decisions.id", ondelete="SET NULL"), nullable=True
     )
@@ -504,6 +502,18 @@ class TigerBeetleTransferRef(Base, TimestampMixin):
         ForeignKey("execution_order_events.id", ondelete="SET NULL"),
         nullable=True,
     )
+    execution_tca_metric_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        GUID(),
+        ForeignKey("execution_tca_metrics.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    runtime_ledger_bucket_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        GUID(),
+        ForeignKey("strategy_runtime_ledger_buckets.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    source_type: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    source_id: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
     event_fingerprint: Mapped[Optional[str]] = mapped_column(
         String(length=64), nullable=True
     )
@@ -512,6 +522,10 @@ class TigerBeetleTransferRef(Base, TimestampMixin):
     trade_decision: Mapped[Optional[TradeDecision]] = relationship()
     execution: Mapped[Optional[Execution]] = relationship()
     execution_order_event: Mapped[Optional[ExecutionOrderEvent]] = relationship()
+    execution_tca_metric: Mapped[Optional["ExecutionTCAMetric"]] = relationship()
+    runtime_ledger_bucket: Mapped[Optional["StrategyRuntimeLedgerBucket"]] = (
+        relationship()
+    )
 
     __table_args__ = (
         UniqueConstraint(
@@ -525,12 +539,33 @@ class TigerBeetleTransferRef(Base, TimestampMixin):
             "transfer_kind",
             name="uq_tigerbeetle_transfer_refs_cluster_event_kind",
         ),
+        UniqueConstraint(
+            "cluster_id",
+            "source_type",
+            "source_id",
+            "transfer_kind",
+            name="uq_tigerbeetle_transfer_refs_cluster_source_kind",
+        ),
         Index("ix_tigerbeetle_transfer_refs_status", "status"),
+        Index(
+            "ix_tigerbeetle_transfer_refs_source",
+            "cluster_id",
+            "source_type",
+            "source_id",
+        ),
         Index("ix_tigerbeetle_transfer_refs_trade_decision_id", "trade_decision_id"),
         Index("ix_tigerbeetle_transfer_refs_execution_id", "execution_id"),
         Index(
             "ix_tigerbeetle_transfer_refs_execution_order_event_id",
             "execution_order_event_id",
+        ),
+        Index(
+            "ix_tigerbeetle_transfer_refs_execution_tca_metric_id",
+            "execution_tca_metric_id",
+        ),
+        Index(
+            "ix_tigerbeetle_transfer_refs_runtime_ledger_bucket_id",
+            "runtime_ledger_bucket_id",
         ),
     )
 
@@ -556,6 +591,9 @@ class TigerBeetleReconciliationRun(Base, TimestampMixin):
         BigInteger(), nullable=False, server_default=text("0")
     )
     mismatched_transfer_count: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, server_default=text("0")
+    )
+    source_missing_count: Mapped[int] = mapped_column(
         BigInteger(), nullable=False, server_default=text("0")
     )
     payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)

@@ -17,7 +17,14 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.config import Settings
-from app.models import Base, ExecutionOrderEvent, TigerBeetleTransferRef
+from app.models import (
+    Base,
+    Execution,
+    ExecutionOrderEvent,
+    ExecutionTCAMetric,
+    StrategyRuntimeLedgerBucket,
+    TigerBeetleTransferRef,
+)
 from app.trading.tigerbeetle_ledger_model import (
     LEDGER_USD_MICRO,
     TRANSFER_CODE_FILL_POST,
@@ -58,12 +65,76 @@ def _add_order_event(
     return event
 
 
+def _add_real_source_rows(session: Session) -> None:
+    execution = Execution(
+        alpaca_account_label="paper",
+        alpaca_order_id="order-source",
+        client_order_id="client-source",
+        symbol="AAPL",
+        side="buy",
+        order_type="market",
+        time_in_force="day",
+        submitted_qty=Decimal("1"),
+        filled_qty=Decimal("1"),
+        avg_fill_price=Decimal("190.25"),
+        status="filled",
+        raw_order={"id": "order-source"},
+    )
+    session.add(execution)
+    session.flush()
+    session.add(
+        ExecutionTCAMetric(
+            execution_id=execution.id,
+            alpaca_account_label="paper",
+            symbol="AAPL",
+            side="buy",
+            filled_qty=Decimal("1"),
+            signed_qty=Decimal("1"),
+            shortfall_notional=Decimal("0.25"),
+            computed_at=datetime.now(timezone.utc),
+        )
+    )
+    session.add(
+        StrategyRuntimeLedgerBucket(
+            run_id="runtime-run-source",
+            candidate_id="candidate",
+            hypothesis_id="hypothesis",
+            observed_stage="paper",
+            bucket_started_at=datetime.now(timezone.utc),
+            bucket_ended_at=datetime.now(timezone.utc),
+            account_label="paper",
+            runtime_strategy_name="demo-runtime",
+            strategy_family="demo",
+            fill_count=1,
+            decision_count=1,
+            submitted_order_count=1,
+            cancelled_order_count=0,
+            rejected_order_count=0,
+            unfilled_order_count=0,
+            closed_trade_count=1,
+            open_position_count=0,
+            filled_notional=Decimal("190.25"),
+            gross_strategy_pnl=Decimal("3.00"),
+            cost_amount=Decimal("0.50"),
+            net_strategy_pnl_after_costs=Decimal("2.50"),
+            post_cost_expectancy_bps=Decimal("12.50"),
+            ledger_schema_version="torghut.runtime-ledger.v1",
+            pnl_basis="post_cost",
+            payload_json={"source": "test"},
+        )
+    )
+    session.flush()
+
+
 class FakeJournal:
     instances: list["FakeJournal"] = []
 
     def __init__(self, *, settings_obj: Settings) -> None:
         self.settings_obj = settings_obj
         self.events: list[str] = []
+        self.executions: list[str] = []
+        self.tca_metrics: list[str] = []
+        self.runtime_buckets: list[str] = []
         FakeJournal.instances.append(self)
 
     def journal_order_event(
@@ -78,6 +149,31 @@ class FakeJournal:
         if event.event_fingerprint == "fail":
             raise RuntimeError("journal failed")
         return SimpleNamespace(transfer_id="1")
+
+    def journal_execution(
+        self, session: Session, execution: Execution
+    ) -> object | None:
+        del session
+        self.executions.append(execution.alpaca_order_id)
+        return SimpleNamespace(transfer_id="2")
+
+    def journal_execution_tca_metric(
+        self,
+        session: Session,
+        metric: ExecutionTCAMetric,
+    ) -> object | None:
+        del session
+        self.tca_metrics.append(metric.symbol)
+        return SimpleNamespace(transfer_id="3")
+
+    def journal_runtime_ledger_bucket(
+        self,
+        session: Session,
+        bucket: StrategyRuntimeLedgerBucket,
+    ) -> object | None:
+        del session
+        self.runtime_buckets.append(bucket.run_id)
+        return SimpleNamespace(transfer_id="4")
 
 
 class TestJournalTigerBeetleOrderEventsScript(TestCase):
@@ -111,6 +207,7 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
             account_label="paper",
             batch_size=10000,
             max_batches=0,
+            fail_on_degraded=False,
         )
 
         payload = script._payload(
@@ -193,6 +290,7 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
             Base.metadata.create_all(engine)
             with Session(engine) as session:
                 _add_order_event(session, fingerprint="selected", source_offset=1)
+                _add_real_source_rows(session)
                 session.commit()
 
             stdout = io.StringIO()
@@ -226,9 +324,15 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
 
         payload = json.loads(stdout.getvalue())
         self.assertEqual(exit_code, 0)
-        self.assertEqual(payload["journaled"], 1)
+        self.assertEqual(payload["journaled"], 4)
         self.assertEqual(payload["failed"], 0)
         self.assertEqual(FakeJournal.instances[0].events, ["selected"])
+        self.assertEqual(FakeJournal.instances[0].executions, ["order-source"])
+        self.assertEqual(FakeJournal.instances[0].tca_metrics, ["AAPL"])
+        self.assertEqual(
+            FakeJournal.instances[0].runtime_buckets,
+            ["runtime-run-source"],
+        )
         reconcile.assert_called_once()
 
     def test_main_dry_run_rolls_back_without_reconcile(self) -> None:
@@ -304,10 +408,50 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
                 exit_code = script.main()
 
         payload = json.loads(stdout.getvalue())
-        self.assertEqual(exit_code, 1)
+        self.assertEqual(exit_code, 0)
         self.assertEqual(payload["status"], "degraded")
         self.assertEqual(payload["skipped"], 1)
         self.assertEqual(payload["failed"], 1)
+
+    def test_main_can_fail_closed_for_degraded_batch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "torghut.db")
+            dsn = f"sqlite+pysqlite:///{db_path}"
+            engine = create_engine(dsn, future=True)
+            Base.metadata.create_all(engine)
+            with Session(engine) as session:
+                _add_order_event(session, fingerprint="fail", source_offset=1)
+                session.commit()
+
+            stdout = io.StringIO()
+            with (
+                patch.dict(os.environ, {"TEST_DB_DSN": dsn}),
+                patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "journal_tigerbeetle_order_events.py",
+                        "--dsn-env",
+                        "TEST_DB_DSN",
+                        "--batch-size",
+                        "10",
+                        "--fail-on-degraded",
+                        "--json",
+                    ],
+                ),
+                patch.object(script, "TigerBeetleLedgerJournal", FakeJournal),
+                patch.object(
+                    script,
+                    "reconcile_tigerbeetle_transfers",
+                    return_value={"ok": False},
+                ),
+                redirect_stdout(stdout),
+            ):
+                exit_code = script.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 1)
+        self.assertTrue(payload["fail_on_degraded"])
 
     def test_main_requires_dsn_env_var(self) -> None:
         with (
