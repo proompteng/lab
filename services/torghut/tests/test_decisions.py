@@ -4070,6 +4070,156 @@ class TestDecisionEngine(TestCase):
         assert isinstance(session_exit, dict)
         self.assertEqual(session_exit.get("type"), "session_flatten_minute_utc")
 
+    def test_scheduler_runtime_position_exit_overlay_flattens_pair_long_leg(
+        self,
+    ) -> None:
+        engine = DecisionEngine(price_fetcher=None)
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="microbar-cross-sectional-pairs-v1",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="microbar-cross-sectional-pairs-v1",
+                    strategy_id="microbar_cross_sectional_pairs_v1@research",
+                    strategy_type="microbar_cross_sectional_pairs_v1",
+                    version="1.0.0",
+                    base_timeframe="1Sec",
+                    universe_type="microbar_cross_sectional_pairs_v1",
+                    universe_symbols=["AAPL", "AMZN"],
+                    max_position_pct_equity=Decimal("0.06"),
+                    max_notional_per_trade=Decimal("75000"),
+                    params={
+                        "session_flatten_start_minute_utc": "1170",
+                        "position_isolation_mode": "per_strategy",
+                    },
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="microbar_cross_sectional_pairs_v1",
+            universe_symbols=["AAPL", "AMZN"],
+            max_position_pct_equity=Decimal("0.06"),
+            max_notional_per_trade=Decimal("75000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 19, 30, 0, tzinfo=timezone.utc),
+            symbol="AMZN",
+            timeframe="1Sec",
+            seq=13,
+            payload={
+                "price": 190.10,
+                "spread": 0.03,
+                "ema12": 190.12,
+                "ema26": 190.08,
+                "macd": 0.001,
+                "macd_signal": 0.001,
+                "rsi14": 50.0,
+                "vol_realized_w60s": 0.00012,
+            },
+        )
+
+        with (
+            patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
+            patch.object(settings, "trading_strategy_scheduler_enabled", True),
+            patch.object(settings, "trading_fractional_equities_enabled", True),
+        ):
+            decisions = engine.evaluate(
+                signal,
+                [strategy],
+                positions=[
+                    {
+                        "symbol": "AMZN",
+                        "strategy_id": str(strategy.id),
+                        "qty": "2.5",
+                        "side": "long",
+                        "market_value": "475.25",
+                        "avg_entry_price": "189.80",
+                    }
+                ],
+            )
+
+        self.assertEqual(len(decisions), 1)
+        self.assertEqual(decisions[0].action, "sell")
+        self.assertEqual(decisions[0].rationale, "session_flatten_exit")
+        session_exit = decisions[0].params.get("position_exit")
+        assert isinstance(session_exit, dict)
+        self.assertEqual(session_exit.get("type"), "session_flatten_minute_utc")
+
+    def test_scheduler_runtime_position_exit_overlay_flattens_pair_short_leg(
+        self,
+    ) -> None:
+        engine = DecisionEngine(price_fetcher=None)
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="microbar-cross-sectional-pairs-v1",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="microbar-cross-sectional-pairs-v1",
+                    strategy_id="microbar_cross_sectional_pairs_v1@research",
+                    strategy_type="microbar_cross_sectional_pairs_v1",
+                    version="1.0.0",
+                    base_timeframe="1Sec",
+                    universe_type="microbar_cross_sectional_pairs_v1",
+                    universe_symbols=["AAPL", "AMZN"],
+                    max_position_pct_equity=Decimal("0.06"),
+                    max_notional_per_trade=Decimal("75000"),
+                    params={
+                        "session_flatten_start_minute_utc": "1170",
+                        "position_isolation_mode": "per_strategy",
+                    },
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="microbar_cross_sectional_pairs_v1",
+            universe_symbols=["AAPL", "AMZN"],
+            max_position_pct_equity=Decimal("0.06"),
+            max_notional_per_trade=Decimal("75000"),
+        )
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 19, 30, 0, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Sec",
+            seq=13,
+            payload={
+                "price": 225.10,
+                "spread": 0.02,
+                "ema12": 225.12,
+                "ema26": 225.08,
+                "macd": 0.001,
+                "macd_signal": 0.001,
+                "rsi14": 50.0,
+                "vol_realized_w60s": 0.00012,
+            },
+        )
+
+        with (
+            patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
+            patch.object(settings, "trading_strategy_scheduler_enabled", True),
+            patch.object(settings, "trading_fractional_equities_enabled", True),
+        ):
+            decisions = engine.evaluate(
+                signal,
+                [strategy],
+                positions=[
+                    {
+                        "symbol": "AAPL",
+                        "strategy_id": str(strategy.id),
+                        "qty": "-3",
+                        "side": "short",
+                        "market_value": "-675.30",
+                        "avg_entry_price": "224.50",
+                    }
+                ],
+            )
+
+        self.assertEqual(len(decisions), 1)
+        self.assertEqual(decisions[0].action, "buy")
+        self.assertEqual(decisions[0].rationale, "session_flatten_exit")
+        session_exit = decisions[0].params.get("position_exit")
+        assert isinstance(session_exit, dict)
+        self.assertEqual(session_exit.get("type"), "session_flatten_minute_utc")
+
     def test_scheduler_runtime_position_exit_overlay_session_flatten_bypasses_min_hold(
         self,
     ) -> None:

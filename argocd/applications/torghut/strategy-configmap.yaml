@@ -453,6 +453,7 @@ data:
           max_session_negative_exit_bps: "10"
           max_stop_loss_exits_per_session: "1"
           stop_loss_lockout_seconds: "1800"
+          session_flatten_start_minute_utc: "1170"
           position_isolation_mode: "per_strategy"
       - name: microbar-volume-continuation-long-top2-v11
         strategy_id: microbar_volume_continuation_long_top2@prod

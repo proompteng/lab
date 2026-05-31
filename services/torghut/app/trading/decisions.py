@@ -1876,10 +1876,9 @@ def _build_runtime_position_exit_overlay(
         for strategy in strategies
         if strategy.enabled
         and strategy.base_timeframe == timeframe
-        and (
-            _treats_sell_as_exit_only(strategy)
-            if position_side == "long"
-            else _treats_buy_as_exit_only(strategy)
+        and _supports_runtime_position_exit_overlay(
+            strategy=strategy,
+            position_side=position_side,
         )
     ]
     if not eligible_strategies:
@@ -2206,6 +2205,44 @@ def _strategy_uses_position_isolation(strategy: Strategy) -> bool:
         "late_day_continuation_long_v1",
         "end_of_day_reversal_long_v1",
     }
+
+
+def _supports_runtime_position_exit_overlay(
+    *,
+    strategy: Strategy,
+    position_side: Literal["long", "short"],
+) -> bool:
+    if (
+        _treats_sell_as_exit_only(strategy)
+        if position_side == "long"
+        else _treats_buy_as_exit_only(strategy)
+    ):
+        return True
+    runtime_type = _strategy_catalog_runtime_type(strategy)
+    if runtime_type != "microbar_cross_sectional_pairs_v1":
+        return False
+    strategy_list = [strategy]
+    has_session_flatten = (
+        _resolve_max_nonnegative_strategy_param(
+            strategies=strategy_list,
+            key="session_flatten_start_minute_utc",
+        )
+        is not None
+    )
+    has_position_exit = any(
+        _resolve_max_nonnegative_strategy_param(strategies=strategy_list, key=key)
+        is not None
+        for key in (
+            "max_hold_seconds",
+            "long_stop_loss_bps",
+            "short_stop_loss_bps",
+            "long_trailing_stop_activation_profit_bps",
+            "long_trailing_stop_drawdown_bps",
+        )
+    )
+    return _strategy_uses_position_isolation(strategy) and (
+        has_session_flatten or has_position_exit
+    )
 
 
 def _position_state_scope_key(
