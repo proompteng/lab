@@ -416,6 +416,7 @@ def _source_decision_priority_payloads(
                 payloads.append(nested)
         params = _as_mapping(decision_json.get("params"))
         if params:
+            payloads.append(params)
             for key in (
                 "strategy_signal_paper",
                 "paper_route_target_plan",
