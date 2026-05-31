@@ -5,5 +5,5 @@ resources:
   - service.yaml
 images:
   - name: registry.ide-newton.ts.net/lab/olden
-    newTag: 0.585.0
+    newTag: 0.586.0
     newName: registry.ide-newton.ts.net/lab/olden
