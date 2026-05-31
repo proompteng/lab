@@ -28,6 +28,7 @@ from app.trading.tigerbeetle_journal import (
     _account_specs,
     _event_amount_usd,
     _lookup_payload_decimal,
+    _order_event_precedes,
     _result_status,
     _transfer_attr,
     _transfer_flag,
@@ -557,6 +558,23 @@ class TestTigerBeetleLedgerJournal(TestCase):
             Decimal("20"),
         )
 
+        explicit_delta_event = ExecutionOrderEvent(
+            event_fingerprint="amount-explicit-delta",
+            source_topic="torghut.trade-updates.v1",
+            source_partition=0,
+            source_offset=1,
+            alpaca_account_label="paper",
+            event_ts=datetime.now(timezone.utc),
+            symbol="AAPL",
+            event_type="fill",
+            status="filled",
+            raw_event={"fill_notional": "7.25", "notional": "100"},
+        )
+        self.assertEqual(
+            _event_amount_usd(explicit_delta_event, TRANSFER_KIND_FILL_POST),
+            Decimal("7.25"),
+        )
+
         nested_payload_event = ExecutionOrderEvent(
             event_fingerprint="amount-nested",
             source_topic="torghut.trade-updates.v1",
@@ -590,6 +608,103 @@ class TestTigerBeetleLedgerJournal(TestCase):
         self.assertIsNone(
             _event_amount_usd(missing_payload_event, TRANSFER_KIND_FILL_POST)
         )
+
+    def test_fill_event_amount_uses_incremental_notional_delta(self) -> None:
+        with Session(self.engine) as session:
+            first = _create_fill_event(session, fingerprint="partial-fill-delta-1")
+            first.alpaca_order_id = "shared-order"
+            first.client_order_id = "shared-client"
+            first.event_type = "partial_fill"
+            first.status = "partially_filled"
+            first.qty = Decimal("2")
+            first.filled_qty = Decimal("1")
+            first.avg_fill_price = Decimal("190.20")
+            first.source_offset = 10
+
+            second = _create_fill_event(session, fingerprint="partial-fill-delta-2")
+            second.alpaca_order_id = "shared-order"
+            second.client_order_id = "shared-client"
+            second.event_type = "fill"
+            second.status = "filled"
+            second.qty = Decimal("2")
+            second.filled_qty = Decimal("2")
+            second.avg_fill_price = Decimal("190.40")
+            second.source_offset = 11
+            duplicate_cumulative = _create_fill_event(
+                session, fingerprint="partial-fill-delta-3"
+            )
+            duplicate_cumulative.alpaca_order_id = "shared-order"
+            duplicate_cumulative.client_order_id = "shared-client"
+            duplicate_cumulative.event_type = "fill"
+            duplicate_cumulative.status = "filled"
+            duplicate_cumulative.qty = Decimal("2")
+            duplicate_cumulative.filled_qty = Decimal("2")
+            duplicate_cumulative.avg_fill_price = Decimal("190.40")
+            duplicate_cumulative.source_offset = 12
+            session.add_all([first, second])
+            session.flush()
+
+            first_plan = build_order_event_transfer_plan(
+                session,
+                first,
+                settings_obj=_settings(),
+            )
+            second_plan = build_order_event_transfer_plan(
+                session,
+                second,
+                settings_obj=_settings(),
+            )
+            duplicate_cumulative_plan = build_order_event_transfer_plan(
+                session,
+                duplicate_cumulative,
+                settings_obj=_settings(),
+            )
+
+        self.assertIsNotNone(first_plan)
+        self.assertIsNotNone(second_plan)
+        assert first_plan is not None
+        assert second_plan is not None
+        self.assertEqual(first_plan.transfer_spec.amount, 190200000)
+        self.assertEqual(second_plan.transfer_spec.amount, 190600000)
+        self.assertIsNone(duplicate_cumulative_plan)
+
+    def test_order_event_precedence_falls_back_deterministically(self) -> None:
+        older = ExecutionOrderEvent(
+            event_fingerprint="older",
+            source_topic="torghut.trade-updates.v1",
+            source_partition=0,
+            source_offset=None,
+            alpaca_account_label="paper",
+            symbol="AAPL",
+            event_type="fill",
+            status="filled",
+            feed_seq=10,
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            created_at=datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+        )
+        newer = ExecutionOrderEvent(
+            event_fingerprint="newer",
+            source_topic="torghut.trade-updates.v1",
+            source_partition=0,
+            source_offset=None,
+            alpaca_account_label="paper",
+            symbol="AAPL",
+            event_type="fill",
+            status="filled",
+            feed_seq=11,
+            event_ts=datetime(2026, 1, 1, 0, 1, tzinfo=timezone.utc),
+            created_at=datetime(2026, 1, 1, 0, 1, tzinfo=timezone.utc),
+        )
+
+        self.assertTrue(_order_event_precedes(older, newer))
+
+        older.feed_seq = None
+        newer.feed_seq = None
+        self.assertTrue(_order_event_precedes(older, newer))
+
+        older.event_ts = None
+        newer.event_ts = None
+        self.assertTrue(_order_event_precedes(older, newer))
 
     def test_transfer_specs_cover_pending_and_void_paths(self) -> None:
         with Session(self.engine) as session:

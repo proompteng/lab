@@ -207,6 +207,7 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
             account_label="paper",
             batch_size=10000,
             max_batches=0,
+            event_scan_limit=1000,
             fail_on_degraded=False,
         )
 
@@ -227,6 +228,7 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
         self.assertEqual(payload["failed"], 1)
         self.assertEqual(payload["batch_size"], 5000)
         self.assertEqual(payload["max_batches"], 1)
+        self.assertEqual(payload["event_scan_limit"], 1000)
 
     def test_payload_degrades_when_reconciliation_fails(self) -> None:
         args = argparse.Namespace(
@@ -301,9 +303,101 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
                 settings_obj=settings_obj,
                 account_label="paper",
                 limit=10,
+                event_scan_limit=10,
             )
 
-        self.assertEqual([event.id for event in events], [selected.id])
+        self.assertEqual([event.id for event in events.rows], [selected.id])
+        self.assertEqual(events.scan_failed, 0)
+
+    def test_select_unlinked_events_degrades_bad_amount_rows(self) -> None:
+        settings_obj = Settings(TORGHUT_TIGERBEETLE_ENABLED=True)
+        with Session(self.engine) as session:
+            bad = _add_order_event(
+                session,
+                fingerprint="bad-precision",
+                account_label="paper",
+                source_offset=1,
+            )
+            bad.avg_fill_price = Decimal("190.2500001")
+            selected = _add_order_event(
+                session,
+                fingerprint="selected",
+                account_label="paper",
+                source_offset=2,
+            )
+            session.add_all([bad, selected])
+            session.flush()
+
+            events = script._select_unlinked_events(
+                session,
+                settings_obj=settings_obj,
+                account_label="paper",
+                limit=10,
+                event_scan_limit=10,
+            )
+
+        self.assertEqual(
+            [event.event_fingerprint for event in events.rows], ["selected"]
+        )
+        self.assertEqual(events.scan_failed, 1)
+
+    def test_select_unlinked_events_honors_scan_limit(self) -> None:
+        settings_obj = Settings(TORGHUT_TIGERBEETLE_ENABLED=True)
+        with Session(self.engine) as session:
+            bad = _add_order_event(
+                session,
+                fingerprint="bad-precision",
+                account_label="paper",
+                source_offset=1,
+            )
+            bad.avg_fill_price = Decimal("190.2500001")
+            _add_order_event(
+                session,
+                fingerprint="selected",
+                account_label="paper",
+                source_offset=2,
+            )
+            session.add(bad)
+            session.flush()
+
+            events = script._select_unlinked_events(
+                session,
+                settings_obj=settings_obj,
+                account_label="paper",
+                limit=1,
+                event_scan_limit=1,
+            )
+
+        self.assertEqual(events.rows, [])
+        self.assertEqual(events.scan_failed, 1)
+
+    def test_select_unlinked_events_stops_after_limit(self) -> None:
+        settings_obj = Settings(TORGHUT_TIGERBEETLE_ENABLED=True)
+        with Session(self.engine) as session:
+            first = _add_order_event(
+                session,
+                fingerprint="selected-1",
+                account_label="paper",
+                source_offset=1,
+            )
+            _add_order_event(
+                session,
+                fingerprint="selected-2",
+                account_label="paper",
+                source_offset=2,
+            )
+            session.commit()
+
+            events = script._select_unlinked_events(
+                session,
+                settings_obj=settings_obj,
+                account_label="paper",
+                limit=1,
+                event_scan_limit=10,
+            )
+
+        self.assertEqual([event.id for event in events.rows], [first.id])
+        self.assertEqual(events.scan_failed, 0)
 
     def test_main_journals_selected_events_and_reconciles(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -393,6 +487,50 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
         self.assertTrue(payload["dry_run"])
         self.assertEqual(payload["journaled"], 1)
         reconcile.assert_not_called()
+
+    def test_main_reports_scan_failed_rows_as_degraded_event_failures(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "torghut.db")
+            dsn = f"sqlite+pysqlite:///{db_path}"
+            engine = create_engine(dsn, future=True)
+            Base.metadata.create_all(engine)
+            with Session(engine) as session:
+                bad = _add_order_event(session, fingerprint="bad", source_offset=1)
+                bad.avg_fill_price = Decimal("190.2500001")
+                _add_order_event(session, fingerprint="selected", source_offset=2)
+                session.commit()
+
+            stdout = io.StringIO()
+            with (
+                patch.dict(os.environ, {"TEST_DB_DSN": dsn}),
+                patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "journal_tigerbeetle_order_events.py",
+                        "--dsn-env",
+                        "TEST_DB_DSN",
+                        "--batch-size",
+                        "10",
+                        "--json",
+                    ],
+                ),
+                patch.object(script, "TigerBeetleLedgerJournal", FakeJournal),
+                patch.object(
+                    script,
+                    "reconcile_tigerbeetle_transfers",
+                    return_value={"ok": True},
+                ),
+                redirect_stdout(stdout),
+            ):
+                exit_code = script.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["status"], "degraded")
+        self.assertEqual(payload["journaled"], 1)
+        self.assertEqual(payload["failed"], 1)
+        self.assertEqual(payload["batches"][0]["scan_failed"], 1)
 
     def test_main_reports_degraded_for_failed_batch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

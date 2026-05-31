@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, cast
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.config import Settings, settings
@@ -94,7 +94,60 @@ def _nested_mapping(value: object) -> Mapping[str, Any]:
     return cast(Mapping[str, Any], value) if isinstance(value, Mapping) else {}
 
 
-def _event_amount_usd(event: ExecutionOrderEvent, transfer_kind: str) -> Decimal | None:
+FILL_POST_EVENT_TYPES = {"fill", "filled", "partial_fill", "partially_filled"}
+
+
+def _event_amount_usd(
+    event: ExecutionOrderEvent,
+    transfer_kind: str,
+    *,
+    session: Session | None = None,
+) -> Decimal | None:
+    explicit_delta = _explicit_fill_delta_notional_usd(event)
+    if transfer_kind == TRANSFER_KIND_FILL_POST and explicit_delta is not None:
+        return explicit_delta
+
+    amount = _event_cumulative_amount_usd(event, transfer_kind)
+    if transfer_kind != TRANSFER_KIND_FILL_POST or amount is None or session is None:
+        return amount
+
+    prior_amount = _prior_cumulative_fill_notional_usd(session, event)
+    if prior_amount is None:
+        return amount
+    delta = amount - prior_amount
+    if delta <= 0:
+        return None
+    return abs(delta)
+
+
+def _explicit_fill_delta_notional_usd(event: ExecutionOrderEvent) -> Decimal | None:
+    raw_event = _nested_mapping(event.raw_event)
+    nested_order = _nested_mapping(raw_event.get("order"))
+    value = _lookup_payload_decimal(
+        raw_event,
+        (
+            "fill_notional",
+            "last_fill_notional",
+            "filled_notional_delta",
+            "execution_notional",
+        ),
+    )
+    if value is None:
+        value = _lookup_payload_decimal(
+            nested_order,
+            (
+                "fill_notional",
+                "last_fill_notional",
+                "filled_notional_delta",
+                "execution_notional",
+            ),
+        )
+    return abs(value) if value is not None else None
+
+
+def _event_cumulative_amount_usd(
+    event: ExecutionOrderEvent, transfer_kind: str
+) -> Decimal | None:
     raw_event = _nested_mapping(event.raw_event)
     nested_order = _nested_mapping(raw_event.get("order"))
     notional = _lookup_payload_decimal(raw_event, ("notional", "filled_notional"))
@@ -123,6 +176,61 @@ def _event_amount_usd(event: ExecutionOrderEvent, transfer_kind: str) -> Decimal
         return None
     amount = Decimal(str(qty)) * Decimal(str(price))
     return abs(amount)
+
+
+def _prior_cumulative_fill_notional_usd(
+    session: Session, event: ExecutionOrderEvent
+) -> Decimal | None:
+    clauses: list[Any] = []
+    if event.alpaca_order_id:
+        clauses.append(ExecutionOrderEvent.alpaca_order_id == event.alpaca_order_id)
+    if event.client_order_id:
+        clauses.append(ExecutionOrderEvent.client_order_id == event.client_order_id)
+    if not clauses:
+        return None
+
+    candidates = (
+        session.execute(
+            select(ExecutionOrderEvent).where(
+                ExecutionOrderEvent.id != event.id,
+                ExecutionOrderEvent.alpaca_account_label == event.alpaca_account_label,
+                or_(*clauses),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    prior_amounts = [
+        _event_cumulative_amount_usd(candidate, TRANSFER_KIND_FILL_POST)
+        for candidate in candidates
+        if _is_fill_post_event(candidate) and _order_event_precedes(candidate, event)
+    ]
+    usable_amounts = [amount for amount in prior_amounts if amount is not None]
+    if not usable_amounts:
+        return None
+    return max(usable_amounts)
+
+
+def _is_fill_post_event(event: ExecutionOrderEvent) -> bool:
+    normalized = (event.event_type or event.status or "").strip().lower()
+    return normalized in FILL_POST_EVENT_TYPES
+
+
+def _order_event_precedes(
+    candidate: ExecutionOrderEvent, event: ExecutionOrderEvent
+) -> bool:
+    if (
+        candidate.source_topic == event.source_topic
+        and candidate.source_partition == event.source_partition
+        and candidate.source_offset is not None
+        and event.source_offset is not None
+    ):
+        return candidate.source_offset < event.source_offset
+    if candidate.feed_seq is not None and event.feed_seq is not None:
+        return candidate.feed_seq < event.feed_seq
+    if candidate.event_ts is not None and event.event_ts is not None:
+        return candidate.event_ts < event.event_ts
+    return candidate.created_at < event.created_at
 
 
 def _account_id(account_key: str) -> int:
@@ -428,7 +536,7 @@ def build_order_event_transfer_plan(
         }
         else None
     )
-    amount_usd = _event_amount_usd(event, transfer_kind)
+    amount_usd = _event_amount_usd(event, transfer_kind, session=session)
     amount = decimal_usd_to_micros(amount_usd) if amount_usd is not None else None
     if amount is None and pending_ref is not None:
         amount = int(pending_ref.amount)
