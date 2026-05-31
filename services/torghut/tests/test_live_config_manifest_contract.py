@@ -1310,7 +1310,8 @@ class TestLiveConfigManifestContract(TestCase):
         )
         pod_spec = cast(Mapping[str, object], template.get("spec", {}))
         self.assertEqual(job_spec.get("activeDeadlineSeconds"), 600)
-        self.assertEqual(job_spec.get("backoffLimit"), 1)
+        self.assertEqual(job_spec.get("backoffLimit"), 0)
+        self.assertEqual(pod_spec.get("restartPolicy"), "Never")
         self.assertEqual(pod_spec.get("serviceAccountName"), "torghut-runtime")
         self.assertEqual(
             pod_spec.get("nodeSelector"),
@@ -1360,6 +1361,7 @@ class TestLiveConfigManifestContract(TestCase):
             value_env["TORGHUT_TIGERBEETLE_RECONCILE_REQUIRED"],
             "false",
         )
+        self.assertEqual(value_env["PYTHONUNBUFFERED"], "1")
 
         args = "\n".join(str(item) for item in container.get("args", []))
         self.assertIn("scripts/journal_tigerbeetle_order_events.py", args)
@@ -1370,7 +1372,7 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("--max-batches 2", args)
         self.assertIn("--event-scan-limit 1000", args)
         self.assertIn("--reconcile-limit 1000", args)
-        self.assertIn("--fail-on-degraded", args)
+        self.assertNotIn("--fail-on-degraded", args)
         self.assertIn("--json", args)
         security_context = cast(
             Mapping[str, object],
