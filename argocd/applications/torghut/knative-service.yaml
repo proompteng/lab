@@ -28,6 +28,9 @@ spec:
       containers:
         - name: user-container
           imagePullPolicy: IfNotPresent
+          securityContext:
+            seccompProfile:
+              type: Unconfined
           image: registry.ide-newton.ts.net/lab/torghut@sha256:46fa917cb9542a0ab5f7aa75cfac9f07f296d92fb8a107d3c904ad9b5ef169f6
           ports:
             - name: http1
