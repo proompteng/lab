@@ -2242,6 +2242,334 @@ def _order_feed_fill_lifecycle_blockers(
     return blockers
 
 
+def _runtime_source_row_symbol(row: Mapping[str, object]) -> str | None:
+    symbol = _first_text(row, "symbol", "ticker")
+    return symbol.upper() if symbol is not None else None
+
+
+def _runtime_source_row_in_bucket(
+    row: Mapping[str, object],
+    *,
+    bucket: RuntimeLedgerBucket,
+) -> bool:
+    row_symbol = _runtime_source_row_symbol(row)
+    if (
+        bucket.symbol is not None
+        and row_symbol is not None
+        and row_symbol != bucket.symbol
+    ):
+        return False
+    event_time = _runtime_ledger_row_time(
+        {str(key): value for key, value in row.items()}
+    )
+    return (
+        event_time is None
+        or bucket.bucket_started_at <= event_time < bucket.bucket_ended_at
+    )
+
+
+def _runtime_source_decision_ids(rows: Sequence[Mapping[str, object]]) -> set[str]:
+    identifiers: set[str] = set()
+    for row in rows:
+        for key in ("trade_decision_id", "decision_id", "decision_hash"):
+            value = _text_or_none(row.get(key))
+            if value is not None:
+                identifiers.add(value)
+    return identifiers
+
+
+def _runtime_order_rows_for_bucket(
+    *,
+    bucket: RuntimeLedgerBucket,
+    execution_rows: list[dict[str, object]],
+    order_lifecycle_rows: list[dict[str, object]] | None,
+) -> list[dict[str, object]]:
+    bucket_execution_order_ids = {
+        order_id
+        for row in execution_rows
+        if _runtime_source_row_in_bucket(row, bucket=bucket)
+        and _execution_row_has_fill(row)
+        and (order_id := _runtime_order_id(row)) is not None
+    }
+    bucket_fill_order_ids = {
+        order_id
+        for row in order_lifecycle_rows or []
+        if _runtime_source_row_in_bucket(row, bucket=bucket)
+        and _runtime_ledger_event_type({str(key): value for key, value in row.items()})
+        in _RUNTIME_LEDGER_FILL_EVENTS
+        and (order_id := _runtime_order_id(row)) is not None
+    }
+    bucket_order_ids = bucket_execution_order_ids | bucket_fill_order_ids
+    rows: list[dict[str, object]] = []
+    for row in order_lifecycle_rows or []:
+        if not _runtime_source_row_in_bucket(row, bucket=bucket):
+            continue
+        order_id = _runtime_order_id(row)
+        if bucket_order_ids and order_id not in bucket_order_ids:
+            continue
+        rows.append(dict(row))
+    return rows
+
+
+def _runtime_decision_rows_for_bucket(
+    *,
+    bucket: RuntimeLedgerBucket,
+    decision_lifecycle_rows: list[dict[str, object]] | None,
+    source_rows: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    decision_ids = _runtime_source_decision_ids(source_rows)
+    rows: list[dict[str, object]] = []
+    for row in decision_lifecycle_rows or []:
+        if not _runtime_source_row_in_bucket(row, bucket=bucket):
+            continue
+        row_ids = _runtime_source_decision_ids([row])
+        if decision_ids and not (row_ids & decision_ids):
+            continue
+        rows.append(dict(row))
+    return rows
+
+
+def _runtime_unlinked_order_rows_for_bucket(
+    *,
+    bucket: RuntimeLedgerBucket,
+    unlinked_order_lifecycle_rows: list[dict[str, object]] | None,
+    bucket_order_ids: set[str],
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for row in unlinked_order_lifecycle_rows or []:
+        if _runtime_source_row_in_bucket(row, bucket=bucket):
+            rows.append(dict(row))
+            continue
+        row_symbol = _runtime_source_row_symbol(row)
+        if (
+            bucket.symbol is not None
+            and row_symbol is not None
+            and row_symbol != bucket.symbol
+        ):
+            continue
+        order_id = _runtime_order_id(row)
+        if order_id is not None and order_id in bucket_order_ids:
+            rows.append(dict(row))
+    return rows
+
+
+def _event_sourced_fill_economics_order_ids(
+    rows: Sequence[Mapping[str, object]],
+) -> set[str]:
+    order_ids: set[str] = set()
+    for row in rows:
+        normalized = {str(key): value for key, value in row.items()}
+        if _runtime_ledger_event_type(normalized) not in _RUNTIME_LEDGER_FILL_EVENTS:
+            continue
+        if (
+            _runtime_lifecycle_ledger_row(
+                normalized,
+                event_type=_runtime_ledger_event_type(normalized),
+                require_complete_fill=True,
+            )
+            is None
+        ):
+            continue
+        order_id = _runtime_order_id(normalized)
+        if order_id is not None:
+            order_ids.add(order_id)
+    return order_ids
+
+
+def _execution_fill_economics_order_ids(
+    rows: Sequence[Mapping[str, object]],
+) -> set[str]:
+    order_ids: set[str] = set()
+    for row in rows:
+        if not _execution_row_has_fill(row):
+            continue
+        order_id = _runtime_order_id(row)
+        if order_id is None:
+            continue
+        filled_notional = _first_decimal(
+            row, "filled_notional", "notional", "turnover_notional"
+        ) or Decimal("0")
+        if filled_notional <= 0:
+            price = _first_decimal(
+                row,
+                "avg_fill_price",
+                "filled_avg_price",
+                "filled_average_price",
+                "average_fill_price",
+                "fill_price",
+                "filled_price",
+            )
+            qty = _first_decimal(
+                row, "filled_qty", "filled_quantity", "qty", "quantity"
+            )
+            if price is None or qty is None or price <= 0 or qty <= 0:
+                continue
+            filled_notional = price * qty
+        cost_amount = _runtime_execution_cost_amount(
+            row,
+            filled_notional=filled_notional,
+            side=_first_text(row, "side", "order_side") or "",
+            filled_qty=(
+                _first_decimal(row, "filled_qty", "filled_quantity", "qty", "quantity")
+                or Decimal("0")
+            ),
+        )
+        cost_basis = _runtime_execution_cost_basis(
+            row,
+            cost_amount=cost_amount,
+            side=_first_text(row, "side", "order_side") or "",
+            filled_qty=(
+                _first_decimal(row, "filled_qty", "filled_quantity", "qty", "quantity")
+                or Decimal("0")
+            ),
+            filled_notional=filled_notional,
+        )
+        if cost_amount is not None and cost_amount >= 0 and cost_basis is not None:
+            order_ids.add(order_id)
+    return order_ids
+
+
+def _runtime_source_context_for_bucket(
+    *,
+    bucket: RuntimeLedgerBucket,
+    execution_rows: list[dict[str, object]],
+    decision_lifecycle_rows: list[dict[str, object]] | None,
+    order_lifecycle_rows: list[dict[str, object]] | None,
+    unlinked_order_lifecycle_rows: list[dict[str, object]] | None,
+) -> dict[str, object]:
+    bucket_order_rows = _runtime_order_rows_for_bucket(
+        bucket=bucket,
+        execution_rows=execution_rows,
+        order_lifecycle_rows=order_lifecycle_rows,
+    )
+    bucket_order_ids = {
+        order_id
+        for row in bucket_order_rows
+        if (order_id := _runtime_order_id(row)) is not None
+    }
+    bucket_execution_rows = [
+        dict(row)
+        for row in execution_rows
+        if _execution_row_has_fill(row)
+        and (
+            _runtime_source_row_in_bucket(row, bucket=bucket)
+            or (
+                (order_id := _runtime_order_id(row)) is not None
+                and order_id in bucket_order_ids
+            )
+        )
+    ]
+    bucket_decision_rows = _runtime_decision_rows_for_bucket(
+        bucket=bucket,
+        decision_lifecycle_rows=decision_lifecycle_rows,
+        source_rows=[*bucket_execution_rows, *bucket_order_rows],
+    )
+    bucket_unlinked_order_rows = _runtime_unlinked_order_rows_for_bucket(
+        bucket=bucket,
+        unlinked_order_lifecycle_rows=unlinked_order_lifecycle_rows,
+        bucket_order_ids=bucket_order_ids,
+    )
+    source_rows = [*bucket_execution_rows, *bucket_decision_rows, *bucket_order_rows]
+    source_window_ids = _source_identifier_values(
+        bucket_order_rows,
+        "source_window_id",
+    )
+    source_row_counts = {
+        "trade_decisions": len(bucket_decision_rows),
+        "executions": len(bucket_execution_rows),
+        "execution_order_events": len(bucket_order_rows),
+    }
+    if source_window_ids:
+        source_row_counts["order_feed_source_windows"] = len(source_window_ids)
+    source_refs = [
+        ref
+        for table, ref in (
+            ("trade_decisions", "postgres:trade_decisions"),
+            ("executions", "postgres:executions"),
+            ("execution_order_events", "postgres:execution_order_events"),
+            ("order_feed_source_windows", "postgres:order_feed_source_windows"),
+        )
+        if source_row_counts.get(table, 0) > 0
+    ]
+    expected_execution_fill_order_ids = {
+        order_id
+        for row in [*bucket_execution_rows, *bucket_order_rows]
+        if _runtime_source_row_in_bucket(row, bucket=bucket)
+        and (order_id := _runtime_order_id(row)) is not None
+    }
+    event_sourced_fill_order_ids = _event_sourced_fill_economics_order_ids(
+        bucket_order_rows
+    )
+    execution_fill_order_ids = _execution_fill_economics_order_ids(
+        bucket_execution_rows
+    )
+    order_feed_fill_economics_complete = bool(
+        expected_execution_fill_order_ids
+    ) and expected_execution_fill_order_ids.issubset(event_sourced_fill_order_ids)
+    execution_fill_economics_complete = bool(
+        expected_execution_fill_order_ids
+    ) and expected_execution_fill_order_ids.issubset(execution_fill_order_ids)
+    source_materialization = None
+    authority_class = None
+    source_offsets = _source_offset_values(bucket_order_rows)
+    execution_order_event_ids = _source_identifier_values(
+        bucket_order_rows,
+        "execution_order_event_id",
+        "event_fingerprint",
+    )
+    if source_offsets and execution_order_event_ids:
+        if order_feed_fill_economics_complete:
+            source_materialization = "execution_order_events"
+            authority_class = "runtime_order_feed_execution_source"
+        elif execution_fill_economics_complete:
+            source_materialization = "source_execution_lifecycle"
+            authority_class = "source_execution_lifecycle_materialized_runtime_ledger"
+    return {
+        "execution_rows": bucket_execution_rows,
+        "decision_rows": bucket_decision_rows,
+        "order_rows": bucket_order_rows,
+        "unlinked_order_rows": bucket_unlinked_order_rows,
+        "source_rows": source_rows,
+        "source_window_ids": source_window_ids,
+        "source_row_counts": source_row_counts,
+        "source_refs": source_refs,
+        "trade_decision_ids": _source_identifier_values(
+            source_rows,
+            "trade_decision_id",
+            "decision_id",
+            "decision_hash",
+        ),
+        "execution_ids": _source_identifier_values(
+            [*bucket_execution_rows, *bucket_order_rows],
+            "execution_id",
+        ),
+        "execution_order_event_ids": execution_order_event_ids,
+        "source_offsets": source_offsets,
+        "source_materialization": source_materialization,
+        "authority_class": authority_class,
+        "fill_economics_complete": (
+            order_feed_fill_economics_complete or execution_fill_economics_complete
+        ),
+        "order_feed_fill_lifecycle_blockers": _order_feed_fill_lifecycle_blockers(
+            execution_rows=bucket_execution_rows,
+            order_lifecycle_rows=bucket_order_rows,
+            unlinked_order_lifecycle_rows=bucket_unlinked_order_rows,
+        ),
+        "source_account_labels": sorted(
+            {
+                str(row.get("source_account_label") or "").strip()
+                for row in source_rows
+                if str(row.get("source_account_label") or "").strip()
+            }
+        ),
+        "source_decision_mode_counts": _source_decision_mode_counts(source_rows),
+        "source_decision_profit_proof_eligible": (
+            _source_decision_rows_profit_proof_eligible(source_rows)
+        ),
+        "equity_denominator": _runtime_ledger_equity_denominator_from_rows(source_rows),
+    }
+
+
 def _source_activity_diagnostics_blockers(
     diagnostics: Mapping[str, object],
 ) -> list[str]:
@@ -2378,23 +2706,11 @@ def _build_realized_strategy_pnl_rows(
 
     ledger_rows: list[RuntimeLedgerFill | dict[str, object]] = []
     event_times: list[datetime] = []
-    event_sourced_lifecycle_rows = 0
-    event_sourced_fill_economics_rows = 0
-    event_sourced_fill_economics_order_ids: set[str] = set()
-    execution_fill_economics_rows = 0
-    execution_fill_economics_order_ids: set[str] = set()
-    expected_execution_fill_order_ids: set[str] = set()
-    order_feed_fill_lifecycle_blockers = _order_feed_fill_lifecycle_blockers(
-        execution_rows=execution_rows,
-        order_lifecycle_rows=order_lifecycle_rows,
-        unlinked_order_lifecycle_rows=unlinked_order_lifecycle_rows,
-    )
     for row in decision_lifecycle_rows or []:
         lifecycle_row = _runtime_lifecycle_ledger_row(row, event_type="decision")
         if lifecycle_row is None:
             continue
         ledger_rows.append(lifecycle_row)
-        event_sourced_lifecycle_rows += 1
         event_time = lifecycle_row.get("executed_at")
         if isinstance(event_time, datetime):
             event_times.append(event_time)
@@ -2410,11 +2726,6 @@ def _build_realized_strategy_pnl_rows(
             )
             if lifecycle_row is not None:
                 ledger_rows.append(lifecycle_row)
-                event_sourced_lifecycle_rows += 1
-                event_sourced_fill_economics_rows += 1
-                order_id = _runtime_order_id(row)
-                if order_id is not None:
-                    event_sourced_fill_economics_order_ids.add(order_id)
                 event_time = lifecycle_row.get("executed_at")
                 if isinstance(event_time, datetime):
                     event_times.append(event_time)
@@ -2430,7 +2741,6 @@ def _build_realized_strategy_pnl_rows(
         if lifecycle_row is None:
             continue
         ledger_rows.append(lifecycle_row)
-        event_sourced_lifecycle_rows += 1
         event_time = lifecycle_row.get("executed_at")
         if isinstance(event_time, datetime):
             event_times.append(event_time)
@@ -2531,10 +2841,10 @@ def _build_realized_strategy_pnl_rows(
         }
         if price is None or price <= 0 or signed_qty == 0:
             continue
-        if order_id is not None:
-            expected_execution_fill_order_ids.add(order_id)
-            if order_id in event_sourced_fill_economics_order_ids:
-                continue
+        if order_id is not None and order_id in _event_sourced_fill_economics_order_ids(
+            order_lifecycle_rows or []
+        ):
+            continue
         event_times.append(ledger_computed_at)
         if isinstance(fill_event_at, datetime):
             event_times.append(fill_event_at)
@@ -2553,10 +2863,6 @@ def _build_realized_strategy_pnl_rows(
             filled_qty=filled_qty,
             filled_notional=filled_notional,
         )
-        if cost_amount is not None and cost_amount >= 0 and cost_basis is not None:
-            execution_fill_economics_rows += 1
-            if order_id is not None:
-                execution_fill_economics_order_ids.add(order_id)
         if _cost_basis_is_alpaca_fee_schedule(cost_basis):
             common_ledger_fields["cost_model_hash"] = (
                 _alpaca_2026_equity_fee_schedule_hash()
@@ -2590,90 +2896,6 @@ def _build_realized_strategy_pnl_rows(
         return []
     unique_times = sorted(set(event_times))
     bucket_ranges = [(unique_times[0], unique_times[-1] + timedelta(microseconds=1))]
-    equity_denominator = _runtime_ledger_equity_denominator_from_rows(
-        [
-            *execution_rows,
-            *(decision_lifecycle_rows or []),
-            *(order_lifecycle_rows or []),
-        ]
-    )
-    source_decision_rows = [
-        *execution_rows,
-        *(decision_lifecycle_rows or []),
-        *(order_lifecycle_rows or []),
-    ]
-    source_account_labels = sorted(
-        {
-            str(row.get("source_account_label") or "").strip()
-            for row in source_decision_rows
-            if str(row.get("source_account_label") or "").strip()
-        }
-    )
-    source_decision_mode_counts = _source_decision_mode_counts(source_decision_rows)
-    source_decision_profit_proof_eligible = _source_decision_rows_profit_proof_eligible(
-        source_decision_rows
-    )
-    source_row_counts = {
-        "trade_decisions": len(decision_lifecycle_rows or []),
-        "executions": len(execution_rows),
-        "execution_order_events": len(order_lifecycle_rows or []),
-    }
-    source_window_ids = _source_identifier_values(
-        order_lifecycle_rows,
-        "source_window_id",
-    )
-    if source_window_ids:
-        source_row_counts["order_feed_source_windows"] = len(source_window_ids)
-    source_refs = [
-        "postgres:trade_decisions",
-        "postgres:executions",
-        "postgres:execution_order_events",
-    ]
-    if source_window_ids:
-        source_refs.append("postgres:order_feed_source_windows")
-    trade_decision_ids = _source_identifier_values(
-        source_decision_rows,
-        "trade_decision_id",
-        "decision_id",
-        "decision_hash",
-    )
-    execution_ids = _source_identifier_values(
-        [*execution_rows, *(order_lifecycle_rows or [])],
-        "execution_id",
-    )
-    execution_order_event_ids = _source_identifier_values(
-        order_lifecycle_rows,
-        "execution_order_event_id",
-        "event_fingerprint",
-    )
-    source_offsets = _source_offset_values(order_lifecycle_rows)
-    order_feed_fill_economics_complete = bool(
-        expected_execution_fill_order_ids
-    ) and expected_execution_fill_order_ids.issubset(
-        event_sourced_fill_economics_order_ids
-    )
-    execution_fill_economics_complete = bool(
-        expected_execution_fill_order_ids
-    ) and expected_execution_fill_order_ids.issubset(execution_fill_economics_order_ids)
-    fill_economics_complete = (
-        order_feed_fill_economics_complete or execution_fill_economics_complete
-    )
-    source_materialization = None
-    authority_class = None
-    if source_offsets and execution_order_event_ids:
-        if event_sourced_fill_economics_rows > 0 and order_feed_fill_economics_complete:
-            source_materialization = "execution_order_events"
-            authority_class = "runtime_order_feed_execution_source"
-        elif (
-            event_sourced_lifecycle_rows > 0
-            and execution_fill_economics_rows > 0
-            and execution_fill_economics_complete
-        ):
-            source_materialization = "source_execution_lifecycle"
-            authority_class = "source_execution_lifecycle_materialized_runtime_ledger"
-        elif event_sourced_lifecycle_rows > 0:
-            source_materialization = "source_execution_lifecycle"
-            authority_class = "source_execution_lifecycle_materialized_runtime_ledger"
     realized_rows: list[dict[str, object]] = []
     for bucket in build_runtime_ledger_buckets(
         ledger_rows,
@@ -2688,6 +2910,42 @@ def _build_realized_strategy_pnl_rows(
             computed_at=unique_times[-1],
         )
         bucket_payload = row.get("runtime_ledger_bucket")
+        source_context = _runtime_source_context_for_bucket(
+            bucket=bucket,
+            execution_rows=execution_rows,
+            decision_lifecycle_rows=decision_lifecycle_rows,
+            order_lifecycle_rows=order_lifecycle_rows,
+            unlinked_order_lifecycle_rows=unlinked_order_lifecycle_rows,
+        )
+        source_account_labels = cast(list[str], source_context["source_account_labels"])
+        source_decision_mode_counts = cast(
+            dict[str, int], source_context["source_decision_mode_counts"]
+        )
+        source_decision_profit_proof_eligible = bool(
+            source_context["source_decision_profit_proof_eligible"]
+        )
+        source_refs = cast(list[str], source_context["source_refs"])
+        source_row_counts = cast(dict[str, int], source_context["source_row_counts"])
+        trade_decision_ids = cast(list[str], source_context["trade_decision_ids"])
+        execution_ids = cast(list[str], source_context["execution_ids"])
+        execution_order_event_ids = cast(
+            list[str], source_context["execution_order_event_ids"]
+        )
+        source_window_ids = cast(list[str], source_context["source_window_ids"])
+        source_offsets = cast(
+            list[Mapping[str, object]], source_context["source_offsets"]
+        )
+        source_materialization = cast(
+            str | None, source_context["source_materialization"]
+        )
+        authority_class = cast(str | None, source_context["authority_class"])
+        fill_economics_complete = bool(source_context["fill_economics_complete"])
+        bucket_order_feed_fill_lifecycle_blockers = cast(
+            list[str], source_context["order_feed_fill_lifecycle_blockers"]
+        )
+        equity_denominator = cast(
+            tuple[Decimal, str] | None, source_context["equity_denominator"]
+        )
         if source_account_labels and isinstance(bucket_payload, Mapping):
             bucket_payload = {
                 **dict(bucket_payload),
@@ -2747,7 +3005,7 @@ def _build_realized_strategy_pnl_rows(
         source_backed_runtime_ledger = (
             allow_authoritative_runtime_ledger_materialization
             and fill_economics_complete
-            and not order_feed_fill_lifecycle_blockers
+            and not bucket_order_feed_fill_lifecycle_blockers
             and isinstance(bucket_payload, Mapping)
             and not runtime_ledger_promotion_source_authority_blockers(bucket_payload)
         )
@@ -2821,9 +3079,15 @@ def _build_realized_strategy_pnl_rows(
                 "execution_reconstruction_not_runtime_ledger_proof"
             )
             blockers = list(row.get("runtime_ledger_blockers") or [])
-            for blocker in order_feed_fill_lifecycle_blockers:
+            for blocker in bucket_order_feed_fill_lifecycle_blockers:
                 if blocker not in blockers:
                     blockers.append(blocker)
+            if isinstance(bucket_payload, Mapping):
+                for blocker in runtime_ledger_promotion_source_authority_blockers(
+                    bucket_payload
+                ):
+                    if blocker not in blockers:
+                        blockers.append(blocker)
             if "execution_reconstruction_not_runtime_ledger_proof" not in blockers:
                 blockers.append("execution_reconstruction_not_runtime_ledger_proof")
             row["runtime_ledger_blockers"] = blockers
