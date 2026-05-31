@@ -47,6 +47,24 @@ def _decision(
     )
 
 
+def _with_simple_lane_quantity_resolution(
+    decision: StrategyDecision,
+    **overrides: object,
+) -> StrategyDecision:
+    resolution: dict[str, object] = {
+        "action": "sell",
+        "reason": "sell_reducing_long_fractional_allowed",
+        "symbol": "AAPL",
+        "position_qty": "184",
+        "requested_qty": "184.0000",
+        "short_increasing": False,
+    }
+    resolution.update(overrides)
+    params = dict(decision.params)
+    params["simple_lane"] = {"quantity_resolution": resolution}
+    return decision.model_copy(update={"params": params})
+
+
 class TestExecutionPolicy(TestCase):
     def setUp(self) -> None:
         self._advisor_enabled = config.settings.trading_execution_advisor_enabled
@@ -151,6 +169,122 @@ class TestExecutionPolicy(TestCase):
 
         self.assertTrue(outcome.approved)
         self.assertNotIn("max_notional_exceeded", outcome.reasons)
+
+    def test_max_notional_does_not_block_prechecked_reducing_sell_when_snapshot_missing(
+        self,
+    ) -> None:
+        policy = ExecutionPolicy(config=_config(max_notional=Decimal("100")))
+        decision = _decision(
+            action="sell",
+            qty=Decimal("184.0000"),
+            price=Decimal("273.97"),
+        )
+        decision = _with_simple_lane_quantity_resolution(
+            decision,
+            short_increasing="off",
+        )
+
+        outcome = policy.evaluate(
+            decision,
+            strategy=None,
+            positions=[],
+            market_snapshot=None,
+        )
+
+        self.assertTrue(outcome.approved)
+        self.assertNotIn("max_notional_exceeded", outcome.reasons)
+        self.assertNotIn("shorts_not_allowed", outcome.reasons)
+
+    def test_max_notional_still_blocks_unmatched_prechecked_reducing_sell(
+        self,
+    ) -> None:
+        policy = ExecutionPolicy(config=_config(max_notional=Decimal("100")))
+        decision = _decision(
+            action="sell",
+            qty=Decimal("184.0000"),
+            price=Decimal("273.97"),
+        )
+        decision = _with_simple_lane_quantity_resolution(decision, symbol="MSFT")
+
+        outcome = policy.evaluate(
+            decision,
+            strategy=None,
+            positions=[],
+            market_snapshot=None,
+        )
+
+        self.assertFalse(outcome.approved)
+        self.assertIn("max_notional_exceeded", outcome.reasons)
+
+    def test_max_notional_still_blocks_invalid_prechecked_reducing_metadata(
+        self,
+    ) -> None:
+        policy = ExecutionPolicy(config=_config(max_notional=Decimal("100")))
+        base_decision = _decision(
+            action="sell",
+            qty=Decimal("184.0000"),
+            price=Decimal("273.97"),
+        )
+        cases: list[dict[str, object]] = [
+            {"action": "buy"},
+            {"position_qty": "100"},
+            {"requested_qty": "100"},
+            {"short_increasing": "yes"},
+            {"short_increasing": None},
+        ]
+
+        for overrides in cases:
+            with self.subTest(overrides=overrides):
+                outcome = policy.evaluate(
+                    _with_simple_lane_quantity_resolution(base_decision, **overrides),
+                    strategy=None,
+                    positions=[],
+                    market_snapshot=None,
+                )
+
+                self.assertFalse(outcome.approved)
+                self.assertIn("max_notional_exceeded", outcome.reasons)
+
+    def test_max_notional_ignores_non_mapping_prechecked_resolution(
+        self,
+    ) -> None:
+        policy = ExecutionPolicy(config=_config(max_notional=Decimal("100")))
+        decision = _decision(
+            action="sell",
+            qty=Decimal("184.0000"),
+            price=Decimal("273.97"),
+        )
+        params = dict(decision.params)
+        params["simple_lane"] = {"quantity_resolution": "not-a-resolution"}
+
+        outcome = policy.evaluate(
+            decision.model_copy(update={"params": params}),
+            strategy=None,
+            positions=[],
+            market_snapshot=None,
+        )
+
+        self.assertFalse(outcome.approved)
+        self.assertIn("max_notional_exceeded", outcome.reasons)
+
+    def test_prechecked_reducing_sell_ignores_non_positive_qty(
+        self,
+    ) -> None:
+        policy = ExecutionPolicy(config=_config(max_notional=Decimal("100")))
+        decision = _with_simple_lane_quantity_resolution(
+            _decision(action="sell", qty=Decimal("0"), price=Decimal("273.97")),
+            requested_qty="0",
+        )
+
+        outcome = policy.evaluate(
+            decision,
+            strategy=None,
+            positions=[],
+            market_snapshot=None,
+        )
+
+        self.assertFalse(outcome.approved)
+        self.assertIn("qty_non_positive", outcome.reasons)
 
     def test_max_notional_does_not_block_short_cover(self) -> None:
         policy = ExecutionPolicy(config=_config(max_notional=Decimal("100")))
