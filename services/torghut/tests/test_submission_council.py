@@ -239,10 +239,23 @@ class TestSubmissionCouncil(TestCase):
             },
             "trade_decision_ids": ["decision-buy", "decision-sell"],
             "execution_ids": ["execution-buy", "execution-sell"],
-            "execution_order_event_ids": ["event-fill-buy", "event-fill-sell"],
-            "source_window_ids": ["source-window-buy", "source-window-sell"],
+            "execution_order_event_ids": [
+                "event-new-buy",
+                "event-fill-buy",
+                "event-new-sell",
+                "event-fill-sell",
+            ],
+            "source_window_ids": [
+                "source-window-new-buy",
+                "source-window-fill-buy",
+                "source-window-new-sell",
+                "source-window-fill-sell",
+            ],
             "source_offsets": [
-                {"topic": "alpaca.trade_updates", "partition": 0, "offset": 100}
+                {"topic": "alpaca.trade_updates", "partition": 0, "offset": 100},
+                {"topic": "alpaca.trade_updates", "partition": 0, "offset": 101},
+                {"topic": "alpaca.trade_updates", "partition": 0, "offset": 102},
+                {"topic": "alpaca.trade_updates", "partition": 0, "offset": 103},
             ],
             "source_materialization": "execution_order_events",
             "authority_class": "runtime_order_feed_execution_source",
@@ -632,7 +645,8 @@ class TestSubmissionCouncil(TestCase):
                     "pairs-source-window-sell",
                 ],
                 "source_offsets": [
-                    {"topic": "alpaca.trade_updates", "partition": 0, "offset": 100}
+                    {"topic": "alpaca.trade_updates", "partition": 0, "offset": 100},
+                    {"topic": "alpaca.trade_updates", "partition": 0, "offset": 101},
                 ],
                 "source_materialization": "execution_order_events",
                 "authority_class": "runtime_order_feed_execution_source",
@@ -992,7 +1006,8 @@ class TestSubmissionCouncil(TestCase):
                 "execution_order_event_ids": ["event-fill-buy", "event-fill-sell"],
                 "source_window_ids": ["source-window-buy", "source-window-sell"],
                 "source_offsets": [
-                    {"topic": "alpaca.trade_updates", "partition": 0, "offset": 100}
+                    {"topic": "alpaca.trade_updates", "partition": 0, "offset": 100},
+                    {"topic": "alpaca.trade_updates", "partition": 0, "offset": 101},
                 ],
                 "source_materialization": "execution_order_events",
                 "authority_class": "runtime_order_feed_execution_source",

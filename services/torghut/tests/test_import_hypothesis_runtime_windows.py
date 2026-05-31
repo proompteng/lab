@@ -252,7 +252,22 @@ class _SourceLedgerCursor:
                                 "topic": "alpaca.trade_updates",
                                 "partition": 0,
                                 "offset": 100,
-                            }
+                            },
+                            {
+                                "topic": "alpaca.trade_updates",
+                                "partition": 0,
+                                "offset": 101,
+                            },
+                            {
+                                "topic": "alpaca.trade_updates",
+                                "partition": 0,
+                                "offset": 102,
+                            },
+                            {
+                                "topic": "alpaca.trade_updates",
+                                "partition": 0,
+                                "offset": 103,
+                            },
                         ],
                         "source_materialization": "execution_order_events",
                         "authority_class": "runtime_order_feed_execution_source",
@@ -1009,7 +1024,22 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                                 "topic": "alpaca.trade_updates",
                                 "partition": 0,
                                 "offset": 100,
-                            }
+                            },
+                            {
+                                "topic": "alpaca.trade_updates",
+                                "partition": 0,
+                                "offset": 101,
+                            },
+                            {
+                                "topic": "alpaca.trade_updates",
+                                "partition": 0,
+                                "offset": 102,
+                            },
+                            {
+                                "topic": "alpaca.trade_updates",
+                                "partition": 0,
+                                "offset": 103,
+                            },
                         ],
                         "source_materialization": "execution_order_events",
                         "authority_class": "runtime_order_feed_execution_source",
@@ -1479,6 +1509,47 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 target_metadata={"evidence_scope": "evidence_collection_only"},
             )
         )
+        self.assertTrue(
+            _source_kind_allows_runtime_ledger_materialization(
+                source_kind="runtime_ledger_source_collection_candidate",
+                target_metadata={
+                    "source_collection_authorized": True,
+                    "source_collection_authorization_scope": (
+                        "source_window_evidence_collection_only"
+                    ),
+                    "runtime_ledger_target_metadata_blockers": [
+                        "runtime_ledger_source_window_evidence_pending"
+                    ],
+                },
+            )
+        )
+        self.assertFalse(
+            _runtime_window_source_kind_is_informational(
+                source_kind="runtime_ledger_source_collection_candidate",
+                target_metadata={
+                    "source_collection_authorized": True,
+                    "source_collection_authorization_scope": (
+                        "source_window_evidence_collection_only"
+                    )
+                },
+            )
+        )
+        self.assertFalse(
+            _source_kind_allows_runtime_ledger_materialization(
+                source_kind="runtime_ledger_source_collection_candidate",
+                target_metadata={
+                    "source_collection_authorization_scope": (
+                        "source_window_evidence_collection_only"
+                    )
+                },
+            )
+        )
+        self.assertFalse(
+            _source_kind_allows_runtime_ledger_materialization(
+                source_kind="runtime_ledger_source_collection_candidate",
+                target_metadata={"source_collection_authorized": True},
+            )
+        )
         self.assertFalse(
             _runtime_window_source_kind_is_informational(
                 source_kind="paper_route_probe_runtime_observed",
@@ -1486,6 +1557,34 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "paper_probation_authorization_scope": "evidence_collection_only"
                 },
             )
+        )
+
+    def test_runtime_window_proof_hygiene_requires_source_collection_authorization(
+        self,
+    ) -> None:
+        self.assertEqual(
+            _runtime_window_import_proof_hygiene_blockers(
+                source_kind="runtime_ledger_source_collection_candidate",
+                target_metadata={
+                    "source_collection_authorization_scope": (
+                        "source_window_evidence_collection_only"
+                    )
+                },
+                dependency_quorum_decision="allow",
+                continuity_ok="ok",
+                drift_ok="ok",
+            ),
+            ["source_collection_authorization_missing"],
+        )
+        self.assertEqual(
+            _runtime_window_import_proof_hygiene_blockers(
+                source_kind="runtime_ledger_source_collection_candidate",
+                target_metadata={"source_collection_authorized": True},
+                dependency_quorum_decision="allow",
+                continuity_ok="ok",
+                drift_ok="ok",
+            ),
+            ["source_collection_authorization_scope_invalid"],
         )
 
     def test_source_activity_missing_summary_includes_proof_hygiene_blockers(

@@ -111,6 +111,42 @@ def _source_refs_present(bucket: Mapping[str, object], *keys: str) -> bool:
     return any(_source_ref_present(bucket.get(key)) for key in keys)
 
 
+def _source_ref_count(bucket: Mapping[str, object], *keys: str) -> int:
+    refs: set[str] = set()
+    for key in keys:
+        value = bucket.get(key)
+        if isinstance(value, Mapping):
+            for ref_key, ref_value in cast(Mapping[object, object], value).items():
+                ref_text = _text(ref_value)
+                if ref_text is None or ref_text in {"True", "False"}:
+                    ref_text = _text(ref_key)
+                if ref_text is not None:
+                    refs.add(ref_text)
+            continue
+        if isinstance(value, Sequence) and not isinstance(
+            value, (str, bytes, bytearray)
+        ):
+            refs.update(_string_list(cast(Sequence[object], value)))
+            continue
+        if (ref := _text(value)) is not None:
+            refs.add(ref)
+    return len(refs)
+
+
+def _source_row_count(bucket: Mapping[str, object], table_name: str) -> int:
+    source_row_counts = bucket.get("source_row_counts")
+    if not isinstance(source_row_counts, Mapping):
+        return 0
+    value = cast(Mapping[object, object], source_row_counts).get(table_name)
+    try:
+        parsed = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return 0
+    if not parsed.is_finite() or parsed <= 0:
+        return 0
+    return int(parsed)
+
+
 def _source_ref_table_names(value: object) -> set[str]:
     refs = _string_list(value)
     table_names: set[str] = set()
@@ -128,15 +164,7 @@ def _source_ref_table_names(value: object) -> set[str]:
 def _source_row_counts_have_positive_rows(
     bucket: Mapping[str, object], table_name: str
 ) -> bool:
-    source_row_counts = bucket.get("source_row_counts")
-    if not isinstance(source_row_counts, Mapping):
-        return False
-    value = cast(Mapping[object, object], source_row_counts).get(table_name)
-    try:
-        parsed = Decimal(str(value))
-    except (InvalidOperation, ValueError):
-        return False
-    return parsed.is_finite() and parsed > 0
+    return _source_row_count(bucket, table_name) > 0
 
 
 def _promotion_grade_source_refs_present(bucket: Mapping[str, object]) -> bool:
@@ -149,6 +177,10 @@ def _promotion_grade_source_refs_present(bucket: Mapping[str, object]) -> bool:
 
 
 def _source_offsets_present(bucket: Mapping[str, object]) -> bool:
+    return _source_offset_count(bucket) > 0
+
+
+def _source_offset_count(bucket: Mapping[str, object]) -> int:
     def has_source_offset_triplet(value: Mapping[object, object]) -> bool:
         return (
             _text(value.get("topic")) is not None
@@ -158,15 +190,24 @@ def _source_offsets_present(bucket: Mapping[str, object]) -> bool:
 
     source_offsets = bucket.get("source_offsets")
     if isinstance(source_offsets, Mapping):
-        return has_source_offset_triplet(cast(Mapping[object, object], source_offsets))
+        return int(has_source_offset_triplet(cast(Mapping[object, object], source_offsets)))
     if isinstance(source_offsets, Sequence) and not isinstance(
         source_offsets, (str, bytes, bytearray)
     ):
+        offsets: set[tuple[str, str, str]] = set()
         for item in cast(Sequence[object], source_offsets):
             if isinstance(item, Mapping):
-                if has_source_offset_triplet(cast(Mapping[object, object], item)):
-                    return True
-    return (
+                typed_item = cast(Mapping[object, object], item)
+                if has_source_offset_triplet(typed_item):
+                    offsets.add(
+                        (
+                            str(typed_item.get("topic")),
+                            str(typed_item.get("partition")),
+                            str(typed_item.get("offset")),
+                        )
+                    )
+        return len(offsets)
+    return int(
         _text(bucket.get("source_topic")) is not None
         and bucket.get("source_partition") is not None
         and bucket.get("source_offset") is not None
@@ -184,15 +225,7 @@ def _promotion_grade_source_materialization_present(
 
 
 def _promotion_grade_authority_class_present(bucket: Mapping[str, object]) -> bool:
-    authority_values = (
-        bucket.get("authority_class"),
-        bucket.get("authority_reason"),
-    )
-    for value in authority_values:
-        text = _text(value)
-        if text in _PROMOTION_GRADE_AUTHORITY_CLASSES:
-            return True
-    return False
+    return _text(bucket.get("authority_class")) in _PROMOTION_GRADE_AUTHORITY_CLASSES
 
 
 def runtime_ledger_source_window_present(bucket: Mapping[str, object]) -> bool:
@@ -253,7 +286,13 @@ def runtime_ledger_promotion_source_authority_blockers(
         "source_window_id",
         "runtime_ledger_source_window_ids",
         "runtime_ledger_source_window_id",
-    ):
+    ) or _source_ref_count(
+        bucket,
+        "source_window_ids",
+        "source_window_id",
+        "runtime_ledger_source_window_ids",
+        "runtime_ledger_source_window_id",
+    ) < _source_row_count(bucket, "order_feed_source_windows"):
         blockers.append(RUNTIME_LEDGER_SOURCE_WINDOW_IDS_MISSING_BLOCKER)
     if not _source_refs_present(
         bucket,
@@ -262,23 +301,42 @@ def runtime_ledger_promotion_source_authority_blockers(
         "trade_decision_id",
         "decision_ids",
         "decision_id",
-    ):
+    ) or _source_ref_count(
+        bucket,
+        "trade_decision_ids",
+        "trade_decision_refs",
+        "trade_decision_id",
+        "decision_ids",
+        "decision_id",
+    ) < _source_row_count(bucket, "trade_decisions"):
         blockers.append(RUNTIME_LEDGER_TRADE_DECISION_REFS_MISSING_BLOCKER)
     if not _source_refs_present(
         bucket,
         "execution_ids",
         "execution_refs",
         "execution_id",
-    ):
+    ) or _source_ref_count(
+        bucket,
+        "execution_ids",
+        "execution_refs",
+        "execution_id",
+    ) < _source_row_count(bucket, "executions"):
         blockers.append(RUNTIME_LEDGER_EXECUTION_REFS_MISSING_BLOCKER)
     if not _source_refs_present(
         bucket,
         "execution_order_event_ids",
         "execution_order_event_refs",
         "execution_order_event_id",
-    ):
+    ) or _source_ref_count(
+        bucket,
+        "execution_order_event_ids",
+        "execution_order_event_refs",
+        "execution_order_event_id",
+    ) < _source_row_count(bucket, "execution_order_events"):
         blockers.append(RUNTIME_LEDGER_EXECUTION_ORDER_EVENT_REFS_MISSING_BLOCKER)
-    if not _source_offsets_present(bucket):
+    if not _source_offsets_present(bucket) or _source_offset_count(
+        bucket
+    ) < _source_row_count(bucket, "execution_order_events"):
         blockers.append(RUNTIME_LEDGER_SOURCE_OFFSETS_MISSING_BLOCKER)
     if not _promotion_grade_source_materialization_present(bucket):
         blockers.append(RUNTIME_LEDGER_SOURCE_MATERIALIZATION_MISSING_BLOCKER)

@@ -96,7 +96,8 @@ def _runtime_ledger_bucket(**overrides: object) -> dict[str, object]:
         "execution_order_event_ids": ["event-fill-buy", "event-fill-sell"],
         "source_window_ids": ["source-window-buy", "source-window-sell"],
         "source_offsets": [
-            {"topic": "alpaca.trade_updates", "partition": 0, "offset": 100}
+            {"topic": "alpaca.trade_updates", "partition": 0, "offset": 100},
+            {"topic": "alpaca.trade_updates", "partition": 0, "offset": 101},
         ],
         "source_materialization": "execution_order_events",
         "authority_class": "runtime_order_feed_execution_source",

@@ -79,7 +79,12 @@ class TestPaperRouteEvidenceAudit(TestCase):
                     "topic": "alpaca.trade_updates",
                     "partition": 0,
                     "offset": 100,
-                }
+                },
+                {
+                    "topic": "alpaca.trade_updates",
+                    "partition": 0,
+                    "offset": 101,
+                },
             ],
             "source_materialization": "execution_order_events",
             "authority_class": "runtime_order_feed_execution_source",
