@@ -25,6 +25,7 @@ from ..models import (
     coerce_json_payload,
 )
 from .tca import upsert_execution_tca_metric
+from .tigerbeetle_journal import TigerBeetleLedgerJournal
 
 logger = logging.getLogger(__name__)
 
@@ -709,6 +710,7 @@ def persist_order_event(
         if existing.source_window_id is None and source_window_id is not None:
             existing.source_window_id = source_window_id
             session.add(existing)
+        _journal_tigerbeetle_order_event(session, existing)
         return existing, True
 
     execution = _resolve_execution(session, event)
@@ -750,6 +752,8 @@ def persist_order_event(
         with session.begin_nested():
             session.add(row)
             session.flush()
+            if settings.tigerbeetle_required:
+                _journal_tigerbeetle_order_event(session, row)
     except IntegrityError:
         existing = session.execute(
             select(ExecutionOrderEvent).where(
@@ -761,9 +765,31 @@ def persist_order_event(
         if existing.source_window_id is None and source_window_id is not None:
             existing.source_window_id = source_window_id
             session.add(existing)
+        _journal_tigerbeetle_order_event(session, existing)
         return existing, True
 
+    if not settings.tigerbeetle_required:
+        _journal_tigerbeetle_order_event(session, row)
     return row, False
+
+
+def _journal_tigerbeetle_order_event(
+    session: Session,
+    row: ExecutionOrderEvent,
+) -> None:
+    if not settings.tigerbeetle_enabled or not settings.tigerbeetle_journal_enabled:
+        return
+    try:
+        with session.begin_nested():
+            TigerBeetleLedgerJournal().journal_order_event(session, row)
+    except Exception as exc:
+        if settings.tigerbeetle_required:
+            raise
+        logger.warning(
+            "TigerBeetle order-event journal failed for event_fingerprint=%s: %s",
+            row.event_fingerprint,
+            exc,
+        )
 
 
 def apply_order_event_to_execution(

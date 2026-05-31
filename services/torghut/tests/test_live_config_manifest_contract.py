@@ -162,6 +162,29 @@ def _load_cronjob_container(
     return spec, containers[0]
 
 
+def _load_job_container(
+    relative_path: str,
+) -> tuple[Mapping[str, object], Mapping[str, object]]:
+    manifest = _load_yaml_mapping(relative_path)
+    spec = cast(Mapping[str, object], manifest.get("spec", {}))
+    template = cast(Mapping[str, object], spec.get("template", {}))
+    pod_spec = cast(Mapping[str, object], template.get("spec", {}))
+    containers = cast(list[Mapping[str, object]], pod_spec.get("containers", []))
+    if not containers:
+        raise AssertionError(f"{relative_path} missing job container")
+    return spec, containers[0]
+
+
+def _container_env(container: Mapping[str, object]) -> dict[str, object]:
+    env_entries = cast(list[Mapping[str, object]], container.get("env", []))
+    env: dict[str, object] = {}
+    for item in env_entries:
+        name = item.get("name")
+        if isinstance(name, str) and "value" in item:
+            env[name] = item["value"]
+    return env
+
+
 def _csv_symbols(value: object) -> list[str]:
     return [
         symbol.strip().upper()
@@ -810,6 +833,135 @@ class TestLiveConfigManifestContract(TestCase):
                 {"kubernetes.io/arch": "arm64"},
                 f"{template.get('name')} pins ClickHouse to one architecture",
             )
+
+    def test_torghut_declares_tigerbeetle_cluster(self) -> None:
+        manifest = _load_yaml_mapping(
+            "argocd/applications/torghut/tigerbeetle-cluster.yaml"
+        )
+
+        self.assertEqual(manifest["apiVersion"], "tigerbeetle.proompteng.ai/v1alpha1")
+        self.assertEqual(manifest["kind"], "TigerBeetleCluster")
+        self.assertEqual(
+            manifest["metadata"],
+            {
+                "name": "torghut-tigerbeetle",
+                "namespace": "torghut",
+                "labels": {
+                    "app.kubernetes.io/name": "torghut-tigerbeetle",
+                    "app.kubernetes.io/part-of": "torghut",
+                },
+            },
+        )
+        spec = manifest["spec"]
+        self.assertIsInstance(spec, Mapping)
+        spec_mapping = cast(Mapping[str, object], spec)
+        self.assertEqual(spec_mapping["clusterID"], "2001")
+        self.assertEqual(spec_mapping["replicas"], 1)
+        self.assertEqual(
+            spec_mapping["image"],
+            {
+                "repository": "ghcr.io/tigerbeetle/tigerbeetle",
+                "tag": "0.17.4",
+                "pullPolicy": "IfNotPresent",
+            },
+        )
+        self.assertEqual(
+            spec_mapping["storage"], {"className": "rook-ceph-block", "size": "100Gi"}
+        )
+        self.assertEqual(spec_mapping["nodeSelector"], {"kubernetes.io/arch": "arm64"})
+        self.assertEqual(spec_mapping["pdb"], {"enabled": True, "minAvailable": 1})
+        self.assertEqual(spec_mapping["health"], {"checkIntervalSeconds": 5})
+
+    def test_torghut_kustomization_includes_tigerbeetle_cluster(self) -> None:
+        manifest = _load_yaml_mapping("argocd/applications/torghut/kustomization.yaml")
+        resources = manifest.get("resources")
+
+        self.assertIsInstance(resources, list)
+        self.assertIn("tigerbeetle-cluster.yaml", resources)
+        self.assertIn("tigerbeetle-smoke-job.yaml", resources)
+
+    def test_torghut_knative_manifests_enable_tigerbeetle_journal(self) -> None:
+        expected = {
+            "TORGHUT_TIGERBEETLE_ENABLED": "true",
+            "TORGHUT_TIGERBEETLE_REQUIRED": "false",
+            "TORGHUT_TIGERBEETLE_CLUSTER_ID": "2001",
+            "TORGHUT_TIGERBEETLE_REPLICA_ADDRESSES": "torghut-tigerbeetle.torghut.svc.cluster.local:3000",
+            "TORGHUT_TIGERBEETLE_HEALTH_TIMEOUT_SECONDS": "2",
+            "TORGHUT_TIGERBEETLE_JOURNAL_ENABLED": "true",
+            "TORGHUT_TIGERBEETLE_RECONCILE_REQUIRED": "false",
+        }
+        for relative_path in (
+            "argocd/applications/torghut/knative-service.yaml",
+            "argocd/applications/torghut/knative-service-sim.yaml",
+        ):
+            env = _load_knative_env(relative_path)
+            for key, value in expected.items():
+                self.assertEqual(env.get(key), value, f"{relative_path} {key}")
+
+    def test_torghut_tigerbeetle_smoke_job_runs_protocol_proof(self) -> None:
+        spec, container = _load_job_container(
+            "argocd/applications/torghut/tigerbeetle-smoke-job.yaml"
+        )
+        env = _container_env(container)
+
+        self.assertEqual(spec.get("backoffLimit"), 3)
+        self.assertEqual(spec.get("activeDeadlineSeconds"), 300)
+        self.assertEqual(
+            container.get("image"),
+            "registry.ide-newton.ts.net/lab/torghut@sha256:926e66b4b09ca48e06c94b35811c676fe475e7bec7c21f763a7adfb81ae7f67d",
+        )
+        self.assertEqual(
+            container.get("command"),
+            ["/bin/bash", "-lc"],
+        )
+        args = container.get("args")
+        self.assertIsInstance(args, list)
+        self.assertIn("scripts/verify_tigerbeetle_ledger.py --mode smoke", str(args[0]))
+        self.assertEqual(env.get("TORGHUT_TIGERBEETLE_ENABLED"), "true")
+        self.assertEqual(env.get("TORGHUT_TIGERBEETLE_REQUIRED"), "true")
+        self.assertEqual(env.get("TORGHUT_TIGERBEETLE_CLUSTER_ID"), "2001")
+        self.assertEqual(
+            env.get("TORGHUT_TIGERBEETLE_REPLICA_ADDRESSES"),
+            "torghut-tigerbeetle.torghut.svc.cluster.local:3000",
+        )
+
+    def test_product_applicationset_renders_torghut_namespace_security_metadata(
+        self,
+    ) -> None:
+        manifest = _load_yaml_mapping("argocd/applicationsets/product.yaml")
+        elements = (
+            manifest.get("spec", {})
+            .get("generators", [])[0]
+            .get("matrix", {})
+            .get("generators", [])[1]
+            .get("list", {})
+            .get("elements", [])
+        )
+        torghut = next(
+            item
+            for item in elements
+            if isinstance(item, Mapping) and item.get("name") == "torghut"
+        )
+        managed_namespace_metadata = cast(
+            Mapping[str, object], torghut.get("managedNamespaceMetadata", {})
+        )
+
+        self.assertEqual(
+            managed_namespace_metadata.get("labels"),
+            {
+                "pod-security.kubernetes.io/enforce": "privileged",
+                "pod-security.kubernetes.io/audit": "privileged",
+                "pod-security.kubernetes.io/warn": "privileged",
+            },
+        )
+        self.assertEqual(
+            managed_namespace_metadata.get("annotations"),
+            {"argocd.argoproj.io/sync-options": "Prune=false"},
+        )
+        self.assertIn(
+            "managedNamespaceMetadata",
+            str(manifest.get("spec", {}).get("templatePatch", "")),
+        )
 
     def test_production_ta_clickhouse_sink_uses_batched_inserts(self) -> None:
         manifest = _load_yaml_mapping("argocd/applications/torghut/ta/configmap.yaml")

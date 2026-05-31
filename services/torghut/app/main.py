@@ -174,6 +174,8 @@ from .trading.simulation_progress import (
     simulation_progress_snapshot,
 )
 from .trading.time_source import trading_time_status
+from .trading.tigerbeetle_client import check_tigerbeetle_health
+from .trading.tigerbeetle_reconcile import latest_tigerbeetle_reconciliation_payload
 from .trading.zero_notional_repair_executor import run_zero_notional_repair
 from .whitepapers import (
     WhitepaperKafkaWorker,
@@ -531,7 +533,15 @@ async def healthz() -> dict[str, str]:
 def _readiness_dependency_cache_key(include_database_contract: bool) -> str:
     trading_mode = int(settings.trading_enabled)
     cache_mode = int(settings.trading_readiness_dependency_cache_enabled)
-    return f"readyz:{trading_mode}:{cache_mode}:{int(include_database_contract)}"
+    tigerbeetle_mode = ":".join(
+        str(int(value))
+        for value in (
+            settings.tigerbeetle_enabled,
+            settings.tigerbeetle_required,
+            settings.tigerbeetle_reconcile_required,
+        )
+    )
+    return f"readyz:{trading_mode}:{cache_mode}:{int(include_database_contract)}:{tigerbeetle_mode}"
 
 
 def _readiness_dependency_checks(
@@ -551,6 +561,7 @@ def _readiness_dependency_checks(
         "postgres": postgres_status,
         "clickhouse": clickhouse_status,
         "alpaca": alpaca_status,
+        "tigerbeetle": _build_tigerbeetle_ledger_status(session),
     }
 
     if include_database_contract:
@@ -2639,6 +2650,7 @@ def trading_status() -> dict[str, object]:
     with SessionLocal() as session:
         llm_evaluation = _load_llm_evaluation(session)
         tca_summary = _load_tca_summary(session, scheduler=scheduler)
+        tigerbeetle_ledger = _build_tigerbeetle_ledger_status(session)
     market_context_status = scheduler.market_context_status()
     hypothesis_payload, hypothesis_summary, hypothesis_dependency_quorum = (
         _build_hypothesis_runtime_payload(
@@ -2931,6 +2943,7 @@ def trading_status() -> dict[str, object]:
         },
         "running": state.running,
         "live_submission_gate": live_submission_gate,
+        "tigerbeetle_ledger": tigerbeetle_ledger,
         "profit_lease_projection": live_submission_gate.get("profit_lease_projection"),
         "proof_floor": proof_floor,
         "renewal_bond_profit_escrow": renewal_bond_profit_escrow,
@@ -5089,6 +5102,87 @@ def _check_postgres(session: Session) -> dict[str, object]:
     except SQLAlchemyError as exc:
         return {"ok": False, "detail": f"postgres error: {exc}"}
     return {"ok": True, "detail": "ok"}
+
+
+def _check_tigerbeetle_protocol_health() -> dict[str, object]:
+    if not settings.tigerbeetle_enabled:
+        health = check_tigerbeetle_health(settings)
+        payload = health.as_dict()
+        payload["protocol_ok"] = True
+        return payload
+
+    timeout_seconds = max(0.1, float(settings.tigerbeetle_health_timeout_seconds))
+    executor = ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(check_tigerbeetle_health, settings)
+    try:
+        health = future.result(timeout=timeout_seconds)
+    except TimeoutError:
+        return {
+            "enabled": True,
+            "required": settings.tigerbeetle_required,
+            "ok": not settings.tigerbeetle_required,
+            "protocol_ok": False,
+            "cluster_id": settings.tigerbeetle_cluster_id,
+            "replica_addresses": [
+                item.strip()
+                for item in settings.tigerbeetle_replica_addresses.split(",")
+                if item.strip()
+            ],
+            "last_error": (
+                f"TimeoutError: tigerbeetle protocol health timed out after "
+                f"{timeout_seconds:.2f}s"
+            ),
+        }
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+    payload = health.as_dict()
+    protocol_ok = bool(payload.get("ok"))
+    payload["protocol_ok"] = protocol_ok
+    payload["ok"] = protocol_ok or not settings.tigerbeetle_required
+    return payload
+
+
+def _build_tigerbeetle_ledger_status(session: Session) -> dict[str, object]:
+    protocol = _check_tigerbeetle_protocol_health()
+    latest_reconciliation = latest_tigerbeetle_reconciliation_payload(
+        session,
+        cluster_id=settings.tigerbeetle_cluster_id,
+    )
+    blockers: list[str] = []
+    if settings.tigerbeetle_enabled and not bool(protocol.get("protocol_ok")):
+        blockers.append("tigerbeetle_protocol_unhealthy")
+    reconciliation_ok = True
+    if latest_reconciliation is None:
+        if settings.tigerbeetle_reconcile_required:
+            reconciliation_ok = False
+            blockers.append("tigerbeetle_reconciliation_missing")
+    else:
+        reconciliation_ok = bool(latest_reconciliation.get("ok"))
+        raw_blockers = latest_reconciliation.get("blockers")
+        if isinstance(raw_blockers, Sequence) and not isinstance(
+            raw_blockers, (str, bytes, bytearray)
+        ):
+            blocker_items = cast(Sequence[object], raw_blockers)
+            blockers.extend(str(item) for item in blocker_items)
+
+    protocol_gate_ok = bool(protocol.get("ok"))
+    reconcile_gate_ok = reconciliation_ok or not settings.tigerbeetle_reconcile_required
+    return {
+        "schema_version": "torghut.tigerbeetle-ledger-status.v1",
+        "enabled": settings.tigerbeetle_enabled,
+        "journal_enabled": settings.tigerbeetle_journal_enabled,
+        "required": settings.tigerbeetle_required,
+        "reconcile_required": settings.tigerbeetle_reconcile_required,
+        "ok": protocol_gate_ok and reconcile_gate_ok,
+        "protocol_ok": bool(protocol.get("protocol_ok")),
+        "reconciliation_ok": reconciliation_ok,
+        "cluster_id": settings.tigerbeetle_cluster_id,
+        "replica_addresses": protocol.get("replica_addresses", []),
+        "last_error": protocol.get("last_error"),
+        "latest_reconciliation": latest_reconciliation,
+        "blockers": sorted(set(blockers)),
+    }
 
 
 def _build_control_plane_contract(

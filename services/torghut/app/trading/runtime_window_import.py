@@ -7,10 +7,12 @@ from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Mapping, Sequence, cast
+from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.elements import ColumnElement
 
 from ..models import (
     StrategyCapitalAllocation,
@@ -19,6 +21,7 @@ from ..models import (
     StrategyHypothesisVersion,
     StrategyPromotionDecision,
     StrategyRuntimeLedgerBucket,
+    TigerBeetleTransferRef,
     VNextDatasetSnapshot,
 )
 from .hypotheses import (
@@ -1398,6 +1401,106 @@ def _runtime_ledger_symbol_pnl_items(
     return [(symbol, net_pnl)]
 
 
+def _uuid_values(values: Sequence[str]) -> list[UUID]:
+    uuids: list[UUID] = []
+    for value in values:
+        try:
+            uuids.append(UUID(value))
+        except ValueError:
+            continue
+    return uuids
+
+
+def _tigerbeetle_refs_for_ledger_payload(
+    session: Session,
+    ledger_payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    event_ids = _uuid_values(
+        [
+            *_string_list(ledger_payload.get("execution_order_event_ids")),
+            *_string_list(
+                ledger_payload.get("runtime_ledger_execution_order_event_ids")
+            ),
+        ]
+    )
+    event_fingerprints = [
+        *_string_list(ledger_payload.get("execution_order_event_fingerprints")),
+        *_string_list(ledger_payload.get("event_fingerprints")),
+    ]
+    predicates: list[ColumnElement[bool]] = []
+    if event_ids:
+        predicates.append(
+            cast(
+                ColumnElement[bool],
+                TigerBeetleTransferRef.execution_order_event_id.in_(event_ids),
+            )
+        )
+    if event_fingerprints:
+        predicates.append(
+            cast(
+                ColumnElement[bool],
+                TigerBeetleTransferRef.event_fingerprint.in_(event_fingerprints),
+            )
+        )
+    if not predicates:
+        return {}
+
+    rows = (
+        session.execute(
+            select(TigerBeetleTransferRef)
+            .where(or_(*predicates))
+            .order_by(TigerBeetleTransferRef.created_at.asc())
+        )
+        .scalars()
+        .all()
+    )
+    if not rows:
+        return {}
+    return {
+        "schema_version": "torghut.tigerbeetle-ledger-refs.v1",
+        "cluster_ids": sorted({row.cluster_id for row in rows}),
+        "transfer_count": len(rows),
+        "transfer_ids": sorted({row.transfer_id for row in rows}),
+        "transfers": [
+            {
+                "cluster_id": row.cluster_id,
+                "transfer_id": row.transfer_id,
+                "transfer_kind": row.transfer_kind,
+                "ledger": row.ledger,
+                "code": row.code,
+                "amount": str(row.amount),
+                "status": row.status,
+                "execution_order_event_id": str(row.execution_order_event_id)
+                if row.execution_order_event_id
+                else None,
+                "event_fingerprint": row.event_fingerprint,
+            }
+            for row in rows
+        ],
+    }
+
+
+def _ledger_payload_with_tigerbeetle_refs(
+    session: Session,
+    ledger_payload: dict[str, Any],
+) -> dict[str, Any]:
+    tigerbeetle_refs = _tigerbeetle_refs_for_ledger_payload(session, ledger_payload)
+    if not tigerbeetle_refs:
+        return ledger_payload
+    source_refs = _string_list(ledger_payload.get("source_refs"))
+    if "postgres:tigerbeetle_transfer_refs" not in source_refs:
+        source_refs.append("postgres:tigerbeetle_transfer_refs")
+    source_row_counts = _mapping(ledger_payload.get("source_row_counts"))
+    source_row_counts["tigerbeetle_transfer_refs"] = tigerbeetle_refs["transfer_count"]
+    return {
+        **ledger_payload,
+        "source_refs": source_refs,
+        "source_row_counts": source_row_counts,
+        "tigerbeetle": tigerbeetle_refs,
+        "tigerbeetle_transfer_ids": tigerbeetle_refs["transfer_ids"],
+    }
+
+
 def _runtime_ledger_daily_summary_from_observed_buckets(
     buckets: Sequence[ObservedRuntimeBucket],
 ) -> dict[str, Any]:
@@ -1867,7 +1970,11 @@ def persist_observed_runtime_windows(
         )
         session.add(metric_window_row)
         metric_window_rows.append(metric_window_row)
-        for ledger_payload in _runtime_ledger_bucket_payloads(bucket.payload_json):
+        for raw_ledger_payload in _runtime_ledger_bucket_payloads(bucket.payload_json):
+            ledger_payload = _ledger_payload_with_tigerbeetle_refs(
+                session,
+                raw_ledger_payload,
+            )
             bucket_started_at = (
                 _parse_observation_datetime(ledger_payload.get("bucket_started_at"))
                 or bucket.window_started_at
