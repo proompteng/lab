@@ -328,8 +328,12 @@ def main() -> int:
     batches: list[dict[str, int | str]] = []
     reconciliation: dict[str, object] | None = None
 
-    with session_factory() as session:
-        journal = TigerBeetleLedgerJournal(settings_obj=settings_obj)
+    with (
+        session_factory() as session,
+        TigerBeetleLedgerJournal(
+            settings_obj=settings_obj,
+        ) as journal,
+    ):
         for _ in range(max_batches):
             events = _select_unlinked_events(
                 session,

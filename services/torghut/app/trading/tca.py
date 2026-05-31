@@ -208,9 +208,8 @@ def _journal_tigerbeetle_execution_cost(
     if not settings.tigerbeetle_enabled or not settings.tigerbeetle_journal_enabled:
         return
     session.flush()
-    journal = TigerBeetleLedgerJournal()
     try:
-        with session.begin_nested():
+        with TigerBeetleLedgerJournal() as journal, session.begin_nested():
             journal.journal_execution(session, execution)
             journal.journal_execution_tca_metric(session, metric)
     except Exception as exc:

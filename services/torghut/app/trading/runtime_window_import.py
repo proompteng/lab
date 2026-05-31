@@ -1624,8 +1624,8 @@ def _journal_tigerbeetle_runtime_ledger_bucket(
         return
     session.flush()
     try:
-        with session.begin_nested():
-            TigerBeetleLedgerJournal().journal_runtime_ledger_bucket(session, row)
+        with TigerBeetleLedgerJournal() as journal, session.begin_nested():
+            journal.journal_runtime_ledger_bucket(session, row)
     except Exception as exc:
         if settings.tigerbeetle_required:
             raise

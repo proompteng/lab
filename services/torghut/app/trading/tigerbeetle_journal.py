@@ -5,7 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, cast
+from types import TracebackType
+from typing import Any, Self, cast
 
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
@@ -665,9 +666,32 @@ class TigerBeetleLedgerJournal:
     ) -> None:
         self._settings = settings_obj
         self._client = client
+        self._owns_client = client is None
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        del exc_type, exc, traceback
+        self.close()
 
     def _client_for_write(self) -> TigerBeetleClientProtocol:
-        return self._client or create_tigerbeetle_client(self._settings)
+        if self._client is None:
+            self._client = create_tigerbeetle_client(self._settings)
+        return self._client
+
+    def close(self) -> None:
+        if not self._owns_client or self._client is None:
+            return
+        close = getattr(self._client, "close", None)
+        if callable(close):
+            close()
+        self._client = None
 
     def _persist_transfer(
         self,
