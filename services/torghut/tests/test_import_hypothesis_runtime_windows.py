@@ -2189,7 +2189,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(bucket["source_materialization"], "execution_order_events")
         self.assertEqual(bucket["account_equity"], "10000")
         self.assertEqual(bucket["account_equity_source"], "equity")
-        self.assertEqual(bucket["source_window_start"], "2026-03-06T14:34:00+00:00")
+        self.assertEqual(bucket["source_window_start"], "2026-03-06T14:35:01+00:00")
         self.assertEqual(
             bucket["source_window_end"], "2026-03-06T14:40:01.000001+00:00"
         )
@@ -2405,7 +2405,10 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(bucket["net_strategy_pnl_after_costs"], "0.70")
         self.assertEqual(bucket["open_position_count"], 0)
         self.assertEqual(bucket["closed_trade_count"], 1)
-        self.assertEqual(bucket["source_window_start"], "2026-03-06T14:34:00+00:00")
+        self.assertEqual(bucket["source_window_start"], "2026-03-06T14:35:01+00:00")
+        self.assertEqual(
+            bucket["source_window_end"], "2026-03-06T14:40:01.000001+00:00"
+        )
         self.assertEqual(
             bucket["source_window_ids"],
             [
@@ -3662,6 +3665,18 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         assert isinstance(bucket, dict)
         self.assertEqual(bucket["blockers"], [])
         self.assertEqual(bucket["source_materialization"], "source_execution_lifecycle")
+        self.assertEqual(
+            bucket["source_window_start"],
+            "2026-03-06T14:31:01+00:00",
+        )
+        self.assertEqual(
+            bucket["source_window_end"],
+            "2026-03-06T14:32:01.000001+00:00",
+        )
+        self.assertEqual(
+            bucket["source_window_ids"],
+            ["source-window-fill-buy", "source-window-fill-sell"],
+        )
         self.assertEqual(
             bucket["cost_basis_counts"],
             {"broker_reported_commission_and_fees": 2},
@@ -5838,7 +5853,10 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         assert isinstance(bucket, dict)
         self.assertEqual(bucket["closed_trade_count"], 1)
         self.assertEqual(bucket["open_position_count"], 0)
-        self.assertEqual(bucket["source_window_start"], "2026-03-06T14:34:00+00:00")
+        self.assertEqual(bucket["source_window_start"], "2026-03-06T14:35:00+00:00")
+        self.assertEqual(
+            bucket["source_window_end"], "2026-03-06T14:40:00.000001+00:00"
+        )
 
     def test_source_activity_diagnostic_blockers_classify_materialization_gap(
         self,

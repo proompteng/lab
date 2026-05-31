@@ -2642,9 +2642,12 @@ def _runtime_source_context_for_bucket(
         bucket_order_ids=bucket_order_ids,
     )
     source_rows = [*bucket_execution_rows, *bucket_decision_rows, *bucket_order_rows]
-    source_row_times = [
+    source_backed_fill_lifecycle_rows = _source_backed_fill_lifecycle_rows(
+        bucket_order_rows
+    )
+    source_backed_fill_lifecycle_times = [
         event_time
-        for row in source_rows
+        for row in source_backed_fill_lifecycle_rows
         if (
             event_time := _runtime_ledger_row_time(
                 {str(key): value for key, value in row.items()}
@@ -2652,9 +2655,6 @@ def _runtime_source_context_for_bucket(
         )
         is not None
     ]
-    source_backed_fill_lifecycle_rows = _source_backed_fill_lifecycle_rows(
-        bucket_order_rows
-    )
     source_window_ids = _source_identifier_values(
         source_backed_fill_lifecycle_rows,
         "source_window_id",
@@ -2732,11 +2732,13 @@ def _runtime_source_context_for_bucket(
         "source_rows": source_rows,
         "source_window_ids": source_window_ids,
         "source_window_start": (
-            min(source_row_times) if source_row_times else bucket.bucket_started_at
+            min(source_backed_fill_lifecycle_times)
+            if source_backed_fill_lifecycle_times
+            else bucket.bucket_started_at
         ),
         "source_window_end": (
-            max(source_row_times) + timedelta(microseconds=1)
-            if source_row_times
+            max(source_backed_fill_lifecycle_times) + timedelta(microseconds=1)
+            if source_backed_fill_lifecycle_times
             else bucket.bucket_ended_at
         ),
         "source_row_counts": source_row_counts,
