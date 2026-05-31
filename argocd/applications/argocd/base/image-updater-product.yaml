@@ -77,6 +77,19 @@ spec:
           manifestTargets:
             kustomize:
               name: registry.ide-newton.ts.net/lab/docs
+    - namePattern: olden
+      writeBackConfig:
+        method: git:secret:argocd/image-updater-git-ssh
+        gitConfig:
+          repository: git@github.com:proompteng/lab.git
+          branch: main:release/{{.SHA256}}
+          writeBackTarget: kustomization:/argocd/applications/olden
+      images:
+        - alias: olden
+          imageName: registry.ide-newton.ts.net/lab/olden:0.x
+          manifestTargets:
+            kustomize:
+              name: registry.ide-newton.ts.net/lab/olden
     - namePattern: analysis
       writeBackConfig:
         method: git:secret:argocd/image-updater-git-ssh

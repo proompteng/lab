@@ -66,6 +66,7 @@ jobs:
             "argocd/applications/khoshut/kustomization.yaml"
             "argocd/applications/analysis/kustomization.yaml"
             "argocd/applications/bilig/kustomization.yaml"
+            "argocd/applications/olden/kustomization.yaml"
           )
 
           contains() {
