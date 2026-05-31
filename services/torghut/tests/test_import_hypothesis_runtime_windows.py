@@ -1569,7 +1569,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "source_collection_authorized": True,
                     "source_collection_authorization_scope": (
                         "source_window_evidence_collection_only"
-                    )
+                    ),
                 },
             )
         )
@@ -3505,7 +3505,9 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         )
 
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["execution_order_event_id"], "source-backed-fill-event")
+        self.assertEqual(
+            rows[0]["execution_order_event_id"], "source-backed-fill-event"
+        )
 
     def test_build_realized_strategy_pnl_rows_accepts_execution_economics_with_order_feed_lifecycle(
         self,
@@ -3731,6 +3733,60 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(ledger_row["cost_model_hash"], "cost-sha")
         self.assertEqual(ledger_row["lineage_hash"], "lineage-sha")
 
+    def test_order_event_lifecycle_uses_nested_positive_fill_economics_over_zero_placeholders(
+        self,
+    ) -> None:
+        row = {
+            "event_ts": datetime(2026, 3, 6, 14, 35, 1, tzinfo=timezone.utc),
+            "event_type": "filled",
+            "symbol": "AAPL",
+            "account_label": "TORGHUT_SIM",
+            "strategy_id": "microbar-cross-sectional-pairs-v1",
+            "decision_hash": "decision-buy",
+            "alpaca_order_id": "order-buy",
+            "filled_qty": Decimal("0"),
+            "avg_fill_price": Decimal("0"),
+            "filled_notional": Decimal("0"),
+            "raw_event": {
+                "event": "fill",
+                "order": {
+                    "id": "order-buy",
+                    "status": "filled",
+                    "side": "buy",
+                    "filled_qty": "1",
+                    "filled_avg_price": "100",
+                },
+            },
+            "execution_audit_json": {
+                "execution_policy_hash": "policy-sha",
+                "cost_model_hash": "cost-sha",
+                "lineage_hash": "lineage-sha",
+            },
+            "raw_order": {
+                "runtime_ledger_cost": {
+                    "cost_amount": "0.20",
+                    "cost_basis": "broker_reported_commission_and_fees",
+                },
+            },
+        }
+
+        ledger_row = _runtime_lifecycle_ledger_row(
+            row,
+            event_type="filled",
+            require_complete_fill=True,
+        )
+
+        self.assertIsNotNone(ledger_row)
+        assert ledger_row is not None
+        self.assertEqual(ledger_row["side"], "buy")
+        self.assertEqual(ledger_row["filled_qty"], Decimal("1"))
+        self.assertEqual(ledger_row["avg_fill_price"], Decimal("100"))
+        self.assertEqual(ledger_row["filled_notional"], Decimal("100"))
+        self.assertEqual(ledger_row["cost_amount"], Decimal("0.20"))
+        self.assertEqual(
+            ledger_row["cost_basis"], "broker_reported_commission_and_fees"
+        )
+
     def test_order_event_lifecycle_does_not_hash_raw_event_as_policy_or_cost(
         self,
     ) -> None:
@@ -3892,6 +3948,199 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(ledger_row["filled_notional"], Decimal("1000"))
         self.assertEqual(ledger_row["cost_amount"], Decimal("0.04"))
         self.assertEqual(ledger_row["source"], "execution_order_event")
+
+    def test_source_backed_round_trip_materializes_nested_fill_economics_over_zero_placeholders(
+        self,
+    ) -> None:
+        common = {
+            "account_label": "TORGHUT_SIM",
+            "strategy_id": "microbar-cross-sectional-pairs-v1",
+            "symbol": "AAPL",
+            "lineage_hash": "lineage-sha",
+            "source_topic": "alpaca.trade_updates",
+            "source_partition": 0,
+            "source_window_id": "source-window",
+            "source_decision_mode": "strategy_signal_paper",
+            "profit_proof_eligible": True,
+        }
+
+        def order_row(
+            *,
+            event_id: str,
+            decision_id: str,
+            order_id: str,
+            event_ts: datetime,
+            event_type: str,
+            side: str,
+            nested_filled_qty: str | None = None,
+            nested_avg_price: str | None = None,
+            source_offset: int,
+        ) -> dict[str, object]:
+            raw_order: dict[str, object] = {
+                "side": side,
+                "runtime_ledger_cost": {
+                    "cost_amount": "0.10",
+                    "cost_basis": "broker_reported_commission_and_fees",
+                },
+            }
+            raw_event_order: dict[str, object] = {
+                "id": order_id,
+                "status": "filled" if nested_filled_qty is not None else "new",
+                "side": side,
+            }
+            if nested_filled_qty is not None:
+                raw_event_order.update(
+                    {
+                        "filled_qty": nested_filled_qty,
+                        "filled_avg_price": nested_avg_price,
+                    }
+                )
+            return {
+                **common,
+                "execution_order_event_id": event_id,
+                "trade_decision_id": decision_id,
+                "decision_hash": decision_id,
+                "event_ts": event_ts,
+                "event_type": event_type,
+                "alpaca_order_id": order_id,
+                "execution_policy_hash": f"policy-{side}",
+                "cost_model_hash": "cost-sha",
+                "source_offset": source_offset,
+                "filled_qty": Decimal("0"),
+                "avg_fill_price": Decimal("0"),
+                "filled_notional": Decimal("0"),
+                "raw_event": {"event": event_type, "order": raw_event_order},
+                "raw_order": raw_order,
+            }
+
+        rows = _build_realized_strategy_pnl_rows(
+            [
+                {
+                    **common,
+                    "execution_id": "execution-buy",
+                    "trade_decision_id": "decision-buy",
+                    "computed_at": datetime(2026, 3, 6, 14, 35, 2, tzinfo=timezone.utc),
+                    "execution_event_at": datetime(
+                        2026, 3, 6, 14, 35, 2, tzinfo=timezone.utc
+                    ),
+                    "side": "buy",
+                    "filled_qty": Decimal("0"),
+                    "avg_fill_price": Decimal("0"),
+                    "alpaca_order_id": "order-buy",
+                    "raw_order": {
+                        "side": "buy",
+                        "filled_qty": "1",
+                        "filled_avg_price": "100",
+                        "runtime_ledger_cost": {
+                            "cost_amount": "0.10",
+                            "cost_basis": "broker_reported_commission_and_fees",
+                        },
+                    },
+                },
+                {
+                    **common,
+                    "execution_id": "execution-sell",
+                    "trade_decision_id": "decision-sell",
+                    "computed_at": datetime(2026, 3, 6, 14, 40, 2, tzinfo=timezone.utc),
+                    "execution_event_at": datetime(
+                        2026, 3, 6, 14, 40, 2, tzinfo=timezone.utc
+                    ),
+                    "side": "sell",
+                    "filled_qty": Decimal("0"),
+                    "avg_fill_price": Decimal("0"),
+                    "alpaca_order_id": "order-sell",
+                    "raw_order": {
+                        "side": "sell",
+                        "filled_qty": "1",
+                        "filled_avg_price": "101",
+                        "runtime_ledger_cost": {
+                            "cost_amount": "0.10",
+                            "cost_basis": "broker_reported_commission_and_fees",
+                        },
+                    },
+                },
+            ],
+            decision_lifecycle_rows=[
+                {
+                    **common,
+                    "trade_decision_id": "decision-buy",
+                    "decision_hash": "decision-buy",
+                    "event_type": "decision",
+                    "computed_at": datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                },
+                {
+                    **common,
+                    "trade_decision_id": "decision-sell",
+                    "decision_hash": "decision-sell",
+                    "event_type": "decision",
+                    "computed_at": datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
+                },
+            ],
+            order_lifecycle_rows=[
+                order_row(
+                    event_id="event-new-buy",
+                    decision_id="decision-buy",
+                    order_id="order-buy",
+                    event_ts=datetime(2026, 3, 6, 14, 35, 1, tzinfo=timezone.utc),
+                    event_type="new",
+                    side="buy",
+                    source_offset=1,
+                ),
+                order_row(
+                    event_id="event-fill-buy",
+                    decision_id="decision-buy",
+                    order_id="order-buy",
+                    event_ts=datetime(2026, 3, 6, 14, 35, 2, tzinfo=timezone.utc),
+                    event_type="filled",
+                    side="buy",
+                    nested_filled_qty="1",
+                    nested_avg_price="100",
+                    source_offset=2,
+                ),
+                order_row(
+                    event_id="event-new-sell",
+                    decision_id="decision-sell",
+                    order_id="order-sell",
+                    event_ts=datetime(2026, 3, 6, 14, 40, 1, tzinfo=timezone.utc),
+                    event_type="new",
+                    side="sell",
+                    source_offset=3,
+                ),
+                order_row(
+                    event_id="event-fill-sell",
+                    decision_id="decision-sell",
+                    order_id="order-sell",
+                    event_ts=datetime(2026, 3, 6, 14, 40, 2, tzinfo=timezone.utc),
+                    event_type="filled",
+                    side="sell",
+                    nested_filled_qty="1",
+                    nested_avg_price="101",
+                    source_offset=4,
+                ),
+            ],
+            allow_authoritative_runtime_ledger_materialization=True,
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0]["authoritative"])
+        self.assertTrue(rows[0]["post_cost_promotion_eligible"])
+        bucket = rows[0]["runtime_ledger_bucket"]
+        self.assertIsInstance(bucket, dict)
+        assert isinstance(bucket, dict)
+        self.assertEqual(bucket["blockers"], [])
+        self.assertEqual(bucket["filled_notional"], "201")
+        self.assertEqual(bucket["open_position_count"], 0)
+        self.assertEqual(bucket["closed_trade_count"], 1)
+        self.assertEqual(
+            bucket["source_refs"],
+            [
+                "postgres:trade_decisions",
+                "postgres:executions",
+                "postgres:execution_order_events",
+                "postgres:order_feed_source_windows",
+            ],
+        )
+        self.assertEqual(bucket["source_materialization"], "execution_order_events")
 
     def test_build_realized_strategy_pnl_rows_does_not_use_idempotency_key_as_policy_hash(
         self,

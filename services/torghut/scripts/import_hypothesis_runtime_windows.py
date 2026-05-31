@@ -335,6 +335,15 @@ def _first_decimal(row: Mapping[str, object], *keys: str) -> Decimal | None:
     return None
 
 
+def _first_positive_decimal(row: Mapping[str, object], *keys: str) -> Decimal | None:
+    for payload in _row_payloads(row):
+        for key in keys:
+            value = payload.get(key)
+            if (parsed := _decimal_or_none(value)) is not None and parsed > 0:
+                return parsed
+    return None
+
+
 def _first_text(row: Mapping[str, object], *keys: str) -> str | None:
     for payload in _row_payloads(row):
         for key in keys:
@@ -1652,7 +1661,9 @@ def _runtime_window_import_proof_hygiene_blockers(
         source_kind.strip().lower().replace("-", "_")
         == "runtime_ledger_source_collection_candidate"
     ):
-        blockers.extend(_source_collection_target_authorization_blockers(target_metadata))
+        blockers.extend(
+            _source_collection_target_authorization_blockers(target_metadata)
+        )
     if not dependency_quorum_decision.strip():
         blockers.append("dependency_quorum_decision_missing")
     if not continuity_ok.strip():
@@ -2114,14 +2125,14 @@ def _runtime_lifecycle_ledger_row(
     }
     if event_type in _RUNTIME_LEDGER_FILL_EVENTS:
         side = _first_text(row, "side", "action", "order_side")
-        filled_qty = _first_decimal(
+        filled_qty = _first_positive_decimal(
             row,
             "filled_qty",
             "filled_quantity",
             "qty",
             "quantity",
         )
-        avg_fill_price = _first_decimal(
+        avg_fill_price = _first_positive_decimal(
             row,
             "avg_fill_price",
             "filled_avg_price",
@@ -2131,7 +2142,7 @@ def _runtime_lifecycle_ledger_row(
             "filled_price",
             "price",
         )
-        filled_notional = _first_decimal(
+        filled_notional = _first_positive_decimal(
             row,
             "filled_notional",
             "notional",
@@ -2202,14 +2213,14 @@ def _runtime_order_id(row: Mapping[str, object]) -> str | None:
 
 
 def _execution_row_has_fill(row: Mapping[str, object]) -> bool:
-    filled_qty = _first_decimal(
+    filled_qty = _first_positive_decimal(
         row,
         "filled_qty",
         "filled_quantity",
         "qty",
         "quantity",
     )
-    avg_fill_price = _first_decimal(
+    avg_fill_price = _first_positive_decimal(
         row,
         "avg_fill_price",
         "filled_avg_price",
@@ -2536,11 +2547,11 @@ def _execution_fill_economics_order_ids(
         order_id = _runtime_order_id(row)
         if order_id is None:
             continue
-        filled_notional = _first_decimal(
+        filled_notional = _first_positive_decimal(
             row, "filled_notional", "notional", "turnover_notional"
         ) or Decimal("0")
         if filled_notional <= 0:
-            price = _first_decimal(
+            price = _first_positive_decimal(
                 row,
                 "avg_fill_price",
                 "filled_avg_price",
@@ -2549,7 +2560,7 @@ def _execution_fill_economics_order_ids(
                 "fill_price",
                 "filled_price",
             )
-            qty = _first_decimal(
+            qty = _first_positive_decimal(
                 row, "filled_qty", "filled_quantity", "qty", "quantity"
             )
             if price is None or qty is None or price <= 0 or qty <= 0:
@@ -2560,7 +2571,9 @@ def _execution_fill_economics_order_ids(
             filled_notional=filled_notional,
             side=_first_text(row, "side", "order_side") or "",
             filled_qty=(
-                _first_decimal(row, "filled_qty", "filled_quantity", "qty", "quantity")
+                _first_positive_decimal(
+                    row, "filled_qty", "filled_quantity", "qty", "quantity"
+                )
                 or Decimal("0")
             ),
         )
@@ -2569,7 +2582,9 @@ def _execution_fill_economics_order_ids(
             cost_amount=cost_amount,
             side=_first_text(row, "side", "order_side") or "",
             filled_qty=(
-                _first_decimal(row, "filled_qty", "filled_quantity", "qty", "quantity")
+                _first_positive_decimal(
+                    row, "filled_qty", "filled_quantity", "qty", "quantity"
+                )
                 or Decimal("0")
             ),
             filled_notional=filled_notional,
@@ -2686,8 +2701,8 @@ def _runtime_source_context_for_bucket(
     for row in bucket_order_rows:
         if (order_id := _runtime_order_id(row)) is not None:
             expected_execution_fill_order_ids.add(order_id)
-    source_backed_fill_lifecycle_order_ids = (
-        _source_backed_fill_lifecycle_order_ids(source_backed_fill_lifecycle_rows)
+    source_backed_fill_lifecycle_order_ids = _source_backed_fill_lifecycle_order_ids(
+        source_backed_fill_lifecycle_rows
     )
     event_sourced_fill_order_ids = _event_sourced_fill_economics_order_ids(
         source_backed_fill_lifecycle_rows
@@ -2719,8 +2734,7 @@ def _runtime_source_context_for_bucket(
             source_materialization = "execution_order_events"
             authority_class = "runtime_order_feed_execution_source"
         elif (
-            execution_fill_economics_complete
-            and source_backed_fill_lifecycle_complete
+            execution_fill_economics_complete and source_backed_fill_lifecycle_complete
         ):
             source_materialization = "source_execution_lifecycle"
             authority_class = "source_execution_lifecycle_materialized_runtime_ledger"
@@ -2889,7 +2903,7 @@ def _runtime_execution_ledger_fill_from_row(
     ledger_computed_at = (
         fill_event_at if isinstance(fill_event_at, datetime) else computed_at
     )
-    price = _first_decimal(
+    price = _first_positive_decimal(
         row,
         "avg_fill_price",
         "filled_avg_price",
@@ -2901,7 +2915,7 @@ def _runtime_execution_ledger_fill_from_row(
     side = _first_text(row, "side", "order_side") or ""
     signed_qty = _execution_signed_qty(
         side=side,
-        qty=_first_decimal(
+        qty=_first_positive_decimal(
             row,
             "filled_qty",
             "filled_quantity",
