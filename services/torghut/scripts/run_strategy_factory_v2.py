@@ -7,7 +7,7 @@ import argparse
 import json
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal, ROUND_CEILING
 from pathlib import Path
@@ -26,6 +26,9 @@ from app.trading.discovery.family_templates import (
 )
 from app.trading.discovery.promotion_contract import (
     blocked_research_candidate_promotion_readiness,
+)
+from app.trading.discovery.replay_ledger_guided_search import (
+    apply_replay_ledger_remediation_guidance,
 )
 from scripts.search_consistent_profitability_frontier import (
     run_consistent_profitability_frontier,
@@ -488,6 +491,33 @@ def _compile_sweep_config(
     )
 
 
+def _replay_ledger_remediation_report(
+    experiment_payload: Mapping[str, Any],
+) -> Mapping[str, Any] | None:
+    for key in (
+        "exact_replay_ledger_remediation",
+        "replay_ledger_remediation",
+        "remediation_report",
+    ):
+        report = _mapping(experiment_payload.get(key))
+        if report:
+            return report
+    return None
+
+
+def _apply_replay_ledger_guidance_to_compiled_sweep(
+    compiled: CompiledExperimentSweep,
+) -> CompiledExperimentSweep:
+    remediation_report = _replay_ledger_remediation_report(compiled.experiment_payload)
+    guided_sweep = apply_replay_ledger_remediation_guidance(
+        sweep_config=compiled.sweep_config,
+        remediation_report=remediation_report,
+    )
+    if not guided_sweep.applied:
+        return compiled
+    return replace(compiled, sweep_config=guided_sweep.sweep_config)
+
+
 def _frontier_args(
     *,
     args: argparse.Namespace,
@@ -778,6 +808,7 @@ def run_strategy_factory_v2_from_specs(
             train_days=max(1, int(args.train_days)),
             holdout_days=max(1, int(args.holdout_days)),
         )
+        compiled = _apply_replay_ledger_guidance_to_compiled_sweep(compiled)
         experiment_root = args.output_dir / compiled.experiment_id
         experiment_root.mkdir(parents=True, exist_ok=True)
         compiled_sweep_path = experiment_root / "compiled-sweep.yaml"
@@ -840,6 +871,11 @@ def run_strategy_factory_v2_from_specs(
             family_template_id=compiled.family_template.family_id,
             runtime_harness=compiled.family_template.runtime_harness,
         )
+        replay_guidance = _mapping(
+            _mapping(compiled.sweep_config.get("metadata")).get(
+                "replay_ledger_guided_search"
+            )
+        )
         results.append(
             {
                 "source_run_id": compiled.source_run_id,
@@ -866,6 +902,9 @@ def run_strategy_factory_v2_from_specs(
                     )
                     if top_candidates
                     else ""
+                ),
+                "replay_ledger_guided_actions": _list_of_strings(
+                    replay_guidance.get("applied_actions")
                 ),
                 "promotion_readiness": promotion_readiness,
                 "persistence_status": dict(persistence_status)
