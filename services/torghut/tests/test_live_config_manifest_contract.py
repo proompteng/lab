@@ -429,11 +429,15 @@ class TestLiveConfigManifestContract(TestCase):
                 self.assertEqual(params.get("max_gross_exposure_pct_equity"), "4.0")
                 self.assertEqual(params.get("max_pair_legs"), "2")
                 self.assertEqual(params.get("top_n"), "1")
-                self.assertEqual(params.get("min_cross_section_continuation_rank"), "0.55")
+                self.assertEqual(
+                    params.get("min_cross_section_continuation_rank"), "0.55"
+                )
                 self.assertEqual(params.get("entry_minute_after_open"), "60")
                 self.assertEqual(params.get("exit_minute_after_open"), "120")
                 self.assertEqual(params.get("long_stop_loss_bps"), "10")
-                self.assertEqual(params.get("long_trailing_stop_activation_profit_bps"), "8")
+                self.assertEqual(
+                    params.get("long_trailing_stop_activation_profit_bps"), "8"
+                )
                 self.assertEqual(params.get("long_trailing_stop_drawdown_bps"), "4")
                 self.assertEqual(params.get("max_hold_seconds"), "7200")
                 self.assertEqual(params.get("max_session_negative_exit_bps"), "10")
@@ -583,6 +587,7 @@ class TestLiveConfigManifestContract(TestCase):
         sim_env = _load_knative_env(
             "argocd/applications/torghut/knative-service-sim.yaml"
         )
+        live_env = _load_torghut_knative_env()
 
         self.assertTrue(_manifest_bool(sim_env, "TRADING_ENABLED"))
         self.assertEqual(sim_env.get("TRADING_MODE"), "paper")
@@ -741,6 +746,28 @@ class TestLiveConfigManifestContract(TestCase):
             "no_signals_in_window",
             _csv_values(sim_env.get("TRADING_SIGNAL_STALENESS_ALERT_CRITICAL_REASONS")),
         )
+
+        self.assertEqual(live_env.get("TRADING_MODE"), "live")
+        self.assertFalse(_manifest_bool(live_env, "TRADING_SIMPLE_SUBMIT_ENABLED"))
+        self.assertTrue(
+            _manifest_bool(live_env, "TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED"),
+            "live proof floor requires lifecycle telemetry even while submit stays disabled",
+        )
+        self.assertTrue(_manifest_bool(live_env, "TRADING_ORDER_FEED_ENABLED"))
+        self.assertEqual(
+            live_env.get("TRADING_ORDER_FEED_TOPIC"),
+            "",
+            "live telemetry should consume account-labelled v2 envelopes only",
+        )
+        self.assertEqual(
+            live_env.get("TRADING_ORDER_FEED_TOPIC_V2"), "torghut.trade-updates.v2"
+        )
+        self.assertEqual(
+            live_env.get("TRADING_ORDER_FEED_GROUP_ID"),
+            "torghut-order-feed-live-default",
+        )
+        self.assertEqual(live_env.get("TRADING_ORDER_FEED_ASSIGNMENT_MODE"), "manual")
+        self.assertEqual(live_env.get("TRADING_ORDER_FEED_AUTO_OFFSET_RESET"), "latest")
 
     def test_autonomy_config_does_not_treat_normal_no_signal_as_critical(self) -> None:
         manifest = _load_yaml_mapping(

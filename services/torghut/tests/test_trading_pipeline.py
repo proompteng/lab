@@ -791,6 +791,12 @@ class TestTradingPipeline(TestCase):
                 "trading_simple_max_notional_per_order",
                 "trading_simple_max_notional_per_symbol",
                 "trading_simple_order_feed_telemetry_enabled",
+                "trading_order_feed_enabled",
+                "trading_order_feed_bootstrap_servers",
+                "trading_order_feed_topic",
+                "trading_order_feed_topic_v2",
+                "trading_order_feed_assignment_mode",
+                "trading_order_feed_auto_offset_reset",
                 "trading_simple_paper_route_probe_enabled",
                 "trading_simple_paper_route_probe_max_notional",
                 "trading_simple_paper_route_probe_retry_attempt_limit",
@@ -2541,6 +2547,12 @@ class TestTradingPipeline(TestCase):
         config.settings.trading_live_enabled = False
         config.settings.trading_pipeline_mode = "simple"
         config.settings.trading_simple_order_feed_telemetry_enabled = True
+        config.settings.trading_order_feed_enabled = True
+        config.settings.trading_order_feed_bootstrap_servers = "kafka:9092"
+        config.settings.trading_order_feed_topic = "torghut.trade-updates.v1"
+        config.settings.trading_order_feed_topic_v2 = None
+        config.settings.trading_order_feed_assignment_mode = "manual"
+        config.settings.trading_order_feed_auto_offset_reset = "latest"
         config.settings.trading_market_context_url = "http://market-context.test/api"
         config.settings.trading_market_context_timeout_seconds = 1
         config.settings.trading_market_context_max_staleness_seconds = 300
