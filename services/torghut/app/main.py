@@ -4580,24 +4580,31 @@ def trading_paper_route_evidence(
         cast(Mapping[str, Any], live_submission_gate)
     )
     simple_lane_status = _build_simple_lane_status_payload()
-    proof_floor = _build_profitability_proof_floor_payload(
-        state=scheduler.state,
-        torghut_revision=BUILD_VERSION,
-        live_submission_gate=live_submission_gate,
-        hypothesis_payload=hypothesis_payload,
-        empirical_jobs_status=empirical_jobs,
-        quant_evidence=quant_evidence,
-        market_context_status=market_context_status,
-        tca_summary=tca_summary,
+    route_reacquisition_book = _paper_route_probe_book_from_target_plan(
+        live_submission_gate,
         simple_lane_status=simple_lane_status,
+        state=scheduler.state,
     )
+    if route_reacquisition_book is None:
+        proof_floor = _build_profitability_proof_floor_payload(
+            state=scheduler.state,
+            torghut_revision=BUILD_VERSION,
+            live_submission_gate=live_submission_gate,
+            hypothesis_payload=hypothesis_payload,
+            empirical_jobs_status=empirical_jobs,
+            quant_evidence=quant_evidence,
+            market_context_status=market_context_status,
+            tca_summary=tca_summary,
+            simple_lane_status=simple_lane_status,
+        )
+        route_reacquisition_book = cast(
+            Mapping[str, Any],
+            proof_floor.get("route_reacquisition_book") or {},
+        )
     payload = build_paper_route_evidence_audit(
         session,
         live_submission_gate=cast(Mapping[str, Any], live_submission_gate),
-        route_reacquisition_book=cast(
-            Mapping[str, Any],
-            proof_floor.get("route_reacquisition_book") or {},
-        ),
+        route_reacquisition_book=route_reacquisition_book,
     )
     return JSONResponse(status_code=200, content=jsonable_encoder(payload))
 
@@ -4640,30 +4647,148 @@ def trading_paper_route_target_plan(
     live_submission_gate = _merge_external_paper_route_target_plan(
         cast(Mapping[str, Any], live_submission_gate)
     )
-    proof_floor = _build_profitability_proof_floor_payload(
+    simple_lane_status = _build_simple_lane_status_payload()
+    route_reacquisition_book = _paper_route_probe_book_from_target_plan(
+        live_submission_gate,
+        simple_lane_status=simple_lane_status,
         state=scheduler.state,
-        torghut_revision=BUILD_VERSION,
-        live_submission_gate=live_submission_gate,
-        hypothesis_payload=hypothesis_payload,
-        empirical_jobs_status=empirical_jobs,
-        quant_evidence=quant_evidence,
-        market_context_status=market_context_status,
-        tca_summary=tca_summary,
-        simple_lane_status=_build_simple_lane_status_payload(),
     )
+    if route_reacquisition_book is None:
+        proof_floor = _build_profitability_proof_floor_payload(
+            state=scheduler.state,
+            torghut_revision=BUILD_VERSION,
+            live_submission_gate=live_submission_gate,
+            hypothesis_payload=hypothesis_payload,
+            empirical_jobs_status=empirical_jobs,
+            quant_evidence=quant_evidence,
+            market_context_status=market_context_status,
+            tca_summary=tca_summary,
+            simple_lane_status=simple_lane_status,
+        )
+        route_reacquisition_book = cast(
+            Mapping[str, Any],
+            proof_floor.get("route_reacquisition_book") or {},
+        )
     payload = build_paper_route_target_plan_payload(
         session,
         live_submission_gate=cast(Mapping[str, Any], live_submission_gate),
-        route_reacquisition_book=cast(
-            Mapping[str, Any],
-            proof_floor.get("route_reacquisition_book") or {},
-        ),
+        route_reacquisition_book=route_reacquisition_book,
     )
     return JSONResponse(status_code=200, content=jsonable_encoder(payload))
 
 
 def _mapping_items(value: object) -> list[dict[str, Any]]:
     return _shared_mapping_items(value)
+
+
+def _paper_route_target_plan_probe_symbols(plan: Mapping[str, Any]) -> list[str]:
+    symbols: list[str] = []
+    for target in _paper_route_target_plan_targets(plan):
+        raw_symbols = target.get("paper_route_probe_symbols")
+        if isinstance(raw_symbols, str):
+            values: Sequence[object] = raw_symbols.split(",")
+        elif isinstance(raw_symbols, Sequence) and not isinstance(
+            raw_symbols,
+            (bytes, bytearray),
+        ):
+            values = cast(Sequence[object], raw_symbols)
+        else:
+            values = ()
+        for item in values:
+            symbol = str(item).strip().upper()
+            if symbol and symbol not in symbols:
+                symbols.append(symbol)
+    return symbols
+
+
+def _paper_route_target_plan_probe_notional(
+    plan: Mapping[str, Any],
+    *,
+    simple_lane_status: Mapping[str, Any],
+) -> str | None:
+    candidate_values: list[object] = []
+    for target in _paper_route_target_plan_targets(plan):
+        candidate_values.extend(
+            [
+                target.get("paper_route_probe_next_session_max_notional"),
+                target.get("bounded_evidence_collection_max_notional"),
+                target.get("paper_route_probe_effective_max_notional"),
+            ]
+        )
+    candidate_values.append(simple_lane_status.get("paper_route_probe_max_notional"))
+    positive_values = [
+        amount
+        for value in candidate_values
+        if (amount := _decimal_or_none(value)) is not None and amount > 0
+    ]
+    if not positive_values:
+        return None
+    return _decimal_to_string(max(positive_values))
+
+
+def _paper_route_probe_book_from_target_plan(
+    live_submission_gate: Mapping[str, Any],
+    *,
+    simple_lane_status: Mapping[str, Any],
+    state: object,
+) -> Mapping[str, Any] | None:
+    plan = _paper_route_target_plan_from_payload(live_submission_gate)
+    targets = _paper_route_target_plan_targets(plan)
+    if not targets:
+        return None
+    eligible_symbols = _paper_route_target_plan_probe_symbols(plan)
+    if not eligible_symbols:
+        return None
+    next_session_max_notional = _paper_route_target_plan_probe_notional(
+        plan,
+        simple_lane_status=simple_lane_status,
+    )
+    if next_session_max_notional is None:
+        return None
+
+    configured_enabled = bool(simple_lane_status.get("paper_route_probe_enabled"))
+    if not configured_enabled:
+        return None
+    market_session_open = cast(bool | None, getattr(state, "market_session_open", None))
+    blocking_reasons: list[str] = []
+    if market_session_open is not True:
+        blocking_reasons.append("market_session_closed")
+    active = configured_enabled and market_session_open is True
+    effective_max_notional = next_session_max_notional if active else "0"
+    active_symbols = eligible_symbols if active else []
+    return {
+        "schema_version": "torghut.route-reacquisition-book.v1",
+        "source": "paper_route_target_plan",
+        "state": "repair_only",
+        "account_label": settings.trading_account_label,
+        "trading_mode": settings.trading_mode,
+        "market_session_open": market_session_open,
+        "summary": {
+            "paper_route_probe_eligible_symbols": eligible_symbols,
+            "paper_route_probe_active_symbols": active_symbols,
+        },
+        "paper_route_probe": {
+            "configured_enabled": configured_enabled,
+            "active": active,
+            "effective_max_notional": effective_max_notional,
+            "next_session_max_notional": next_session_max_notional,
+            "eligible_symbol_count": len(eligible_symbols),
+            "eligible_symbols": eligible_symbols,
+            "active_symbols": active_symbols,
+            "blocking_reasons": blocking_reasons,
+            "capital_authority": "none",
+        },
+        "source_refs": {
+            "target_plan_source": live_submission_gate.get(
+                "paper_route_target_plan_source"
+            ),
+            "target_plan_target_count": len(targets),
+        },
+        "rollback_target": {
+            "paper_probe_notional_limit": "0",
+            "live_submit_enabled": False,
+        },
+    }
 
 
 def _paper_route_target_plan_targets(plan: Mapping[str, Any]) -> list[dict[str, Any]]:

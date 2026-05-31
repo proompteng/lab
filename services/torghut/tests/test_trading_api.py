@@ -7462,6 +7462,79 @@ class TestTradingApi(TestCase):
             else:
                 app.state.trading_scheduler = original_scheduler
 
+    def test_paper_route_target_plan_skips_full_proof_floor_when_target_plan_ready(
+        self,
+    ) -> None:
+        original_scheduler = getattr(app.state, "trading_scheduler", None)
+        target = {
+            "hypothesis_id": "H-PAIRS-01",
+            "candidate_id": "c88421d619759b2cfaa6f4d0",
+            "observed_stage": "paper",
+            "strategy_family": "microbar_cross_sectional_pairs",
+            "strategy_name": "microbar-cross-sectional-pairs-v1",
+            "account_label": "TORGHUT_SIM",
+            "source_kind": "runtime_ledger_paper_probation_candidates",
+            "source_manifest_ref": "config/trading/hypotheses/h-pairs.json",
+            "dataset_snapshot_ref": "portfolio-profit-autoresearch-500-v1",
+            "paper_route_probe_symbols": ["AAPL", "AMZN"],
+            "paper_route_probe_next_session_max_notional": "75000",
+            "paper_probation_authorized": True,
+            "source_collection_authorized": True,
+            "promotion_allowed": False,
+            "final_promotion_allowed": False,
+            "max_notional": "0",
+        }
+        live_gate = {
+            "allowed": True,
+            "reason": "paper_probe_ready",
+            "blocked_reasons": [],
+            "promotion_eligible_total": 0,
+            "runtime_ledger_paper_probation_import_plan": {
+                "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                "target_count": 1,
+                "skipped_target_count": 0,
+                "promotion_allowed": False,
+                "final_promotion_allowed": False,
+                "targets": [target],
+            },
+        }
+        try:
+            if hasattr(app.state, "trading_scheduler"):
+                del app.state.trading_scheduler
+            with (
+                patch(
+                    "app.main._build_live_submission_gate_payload",
+                    return_value=live_gate,
+                ),
+                patch(
+                    "app.main._build_simple_lane_status_payload",
+                    return_value={
+                        "paper_route_probe_enabled": True,
+                        "paper_route_probe_max_notional": "75000",
+                    },
+                ),
+                patch(
+                    "app.main._build_profitability_proof_floor_payload",
+                    side_effect=AssertionError("full proof floor should not run"),
+                ),
+            ):
+                response = self.client.get("/trading/paper-route-target-plan")
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(
+                payload["paper_route_probe"]["eligible_symbols"], ["AAPL", "AMZN"]
+            )
+            self.assertEqual(
+                payload["paper_route_probe"]["next_session_max_notional"], "75000"
+            )
+            self.assertFalse(payload["summary"]["promotion_authority"]["allowed"])
+        finally:
+            if original_scheduler is None:
+                if hasattr(app.state, "trading_scheduler"):
+                    del app.state.trading_scheduler
+            else:
+                app.state.trading_scheduler = original_scheduler
+
     def test_trading_paper_route_evidence_uses_external_plan_when_url_configured(
         self,
     ) -> None:
