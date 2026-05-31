@@ -163,6 +163,29 @@ describe('Olden Era wiki data', () => {
 })
 
 describe('Olden Era wiki components', () => {
+  it('keeps the mechanics page structured with visible hierarchy', () => {
+    const mechanicsPage = readFileSync(join(contentRoot, 'mechanics.mdx'), 'utf8')
+    const globalCss = readFileSync(join(import.meta.dir, '../../../../app/global.css'), 'utf8')
+    const formulaComponent = readFileSync(join(import.meta.dir, '../mechanics-formula-reference.tsx'), 'utf8')
+    const matrixComponent = readFileSync(join(import.meta.dir, '../mechanics-matrix.tsx'), 'utf8')
+
+    expect(globalCss).toContain('--breakpoint-md: 48rem')
+    expect(globalCss).toContain('--breakpoint-lg: 64rem')
+    expect(globalCss).toContain('--breakpoint-xl: 80rem')
+    expect(globalCss).toContain('.olden-md-grid-cols-3')
+    expect(globalCss).toContain('.olden-lg-grid-cols-3')
+    expect(globalCss).toContain('.olden-xl-grid-cols-2')
+    expect(mechanicsPage).not.toMatch(/^# Mechanics$/m)
+    expect(formulaComponent).toContain('Rules that change play')
+    expect(formulaComponent).toContain('Source-backed rule')
+    expect(formulaComponent).toContain('Decision check')
+    expect(formulaComponent).toContain('How it shows up')
+    expect(formulaComponent).toContain('space-y-10')
+    expect(matrixComponent).toContain('What to check before spending a turn')
+    expect(matrixComponent).toContain('Check before acting')
+    expect(matrixComponent).toContain('Avoid')
+  })
+
   it('keeps source notes compact and readable on the dark docs surface', () => {
     expect(sourceNoteClassNames.aside).toContain('px-3')
     expect(sourceNoteClassNames.aside).toContain('py-2')

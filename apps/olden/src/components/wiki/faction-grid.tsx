@@ -5,7 +5,7 @@ import { FreshnessBadge } from './freshness-badge'
 
 export function FactionGrid() {
   return (
-    <div className="not-prose grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+    <div className="olden-lg-grid-cols-3 not-prose grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {factions.map((faction) => (
         <Link
           key={faction.id}

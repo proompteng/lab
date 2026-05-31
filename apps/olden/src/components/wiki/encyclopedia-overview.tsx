@@ -70,7 +70,7 @@ export function EncyclopediaOverview() {
 
   return (
     <div className="not-prose my-8 space-y-5">
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+      <div className="olden-xl-grid-cols-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {cards.map((card) => (
           <a
             key={card.href}
