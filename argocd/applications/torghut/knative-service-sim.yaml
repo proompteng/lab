@@ -231,7 +231,6 @@ spec:
             - name: TRADING_ORDER_FEED_AUTO_OFFSET_RESET
               value: earliest
             - name: TRADING_ORDER_FEED_TOPIC_V2
-              value: ""
             - name: TRADING_SIMULATION_ORDER_UPDATES_TOPIC
               value: torghut.sim.trade-updates.v1
             - name: TRADING_SIMULATION_ORDER_UPDATES_BOOTSTRAP_SERVERS

@@ -186,7 +186,6 @@ spec:
                   name: torghut-ws
                   key: password
             - name: TRADING_ORDER_FEED_TOPIC
-              value: ""
             - name: TRADING_ORDER_FEED_GROUP_ID
               value: torghut-order-feed-live-default
             - name: TRADING_ORDER_FEED_ASSIGNMENT_MODE
