@@ -5348,6 +5348,7 @@ class TestTradingPipeline(TestCase):
             self.assertEqual(len(decisions), 1)
             self.assertEqual(len(executions), 1)
             decision = decisions[0]
+            execution = executions[0]
             decision_json = cast(dict[str, Any], decision.decision_json)
             params = cast(dict[str, Any], decision_json.get("params"))
             target_plan = cast(dict[str, Any], params.get("paper_route_target_plan"))
@@ -5356,8 +5357,15 @@ class TestTradingPipeline(TestCase):
                 params.get("paper_route_target_plan_source_decision"),
             )
             paper_route_probe = cast(dict[str, Any], params.get("paper_route_probe"))
+            simple_lane = cast(dict[str, Any], params.get("simple_lane"))
+            simple_lane_precheck = cast(
+                dict[str, Any], params.get("simple_lane_precheck")
+            )
+            execution_policy = cast(dict[str, Any], params.get("execution_policy"))
 
             self.assertEqual(decision.status, "submitted")
+            self.assertEqual(Decimal(str(decision_json["qty"])), Decimal("2.5"))
+            self.assertEqual(execution.submitted_qty, Decimal("2.50000000"))
             created_at = decision.created_at
             if created_at.tzinfo is None:
                 created_at = created_at.replace(tzinfo=timezone.utc)
@@ -5411,8 +5419,18 @@ class TestTradingPipeline(TestCase):
                 "2026-05-26T15:30:00+00:00",
             )
             self.assertEqual(paper_route_probe["capped_qty"], "2.5000")
-            self.assertEqual(paper_route_probe["capped_notional"], "250.000000")
+            self.assertEqual(
+                Decimal(str(paper_route_probe["capped_notional"])), Decimal("250")
+            )
             self.assertTrue(paper_route_probe["target_source_notional_sized"])
+            self.assertEqual(Decimal(str(simple_lane["final_qty"])), Decimal("2.5"))
+            self.assertEqual(Decimal(str(simple_lane["notional"])), Decimal("250"))
+            self.assertTrue(simple_lane["paper_route_probe_cap_applied"])
+            self.assertEqual(simple_lane_precheck["requested_qty"], "2.5000")
+            self.assertEqual(simple_lane_precheck["final_qty"], "2.5000")
+            self.assertEqual(
+                Decimal(str(execution_policy["notional"])), Decimal("250.0")
+            )
 
     def test_simple_pipeline_signal_cycle_still_generates_target_plan_source_decision(
         self,
@@ -7604,19 +7622,15 @@ class TestTradingPipeline(TestCase):
         )
 
         self.assertFalse(
-            pipeline._apply_paper_route_probe_cap(
-                session=cast(Session, None),
+            pipeline._paper_route_probe_capped_decision(
                 decision=missing_price_decision,
-                decision_row=cast(TradeDecision, object()),
                 proof_floor={},
                 context={"max_notional": "25"},
             )
         )
         self.assertFalse(
-            pipeline._apply_paper_route_probe_cap(
-                session=cast(Session, None),
+            pipeline._paper_route_probe_capped_decision(
                 decision=priced_decision,
-                decision_row=cast(TradeDecision, object()),
                 proof_floor={},
                 context={"max_notional": "0.00001"},
             )
