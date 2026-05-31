@@ -24,7 +24,10 @@ from app.trading.tigerbeetle_reconcile import (
     BLOCKER_AMOUNT_MISMATCH,
     BLOCKER_CODE_MISMATCH,
     BLOCKER_CLIENT_UNAVAILABLE,
+    BLOCKER_CREDIT_ACCOUNT_MISMATCH,
+    BLOCKER_DEBIT_ACCOUNT_MISMATCH,
     BLOCKER_LEDGER_MISMATCH,
+    BLOCKER_POSTGRES_REF_MISMATCH,
     BLOCKER_TRANSFER_MISSING,
     BLOCKER_UNLINKED_EVENT,
     _attr,
@@ -47,6 +50,7 @@ def _add_ref(
     *,
     transfer_id: str = "1001",
     amount: Decimal = Decimal("190250000"),
+    payload_json: dict[str, object] | None = None,
 ) -> None:
     session.add(
         TigerBeetleTransferRef(
@@ -58,6 +62,7 @@ def _add_ref(
             amount=amount,
             status="created",
             event_fingerprint=f"fingerprint-{transfer_id}",
+            payload_json=payload_json,
         )
     )
     session.flush()
@@ -144,6 +149,79 @@ class TestTigerBeetleReconcile(TestCase):
             self.assertIn(BLOCKER_CODE_MISMATCH, payload["blockers"])
             self.assertIn(BLOCKER_LEDGER_MISMATCH, payload["blockers"])
 
+    def test_reconciliation_blocks_account_mismatch(self) -> None:
+        with Session(self.engine) as session:
+            _add_ref(
+                session,
+                payload_json={"debit_account_id": "11", "credit_account_id": "12"},
+            )
+            client = FakeTigerBeetleClient()
+            client.transfers[1001] = TigerBeetleTransferSpec(
+                transfer_id=1001,
+                transfer_kind="fill_post",
+                debit_account_id=99,
+                credit_account_id=98,
+                amount=190250000,
+                ledger=LEDGER_USD_MICRO,
+                code=TRANSFER_CODE_FILL_POST,
+            )
+
+            payload = reconcile_tigerbeetle_transfers(
+                session, settings_obj=_settings(), client=client
+            )
+
+            self.assertFalse(payload["ok"])
+            self.assertIn(BLOCKER_DEBIT_ACCOUNT_MISMATCH, payload["blockers"])
+            self.assertIn(BLOCKER_CREDIT_ACCOUNT_MISMATCH, payload["blockers"])
+
+    def test_reconciliation_blocks_postgres_ref_that_no_longer_matches_event(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            event = ExecutionOrderEvent(
+                event_fingerprint="linked-unjournalable-event",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=1,
+                alpaca_account_label="paper",
+                event_ts=datetime.now(timezone.utc),
+                symbol="AAPL",
+                event_type="accepted",
+                status="accepted",
+                raw_event={"event": "accepted"},
+            )
+            session.add(event)
+            session.flush()
+            session.add(
+                TigerBeetleTransferRef(
+                    cluster_id=2001,
+                    transfer_id="1001",
+                    transfer_kind="fill_post",
+                    ledger=LEDGER_USD_MICRO,
+                    code=TRANSFER_CODE_FILL_POST,
+                    amount=Decimal("190250000"),
+                    status="created",
+                    event_fingerprint=event.event_fingerprint,
+                    execution_order_event_id=event.id,
+                    payload_json={
+                        "debit_account_id": "11",
+                        "credit_account_id": "12",
+                    },
+                )
+            )
+            session.flush()
+            client = FakeTigerBeetleClient()
+            client.transfers[1001] = _transfer()
+
+            payload = reconcile_tigerbeetle_transfers(
+                session,
+                settings_obj=_settings(),
+                client=client,
+            )
+
+            self.assertFalse(payload["ok"])
+            self.assertIn(BLOCKER_POSTGRES_REF_MISMATCH, payload["blockers"])
+
     def test_reconciliation_blocks_unlinked_order_event(self) -> None:
         with Session(self.engine) as session:
             session.add(
@@ -173,6 +251,34 @@ class TestTigerBeetleReconcile(TestCase):
 
             self.assertFalse(payload["ok"])
             self.assertIn(BLOCKER_UNLINKED_EVENT, payload["blockers"])
+
+    def test_reconciliation_ignores_unjournalable_lifecycle_event(self) -> None:
+        with Session(self.engine) as session:
+            session.add(
+                ExecutionOrderEvent(
+                    event_fingerprint="accepted-without-price",
+                    source_topic="torghut.trade-updates.v1",
+                    source_partition=0,
+                    source_offset=1,
+                    alpaca_account_label="paper",
+                    event_ts=datetime.now(timezone.utc),
+                    symbol="AAPL",
+                    event_type="accepted",
+                    status="accepted",
+                    qty=Decimal("1"),
+                    raw_event={"event": "accepted"},
+                )
+            )
+            session.flush()
+
+            payload = reconcile_tigerbeetle_transfers(
+                session,
+                settings_obj=_settings(),
+                client=FakeTigerBeetleClient(),
+            )
+
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["unlinked_event_count"], 0)
 
     def test_reconciliation_blocks_client_unavailable(self) -> None:
         with Session(self.engine) as session:

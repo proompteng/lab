@@ -22,6 +22,7 @@ from app.models import (
     OrderFeedSourceWindow,
     RejectedSignalOutcomeEvent,
     Strategy,
+    TigerBeetleReconciliationRun,
     TigerBeetleTransferRef,
     TradeDecision,
 )
@@ -132,6 +133,9 @@ class TestOrderFeed(TestCase):
         self._orig_tigerbeetle_enabled = settings.tigerbeetle_enabled
         self._orig_tigerbeetle_journal_enabled = settings.tigerbeetle_journal_enabled
         self._orig_tigerbeetle_required = settings.tigerbeetle_required
+        self._orig_tigerbeetle_reconcile_required = (
+            settings.tigerbeetle_reconcile_required
+        )
         settings.trading_order_feed_enabled = True
         settings.trading_order_feed_bootstrap_servers = "localhost:9092"
         settings.trading_order_feed_topic = "torghut.trade-updates.v1"
@@ -141,6 +145,7 @@ class TestOrderFeed(TestCase):
         settings.tigerbeetle_enabled = False
         settings.tigerbeetle_journal_enabled = False
         settings.tigerbeetle_required = False
+        settings.tigerbeetle_reconcile_required = False
 
     def tearDown(self) -> None:
         settings.trading_order_feed_enabled = self._orig_feed_enabled
@@ -154,6 +159,9 @@ class TestOrderFeed(TestCase):
         settings.tigerbeetle_enabled = self._orig_tigerbeetle_enabled
         settings.tigerbeetle_journal_enabled = self._orig_tigerbeetle_journal_enabled
         settings.tigerbeetle_required = self._orig_tigerbeetle_required
+        settings.tigerbeetle_reconcile_required = (
+            self._orig_tigerbeetle_reconcile_required
+        )
 
     def _seed_execution(
         self,
@@ -381,6 +389,63 @@ class TestOrderFeed(TestCase):
             self.assertEqual(len(refs), 1)
             self.assertEqual(refs[0].execution_order_event_id, persisted.id)
             self.assertEqual(refs[0].amount, Decimal("190250000"))
+
+    def test_order_feed_ingest_persists_tigerbeetle_reconciliation(self) -> None:
+        payload = (
+            b'{"channel":"trade_updates","payload":{"event":"fill","timestamp":"2026-02-01T10:00:00Z",'
+            b'"order":{"id":"order-1","client_order_id":"client-1","symbol":"AAPL","status":"filled",'
+            b'"qty":"1","filled_qty":"1","filled_avg_price":"190.25"}},"seq":10}'
+        )
+        record = FakeRecord(value=payload, offset=22)
+        client = FakeTigerBeetleClient()
+        settings.tigerbeetle_enabled = True
+        settings.tigerbeetle_journal_enabled = True
+
+        with Session(self.engine) as session:
+            self._seed_execution(session)
+            ingestor = OrderFeedIngestor(
+                consumer_factory=lambda: FakeConsumer([record]),
+                default_account_label="paper",
+            )
+
+            with (
+                patch(
+                    "app.trading.tigerbeetle_journal.create_tigerbeetle_client",
+                    return_value=client,
+                ),
+                patch(
+                    "app.trading.tigerbeetle_reconcile.create_tigerbeetle_client",
+                    return_value=client,
+                ),
+            ):
+                counters = ingestor.ingest_once(session)
+
+            self.assertEqual(counters["events_persisted_total"], 1)
+            refs = session.execute(select(TigerBeetleTransferRef)).scalars().all()
+            self.assertEqual(len(refs), 1)
+            runs = session.execute(select(TigerBeetleReconciliationRun)).scalars().all()
+            self.assertEqual(len(runs), 1)
+            self.assertEqual(runs[0].status, "ok")
+
+    def test_order_feed_reconciliation_failure_respects_required_flag(self) -> None:
+        settings.tigerbeetle_enabled = True
+        settings.tigerbeetle_journal_enabled = True
+
+        with Session(self.engine) as session:
+            ingestor = OrderFeedIngestor(
+                consumer_factory=lambda: FakeConsumer([]),
+                default_account_label="paper",
+            )
+            with patch(
+                "app.trading.order_feed.reconcile_tigerbeetle_transfers",
+                side_effect=RuntimeError("reconcile failed"),
+            ):
+                with self.assertLogs(order_feed_module.logger, level="WARNING"):
+                    ingestor._reconcile_tigerbeetle_if_enabled(session)
+
+                settings.tigerbeetle_reconcile_required = True
+                with self.assertRaisesRegex(RuntimeError, "reconcile failed"):
+                    ingestor._reconcile_tigerbeetle_if_enabled(session)
 
     def test_optional_tigerbeetle_journal_failure_does_not_drop_order_event(
         self,

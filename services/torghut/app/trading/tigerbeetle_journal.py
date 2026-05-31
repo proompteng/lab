@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, cast
 
@@ -114,6 +115,14 @@ def _account_id(account_key: str) -> int:
     return stable_u128("torghut.tigerbeetle.account", account_key)
 
 
+@dataclass(frozen=True)
+class TigerBeetleOrderEventTransferPlan:
+    account_specs: tuple[TigerBeetleAccountSpec, ...]
+    transfer_spec: TigerBeetleTransferSpec
+    transfer_kind: str
+    pending_mode: str
+
+
 def _submitted_pending_key(event: ExecutionOrderEvent) -> str:
     source_id = (
         str(event.execution_id)
@@ -222,6 +231,7 @@ def _transfer_spec(
     transfer_kind: str,
     amount: int,
     accounts: Mapping[str, TigerBeetleAccountSpec],
+    use_pending_transfer: bool = True,
 ) -> TigerBeetleTransferSpec:
     cash = accounts[f"cash:{event.alpaca_account_label}:usd"]
     order_identity = (
@@ -247,6 +257,8 @@ def _transfer_spec(
             timeout=0,
         )
     if transfer_kind in {TRANSFER_KIND_CANCEL_VOID, TRANSFER_KIND_REJECT_VOID}:
+        if not use_pending_transfer:
+            raise ValueError("tigerbeetle_pending_transfer_required_for_void")
         return TigerBeetleTransferSpec(
             transfer_id=transfer_id,
             transfer_kind=transfer_kind,
@@ -257,6 +269,16 @@ def _transfer_spec(
             ledger=LEDGER_USD_MICRO,
             code=code,
             flags=_transfer_flag("VOID_PENDING_TRANSFER"),
+        )
+    if transfer_kind == TRANSFER_KIND_FILL_POST and not use_pending_transfer:
+        return TigerBeetleTransferSpec(
+            transfer_id=transfer_id,
+            transfer_kind=transfer_kind,
+            debit_account_id=cash.account_id,
+            credit_account_id=fill_notional.account_id,
+            amount=amount,
+            ledger=LEDGER_USD_MICRO,
+            code=code,
         )
     return TigerBeetleTransferSpec(
         transfer_id=transfer_id,
@@ -272,6 +294,86 @@ def _transfer_spec(
         flags=_transfer_flag("POST_PENDING_TRANSFER")
         if transfer_kind == TRANSFER_KIND_FILL_POST
         else 0,
+    )
+
+
+def _pending_transfer_ref_for_event(
+    session: Session,
+    event: ExecutionOrderEvent,
+    *,
+    cluster_id: int,
+) -> TigerBeetleTransferRef | None:
+    return session.execute(
+        select(TigerBeetleTransferRef).where(
+            TigerBeetleTransferRef.cluster_id == cluster_id,
+            TigerBeetleTransferRef.transfer_id
+            == u128_decimal(submitted_pending_transfer_id(event)),
+            TigerBeetleTransferRef.transfer_kind == TRANSFER_KIND_SUBMITTED_PENDING,
+        )
+    ).scalar_one_or_none()
+
+
+def build_order_event_transfer_plan(
+    session: Session,
+    event: ExecutionOrderEvent,
+    *,
+    settings_obj: Settings = settings,
+) -> TigerBeetleOrderEventTransferPlan | None:
+    transfer_kind = transfer_kind_for_event(event.event_type, event.status)
+    if transfer_kind is None:
+        return None
+
+    pending_ref = (
+        _pending_transfer_ref_for_event(
+            session,
+            event,
+            cluster_id=settings_obj.tigerbeetle_cluster_id,
+        )
+        if transfer_kind
+        in {
+            TRANSFER_KIND_FILL_POST,
+            TRANSFER_KIND_CANCEL_VOID,
+            TRANSFER_KIND_REJECT_VOID,
+        }
+        else None
+    )
+    amount_usd = _event_amount_usd(event, transfer_kind)
+    amount = decimal_usd_to_micros(amount_usd) if amount_usd is not None else None
+    if amount is None and pending_ref is not None:
+        amount = int(pending_ref.amount)
+    if amount is None or amount <= 0:
+        return None
+    if (
+        transfer_kind in {TRANSFER_KIND_CANCEL_VOID, TRANSFER_KIND_REJECT_VOID}
+        and pending_ref is None
+    ):
+        return None
+
+    account_specs = tuple(_account_specs(event))
+    account_by_key = {spec.account_key: spec for spec in account_specs}
+    use_pending_transfer = pending_ref is not None or transfer_kind in {
+        TRANSFER_KIND_SUBMITTED_PENDING,
+        TRANSFER_KIND_CANCEL_VOID,
+        TRANSFER_KIND_REJECT_VOID,
+    }
+    transfer_spec = _transfer_spec(
+        event,
+        transfer_kind=transfer_kind,
+        amount=amount,
+        accounts=account_by_key,
+        use_pending_transfer=use_pending_transfer,
+    )
+    return TigerBeetleOrderEventTransferPlan(
+        account_specs=account_specs,
+        transfer_spec=transfer_spec,
+        transfer_kind=transfer_kind,
+        pending_mode=(
+            "pending_transfer_ref"
+            if pending_ref is not None
+            else "standalone_fill"
+            if transfer_kind == TRANSFER_KIND_FILL_POST
+            else "pending_transfer"
+        ),
     )
 
 
@@ -341,24 +443,16 @@ class TigerBeetleLedgerJournal:
             or not self._settings.tigerbeetle_journal_enabled
         ):
             return None
-        transfer_kind = transfer_kind_for_event(event.event_type, event.status)
-        if transfer_kind is None:
-            return None
-        amount_usd = _event_amount_usd(event, transfer_kind)
-        if amount_usd is None:
-            return None
-        amount = decimal_usd_to_micros(amount_usd)
-        if amount <= 0:
+        plan = build_order_event_transfer_plan(
+            session,
+            event,
+            settings_obj=self._settings,
+        )
+        if plan is None:
             return None
 
-        account_specs = _account_specs(event)
-        account_by_key = {spec.account_key: spec for spec in account_specs}
-        transfer_spec = _transfer_spec(
-            event,
-            transfer_kind=transfer_kind,
-            amount=amount,
-            accounts=account_by_key,
-        )
+        account_specs = plan.account_specs
+        transfer_spec = plan.transfer_spec
         transfer_id_text = u128_decimal(transfer_spec.transfer_id)
         existing = session.execute(
             select(TigerBeetleTransferRef).where(
@@ -369,7 +463,7 @@ class TigerBeetleLedgerJournal:
         ).scalar_one_or_none()
         if existing is not None:
             if (
-                existing.amount == Decimal(amount)
+                existing.amount == Decimal(transfer_spec.amount)
                 and existing.code == transfer_spec.code
                 and existing.ledger == transfer_spec.ledger
             ):
@@ -399,10 +493,10 @@ class TigerBeetleLedgerJournal:
         ref = TigerBeetleTransferRef(
             cluster_id=self._settings.tigerbeetle_cluster_id,
             transfer_id=transfer_id_text,
-            transfer_kind=transfer_kind,
+            transfer_kind=plan.transfer_kind,
             ledger=transfer_spec.ledger,
             code=transfer_spec.code,
-            amount=Decimal(amount),
+            amount=Decimal(transfer_spec.amount),
             status=status,
             result_code=status,
             trade_decision_id=event.trade_decision_id,
@@ -416,6 +510,7 @@ class TigerBeetleLedgerJournal:
                     "pending_id": u128_decimal(transfer_spec.pending_id)
                     if transfer_spec.pending_id
                     else None,
+                    "pending_mode": plan.pending_mode,
                     "source": "execution_order_event",
                 }
             ),
