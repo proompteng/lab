@@ -3,7 +3,20 @@ import { sql } from 'kysely'
 import { resolveStoreDb, type Db } from '~/server/db'
 import { requestEmbedding } from '~/server/embedding-client'
 import { ensureMigrations } from '~/server/kysely-migrations'
+import {
+  createAtlasCodeSearchHandlers,
+  type AtlasCodeSearchHealth,
+  type AtlasCodeSearchInput,
+  type AtlasCodeSearchMatch,
+} from './atlas-code-search'
 import { resolveEmbeddingConfig } from './memory-config'
+
+export type {
+  AtlasCodeSearchHealth,
+  AtlasCodeSearchHealthStatus,
+  AtlasCodeSearchInput,
+  AtlasCodeSearchMatch,
+} from './atlas-code-search'
 
 export type RepositoryRecord = {
   id: string
@@ -299,36 +312,14 @@ export type AtlasSearchMatch = {
   repository: RepositoryRecord
 }
 
-export type AtlasCodeSearchInput = {
-  query: string
-  limit?: number
-  repository?: string
-  ref?: string
-  pathPrefix?: string
-  language?: string
-}
-
-export type AtlasCodeSearchSignals = {
-  semanticDistance: number | null
-  lexicalRank: number | null
-  matchedIdentifiers: string[]
-}
-
-export type AtlasCodeSearchMatch = {
-  repository: RepositoryRecord
-  fileKey: FileKeyRecord
-  fileVersion: FileVersionRecord
-  chunk: FileChunkRecord
-  score: number
-  signals: AtlasCodeSearchSignals
-}
-
 export type AtlasStats = {
   repositories: number
   fileKeys: number
   fileVersions: number
+  fileChunks: number
   enrichments: number
   embeddings: number
+  chunkEmbeddings: number
 }
 
 export type AtlasAstFact = {
@@ -386,6 +377,7 @@ export type AtlasStore = {
   search: (input: AtlasSearchInput) => Promise<AtlasSearchMatch[]>
   searchCount: (input: AtlasSearchInput) => Promise<number>
   codeSearch: (input: AtlasCodeSearchInput) => Promise<AtlasCodeSearchMatch[]>
+  codeSearchHealth: (input: Omit<AtlasCodeSearchInput, 'query' | 'limit'>) => Promise<AtlasCodeSearchHealth>
   stats: () => Promise<AtlasStats>
   close: () => Promise<void>
 }
@@ -402,54 +394,6 @@ const MAX_SEARCH_LIMIT = 200
 const SCHEMA = 'atlas'
 
 const vectorToPgArray = (values: number[]) => `[${values.join(',')}]`
-
-const extractIdentifierTokens = (query: string) => {
-  // Prefer identifiers that are likely to appear in code.
-  const candidates = query
-    .split(/[^A-Za-z0-9_./-]+/g)
-    .map((token) => token.trim())
-    .filter((token) => token.length >= 3)
-
-  const blocked = new Set([
-    'the',
-    'and',
-    'for',
-    'with',
-    'where',
-    'what',
-    'how',
-    'file',
-    'files',
-    'code',
-    'repo',
-    'repository',
-    'path',
-    'search',
-  ])
-
-  const result: string[] = []
-  const seen = new Set<string>()
-  for (const token of candidates) {
-    const lowered = token.toLowerCase()
-    if (blocked.has(lowered)) continue
-    if (seen.has(lowered)) continue
-    seen.add(lowered)
-    result.push(token)
-  }
-  return result.slice(0, 25)
-}
-
-const countIdentifierMatches = (haystack: string, identifiers: string[]) => {
-  if (!haystack || identifiers.length === 0) return { matched: [], count: 0 }
-  const matched: string[] = []
-  for (const token of identifiers) {
-    if (matched.length >= 10) break
-    if (haystack.includes(token)) {
-      matched.push(token)
-    }
-  }
-  return { matched, count: matched.length }
-}
 
 const loadEmbeddingConfig = () => {
   const config = resolveEmbeddingConfig(process.env)
@@ -1773,313 +1717,13 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     return unique.size
   }
 
-  const resolveCodeSearchFilters = ({
-    repository,
-    ref,
-    pathPrefix,
-    language,
-  }: Pick<AtlasCodeSearchInput, 'repository' | 'ref' | 'pathPrefix' | 'language'>) => ({
-    repository: typeof repository === 'string' ? repository.trim() : '',
-    ref: typeof ref === 'string' ? ref.trim() : '',
-    pathPrefix: typeof pathPrefix === 'string' ? pathPrefix.trim() : '',
-    language: typeof language === 'string' ? language.trim() : '',
+  const { codeSearch, codeSearchHealth } = createAtlasCodeSearchHandlers({
+    db,
+    ensureSchema,
+    loadEmbeddingConfig,
+    embedText,
+    normalizeText,
   })
-
-  const applyCodeSearchFilters = <T extends { where: (...args: unknown[]) => T }>(
-    query: T,
-    filters: ReturnType<typeof resolveCodeSearchFilters>,
-  ) => {
-    let next = query
-    if (filters.repository) {
-      next = next.where('repositories.name', '=', filters.repository)
-    }
-    if (filters.ref) {
-      next = next.where('file_versions.repository_ref', '=', filters.ref)
-    }
-    if (filters.pathPrefix) {
-      next = next.where('file_keys.path', 'like', `${filters.pathPrefix}%`)
-    }
-    if (filters.language) {
-      next = next.where('file_versions.language', '=', filters.language)
-    }
-    return next
-  }
-
-  const latestFileVersionIdsExpr = (filters: ReturnType<typeof resolveCodeSearchFilters>) => {
-    const conditions: Array<ReturnType<typeof sql>> = []
-    if (filters.repository) {
-      conditions.push(sql`repositories_scope.name = ${filters.repository}`)
-    }
-    if (filters.ref) {
-      conditions.push(sql`fv.repository_ref = ${filters.ref}`)
-    }
-    if (filters.pathPrefix) {
-      conditions.push(sql`file_keys_scope.path LIKE ${`${filters.pathPrefix}%`}`)
-    }
-    if (filters.language) {
-      conditions.push(sql`fv.language = ${filters.language}`)
-    }
-
-    const whereClause = conditions.length ? sql`WHERE ${sql.join(conditions, sql` AND `)}` : sql``
-
-    return sql<string>`
-      SELECT ranked.id
-      FROM (
-        SELECT
-          fv.id,
-          ROW_NUMBER() OVER (
-            PARTITION BY fv.file_key_id, fv.repository_ref
-            ORDER BY fv.updated_at DESC, fv.created_at DESC, fv.id DESC
-          ) AS latest_rank
-        FROM atlas.file_versions AS fv
-        INNER JOIN atlas.file_keys AS file_keys_scope ON file_keys_scope.id = fv.file_key_id
-        INNER JOIN atlas.repositories AS repositories_scope ON repositories_scope.id = file_keys_scope.repository_id
-        ${whereClause}
-      ) AS ranked
-      WHERE ranked.latest_rank = 1
-    `
-  }
-
-  // Keep only the most recent indexed file version per (file, ref)
-  // so code-search doesn't surface stale duplicates from prior versions.
-  const applyLatestFileVersionFilter = <T extends { where: (...args: unknown[]) => T }>(
-    query: T,
-    filters: ReturnType<typeof resolveCodeSearchFilters>,
-  ) => query.where(sql<boolean>`file_versions.id IN (${latestFileVersionIdsExpr(filters)})`)
-
-  const codeSearch: AtlasStore['codeSearch'] = async ({ query, limit, repository, ref, pathPrefix, language }) => {
-    await ensureSchema()
-
-    const resolvedQuery = normalizeText(query, 'query')
-    const resolvedLimit = Math.max(1, Math.min(MAX_SEARCH_LIMIT, Math.floor(limit ?? DEFAULT_SEARCH_LIMIT)))
-    const filters = resolveCodeSearchFilters({ repository, ref, pathPrefix, language })
-
-    const identifiers = extractIdentifierTokens(resolvedQuery)
-
-    const semanticLimit = Math.min(MAX_SEARCH_LIMIT, Math.max(resolvedLimit * 5, resolvedLimit))
-    const lexicalLimit = Math.min(MAX_SEARCH_LIMIT, Math.max(resolvedLimit * 5, resolvedLimit))
-    const semanticRows = await (async () => {
-      try {
-        const embeddingConfig = loadEmbeddingConfig()
-        const embedding = await embedText(resolvedQuery, embeddingConfig)
-        const vectorString = vectorToPgArray(embedding)
-        const semanticDistanceExpr = sql<number>`chunk_embeddings.embedding <=> ${vectorString}::vector`
-
-        let semanticQuery = db
-          .selectFrom('atlas.chunk_embeddings as chunk_embeddings')
-          .innerJoin('atlas.file_chunks as file_chunks', 'file_chunks.id', 'chunk_embeddings.chunk_id')
-          .innerJoin('atlas.file_versions as file_versions', 'file_versions.id', 'file_chunks.file_version_id')
-          .innerJoin('atlas.file_keys as file_keys', 'file_keys.id', 'file_versions.file_key_id')
-          .innerJoin('atlas.repositories as repositories', 'repositories.id', 'file_keys.repository_id')
-          .select([
-            'file_chunks.id as chunk_id',
-            'file_chunks.file_version_id as chunk_file_version_id',
-            'file_chunks.chunk_index as chunk_index',
-            'file_chunks.start_line as chunk_start_line',
-            'file_chunks.end_line as chunk_end_line',
-            'file_chunks.content as chunk_content',
-            'file_chunks.token_count as chunk_token_count',
-            'file_chunks.metadata as chunk_metadata',
-            'file_chunks.created_at as chunk_created_at',
-            'file_versions.id as file_version_id',
-            'file_versions.file_key_id as file_version_file_key_id',
-            'file_versions.repository_ref as file_version_repository_ref',
-            'file_versions.repository_commit as file_version_repository_commit',
-            'file_versions.content_hash as file_version_content_hash',
-            'file_versions.language as file_version_language',
-            'file_versions.byte_size as file_version_byte_size',
-            'file_versions.line_count as file_version_line_count',
-            'file_versions.metadata as file_version_metadata',
-            'file_versions.source_timestamp as file_version_source_timestamp',
-            'file_versions.created_at as file_version_created_at',
-            'file_versions.updated_at as file_version_updated_at',
-            'file_keys.id as file_key_id',
-            'file_keys.repository_id as file_key_repository_id',
-            'file_keys.path as file_key_path',
-            'file_keys.created_at as file_key_created_at',
-            'repositories.id as repository_id',
-            'repositories.name as repository_name',
-            'repositories.default_ref as repository_default_ref',
-            'repositories.metadata as repository_metadata',
-            'repositories.created_at as repository_created_at',
-            'repositories.updated_at as repository_updated_at',
-            semanticDistanceExpr.as('semantic_distance'),
-          ])
-          .where('chunk_embeddings.model', '=', embeddingConfig.model)
-          .where('chunk_embeddings.dimension', '=', embeddingConfig.dimension)
-
-        semanticQuery = applyCodeSearchFilters(semanticQuery, filters)
-        semanticQuery = applyLatestFileVersionFilter(semanticQuery, filters)
-
-        return await semanticQuery.orderBy(semanticDistanceExpr).limit(semanticLimit).execute()
-      } catch (error) {
-        console.warn('[atlas] semantic code search unavailable; falling back to lexical only', {
-          error: error instanceof Error ? error.message : String(error),
-        })
-        return []
-      }
-    })()
-
-    const lexicalQueryExpr = sql<string>`websearch_to_tsquery('simple', ${resolvedQuery})`
-    const lexicalRankExpr = sql<number>`ts_rank_cd(file_chunks.text_tsvector, ${lexicalQueryExpr})`
-
-    let lexicalQuery = db
-      .selectFrom('atlas.file_chunks as file_chunks')
-      .innerJoin('atlas.file_versions as file_versions', 'file_versions.id', 'file_chunks.file_version_id')
-      .innerJoin('atlas.file_keys as file_keys', 'file_keys.id', 'file_versions.file_key_id')
-      .innerJoin('atlas.repositories as repositories', 'repositories.id', 'file_keys.repository_id')
-      .select([
-        'file_chunks.id as chunk_id',
-        'file_chunks.file_version_id as chunk_file_version_id',
-        'file_chunks.chunk_index as chunk_index',
-        'file_chunks.start_line as chunk_start_line',
-        'file_chunks.end_line as chunk_end_line',
-        'file_chunks.content as chunk_content',
-        'file_chunks.token_count as chunk_token_count',
-        'file_chunks.metadata as chunk_metadata',
-        'file_chunks.created_at as chunk_created_at',
-        'file_versions.id as file_version_id',
-        'file_versions.file_key_id as file_version_file_key_id',
-        'file_versions.repository_ref as file_version_repository_ref',
-        'file_versions.repository_commit as file_version_repository_commit',
-        'file_versions.content_hash as file_version_content_hash',
-        'file_versions.language as file_version_language',
-        'file_versions.byte_size as file_version_byte_size',
-        'file_versions.line_count as file_version_line_count',
-        'file_versions.metadata as file_version_metadata',
-        'file_versions.source_timestamp as file_version_source_timestamp',
-        'file_versions.created_at as file_version_created_at',
-        'file_versions.updated_at as file_version_updated_at',
-        'file_keys.id as file_key_id',
-        'file_keys.repository_id as file_key_repository_id',
-        'file_keys.path as file_key_path',
-        'file_keys.created_at as file_key_created_at',
-        'repositories.id as repository_id',
-        'repositories.name as repository_name',
-        'repositories.default_ref as repository_default_ref',
-        'repositories.metadata as repository_metadata',
-        'repositories.created_at as repository_created_at',
-        'repositories.updated_at as repository_updated_at',
-        lexicalRankExpr.as('lexical_rank'),
-      ])
-      .where(sql<boolean>`file_chunks.text_tsvector @@ ${lexicalQueryExpr}`)
-
-    lexicalQuery = applyCodeSearchFilters(lexicalQuery, filters)
-    lexicalQuery = applyLatestFileVersionFilter(lexicalQuery, filters)
-
-    const lexicalRows = await lexicalQuery.orderBy(lexicalRankExpr, 'desc').limit(lexicalLimit).execute()
-
-    const merged = new Map<
-      string,
-      {
-        row: (typeof semanticRows)[number] | (typeof lexicalRows)[number]
-        semanticDistance: number | null
-        lexicalRank: number | null
-      }
-    >()
-
-    for (const row of semanticRows) {
-      merged.set(row.chunk_id, { row, semanticDistance: Number(row.semantic_distance), lexicalRank: null })
-    }
-
-    for (const row of lexicalRows) {
-      const existing = merged.get(row.chunk_id)
-      if (existing) {
-        existing.lexicalRank = Number(row.lexical_rank)
-      } else {
-        merged.set(row.chunk_id, { row, semanticDistance: null, lexicalRank: Number(row.lexical_rank) })
-      }
-    }
-
-    const results: AtlasCodeSearchMatch[] = []
-
-    for (const entry of merged.values()) {
-      const row = entry.row
-      const content = row.chunk_content ?? ''
-      const { matched } = countIdentifierMatches(content, identifiers)
-
-      const semanticDistance = entry.semanticDistance
-      const lexicalRank = entry.lexicalRank
-
-      // Convert distance (lower is better) to a bounded score.
-      const semanticScore = semanticDistance === null ? 0 : 1 / (1 + Math.max(0, semanticDistance))
-      const lexicalScore = lexicalRank === null ? 0 : Math.max(0, lexicalRank)
-      const identifierBoost = Math.min(0.5, matched.length * 0.05)
-
-      const score = semanticScore + lexicalScore * 0.25 + identifierBoost
-
-      results.push({
-        repository: {
-          id: row.repository_id,
-          name: row.repository_name,
-          defaultRef: row.repository_default_ref,
-          metadata: row.repository_metadata ?? {},
-          createdAt:
-            row.repository_created_at instanceof Date
-              ? row.repository_created_at.toISOString()
-              : String(row.repository_created_at),
-          updatedAt:
-            row.repository_updated_at instanceof Date
-              ? row.repository_updated_at.toISOString()
-              : String(row.repository_updated_at),
-        },
-        fileKey: {
-          id: row.file_key_id,
-          repositoryId: row.file_key_repository_id,
-          path: row.file_key_path,
-          createdAt:
-            row.file_key_created_at instanceof Date
-              ? row.file_key_created_at.toISOString()
-              : String(row.file_key_created_at),
-        },
-        fileVersion: {
-          id: row.file_version_id,
-          fileKeyId: row.file_version_file_key_id,
-          repositoryRef: row.file_version_repository_ref,
-          repositoryCommit: row.file_version_repository_commit,
-          contentHash: row.file_version_content_hash,
-          language: row.file_version_language,
-          byteSize: row.file_version_byte_size,
-          lineCount: row.file_version_line_count,
-          metadata: row.file_version_metadata ?? {},
-          sourceTimestamp:
-            row.file_version_source_timestamp instanceof Date
-              ? row.file_version_source_timestamp.toISOString()
-              : row.file_version_source_timestamp
-                ? String(row.file_version_source_timestamp)
-                : null,
-          createdAt:
-            row.file_version_created_at instanceof Date
-              ? row.file_version_created_at.toISOString()
-              : String(row.file_version_created_at),
-          updatedAt:
-            row.file_version_updated_at instanceof Date
-              ? row.file_version_updated_at.toISOString()
-              : String(row.file_version_updated_at),
-        },
-        chunk: {
-          id: row.chunk_id,
-          fileVersionId: row.chunk_file_version_id,
-          chunkIndex: row.chunk_index,
-          startLine: row.chunk_start_line,
-          endLine: row.chunk_end_line,
-          content: row.chunk_content,
-          tokenCount: row.chunk_token_count,
-          metadata: row.chunk_metadata ?? {},
-          createdAt:
-            row.chunk_created_at instanceof Date ? row.chunk_created_at.toISOString() : String(row.chunk_created_at),
-        },
-        score,
-        signals: {
-          semanticDistance,
-          lexicalRank,
-          matchedIdentifiers: matched,
-        },
-      })
-    }
-
-    return results.sort((a, b) => b.score - a.score).slice(0, resolvedLimit)
-  }
 
   const stats: AtlasStore['stats'] = async () => {
     await ensureSchema()
@@ -2088,28 +1732,42 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
       repositories: string | number
       file_keys: string | number
       file_versions: string | number
+      file_chunks: string | number
       enrichments: string | number
       embeddings: string | number
+      chunk_embeddings: string | number
     }>`
       SELECT
         (SELECT COUNT(*) FROM atlas.repositories) AS repositories,
         (SELECT COUNT(*) FROM atlas.file_keys) AS file_keys,
         (SELECT COUNT(*) FROM atlas.file_versions) AS file_versions,
+        (SELECT COUNT(*) FROM atlas.file_chunks) AS file_chunks,
         (SELECT COUNT(*) FROM atlas.enrichments) AS enrichments,
-        (SELECT COUNT(*) FROM atlas.embeddings) AS embeddings;
+        (SELECT COUNT(*) FROM atlas.embeddings) AS embeddings,
+        (SELECT COUNT(*) FROM atlas.chunk_embeddings) AS chunk_embeddings;
     `.execute(db)
 
     const row = rows[0]
     if (!row) {
-      return { repositories: 0, fileKeys: 0, fileVersions: 0, enrichments: 0, embeddings: 0 }
+      return {
+        repositories: 0,
+        fileKeys: 0,
+        fileVersions: 0,
+        fileChunks: 0,
+        enrichments: 0,
+        embeddings: 0,
+        chunkEmbeddings: 0,
+      }
     }
 
     return {
       repositories: Number(row.repositories) || 0,
       fileKeys: Number(row.file_keys) || 0,
       fileVersions: Number(row.file_versions) || 0,
+      fileChunks: Number(row.file_chunks) || 0,
       enrichments: Number(row.enrichments) || 0,
       embeddings: Number(row.embeddings) || 0,
+      chunkEmbeddings: Number(row.chunk_embeddings) || 0,
     }
   }
 
@@ -2141,6 +1799,7 @@ export const createPostgresAtlasStore = (options: PostgresAtlasStoreOptions = {}
     search,
     searchCount,
     codeSearch,
+    codeSearchHealth,
     stats,
     close,
   }

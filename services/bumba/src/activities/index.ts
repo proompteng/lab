@@ -2588,6 +2588,34 @@ const resolveGithubEventId = async (db: SQL, deliveryId: string) => {
   return rows[0]?.id ?? null
 }
 
+const truncateMetadataError = (error: unknown) => {
+  const message = formatActivityError(error)
+  return message.length > 500 ? `${message.slice(0, 500)}...` : message
+}
+
+const updateChunkEmbeddingMetadata = async (db: SQL, chunkIds: string[], metadata: Record<string, unknown>) => {
+  if (chunkIds.length === 0) return
+
+  const patch = JSON.stringify({
+    ...metadata,
+    embeddingUpdatedAt: new Date().toISOString(),
+  })
+
+  try {
+    await db`
+      UPDATE atlas.file_chunks
+      SET metadata = COALESCE(metadata, '{}'::jsonb) || ${patch}::jsonb
+      WHERE id = ANY(${db.array(chunkIds, 'uuid')});
+    `
+  } catch (error) {
+    logActivity('error', 'failed', 'updateChunkEmbeddingMetadata', {
+      chunks: chunkIds.length,
+      metadata,
+      error: formatActivityError(error),
+    })
+  }
+}
+
 export const activities = {
   async listRepoFiles(input: ListRepoFilesInput): Promise<ListRepoFilesOutput> {
     const repoRoot = resolve(input.repoRoot)
@@ -3691,7 +3719,14 @@ export const activities = {
       const endLines = chunks.map((chunk) => chunk.endLine)
       const contents = chunks.map((chunk) => chunk.content)
       const tokenCounts = chunks.map((chunk) => chunk.tokenCount)
-      const metadataValues = chunks.map((chunk) => JSON.stringify(chunk.metadata ?? {}))
+      const embeddingPendingAt = new Date().toISOString()
+      const metadataValues = chunks.map((chunk) =>
+        JSON.stringify({
+          ...chunk.metadata,
+          embeddingStatus: 'pending',
+          embeddingUpdatedAt: embeddingPendingAt,
+        }),
+      )
 
       let chunkIdByIndex = new Map<number, string>()
 
@@ -3768,7 +3803,28 @@ export const activities = {
         return { skipped: false, chunks: chunks.length, embedded: 0 }
       }
 
-      const { maxInputChars, model, dimension } = loadEmbeddingConfig()
+      const indexedChunkIds = Array.from(chunkIdByIndex.values())
+      let embeddingConfig: ReturnType<typeof loadEmbeddingConfig>
+      try {
+        embeddingConfig = loadEmbeddingConfig()
+      } catch (error) {
+        await updateChunkEmbeddingMetadata(db, indexedChunkIds, {
+          embeddingStatus: 'failed',
+          embeddingFailureReason: 'embedding_config_failed',
+          embeddingError: truncateMetadataError(error),
+        })
+        logActivity('error', 'failed', 'indexFileChunks', {
+          fileVersionId: input.fileVersionId,
+          filePath: input.filePath,
+          reason: 'embedding_config_failed',
+          chunks: chunkIdByIndex.size,
+          durationMs: Date.now() - startedAt,
+          error: formatActivityError(error),
+        })
+        return { skipped: false, reason: 'embedding_config_failed', chunks: chunkIdByIndex.size, embedded: 0 }
+      }
+
+      const { maxInputChars, model, dimension } = embeddingConfig
       const embedInputs = chunks.map((chunk) => {
         const truncated = chunk.content.length > maxInputChars ? chunk.content.slice(0, maxInputChars) : chunk.content
         return truncated
@@ -3778,6 +3834,13 @@ export const activities = {
       try {
         embeddings = await embedTexts(embedInputs)
       } catch (error) {
+        await updateChunkEmbeddingMetadata(db, indexedChunkIds, {
+          embeddingStatus: 'failed',
+          embeddingFailureReason: 'embedding_failed',
+          embeddingError: truncateMetadataError(error),
+          embeddingModel: model,
+          embeddingDimension: dimension,
+        })
         logActivity('error', 'failed', 'indexFileChunks', {
           fileVersionId: input.fileVersionId,
           filePath: input.filePath,
@@ -3788,6 +3851,26 @@ export const activities = {
         })
         return { skipped: false, reason: 'embedding_failed', chunks: chunkIdByIndex.size, embedded: 0 }
       }
+
+      if (embeddings.length !== embedInputs.length) {
+        await updateChunkEmbeddingMetadata(db, indexedChunkIds, {
+          embeddingStatus: 'failed',
+          embeddingFailureReason: 'embedding_count_mismatch',
+          embeddingError: `expected ${embedInputs.length} embeddings but received ${embeddings.length}`,
+          embeddingModel: model,
+          embeddingDimension: dimension,
+        })
+        logActivity('error', 'failed', 'indexFileChunks', {
+          fileVersionId: input.fileVersionId,
+          filePath: input.filePath,
+          reason: 'embedding_count_mismatch',
+          chunks: chunkIdByIndex.size,
+          embeddings: embeddings.length,
+          durationMs: Date.now() - startedAt,
+        })
+        return { skipped: false, reason: 'embedding_count_mismatch', chunks: chunkIdByIndex.size, embedded: 0 }
+      }
+
       const chunkIds: string[] = []
       const vectors: string[] = []
 
@@ -3822,6 +3905,13 @@ export const activities = {
           const normalized = message.toLowerCase()
           const looksLikeSchemaMissing = normalized.includes('does not exist') || normalized.includes('relation')
           if (looksLikeSchemaMissing) {
+            await updateChunkEmbeddingMetadata(db, indexedChunkIds, {
+              embeddingStatus: 'failed',
+              embeddingFailureReason: 'schema_missing',
+              embeddingError: message,
+              embeddingModel: model,
+              embeddingDimension: dimension,
+            })
             logActivity('info', 'skipped', 'indexFileChunks', {
               fileVersionId: input.fileVersionId,
               filePath: input.filePath,
@@ -3829,8 +3919,15 @@ export const activities = {
               error: message,
               durationMs: Date.now() - startedAt,
             })
-            return { skipped: true, reason: 'schema_missing', chunks: 0, embedded: 0 }
+            return { skipped: true, reason: 'schema_missing', chunks: chunkIdByIndex.size, embedded: 0 }
           }
+          await updateChunkEmbeddingMetadata(db, indexedChunkIds, {
+            embeddingStatus: 'failed',
+            embeddingFailureReason: 'chunk_embeddings_failed',
+            embeddingError: message,
+            embeddingModel: model,
+            embeddingDimension: dimension,
+          })
           logActivity('error', 'failed', 'indexFileChunks', {
             fileVersionId: input.fileVersionId,
             filePath: input.filePath,
@@ -3843,6 +3940,14 @@ export const activities = {
           return { skipped: false, reason: 'chunk_embeddings_failed', chunks: chunkIdByIndex.size, embedded: 0 }
         }
       }
+
+      await updateChunkEmbeddingMetadata(db, chunkIds, {
+        embeddingStatus: 'embedded',
+        embeddingFailureReason: null,
+        embeddingError: null,
+        embeddingModel: model,
+        embeddingDimension: dimension,
+      })
 
       logActivity('info', 'completed', 'indexFileChunks', {
         fileVersionId: input.fileVersionId,

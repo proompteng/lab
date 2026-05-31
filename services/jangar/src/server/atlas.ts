@@ -2,6 +2,7 @@ import { Context, Effect, Layer, pipe } from 'effect'
 
 import {
   type AtlasAstPreview,
+  type AtlasCodeSearchHealth,
   type AtlasCodeSearchInput,
   type AtlasCodeSearchMatch,
   type AtlasIndexedFile,
@@ -76,6 +77,9 @@ export type AtlasService = {
   search: (input: AtlasSearchInput) => Effect.Effect<AtlasSearchMatch[], Error>
   searchCount: (input: AtlasSearchInput) => Effect.Effect<number, Error>
   codeSearch: (input: AtlasCodeSearchInput) => Effect.Effect<AtlasCodeSearchMatch[], Error>
+  codeSearchHealth: (
+    input: Omit<AtlasCodeSearchInput, 'query' | 'limit'>,
+  ) => Effect.Effect<AtlasCodeSearchHealth, Error>
   stats: () => Effect.Effect<AtlasStats, Error>
   close: () => Effect.Effect<void, Error>
 }
@@ -153,6 +157,8 @@ export const AtlasLive = Layer.scoped(
       search: (input) => wrap('atlas search failed', (resolved) => resolved.search(input)),
       searchCount: (input) => wrap('atlas search count failed', (resolved) => resolved.searchCount(input)),
       codeSearch: (input) => wrap('atlas code search failed', (resolved) => resolved.codeSearch(input)),
+      codeSearchHealth: (input) =>
+        wrap('atlas code search health failed', (resolved) => resolved.codeSearchHealth(input)),
       stats: () => wrap('atlas stats failed', (resolved) => resolved.stats()),
       close: () =>
         pipe(

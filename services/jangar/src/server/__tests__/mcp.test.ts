@@ -91,14 +91,27 @@ const makeAtlasService = (): AtlasService => {
           signals: { semanticDistance: 0.1, lexicalRank: null, matchedIdentifiers: ['handleMcpRequest'] },
         },
       ]),
+    codeSearchHealth: () =>
+      Effect.succeed({
+        status: 'ok',
+        checkedAt: new Date().toISOString(),
+        model: 'test-embedding',
+        dimension: 3,
+        filters: { repository: null, ref: null, pathPrefix: null, language: null },
+        sample: { limit: 500, chunks: 10, embedded: 10, missing: 0, coverage: 1 },
+        thresholds: { minSemanticCoverage: 0.95 },
+        message: 'semantic chunk coverage is healthy',
+      }),
     searchCount: () => Effect.succeed(1),
     stats: () =>
       Effect.succeed({
         repositories: 1,
         fileKeys: 1,
         fileVersions: 1,
+        fileChunks: 1,
         enrichments: 1,
         embeddings: 1,
+        chunkEmbeddings: 1,
       }),
     close: () => Effect.void,
   }
@@ -175,6 +188,24 @@ describe('Jangar Atlas MCP handler', () => {
     })
     expect(search.response.status).toBe(200)
     expect(search.json?.result?.content?.[0]?.text).toContain('Agents owns memory MCP')
+  })
+
+  it('returns Atlas code-search index health with matches', async () => {
+    const codeSearch = await post({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: {
+        name: 'atlas_code_search',
+        arguments: { query: 'handleMcpRequest', requireSemanticCoverage: true },
+      },
+    })
+
+    expect(codeSearch.response.status).toBe(200)
+    const text = codeSearch.json?.result?.content?.[0]?.text as string
+    expect(text).toContain('"indexHealth"')
+    expect(text).toContain('"status": "ok"')
+    expect(text).toContain('handleMcpRequest')
   })
 
   it('returns JSON-RPC invalid params errors for malformed Atlas calls', async () => {

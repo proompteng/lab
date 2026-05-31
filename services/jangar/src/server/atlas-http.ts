@@ -10,6 +10,7 @@ export const MAX_QUERY_CHARS = 10_000
 export const MAX_TAGS = 50
 export const MAX_KINDS = 50
 export const MAX_SEARCH_LIMIT = 200
+export const MAX_CODE_SEARCH_HEALTH_SAMPLE_LIMIT = 5_000
 
 type ValidationResult<T> = { ok: true; value: T } | { ok: false; message: string }
 
@@ -39,6 +40,9 @@ export type AtlasCodeSearchInput = {
   ref?: string
   pathPrefix?: string
   language?: string
+  requireSemanticCoverage?: boolean
+  minSemanticCoverage?: number
+  healthSampleLimit?: number
 }
 
 const normalizeRequiredText = (value: unknown, field: string, max: number, fallback?: string): string | null => {
@@ -80,6 +84,25 @@ const normalizeLimit = (value: unknown, fallback = DEFAULT_LIMIT) => {
     }
   }
   return Math.max(1, Math.min(MAX_SEARCH_LIMIT, fallback))
+}
+
+const normalizeOptionalBoolean = (value: unknown): boolean | undefined => {
+  if (typeof value === 'boolean') return value
+  if (typeof value !== 'string') return undefined
+  const normalized = value.trim().toLowerCase()
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false
+  return undefined
+}
+
+const normalizeOptionalRatio = (value: unknown): number | undefined => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined
+  return Math.max(0, Math.min(1, value))
+}
+
+const normalizeOptionalSampleLimit = (value: unknown): number | undefined => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined
+  return Math.max(1, Math.min(MAX_CODE_SEARCH_HEALTH_SAMPLE_LIMIT, Math.floor(value)))
 }
 
 const normalizeMetadata = (value: unknown): Record<string, unknown> | undefined => {
@@ -174,6 +197,9 @@ export const parseAtlasCodeSearchInput = (
     const ref = normalizeOptionalText(payload.ref, MAX_REF_CHARS)
     const pathPrefix = normalizeOptionalText(payload.pathPrefix, MAX_PATH_CHARS)
     const language = normalizeOptionalText(payload.language, 100)
+    const requireSemanticCoverage = normalizeOptionalBoolean(payload.requireSemanticCoverage)
+    const minSemanticCoverage = normalizeOptionalRatio(payload.minSemanticCoverage)
+    const healthSampleLimit = normalizeOptionalSampleLimit(payload.healthSampleLimit)
 
     return {
       ok: true,
@@ -184,6 +210,9 @@ export const parseAtlasCodeSearchInput = (
         ref,
         pathPrefix,
         language,
+        requireSemanticCoverage,
+        minSemanticCoverage,
+        healthSampleLimit,
       },
     }
   } catch (error) {
