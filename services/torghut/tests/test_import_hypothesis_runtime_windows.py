@@ -29,6 +29,7 @@ from scripts.import_hypothesis_runtime_windows import (
     _load_json_artifact,
     _load_report_post_cost_expectancy_bps,
     _nonnegative_int,
+    _order_lifecycle_query_row,
     _parse_args,
     _parse_dt_or_none,
     _parse_target_metadata,
@@ -2686,6 +2687,62 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             ledger_row["cost_model_hash"],
             _alpaca_2026_equity_fee_schedule_hash(),
         )
+
+    def test_order_lifecycle_query_row_preserves_fill_economics_columns(
+        self,
+    ) -> None:
+        query_row = (
+            "event-1",
+            "decision-1",
+            "execution-1",
+            datetime(2026, 3, 6, 14, 35, 1, tzinfo=timezone.utc),
+            "AAPL",
+            "TORGHUT_SIM",
+            "microbar-cross-sectional-pairs-v1",
+            "decision-hash",
+            {"source_decision_mode": "strategy_signal_paper"},
+            "alpaca-order-1",
+            "client-order-1",
+            "fill",
+            "filled",
+            "sell",
+            Decimal("10"),
+            Decimal("10"),
+            Decimal("100"),
+            "fingerprint-1",
+            "torghut.trade-updates.v1",
+            2,
+            22124,
+            "source-window-1",
+            {"event": "fill"},
+            {
+                "execution_policy_hash": "policy-sha",
+                "lineage_hash": "lineage-sha",
+            },
+            {
+                "runtime_ledger_cost": {
+                    "cost_amount": "0.04",
+                    "cost_basis": "broker_reported_commission_and_fees",
+                }
+            },
+        )
+
+        row = _order_lifecycle_query_row(query_row)
+        ledger_row = _runtime_lifecycle_ledger_row(
+            row,
+            event_type="fill",
+            require_complete_fill=True,
+        )
+
+        self.assertEqual(row["side"], "sell")
+        self.assertEqual(row["filled_qty"], Decimal("10"))
+        self.assertEqual(row["avg_fill_price"], Decimal("100"))
+        self.assertEqual(row["source_window_id"], "source-window-1")
+        self.assertIsNotNone(ledger_row)
+        assert ledger_row is not None
+        self.assertEqual(ledger_row["filled_notional"], Decimal("1000"))
+        self.assertEqual(ledger_row["cost_amount"], Decimal("0.04"))
+        self.assertEqual(ledger_row["source"], "execution_order_event")
 
     def test_build_realized_strategy_pnl_rows_does_not_use_idempotency_key_as_policy_hash(
         self,
