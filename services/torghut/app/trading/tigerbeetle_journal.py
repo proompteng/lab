@@ -56,19 +56,40 @@ SOURCE_TYPE_EXECUTION_TCA_METRIC = "execution_tca_metric"
 SOURCE_TYPE_RUNTIME_LEDGER_BUCKET = "strategy_runtime_ledger_bucket"
 
 
-def _result_status(result: object) -> str:
-    def normalize(value: object) -> str:
-        text = str(value).split(".")[-1].lower()
-        if text == "4294967295":
-            return "created"
-        if text == "46":
-            return "exists"
-        return text
+def _official_status_name(value: object) -> str | None:
+    if not isinstance(value, int):
+        return None
+    fallback_statuses = {46: "exists", 4294967295: "created"}
+    try:
+        import tigerbeetle as tb
+    except Exception:
+        return fallback_statuses.get(value)
 
+    for status_type_name in ("CreateTransferStatus", "CreateAccountStatus"):
+        status_type = getattr(tb, status_type_name, None)
+        if status_type is None:
+            continue
+        for name in dir(status_type):
+            if name.startswith("_"):
+                continue
+            status_value = getattr(status_type, name)
+            if isinstance(status_value, int) and status_value == value:
+                return name.lower()
+    return fallback_statuses.get(value)
+
+
+def _normalize_result_status(value: object) -> str:
+    official_name = _official_status_name(value)
+    if official_name is not None:
+        return official_name
+    return str(value or "").split(".")[-1].lower()
+
+
+def _result_status(result: object) -> str:
     if isinstance(result, Mapping):
         result_mapping = cast(Mapping[str, object], result)
-        return normalize(result_mapping.get("status") or "")
-    return normalize(getattr(result, "status", ""))
+        return _normalize_result_status(result_mapping.get("status"))
+    return _normalize_result_status(getattr(result, "status", ""))
 
 
 def _transfer_attr(transfer: object, name: str) -> Any:
