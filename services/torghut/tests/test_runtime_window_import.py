@@ -17,6 +17,7 @@ from app.models import (
     StrategyHypothesisVersion,
     StrategyPromotionDecision,
     StrategyRuntimeLedgerBucket,
+    TigerBeetleAccountRef,
     TigerBeetleTransferRef,
     VNextDatasetSnapshot,
 )
@@ -732,6 +733,27 @@ class TestRuntimeWindowImport(TestCase):
         )
 
         with self.session_local() as session:
+            session.add_all(
+                [
+                    TigerBeetleAccountRef(
+                        cluster_id=2001,
+                        account_id="100100100100100100100100100100100101",
+                        account_key="TORGHUT_SIM:cash",
+                        ledger=840001,
+                        code=1001,
+                        account_label="paper",
+                    ),
+                    TigerBeetleAccountRef(
+                        cluster_id=2001,
+                        account_id="100100100100100100100100100100100102",
+                        account_key="TORGHUT_SIM:AAPL:position",
+                        ledger=840001,
+                        code=1002,
+                        account_label="paper",
+                        symbol="AAPL",
+                    ),
+                ]
+            )
             session.add(
                 TigerBeetleTransferRef(
                     cluster_id=2001,
@@ -743,6 +765,10 @@ class TestRuntimeWindowImport(TestCase):
                     status="created",
                     execution_order_event_id=event_id,
                     event_fingerprint="runtime-fill-event",
+                    payload_json={
+                        "debit_account_id": "100100100100100100100100100100100101",
+                        "credit_account_id": "100100100100100100100100100100100102",
+                    },
                 )
             )
             session.flush()
@@ -802,14 +828,39 @@ class TestRuntimeWindowImport(TestCase):
         tigerbeetle_refs = payload.get("tigerbeetle")
         self.assertIsInstance(tigerbeetle_refs, dict)
         self.assertEqual(
+            tigerbeetle_refs.get("account_ids"),
+            [
+                "100100100100100100100100100100100101",
+                "100100100100100100100100100100100102",
+            ],
+        )
+        self.assertEqual(
+            tigerbeetle_refs.get("account_keys"),
+            ["TORGHUT_SIM:AAPL:position", "TORGHUT_SIM:cash"],
+        )
+        self.assertEqual(tigerbeetle_refs.get("missing_account_ids"), [])
+        self.assertEqual(
             tigerbeetle_refs.get("transfer_ids"),
             ["340282366920938463463374607431768211"],
+        )
+        self.assertEqual(
+            payload.get("tigerbeetle_account_ids"),
+            tigerbeetle_refs.get("account_ids"),
+        )
+        self.assertEqual(
+            payload.get("tigerbeetle_account_keys"),
+            tigerbeetle_refs.get("account_keys"),
         )
         self.assertEqual(
             payload.get("tigerbeetle_transfer_ids"),
             tigerbeetle_refs.get("transfer_ids"),
         )
+        self.assertIn("postgres:tigerbeetle_account_refs", payload.get("source_refs"))
         self.assertIn("postgres:tigerbeetle_transfer_refs", payload.get("source_refs"))
+        self.assertEqual(
+            payload.get("source_row_counts", {}).get("tigerbeetle_account_refs"),
+            2,
+        )
         self.assertEqual(
             payload.get("source_row_counts", {}).get("tigerbeetle_transfer_refs"),
             1,

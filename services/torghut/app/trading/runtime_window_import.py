@@ -21,6 +21,7 @@ from ..models import (
     StrategyHypothesisVersion,
     StrategyPromotionDecision,
     StrategyRuntimeLedgerBucket,
+    TigerBeetleAccountRef,
     TigerBeetleTransferRef,
     VNextDatasetSnapshot,
 )
@@ -1439,6 +1440,41 @@ def _uuid_values(values: Sequence[str]) -> list[UUID]:
     return uuids
 
 
+def _tigerbeetle_transfer_account_ids(row: TigerBeetleTransferRef) -> list[str]:
+    payload = _mapping(row.payload_json)
+    account_ids: list[str] = []
+    for key in ("debit_account_id", "credit_account_id"):
+        account_id = _text(payload.get(key))
+        if account_id is not None:
+            account_ids.append(account_id)
+    return account_ids
+
+
+def _tigerbeetle_account_refs_for_ids(
+    *,
+    session: Session,
+    cluster_ids: Sequence[int],
+    account_ids: Sequence[str],
+) -> list[TigerBeetleAccountRef]:
+    if not cluster_ids or not account_ids:
+        return []
+    return list(
+        session.execute(
+            select(TigerBeetleAccountRef)
+            .where(
+                TigerBeetleAccountRef.cluster_id.in_(cluster_ids),
+                TigerBeetleAccountRef.account_id.in_(account_ids),
+            )
+            .order_by(
+                TigerBeetleAccountRef.cluster_id.asc(),
+                TigerBeetleAccountRef.account_key.asc(),
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
 def _tigerbeetle_refs_for_ledger_payload(
     session: Session,
     ledger_payload: Mapping[str, Any],
@@ -1484,9 +1520,47 @@ def _tigerbeetle_refs_for_ledger_payload(
     )
     if not rows:
         return {}
+    account_ids = sorted(
+        {
+            account_id
+            for row in rows
+            for account_id in _tigerbeetle_transfer_account_ids(row)
+        }
+    )
+    account_rows = _tigerbeetle_account_refs_for_ids(
+        session=session,
+        cluster_ids=sorted({row.cluster_id for row in rows}),
+        account_ids=account_ids,
+    )
+    account_ref_keys = {(row.cluster_id, row.account_id) for row in account_rows}
+    missing_account_ids = sorted(
+        {
+            account_id
+            for row in rows
+            for account_id in _tigerbeetle_transfer_account_ids(row)
+            if (row.cluster_id, account_id) not in account_ref_keys
+        }
+    )
     return {
         "schema_version": "torghut.tigerbeetle-ledger-refs.v1",
         "cluster_ids": sorted({row.cluster_id for row in rows}),
+        "account_count": len(account_rows),
+        "account_ids": sorted({row.account_id for row in account_rows}),
+        "account_keys": sorted({row.account_key for row in account_rows}),
+        "accounts": [
+            {
+                "cluster_id": row.cluster_id,
+                "account_id": row.account_id,
+                "account_key": row.account_key,
+                "ledger": row.ledger,
+                "code": row.code,
+                "account_label": row.account_label,
+                "symbol": row.symbol,
+                "strategy_id": row.strategy_id,
+            }
+            for row in account_rows
+        ],
+        "missing_account_ids": missing_account_ids,
         "transfer_count": len(rows),
         "transfer_ids": sorted({row.transfer_id for row in rows}),
         "transfers": [
@@ -1520,11 +1594,19 @@ def _ledger_payload_with_tigerbeetle_refs(
         source_refs.append("postgres:tigerbeetle_transfer_refs")
     source_row_counts = _mapping(ledger_payload.get("source_row_counts"))
     source_row_counts["tigerbeetle_transfer_refs"] = tigerbeetle_refs["transfer_count"]
+    if tigerbeetle_refs.get("account_count"):
+        if "postgres:tigerbeetle_account_refs" not in source_refs:
+            source_refs.append("postgres:tigerbeetle_account_refs")
+        source_row_counts["tigerbeetle_account_refs"] = tigerbeetle_refs[
+            "account_count"
+        ]
     return {
         **ledger_payload,
         "source_refs": source_refs,
         "source_row_counts": source_row_counts,
         "tigerbeetle": tigerbeetle_refs,
+        "tigerbeetle_account_ids": tigerbeetle_refs["account_ids"],
+        "tigerbeetle_account_keys": tigerbeetle_refs["account_keys"],
         "tigerbeetle_transfer_ids": tigerbeetle_refs["transfer_ids"],
     }
 
