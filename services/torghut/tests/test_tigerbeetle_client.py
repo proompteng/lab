@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import socket
 import sys
 from types import SimpleNamespace
 from unittest import TestCase
@@ -12,6 +13,7 @@ from app.trading.tigerbeetle_client import (
     check_tigerbeetle_health,
     create_tigerbeetle_client,
     parse_replica_addresses,
+    resolve_replica_addresses,
 )
 from app.trading.tigerbeetle_ledger_model import (
     LEDGER_USD_MICRO,
@@ -31,6 +33,60 @@ class TestTigerBeetleClient(TestCase):
             parse_replica_addresses(" 127.0.0.1:3000,127.0.0.2:3000 ,, "),
             ["127.0.0.1:3000", "127.0.0.2:3000"],
         )
+
+    def test_resolve_replica_addresses_resolves_kubernetes_dns(self) -> None:
+        def fake_getaddrinfo(
+            host: str,
+            port: str | None,
+            *,
+            family: socket.AddressFamily,
+            type: socket.SocketKind,
+        ) -> list[
+            tuple[socket.AddressFamily, socket.SocketKind, int, str, tuple[str, int]]
+        ]:
+            self.assertEqual(family, socket.AF_INET)
+            self.assertEqual(type, socket.SOCK_STREAM)
+            self.assertEqual(host, "torghut-tigerbeetle.torghut.svc.cluster.local")
+            self.assertEqual(port, "3000")
+            return [
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.99.251.1", 3000)),
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.99.251.1", 3000)),
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.99.251.2", 3000)),
+            ]
+
+        with patch(
+            "app.trading.tigerbeetle_client.socket.getaddrinfo",
+            side_effect=fake_getaddrinfo,
+        ):
+            self.assertEqual(
+                resolve_replica_addresses(
+                    [
+                        "torghut-tigerbeetle.torghut.svc.cluster.local:3000",
+                        "127.0.0.1:3000",
+                    ]
+                ),
+                ["10.99.251.1:3000", "10.99.251.2:3000", "127.0.0.1:3000"],
+            )
+
+    def test_resolve_replica_addresses_leaves_ip_and_port_literals(self) -> None:
+        with patch("app.trading.tigerbeetle_client.socket.getaddrinfo") as getaddrinfo:
+            self.assertEqual(
+                resolve_replica_addresses(["3000", "127.0.0.1:3000"]),
+                ["3000", "127.0.0.1:3000"],
+            )
+
+        getaddrinfo.assert_not_called()
+
+    def test_resolve_replica_addresses_reports_dns_failure(self) -> None:
+        with patch(
+            "app.trading.tigerbeetle_client.socket.getaddrinfo",
+            side_effect=socket.gaierror("no such host"),
+        ):
+            with self.assertRaisesRegex(
+                ValueError,
+                "could not resolve TigerBeetle replica address 'missing-tb:3000'",
+            ):
+                resolve_replica_addresses(["missing-tb:3000"])
 
     def test_health_is_ok_when_disabled(self) -> None:
         settings = Settings(TORGHUT_TIGERBEETLE_ENABLED=False)
@@ -144,10 +200,26 @@ class TestTigerBeetleClient(TestCase):
             Account=_Event,
             Transfer=_Event,
         )
-        with patch.dict(sys.modules, {"tigerbeetle": fake_module}):
+        with (
+            patch.dict(sys.modules, {"tigerbeetle": fake_module}),
+            patch(
+                "app.trading.tigerbeetle_client.socket.getaddrinfo",
+                return_value=[
+                    (
+                        socket.AF_INET,
+                        socket.SOCK_STREAM,
+                        6,
+                        "",
+                        ("10.99.251.1", 3000),
+                    )
+                ],
+            ),
+        ):
             client = RealTigerBeetleClient(
                 cluster_id=2001,
-                replica_addresses=["tb-0:3000", "tb-1:3000"],
+                replica_addresses=[
+                    "torghut-tigerbeetle.torghut.svc.cluster.local:3000"
+                ],
             )
             account = TigerBeetleAccountSpec(
                 account_id=11,
@@ -177,7 +249,7 @@ class TestTigerBeetleClient(TestCase):
 
         sync = instances[0]
         self.assertEqual(sync.cluster_id, 2001)
-        self.assertEqual(sync.replica_addresses, "tb-0:3000,tb-1:3000")
+        self.assertEqual(sync.replica_addresses, "10.99.251.1:3000")
         self.assertEqual(sync.created_accounts[0].id, 11)
         self.assertEqual(sync.created_transfers[0].id, 22)
         self.assertTrue(sync.closed)
