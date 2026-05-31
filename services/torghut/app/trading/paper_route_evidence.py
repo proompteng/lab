@@ -3578,6 +3578,31 @@ def build_paper_route_target_plan_payload(
         and _safe_int(latest_closed_targets.get("target_count")) > 0
         else next_targets
     )
+    source_target_audits = [
+        _target_audit(
+            session,
+            raw_target=target,
+            probe=probe,
+            generated_at=resolved_generated_at,
+            lookback_hours=DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
+        )
+        for target in targets
+    ]
+    runtime_window_import_target_audits = [
+        _target_audit(
+            session,
+            raw_target=target,
+            probe=probe,
+            generated_at=resolved_generated_at,
+            lookback_hours=DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
+        )
+        for target in _as_mapping_items(runtime_window_import_plan.get("targets"))
+    ]
+    runtime_window_import_audit = _runtime_window_import_audit(
+        next_targets=runtime_window_import_plan,
+        target_audits=source_target_audits,
+        next_target_audits=runtime_window_import_target_audits,
+    )
     return {
         "schema_version": PAPER_ROUTE_TARGET_PLAN_PAYLOAD_SCHEMA_VERSION,
         "generated_at": _isoformat(resolved_generated_at),
@@ -3614,6 +3639,7 @@ def build_paper_route_target_plan_payload(
         },
         "paper_route_probe": probe,
         "runtime_window_import_plan": runtime_window_import_plan,
+        "runtime_window_import_audit": runtime_window_import_audit,
         "source_runtime_window_import_plan": source_targets,
         "latest_closed_paper_route_runtime_window_targets": latest_closed_targets,
         "next_paper_route_runtime_window_targets": next_targets,
@@ -3633,6 +3659,12 @@ def build_paper_route_target_plan_payload(
             ),
             "source_runtime_window_target_count": _safe_int(
                 source_targets.get("target_count")
+            ),
+            "runtime_window_import_audit_state": _safe_text(
+                runtime_window_import_audit.get("state")
+            ),
+            "runtime_window_import_audit_blockers": _unique_text_items(
+                runtime_window_import_audit.get("blockers")
             ),
             "skipped_target_count": _safe_int(next_targets.get("skipped_target_count")),
             "promotion_authority": {

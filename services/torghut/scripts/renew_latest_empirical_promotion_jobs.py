@@ -119,6 +119,13 @@ RUNTIME_WINDOW_TARGET_PLAN_DEFERRED_REASONS = frozenset(
         "runtime_window_target_plan_window_settlement_pending",
     )
 )
+RUNTIME_WINDOW_TARGET_PLAN_IMPORT_BLOCKED_STATES = frozenset(
+    (
+        "import_due_account_contamination_detected",
+        "import_due_account_state_not_clean",
+        "import_due_source_activity_missing",
+    )
+)
 OFFLINE_REPLAY_TRIAGE_CANDIDATE_LIMIT = 5
 
 
@@ -504,6 +511,7 @@ def _read_runtime_window_target_plan(ref: str) -> dict[str, Any]:
 def _runtime_window_target_plan_from_payload(
     payload: Mapping[str, Any],
 ) -> dict[str, Any]:
+    _raise_if_runtime_window_target_plan_import_blocked(payload)
     direct_plan = _as_dict(payload.get("runtime_window_import_plan"))
     if direct_plan:
         return direct_plan
@@ -526,6 +534,26 @@ def _runtime_window_target_plan_from_payload(
     if paper_route_plan:
         return paper_route_plan
     return _as_dict(payload)
+
+
+def _raise_if_runtime_window_target_plan_import_blocked(
+    payload: Mapping[str, Any],
+) -> None:
+    audit = _as_dict(payload.get("runtime_window_import_audit"))
+    if not audit:
+        return
+    state = str(audit.get("state") or "").strip()
+    if state not in RUNTIME_WINDOW_TARGET_PLAN_IMPORT_BLOCKED_STATES:
+        return
+    blockers = [
+        str(item).strip()
+        for item in _as_sequence(audit.get("blockers"))
+        if str(item).strip()
+    ]
+    blocker_text = ",".join(blockers) if blockers else "unknown"
+    raise RuntimeError(
+        f"runtime_window_target_plan_import_blocked:{state}:{blocker_text}"
+    )
 
 
 def _runtime_window_target_plan_has_targets(plan: Mapping[str, Any]) -> bool:

@@ -788,6 +788,43 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         self.assertEqual(top_level_plan["targets"][0]["hypothesis_id"], "H-PAIRS-01")
         self.assertEqual(fallback_plan["targets"][0]["hypothesis_id"], "H-FALLBACK-01")
 
+    def test_runtime_window_target_plan_payload_blocks_contaminated_import_audit(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(
+            RuntimeError,
+            (
+                "runtime_window_target_plan_import_blocked:"
+                "import_due_account_contamination_detected:.*"
+                "unlinked_order_events_present"
+            ),
+        ):
+            renewal._runtime_window_target_plan_from_payload(
+                {
+                    "schema_version": "torghut.paper-route-target-plan.v1",
+                    "runtime_window_import_plan": {
+                        "schema_version": (
+                            "torghut.next-paper-route-runtime-window-targets.v1"
+                        ),
+                        "targets": [
+                            {
+                                "candidate_id": "cand-contaminated",
+                                "hypothesis_id": "H-CONTAMINATED",
+                                "window_start": "2026-05-29T13:30:00+00:00",
+                                "window_end": "2026-05-29T20:00:00+00:00",
+                            }
+                        ],
+                    },
+                    "runtime_window_import_audit": {
+                        "state": "import_due_account_contamination_detected",
+                        "blockers": [
+                            "paper_route_account_contamination_detected",
+                            "unlinked_order_events_present",
+                        ],
+                    },
+                }
+            )
+
     def test_runtime_window_target_plan_payload_prefers_next_paper_route_plan(
         self,
     ) -> None:
