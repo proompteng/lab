@@ -1577,6 +1577,16 @@ def _runtime_window_import_proof_hygiene_blockers(
         blockers.append("continuity_gate_missing")
     if not drift_ok.strip():
         blockers.append("drift_gate_missing")
+    for key in (
+        "runtime_ledger_target_metadata_blockers",
+        "runtime_window_import_health_gate_blockers",
+        "runtime_window_import_promotion_blockers",
+        "paper_route_session_import_blockers",
+        "candidate_blockers",
+        "runtime_window_import_audit_blockers",
+        "runtime_window_import_audit_target_blockers",
+    ):
+        blockers.extend(_metadata_text_list(target_metadata.get(key)))
     return blockers
 
 

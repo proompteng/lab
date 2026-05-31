@@ -62,6 +62,10 @@ RUNTIME_WINDOW_TARGET_METADATA_KEYS = (
     "runtime_window_import_health_gate",
     "runtime_window_import_health_gate_blockers",
     "runtime_window_import_promotion_blockers",
+    "runtime_window_import_audit_state",
+    "runtime_window_import_audit_next_action",
+    "runtime_window_import_audit_blockers",
+    "runtime_window_import_audit_target_blockers",
     "strategy_id",
     "runtime_strategy_name",
     "source_strategy_name",
@@ -511,39 +515,197 @@ def _read_runtime_window_target_plan(ref: str) -> dict[str, Any]:
 def _runtime_window_target_plan_from_payload(
     payload: Mapping[str, Any],
 ) -> dict[str, Any]:
-    _raise_if_runtime_window_target_plan_import_blocked(payload)
     direct_plan = _as_dict(payload.get("runtime_window_import_plan"))
     if direct_plan:
-        return direct_plan
-    paper_route_plan = _as_dict(payload.get("next_paper_route_runtime_window_targets"))
-    if (
-        str(payload.get("schema_version") or "").strip()
-        == "torghut.paper-route-evidence.v1"
-        and paper_route_plan
-    ):
-        return paper_route_plan
-    gate = _as_dict(payload.get("live_submission_gate"))
-    gate_plan = _as_dict(gate.get("runtime_ledger_paper_probation_import_plan"))
-    if gate_plan:
-        return gate_plan
-    top_level_gate_plan = _as_dict(
-        payload.get("runtime_ledger_paper_probation_import_plan")
+        plan = direct_plan
+    else:
+        paper_route_plan = _as_dict(
+            payload.get("next_paper_route_runtime_window_targets")
+        )
+        if (
+            str(payload.get("schema_version") or "").strip()
+            == "torghut.paper-route-evidence.v1"
+            and paper_route_plan
+        ):
+            plan = paper_route_plan
+        else:
+            gate = _as_dict(payload.get("live_submission_gate"))
+            gate_plan = _as_dict(gate.get("runtime_ledger_paper_probation_import_plan"))
+            if gate_plan:
+                plan = gate_plan
+            else:
+                top_level_gate_plan = _as_dict(
+                    payload.get("runtime_ledger_paper_probation_import_plan")
+                )
+                if top_level_gate_plan:
+                    plan = top_level_gate_plan
+                elif paper_route_plan:
+                    plan = paper_route_plan
+                else:
+                    plan = _as_dict(payload)
+    plan = _runtime_window_target_plan_with_import_audit_blockers(
+        payload=payload,
+        plan=plan,
     )
-    if top_level_gate_plan:
-        return top_level_gate_plan
-    if paper_route_plan:
-        return paper_route_plan
-    return _as_dict(payload)
+    _raise_if_runtime_window_target_plan_import_blocked(payload, plan=plan)
+    return plan
+
+
+def _extend_unique_text_items(
+    existing: Any,
+    additions: Sequence[str],
+) -> list[str]:
+    values: list[str] = []
+    if isinstance(existing, str):
+        text = existing.strip()
+        if text:
+            values.append(text)
+    elif isinstance(existing, Sequence) and not isinstance(
+        existing, (bytes, bytearray)
+    ):
+        values.extend(str(item).strip() for item in existing if str(item).strip())
+    values.extend(item for item in additions if item)
+    return list(dict.fromkeys(values))
+
+
+def _runtime_window_import_audit_blockers(audit: Mapping[str, Any]) -> list[str]:
+    state = str(audit.get("state") or "").strip()
+    blockers = _extend_unique_text_items((), _as_text_list(audit.get("blockers")))
+    if not blockers and state in RUNTIME_WINDOW_TARGET_PLAN_IMPORT_BLOCKED_STATES:
+        blockers.append(state)
+    return blockers
+
+
+def _target_text(payload: Mapping[str, Any], key: str) -> str:
+    return str(payload.get(key) or "").strip()
+
+
+def _target_strategy_names(payload: Mapping[str, Any]) -> set[str]:
+    names = {
+        _target_text(payload, "strategy_name"),
+        _target_text(payload, "runtime_strategy_name"),
+        _target_text(payload, "source_strategy_name"),
+        _target_text(payload, "source_runtime_strategy_name"),
+    }
+    for item in _as_sequence(payload.get("strategy_lookup_names")):
+        text = str(item).strip()
+        if text:
+            names.add(text)
+    return {item for item in names if item}
+
+
+def _runtime_window_audit_target_blocker_matches(
+    *,
+    target_blocker: Mapping[str, Any],
+    target: Mapping[str, Any],
+) -> bool:
+    comparable_keys = (
+        "hypothesis_id",
+        "candidate_id",
+        "account_label",
+        "source_kind",
+        "window_start",
+        "window_end",
+    )
+    compared = False
+    for key in comparable_keys:
+        blocker_value = _target_text(target_blocker, key)
+        if not blocker_value:
+            continue
+        compared = True
+        if blocker_value != _target_text(target, key):
+            return False
+
+    blocker_strategy_names = _target_strategy_names(target_blocker)
+    if blocker_strategy_names:
+        compared = True
+        if not blocker_strategy_names.intersection(_target_strategy_names(target)):
+            return False
+    return compared
+
+
+def _runtime_window_target_plan_with_import_audit_blockers(
+    *,
+    payload: Mapping[str, Any],
+    plan: Mapping[str, Any],
+) -> dict[str, Any]:
+    audit = _as_dict(payload.get("runtime_window_import_audit"))
+    if not audit:
+        return dict(plan)
+    state = str(audit.get("state") or "").strip()
+    if state not in RUNTIME_WINDOW_TARGET_PLAN_IMPORT_BLOCKED_STATES:
+        return dict(plan)
+    raw_targets = plan.get("targets")
+    if not isinstance(raw_targets, Sequence) or isinstance(
+        raw_targets, (str, bytes, bytearray)
+    ):
+        return dict(plan)
+
+    audit_blockers = _runtime_window_import_audit_blockers(audit)
+    target_blockers = [
+        blocker
+        for item in _as_sequence(audit.get("target_blockers"))
+        if (blocker := _as_dict(item))
+    ]
+    next_action = _as_text(audit.get("next_action"))
+    annotated_targets: list[Any] = []
+    for raw_target in raw_targets:
+        target = _as_dict(raw_target)
+        if not target:
+            annotated_targets.append(raw_target)
+            continue
+        matched_blockers: list[str] = []
+        for target_blocker in target_blockers:
+            if _runtime_window_audit_target_blocker_matches(
+                target_blocker=target_blocker,
+                target=target,
+            ):
+                matched_blockers.extend(
+                    _runtime_window_import_audit_blockers(target_blocker)
+                )
+        combined_blockers = list(dict.fromkeys([*audit_blockers, *matched_blockers]))
+        if combined_blockers:
+            for key in (
+                "runtime_ledger_target_metadata_blockers",
+                "runtime_window_import_health_gate_blockers",
+                "candidate_blockers",
+            ):
+                target[key] = _extend_unique_text_items(
+                    target.get(key), combined_blockers
+                )
+            target["runtime_window_import_audit_blockers"] = _extend_unique_text_items(
+                target.get("runtime_window_import_audit_blockers"),
+                audit_blockers,
+            )
+            if matched_blockers:
+                target["runtime_window_import_audit_target_blockers"] = (
+                    _extend_unique_text_items(
+                        target.get("runtime_window_import_audit_target_blockers"),
+                        matched_blockers,
+                    )
+                )
+        target["runtime_window_import_audit_state"] = state
+        if next_action is not None:
+            target["runtime_window_import_audit_next_action"] = next_action
+        annotated_targets.append(target)
+
+    annotated_plan = dict(plan)
+    annotated_plan["targets"] = annotated_targets
+    return annotated_plan
 
 
 def _raise_if_runtime_window_target_plan_import_blocked(
     payload: Mapping[str, Any],
+    *,
+    plan: Mapping[str, Any],
 ) -> None:
     audit = _as_dict(payload.get("runtime_window_import_audit"))
     if not audit:
         return
     state = str(audit.get("state") or "").strip()
     if state not in RUNTIME_WINDOW_TARGET_PLAN_IMPORT_BLOCKED_STATES:
+        return
+    if _runtime_window_target_plan_has_targets(plan):
         return
     blockers = [
         str(item).strip()
