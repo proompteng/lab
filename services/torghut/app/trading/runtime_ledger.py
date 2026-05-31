@@ -181,6 +181,7 @@ def build_runtime_ledger_buckets(
     bucket_ranges: Sequence[tuple[datetime, datetime]],
     group_by: Sequence[str] = (),
     require_order_lifecycle: bool = False,
+    carry_in_rows: Sequence[RuntimeLedgerFill | Mapping[str, object]] = (),
 ) -> list[RuntimeLedgerBucket]:
     """Aggregate runtime fills into fail-closed post-cost PnL buckets.
 
@@ -192,6 +193,10 @@ def build_runtime_ledger_buckets(
     normalized_rows = [
         _normalize_fill_row(row, row_index=index) for index, row in enumerate(rows)
     ]
+    normalized_carry_in_rows = [
+        _normalize_fill_row(row, row_index=-(index + 1))
+        for index, row in enumerate(carry_in_rows)
+    ]
     normalized_ranges = [(_utc(start), _utc(end)) for start, end in bucket_ranges]
     for start, end in normalized_ranges:
         if end <= start:
@@ -200,6 +205,7 @@ def build_runtime_ledger_buckets(
     buckets: list[RuntimeLedgerBucket] = []
     if not group_by:
         positions: dict[tuple[str | None, str | None, str | None], _PositionState] = {}
+        applied_carry_in_row_indexes: set[int] = set()
         for bucket_start, bucket_end in normalized_ranges:
             bucket_rows = [
                 row
@@ -207,11 +213,17 @@ def build_runtime_ledger_buckets(
                 if row.executed_at is not None
                 and bucket_start <= row.executed_at < bucket_end
             ]
+            bucket_carry_in_rows = _carry_in_rows_before_bucket(
+                normalized_carry_in_rows,
+                bucket_start=bucket_start,
+                applied_row_indexes=applied_carry_in_row_indexes,
+            )
             buckets.append(
                 _build_bucket(
                     bucket_start=bucket_start,
                     bucket_end=bucket_end,
                     rows=bucket_rows,
+                    carry_in_rows=bucket_carry_in_rows,
                     carried_positions=positions,
                     require_order_lifecycle=require_order_lifecycle,
                 )
@@ -222,6 +234,7 @@ def build_runtime_ledger_buckets(
         tuple[str | None, ...],
         dict[tuple[str | None, str | None, str | None], _PositionState],
     ] = {}
+    grouped_applied_carry_in_row_indexes: set[int] = set()
     for bucket_start, bucket_end in normalized_ranges:
         bucket_rows = [
             row
@@ -233,11 +246,21 @@ def build_runtime_ledger_buckets(
         for row in bucket_rows:
             grouped_rows.setdefault(_group_key(row, group_by), []).append(row)
         for key in sorted(grouped_rows):
+            bucket_carry_in_rows = _carry_in_rows_before_bucket(
+                [
+                    row
+                    for row in normalized_carry_in_rows
+                    if _group_key(row, group_by) == key
+                ],
+                bucket_start=bucket_start,
+                applied_row_indexes=grouped_applied_carry_in_row_indexes,
+            )
             buckets.append(
                 _build_bucket(
                     bucket_start=bucket_start,
                     bucket_end=bucket_end,
                     rows=grouped_rows[key],
+                    carry_in_rows=bucket_carry_in_rows,
                     group_by=group_by,
                     group_key=key,
                     carried_positions=grouped_positions.setdefault(key, {}),
@@ -252,6 +275,7 @@ def _build_bucket(
     bucket_start: datetime,
     bucket_end: datetime,
     rows: Sequence[_NormalizedFill],
+    carry_in_rows: Sequence[_NormalizedFill] = (),
     group_by: Sequence[str] = (),
     group_key: tuple[str | None, ...] = (),
     carried_positions: dict[tuple[str | None, str | None, str | None], _PositionState]
@@ -259,10 +283,12 @@ def _build_bucket(
     require_order_lifecycle: bool = False,
 ) -> RuntimeLedgerBucket:
     blockers: list[str] = []
-    for row in rows:
+    for row in [*carry_in_rows, *rows]:
         blockers.extend(row.blockers)
 
-    lifecycle_rows = [row for row in rows if row.event_type in _LIFECYCLE_EVENTS]
+    lifecycle_rows = [
+        row for row in [*carry_in_rows, *rows] if row.event_type in _LIFECYCLE_EVENTS
+    ]
     decision_count = sum(1 for row in rows if row.event_type in _DECISION_EVENTS)
     submitted_order_count = sum(
         1 for row in rows if row.event_type in _SUBMITTED_ORDER_EVENTS
@@ -277,6 +303,8 @@ def _build_bucket(
         1 for row in rows if row.event_type in _UNFILLED_ORDER_EVENTS
     )
     usable_fills = [row for row in rows if row.is_usable_fill]
+    carry_in_usable_fills = [row for row in carry_in_rows if row.is_usable_fill]
+    all_usable_fills = [*carry_in_usable_fills, *usable_fills]
     if not usable_fills:
         blockers.append("runtime_fills_missing")
 
@@ -290,13 +318,34 @@ def _build_bucket(
             execution_policy_hash_counter[row.execution_policy_hash] += 1
         if (lineage_hash := row.lineage_hash or row.replay_data_hash) is not None:
             lineage_hash_counter[lineage_hash] += 1
-    for row in usable_fills:
+    for row in all_usable_fills:
         if row.cost_model_hash is not None:
             cost_model_hash_counter[row.cost_model_hash] += 1
 
     positions: dict[tuple[str | None, str | None, str | None], _PositionState] = (
         carried_positions if carried_positions is not None else {}
     )
+    carry_in_accumulator = _LedgerAccumulator()
+    for fill in sorted(
+        carry_in_usable_fills,
+        key=lambda item: (item.executed_at or bucket_start, item.row_index),
+    ):
+        assert fill.side is not None
+        assert fill.filled_qty is not None
+        assert fill.avg_fill_price is not None
+        assert fill.filled_notional is not None
+        assert fill.cost_amount is not None
+        assert fill.cost_basis is not None
+
+        cost_basis_counter[fill.cost_basis] += 1
+        position_key = (fill.account_label, fill.strategy_id, fill.symbol)
+        state = positions.setdefault(position_key, _PositionState())
+        _apply_fill_to_position(
+            state=state,
+            fill=fill,
+            accumulator=carry_in_accumulator,
+        )
+
     for fill in sorted(
         usable_fills,
         key=lambda item: (item.executed_at or bucket_start, item.row_index),
@@ -326,7 +375,7 @@ def _build_bucket(
         blockers.extend(
             _order_lifecycle_blockers(
                 lifecycle_rows=lifecycle_rows,
-                usable_fills=usable_fills,
+                usable_fills=all_usable_fills,
                 decision_count=decision_count,
                 submitted_order_count=submitted_order_count,
                 rejected_order_count=rejected_order_count,
@@ -381,6 +430,23 @@ def _build_bucket(
         blockers=unique_blockers,
         diagnostic_closed_trade_expectancy_bps=diagnostic_closed_trade_expectancy_bps,
     )
+
+
+def _carry_in_rows_before_bucket(
+    rows: Sequence[_NormalizedFill],
+    *,
+    bucket_start: datetime,
+    applied_row_indexes: set[int],
+) -> list[_NormalizedFill]:
+    bucket_rows = [
+        row
+        for row in rows
+        if row.row_index not in applied_row_indexes
+        and row.executed_at is not None
+        and row.executed_at < bucket_start
+    ]
+    applied_row_indexes.update(row.row_index for row in bucket_rows)
+    return bucket_rows
 
 
 def _order_lifecycle_blockers(
