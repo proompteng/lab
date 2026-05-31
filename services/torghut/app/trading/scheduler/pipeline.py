@@ -97,7 +97,7 @@ from ..regime_hmm import (
     resolve_regime_context_authority_reason,
 )
 from ..risk import RiskEngine
-from ..session_context import REGULAR_OPEN_UTC
+from ..session_context import regular_session_open_utc_for
 from ..tca import derive_adaptive_execution_policy
 from ..time_source import trading_now
 from ..universe import UniverseResolver
@@ -301,15 +301,11 @@ class TradingPipeline:
             return
 
         now = trading_now(account_label=self.account_label).astimezone(timezone.utc)
-        session_day = now.date()
+        session_open = regular_session_open_utc_for(now)
+        session_day = session_open.date()
         if self._session_context_warmup_day == session_day:
             return
 
-        session_open = datetime.combine(
-            session_day,
-            REGULAR_OPEN_UTC,
-            tzinfo=timezone.utc,
-        )
         if now < session_open:
             return
 
@@ -410,15 +406,11 @@ class TradingPipeline:
             return
 
         now = trading_now(account_label=self.account_label).astimezone(timezone.utc)
-        session_day = now.date()
+        session_open = regular_session_open_utc_for(now)
+        session_day = session_open.date()
         if self._runtime_window_account_snapshot_day == session_day:
             return
 
-        session_open = datetime.combine(
-            session_day,
-            REGULAR_OPEN_UTC,
-            tzinfo=timezone.utc,
-        )
         capture_start = session_open - timedelta(
             seconds=PAPER_ROUTE_ACCOUNT_PRE_SESSION_READINESS_SECONDS
         )
@@ -772,12 +764,8 @@ class TradingPipeline:
     ) -> list[dict[str, Any]]:
         if not positions:
             return positions
-        session_open = datetime.combine(
-            trading_now(account_label=self.account_label)
-            .astimezone(timezone.utc)
-            .date(),
-            REGULAR_OPEN_UTC,
-            tzinfo=timezone.utc,
+        session_open = regular_session_open_utc_for(
+            trading_now(account_label=self.account_label).astimezone(timezone.utc)
         )
         lookback_start = session_open - _STRATEGY_POSITION_TAG_LOOKBACK
         try:

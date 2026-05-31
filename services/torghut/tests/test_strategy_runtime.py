@@ -5487,7 +5487,7 @@ class TestStrategyRuntimeMicrobarCoverage(TestCase):
         context = self._context()
         self.assertEqual(
             _microbar_minutes_elapsed(
-                context=context,
+                context=self._context(event_ts="2026-03-24T14:31:00+00:00"),
                 features=_test_feature_vector({"session_minutes_elapsed": "61"}),
             ),
             61,
@@ -5504,6 +5504,20 @@ class TestStrategyRuntimeMicrobarCoverage(TestCase):
                 features=_test_feature_vector({}),
             ),
             65,
+        )
+        self.assertEqual(
+            _microbar_minutes_elapsed(
+                context=self._context(event_ts="2026-05-29T15:30:00+00:00"),
+                features=_test_feature_vector({"session_minutes_elapsed": 60}),
+            ),
+            120,
+        )
+        self.assertEqual(
+            _microbar_minutes_elapsed(
+                context=self._context(event_ts="2026-01-05T15:30:00+00:00"),
+                features=_test_feature_vector({}),
+            ),
+            60,
         )
         self.assertIsNone(
             _microbar_minutes_elapsed(
@@ -5602,7 +5616,9 @@ class TestStrategyRuntimeMicrobarCoverage(TestCase):
         self.assertEqual(missing_minutes.trace.first_failed_gate, "schedule")
 
         mismatched_minute = _evaluate_microbar_cross_sectional(
-            context=self._context(params=base_params),
+            context=self._context(
+                params=base_params, event_ts="2026-03-24T14:29:00+00:00"
+            ),
             features=_test_feature_vector({"session_minutes_elapsed": 59}),
             entry_action="buy",
             exit_action="sell",
