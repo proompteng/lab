@@ -57,6 +57,10 @@ from app.trading.models import SignalEnvelope, StrategyDecision
 from app.trading.prices import MarketSnapshot, PriceFetcher
 from app.trading.ingest import SignalBatch
 from app.trading.reconcile import Reconciler
+from app.trading.runtime_decision_authority import (
+    ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
+    STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE,
+)
 from app.trading.risk import RiskEngine
 from app.trading.scheduler.pipeline import TradingPipeline
 from app.trading.scheduler.simple_pipeline import (
@@ -5938,6 +5942,233 @@ class TestTradingPipeline(TestCase):
 
         self.assertEqual([decision.symbol for decision in decisions], ["AAPL"])
 
+    def test_paper_route_target_source_decisions_skip_db_profit_proof_exposure(
+        self,
+    ) -> None:
+        from app import config
+
+        now = datetime(2026, 5, 26, 14, 0, tzinfo=timezone.utc)
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, 0, tzinfo=timezone.utc)
+        config.settings.trading_mode = "paper"
+        config.settings.trading_simple_paper_route_probe_enabled = True
+
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="paper-route-candidate-v1",
+                description="paper route candidate",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL", "AMZN"],
+                max_notional_per_trade=Decimal("1000"),
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            for symbol, source_decision_mode, profit_proof_eligible in (
+                ("AAPL", STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE, True),
+                ("AMZN", ROUTE_ACQUISITION_SOURCE_DECISION_MODE, False),
+            ):
+                decision_hash = f"source-mode-{symbol.lower()}-{uuid4()}"
+                decision_row = TradeDecision(
+                    strategy_id=strategy.id,
+                    alpaca_account_label="paper",
+                    symbol=symbol,
+                    timeframe="1Min",
+                    decision_json=StrategyDecision(
+                        strategy_id=str(strategy.id),
+                        symbol=symbol,
+                        event_ts=window_start + timedelta(minutes=5),
+                        timeframe="1Min",
+                        action="buy",
+                        qty=Decimal("10"),
+                        rationale="source-mode-fixture",
+                        params={
+                            "source_decision_mode": source_decision_mode,
+                            "profit_proof_eligible": profit_proof_eligible,
+                        },
+                    ).model_dump(mode="json"),
+                    rationale="source-mode-fixture",
+                    status="submitted",
+                    decision_hash=decision_hash,
+                    created_at=window_start + timedelta(minutes=5),
+                )
+                session.add(decision_row)
+                session.commit()
+                session.refresh(decision_row)
+                session.add(
+                    Execution(
+                        trade_decision_id=decision_row.id,
+                        alpaca_account_label="paper",
+                        alpaca_order_id=f"{symbol.lower()}-{uuid4()}",
+                        client_order_id=decision_hash,
+                        symbol=symbol,
+                        side="buy",
+                        order_type="market",
+                        time_in_force="day",
+                        submitted_qty=Decimal("10"),
+                        filled_qty=Decimal("10"),
+                        avg_fill_price=Decimal("100"),
+                        status="filled",
+                        created_at=window_start + timedelta(minutes=6),
+                    )
+                )
+            session.commit()
+
+            target = {
+                "strategy_name": "paper-route-candidate-v1",
+                "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                "paper_route_probe_next_session_max_notional": "25",
+                "paper_route_probe_window_start": window_start.isoformat(),
+                "paper_route_probe_window_end": window_end.isoformat(),
+            }
+            pipeline = SimpleTradingPipeline(
+                alpaca_client=FakeAlpacaClient(),
+                order_firewall=OrderFirewall(FakeAlpacaClient()),
+                ingestor=FakeIngestor([]),
+                decision_engine=DecisionEngine(),
+                risk_engine=RiskEngine(),
+                executor=OrderExecutor(),
+                execution_adapter=FakeAlpacaClient(),
+                reconciler=Reconciler(),
+                universe_resolver=UniverseResolver(),
+                state=TradingState(),
+                account_label="paper",
+                session_factory=self.session_local,
+            )
+            pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+
+            with (
+                patch.object(
+                    SimpleTradingPipeline,
+                    "_external_paper_route_target_probe_symbols_cached",
+                    return_value=({"AAPL", "AMZN"}, None, [target]),
+                ),
+                patch(
+                    "app.trading.scheduler.simple_pipeline.trading_now",
+                    return_value=now,
+                ),
+            ):
+                decisions = pipeline._paper_route_target_source_decisions(
+                    session=session,
+                    strategies=[strategy],
+                    allowed_symbols={"AAPL", "AMZN"},
+                    positions=[],
+                )
+
+        self.assertEqual([decision.symbol for decision in decisions], ["AMZN"])
+
+    def test_paper_route_target_profit_proof_exposure_helper_fails_closed(
+        self,
+    ) -> None:
+        strategy = Strategy(
+            id=uuid4(),
+            name="paper-route-candidate-v1",
+            description="paper route candidate",
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="static",
+            universe_symbols=["AAPL"],
+            max_notional_per_trade=Decimal("1000"),
+        )
+        mock_session = Mock(spec=Session)
+        mock_session.execute.side_effect = RuntimeError("database offline")
+
+        self.assertTrue(
+            SimpleTradingPipeline._paper_route_target_symbol_has_open_profit_proof_exposure(
+                session=cast(Session, mock_session),
+                strategy=strategy,
+                symbol="AAPL",
+                account_label="paper",
+                window_start=datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc),
+            )
+        )
+
+    def test_paper_route_target_profit_proof_exposure_helper_ignores_noise(
+        self,
+    ) -> None:
+        strategy = Strategy(
+            id=uuid4(),
+            name="paper-route-candidate-v1",
+            description="paper route candidate",
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="static",
+            universe_symbols=["AAPL"],
+            max_notional_per_trade=Decimal("1000"),
+        )
+        result = Mock()
+        result.all.return_value = [
+            ("buy", Decimal("1"), ["not-a-decision-mapping"]),
+            ("buy", Decimal("1"), {"params": "not-a-param-mapping"}),
+            (
+                "buy",
+                Decimal("1"),
+                {
+                    "params": {
+                        "source_decision_mode": ROUTE_ACQUISITION_SOURCE_DECISION_MODE
+                    }
+                },
+            ),
+            ("buy", None, {"params": {"profit_proof_eligible": True}}),
+            (
+                "sell",
+                Decimal("2"),
+                {
+                    "params": {
+                        "source_decision_mode": STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE,
+                    }
+                },
+            ),
+        ]
+        mock_session = Mock(spec=Session)
+        mock_session.execute.return_value = result
+
+        self.assertTrue(
+            SimpleTradingPipeline._paper_route_target_symbol_has_open_profit_proof_exposure(
+                session=cast(Session, mock_session),
+                strategy=strategy,
+                symbol="aapl",
+                account_label="paper",
+                window_start=datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc),
+            )
+        )
+
+    def test_paper_route_target_profit_proof_exposure_helper_returns_false_without_key(
+        self,
+    ) -> None:
+        strategy = Strategy(
+            name="paper-route-candidate-v1",
+            description="paper route candidate",
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="static",
+            universe_symbols=["AAPL"],
+            max_notional_per_trade=Decimal("1000"),
+        )
+        mock_session = Mock(spec=Session)
+
+        self.assertFalse(
+            SimpleTradingPipeline._paper_route_target_symbol_has_open_profit_proof_exposure(
+                session=cast(Session, mock_session),
+                strategy=strategy,
+                symbol="AAPL",
+                account_label="paper",
+                window_start=datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc),
+            )
+        )
+        self.assertFalse(
+            SimpleTradingPipeline._paper_route_target_symbol_has_open_profit_proof_exposure(
+                session=cast(Session, mock_session),
+                strategy=strategy,
+                symbol=" ",
+                account_label="paper",
+                window_start=datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc),
+            )
+        )
+
     def test_process_paper_route_target_source_decisions_records_submit_failure(
         self,
     ) -> None:
@@ -6003,6 +6234,7 @@ class TestTradingPipeline(TestCase):
             strategies=[strategy],
             allowed_symbols={"AAPL"},
             positions=positions,
+            session=session,
         )
         self.assertEqual(state.metrics.decisions_total, 1)
         self.assertEqual(state.metrics.orders_rejected_total, 1)
