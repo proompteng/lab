@@ -1,7 +1,7 @@
 image:
   repository: registry.ide-newton.ts.net/lab/tigresse
-  tag: v0.1.4
-  digest: sha256:0bcc6bb0929389789d76b95afbf7df97e48f175857d67d77ad1e22a0d55aa16e
+  tag: v0.1.5
+  digest: sha256:b73cc34f3f82b21a28eeea6b480a634bdbe93ac91d1a5710d082d33a211521eb
   pullPolicy: IfNotPresent
 
 podSecurityContext:
@@ -9,4 +9,4 @@ podSecurityContext:
   runAsUser: 65532
   runAsGroup: 65532
   seccompProfile:
-    type: RuntimeDefault
+    type: Unconfined
