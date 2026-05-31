@@ -16,6 +16,7 @@ from app.models import (
     Execution,
     ExecutionOrderEvent,
     Strategy,
+    TigerBeetleAccountRef,
     TigerBeetleTransferRef,
     TradeDecision,
 )
@@ -29,6 +30,7 @@ from app.trading.tigerbeetle_journal import (
     _transfer_attr,
     _transfer_flag,
     _transfer_spec,
+    submitted_pending_transfer_id,
     event_transfer_id,
 )
 from app.trading.tigerbeetle_ledger_model import (
@@ -152,6 +154,66 @@ class TestTigerBeetleLedgerJournal(TestCase):
             self.assertEqual(refs[0].ledger, LEDGER_USD_MICRO)
             self.assertEqual(len(client.transfers), 1)
 
+    def test_fill_without_pending_ref_uses_standalone_transfer(self) -> None:
+        with Session(self.engine) as session:
+            event = _create_fill_event(session, fingerprint="fingerprint-standalone")
+            client = FakeTigerBeetleClient()
+
+            ref = TigerBeetleLedgerJournal(
+                settings_obj=_settings(), client=client
+            ).journal_order_event(
+                session,
+                event,
+            )
+
+            self.assertIsNotNone(ref)
+            assert ref is not None
+            self.assertIsNone(ref.payload_json["pending_id"])
+            self.assertEqual(ref.payload_json["pending_mode"], "standalone_fill")
+            transfer = client.transfers[int(ref.transfer_id)]
+            self.assertEqual(getattr(transfer, "pending_id"), 0)
+            self.assertEqual(getattr(transfer, "flags"), 0)
+
+    def test_fill_with_pending_ref_uses_post_pending_transfer(self) -> None:
+        with Session(self.engine) as session:
+            fill = _create_fill_event(session, fingerprint="fingerprint-post-pending")
+            submitted = ExecutionOrderEvent(
+                event_fingerprint="fingerprint-post-pending-submitted",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=10,
+                alpaca_account_label=fill.alpaca_account_label,
+                event_ts=datetime.now(timezone.utc),
+                symbol=fill.symbol,
+                alpaca_order_id=fill.alpaca_order_id,
+                client_order_id=fill.client_order_id,
+                event_type="new",
+                status="new",
+                qty=Decimal("1"),
+                avg_fill_price=Decimal("190.25"),
+                raw_event={"event": "new", "price": "190.25"},
+                execution_id=fill.execution_id,
+                trade_decision_id=fill.trade_decision_id,
+            )
+            session.add(submitted)
+            session.flush()
+            client = FakeTigerBeetleClient()
+            journal = TigerBeetleLedgerJournal(settings_obj=_settings(), client=client)
+
+            pending_ref = journal.journal_order_event(session, submitted)
+            fill_ref = journal.journal_order_event(session, fill)
+
+            self.assertIsNotNone(pending_ref)
+            self.assertIsNotNone(fill_ref)
+            assert fill_ref is not None
+            self.assertEqual(
+                fill_ref.payload_json["pending_id"],
+                str(submitted_pending_transfer_id(fill)),
+            )
+            self.assertEqual(
+                fill_ref.payload_json["pending_mode"], "pending_transfer_ref"
+            )
+
     def test_duplicate_transfer_exists_is_verified_before_ref_persist(self) -> None:
         with Session(self.engine) as session:
             event = _create_fill_event(session, fingerprint="fingerprint-exists")
@@ -165,6 +227,7 @@ class TestTigerBeetleLedgerJournal(TestCase):
                 transfer_kind=TRANSFER_KIND_FILL_POST,
                 amount=amount,
                 accounts=accounts,
+                use_pending_transfer=False,
             )
             client.transfers[expected.transfer_id] = expected
 
@@ -328,6 +391,10 @@ class TestTigerBeetleLedgerJournal(TestCase):
                 if getattr(ref, "account_key", "") == "cash:paper:usd"
             ]
             self.assertEqual(len(cash_refs), 1)
+            account_refs = (
+                session.execute(select(TigerBeetleAccountRef)).scalars().all()
+            )
+            self.assertGreaterEqual(len(account_refs), 5)
 
     def test_journal_ignores_non_transfer_and_missing_amount_events(self) -> None:
         with Session(self.engine) as session:

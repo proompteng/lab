@@ -49,6 +49,16 @@ spec:
                     --max-batches 1 \
                     --apply \
                     --json
+                  /opt/venv/bin/python scripts/journal_tigerbeetle_order_events.py \
+                    --dsn-env SIM_DB_DSN \
+                    --account-label TORGHUT_SIM \
+                    --batch-size 500 \
+                    --max-batches 2 \
+                    --reconcile-limit 1000 \
+                    --json
+              securityContext:
+                seccompProfile:
+                  type: Unconfined
               env:
                 - name: TORGHUT_SIM_DB_HOST
                   valueFrom:

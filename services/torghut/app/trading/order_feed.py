@@ -26,6 +26,7 @@ from ..models import (
 )
 from .tca import upsert_execution_tca_metric
 from .tigerbeetle_journal import TigerBeetleLedgerJournal
+from .tigerbeetle_reconcile import reconcile_tigerbeetle_transfers
 
 logger = logging.getLogger(__name__)
 
@@ -119,10 +120,23 @@ class OrderFeedIngestor:
                 break
 
         if durable_any:
+            self._reconcile_tigerbeetle_if_enabled(session)
             session.commit()
         if durable_any and commit_allowed:
             _commit_consumer(consumer)
         return counters
+
+    def _reconcile_tigerbeetle_if_enabled(self, session: Session) -> None:
+        if not settings.tigerbeetle_enabled or not settings.tigerbeetle_journal_enabled:
+            return
+        try:
+            reconcile_tigerbeetle_transfers(session)
+        except Exception as exc:
+            if settings.tigerbeetle_reconcile_required:
+                raise
+            logger.warning(
+                "TigerBeetle reconciliation failed after order-feed ingest: %s", exc
+            )
 
     @staticmethod
     def _new_counters() -> dict[str, int]:

@@ -1265,7 +1265,19 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("--batch-size 500", args)
         self.assertIn("--max-batches 1", args)
         self.assertIn("--apply", args)
+        self.assertIn("scripts/journal_tigerbeetle_order_events.py", args)
+        self.assertIn("--max-batches 2", args)
+        self.assertIn("--reconcile-limit 1000", args)
         self.assertIn("--json", args)
+        security_context = cast(
+            Mapping[str, object],
+            container.get("securityContext", {}),
+        )
+        seccomp_profile = cast(
+            Mapping[str, object],
+            security_context.get("seccompProfile", {}),
+        )
+        self.assertEqual(seccomp_profile.get("type"), "Unconfined")
 
     def test_empirical_promotion_renewal_imports_authoritative_sim_paper_plan_and_sim_db(
         self,

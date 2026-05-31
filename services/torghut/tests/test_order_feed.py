@@ -22,6 +22,7 @@ from app.models import (
     OrderFeedSourceWindow,
     RejectedSignalOutcomeEvent,
     Strategy,
+    TigerBeetleReconciliationRun,
     TigerBeetleTransferRef,
     TradeDecision,
 )
@@ -381,6 +382,43 @@ class TestOrderFeed(TestCase):
             self.assertEqual(len(refs), 1)
             self.assertEqual(refs[0].execution_order_event_id, persisted.id)
             self.assertEqual(refs[0].amount, Decimal("190250000"))
+
+    def test_order_feed_ingest_persists_tigerbeetle_reconciliation(self) -> None:
+        payload = (
+            b'{"channel":"trade_updates","payload":{"event":"fill","timestamp":"2026-02-01T10:00:00Z",'
+            b'"order":{"id":"order-1","client_order_id":"client-1","symbol":"AAPL","status":"filled",'
+            b'"qty":"1","filled_qty":"1","filled_avg_price":"190.25"}},"seq":10}'
+        )
+        record = FakeRecord(value=payload, offset=22)
+        client = FakeTigerBeetleClient()
+        settings.tigerbeetle_enabled = True
+        settings.tigerbeetle_journal_enabled = True
+
+        with Session(self.engine) as session:
+            self._seed_execution(session)
+            ingestor = OrderFeedIngestor(
+                consumer_factory=lambda: FakeConsumer([record]),
+                default_account_label="paper",
+            )
+
+            with (
+                patch(
+                    "app.trading.tigerbeetle_journal.create_tigerbeetle_client",
+                    return_value=client,
+                ),
+                patch(
+                    "app.trading.tigerbeetle_reconcile.create_tigerbeetle_client",
+                    return_value=client,
+                ),
+            ):
+                counters = ingestor.ingest_once(session)
+
+            self.assertEqual(counters["events_persisted_total"], 1)
+            refs = session.execute(select(TigerBeetleTransferRef)).scalars().all()
+            self.assertEqual(len(refs), 1)
+            runs = session.execute(select(TigerBeetleReconciliationRun)).scalars().all()
+            self.assertEqual(len(runs), 1)
+            self.assertEqual(runs[0].status, "ok")
 
     def test_optional_tigerbeetle_journal_failure_does_not_drop_order_event(
         self,
