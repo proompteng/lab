@@ -288,9 +288,7 @@ class OrderFeedIngestor:
                 )
                 return _IngestRecordOutcome(durable=True)
 
-            updated, out_of_order = apply_order_event_to_execution(
-                execution, persisted
-            )
+            updated, out_of_order = apply_order_event_to_execution(execution, persisted)
             if out_of_order:
                 counters["out_of_order_total"] += 1
             if not updated:
@@ -1119,9 +1117,32 @@ def _refresh_source_window_linkage_counts(
     source_window = session.get(OrderFeedSourceWindow, event.source_window_id)
     if source_window is None:
         return
-    source_window.unlinked_execution_count = 0 if event.execution_id is not None else 1
-    source_window.unlinked_decision_count = (
-        0 if event.trade_decision_id is not None else 1
+    total_events = session.scalar(
+        select(func.count(ExecutionOrderEvent.id)).where(
+            ExecutionOrderEvent.source_window_id == event.source_window_id
+        )
+    )
+    linked_executions = session.scalar(
+        select(func.count(ExecutionOrderEvent.execution_id)).where(
+            ExecutionOrderEvent.source_window_id == event.source_window_id
+        )
+    )
+    linked_decisions = session.scalar(
+        select(func.count(ExecutionOrderEvent.trade_decision_id)).where(
+            ExecutionOrderEvent.source_window_id == event.source_window_id
+        )
+    )
+    event_count = int(total_events or 0)
+    source_window.unlinked_execution_count = max(
+        event_count - int(linked_executions or 0),
+        0,
+    )
+    source_window.unlinked_decision_count = max(
+        event_count - int(linked_decisions or 0),
+        0,
+    )
+    source_window.inserted_count = max(
+        int(source_window.inserted_count or 0), event_count
     )
     session.add(source_window)
 
