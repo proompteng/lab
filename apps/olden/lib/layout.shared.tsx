@@ -15,8 +15,38 @@ const baseConfig: BaseLayoutProps = {
     },
     {
       type: 'main',
+      text: 'Items',
+      url: '/docs/items',
+      active: 'url',
+    },
+    {
+      type: 'main',
+      text: 'Stats',
+      url: '/docs/stats',
+      active: 'url',
+    },
+    {
+      type: 'main',
+      text: 'Sets',
+      url: '/docs/sets',
+      active: 'url',
+    },
+    {
+      type: 'main',
+      text: 'Heroes',
+      url: '/docs/heroes',
+      active: 'url',
+    },
+    {
+      type: 'main',
+      text: 'Build Trees',
+      url: '/docs/towns-build-tree',
+      active: 'url',
+    },
+    {
+      type: 'main',
       text: 'Sources',
-      url: '/docs/meta/sources',
+      url: '/docs/source-database',
       active: 'url',
     },
     {

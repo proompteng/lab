@@ -104,6 +104,53 @@ export type ArtifactReference = {
   sourceIds: string[]
 }
 
+export type EncyclopediaEntry = {
+  id: string
+  name: string
+  description: string
+  url: string
+  image?: string
+  properties: Record<string, string>
+}
+
+export type SourceSiteNavEntry = {
+  id: string
+  label: string
+  url: string
+  coverage: string
+  localHref: string
+}
+
+export type UnitAssetEntry = EncyclopediaEntry
+
+export type ArtifactSetItem = {
+  name: string
+  slot: string
+  rarity: string
+  url: string
+  image?: string
+}
+
+export type ArtifactSetEntry = {
+  id: string
+  name: string
+  url: string
+  image: string
+  items: ArtifactSetItem[]
+  effects: string[]
+  playPattern: string
+  sourceIds: string[]
+}
+
+export type MechanicsFormulaEntry = {
+  id: string
+  title: string
+  rule: string
+  check: string
+  examples: string[]
+  sourceIds: string[]
+}
+
 export type VideoTranscriptAudit = {
   id: string
   title: string

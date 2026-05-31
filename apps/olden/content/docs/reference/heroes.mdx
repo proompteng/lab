@@ -3,6 +3,8 @@ title: Heroes Reference
 description: How to evaluate Olden Era heroes by job, specialty, skills, spells, and army plan.
 ---
 
+import { classEntries, heroEntries } from '@/src/data/olden/encyclopedia'
+
 # Heroes Reference
 
 Heroes should be evaluated by job, not only by raw strength. A strong main hero, useful scout, and support specialist solve different problems.
@@ -23,4 +25,26 @@ The main hero should make the best army safer and faster. Pick combat, magic, an
 
 A scout should reveal information and collect safe resources without stealing the main army's timing.
 
-<SourceNote ids={['official-wiki-main-page']} />
+## Hero roster
+
+<EncyclopediaEntryTable
+  entries={heroEntries}
+  title="Hero roster"
+  description="All public hero rows grouped by faction, with class, starting skills, specialty text, and source portrait links."
+  groupBy="Faction"
+  defaultOpenGroups={7}
+  sourceLabel="Hero page"
+/>
+
+## Classes
+
+<EncyclopediaEntryTable
+  entries={classEntries}
+  title="Hero classes"
+  description="Public class rows grouped by faction."
+  groupBy="Faction"
+  defaultOpenGroups={7}
+  sourceLabel="Class page"
+/>
+
+<SourceNote ids={['community-olden-era-heroes', 'community-olden-era-classes', 'official-wiki-main-page']} />
