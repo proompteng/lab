@@ -622,6 +622,15 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
         self.assertEqual(payload["status"], "degraded")
         self.assertEqual(payload["skipped"], 1)
         self.assertEqual(payload["failed"], 1)
+        self.assertEqual(
+            payload["batches"][0]["error_counts"],
+            {"RuntimeError:journal failed": 1},
+        )
+        sample_errors = payload["batches"][0]["sample_errors"]
+        self.assertEqual(len(sample_errors), 1)
+        self.assertTrue(sample_errors[0]["row_id"])
+        self.assertEqual(sample_errors[0]["error_type"], "RuntimeError")
+        self.assertEqual(sample_errors[0]["error"], "journal failed")
 
     def test_main_can_fail_closed_for_degraded_batch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -905,3 +905,29 @@ class TestTigerBeetleLedgerJournal(TestCase):
                     settings_obj=_settings(),
                     client=ErrorTransferClient(),
                 ).journal_order_event(session, event)
+
+    def test_journal_accepts_official_numeric_exists_status(self) -> None:
+        class NumericExistsTransferClient(FakeTigerBeetleClient):
+            def create_transfers(self, transfers: list[object]) -> list[object]:
+                for transfer in transfers:
+                    transfer_id = int(getattr(transfer, "transfer_id"))
+                    self.transfers[transfer_id] = transfer
+                return [SimpleNamespace(status=46)]
+
+        with Session(self.engine) as session:
+            event = _create_fill_event(session, fingerprint="fingerprint-exists-status")
+            client = NumericExistsTransferClient()
+
+            ref = TigerBeetleLedgerJournal(
+                settings_obj=_settings(),
+                client=client,
+            ).journal_order_event(session, event)
+
+            self.assertIsNotNone(ref)
+            assert ref is not None
+            self.assertEqual(ref.status, "exists")
+            self.assertEqual(_result_status(SimpleNamespace(status=46)), "exists")
+            self.assertEqual(
+                _result_status(SimpleNamespace(status=4294967295)),
+                "created",
+            )

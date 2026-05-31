@@ -57,10 +57,18 @@ SOURCE_TYPE_RUNTIME_LEDGER_BUCKET = "strategy_runtime_ledger_bucket"
 
 
 def _result_status(result: object) -> str:
+    def normalize(value: object) -> str:
+        text = str(value).split(".")[-1].lower()
+        if text == "4294967295":
+            return "created"
+        if text == "46":
+            return "exists"
+        return text
+
     if isinstance(result, Mapping):
         result_mapping = cast(Mapping[str, object], result)
-        return str(result_mapping.get("status") or "").split(".")[-1].lower()
-    return str(getattr(result, "status", "")).split(".")[-1].lower()
+        return normalize(result_mapping.get("status") or "")
+    return normalize(getattr(result, "status", ""))
 
 
 def _transfer_attr(transfer: object, name: str) -> Any:
