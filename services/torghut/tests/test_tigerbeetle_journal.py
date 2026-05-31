@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 import sys
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -60,6 +61,12 @@ class ClosableFakeTigerBeetleClient(FakeTigerBeetleClient):
 
     def close(self) -> None:
         self.close_count += 1
+
+
+class NumericExistsFakeTigerBeetleClient(FakeTigerBeetleClient):
+    def create_transfers(self, transfers: Sequence[object]) -> list[SimpleNamespace]:
+        del transfers
+        return [SimpleNamespace(status=46)]
 
 
 def _settings(*, enabled: bool = True, journal_enabled: bool = True) -> Settings:
@@ -565,6 +572,40 @@ class TestTigerBeetleLedgerJournal(TestCase):
             self.assertEqual(ref.status, "exists")
             self.assertEqual(ref.transfer_id, str(expected.transfer_id))
 
+    def test_numeric_duplicate_transfer_exists_is_verified_before_ref_persist(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            event = _create_fill_event(
+                session,
+                fingerprint="fingerprint-numeric-exists",
+            )
+            client = NumericExistsFakeTigerBeetleClient()
+            amount = decimal_usd_to_micros(
+                _event_amount_usd(event, TRANSFER_KIND_FILL_POST) or Decimal("0")
+            )
+            accounts = {spec.account_key: spec for spec in _account_specs(event)}
+            expected = _transfer_spec(
+                event,
+                transfer_kind=TRANSFER_KIND_FILL_POST,
+                amount=amount,
+                accounts=accounts,
+                use_pending_transfer=False,
+            )
+            client.transfers[expected.transfer_id] = expected
+
+            ref = TigerBeetleLedgerJournal(
+                settings_obj=_settings(), client=client
+            ).journal_order_event(
+                session,
+                event,
+            )
+
+            self.assertIsNotNone(ref)
+            assert ref is not None
+            self.assertEqual(ref.status, "exists")
+            self.assertEqual(ref.transfer_id, str(expected.transfer_id))
+
     def test_duplicate_transfer_conflict_fails_hard(self) -> None:
         with Session(self.engine) as session:
             event = _create_fill_event(session, fingerprint="fingerprint-conflict")
@@ -594,6 +635,28 @@ class TestTigerBeetleLedgerJournal(TestCase):
         self.assertEqual(
             _result_status(SimpleNamespace(status="Result.CREATED")), "created"
         )
+        self.assertEqual(_result_status(SimpleNamespace(status=46)), "exists")
+        self.assertEqual(_result_status(SimpleNamespace(status=4294967295)), "created")
+        with patch.dict(sys.modules, {"tigerbeetle": None}):
+            self.assertEqual(_result_status(SimpleNamespace(status=46)), "exists")
+        with patch.dict(sys.modules, {"tigerbeetle": SimpleNamespace()}):
+            self.assertEqual(_result_status(SimpleNamespace(status=1234)), "1234")
+
+        class FakeTransferStatuses:
+            _IGNORED = 1
+            EXISTS = 46
+
+        with patch.dict(
+            sys.modules,
+            {
+                "tigerbeetle": SimpleNamespace(
+                    CreateTransferStatus=FakeTransferStatuses,
+                    CreateAccountStatus=None,
+                )
+            },
+        ):
+            self.assertEqual(_result_status(SimpleNamespace(status=46)), "exists")
+            self.assertEqual(_result_status(SimpleNamespace(status=1)), "1")
         self.assertEqual(_transfer_attr({"transfer_id": 123}, "id"), 123)
         self.assertEqual(_transfer_attr(SimpleNamespace(transfer_id=456), "id"), 456)
         with self.assertRaises(AttributeError):
