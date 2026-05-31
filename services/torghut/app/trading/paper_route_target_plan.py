@@ -39,17 +39,12 @@ def paper_route_target_plan_from_payload(payload: Mapping[str, Any]) -> dict[str
     next_paper_route_plan = _to_str_map(
         payload.get("next_paper_route_runtime_window_targets")
     )
-    paper_route_payload = (
-        payload.get("schema_version") == "torghut.paper-route-evidence.v1"
-    )
-    paper_route_plans = [next_paper_route_plan] if paper_route_payload else []
     candidate_plans = [
-        runtime_window_plan,
-        *paper_route_plans,
+        next_paper_route_plan,
         source_runtime_window_plan,
+        runtime_window_plan,
         _to_str_map(live_gate.get("runtime_ledger_paper_probation_import_plan")),
         _to_str_map(payload.get("runtime_ledger_paper_probation_import_plan")),
-        *([] if paper_route_payload else [next_paper_route_plan]),
         dict(payload) if paper_route_target_plan_targets(payload) else {},
     ]
     for plan in candidate_plans:
