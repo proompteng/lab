@@ -1061,6 +1061,38 @@ class TestSubmissionCouncil(TestCase):
         self.assertIn("strategy_name", skipped_target["missing_fields"])
         self.assertIn("source_manifest_ref", skipped_target["missing_fields"])
 
+    def test_runtime_ledger_paper_probation_import_plan_uses_family_runtime_harness(
+        self,
+    ) -> None:
+        plan = _runtime_ledger_paper_probation_import_plan(
+            [
+                {
+                    "hypothesis_id": "H-TSMOM-LIQ",
+                    "candidate_id": "candidate-tsmom",
+                    "strategy_id": "intraday_tsmom_v2@research",
+                    "runtime_strategy_name": "intraday-tsmom-v2",
+                    "strategy_family": "intraday_tsmom_consistent",
+                    "account": "TORGHUT_SIM",
+                    "bucket_started_at": "2026-05-29T13:30:00+00:00",
+                    "bucket_ended_at": "2026-05-29T20:00:00+00:00",
+                    "reason_codes": ["runtime_ledger_source_collection_pending"],
+                }
+            ]
+        )
+
+        self.assertEqual(plan["target_count"], 1)
+        target = plan["targets"][0]
+        self.assertEqual(target["strategy_id"], "intraday_tsmom_v2@research")
+        self.assertEqual(target["strategy_name"], "intraday-tsmom-profit-v3")
+        self.assertEqual(target["runtime_strategy_name"], "intraday-tsmom-profit-v3")
+        self.assertEqual(
+            target["strategy_lookup_names"],
+            ["intraday-tsmom-profit-v3", "intraday-tsmom-v2"],
+        )
+        self.assertFalse(target["promotion_allowed"])
+        self.assertFalse(target["final_promotion_authorized"])
+        self.assertFalse(target["final_promotion_allowed"])
+
     def test_runtime_ledger_paper_probation_import_plan_dedupes_same_window_targets(
         self,
     ) -> None:

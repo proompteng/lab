@@ -1107,6 +1107,104 @@ class TestPaperRouteEvidenceAudit(TestCase):
         )
         self.assertFalse(summary_target["profit_proof_eligible"])
 
+    def test_next_paper_route_targets_use_family_runtime_harness_from_strategy_id(
+        self,
+    ) -> None:
+        generated_at = datetime(2026, 5, 29, 12, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            session.add(
+                Strategy(
+                    name="intraday-tsmom-profit-v3",
+                    description="runtime harness strategy",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["NVDA", "AAPL"],
+                    max_notional_per_trade=Decimal("25000"),
+                )
+            )
+            session.commit()
+            payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "paper_route_probe_only",
+                    "blocked_reasons": [],
+                    "promotion_eligible_total": 0,
+                    "dependency_quorum_decision": "allow",
+                    "continuity_ok": True,
+                    "continuity_reason": "signal_continuity_nominal",
+                    "drift_ok": True,
+                    "drift_reason": "drift_live_promotion_eligible",
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "target_count": 1,
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-TSMOM-LIQ",
+                                "candidate_id": "candidate-tsmom",
+                                "observed_stage": "paper",
+                                "strategy_family": "intraday_tsmom_consistent",
+                                "strategy_name": "intraday-tsmom-v2",
+                                "runtime_strategy_name": "intraday-tsmom-v2",
+                                "strategy_id": "intraday_tsmom_v2@research",
+                                "strategy_lookup_names": ["intraday-tsmom-v2"],
+                                "account_label": "TORGHUT_SIM",
+                                "source_kind": "durable_runtime_ledger_bucket",
+                                "source_manifest_ref": "config/trading/hypotheses/h-tsmom-liq.json",
+                                "dataset_snapshot_ref": "portfolio-profit-autoresearch-500-v1",
+                                "paper_probation_authorized": True,
+                                "source_collection_authorized": True,
+                                "promotion_allowed": False,
+                                "final_promotion_authorized": False,
+                                "max_notional": "0",
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "summary": {
+                        "paper_route_probe_eligible_symbols": ["NVDA", "AAPL", "MSFT"],
+                        "paper_route_probe_active_symbols": [],
+                    },
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": False,
+                        "next_session_max_notional": "25000",
+                        "eligible_symbol_count": 3,
+                        "eligible_symbols": ["NVDA", "AAPL", "MSFT"],
+                        "blocking_reasons": ["market_session_closed"],
+                    },
+                },
+                generated_at=generated_at,
+            )
+
+        plan = payload["next_paper_route_runtime_window_targets"]
+        self.assertEqual(plan["source_decision_readiness"]["ready_target_count"], 1)
+        target = plan["targets"][0]
+        readiness = target["source_decision_readiness"]
+        self.assertTrue(readiness["ready"])
+        self.assertEqual(readiness["blockers"], [])
+        self.assertEqual(target["strategy_name"], "intraday-tsmom-profit-v3")
+        self.assertEqual(target["runtime_strategy_name"], "intraday-tsmom-profit-v3")
+        self.assertEqual(target["source_strategy_name"], "intraday-tsmom-v2")
+        self.assertEqual(target["source_runtime_strategy_name"], "intraday-tsmom-v2")
+        self.assertEqual(
+            target["strategy_lookup_names"],
+            ["intraday-tsmom-profit-v3", "intraday-tsmom-v2"],
+        )
+        self.assertEqual(
+            readiness["matched_strategy"]["strategy_name"],
+            "intraday-tsmom-profit-v3",
+        )
+        self.assertEqual(readiness["scoped_probe_symbols"], ["NVDA", "AAPL"])
+        self.assertEqual(
+            target["paper_route_probe_out_of_strategy_scope_symbols"],
+            ["MSFT"],
+        )
+
     def test_next_paper_route_targets_use_strategy_universe_when_route_probe_empty(
         self,
     ) -> None:
