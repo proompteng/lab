@@ -5,10 +5,12 @@ import sys
 from datetime import datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
+from typing import cast
 from unittest import TestCase
 from unittest.mock import patch
 
 from sqlalchemy import create_engine, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import Settings
@@ -30,6 +32,7 @@ from app.trading.tigerbeetle_journal import (
     _event_amount_usd,
     _lookup_payload_decimal,
     _order_event_precedes,
+    _persist_account_refs,
     _result_status,
     _transfer_attr,
     _transfer_flag,
@@ -41,8 +44,10 @@ from app.trading.tigerbeetle_journal import (
     execution_transfer_id,
     runtime_ledger_transfer_id,
 )
+from app.trading.tigerbeetle_ids import u128_decimal
 from app.trading.tigerbeetle_ledger_model import (
     LEDGER_USD_MICRO,
+    TigerBeetleAccountSpec,
     TRANSFER_KIND_CANCEL_VOID,
     TRANSFER_KIND_EXECUTION_COST,
     TRANSFER_KIND_EXECUTION_FILL,
@@ -67,6 +72,49 @@ class NumericExistsFakeTigerBeetleClient(FakeTigerBeetleClient):
     def create_transfers(self, transfers: Sequence[object]) -> list[SimpleNamespace]:
         del transfers
         return [SimpleNamespace(status=46)]
+
+
+class _ScalarResult:
+    def __init__(self, value: TigerBeetleAccountRef | None) -> None:
+        self._value = value
+
+    def scalar_one_or_none(self) -> TigerBeetleAccountRef | None:
+        return self._value
+
+
+class _NestedTransaction:
+    def __enter__(self) -> None:
+        return None
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> bool:
+        return False
+
+
+class _RacingAccountRefSession:
+    def __init__(
+        self, existing_after_integrity_error: TigerBeetleAccountRef | None
+    ) -> None:
+        self._existing_after_integrity_error = existing_after_integrity_error
+        self.execute_count = 0
+        self.added_refs: list[TigerBeetleAccountRef] = []
+
+    def execute(self, statement: object) -> _ScalarResult:
+        del statement
+        self.execute_count += 1
+        if self.execute_count == 1:
+            return _ScalarResult(None)
+        return _ScalarResult(self._existing_after_integrity_error)
+
+    def begin_nested(self) -> _NestedTransaction:
+        return _NestedTransaction()
+
+    def add(self, value: TigerBeetleAccountRef) -> None:
+        self.added_refs.append(value)
+
+    def flush(self) -> None:
+        raise IntegrityError(
+            "insert tigerbeetle account ref", {}, RuntimeError("duplicate")
+        )
 
 
 def _settings(*, enabled: bool = True, journal_enabled: bool = True) -> Settings:
@@ -959,6 +1007,110 @@ class TestTigerBeetleLedgerJournal(TestCase):
                 session.execute(select(TigerBeetleAccountRef)).scalars().all()
             )
             self.assertGreaterEqual(len(account_refs), 5)
+
+    def test_journal_detects_account_ref_id_key_conflict(self) -> None:
+        with Session(self.engine) as session:
+            event = _create_fill_event(session, fingerprint="fingerprint-ref-conflict")
+            spec = next(
+                item
+                for item in _account_specs(event)
+                if item.account_key.startswith("order_hold:")
+            )
+            session.add(
+                TigerBeetleAccountRef(
+                    cluster_id=_settings().tigerbeetle_cluster_id,
+                    account_id=str(spec.account_id),
+                    account_key=f"{spec.account_key}:conflict",
+                    ledger=spec.ledger,
+                    code=spec.code,
+                    account_label=spec.account_label,
+                    symbol=spec.symbol,
+                    strategy_id=spec.strategy_id,
+                )
+            )
+            session.flush()
+
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "tigerbeetle_account_ref_conflict",
+            ):
+                TigerBeetleLedgerJournal(
+                    settings_obj=_settings(),
+                    client=FakeTigerBeetleClient(),
+                ).journal_order_event(session, event)
+
+    def test_persist_account_refs_accepts_matching_concurrent_insert(self) -> None:
+        spec = TigerBeetleAccountSpec(
+            account_id=101,
+            account_key="order_hold:paper:test-order",
+            ledger=LEDGER_USD_MICRO,
+            code=1101,
+            account_label="paper",
+            symbol="AAPL",
+            strategy_id="strategy-1",
+        )
+        existing = TigerBeetleAccountRef(
+            cluster_id=2001,
+            account_id=u128_decimal(spec.account_id),
+            account_key=spec.account_key,
+            ledger=spec.ledger,
+            code=spec.code,
+            account_label=spec.account_label,
+            symbol=spec.symbol,
+            strategy_id=spec.strategy_id,
+        )
+        session = _RacingAccountRefSession(existing)
+
+        _persist_account_refs(
+            cast(Session, session),
+            cluster_id=2001,
+            account_specs=(spec,),
+        )
+
+        self.assertEqual(session.execute_count, 2)
+        self.assertEqual(len(session.added_refs), 1)
+
+    def test_persist_account_refs_reraises_unresolved_integrity_error(self) -> None:
+        spec = TigerBeetleAccountSpec(
+            account_id=102,
+            account_key="order_hold:paper:missing-race-row",
+            ledger=LEDGER_USD_MICRO,
+            code=1101,
+        )
+        session = _RacingAccountRefSession(None)
+
+        with self.assertRaises(IntegrityError):
+            _persist_account_refs(
+                cast(Session, session),
+                cluster_id=2001,
+                account_specs=(spec,),
+            )
+
+    def test_persist_account_refs_rejects_conflicting_concurrent_insert(self) -> None:
+        spec = TigerBeetleAccountSpec(
+            account_id=103,
+            account_key="order_hold:paper:conflicting-race-row",
+            ledger=LEDGER_USD_MICRO,
+            code=1101,
+        )
+        existing = TigerBeetleAccountRef(
+            cluster_id=2001,
+            account_id=u128_decimal(spec.account_id),
+            account_key=spec.account_key,
+            ledger=spec.ledger,
+            code=9999,
+        )
+        session = _RacingAccountRefSession(existing)
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "tigerbeetle_account_ref_conflict",
+        ):
+            _persist_account_refs(
+                cast(Session, session),
+                cluster_id=2001,
+                account_specs=(spec,),
+            )
 
     def test_journal_ignores_non_transfer_and_missing_amount_events(self) -> None:
         with Session(self.engine) as session:
