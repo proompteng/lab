@@ -41,6 +41,8 @@ from scripts.import_hypothesis_runtime_windows import (
     _runtime_lifecycle_ledger_row,
     _runtime_ledger_profit_proof_present,
     _runtime_observation_authority_payload,
+    _runtime_decision_rows_before_bucket,
+    _runtime_execution_ledger_fill_from_row,
     _runtime_ledger_target_metadata_blockers,
     _runtime_ledger_tca_row_from_bucket,
     _runtime_ledger_tca_materialization_metadata,
@@ -2062,6 +2064,386 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             ],
         )
         self.assertTrue(_runtime_ledger_bucket_profit_proof_present(bucket))
+
+    def test_build_realized_strategy_pnl_rows_uses_source_backed_carry_in(
+        self,
+    ) -> None:
+        rows = _build_realized_strategy_pnl_rows(
+            [
+                {
+                    "execution_id": "execution-sell",
+                    "trade_decision_id": "decision-sell-id",
+                    "computed_at": datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
+                    "execution_event_at": datetime(
+                        2026, 3, 6, 14, 40, 1, tzinfo=timezone.utc
+                    ),
+                    "symbol": "AAPL",
+                    "side": "sell",
+                    "filled_qty": Decimal("1"),
+                    "avg_fill_price": Decimal("101"),
+                    "cost_amount": Decimal("0.10"),
+                    "cost_basis": "broker_reported_commission_and_fees",
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_id": "microbar-cross-sectional-pairs-v1",
+                    "decision_hash": "decision-sell",
+                    "alpaca_order_id": "order-sell",
+                    "execution_policy_hash": "policy-sell",
+                    "cost_model_hash": "cost-sha",
+                    "lineage_hash": "lineage-sha",
+                    "source_decision_mode": "strategy_signal_paper",
+                    "profit_proof_eligible": True,
+                },
+            ],
+            decision_lifecycle_rows=[
+                {
+                    "trade_decision_id": "decision-sell-id",
+                    "computed_at": datetime(2026, 3, 6, 14, 39, tzinfo=timezone.utc),
+                    "event_type": "decision",
+                    "symbol": "AAPL",
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_id": "microbar-cross-sectional-pairs-v1",
+                    "decision_hash": "decision-sell",
+                    "decision_json": {"account": {"equity": "10000"}},
+                    "source_decision_mode": "strategy_signal_paper",
+                    "profit_proof_eligible": True,
+                    "lineage_hash": "lineage-sha",
+                },
+            ],
+            order_lifecycle_rows=[
+                {
+                    "execution_order_event_id": "event-new-sell",
+                    "trade_decision_id": "decision-sell-id",
+                    "event_ts": datetime(2026, 3, 6, 14, 39, 1, tzinfo=timezone.utc),
+                    "event_type": "new",
+                    "symbol": "AAPL",
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_id": "microbar-cross-sectional-pairs-v1",
+                    "decision_hash": "decision-sell",
+                    "alpaca_order_id": "order-sell",
+                    "execution_policy_hash": "policy-sell",
+                    "lineage_hash": "lineage-sha",
+                    "source_topic": "alpaca.trade_updates",
+                    "source_partition": 0,
+                    "source_offset": 201,
+                    "source_window_id": "source-window-new-sell",
+                },
+                {
+                    "execution_order_event_id": "event-fill-sell",
+                    "trade_decision_id": "decision-sell-id",
+                    "execution_id": "execution-sell",
+                    "event_ts": datetime(2026, 3, 6, 14, 40, 1, tzinfo=timezone.utc),
+                    "event_type": "filled",
+                    "symbol": "AAPL",
+                    "side": "sell",
+                    "filled_qty": Decimal("1"),
+                    "avg_fill_price": Decimal("101"),
+                    "cost_amount": Decimal("0.10"),
+                    "cost_basis": "broker_reported_commission_and_fees",
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_id": "microbar-cross-sectional-pairs-v1",
+                    "decision_hash": "decision-sell",
+                    "alpaca_order_id": "order-sell",
+                    "execution_policy_hash": "policy-sell",
+                    "cost_model_hash": "cost-sha",
+                    "lineage_hash": "lineage-sha",
+                    "source_topic": "alpaca.trade_updates",
+                    "source_partition": 0,
+                    "source_offset": 202,
+                    "source_window_id": "source-window-fill-sell",
+                },
+            ],
+            carry_in_execution_rows=[
+                {
+                    "execution_id": "execution-buy",
+                    "trade_decision_id": "decision-buy-id",
+                    "computed_at": datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                    "execution_event_at": datetime(
+                        2026, 3, 6, 14, 35, 1, tzinfo=timezone.utc
+                    ),
+                    "symbol": "AAPL",
+                    "side": "buy",
+                    "filled_qty": Decimal("1"),
+                    "avg_fill_price": Decimal("100"),
+                    "cost_amount": Decimal("0.20"),
+                    "cost_basis": "broker_reported_commission_and_fees",
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_id": "microbar-cross-sectional-pairs-v1",
+                    "decision_hash": "decision-buy",
+                    "alpaca_order_id": "order-buy",
+                    "execution_policy_hash": "policy-buy",
+                    "cost_model_hash": "cost-sha",
+                    "lineage_hash": "lineage-sha",
+                    "source_decision_mode": "strategy_signal_paper",
+                    "profit_proof_eligible": True,
+                },
+            ],
+            carry_in_decision_lifecycle_rows=[
+                {
+                    "trade_decision_id": "decision-buy-id",
+                    "computed_at": datetime(2026, 3, 6, 14, 34, tzinfo=timezone.utc),
+                    "event_type": "decision",
+                    "symbol": "AAPL",
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_id": "microbar-cross-sectional-pairs-v1",
+                    "decision_hash": "decision-buy",
+                    "decision_json": {"account": {"equity": "10000"}},
+                    "source_decision_mode": "strategy_signal_paper",
+                    "profit_proof_eligible": True,
+                    "lineage_hash": "lineage-sha",
+                },
+            ],
+            carry_in_order_lifecycle_rows=[
+                {
+                    "execution_order_event_id": "event-new-buy",
+                    "trade_decision_id": "decision-buy-id",
+                    "event_ts": datetime(2026, 3, 6, 14, 34, 1, tzinfo=timezone.utc),
+                    "event_type": "new",
+                    "symbol": "AAPL",
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_id": "microbar-cross-sectional-pairs-v1",
+                    "decision_hash": "decision-buy",
+                    "alpaca_order_id": "order-buy",
+                    "execution_policy_hash": "policy-buy",
+                    "lineage_hash": "lineage-sha",
+                    "source_topic": "alpaca.trade_updates",
+                    "source_partition": 0,
+                    "source_offset": 199,
+                    "source_window_id": "source-window-new-buy",
+                },
+                {
+                    "execution_order_event_id": "event-fill-buy",
+                    "trade_decision_id": "decision-buy-id",
+                    "execution_id": "execution-buy",
+                    "event_ts": datetime(2026, 3, 6, 14, 35, 1, tzinfo=timezone.utc),
+                    "event_type": "filled",
+                    "symbol": "AAPL",
+                    "side": "buy",
+                    "filled_qty": Decimal("1"),
+                    "avg_fill_price": Decimal("100"),
+                    "cost_amount": Decimal("0.20"),
+                    "cost_basis": "broker_reported_commission_and_fees",
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_id": "microbar-cross-sectional-pairs-v1",
+                    "decision_hash": "decision-buy",
+                    "alpaca_order_id": "order-buy",
+                    "execution_policy_hash": "policy-buy",
+                    "cost_model_hash": "cost-sha",
+                    "lineage_hash": "lineage-sha",
+                    "source_topic": "alpaca.trade_updates",
+                    "source_partition": 0,
+                    "source_offset": 200,
+                    "source_window_id": "source-window-fill-buy",
+                },
+            ],
+            allow_authoritative_runtime_ledger_materialization=True,
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0]["post_cost_promotion_eligible"])
+        self.assertTrue(rows[0]["authoritative"])
+        bucket = rows[0]["runtime_ledger_bucket"]
+        self.assertIsInstance(bucket, dict)
+        assert isinstance(bucket, dict)
+        self.assertEqual(bucket["blockers"], [])
+        self.assertEqual(bucket["filled_notional"], "201")
+        self.assertEqual(bucket["cost_amount"], "0.30")
+        self.assertEqual(bucket["net_strategy_pnl_after_costs"], "0.70")
+        self.assertEqual(bucket["open_position_count"], 0)
+        self.assertEqual(bucket["closed_trade_count"], 1)
+        self.assertEqual(bucket["source_window_start"], "2026-03-06T14:34:00+00:00")
+        self.assertEqual(
+            bucket["source_window_ids"],
+            [
+                "source-window-new-buy",
+                "source-window-fill-buy",
+                "source-window-new-sell",
+                "source-window-fill-sell",
+            ],
+        )
+        self.assertEqual(
+            bucket["source_row_counts"],
+            {
+                "executions": 2,
+                "execution_order_events": 4,
+                "order_feed_source_windows": 4,
+                "trade_decisions": 2,
+            },
+        )
+        self.assertTrue(_runtime_ledger_bucket_profit_proof_present(bucket))
+
+    def test_runtime_carry_in_source_filters_reject_wrong_symbol_and_decision(
+        self,
+    ) -> None:
+        bucket = RuntimeLedgerBucket(
+            bucket_started_at=datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
+            bucket_ended_at=datetime(2026, 3, 6, 14, 45, tzinfo=timezone.utc),
+            account_label="TORGHUT_SIM",
+            strategy_id="microbar-cross-sectional-pairs-v1",
+            symbol="AAPL",
+            fill_count=0,
+            decision_count=0,
+            submitted_order_count=0,
+            cancelled_order_count=0,
+            rejected_order_count=0,
+            unfilled_order_count=0,
+            closed_trade_count=0,
+            open_position_count=0,
+            filled_notional=Decimal("0"),
+            gross_strategy_pnl=Decimal("0"),
+            cost_amount=Decimal("0"),
+            net_strategy_pnl_after_costs=Decimal("0"),
+            post_cost_expectancy_bps=None,
+            cost_basis_counts={},
+            execution_policy_hash_counts={},
+            cost_model_hash_counts={},
+            lineage_hash_counts={},
+            blockers=[],
+        )
+
+        rows = _runtime_decision_rows_before_bucket(
+            bucket=bucket,
+            decision_lifecycle_rows=[
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 39, tzinfo=timezone.utc),
+                    "symbol": "MSFT",
+                    "decision_hash": "wanted",
+                },
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 46, tzinfo=timezone.utc),
+                    "symbol": "AAPL",
+                    "decision_hash": "wanted",
+                },
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 39, tzinfo=timezone.utc),
+                    "symbol": "AAPL",
+                    "decision_hash": "other",
+                },
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 39, tzinfo=timezone.utc),
+                    "symbol": "AAPL",
+                    "decision_hash": "wanted",
+                },
+            ],
+            source_rows=[{"decision_hash": "wanted"}],
+        )
+
+        self.assertEqual(
+            rows,
+            [
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 39, tzinfo=timezone.utc),
+                    "symbol": "AAPL",
+                    "decision_hash": "wanted",
+                }
+            ],
+        )
+
+    def test_runtime_execution_ledger_fill_helper_validates_and_hashes_cost_model(
+        self,
+    ) -> None:
+        invalid_fill, invalid_times = _runtime_execution_ledger_fill_from_row(
+            {
+                "computed_at": datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                "symbol": "AAPL",
+                "side": "buy",
+                "filled_qty": Decimal("1"),
+                "avg_fill_price": Decimal("0"),
+            },
+            order_lifecycle_rows=None,
+        )
+
+        self.assertIsNone(invalid_fill)
+        self.assertEqual(invalid_times, [])
+
+        fill, event_times = _runtime_execution_ledger_fill_from_row(
+            {
+                "execution_id": "execution-sell",
+                "trade_decision_id": "decision-sell-id",
+                "computed_at": datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
+                "execution_event_at": datetime(
+                    2026, 3, 6, 14, 40, 1, tzinfo=timezone.utc
+                ),
+                "symbol": "AAPL",
+                "side": "sell",
+                "filled_qty": Decimal("1"),
+                "avg_fill_price": Decimal("101"),
+                "cost_amount": Decimal("0.02"),
+                "cost_basis": "alpaca_2026_equity_fee_schedule",
+                "account_label": "TORGHUT_SIM",
+                "strategy_id": "microbar-cross-sectional-pairs-v1",
+            },
+            order_lifecycle_rows=None,
+        )
+
+        self.assertIsNotNone(fill)
+        assert fill is not None
+        self.assertEqual(fill.cost_model_hash, _alpaca_2026_equity_fee_schedule_hash())
+        self.assertEqual(
+            event_times,
+            [
+                datetime(2026, 3, 6, 14, 40, 1, tzinfo=timezone.utc),
+                datetime(2026, 3, 6, 14, 40, 1, tzinfo=timezone.utc),
+            ],
+        )
+
+    def test_build_realized_strategy_pnl_rows_uses_carry_in_execution_economics(
+        self,
+    ) -> None:
+        rows = _build_realized_strategy_pnl_rows(
+            [
+                {
+                    "execution_id": "execution-sell",
+                    "trade_decision_id": "decision-sell-id",
+                    "computed_at": datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
+                    "execution_event_at": datetime(
+                        2026, 3, 6, 14, 40, 1, tzinfo=timezone.utc
+                    ),
+                    "symbol": "AAPL",
+                    "side": "sell",
+                    "filled_qty": Decimal("1"),
+                    "avg_fill_price": Decimal("101"),
+                    "cost_amount": Decimal("0.10"),
+                    "cost_basis": "broker_reported_commission_and_fees",
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_id": "microbar-cross-sectional-pairs-v1",
+                    "decision_hash": "decision-sell",
+                    "execution_policy_hash": "policy-sell",
+                    "cost_model_hash": "cost-sha",
+                    "lineage_hash": "lineage-sha",
+                },
+            ],
+            carry_in_execution_rows=[
+                {
+                    "execution_id": "execution-buy",
+                    "trade_decision_id": "decision-buy-id",
+                    "computed_at": datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                    "execution_event_at": datetime(
+                        2026, 3, 6, 14, 35, 1, tzinfo=timezone.utc
+                    ),
+                    "symbol": "AAPL",
+                    "side": "buy",
+                    "filled_qty": Decimal("1"),
+                    "avg_fill_price": Decimal("100"),
+                    "cost_amount": Decimal("0.20"),
+                    "cost_basis": "broker_reported_commission_and_fees",
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_id": "microbar-cross-sectional-pairs-v1",
+                    "decision_hash": "decision-buy",
+                    "execution_policy_hash": "policy-buy",
+                    "cost_model_hash": "cost-sha",
+                    "lineage_hash": "lineage-sha",
+                },
+            ],
+            split_mixed_source_decision_modes=False,
+        )
+
+        self.assertEqual(len(rows), 1)
+        bucket = rows[0]["runtime_ledger_bucket"]
+        self.assertIsInstance(bucket, dict)
+        assert isinstance(bucket, dict)
+        self.assertEqual(bucket["closed_trade_count"], 1)
+        self.assertEqual(bucket["filled_notional"], "201")
+        self.assertEqual(bucket["net_strategy_pnl_after_costs"], "0.70")
 
     def test_build_realized_strategy_pnl_rows_does_not_borrow_source_refs_from_other_symbol(
         self,
@@ -4641,6 +5023,254 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             diagnostics["order_feed_fill_lifecycle_blockers"],
             ["order_feed_fill_lifecycle_missing"],
         )
+
+    def test_query_timestamps_materializes_source_backed_carry_in(
+        self,
+    ) -> None:
+        def decision_row(
+            decision_id: str,
+            created_at: datetime,
+            decision_hash: str,
+        ) -> tuple[object, ...]:
+            return (
+                decision_id,
+                created_at,
+                "AAPL",
+                "TORGHUT_SIM",
+                "microbar-cross-sectional-pairs-v1",
+                decision_hash,
+                {},
+            )
+
+        def execution_row(
+            execution_id: str,
+            decision_id: str,
+            decision_created_at: datetime,
+            event_at: datetime,
+            side: str,
+            qty: str,
+            price: str,
+            order_id: str,
+            decision_hash: str,
+        ) -> tuple[object, ...]:
+            return (
+                execution_id,
+                decision_id,
+                decision_created_at,
+                event_at,
+                event_at,
+                "AAPL",
+                side,
+                Decimal(qty),
+                Decimal(price),
+                Decimal("0.01"),
+                {
+                    "cost_amount": "0.01",
+                    "cost_basis": "broker_reported_commission_and_fees",
+                },
+                {},
+                "TORGHUT_SIM",
+                "microbar-cross-sectional-pairs-v1",
+                decision_hash,
+                {},
+                order_id,
+                f"client-{order_id}",
+                "filled",
+            )
+
+        def order_event_row(
+            event_id: str,
+            decision_id: str,
+            execution_id: str,
+            event_at: datetime,
+            event_type: str,
+            side: str,
+            qty: str,
+            price: str,
+            order_id: str,
+            decision_hash: str,
+            source_offset: int,
+        ) -> tuple[object, ...]:
+            return (
+                event_id,
+                decision_id,
+                execution_id,
+                event_at,
+                "AAPL",
+                "TORGHUT_SIM",
+                "microbar-cross-sectional-pairs-v1",
+                decision_hash,
+                {},
+                order_id,
+                f"client-{order_id}",
+                event_type,
+                "filled" if event_type == "filled" else "new",
+                side,
+                Decimal(qty),
+                Decimal(qty) if event_type == "filled" else Decimal("0"),
+                Decimal(price),
+                f"fingerprint-{event_id}",
+                "alpaca.trade_updates",
+                0,
+                source_offset,
+                f"source-window-{event_id}",
+                {},
+                {
+                    "cost_amount": "0.01",
+                    "cost_basis": "broker_reported_commission_and_fees",
+                },
+                {},
+            )
+
+        cursor = _FakeCursor()
+        cursor._results = [
+            [
+                decision_row(
+                    "decision-sell-id",
+                    datetime(2026, 3, 6, 14, 39, tzinfo=timezone.utc),
+                    "decision-sell",
+                )
+            ],
+            [
+                execution_row(
+                    "execution-sell",
+                    "decision-sell-id",
+                    datetime(2026, 3, 6, 14, 39, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
+                    "sell",
+                    "1",
+                    "101",
+                    "order-sell",
+                    "decision-sell",
+                )
+            ],
+            [
+                order_event_row(
+                    "event-fill-sell",
+                    "decision-sell-id",
+                    "execution-sell",
+                    datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
+                    "filled",
+                    "sell",
+                    "1",
+                    "101",
+                    "order-sell",
+                    "decision-sell",
+                    202,
+                )
+            ],
+            [
+                decision_row(
+                    "decision-buy-id",
+                    datetime(2026, 3, 6, 14, 34, tzinfo=timezone.utc),
+                    "decision-buy",
+                )
+            ],
+            [
+                execution_row(
+                    "execution-buy",
+                    "decision-buy-id",
+                    datetime(2026, 3, 6, 14, 34, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                    "buy",
+                    "1",
+                    "100",
+                    "order-buy",
+                    "decision-buy",
+                )
+            ],
+            [
+                order_event_row(
+                    "event-fill-buy",
+                    "decision-buy-id",
+                    "execution-buy",
+                    datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                    "filled",
+                    "buy",
+                    "1",
+                    "100",
+                    "order-buy",
+                    "decision-buy",
+                    200,
+                )
+            ],
+            [],
+            [],
+        ]
+        connection = _FakeConnection(cursor)
+        diagnostics: dict[str, object] = {}
+
+        with patch(
+            "scripts.import_hypothesis_runtime_windows.psycopg.connect",
+            return_value=connection,
+        ):
+            _, _, tca_rows = _query_timestamps(
+                dsn="postgresql://example",
+                strategy_names=["microbar-cross-sectional-pairs-v1"],
+                account_label="TORGHUT_SIM",
+                window_start=datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
+                window_end=datetime(2026, 3, 6, 14, 45, tzinfo=timezone.utc),
+                symbols=["AAPL"],
+                allow_authoritative_runtime_ledger_materialization=True,
+                source_activity_diagnostics=diagnostics,
+            )
+
+        self.assertEqual(len(cursor.executed), 8)
+        carry_decision_query, carry_decision_params = cursor.executed[3]
+        carry_execution_query, carry_execution_params = cursor.executed[4]
+        carry_order_query, carry_order_params = cursor.executed[5]
+        self.assertIn("d.created_at >= %s", carry_decision_query)
+        self.assertIn("d.created_at < %s", carry_decision_query)
+        self.assertIn("from executions e", carry_execution_query)
+        self.assertIn("from execution_order_events oe", carry_order_query)
+        self.assertEqual(
+            carry_decision_params[3],
+            datetime(2026, 3, 1, 14, 40, tzinfo=timezone.utc),
+        )
+        self.assertEqual(
+            carry_execution_params[3],
+            datetime(2026, 3, 1, 14, 40, tzinfo=timezone.utc),
+        )
+        self.assertEqual(
+            carry_order_params[3],
+            datetime(2026, 3, 1, 14, 40, tzinfo=timezone.utc),
+        )
+        self.assertEqual(diagnostics["carry_in_decision_rows_before_lineage_filter"], 1)
+        self.assertEqual(diagnostics["carry_in_decision_rows_after_lineage_filter"], 1)
+        self.assertEqual(
+            diagnostics["carry_in_execution_rows_before_lineage_filter"], 1
+        )
+        self.assertEqual(diagnostics["carry_in_execution_rows_after_lineage_filter"], 1)
+        self.assertEqual(
+            diagnostics["carry_in_fill_execution_rows_before_lineage_filter"], 1
+        )
+        self.assertEqual(
+            diagnostics["carry_in_fill_execution_rows_after_lineage_filter"], 1
+        )
+        self.assertEqual(
+            diagnostics["carry_in_order_lifecycle_rows_before_lineage_filter"], 1
+        )
+        self.assertEqual(
+            diagnostics["carry_in_order_lifecycle_rows_after_lineage_filter"], 1
+        )
+        self.assertEqual(
+            diagnostics["carry_in_fill_order_lifecycle_rows_before_lineage_filter"], 1
+        )
+        self.assertEqual(
+            diagnostics["carry_in_fill_order_lifecycle_rows_after_lineage_filter"], 1
+        )
+        runtime_rows = [
+            row
+            for row in tca_rows
+            if row.get("post_cost_expectancy_basis") == POST_COST_BASIS_RUNTIME_LEDGER
+        ]
+        self.assertEqual(len(runtime_rows), 1)
+        bucket = runtime_rows[0]["runtime_ledger_bucket"]
+        self.assertIsInstance(bucket, dict)
+        assert isinstance(bucket, dict)
+        self.assertEqual(bucket["closed_trade_count"], 1)
+        self.assertEqual(bucket["open_position_count"], 0)
+        self.assertEqual(bucket["source_window_start"], "2026-03-06T14:34:00+00:00")
 
     def test_source_activity_diagnostic_blockers_classify_materialization_gap(
         self,
