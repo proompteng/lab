@@ -243,6 +243,12 @@ def _completion(
     net_pnl: str = "10000",
     trading_days: int = 20,
     expectancy_bps: str = "13",
+    filled_notional: str = "10000000",
+    avg_daily_filled_notional: str | None = "500000",
+    median_daily_net_pnl: str | None = "500",
+    p10_daily_net_pnl: str | None = "500",
+    worst_day_net_pnl: str | None = "500",
+    max_intraday_drawdown: str | None = "500",
     drawdown_pct: str | None = "0.02",
     best_day_share: str | None = "0.20",
     symbol_concentration_share: str | None = "0.35",
@@ -253,11 +259,31 @@ def _completion(
         "runtime_ledger_bucket_count": 1,
         "runtime_ledger_fill_count": 4,
         "runtime_ledger_closed_trade_count": 2,
-        "runtime_ledger_filled_notional": "50000",
+        "runtime_ledger_filled_notional": filled_notional,
         "runtime_ledger_net_strategy_pnl_after_costs": net_pnl,
         "runtime_ledger_post_cost_expectancy_bps": expectancy_bps,
         "runtime_ledger_observed_trading_day_count": trading_days,
     }
+    if avg_daily_filled_notional is not None:
+        runtime_ledger_summary["runtime_ledger_avg_daily_filled_notional"] = (
+            avg_daily_filled_notional
+        )
+    if median_daily_net_pnl is not None:
+        runtime_ledger_summary["runtime_ledger_median_daily_net_pnl_after_costs"] = (
+            median_daily_net_pnl
+        )
+    if p10_daily_net_pnl is not None:
+        runtime_ledger_summary["runtime_ledger_p10_daily_net_pnl_after_costs"] = (
+            p10_daily_net_pnl
+        )
+    if worst_day_net_pnl is not None:
+        runtime_ledger_summary["runtime_ledger_worst_day_net_pnl_after_costs"] = (
+            worst_day_net_pnl
+        )
+    if max_intraday_drawdown is not None:
+        runtime_ledger_summary["runtime_ledger_max_intraday_drawdown"] = (
+            max_intraday_drawdown
+        )
     if drawdown_pct is not None:
         runtime_ledger_summary["runtime_ledger_max_drawdown_pct_equity"] = drawdown_pct
     if best_day_share is not None:
@@ -409,12 +435,112 @@ class TestRuntimeLedgerProofPacket(TestCase):
             "0.02",
         )
         self.assertEqual(
+            result["checks"]["runtime_ledger_daily_distribution_authority"][
+                "observed"
+            ]["median_daily_net_pnl_after_costs"],
+            "500",
+        )
+        self.assertEqual(
+            result["checks"]["runtime_ledger_target_implied_scale"]["observed"][
+                "target_implied_avg_daily_filled_notional"
+            ],
+            "384615.3846153846153846153846",
+        )
+        self.assertEqual(
             result["target"]["max_runtime_ledger_drawdown_pct_equity"],
             "0.03",
+        )
+        self.assertEqual(
+            result["target"]["min_runtime_ledger_median_daily_net_pnl_after_costs"],
+            "250",
+        )
+        self.assertEqual(result["target"]["max_runtime_ledger_intraday_drawdown"], "1500")
+        self.assertEqual(
+            result["target"]["target_implied_avg_daily_filled_notional"],
+            "384615.3846153846153846153846",
         )
         self.assertEqual(result["proof_mode"], "authority")
         self.assertTrue(result["final_authority_ok"])
         self.assertFalse(result["evidence_collection_only"])
+
+    def test_authority_packet_requires_daily_distribution_and_scale(self) -> None:
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=_runtime_import(),
+            completion_status=_completion(
+                avg_daily_filled_notional="200000",
+                median_daily_net_pnl="200",
+                p10_daily_net_pnl="-300",
+                worst_day_net_pnl="-800",
+                max_intraday_drawdown="1600",
+            ),
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertFalse(result["final_authority_ok"])
+        daily_blockers = result["checks"]["runtime_ledger_daily_distribution_authority"][
+            "blockers"
+        ]
+        self.assertIn(
+            "runtime_ledger_median_daily_net_pnl_after_costs_below_floor",
+            daily_blockers,
+        )
+        self.assertIn(
+            "runtime_ledger_p10_daily_net_pnl_after_costs_below_floor",
+            daily_blockers,
+        )
+        self.assertIn(
+            "runtime_ledger_worst_day_net_pnl_after_costs_below_floor",
+            daily_blockers,
+        )
+        self.assertIn(
+            "runtime_ledger_avg_daily_filled_notional_below_target_implied_floor",
+            result["checks"]["runtime_ledger_target_implied_scale"]["blockers"],
+        )
+        self.assertIn(
+            "runtime_ledger_max_intraday_drawdown_above_limit",
+            result["checks"]["runtime_ledger_risk_quality"]["blockers"],
+        )
+        self.assertEqual(result["verdict"], "blocked")
+
+    def test_authority_packet_requires_daily_distribution_fields(self) -> None:
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=_runtime_import(),
+            completion_status=_completion(
+                avg_daily_filled_notional=None,
+                median_daily_net_pnl=None,
+                p10_daily_net_pnl=None,
+                worst_day_net_pnl=None,
+                max_intraday_drawdown=None,
+            ),
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertIn(
+            "runtime_ledger_median_daily_net_pnl_after_costs_missing",
+            result["promotion_authority"]["blocking_reasons"],
+        )
+        self.assertIn(
+            "runtime_ledger_p10_daily_net_pnl_after_costs_missing",
+            result["promotion_authority"]["blocking_reasons"],
+        )
+        self.assertIn(
+            "runtime_ledger_worst_day_net_pnl_after_costs_missing",
+            result["promotion_authority"]["blocking_reasons"],
+        )
+        self.assertIn(
+            "runtime_ledger_avg_daily_filled_notional_missing",
+            result["promotion_authority"]["blocking_reasons"],
+        )
+        self.assertIn(
+            "runtime_ledger_max_intraday_drawdown_missing",
+            result["promotion_authority"]["blocking_reasons"],
+        )
 
     def test_smoke_packet_cannot_grant_promotion_authority(self) -> None:
         result = packet.build_runtime_ledger_proof_packet(
@@ -1166,6 +1292,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
             result["checks"]["runtime_ledger_risk_quality"]["expected"],
             {
                 "max_drawdown_pct_equity": "0.03",
+                "max_intraday_drawdown": "1500",
                 "max_best_day_share": "0.25",
                 "max_symbol_concentration_share": "0.35",
             },
