@@ -5,7 +5,12 @@ description: How to evaluate Olden Era units by speed, role, ability, growth, an
 
 # Units Reference
 
-Units are not interchangeable damage numbers. Each stack has a job.
+Units are not interchangeable damage numbers. Each stack has a job, a replacement cost, and a timing window.
+
+<img
+  src="/visuals/creature-stat-board.svg"
+  alt="Creature stat decision board for speed, damage, durability, and growth value."
+/>
 
 ## Unit roles
 
@@ -23,9 +28,23 @@ Units are not interchangeable damage numbers. Each stack has a job.
 - Health and defense decide whether retaliation is acceptable.
 - Abilities decide if normal positioning rules change.
 - Growth and cost decide how painful losses are.
+- Experience tells you how valuable enemy losses are when planning neutral fights.
 
 ## Beginner rule
 
 Protect units that are hard to replace or essential to the next fight. Spending one cheap stack to save an elite stack is often correct.
 
-<SourceNote ids={['official-wiki-units', 'official-wiki-main-page']} />
+## Creature stats
+
+The table below is intentionally practical: every row keeps the full stat line visible and adds a short note for how that creature should be evaluated during play.
+
+<CreatureStatsTable />
+
+<SourceNote
+  ids={[
+    'official-wiki-units',
+    'official-wiki-data-units-json',
+    'official-wiki-unit-stats',
+    'community-olden-era-units',
+  ]}
+/>
