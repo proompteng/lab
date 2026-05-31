@@ -173,8 +173,37 @@ jobs:
     needs: [version, build-proompteng, build-app, build-synthesis, build-docs, build-olden]
     if: failure()
     steps:
-      - name: Delete release if any build failed
-        run: gh release delete ${{ needs.version.outputs.new_tag }} --cleanup-tag --yes
-        continue-on-error: true
+      - name: Delete release and tag if any build failed
+        uses: actions/github-script@v8
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.version.outputs.new_tag }}
+        with:
+          script: |
+            const tag = process.env.RELEASE_TAG;
+            if (!tag) {
+              core.info('No release tag was produced; nothing to clean up.');
+              return;
+            }
+
+            const { owner, repo } = context.repo;
+
+            try {
+              const release = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
+              await github.rest.repos.deleteRelease({ owner, repo, release_id: release.data.id });
+              core.info(`Deleted release ${tag}.`);
+            } catch (error) {
+              if (error.status !== 404) {
+                throw error;
+              }
+              core.info(`Release ${tag} was already absent.`);
+            }
+
+            try {
+              await github.rest.git.deleteRef({ owner, repo, ref: `tags/${tag}` });
+              core.info(`Deleted tag ${tag}.`);
+            } catch (error) {
+              if (error.status !== 404) {
+                throw error;
+              }
+              core.info(`Tag ${tag} was already absent.`);
+            }
