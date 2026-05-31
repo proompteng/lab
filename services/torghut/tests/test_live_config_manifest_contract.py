@@ -906,9 +906,9 @@ class TestLiveConfigManifestContract(TestCase):
 
         self.assertEqual(spec.get("backoffLimit"), 3)
         self.assertEqual(spec.get("activeDeadlineSeconds"), 300)
-        self.assertEqual(
-            container.get("image"),
-            "registry.ide-newton.ts.net/lab/torghut@sha256:926e66b4b09ca48e06c94b35811c676fe475e7bec7c21f763a7adfb81ae7f67d",
+        self.assertRegex(
+            container.get("image", ""),
+            r"^registry\.ide-newton\.ts\.net/lab/torghut@sha256:[0-9a-f]{64}$",
         )
         self.assertEqual(
             container.get("command"),

@@ -259,6 +259,7 @@ jobs:
             argocd/applications/torghut/order-feed-source-window-repair-cronjob.yaml \
             argocd/applications/torghut/paper-account-flatten-cronjob.yaml \
             argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml \
+            argocd/applications/torghut/tigerbeetle-smoke-job.yaml \
             argocd/applications/torghut-options/catalog/deployment.yaml \
             argocd/applications/torghut-options/enricher/deployment.yaml; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -300,6 +301,7 @@ jobs:
             argocd/applications/torghut/order-feed-source-window-repair-cronjob.yaml
             argocd/applications/torghut/paper-account-flatten-cronjob.yaml
             argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml
+            argocd/applications/torghut/tigerbeetle-smoke-job.yaml
             argocd/applications/torghut-options/catalog/deployment.yaml
             argocd/applications/torghut-options/enricher/deployment.yaml
           body: |
@@ -344,6 +346,7 @@ jobs:
             argocd/applications/torghut/order-feed-source-window-repair-cronjob.yaml
             argocd/applications/torghut/paper-account-flatten-cronjob.yaml
             argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml
+            argocd/applications/torghut/tigerbeetle-smoke-job.yaml
             argocd/applications/torghut-options/catalog/deployment.yaml
             argocd/applications/torghut-options/enricher/deployment.yaml
           body: |
