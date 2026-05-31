@@ -53,9 +53,9 @@ spec:
                 enabled: "true"
                 managedNamespaceMetadata:
                   labels:
-                    pod-security.kubernetes.io/enforce: restricted
-                    pod-security.kubernetes.io/audit: restricted
-                    pod-security.kubernetes.io/warn: restricted
+                    pod-security.kubernetes.io/enforce: privileged
+                    pod-security.kubernetes.io/audit: privileged
+                    pod-security.kubernetes.io/warn: privileged
               - name: metrics-server
                 path: manifests/overlays/release-ha-1.21+
                 repoURL: https://github.com/kubernetes-sigs/metrics-server.git
