@@ -6341,6 +6341,21 @@ def _apply_fast_replay_preview_narrowing(
             updated["fast_replay_preview_matched_row_count"] = preview_row[
                 "matched_row_count"
             ]
+            updated["fast_replay_preview_ofi_pressure_score"] = preview_row[
+                "ofi_pressure_score"
+            ]
+            updated["fast_replay_preview_microprice_bias_bps"] = preview_row[
+                "microprice_bias_bps"
+            ]
+            updated["fast_replay_preview_spread_tail_bps"] = preview_row[
+                "spread_tail_bps"
+            ]
+            updated["fast_replay_preview_return_tail_abs_bps"] = preview_row[
+                "return_tail_abs_bps"
+            ]
+            updated["fast_replay_preview_impact_liquidity_penalty_bps"] = preview_row[
+                "impact_liquidity_penalty_bps"
+            ]
         if candidate_spec_id in original_selected_ids:
             updated["pre_fast_replay_preview_selected_for_replay"] = bool(
                 row.get("selected_for_replay")
