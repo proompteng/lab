@@ -2,8 +2,8 @@ apiVersion: v2
 name: tigresse
 description: Production TigerBeetle Kubernetes operator
 type: application
-version: 0.1.2
-appVersion: v0.1.2
+version: 0.1.3
+appVersion: v0.1.3
 home: https://github.com/proompteng/tigresse
 sources:
   - https://github.com/proompteng/tigresse
