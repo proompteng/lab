@@ -1,0 +1,135 @@
+from __future__ import annotations
+
+import time
+from datetime import datetime, timezone
+from unittest import TestCase
+from unittest.mock import patch
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
+
+from app.config import settings
+from app.main import (
+    _build_tigerbeetle_ledger_status,
+    _check_tigerbeetle_protocol_health,
+)
+from app.models import Base, TigerBeetleReconciliationRun
+from app.trading.tigerbeetle_client import TigerBeetleHealth
+
+
+class TestTigerBeetleStatus(TestCase):
+    def setUp(self) -> None:
+        self.engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+        Base.metadata.create_all(self.engine)
+        self._orig_enabled = settings.tigerbeetle_enabled
+        self._orig_required = settings.tigerbeetle_required
+        self._orig_journal_enabled = settings.tigerbeetle_journal_enabled
+        self._orig_reconcile_required = settings.tigerbeetle_reconcile_required
+        self._orig_timeout = settings.tigerbeetle_health_timeout_seconds
+        settings.tigerbeetle_enabled = False
+        settings.tigerbeetle_required = False
+        settings.tigerbeetle_journal_enabled = False
+        settings.tigerbeetle_reconcile_required = False
+        settings.tigerbeetle_health_timeout_seconds = 1.0
+
+    def tearDown(self) -> None:
+        settings.tigerbeetle_enabled = self._orig_enabled
+        settings.tigerbeetle_required = self._orig_required
+        settings.tigerbeetle_journal_enabled = self._orig_journal_enabled
+        settings.tigerbeetle_reconcile_required = self._orig_reconcile_required
+        settings.tigerbeetle_health_timeout_seconds = self._orig_timeout
+
+    def test_disabled_tigerbeetle_status_is_non_blocking(self) -> None:
+        with Session(self.engine) as session:
+            payload = _build_tigerbeetle_ledger_status(session)
+
+        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["enabled"])
+        self.assertTrue(payload["protocol_ok"])
+        self.assertEqual(payload["blockers"], [])
+
+    def test_required_protocol_failure_blocks_readiness_dependency(self) -> None:
+        settings.tigerbeetle_enabled = True
+        settings.tigerbeetle_required = True
+        health = TigerBeetleHealth(
+            enabled=True,
+            required=True,
+            ok=False,
+            cluster_id=2001,
+            replica_addresses=["tb:3000"],
+            last_error="RuntimeError: boom",
+        )
+
+        with Session(self.engine) as session:
+            with patch("app.main.check_tigerbeetle_health", return_value=health):
+                payload = _build_tigerbeetle_ledger_status(session)
+
+        self.assertFalse(payload["ok"])
+        self.assertFalse(payload["protocol_ok"])
+        self.assertIn("tigerbeetle_protocol_unhealthy", payload["blockers"])
+
+    def test_missing_reconciliation_blocks_only_when_required(self) -> None:
+        settings.tigerbeetle_reconcile_required = True
+
+        with Session(self.engine) as session:
+            payload = _build_tigerbeetle_ledger_status(session)
+
+        self.assertFalse(payload["ok"])
+        self.assertFalse(payload["reconciliation_ok"])
+        self.assertIn("tigerbeetle_reconciliation_missing", payload["blockers"])
+
+    def test_protocol_timeout_is_nonblocking_until_required(self) -> None:
+        settings.tigerbeetle_enabled = True
+        settings.tigerbeetle_required = False
+        settings.tigerbeetle_health_timeout_seconds = 0.01
+
+        def slow_health(_settings: object) -> TigerBeetleHealth:
+            time.sleep(0.2)
+            return TigerBeetleHealth(
+                enabled=True,
+                required=False,
+                ok=True,
+                cluster_id=2001,
+                replica_addresses=["tb:3000"],
+                last_error=None,
+            )
+
+        with patch("app.main.check_tigerbeetle_health", side_effect=slow_health):
+            payload = _check_tigerbeetle_protocol_health()
+
+        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["protocol_ok"])
+        self.assertIn("TimeoutError", str(payload["last_error"]))
+
+    def test_latest_reconciliation_blockers_are_reported(self) -> None:
+        settings.tigerbeetle_enabled = True
+        settings.tigerbeetle_reconcile_required = True
+        health = TigerBeetleHealth(
+            enabled=True,
+            required=False,
+            ok=True,
+            cluster_id=2001,
+            replica_addresses=["tb:3000"],
+            last_error=None,
+        )
+
+        with Session(self.engine) as session:
+            session.add(
+                TigerBeetleReconciliationRun(
+                    cluster_id=2001,
+                    started_at=datetime.now(timezone.utc),
+                    finished_at=datetime.now(timezone.utc),
+                    status="degraded",
+                    checked_transfer_count=1,
+                    missing_transfer_count=0,
+                    mismatched_transfer_count=1,
+                    payload_json={"blockers": ["tigerbeetle_transfer_code_mismatch"]},
+                )
+            )
+            session.flush()
+            with patch("app.main.check_tigerbeetle_health", return_value=health):
+                payload = _build_tigerbeetle_ledger_status(session)
+
+        self.assertFalse(payload["ok"])
+        self.assertFalse(payload["reconciliation_ok"])
+        self.assertIn("tigerbeetle_transfer_code_mismatch", payload["blockers"])

@@ -16,6 +16,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy import func
@@ -435,6 +436,134 @@ class OrderFeedConsumerCursor(Base, TimestampMixin):
             "ix_order_feed_consumer_cursors_updated_at",
             "updated_at",
         ),
+    )
+
+
+class TigerBeetleAccountRef(Base, TimestampMixin):
+    """Postgres reference row for a deterministic TigerBeetle account."""
+
+    __tablename__ = "tigerbeetle_account_refs"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    cluster_id: Mapped[int] = mapped_column(BigInteger(), nullable=False)
+    account_id: Mapped[str] = mapped_column(String(length=39), nullable=False)
+    account_key: Mapped[str] = mapped_column(String(length=255), nullable=False)
+    ledger: Mapped[int] = mapped_column(BigInteger(), nullable=False)
+    code: Mapped[int] = mapped_column(BigInteger(), nullable=False)
+    account_label: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    symbol: Mapped[Optional[str]] = mapped_column(
+        String(length=MARKET_SYMBOL_MAX_LENGTH), nullable=True
+    )
+    strategy_id: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
+    payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "cluster_id",
+            "account_id",
+            name="uq_tigerbeetle_account_refs_cluster_account_id",
+        ),
+        UniqueConstraint(
+            "cluster_id",
+            "account_key",
+            name="uq_tigerbeetle_account_refs_cluster_account_key",
+        ),
+        Index("ix_tigerbeetle_account_refs_account_label", "account_label"),
+        Index("ix_tigerbeetle_account_refs_symbol", "symbol"),
+    )
+
+
+class TigerBeetleTransferRef(Base, TimestampMixin):
+    """Postgres reference row for an idempotent TigerBeetle transfer."""
+
+    __tablename__ = "tigerbeetle_transfer_refs"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    cluster_id: Mapped[int] = mapped_column(BigInteger(), nullable=False)
+    transfer_id: Mapped[str] = mapped_column(String(length=39), nullable=False)
+    transfer_kind: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    ledger: Mapped[int] = mapped_column(BigInteger(), nullable=False)
+    code: Mapped[int] = mapped_column(BigInteger(), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(39, 0), nullable=False)
+    status: Mapped[str] = mapped_column(String(length=32), nullable=False)
+    result_code: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    trade_decision_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        GUID(), ForeignKey("trade_decisions.id", ondelete="SET NULL"), nullable=True
+    )
+    execution_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        GUID(), ForeignKey("executions.id", ondelete="SET NULL"), nullable=True
+    )
+    execution_order_event_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        GUID(),
+        ForeignKey("execution_order_events.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    event_fingerprint: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+
+    trade_decision: Mapped[Optional[TradeDecision]] = relationship()
+    execution: Mapped[Optional[Execution]] = relationship()
+    execution_order_event: Mapped[Optional[ExecutionOrderEvent]] = relationship()
+
+    __table_args__ = (
+        UniqueConstraint(
+            "cluster_id",
+            "transfer_id",
+            name="uq_tigerbeetle_transfer_refs_cluster_transfer_id",
+        ),
+        UniqueConstraint(
+            "cluster_id",
+            "event_fingerprint",
+            "transfer_kind",
+            name="uq_tigerbeetle_transfer_refs_cluster_event_kind",
+        ),
+        Index("ix_tigerbeetle_transfer_refs_status", "status"),
+        Index("ix_tigerbeetle_transfer_refs_trade_decision_id", "trade_decision_id"),
+        Index("ix_tigerbeetle_transfer_refs_execution_id", "execution_id"),
+        Index(
+            "ix_tigerbeetle_transfer_refs_execution_order_event_id",
+            "execution_order_event_id",
+        ),
+    )
+
+
+class TigerBeetleReconciliationRun(Base, TimestampMixin):
+    """Summary row for TigerBeetle reconciliation checks."""
+
+    __tablename__ = "tigerbeetle_reconciliation_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    cluster_id: Mapped[int] = mapped_column(BigInteger(), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    finished_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    status: Mapped[str] = mapped_column(String(length=32), nullable=False)
+    checked_transfer_count: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, server_default=text("0")
+    )
+    missing_transfer_count: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, server_default=text("0")
+    )
+    mismatched_transfer_count: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, server_default=text("0")
+    )
+    payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+
+    __table_args__ = (
+        Index("ix_tigerbeetle_reconciliation_runs_cluster_id", "cluster_id"),
+        Index("ix_tigerbeetle_reconciliation_runs_status", "status"),
+        Index("ix_tigerbeetle_reconciliation_runs_started_at", "started_at"),
     )
 
 

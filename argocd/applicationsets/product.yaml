@@ -270,6 +270,13 @@ spec:
                   - ApplyOutOfSyncOnly=true
                   - PruneLast=true
                   - ClientSideApplyMigration=false
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: privileged
+                    pod-security.kubernetes.io/audit: privileged
+                    pod-security.kubernetes.io/warn: privileged
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false
                 ignoreDifferences:
                   - group: serving.knative.dev
                     kind: Service
@@ -465,7 +472,8 @@ spec:
     {{- $useLovely := or (not (hasKey . "renderWithLovely")) .renderWithLovely -}}
     {{- $auto := eq .automation "auto" -}}
     {{- $hasSyncOptions := hasKey . "syncOptions" -}}
-    {{- $needsSpec := or $hasDestServer $hasDestName $useLovely $auto $hasSyncOptions (hasKey . "ignoreDifferences") -}}
+    {{- $hasManagedNS := hasKey . "managedNamespaceMetadata" -}}
+    {{- $needsSpec := or $hasDestServer $hasDestName $useLovely $auto $hasSyncOptions $hasManagedNS (hasKey . "ignoreDifferences") -}}
     {{- if $needsSpec }}
     spec:
     {{- if or $hasDestServer $hasDestName }}
@@ -483,7 +491,7 @@ spec:
         plugin:
           name: lovely
     {{- end }}
-    {{- if or $auto $hasSyncOptions }}
+    {{- if or $auto $hasSyncOptions $hasManagedNS }}
       syncPolicy:
       {{- if $hasSyncOptions }}
         syncOptions: {{ toJson .syncOptions }}
@@ -500,6 +508,21 @@ spec:
             factor: 2
             maxDuration: 3m
           refresh: true
+      {{- end }}
+      {{- if $hasManagedNS }}
+        managedNamespaceMetadata:
+        {{- if hasKey .managedNamespaceMetadata "labels" }}
+          labels:
+          {{- range $key, $value := .managedNamespaceMetadata.labels }}
+            {{ $key }}: {{ $value | quote }}
+          {{- end }}
+        {{- end }}
+        {{- if hasKey .managedNamespaceMetadata "annotations" }}
+          annotations:
+          {{- range $key, $value := .managedNamespaceMetadata.annotations }}
+            {{ $key }}: {{ $value | quote }}
+          {{- end }}
+        {{- end }}
       {{- end }}
     {{- end }}
     {{- if hasKey . "ignoreDifferences" }}

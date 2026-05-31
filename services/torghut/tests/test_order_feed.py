@@ -22,9 +22,11 @@ from app.models import (
     OrderFeedSourceWindow,
     RejectedSignalOutcomeEvent,
     Strategy,
+    TigerBeetleTransferRef,
     TradeDecision,
 )
 from app.trading import order_feed as order_feed_module
+from app.trading.tigerbeetle_client import FakeTigerBeetleClient
 from app.trading.order_feed import (
     HISTORICAL_ORDER_EVENT_SOURCE_WINDOW_REVISION,
     ORDER_FEED_SOURCE_REVISION,
@@ -126,12 +128,18 @@ class TestOrderFeed(TestCase):
         self._orig_client_id = settings.trading_order_feed_client_id
         self._orig_assignment_mode = settings.trading_order_feed_assignment_mode
         self._orig_auto_offset_reset = settings.trading_order_feed_auto_offset_reset
+        self._orig_tigerbeetle_enabled = settings.tigerbeetle_enabled
+        self._orig_tigerbeetle_journal_enabled = settings.tigerbeetle_journal_enabled
+        self._orig_tigerbeetle_required = settings.tigerbeetle_required
         settings.trading_order_feed_enabled = True
         settings.trading_order_feed_bootstrap_servers = "localhost:9092"
         settings.trading_order_feed_topic = "torghut.trade-updates.v1"
         settings.trading_order_feed_topic_v2 = None
         settings.trading_order_feed_assignment_mode = "group"
         settings.trading_order_feed_auto_offset_reset = "latest"
+        settings.tigerbeetle_enabled = False
+        settings.tigerbeetle_journal_enabled = False
+        settings.tigerbeetle_required = False
 
     def tearDown(self) -> None:
         settings.trading_order_feed_enabled = self._orig_feed_enabled
@@ -142,6 +150,9 @@ class TestOrderFeed(TestCase):
         settings.trading_order_feed_client_id = self._orig_client_id
         settings.trading_order_feed_assignment_mode = self._orig_assignment_mode
         settings.trading_order_feed_auto_offset_reset = self._orig_auto_offset_reset
+        settings.tigerbeetle_enabled = self._orig_tigerbeetle_enabled
+        settings.tigerbeetle_journal_enabled = self._orig_tigerbeetle_journal_enabled
+        settings.tigerbeetle_required = self._orig_tigerbeetle_required
 
     def _seed_execution(
         self,
@@ -309,8 +320,6 @@ class TestOrderFeed(TestCase):
             self.assertEqual(counters["apply_updates_total"], 0)
             self.assertEqual(counters["duplicates_total"], 0)
 
-            session.commit()
-
             paper_a = session.execute(
                 select(Execution).where(
                     Execution.alpaca_account_label == "paper-a",
@@ -329,6 +338,121 @@ class TestOrderFeed(TestCase):
             events = session.execute(select(ExecutionOrderEvent)).scalars().all()
             self.assertEqual(len(events), 1)
             self.assertEqual(events[0].alpaca_account_label, "paper-b")
+
+    def test_persist_order_event_journals_tigerbeetle_ref_when_enabled(self) -> None:
+        payload = (
+            b'{"channel":"trade_updates","payload":{"event":"fill","timestamp":"2026-02-01T10:00:00Z",'
+            b'"order":{"id":"order-1","client_order_id":"client-1","symbol":"AAPL","status":"filled",'
+            b'"qty":"1","filled_qty":"1","filled_avg_price":"190.25"}},"seq":10}'
+        )
+        record = FakeRecord(value=payload, offset=22)
+        client = FakeTigerBeetleClient()
+        settings.tigerbeetle_enabled = True
+        settings.tigerbeetle_journal_enabled = True
+
+        with Session(self.engine) as session:
+            self._seed_execution(session)
+            normalized = normalize_order_feed_record(
+                record,
+                default_topic="torghut.trade-updates.v1",
+                default_account_label="paper",
+            )
+            assert normalized.event is not None
+
+            with patch(
+                "app.trading.tigerbeetle_journal.create_tigerbeetle_client",
+                return_value=client,
+            ):
+                persisted, is_duplicate = persist_order_event(
+                    session,
+                    normalized.event,
+                )
+                duplicate_row, duplicate = persist_order_event(
+                    session,
+                    normalized.event,
+                )
+            session.commit()
+
+            self.assertFalse(is_duplicate)
+            self.assertTrue(duplicate)
+            self.assertEqual(duplicate_row.id, persisted.id)
+            refs = session.execute(select(TigerBeetleTransferRef)).scalars().all()
+            self.assertEqual(len(refs), 1)
+            self.assertEqual(refs[0].execution_order_event_id, persisted.id)
+            self.assertEqual(refs[0].amount, Decimal("190250000"))
+
+    def test_optional_tigerbeetle_journal_failure_does_not_drop_order_event(
+        self,
+    ) -> None:
+        payload = (
+            b'{"channel":"trade_updates","payload":{"event":"fill","timestamp":"2026-02-01T10:00:00Z",'
+            b'"order":{"id":"order-1","client_order_id":"client-1","symbol":"AAPL","status":"filled",'
+            b'"qty":"1","filled_qty":"1","filled_avg_price":"190.25"}},"seq":10}'
+        )
+        record = FakeRecord(value=payload, offset=22)
+        settings.tigerbeetle_enabled = True
+        settings.tigerbeetle_journal_enabled = True
+        settings.tigerbeetle_required = False
+
+        with Session(self.engine) as session:
+            self._seed_execution(session)
+            normalized = normalize_order_feed_record(
+                record,
+                default_topic="torghut.trade-updates.v1",
+                default_account_label="paper",
+            )
+            assert normalized.event is not None
+
+            with patch(
+                "app.trading.tigerbeetle_journal.create_tigerbeetle_client",
+                side_effect=RuntimeError("tb unavailable"),
+            ):
+                persisted, is_duplicate = persist_order_event(
+                    session,
+                    normalized.event,
+                )
+            session.commit()
+
+            self.assertFalse(is_duplicate)
+            self.assertIsNotNone(persisted.id)
+            refs = session.execute(select(TigerBeetleTransferRef)).scalars().all()
+            self.assertEqual(refs, [])
+
+    def test_required_tigerbeetle_journal_failure_blocks_order_event(self) -> None:
+        payload = (
+            b'{"channel":"trade_updates","payload":{"event":"fill","timestamp":"2026-02-01T10:00:00Z",'
+            b'"order":{"id":"order-1","client_order_id":"client-1","symbol":"AAPL","status":"filled",'
+            b'"qty":"1","filled_qty":"1","filled_avg_price":"190.25"}},"seq":10}'
+        )
+        record = FakeRecord(value=payload, offset=22)
+        settings.tigerbeetle_enabled = True
+        settings.tigerbeetle_journal_enabled = True
+        settings.tigerbeetle_required = True
+
+        with Session(self.engine) as session:
+            self._seed_execution(session)
+            normalized = normalize_order_feed_record(
+                record,
+                default_topic="torghut.trade-updates.v1",
+                default_account_label="paper",
+            )
+            assert normalized.event is not None
+
+            with patch(
+                "app.trading.tigerbeetle_journal.create_tigerbeetle_client",
+                side_effect=RuntimeError("tb unavailable"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "tb unavailable"):
+                    persist_order_event(session, normalized.event)
+            session.rollback()
+            self.assertEqual(
+                session.execute(select(ExecutionOrderEvent)).scalars().all(),
+                [],
+            )
+            self.assertEqual(
+                session.execute(select(TigerBeetleTransferRef)).scalars().all(),
+                [],
+            )
 
     def test_duplicate_event_is_idempotent(self) -> None:
         payload = (

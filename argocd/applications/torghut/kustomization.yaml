@@ -10,6 +10,8 @@ resources:
   - autonomy-configmap.yaml
   - autonomy-gate-policy-configmap.yaml
   - db-migrations-job.yaml
+  - tigerbeetle-cluster.yaml
+  - tigerbeetle-smoke-job.yaml
   - knative-service.yaml
   - knative-service-sim.yaml
   - tailscale-service.yaml

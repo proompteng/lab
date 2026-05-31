@@ -15,6 +15,9 @@ from app.models import (
     LLMDSPyWorkflowArtifact,
     PositionSnapshot,
     Strategy,
+    TigerBeetleAccountRef,
+    TigerBeetleReconciliationRun,
+    TigerBeetleTransferRef,
     TradeDecision,
 )
 
@@ -89,6 +92,40 @@ class TestModels(TestCase):
             session.add(order_event)
             session.commit()
 
+            account_ref = TigerBeetleAccountRef(
+                cluster_id=2001,
+                account_id="1001",
+                account_key="cash:paper:usd",
+                ledger=840001,
+                code=1001,
+                account_label="paper",
+                symbol="AAPL",
+                strategy_id=str(strategy.id),
+            )
+            transfer_ref = TigerBeetleTransferRef(
+                cluster_id=2001,
+                transfer_id="2001",
+                transfer_kind="fill_post",
+                ledger=840001,
+                code=2001,
+                amount=Decimal("190250000"),
+                status="created",
+                trade_decision_id=decision.id,
+                execution_id=execution.id,
+                execution_order_event_id=order_event.id,
+                event_fingerprint=order_event.event_fingerprint,
+            )
+            reconciliation_run = TigerBeetleReconciliationRun(
+                cluster_id=2001,
+                started_at=datetime.now(timezone.utc),
+                status="ok",
+                checked_transfer_count=1,
+                missing_transfer_count=0,
+                mismatched_transfer_count=0,
+            )
+            session.add_all([account_ref, transfer_ref, reconciliation_run])
+            session.commit()
+
             snapshot = PositionSnapshot(
                 alpaca_account_label="paper",
                 as_of=datetime.now(timezone.utc),
@@ -128,7 +165,18 @@ class TestModels(TestCase):
             found_strategy = session.execute(select(Strategy)).scalar_one()
             found_decision = session.execute(select(TradeDecision)).scalar_one()
             found_execution = session.execute(select(Execution)).scalar_one()
-            found_order_event = session.execute(select(ExecutionOrderEvent)).scalar_one()
+            found_order_event = session.execute(
+                select(ExecutionOrderEvent)
+            ).scalar_one()
+            found_account_ref = session.execute(
+                select(TigerBeetleAccountRef)
+            ).scalar_one()
+            found_transfer_ref = session.execute(
+                select(TigerBeetleTransferRef)
+            ).scalar_one()
+            found_reconciliation_run = session.execute(
+                select(TigerBeetleReconciliationRun)
+            ).scalar_one()
             found_snapshot = session.execute(select(PositionSnapshot)).scalar_one()
             found_dspy = session.execute(select(LLMDSPyWorkflowArtifact)).scalar_one()
 
@@ -136,6 +184,9 @@ class TestModels(TestCase):
             self.assertEqual(found_decision.status, "planned")
             self.assertEqual(found_execution.filled_qty, Decimal("0"))
             self.assertEqual(found_order_event.event_type, "fill")
+            self.assertEqual(found_account_ref.account_key, "cash:paper:usd")
+            self.assertEqual(found_transfer_ref.event_fingerprint, "fingerprint-1")
+            self.assertEqual(found_reconciliation_run.status, "ok")
             self.assertEqual(found_snapshot.equity, Decimal("10000"))
             self.assertEqual(found_dspy.lane, "compile")
 

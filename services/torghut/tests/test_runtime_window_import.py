@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from unittest import TestCase
+from uuid import uuid4
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
@@ -16,6 +17,7 @@ from app.models import (
     StrategyHypothesisVersion,
     StrategyPromotionDecision,
     StrategyRuntimeLedgerBucket,
+    TigerBeetleTransferRef,
     VNextDatasetSnapshot,
 )
 from app.trading.runtime_cost_authority import (
@@ -665,6 +667,7 @@ class TestRuntimeWindowImport(TestCase):
         )
 
     def test_persist_observed_runtime_windows_creates_governance_rows(self) -> None:
+        event_id = uuid4()
         buckets = build_observed_runtime_buckets(
             bucket_ranges=[
                 (
@@ -710,6 +713,7 @@ class TestRuntimeWindowImport(TestCase):
                         "execution_policy_hash_counts": {"policy-sha": 2},
                         "cost_model_hash_counts": {"cost-sha": 2},
                         "lineage_hash_counts": {"lineage-sha": 2},
+                        "execution_order_event_ids": [str(event_id)],
                         "blockers": [],
                     },
                     **_runtime_pnl_basis(),
@@ -727,6 +731,20 @@ class TestRuntimeWindowImport(TestCase):
         )
 
         with self.session_local() as session:
+            session.add(
+                TigerBeetleTransferRef(
+                    cluster_id=2001,
+                    transfer_id="340282366920938463463374607431768211",
+                    transfer_kind="fill_post",
+                    ledger=840001,
+                    code=2001,
+                    amount=Decimal("200000000"),
+                    status="created",
+                    execution_order_event_id=event_id,
+                    event_fingerprint="runtime-fill-event",
+                )
+            )
+            session.flush()
             summary = persist_observed_runtime_windows(
                 session=session,
                 run_id="import-live-1",
@@ -777,6 +795,23 @@ class TestRuntimeWindowImport(TestCase):
         self.assertEqual(
             ledger_buckets[0].lineage_hash_counts,
             {"lineage-sha": 2},
+        )
+        payload = ledger_buckets[0].payload_json
+        self.assertIsInstance(payload, dict)
+        tigerbeetle_refs = payload.get("tigerbeetle")
+        self.assertIsInstance(tigerbeetle_refs, dict)
+        self.assertEqual(
+            tigerbeetle_refs.get("transfer_ids"),
+            ["340282366920938463463374607431768211"],
+        )
+        self.assertEqual(
+            payload.get("tigerbeetle_transfer_ids"),
+            tigerbeetle_refs.get("transfer_ids"),
+        )
+        self.assertIn("postgres:tigerbeetle_transfer_refs", payload.get("source_refs"))
+        self.assertEqual(
+            payload.get("source_row_counts", {}).get("tigerbeetle_transfer_refs"),
+            1,
         )
         self.assertEqual(datasets[0].candidate_id, "cand-1")
         self.assertEqual(datasets[0].artifact_ref, "torghut-runtime-window-cand-1")

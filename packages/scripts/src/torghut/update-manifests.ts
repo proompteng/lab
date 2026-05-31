@@ -32,6 +32,7 @@ const defaultOrderFeedSourceWindowRepairManifestPath =
 const defaultPaperAccountFlattenManifestPath = 'argocd/applications/torghut/paper-account-flatten-cronjob.yaml'
 const defaultWhitepaperSemanticBackfillManifestPath =
   'argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml'
+const defaultTigerBeetleSmokeManifestPath = 'argocd/applications/torghut/tigerbeetle-smoke-job.yaml'
 const defaultOptionsCatalogManifestPath = 'argocd/applications/torghut-options/catalog/deployment.yaml'
 const defaultOptionsEnricherManifestPath = 'argocd/applications/torghut-options/enricher/deployment.yaml'
 
@@ -59,6 +60,7 @@ type UpdateManifestsOptions = {
   orderFeedSourceWindowRepairManifestPath?: string
   paperAccountFlattenManifestPath?: string
   whitepaperSemanticBackfillManifestPath?: string
+  tigerBeetleSmokeManifestPath?: string
   optionsCatalogManifestPath?: string
   optionsEnricherManifestPath?: string
 }
@@ -87,6 +89,7 @@ type CliOptions = {
   orderFeedSourceWindowRepairManifestPath?: string
   paperAccountFlattenManifestPath?: string
   whitepaperSemanticBackfillManifestPath?: string
+  tigerBeetleSmokeManifestPath?: string
   optionsCatalogManifestPath?: string
   optionsEnricherManifestPath?: string
 }
@@ -337,6 +340,11 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     options.whitepaperSemanticBackfillManifestPath ?? defaultWhitepaperSemanticBackfillManifestPath,
     'torghut-whitepaper-semantic-backfill image reference',
   )
+  const tigerBeetleSmoke = updateImageOnlyManifest(
+    options,
+    options.tigerBeetleSmokeManifestPath ?? defaultTigerBeetleSmokeManifestPath,
+    'torghut-tigerbeetle-smoke image reference',
+  )
   const optionsCatalog = updateVersionedDeploymentManifest(
     options,
     options.optionsCatalogManifestPath ?? defaultOptionsCatalogManifestPath,
@@ -370,6 +378,7 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     orderFeedSourceWindowRepair,
     paperAccountFlatten,
     whitepaperSemanticBackfill,
+    tigerBeetleSmoke,
     optionsCatalog,
     optionsEnricher,
   ]
@@ -414,6 +423,7 @@ Options:
   --order-feed-source-window-repair-manifest-path <path>
   --paper-account-flatten-manifest-path <path>
   --whitepaper-semantic-backfill-manifest-path <path>
+  --tigerbeetle-smoke-manifest-path <path>
   --options-catalog-manifest-path <path>
   --options-enricher-manifest-path <path>`)
       process.exit(0)
@@ -502,6 +512,9 @@ Options:
       case '--whitepaper-semantic-backfill-manifest-path':
         options.whitepaperSemanticBackfillManifestPath = value
         break
+      case '--tigerbeetle-smoke-manifest-path':
+        options.tigerBeetleSmokeManifestPath = value
+        break
       case '--options-catalog-manifest-path':
         options.optionsCatalogManifestPath = value
         break
@@ -570,6 +583,8 @@ const main = (cliOptions?: CliOptions) => {
       parsed.paperAccountFlattenManifestPath ?? process.env.TORGHUT_PAPER_ACCOUNT_FLATTEN_MANIFEST_PATH,
     whitepaperSemanticBackfillManifestPath:
       parsed.whitepaperSemanticBackfillManifestPath ?? process.env.TORGHUT_WHITEPAPER_SEMANTIC_BACKFILL_MANIFEST_PATH,
+    tigerBeetleSmokeManifestPath:
+      parsed.tigerBeetleSmokeManifestPath ?? process.env.TORGHUT_TIGERBEETLE_SMOKE_MANIFEST_PATH,
     optionsCatalogManifestPath: parsed.optionsCatalogManifestPath ?? process.env.TORGHUT_OPTIONS_CATALOG_MANIFEST_PATH,
     optionsEnricherManifestPath:
       parsed.optionsEnricherManifestPath ?? process.env.TORGHUT_OPTIONS_ENRICHER_MANIFEST_PATH,
