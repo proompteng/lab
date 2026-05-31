@@ -7226,16 +7226,47 @@ class TestTradingApi(TestCase):
                         "execution_order_events": 4,
                         "order_feed_source_windows": 1,
                     },
-                    "trade_decision_ids": ["paper-route-decision"],
-                    "execution_ids": ["paper-route-execution"],
-                    "execution_order_event_ids": ["paper-route-order-event"],
+                    "trade_decision_ids": [
+                        "paper-route-decision-1",
+                        "paper-route-decision-2",
+                        "paper-route-decision-3",
+                        "paper-route-decision-4",
+                        "paper-route-decision-5",
+                    ],
+                    "execution_ids": [
+                        "paper-route-execution-1",
+                        "paper-route-execution-2",
+                        "paper-route-execution-3",
+                        "paper-route-execution-4",
+                    ],
+                    "execution_order_event_ids": [
+                        "paper-route-order-event-1",
+                        "paper-route-order-event-2",
+                        "paper-route-order-event-3",
+                        "paper-route-order-event-4",
+                    ],
                     "source_window_ids": ["paper-route-source-window"],
                     "source_offsets": [
                         {
                             "topic": "alpaca.trade_updates",
                             "partition": 0,
                             "offset": 100,
-                        }
+                        },
+                        {
+                            "topic": "alpaca.trade_updates",
+                            "partition": 0,
+                            "offset": 101,
+                        },
+                        {
+                            "topic": "alpaca.trade_updates",
+                            "partition": 0,
+                            "offset": 102,
+                        },
+                        {
+                            "topic": "alpaca.trade_updates",
+                            "partition": 0,
+                            "offset": 103,
+                        },
                     ],
                     "source_materialization": "execution_order_events",
                     "authority_class": "runtime_order_feed_execution_source",

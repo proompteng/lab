@@ -84,8 +84,8 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
             "source_row_counts": {
                 "trade_decisions": 2,
                 "executions": 2,
-                "execution_order_events": 4,
-                "order_feed_source_windows": 4,
+                "execution_order_events": 2,
+                "order_feed_source_windows": 2,
             },
         }
 
@@ -106,7 +106,8 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
             "execution_order_event_ids": ["event-1", "event-2"],
             "source_window_ids": ["source-window-1", "source-window-2"],
             "source_offsets": [
-                {"topic": "alpaca.trade_updates", "partition": 0, "offset": 42}
+                {"topic": "alpaca.trade_updates", "partition": 0, "offset": 42},
+                {"topic": "alpaca.trade_updates", "partition": 0, "offset": 43},
             ],
             "source_materialization": "execution_order_events",
             "authority_class": "runtime_order_feed_execution_source",
@@ -116,6 +117,114 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
             runtime_ledger_promotion_source_authority_blockers(source_backed),
             [],
         )
+
+    def test_promotion_source_authority_rejects_underlinked_row_refs(
+        self,
+    ) -> None:
+        underlinked = {
+            "source_window_start": "2026-05-29T14:30:00+00:00",
+            "source_window_end": "2026-05-29T15:00:00+00:00",
+            "source_refs": [
+                "postgres:trade_decisions",
+                "postgres:executions",
+                "postgres:execution_order_events",
+                "postgres:order_feed_source_windows",
+            ],
+            "source_row_counts": {
+                "trade_decisions": 3,
+                "executions": 3,
+                "execution_order_events": 4,
+                "order_feed_source_windows": 3,
+            },
+            "trade_decision_ids": ["decision-1", "decision-2"],
+            "execution_ids": ["execution-1", "execution-2"],
+            "execution_order_event_ids": ["event-1", "event-2"],
+            "source_window_ids": ["source-window-1", "source-window-2"],
+            "source_offsets": [
+                {"topic": "alpaca.trade_updates", "partition": 0, "offset": 42}
+            ],
+            "source_materialization": "execution_order_events",
+            "authority_class": "runtime_order_feed_execution_source",
+        }
+
+        blockers = runtime_ledger_promotion_source_authority_blockers(underlinked)
+
+        self.assertIn("runtime_ledger_trade_decision_refs_missing", blockers)
+        self.assertIn("runtime_ledger_execution_refs_missing", blockers)
+        self.assertIn("runtime_ledger_execution_order_event_refs_missing", blockers)
+        self.assertIn("runtime_ledger_source_window_ids_missing", blockers)
+        self.assertIn("runtime_ledger_source_offsets_missing", blockers)
+
+    def test_promotion_source_authority_counts_mapping_and_scalar_refs(
+        self,
+    ) -> None:
+        blockers = runtime_ledger_promotion_source_authority_blockers(
+            {
+                "source_window_start": "2026-05-29T14:30:00+00:00",
+                "source_window_end": "2026-05-29T15:00:00+00:00",
+                "source_refs": [
+                    "postgres:trade_decisions",
+                    "postgres:executions",
+                    "postgres:execution_order_events",
+                    "postgres:order_feed_source_windows",
+                ],
+                "source_row_counts": {
+                    "trade_decisions": 1,
+                    "executions": 1,
+                    "execution_order_events": 1,
+                    "order_feed_source_windows": 1,
+                },
+                "trade_decision_id": "decision-1",
+                "execution_id": "execution-1",
+                "execution_order_event_id": "event-1",
+                "source_window_ids": {"source-window-1": True},
+                "source_offsets": [
+                    {"topic": "alpaca.trade_updates", "partition": 0, "offset": 42}
+                ],
+                "source_materialization": "execution_order_events",
+                "authority_class": "runtime_order_feed_execution_source",
+            }
+        )
+
+        self.assertEqual(blockers, [])
+
+    def test_promotion_source_authority_rejects_duplicate_refs_and_offsets(
+        self,
+    ) -> None:
+        blockers = runtime_ledger_promotion_source_authority_blockers(
+            {
+                "source_window_start": "2026-05-29T14:30:00+00:00",
+                "source_window_end": "2026-05-29T15:00:00+00:00",
+                "source_refs": [
+                    "postgres:trade_decisions",
+                    "postgres:executions",
+                    "postgres:execution_order_events",
+                    "postgres:order_feed_source_windows",
+                ],
+                "source_row_counts": {
+                    "trade_decisions": 2,
+                    "executions": 2,
+                    "execution_order_events": 2,
+                    "order_feed_source_windows": 2,
+                },
+                "trade_decision_ids": ["decision-1", "decision-1"],
+                "execution_ids": ["execution-1", "execution-1"],
+                "execution_order_event_ids": ["event-1", "event-1"],
+                "source_window_ids": ["source-window-1", "source-window-1"],
+                "source_offsets": [
+                    {"topic": "alpaca.trade_updates", "partition": 0, "offset": 42},
+                    {"topic": "alpaca.trade_updates", "partition": 0, "offset": 42},
+                ],
+                "source_materialization": "execution_order_events",
+                "authority_class": "runtime_order_feed_execution_source",
+            }
+        )
+
+        self.assertIn("runtime_ledger_trade_decision_refs_missing", blockers)
+        self.assertIn("runtime_ledger_execution_refs_missing", blockers)
+        self.assertIn("runtime_ledger_execution_order_event_refs_missing", blockers)
+        self.assertIn("runtime_ledger_source_window_ids_missing", blockers)
+        self.assertIn("runtime_ledger_source_offsets_missing", blockers)
 
     def test_promotion_source_authority_rejects_unstructured_source_offsets(
         self,
@@ -181,6 +290,39 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
                 ],
                 "source_materialization": "execution_order_events",
                 "pnl_derivation": "execution_order_events_runtime_ledger",
+            }
+        )
+
+        self.assertIn("runtime_ledger_authority_class_missing", blockers)
+
+    def test_promotion_source_authority_rejects_authority_reason_only(
+        self,
+    ) -> None:
+        blockers = runtime_ledger_promotion_source_authority_blockers(
+            {
+                "source_window_start": "2026-05-29T14:30:00+00:00",
+                "source_window_end": "2026-05-29T15:00:00+00:00",
+                "source_refs": [
+                    "postgres:trade_decisions",
+                    "postgres:executions",
+                    "postgres:execution_order_events",
+                    "postgres:order_feed_source_windows",
+                ],
+                "source_row_counts": {
+                    "trade_decisions": 1,
+                    "executions": 1,
+                    "execution_order_events": 1,
+                    "order_feed_source_windows": 1,
+                },
+                "trade_decision_id": "decision-1",
+                "execution_id": "execution-1",
+                "execution_order_event_id": "event-1",
+                "source_window_id": "source-window-1",
+                "source_offsets": [
+                    {"topic": "alpaca.trade_updates", "partition": 0, "offset": 42}
+                ],
+                "source_materialization": "execution_order_events",
+                "authority_reason": "event_sourced_runtime_ledger_profit_proof",
             }
         )
 

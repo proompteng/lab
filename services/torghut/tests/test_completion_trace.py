@@ -84,6 +84,20 @@ def _runtime_ledger_source_authority_payload(
     cost_basis_counts: dict[str, int] | None = None,
     extra: dict[str, object] | None = None,
 ) -> dict[str, object]:
+    trade_decision_ids = [f'trade-decision-{index}' for index in range(24)]
+    execution_ids = [f'execution-{index}' for index in range(12)]
+    execution_order_event_ids = [
+        f'execution-order-event-{index}' for index in range(12)
+    ]
+    source_window_ids = [f'source-window-{index}' for index in range(12)]
+    source_offsets = [
+        {
+            'topic': 'torghut.trade-updates.v2',
+            'partition': 0,
+            'offset': 42 + index,
+        }
+        for index in range(12)
+    ]
     payload: dict[str, object] = {
         'source': 'runtime-order-feed',
         'source_window_start': '2026-03-06T14:30:00+00:00',
@@ -100,17 +114,11 @@ def _runtime_ledger_source_authority_payload(
             'execution_order_events': 12,
             'order_feed_source_windows': 12,
         },
-        'source_window_ids': ['source-window-1'],
-        'trade_decision_ids': ['trade-decision-1'],
-        'execution_ids': ['execution-1'],
-        'execution_order_event_ids': ['execution-order-event-1'],
-        'source_offsets': [
-            {
-                'topic': 'torghut.trade-updates.v2',
-                'partition': 0,
-                'offset': 42,
-            }
-        ],
+        'source_window_ids': source_window_ids,
+        'trade_decision_ids': trade_decision_ids,
+        'execution_ids': execution_ids,
+        'execution_order_event_ids': execution_order_event_ids,
+        'source_offsets': source_offsets,
         'source_materialization': 'execution_order_events',
         'authority_class': 'runtime_order_feed_execution_source',
     }

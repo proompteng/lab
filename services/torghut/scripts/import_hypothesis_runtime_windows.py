@@ -1597,9 +1597,24 @@ _AUTHORITATIVE_RUNTIME_LEDGER_MATERIALIZATION_SOURCE_KINDS = frozenset(
     {
         "paper_route_probe_runtime_observed",
         "paper_runtime_observed",
+        "runtime_ledger_source_collection_candidate",
         "live_runtime_observed",
     }
 )
+
+
+def _source_collection_target_authorization_blockers(
+    target_metadata: Mapping[str, Any],
+) -> list[str]:
+    blockers: list[str] = []
+    if target_metadata.get("source_collection_authorized") is not True:
+        blockers.append("source_collection_authorization_missing")
+    if (
+        str(target_metadata.get("source_collection_authorization_scope") or "").strip()
+        != "source_window_evidence_collection_only"
+    ):
+        blockers.append("source_collection_authorization_scope_invalid")
+    return blockers
 
 
 def _source_kind_allows_runtime_ledger_materialization(
@@ -1613,6 +1628,8 @@ def _source_kind_allows_runtime_ledger_materialization(
     ):
         return False
     normalized = source_kind.strip().lower().replace("-", "_")
+    if normalized == "runtime_ledger_source_collection_candidate":
+        return not _source_collection_target_authorization_blockers(target_metadata)
     return normalized in _AUTHORITATIVE_RUNTIME_LEDGER_MATERIALIZATION_SOURCE_KINDS
 
 
@@ -1630,6 +1647,11 @@ def _runtime_window_import_proof_hygiene_blockers(
         target_metadata=target_metadata,
     ):
         blockers.append("runtime_window_target_metadata_missing")
+    if (
+        source_kind.strip().lower().replace("-", "_")
+        == "runtime_ledger_source_collection_candidate"
+    ):
+        blockers.extend(_source_collection_target_authorization_blockers(target_metadata))
     if not dependency_quorum_decision.strip():
         blockers.append("dependency_quorum_decision_missing")
     if not continuity_ok.strip():
