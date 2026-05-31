@@ -25,6 +25,7 @@ const createFixture = () => {
   const paperAccountFlattenManifestPath = join(dir, 'paper-account-flatten-cronjob.yaml')
   const whitepaperSemanticBackfillManifestPath = join(dir, 'whitepaper-semantic-backfill-job.yaml')
   const tigerBeetleSmokeManifestPath = join(dir, 'tigerbeetle-smoke-job.yaml')
+  const tigerBeetleJournalOrderEventsManifestPath = join(dir, 'tigerbeetle-journal-order-events-cronjob.yaml')
   const optionsCatalogManifestPath = join(dir, 'options-catalog-deployment.yaml')
   const optionsEnricherManifestPath = join(dir, 'options-enricher-deployment.yaml')
   writeFileSync(
@@ -104,6 +105,7 @@ spec:
     paperAccountFlattenManifestPath,
     whitepaperSemanticBackfillManifestPath,
     tigerBeetleSmokeManifestPath,
+    tigerBeetleJournalOrderEventsManifestPath,
   ]) {
     writeFileSync(
       path,
@@ -161,6 +163,7 @@ spec:
     paperAccountFlattenManifestPath,
     whitepaperSemanticBackfillManifestPath,
     tigerBeetleSmokeManifestPath,
+    tigerBeetleJournalOrderEventsManifestPath,
     optionsCatalogManifestPath,
     optionsEnricherManifestPath,
   }
@@ -234,6 +237,7 @@ describe('update-manifests', () => {
       paperAccountFlattenManifestPath: relative(repoRoot, fixture.paperAccountFlattenManifestPath),
       whitepaperSemanticBackfillManifestPath: relative(repoRoot, fixture.whitepaperSemanticBackfillManifestPath),
       tigerBeetleSmokeManifestPath: relative(repoRoot, fixture.tigerBeetleSmokeManifestPath),
+      tigerBeetleJournalOrderEventsManifestPath: relative(repoRoot, fixture.tigerBeetleJournalOrderEventsManifestPath),
       optionsCatalogManifestPath: relative(repoRoot, fixture.optionsCatalogManifestPath),
       optionsEnricherManifestPath: relative(repoRoot, fixture.optionsEnricherManifestPath),
     })
@@ -258,6 +262,10 @@ describe('update-manifests', () => {
     const paperAccountFlattenManifest = readFileSync(fixture.paperAccountFlattenManifestPath, 'utf8')
     const whitepaperSemanticBackfillManifest = readFileSync(fixture.whitepaperSemanticBackfillManifestPath, 'utf8')
     const tigerBeetleSmokeManifest = readFileSync(fixture.tigerBeetleSmokeManifestPath, 'utf8')
+    const tigerBeetleJournalOrderEventsManifest = readFileSync(
+      fixture.tigerBeetleJournalOrderEventsManifestPath,
+      'utf8',
+    )
     const optionsCatalogManifest = readFileSync(fixture.optionsCatalogManifestPath, 'utf8')
     const optionsEnricherManifest = readFileSync(fixture.optionsEnricherManifestPath, 'utf8')
     expect(serviceManifest).toContain('client.knative.dev/updateTimestamp: "2026-02-21T04:00:00Z"')
@@ -295,6 +303,7 @@ describe('update-manifests', () => {
       paperAccountFlattenManifest,
       whitepaperSemanticBackfillManifest,
       tigerBeetleSmokeManifest,
+      tigerBeetleJournalOrderEventsManifest,
     ]) {
       expect(manifest).toContain(
         'image: registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
@@ -312,7 +321,7 @@ describe('update-manifests', () => {
     expect(result.imageRef).toBe(
       'registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
     )
-    expect(result.changedPaths.length).toBe(19)
+    expect(result.changedPaths.length).toBe(20)
 
     rmSync(fixture.dir, { recursive: true, force: true })
   })
@@ -345,6 +354,7 @@ describe('update-manifests', () => {
       paperAccountFlattenManifestPath: relative(repoRoot, fixture.paperAccountFlattenManifestPath),
       whitepaperSemanticBackfillManifestPath: relative(repoRoot, fixture.whitepaperSemanticBackfillManifestPath),
       tigerBeetleSmokeManifestPath: relative(repoRoot, fixture.tigerBeetleSmokeManifestPath),
+      tigerBeetleJournalOrderEventsManifestPath: relative(repoRoot, fixture.tigerBeetleJournalOrderEventsManifestPath),
       optionsCatalogManifestPath: relative(repoRoot, fixture.optionsCatalogManifestPath),
       optionsEnricherManifestPath: relative(repoRoot, fixture.optionsEnricherManifestPath),
     }
