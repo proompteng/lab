@@ -7,7 +7,7 @@ metadata:
     app.kubernetes.io/name: torghut
     app.kubernetes.io/component: order-feed-source-window-repair
 spec:
-  schedule: "13,28,43,58 * * * *"
+  schedule: "13,43 * * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 1
   failedJobsHistoryLimit: 2
@@ -33,7 +33,7 @@ spec:
                   ephemeral-storage: 128Mi
                 limits:
                   cpu: 250m
-                  memory: 256Mi
+                  memory: 512Mi
                   ephemeral-storage: 512Mi
               command:
                 - /bin/bash
@@ -46,7 +46,7 @@ spec:
                   /opt/venv/bin/python scripts/repair_order_feed_source_windows.py \
                     --dsn-env SIM_DB_DSN \
                     --account-label TORGHUT_SIM \
-                    --batch-size 500 \
+                    --batch-size 250 \
                     --max-batches 1 \
                     --apply \
                     --json

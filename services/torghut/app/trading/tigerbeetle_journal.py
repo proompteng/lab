@@ -693,6 +693,14 @@ class TigerBeetleLedgerJournal:
             self._client = create_tigerbeetle_client(self._settings)
         return self._client
 
+    def client_for_reconciliation(self) -> TigerBeetleClientProtocol | None:
+        if (
+            not self._settings.tigerbeetle_enabled
+            or not self._settings.tigerbeetle_journal_enabled
+        ):
+            return None
+        return self._client_for_write()
+
     def close(self) -> None:
         if not self._owns_client or self._client is None:
             return

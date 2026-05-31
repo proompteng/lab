@@ -7,7 +7,7 @@ metadata:
     app.kubernetes.io/name: torghut
     app.kubernetes.io/component: tigerbeetle-journal-order-events
 spec:
-  schedule: "6,21,36,51 * * * *"
+  schedule: "6,36 * * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 2
   failedJobsHistoryLimit: 3
@@ -46,7 +46,7 @@ spec:
                   ephemeral-storage: 128Mi
                 limits:
                   cpu: 500m
-                  memory: 512Mi
+                  memory: 1Gi
                   ephemeral-storage: 512Mi
               command:
                 - /bin/bash
@@ -58,10 +58,10 @@ spec:
                   /opt/venv/bin/python scripts/journal_tigerbeetle_order_events.py \
                     --dsn-env SIM_DB_DSN \
                     --account-label TORGHUT_SIM \
-                    --batch-size 500 \
-                    --max-batches 2 \
-                    --event-scan-limit 1000 \
-                    --reconcile-limit 1000 \
+                    --batch-size 100 \
+                    --max-batches 1 \
+                    --event-scan-limit 250 \
+                    --reconcile-limit 250 \
                     --json
               env:
                 - name: TORGHUT_SIM_DB_HOST
