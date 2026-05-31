@@ -1001,6 +1001,18 @@ families:
     consistency_repair_iterations: 1
     consistency_repair_candidates: 2
     parameter_mutations:
+      rank_feature:
+        mode: explicit_values
+        values:
+          - 'cross_section_clusterlob_directional_ofi_rank'
+          - 'cross_section_pair_relative_return_rank'
+          - 'cross_section_vwap_w5m_rank'
+      gate_feature:
+        mode: explicit_values
+        values: ['', 'clusterlob_event_cluster_stability_score']
+      gate_min:
+        mode: explicit_values
+        values: ['0', '0.60']
       min_cross_section_continuation_rank:
         mode: numeric_step
         deltas: ['-0.05', '0', '0.05']

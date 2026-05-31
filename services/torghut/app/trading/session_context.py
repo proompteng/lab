@@ -257,6 +257,7 @@ class _SymbolSessionState:
     latest_price_position_in_session_range: Decimal | None = None
     latest_recent_15m_return_bps: Decimal | None = None
     latest_microbar_volume: Decimal | None = None
+    latest_clusterlob_directional_ofi: Decimal | None = None
     latest_price_vs_vwap_w5m_bps: Decimal | None = None
     latest_opening_window_return_bps: Decimal | None = None
     latest_opening_window_return_from_prev_close_bps: Decimal | None = None
@@ -351,6 +352,18 @@ class SessionContextTracker:
         microbar_volume = optional_decimal(payload_value(payload, "microbar_volume"))
         if microbar_volume is None:
             microbar_volume = optional_decimal(payload_value(payload, "volume"))
+        clusterlob_directional_ofi = optional_decimal(
+            payload_value(payload, "clusterlob_directional_ofi")
+        )
+        clusterlob_opportunistic_ofi = optional_decimal(
+            payload_value(payload, "clusterlob_opportunistic_ofi")
+        )
+        clusterlob_market_making_ofi = optional_decimal(
+            payload_value(payload, "clusterlob_market_making_ofi")
+        )
+        clusterlob_event_cluster_stability_score = optional_decimal(
+            payload_value(payload, "clusterlob_event_cluster_stability_score")
+        )
         vwap_w5m = optional_decimal(
             payload_value(payload, "vwap_w5m", block="vwap", nested_key="w5m")
         )
@@ -469,6 +482,7 @@ class SessionContextTracker:
             state.latest_price_position_in_session_range = position_in_range
             state.latest_recent_15m_return_bps = recent_15m_return_bps
             state.latest_microbar_volume = microbar_volume
+            state.latest_clusterlob_directional_ofi = clusterlob_directional_ofi
             state.latest_price_vs_vwap_w5m_bps = price_vs_vwap_w5m_bps
             state.latest_opening_window_return_bps = opening_window_return_bps
             state.latest_opening_window_return_from_prev_close_bps = (
@@ -525,6 +539,14 @@ class SessionContextTracker:
                 symbol=symbol,
                 accessor="latest_microbar_volume",
             )
+        )
+        (
+            clusterlob_directional_ofi_rank,
+            clusterlob_directional_ofi_rank_universe_size,
+        ) = self._rank_latest_metric(
+            current_day=session_day,
+            symbol=symbol,
+            accessor="latest_clusterlob_directional_ofi",
         )
         recent_imbalance_rank, recent_imbalance_rank_universe_size = (
             self._rank_latest_metric(
@@ -716,6 +738,7 @@ class SessionContextTracker:
                 effective_session_drive_rank,
                 effective_opening_window_return_rank,
                 recent_15m_return_rank,
+                clusterlob_directional_ofi_rank,
             ]
         )
         cross_section_pair_relative_return_rank_universe_size = _rank_universe_size(
@@ -723,6 +746,7 @@ class SessionContextTracker:
                 effective_session_drive_rank_universe_size,
                 effective_opening_window_return_rank_universe_size,
                 recent_15m_return_rank_universe_size,
+                clusterlob_directional_ofi_rank_universe_size,
             ]
         )
         cross_section_residual_spread_zscore_rank = _average_decimal(
@@ -777,6 +801,12 @@ class SessionContextTracker:
                 "recent_above_vwap_w5m_ratio": recent_above_vwap_w5m_ratio,
                 "recent_15m_return_bps": recent_15m_return_bps,
                 "microbar_volume": microbar_volume,
+                "clusterlob_directional_ofi": clusterlob_directional_ofi,
+                "clusterlob_opportunistic_ofi": clusterlob_opportunistic_ofi,
+                "clusterlob_market_making_ofi": clusterlob_market_making_ofi,
+                "clusterlob_event_cluster_stability_score": (
+                    clusterlob_event_cluster_stability_score
+                ),
                 "cross_section_session_open_rank": session_open_rank,
                 "cross_section_session_open_rank_universe_size": session_open_rank_universe_size,
                 "cross_section_prev_session_close_rank": prev_session_close_rank,
@@ -803,6 +833,12 @@ class SessionContextTracker:
                 "cross_section_recent_15m_return_rank_universe_size": recent_15m_return_rank_universe_size,
                 "cross_section_microbar_volume_rank": microbar_volume_rank,
                 "cross_section_microbar_volume_rank_universe_size": microbar_volume_rank_universe_size,
+                "cross_section_clusterlob_directional_ofi_rank": (
+                    clusterlob_directional_ofi_rank
+                ),
+                "cross_section_clusterlob_directional_ofi_rank_universe_size": (
+                    clusterlob_directional_ofi_rank_universe_size
+                ),
                 "cross_section_recent_imbalance_rank": recent_imbalance_rank,
                 "cross_section_recent_imbalance_rank_universe_size": recent_imbalance_rank_universe_size,
                 "cross_section_rsi14_rank": rsi14_rank,

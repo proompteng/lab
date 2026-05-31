@@ -4402,9 +4402,11 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertIn("left join lateral", unlinked_query)
         self.assertIn("exact_match.match_count = 1", unlinked_query)
         self.assertIn(
-            "or coalesce(oe.trade_decision_id, e.trade_decision_id) is null",
+            "or coalesce(oe.trade_decision_id, e.trade_decision_id, d_by_client.id) is null",
             unlinked_query,
         )
+        self.assertIn("exact_decision_match.match_count = 1", unlinked_query)
+        self.assertIn("d_match.decision_hash = oe.client_order_id", unlinked_query)
         self.assertIn("upper(oe.symbol) = any(%s)", unlinked_query)
         self.assertEqual(unlinked_params[-1], ["AAPL"])
         self.assertEqual(diagnostics["order_feed_unlinked_fill_lifecycle_count"], 1)
@@ -4574,11 +4576,15 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertIn("left join lateral", order_event_query)
         self.assertIn("exact_match.match_count = 1", order_event_query)
         self.assertIn(
-            "coalesce(oe.trade_decision_id, e.trade_decision_id)",
+            "coalesce(oe.trade_decision_id, e.trade_decision_id, d_by_client.id)",
             order_event_query,
         )
+        self.assertIn("exact_decision_match.match_count = 1", order_event_query)
+        self.assertIn("d_match.decision_hash = oe.client_order_id", order_event_query)
         self.assertIn("left join lateral", unlinked_query)
         self.assertIn("exact_match.match_count = 1", unlinked_query)
+        self.assertIn("exact_decision_match.match_count = 1", unlinked_query)
+        self.assertIn("d_match.decision_hash = oe.client_order_id", unlinked_query)
         self.assertEqual(diagnostics["order_feed_unlinked_fill_lifecycle_count"], 0)
         self.assertEqual(
             diagnostics["order_feed_unlinked_strategy_fill_lifecycle_count"], 0
@@ -4734,9 +4740,11 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertIn("left join lateral", unlinked_query)
         self.assertIn("exact_match.match_count = 1", unlinked_query)
         self.assertIn(
-            "or coalesce(oe.trade_decision_id, e.trade_decision_id) is null",
+            "or coalesce(oe.trade_decision_id, e.trade_decision_id, d_by_client.id) is null",
             unlinked_query,
         )
+        self.assertIn("exact_decision_match.match_count = 1", unlinked_query)
+        self.assertIn("d_match.decision_hash = oe.client_order_id", unlinked_query)
         self.assertIn("upper(oe.symbol) = any(%s)", unlinked_query)
         self.assertEqual(unlinked_params[-1], ["AAPL"])
         self.assertIn("upper(d.symbol) = any(%s)", tca_query)
