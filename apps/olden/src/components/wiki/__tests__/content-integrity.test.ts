@@ -7,6 +7,7 @@ import { gameModes } from '@/src/data/olden/game-modes'
 import { referenceCategories } from '@/src/data/olden/reference'
 import { roadmapItems } from '@/src/data/olden/roadmap'
 import { sourceIds, wikiSources } from '@/src/data/olden/sources'
+import { sourceNoteClassNames } from '@/src/components/wiki/source-note'
 
 const contentRoot = join(import.meta.dir, '../../../../content/docs')
 
@@ -52,6 +53,23 @@ describe('Olden Era wiki data', () => {
     for (const source of wikiSources) {
       expect(source.url).toMatch(/^https:\/\//)
       expect(source.retrievedAt).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    }
+  })
+})
+
+describe('Olden Era wiki components', () => {
+  it('uses theme-aware source note colors instead of dark-mode-only overrides', () => {
+    expect(sourceNoteClassNames.aside).toContain('border-fd-border')
+    expect(sourceNoteClassNames.aside).toContain('bg-fd-card')
+    expect(sourceNoteClassNames.title).toContain('text-fd-foreground')
+    expect(sourceNoteClassNames.link).toContain('text-fd-foreground')
+    expect(sourceNoteClassNames.meta).toContain('text-fd-muted-foreground')
+
+    for (const className of Object.values(sourceNoteClassNames)) {
+      expect(className).not.toContain('dark:')
+      expect(className).not.toContain('bg-zinc-50')
+      expect(className).not.toContain('text-zinc-900')
+      expect(className).not.toContain('text-zinc-950')
     }
   })
 })
