@@ -136,7 +136,15 @@ class FakeJournal:
         self.executions: list[str] = []
         self.tca_metrics: list[str] = []
         self.runtime_buckets: list[str] = []
+        self.closed = False
         FakeJournal.instances.append(self)
+
+    def __enter__(self) -> "FakeJournal":
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        del args
+        self.closed = True
 
     def journal_order_event(
         self,

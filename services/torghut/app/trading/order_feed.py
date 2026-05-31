@@ -794,8 +794,8 @@ def _journal_tigerbeetle_order_event(
     if not settings.tigerbeetle_enabled or not settings.tigerbeetle_journal_enabled:
         return
     try:
-        with session.begin_nested():
-            TigerBeetleLedgerJournal().journal_order_event(session, row)
+        with TigerBeetleLedgerJournal() as journal, session.begin_nested():
+            journal.journal_order_event(session, row)
     except Exception as exc:
         if settings.tigerbeetle_required:
             raise

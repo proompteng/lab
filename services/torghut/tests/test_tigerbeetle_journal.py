@@ -53,6 +53,15 @@ from app.trading.tigerbeetle_ledger_model import (
 )
 
 
+class ClosableFakeTigerBeetleClient(FakeTigerBeetleClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.close_count = 0
+
+    def close(self) -> None:
+        self.close_count += 1
+
+
 def _settings(*, enabled: bool = True, journal_enabled: bool = True) -> Settings:
     return Settings(
         TORGHUT_TIGERBEETLE_ENABLED=enabled,
@@ -232,6 +241,24 @@ class TestTigerBeetleLedgerJournal(TestCase):
             self.assertEqual(refs[0].amount, Decimal("190250000"))
             self.assertEqual(refs[0].ledger, LEDGER_USD_MICRO)
             self.assertEqual(len(client.transfers), 1)
+
+    def test_owned_client_is_reused_and_closed(self) -> None:
+        with Session(self.engine) as session:
+            first = _create_fill_event(session, fingerprint="client-reuse-1")
+            second = _create_fill_event(session, fingerprint="client-reuse-2")
+            client = ClosableFakeTigerBeetleClient()
+
+            with patch(
+                "app.trading.tigerbeetle_journal.create_tigerbeetle_client",
+                return_value=client,
+            ) as factory:
+                with TigerBeetleLedgerJournal(settings_obj=_settings()) as journal:
+                    self.assertIsNotNone(journal.journal_order_event(session, first))
+                    self.assertIsNotNone(journal.journal_order_event(session, second))
+
+            self.assertEqual(factory.call_count, 1)
+            self.assertEqual(client.close_count, 1)
+            self.assertEqual(len(client.transfers), 2)
 
     def test_real_fractional_notional_rounds_to_nearest_micro(self) -> None:
         with Session(self.engine) as session:
