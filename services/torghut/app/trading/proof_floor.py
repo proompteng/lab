@@ -520,6 +520,13 @@ def build_profitability_proof_floor_receipt(
     order_feed_telemetry_enabled = _truthy(
         simple_status.get("order_feed_telemetry_enabled")
     )
+    order_feed_ingestion_enabled = _truthy(
+        simple_status.get("order_feed_ingestion_enabled")
+    )
+    order_feed_bootstrap_configured = _truthy(
+        simple_status.get("order_feed_bootstrap_configured")
+    )
+    order_feed_topic_count = _int(simple_status.get("order_feed_topic_count"))
     if order_feed_lifecycle_required and not order_feed_telemetry_enabled:
         order_feed_state = "fail"
         order_feed_reason = "order_feed_lifecycle_disabled"
@@ -528,6 +535,39 @@ def build_profitability_proof_floor_receipt(
             code="enable_order_feed_lifecycle",
             dimension="order_feed_lifecycle",
             action="enable_simple_order_feed_ingestion_before_proof_floor_authority",
+            reason=order_feed_reason,
+            priority=72,
+        )
+    elif order_feed_lifecycle_required and not order_feed_ingestion_enabled:
+        order_feed_state = "fail"
+        order_feed_reason = "order_feed_ingestion_disabled"
+        _add_repair(
+            repairs,
+            code="enable_order_feed_lifecycle",
+            dimension="order_feed_lifecycle",
+            action="enable_simple_order_feed_ingestion_before_proof_floor_authority",
+            reason=order_feed_reason,
+            priority=72,
+        )
+    elif order_feed_lifecycle_required and not order_feed_bootstrap_configured:
+        order_feed_state = "fail"
+        order_feed_reason = "order_feed_bootstrap_missing"
+        _add_repair(
+            repairs,
+            code="enable_order_feed_lifecycle",
+            dimension="order_feed_lifecycle",
+            action="configure_order_feed_bootstrap_before_proof_floor_authority",
+            reason=order_feed_reason,
+            priority=72,
+        )
+    elif order_feed_lifecycle_required and order_feed_topic_count <= 0:
+        order_feed_state = "fail"
+        order_feed_reason = "order_feed_topic_missing"
+        _add_repair(
+            repairs,
+            code="enable_order_feed_lifecycle",
+            dimension="order_feed_lifecycle",
+            action="configure_order_feed_topic_before_proof_floor_authority",
             reason=order_feed_reason,
             priority=72,
         )
@@ -550,6 +590,15 @@ def build_profitability_proof_floor_receipt(
             "simple_lane_enabled": _truthy(simple_status.get("enabled")),
             "lifecycle_required": order_feed_lifecycle_required,
             "order_feed_telemetry_enabled": order_feed_telemetry_enabled,
+            "order_feed_ingestion_enabled": order_feed_ingestion_enabled,
+            "order_feed_bootstrap_configured": order_feed_bootstrap_configured,
+            "order_feed_topic_count": order_feed_topic_count,
+            "order_feed_assignment_mode": simple_status.get(
+                "order_feed_assignment_mode"
+            ),
+            "order_feed_auto_offset_reset": simple_status.get(
+                "order_feed_auto_offset_reset"
+            ),
             "order_feed_lifecycle_status": simple_status.get(
                 "order_feed_lifecycle_status"
             ),

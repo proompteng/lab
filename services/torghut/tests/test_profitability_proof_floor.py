@@ -72,6 +72,11 @@ def _simple_lane_status() -> dict[str, object]:
         "enabled": True,
         "submit_enabled": True,
         "order_feed_telemetry_enabled": True,
+        "order_feed_ingestion_enabled": True,
+        "order_feed_bootstrap_configured": True,
+        "order_feed_topic_count": 1,
+        "order_feed_assignment_mode": "manual",
+        "order_feed_auto_offset_reset": "latest",
         "order_feed_lifecycle_required": True,
         "order_feed_lifecycle_status": "enabled",
         "route_symbol_filter_enabled": True,
@@ -354,6 +359,126 @@ def test_required_order_feed_lifecycle_blocks_simple_proof_floor() -> None:
     assert order_feed_dimension["state"] == "fail"
     assert order_feed_dimension["capital_effect"] == "paper_hold"
     assert receipt["repair_ladder"][0]["code"] == "enable_order_feed_lifecycle"
+
+
+def test_required_order_feed_ingestion_config_blocks_simple_proof_floor() -> None:
+    receipt = build_profitability_proof_floor_receipt(
+        account_label="TORGHUT_SIM",
+        torghut_revision="torghut-sim-00345",
+        trading_mode="paper",
+        market_session_open=True,
+        live_submission_gate={
+            "allowed": True,
+            "reason": "non_live_mode",
+            "blocked_reasons": [],
+            "capital_stage": "paper",
+        },
+        hypothesis_payload=_healthy_hypothesis_payload(),
+        empirical_jobs_status=_healthy_empirical_jobs(),
+        quant_evidence=_healthy_quant_evidence(),
+        market_context_status=_healthy_market_context(),
+        tca_summary=_fresh_tca_summary(),
+        simple_lane_status={
+            **_simple_lane_status(),
+            "order_feed_ingestion_enabled": False,
+            "order_feed_bootstrap_configured": False,
+            "order_feed_topic_count": 0,
+        },
+        now=NOW,
+    )
+
+    assert receipt["route_state"] == "repair_only"
+    assert receipt["capital_state"] == "zero_notional"
+    assert receipt["blocking_reasons"] == ["order_feed_ingestion_disabled"]
+    order_feed_dimension = next(
+        item
+        for item in receipt["proof_dimensions"]
+        if item["dimension"] == "order_feed_lifecycle"
+    )
+    assert order_feed_dimension["state"] == "fail"
+    assert order_feed_dimension["reason"] == "order_feed_ingestion_disabled"
+    assert order_feed_dimension["source_ref"]["order_feed_telemetry_enabled"] is True
+    assert order_feed_dimension["source_ref"]["order_feed_ingestion_enabled"] is False
+    assert order_feed_dimension["source_ref"]["order_feed_topic_count"] == 0
+    assert receipt["repair_ladder"][0]["code"] == "enable_order_feed_lifecycle"
+
+
+def test_required_order_feed_bootstrap_config_blocks_simple_proof_floor() -> None:
+    receipt = build_profitability_proof_floor_receipt(
+        account_label="TORGHUT_SIM",
+        torghut_revision="torghut-sim-00345",
+        trading_mode="paper",
+        market_session_open=True,
+        live_submission_gate={
+            "allowed": True,
+            "reason": "non_live_mode",
+            "blocked_reasons": [],
+            "capital_stage": "paper",
+        },
+        hypothesis_payload=_healthy_hypothesis_payload(),
+        empirical_jobs_status=_healthy_empirical_jobs(),
+        quant_evidence=_healthy_quant_evidence(),
+        market_context_status=_healthy_market_context(),
+        tca_summary=_fresh_tca_summary(),
+        simple_lane_status={
+            **_simple_lane_status(),
+            "order_feed_bootstrap_configured": False,
+        },
+        now=NOW,
+    )
+
+    assert receipt["route_state"] == "repair_only"
+    assert receipt["capital_state"] == "zero_notional"
+    assert receipt["blocking_reasons"] == ["order_feed_bootstrap_missing"]
+    order_feed_dimension = next(
+        item
+        for item in receipt["proof_dimensions"]
+        if item["dimension"] == "order_feed_lifecycle"
+    )
+    assert order_feed_dimension["state"] == "fail"
+    assert order_feed_dimension["reason"] == "order_feed_bootstrap_missing"
+    assert receipt["repair_ladder"][0]["action"] == (
+        "configure_order_feed_bootstrap_before_proof_floor_authority"
+    )
+
+
+def test_required_order_feed_topic_config_blocks_simple_proof_floor() -> None:
+    receipt = build_profitability_proof_floor_receipt(
+        account_label="TORGHUT_SIM",
+        torghut_revision="torghut-sim-00345",
+        trading_mode="paper",
+        market_session_open=True,
+        live_submission_gate={
+            "allowed": True,
+            "reason": "non_live_mode",
+            "blocked_reasons": [],
+            "capital_stage": "paper",
+        },
+        hypothesis_payload=_healthy_hypothesis_payload(),
+        empirical_jobs_status=_healthy_empirical_jobs(),
+        quant_evidence=_healthy_quant_evidence(),
+        market_context_status=_healthy_market_context(),
+        tca_summary=_fresh_tca_summary(),
+        simple_lane_status={
+            **_simple_lane_status(),
+            "order_feed_topic_count": 0,
+        },
+        now=NOW,
+    )
+
+    assert receipt["route_state"] == "repair_only"
+    assert receipt["capital_state"] == "zero_notional"
+    assert receipt["blocking_reasons"] == ["order_feed_topic_missing"]
+    order_feed_dimension = next(
+        item
+        for item in receipt["proof_dimensions"]
+        if item["dimension"] == "order_feed_lifecycle"
+    )
+    assert order_feed_dimension["state"] == "fail"
+    assert order_feed_dimension["reason"] == "order_feed_topic_missing"
+    assert receipt["repair_ladder"][0]["action"] == (
+        "configure_order_feed_topic_before_proof_floor_authority"
+    )
 
 
 def test_optional_degraded_quant_evidence_is_informational() -> None:
@@ -870,8 +995,7 @@ def test_execution_tca_route_universe_uses_adverse_signed_shortfall() -> None:
     assert symbol_routes["routeable_symbol_count"] == 1
     assert symbol_routes["routeable_symbols"][0]["symbol"] == "AAPL"
     assert (
-        symbol_routes["routeable_symbols"][0]["avg_abs_slippage_bps"]
-        == "28.05213012"
+        symbol_routes["routeable_symbols"][0]["avg_abs_slippage_bps"] == "28.05213012"
     )
     assert (
         symbol_routes["routeable_symbols"][0]["avg_realized_shortfall_bps"]

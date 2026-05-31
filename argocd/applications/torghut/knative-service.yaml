@@ -88,7 +88,7 @@ spec:
             - name: TRADING_SIMPLE_SUBMIT_ENABLED
               value: "false"
             - name: TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED
-              value: "false"
+              value: "true"
             - name: TRADING_SIMPLE_PAPER_ROUTE_PROBE_ENABLED
               value: "true"
             - name: TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL
@@ -170,6 +170,29 @@ spec:
               value: "5000"
             - name: TRADING_RECONCILE_MS
               value: "15000"
+            - name: TRADING_ORDER_FEED_ENABLED
+              value: "true"
+            - name: TRADING_ORDER_FEED_BOOTSTRAP_SERVERS
+              value: kafka-kafka-bootstrap.kafka:9092
+            - name: TRADING_ORDER_FEED_SECURITY_PROTOCOL
+              value: SASL_PLAINTEXT
+            - name: TRADING_ORDER_FEED_SASL_MECHANISM
+              value: SCRAM-SHA-512
+            - name: TRADING_ORDER_FEED_SASL_USERNAME
+              value: torghut-ws
+            - name: TRADING_ORDER_FEED_SASL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-ws
+                  key: password
+            - name: TRADING_ORDER_FEED_TOPIC
+              value: ""
+            - name: TRADING_ORDER_FEED_GROUP_ID
+              value: torghut-order-feed-live-default
+            - name: TRADING_ORDER_FEED_ASSIGNMENT_MODE
+              value: manual
+            - name: TRADING_ORDER_FEED_AUTO_OFFSET_RESET
+              value: latest
             - name: TRADING_ORDER_FEED_TOPIC_V2
               value: torghut.trade-updates.v2
             - name: TRADING_EXECUTION_PREFER_LIMIT

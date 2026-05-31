@@ -1823,6 +1823,19 @@ class SimpleTradingPipeline(TradingPipeline):
                     "order_feed_telemetry_enabled": (
                         settings.trading_simple_order_feed_telemetry_enabled
                     ),
+                    "order_feed_ingestion_enabled": (
+                        settings.trading_order_feed_enabled
+                    ),
+                    "order_feed_bootstrap_configured": bool(
+                        settings.trading_order_feed_bootstrap_server_list
+                    ),
+                    "order_feed_topic_count": len(settings.trading_order_feed_topics),
+                    "order_feed_assignment_mode": (
+                        settings.trading_order_feed_assignment_mode
+                    ),
+                    "order_feed_auto_offset_reset": (
+                        settings.trading_order_feed_auto_offset_reset
+                    ),
                     "order_feed_lifecycle_required": (
                         settings.trading_pipeline_mode == "simple"
                         and settings.trading_mode in {"paper", "live"}
