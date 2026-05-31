@@ -92,6 +92,22 @@ def _load_knative_env(relative_path: str) -> dict[str, object]:
     return env
 
 
+def _load_knative_template_spec(relative_path: str) -> Mapping[str, object]:
+    manifest = _load_yaml_mapping(relative_path)
+    return cast(
+        Mapping[str, object],
+        manifest.get("spec", {}).get("template", {}).get("spec", {}),
+    )
+
+
+def _load_knative_container(relative_path: str) -> Mapping[str, object]:
+    template_spec = _load_knative_template_spec(relative_path)
+    containers = cast(list[Mapping[str, object]], template_spec.get("containers", []))
+    if not containers:
+        raise AssertionError(f"{relative_path} missing spec.template.spec.containers")
+    return containers[0]
+
+
 def _load_torghut_knative_env() -> dict[str, object]:
     return _load_knative_env("argocd/applications/torghut/knative-service.yaml")
 
@@ -897,6 +913,39 @@ class TestLiveConfigManifestContract(TestCase):
             env = _load_knative_env(relative_path)
             for key, value in expected.items():
                 self.assertEqual(env.get(key), value, f"{relative_path} {key}")
+
+    def test_torghut_tigerbeetle_client_pods_allow_io_uring(self) -> None:
+        for relative_path in (
+            "argocd/applications/torghut/knative-service.yaml",
+            "argocd/applications/torghut/knative-service-sim.yaml",
+        ):
+            container = _load_knative_container(relative_path)
+            security_context = cast(
+                Mapping[str, object],
+                container.get("securityContext", {}),
+            )
+            seccomp_profile = cast(
+                Mapping[str, object],
+                security_context.get("seccompProfile", {}),
+            )
+            self.assertEqual(
+                seccomp_profile.get("type"),
+                "Unconfined",
+                f"{relative_path} official TigerBeetle client requires io_uring",
+            )
+
+        _, smoke_container = _load_job_container(
+            "argocd/applications/torghut/tigerbeetle-smoke-job.yaml"
+        )
+        smoke_security_context = cast(
+            Mapping[str, object],
+            smoke_container.get("securityContext", {}),
+        )
+        smoke_seccomp_profile = cast(
+            Mapping[str, object],
+            smoke_security_context.get("seccompProfile", {}),
+        )
+        self.assertEqual(smoke_seccomp_profile.get("type"), "Unconfined")
 
     def test_torghut_tigerbeetle_smoke_job_runs_protocol_proof(self) -> None:
         spec, container = _load_job_container(
