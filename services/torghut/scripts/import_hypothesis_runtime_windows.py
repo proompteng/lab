@@ -1227,6 +1227,34 @@ def _execution_query_row_has_time(row: Sequence[object]) -> bool:
 
 
 def _order_lifecycle_query_row(row: Sequence[object]) -> dict[str, object]:
+    if len(row) >= 25:
+        return {
+            "execution_order_event_id": str(row[0]),
+            "trade_decision_id": str(row[1]),
+            "execution_id": str(row[2]) if row[2] is not None else None,
+            "event_ts": row[3],
+            "symbol": row[4],
+            "account_label": row[5],
+            "strategy_id": row[6],
+            "decision_hash": row[7],
+            "decision_json": row[8],
+            "alpaca_order_id": row[9],
+            "client_order_id": row[10],
+            "event_type": row[11],
+            "order_status": row[12],
+            "side": row[13],
+            "qty": row[14],
+            "filled_qty": row[15],
+            "avg_fill_price": row[16],
+            "event_fingerprint": row[17],
+            "source_topic": row[18],
+            "source_partition": row[19],
+            "source_offset": row[20],
+            "source_window_id": str(row[21]) if row[21] is not None else None,
+            "raw_event": row[22],
+            "execution_audit_json": row[23],
+            "raw_order": row[24],
+        }
     if len(row) >= 21:
         return {
             "execution_order_event_id": str(row[0]),
@@ -3773,6 +3801,10 @@ def _query_timestamps(
                     oe.client_order_id,
                     oe.event_type,
                     oe.status,
+                    e.side,
+                    oe.qty,
+                    oe.filled_qty,
+                    oe.avg_fill_price,
                     oe.event_fingerprint,
                     oe.source_topic,
                     oe.source_partition,
@@ -3862,6 +3894,10 @@ def _query_timestamps(
                         oe.client_order_id,
                         oe.event_type,
                         oe.status,
+                        null,
+                        oe.qty,
+                        oe.filled_qty,
+                        oe.avg_fill_price,
                         oe.event_fingerprint,
                         oe.source_topic,
                         oe.source_partition,
