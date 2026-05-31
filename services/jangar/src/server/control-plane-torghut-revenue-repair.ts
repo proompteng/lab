@@ -19,8 +19,7 @@ export const normalizeRevenueRepairBoolean = (value: unknown): boolean | null =>
 export const hasRevenueRepairSummary = (payload: Record<string, unknown>) =>
   normalizeNonEmpty(payload.business_state) !== null ||
   normalizeRevenueRepairBoolean(payload.revenue_ready) !== null ||
-  Array.isArray(payload.repair_queue) ||
-  asRecord(payload.top_repair_queue_item) !== null
+  Array.isArray(payload.repair_queue)
 
 const readRevenueRepairQueueItem = (rawItem: unknown): TorghutRevenueRepairQueueItem | null => {
   const item = asRecord(rawItem)
