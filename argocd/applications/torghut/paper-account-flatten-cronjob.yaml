@@ -7,7 +7,8 @@ metadata:
     app.kubernetes.io/name: torghut
     app.kubernetes.io/component: paper-account-flatten
 spec:
-  schedule: "5,20,35,50 19 * * 1-5"
+  schedule: "5,20 9 * * 1-5"
+  timeZone: America/New_York
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 2
   failedJobsHistoryLimit: 3
@@ -15,7 +16,7 @@ spec:
   jobTemplate:
     spec:
       backoffLimit: 1
-      activeDeadlineSeconds: 180
+      activeDeadlineSeconds: 300
       template:
         spec:
           restartPolicy: OnFailure
@@ -49,9 +50,19 @@ spec:
                     --paper-base-url https://paper-api.alpaca.markets \
                     --max-gross-market-value 100000 \
                     --max-position-count 25 \
+                    --extended-hours-limit \
+                    --limit-away-bps 200 \
+                    --wait-flat-seconds 120 \
+                    --poll-seconds 10 \
+                    --persist-snapshot \
                     --apply \
                     --json
               env:
+                - name: DB_DSN
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: uri
                 - name: APCA_API_KEY_ID
                   valueFrom:
                     secretKeyRef:

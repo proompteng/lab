@@ -6,6 +6,7 @@ from contextlib import redirect_stdout
 from datetime import datetime, timezone
 from decimal import Decimal
 from io import StringIO
+from types import SimpleNamespace
 from typing import Any
 from unittest import TestCase
 from unittest.mock import patch
@@ -48,10 +49,31 @@ class FakeFlattenClient:
             "qty": str(qty),
             "type": order_type,
             "time_in_force": time_in_force,
+            "limit_price": limit_price,
+            "extended_hours": (extra_params or {}).get("extended_hours"),
             "client_order_id": (extra_params or {}).get("client_order_id"),
         }
         self.submitted.append(order)
         return order
+
+
+class SequencedFlattenClient(FakeFlattenClient):
+    def __init__(self, position_snapshots: list[list[dict[str, Any]]]) -> None:
+        super().__init__(position_snapshots[0] if position_snapshots else [])
+        self.position_snapshots = list(position_snapshots)
+
+    def list_positions(self) -> list[dict[str, Any]]:
+        if len(self.position_snapshots) > 1:
+            return self.position_snapshots.pop(0)
+        return self.position_snapshots[0] if self.position_snapshots else []
+
+
+class FakeSessionContext:
+    def __enter__(self) -> object:
+        return object()
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        return None
 
 
 class TestFlattenPaperAccountPositions(TestCase):
@@ -114,6 +136,162 @@ class TestFlattenPaperAccountPositions(TestCase):
             [("AMAT", "sell", "market"), ("TSM", "buy", "market")],
         )
         self.assertEqual(payload["submitted_order_count"], 2)
+
+    def test_extended_hours_limit_orders_use_guarded_reference_prices(self) -> None:
+        client = FakeFlattenClient(
+            [
+                {
+                    "symbol": "AMAT",
+                    "qty": "2",
+                    "side": "long",
+                    "current_price": "100",
+                },
+                {
+                    "symbol": "TSM",
+                    "qty": "3",
+                    "side": "short",
+                    "current_price": "50",
+                },
+            ]
+        )
+
+        payload = flatten_paper_account_positions(
+            client=client,
+            account_label="TORGHUT_SIM",
+            expected_account_label="TORGHUT_SIM",
+            trading_mode="paper",
+            apply=True,
+            max_gross_market_value=Decimal("2500"),
+            max_position_count=10,
+            extended_hours_limit=True,
+            limit_away_bps=Decimal("200"),
+            generated_at=datetime(2026, 5, 29, 13, 5, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(payload["status"], "submitted")
+        self.assertTrue(payload["extended_hours_limit"])
+        self.assertEqual(payload["limit_away_bps"], "200")
+        self.assertEqual(payload["extended_hours_limit_missing_symbols"], [])
+        self.assertEqual(
+            [
+                (
+                    order["symbol"],
+                    order["side"],
+                    order["type"],
+                    order["limit_price"],
+                    order["extended_hours"],
+                )
+                for order in client.submitted
+            ],
+            [
+                ("AMAT", "sell", "limit", 98.0, True),
+                ("TSM", "buy", "limit", 51.0, True),
+            ],
+        )
+
+    def test_extended_hours_limit_blocks_missing_reference_prices(self) -> None:
+        client = FakeFlattenClient([{"symbol": "AMAT", "qty": "2", "side": "long"}])
+
+        payload = flatten_paper_account_positions(
+            client=client,
+            account_label="TORGHUT_SIM",
+            expected_account_label="TORGHUT_SIM",
+            trading_mode="paper",
+            apply=True,
+            max_gross_market_value=Decimal("2500"),
+            max_position_count=10,
+            extended_hours_limit=True,
+            limit_away_bps=Decimal("200"),
+        )
+
+        self.assertEqual(payload["status"], "blocked")
+        self.assertEqual(payload["extended_hours_limit_missing_symbols"], ["AMAT"])
+        self.assertIn(
+            "paper_account_flatten_extended_hours_limit_price_missing",
+            payload["blockers"],
+        )
+        self.assertFalse(client.cancelled)
+        self.assertEqual(client.submitted, [])
+
+    def test_extended_hours_limit_clamps_non_positive_sell_limit(self) -> None:
+        client = FakeFlattenClient(
+            [
+                {
+                    "symbol": "PENNY",
+                    "qty": "1",
+                    "side": "long",
+                    "current_price": "0.000001",
+                }
+            ]
+        )
+
+        payload = flatten_paper_account_positions(
+            client=client,
+            account_label="TORGHUT_SIM",
+            expected_account_label="TORGHUT_SIM",
+            trading_mode="paper",
+            apply=True,
+            max_gross_market_value=Decimal("2500"),
+            max_position_count=10,
+            extended_hours_limit=True,
+            limit_away_bps=Decimal("20000"),
+        )
+
+        self.assertEqual(payload["status"], "submitted")
+        self.assertEqual(client.submitted[0]["type"], "limit")
+        self.assertEqual(client.submitted[0]["limit_price"], 0.0001)
+
+    def test_wait_flat_marks_submitted_not_flat_when_positions_remain(self) -> None:
+        client = FakeFlattenClient(
+            [{"symbol": "AMAT", "qty": "2", "side": "long", "current_price": "100"}]
+        )
+
+        payload = flatten_paper_account_positions(
+            client=client,
+            account_label="TORGHUT_SIM",
+            expected_account_label="TORGHUT_SIM",
+            trading_mode="paper",
+            apply=True,
+            max_gross_market_value=Decimal("2500"),
+            max_position_count=10,
+            wait_flat_seconds=0.01,
+            poll_seconds=0.01,
+        )
+
+        self.assertEqual(payload["status"], "submitted_not_flat")
+        self.assertEqual(payload["position_count"], 1)
+        self.assertEqual(payload["final_position_count"], 1)
+
+    def test_wait_flat_marks_flattened_when_positions_clear(self) -> None:
+        client = SequencedFlattenClient(
+            [
+                [
+                    {
+                        "symbol": "AMAT",
+                        "qty": "2",
+                        "side": "long",
+                        "current_price": "100",
+                    }
+                ],
+                [],
+            ]
+        )
+
+        payload = flatten_paper_account_positions(
+            client=client,
+            account_label="TORGHUT_SIM",
+            expected_account_label="TORGHUT_SIM",
+            trading_mode="paper",
+            apply=True,
+            max_gross_market_value=Decimal("2500"),
+            max_position_count=10,
+            wait_flat_seconds=0.01,
+            poll_seconds=0.01,
+        )
+
+        self.assertEqual(payload["status"], "flattened")
+        self.assertEqual(payload["position_count"], 1)
+        self.assertEqual(payload["final_position_count"], 0)
 
     def test_refuses_live_mode_or_wrong_account(self) -> None:
         client = FakeFlattenClient(
@@ -289,6 +467,14 @@ class TestFlattenPaperAccountPositions(TestCase):
             "1234.56",
             "--max-position-count",
             "3",
+            "--extended-hours-limit",
+            "--limit-away-bps",
+            "150",
+            "--wait-flat-seconds",
+            "45",
+            "--poll-seconds",
+            "3",
+            "--persist-snapshot",
             "--apply",
             "--json",
         ]
@@ -302,6 +488,11 @@ class TestFlattenPaperAccountPositions(TestCase):
         self.assertEqual(args.paper_base_url, "https://paper-api.alpaca.markets")
         self.assertEqual(args.max_gross_market_value, "1234.56")
         self.assertEqual(args.max_position_count, 3)
+        self.assertTrue(args.extended_hours_limit)
+        self.assertEqual(args.limit_away_bps, "150")
+        self.assertEqual(args.wait_flat_seconds, 45)
+        self.assertEqual(args.poll_seconds, 3)
+        self.assertTrue(args.persist_snapshot)
         self.assertTrue(args.apply)
         self.assertTrue(args.json)
 
@@ -332,6 +523,82 @@ class TestFlattenPaperAccountPositions(TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["status"], "clean")
         self.assertEqual(payload["position_count"], 0)
+
+    def test_main_persists_snapshot_for_guarded_paper_account(self) -> None:
+        client = FakeFlattenClient()
+        snapshot = SimpleNamespace(
+            id="snapshot-1",
+            as_of=datetime(2026, 5, 31, 6, 35, tzinfo=timezone.utc),
+        )
+        argv = [
+            "flatten_paper_account_positions.py",
+            "--account-label",
+            "TORGHUT_SIM",
+            "--expected-account-label",
+            "TORGHUT_SIM",
+            "--trading-mode",
+            "paper",
+            "--persist-snapshot",
+            "--json",
+        ]
+
+        with (
+            patch.object(sys, "argv", argv),
+            patch.object(flatten_script, "TorghutAlpacaClient", return_value=client),
+            patch.object(
+                flatten_script, "OrderFirewall", side_effect=lambda wrapped: wrapped
+            ),
+            patch.object(flatten_script, "SessionLocal", return_value=FakeSessionContext()),
+            patch.object(
+                flatten_script, "snapshot_account_and_positions", return_value=snapshot
+            ) as snapshot_account,
+            redirect_stdout(StringIO()) as output,
+        ):
+            exit_code = flatten_script.main()
+
+        payload = json.loads(output.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["position_snapshot_id"], "snapshot-1")
+        self.assertEqual(
+            payload["position_snapshot_as_of"],
+            "2026-05-31T06:35:00+00:00",
+        )
+        snapshot_account.assert_called_once()
+
+    def test_main_skips_snapshot_persistence_when_guard_fails(self) -> None:
+        client = FakeFlattenClient()
+        argv = [
+            "flatten_paper_account_positions.py",
+            "--account-label",
+            "WRONG",
+            "--expected-account-label",
+            "TORGHUT_SIM",
+            "--trading-mode",
+            "paper",
+            "--persist-snapshot",
+            "--json",
+        ]
+
+        with (
+            patch.object(sys, "argv", argv),
+            patch.object(flatten_script, "TorghutAlpacaClient", return_value=client),
+            patch.object(
+                flatten_script, "OrderFirewall", side_effect=lambda wrapped: wrapped
+            ),
+            patch.object(flatten_script, "SessionLocal") as session_local,
+            patch.object(flatten_script, "snapshot_account_and_positions") as snapshot_account,
+            redirect_stdout(StringIO()) as output,
+        ):
+            exit_code = flatten_script.main()
+
+        payload = json.loads(output.getvalue())
+        self.assertEqual(exit_code, 2)
+        self.assertEqual(
+            payload["position_snapshot_skipped"],
+            "paper_account_label_or_mode_guard_failed",
+        )
+        session_local.assert_not_called()
+        snapshot_account.assert_not_called()
 
     def test_main_outputs_text_and_returns_blocked_status(self) -> None:
         client = FakeFlattenClient(

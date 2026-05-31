@@ -923,7 +923,8 @@ class TestLiveConfigManifestContract(TestCase):
             "argocd/applications/torghut/paper-account-flatten-cronjob.yaml"
         )
 
-        self.assertEqual(spec.get("schedule"), "5,20,35,50 19 * * 1-5")
+        self.assertEqual(spec.get("schedule"), "5,20 9 * * 1-5")
+        self.assertEqual(spec.get("timeZone"), "America/New_York")
         self.assertEqual(spec.get("concurrencyPolicy"), "Forbid")
         job_spec = cast(
             Mapping[str, object],
@@ -934,7 +935,7 @@ class TestLiveConfigManifestContract(TestCase):
             cast(Mapping[str, object], job_spec.get("template", {})),
         )
         pod_spec = cast(Mapping[str, object], template.get("spec", {}))
-        self.assertEqual(job_spec.get("activeDeadlineSeconds"), 180)
+        self.assertEqual(job_spec.get("activeDeadlineSeconds"), 300)
         self.assertEqual(pod_spec.get("serviceAccountName"), "torghut-runtime")
         self.assertEqual(
             pod_spec.get("nodeSelector"),
@@ -961,6 +962,12 @@ class TestLiveConfigManifestContract(TestCase):
             item.get("name"): item
             for item in cast(list[Mapping[str, object]], container.get("env", []))
         }
+        db_dsn = cast(Mapping[str, object], env["DB_DSN"])
+        value_from = cast(Mapping[str, object], db_dsn.get("valueFrom", {}))
+        self.assertEqual(
+            value_from.get("secretKeyRef"),
+            {"name": "torghut-db-app", "key": "uri"},
+        )
         self.assertEqual(env["TRADING_MODE"].get("value"), "paper")
         self.assertEqual(env["TRADING_ACCOUNT_LABEL"].get("value"), "TORGHUT_SIM")
         self.assertEqual(env["TRADING_KILL_SWITCH_ENABLED"].get("value"), "false")
@@ -974,6 +981,11 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("--max-gross-market-value 100000", args)
         self.assertNotIn("--max-gross-market-value 2500", args)
         self.assertIn("--max-position-count 25", args)
+        self.assertIn("--extended-hours-limit", args)
+        self.assertIn("--limit-away-bps 200", args)
+        self.assertIn("--wait-flat-seconds 120", args)
+        self.assertIn("--poll-seconds 10", args)
+        self.assertIn("--persist-snapshot", args)
         self.assertIn("--apply", args)
         self.assertIn("--json", args)
 
