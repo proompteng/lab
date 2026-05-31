@@ -255,8 +255,13 @@ class TestPaperRouteEvidenceAudit(TestCase):
             "paper_route_account_pre_session_non_target_positions_present", blockers
         )
         readiness = plan["account_pre_session_readiness"]
+        self.assertEqual(readiness["state"], "blocked")
+        self.assertEqual(readiness["target_count"], 1)
         self.assertEqual(readiness["required_target_count"], 1)
+        self.assertEqual(readiness["not_yet_required_target_count"], 0)
+        self.assertEqual(readiness["pending_target_count"], 0)
         self.assertEqual(readiness["clean_target_count"], 0)
+        self.assertEqual(readiness["blocked_target_count"], 1)
         self.assertIn("paper_route_account_pre_session_not_flat", readiness["blockers"])
 
     def test_pre_session_missing_account_snapshot_skips_target(self) -> None:
@@ -754,6 +759,19 @@ class TestPaperRouteEvidenceAudit(TestCase):
             plan["session_readiness"]["settlement_ready_at"],
             "2026-05-26T21:00:00+00:00",
         )
+        account_pre_session = plan["account_pre_session_readiness"]
+        self.assertEqual(account_pre_session["state"], "pending_until_pre_session")
+        self.assertEqual(account_pre_session["target_count"], 1)
+        self.assertEqual(account_pre_session["required_target_count"], 0)
+        self.assertEqual(account_pre_session["not_yet_required_target_count"], 1)
+        self.assertEqual(account_pre_session["pending_target_count"], 1)
+        self.assertEqual(account_pre_session["clean_target_count"], 0)
+        self.assertEqual(account_pre_session["blocked_target_count"], 0)
+        self.assertEqual(
+            account_pre_session["next_required_after"],
+            "2026-05-26T13:15:00+00:00",
+        )
+        self.assertEqual(account_pre_session["blockers"], [])
         self.assertEqual(
             plan["session_readiness"]["import_blockers"],
             ["paper_route_session_window_not_open"],

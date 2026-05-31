@@ -1590,12 +1590,18 @@ def _next_paper_route_runtime_window_targets(
         }
     )
     account_pre_session_items = [
-        _as_mapping(target.get("paper_route_account_pre_session_state"))
+        item
         for target in planned_targets
+        if (item := _as_mapping(target.get("paper_route_account_pre_session_state")))
     ]
     account_pre_session_items.extend(
-        _as_mapping(skipped_target.get("paper_route_account_pre_session_state"))
+        item
         for skipped_target in skipped_targets
+        if (
+            item := _as_mapping(
+                skipped_target.get("paper_route_account_pre_session_state")
+            )
+        )
     )
     account_pre_session_required_count = sum(
         1 for item in account_pre_session_items if bool(item.get("required"))
@@ -1607,12 +1613,44 @@ def _next_paper_route_runtime_window_targets(
             for blocker in _unique_text_items(item.get("blockers"))
         }
     )
+    account_pre_session_not_yet_required_count = sum(
+        1
+        for item in account_pre_session_items
+        if item.get("state") == "not_required_until_pre_session"
+    )
     account_pre_session_clean_count = sum(
         1
         for item in account_pre_session_items
-        if item.get("state") in {"clean", "not_required_until_pre_session"}
+        if item.get("state") == "clean"
         and not _unique_text_items(item.get("blockers"))
     )
+    account_pre_session_blocked_count = sum(
+        1
+        for item in account_pre_session_items
+        if item.get("state") == "blocked"
+        or bool(_unique_text_items(item.get("blockers")))
+    )
+    account_pre_session_pending_count = sum(
+        1
+        for item in account_pre_session_items
+        if item.get("state") == "not_required_until_pre_session"
+        and not _unique_text_items(item.get("blockers"))
+    )
+    account_pre_session_required_after_values = sorted(
+        str(item.get("required_after"))
+        for item in account_pre_session_items
+        if item.get("required_after") is not None
+    )
+    if not account_pre_session_items:
+        account_pre_session_summary_state = "no_targets"
+    elif account_pre_session_blocked_count:
+        account_pre_session_summary_state = "blocked"
+    elif account_pre_session_pending_count:
+        account_pre_session_summary_state = "pending_until_pre_session"
+    elif account_pre_session_clean_count == len(account_pre_session_items):
+        account_pre_session_summary_state = "clean"
+    else:
+        account_pre_session_summary_state = "unknown"
     return {
         "schema_version": NEXT_PAPER_ROUTE_RUNTIME_WINDOW_TARGETS_SCHEMA_VERSION,
         "source": "paper_route_evidence_audit",
@@ -1646,11 +1684,19 @@ def _next_paper_route_runtime_window_targets(
         },
         "account_pre_session_readiness": {
             "schema_version": "torghut.paper-route-account-pre-session-readiness-summary.v1",
+            "state": account_pre_session_summary_state,
             "target_count": len(account_pre_session_items),
             "required_target_count": account_pre_session_required_count,
+            "not_yet_required_target_count": (
+                account_pre_session_not_yet_required_count
+            ),
+            "pending_target_count": account_pre_session_pending_count,
             "clean_target_count": account_pre_session_clean_count,
-            "blocked_target_count": (
-                len(account_pre_session_items) - account_pre_session_clean_count
+            "blocked_target_count": account_pre_session_blocked_count,
+            "next_required_after": (
+                account_pre_session_required_after_values[0]
+                if account_pre_session_required_after_values
+                else None
             ),
             "blockers": account_pre_session_blockers,
         },
