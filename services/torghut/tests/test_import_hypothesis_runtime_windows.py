@@ -1419,6 +1419,42 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             )
         )
 
+    def test_runtime_window_proof_hygiene_carries_target_metadata_blockers(
+        self,
+    ) -> None:
+        self.assertEqual(
+            _runtime_window_import_proof_hygiene_blockers(
+                source_kind="paper_runtime_observed",
+                target_metadata={
+                    "runtime_ledger_target_metadata_blockers": [
+                        "existing_target_blocker"
+                    ],
+                    "runtime_window_import_health_gate_blockers": [
+                        "health_gate_blocker"
+                    ],
+                    "candidate_blockers": ["candidate_blocker"],
+                    "runtime_window_import_audit_blockers": [
+                        "paper_route_account_contamination_detected",
+                        "unlinked_order_events_present",
+                    ],
+                    "runtime_window_import_audit_target_blockers": [
+                        "runtime_ledger_evidence_grade_bucket_missing"
+                    ],
+                },
+                dependency_quorum_decision="allow",
+                continuity_ok="ok",
+                drift_ok="ok",
+            ),
+            [
+                "existing_target_blocker",
+                "health_gate_blocker",
+                "candidate_blocker",
+                "paper_route_account_contamination_detected",
+                "unlinked_order_events_present",
+                "runtime_ledger_evidence_grade_bucket_missing",
+            ],
+        )
+
     def test_source_kind_allows_authoritative_materialization_only_for_observed_runtime(
         self,
     ) -> None:

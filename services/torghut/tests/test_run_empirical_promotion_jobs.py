@@ -788,7 +788,137 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         self.assertEqual(top_level_plan["targets"][0]["hypothesis_id"], "H-PAIRS-01")
         self.assertEqual(fallback_plan["targets"][0]["hypothesis_id"], "H-FALLBACK-01")
 
-    def test_runtime_window_target_plan_payload_blocks_contaminated_import_audit(
+    def test_runtime_window_target_plan_payload_marks_contaminated_import_audit(
+        self,
+    ) -> None:
+        plan = renewal._runtime_window_target_plan_from_payload(
+            {
+                "schema_version": "torghut.paper-route-target-plan.v1",
+                "runtime_window_import_plan": {
+                    "schema_version": (
+                        "torghut.next-paper-route-runtime-window-targets.v1"
+                    ),
+                    "targets": [
+                        {
+                            "candidate_id": "cand-contaminated",
+                            "hypothesis_id": "H-CONTAMINATED",
+                            "strategy_name": "microbar-cross-sectional-pairs-v1",
+                            "window_start": "2026-05-29T13:30:00+00:00",
+                            "window_end": "2026-05-29T20:00:00+00:00",
+                        }
+                    ],
+                },
+                "runtime_window_import_audit": {
+                    "state": "import_due_account_contamination_detected",
+                    "next_action": "import_with_blockers",
+                    "blockers": [
+                        "paper_route_account_contamination_detected",
+                        "unlinked_order_events_present",
+                    ],
+                    "target_blockers": [
+                        {
+                            "candidate_id": "cand-contaminated",
+                            "hypothesis_id": "H-CONTAMINATED",
+                            "strategy_name": "microbar-cross-sectional-pairs-v1",
+                            "window_start": "2026-05-29T13:30:00+00:00",
+                            "window_end": "2026-05-29T20:00:00+00:00",
+                            "blockers": [
+                                "runtime_ledger_evidence_grade_bucket_missing"
+                            ],
+                        }
+                    ],
+                },
+            }
+        )
+
+        target = plan["targets"][0]
+        self.assertEqual(
+            target["runtime_window_import_audit_state"],
+            "import_due_account_contamination_detected",
+        )
+        self.assertIn(
+            "paper_route_account_contamination_detected",
+            target["runtime_ledger_target_metadata_blockers"],
+        )
+        self.assertIn(
+            "unlinked_order_events_present",
+            target["runtime_window_import_health_gate_blockers"],
+        )
+        self.assertIn(
+            "runtime_ledger_evidence_grade_bucket_missing",
+            target["runtime_window_import_audit_target_blockers"],
+        )
+
+    def test_runtime_window_import_audit_annotation_helper_fallbacks(
+        self,
+    ) -> None:
+        self.assertEqual(
+            renewal._extend_unique_text_items(" existing ", ["new", "existing"]),
+            ["existing", "new"],
+        )
+        self.assertEqual(
+            renewal._runtime_window_import_audit_blockers(
+                {"state": "import_due_source_activity_missing"}
+            ),
+            ["import_due_source_activity_missing"],
+        )
+        self.assertTrue(
+            renewal._runtime_window_audit_target_blocker_matches(
+                target_blocker={
+                    "hypothesis_id": "H-PAIRS-01",
+                    "strategy_lookup_names": ["runtime-strategy"],
+                },
+                target={
+                    "hypothesis_id": "H-PAIRS-01",
+                    "runtime_strategy_name": "runtime-strategy",
+                },
+            )
+        )
+        self.assertFalse(
+            renewal._runtime_window_audit_target_blocker_matches(
+                target_blocker={"candidate_id": "different"},
+                target={"candidate_id": "candidate"},
+            )
+        )
+        self.assertFalse(
+            renewal._runtime_window_audit_target_blocker_matches(
+                target_blocker={"strategy_lookup_names": ["missing-strategy"]},
+                target={"runtime_strategy_name": "runtime-strategy"},
+            )
+        )
+        payload = {
+            "runtime_window_import_audit": {
+                "state": "import_due_source_activity_missing",
+            }
+        }
+        self.assertEqual(
+            renewal._runtime_window_target_plan_with_import_audit_blockers(
+                payload=payload,
+                plan={"targets": "invalid"},
+            ),
+            {"targets": "invalid"},
+        )
+        annotated = renewal._runtime_window_target_plan_with_import_audit_blockers(
+            payload=payload,
+            plan={
+                "targets": [
+                    None,
+                    {
+                        "candidate_id": "candidate",
+                        "hypothesis_id": "H-PAIRS-01",
+                        "strategy_name": "runtime-strategy",
+                    },
+                ]
+            },
+        )
+
+        self.assertIsNone(annotated["targets"][0])
+        self.assertIn(
+            "import_due_source_activity_missing",
+            annotated["targets"][1]["runtime_ledger_target_metadata_blockers"],
+        )
+
+    def test_runtime_window_target_plan_payload_blocks_contaminated_import_audit_without_targets(
         self,
     ) -> None:
         with self.assertRaisesRegex(
@@ -806,14 +936,7 @@ class TestRunEmpiricalPromotionJobs(TestCase):
                         "schema_version": (
                             "torghut.next-paper-route-runtime-window-targets.v1"
                         ),
-                        "targets": [
-                            {
-                                "candidate_id": "cand-contaminated",
-                                "hypothesis_id": "H-CONTAMINATED",
-                                "window_start": "2026-05-29T13:30:00+00:00",
-                                "window_end": "2026-05-29T20:00:00+00:00",
-                            }
-                        ],
+                        "targets": [],
                     },
                     "runtime_window_import_audit": {
                         "state": "import_due_account_contamination_detected",
