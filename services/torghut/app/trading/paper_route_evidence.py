@@ -33,6 +33,12 @@ from .runtime_cost_authority import cost_basis_counts_have_non_promotion_grade_c
 from .runtime_decision_authority import ROUTE_ACQUISITION_SOURCE_DECISION_MODE
 from .runtime_ledger import POST_COST_PNL_BASIS
 from .runtime_ledger_proof_policy import runtime_ledger_proof_policy_from_env
+from .runtime_strategy_resolution import (
+    derived_strategy_name_from_strategy_id,
+    explicit_runtime_strategy_name_or_family_harness,
+    runtime_strategy_name_from_strategy_id,
+    strategy_names_from_strategy_id,
+)
 
 
 PAPER_ROUTE_EVIDENCE_SCHEMA_VERSION = "torghut.paper-route-evidence.v1"
@@ -225,11 +231,7 @@ def _safe_text(value: object) -> str | None:
 
 
 def _strategy_name_from_strategy_id(strategy_id: object) -> str | None:
-    text = _safe_text(strategy_id)
-    if text is None:
-        return None
-    base = text.split("@", 1)[0].strip()
-    return base.replace("_", "-") if base else None
+    return runtime_strategy_name_from_strategy_id(strategy_id)
 
 
 def _looks_like_uuid_text(value: object) -> bool:
@@ -271,13 +273,18 @@ def _canonical_runtime_strategy_name(
     matched_strategy: Mapping[str, object] | None = None,
 ) -> str | None:
     matched_name = _safe_text((matched_strategy or {}).get("strategy_name"))
-    derived_name = _strategy_name_from_strategy_id(strategy_id)
+    explicit_or_family_name = explicit_runtime_strategy_name_or_family_harness(
+        runtime_strategy_name=runtime_strategy_name,
+        strategy_name=strategy_name,
+        strategy_id=strategy_id,
+    )
     preferred = _strategy_lookup_names(
         matched_name,
+        explicit_or_family_name,
+        strategy_names_from_strategy_id(strategy_id),
+        _strategy_lookup_names(strategy_lookup_names),
         runtime_strategy_name,
         strategy_name,
-        derived_name,
-        _strategy_lookup_names(strategy_lookup_names),
     )
     for name in preferred:
         if not _looks_like_uuid_text(name):
@@ -891,13 +898,19 @@ def _target_identity(
     strategy_name = _safe_text(target.get("strategy_name"))
     strategy_id = _safe_text(target.get("strategy_id"))
     runtime_strategy_name = (
-        _safe_text(target.get("runtime_strategy_name")) or strategy_name
+        explicit_runtime_strategy_name_or_family_harness(
+            runtime_strategy_name=target.get("runtime_strategy_name"),
+            strategy_name=strategy_name,
+            strategy_id=strategy_id,
+        )
+        or strategy_name
     )
     strategy_lookup_names = _strategy_lookup_names(
         target.get("strategy_lookup_names"),
         runtime_strategy_name,
         strategy_name,
-        _strategy_name_from_strategy_id(strategy_id),
+        strategy_names_from_strategy_id(strategy_id),
+        derived_strategy_name_from_strategy_id(strategy_id),
     )
     return {
         "hypothesis_id": _safe_text(target.get("hypothesis_id")),
@@ -1221,14 +1234,23 @@ def _next_paper_route_runtime_window_targets(
         strategy_family = _safe_text(target.get("strategy_family"))
         strategy_name = _safe_text(target.get("strategy_name"))
         strategy_id = _safe_text(target.get("strategy_id"))
-        runtime_strategy_name = (
+        source_runtime_strategy_name = (
             _safe_text(target.get("runtime_strategy_name")) or strategy_name
+        )
+        runtime_strategy_name = (
+            explicit_runtime_strategy_name_or_family_harness(
+                runtime_strategy_name=target.get("runtime_strategy_name"),
+                strategy_name=strategy_name,
+                strategy_id=strategy_id,
+            )
+            or strategy_name
         )
         strategy_lookup_names = _strategy_lookup_names(
             target.get("strategy_lookup_names"),
             runtime_strategy_name,
             strategy_name,
-            _strategy_name_from_strategy_id(strategy_id),
+            strategy_names_from_strategy_id(strategy_id),
+            derived_strategy_name_from_strategy_id(strategy_id),
         )
         raw_target_probe_symbols = _target_probe_symbols(target, probe)
         strategy_universe_symbols = _strategy_universe_symbols(
@@ -1277,7 +1299,8 @@ def _next_paper_route_runtime_window_targets(
             strategy_lookup_names,
             runtime_strategy_name,
             strategy_name,
-            _strategy_name_from_strategy_id(strategy_id),
+            strategy_names_from_strategy_id(strategy_id),
+            derived_strategy_name_from_strategy_id(strategy_id),
         )
         target_probe_ready = (
             bool(probe.get("configured_enabled"))
@@ -1429,7 +1452,7 @@ def _next_paper_route_runtime_window_targets(
             "strategy_id": strategy_id or "",
             "runtime_strategy_name": canonical_strategy_name or "",
             "source_strategy_name": strategy_name or "",
-            "source_runtime_strategy_name": runtime_strategy_name or "",
+            "source_runtime_strategy_name": source_runtime_strategy_name or "",
             "strategy_lookup_names": strategy_lookup_names,
             "account_label": PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
             "source_account_label": source_account_label or "",

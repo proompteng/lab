@@ -57,6 +57,11 @@ from .runtime_ledger_source_authority import (
     RUNTIME_LEDGER_TRADE_DECISION_REFS_MISSING_BLOCKER,
     runtime_ledger_promotion_source_authority_blockers,
 )
+from .runtime_strategy_resolution import (
+    derived_strategy_name_from_strategy_id,
+    explicit_runtime_strategy_name_or_family_harness,
+    strategy_names_from_strategy_id,
+)
 from .tca import build_tca_gate_inputs
 
 _CAPITAL_STAGE_ORDER = (
@@ -1440,14 +1445,6 @@ def _runtime_ledger_source_collection_candidates(
     ]
 
 
-def _strategy_name_from_strategy_id(strategy_id: object) -> str | None:
-    text = _safe_text(strategy_id)
-    if text is None:
-        return None
-    base = text.split("@", 1)[0].strip()
-    return base.replace("_", "-") if base else None
-
-
 def _strategy_lookup_names(*values: object) -> list[str]:
     names: list[str] = []
     for value in values:
@@ -1476,8 +1473,10 @@ def _hypothesis_manifest_ref(hypothesis_id: object) -> str | None:
 def _runtime_ledger_paper_probation_strategy_name(
     candidate: Mapping[str, object],
 ) -> str | None:
-    return _safe_text(candidate.get("runtime_strategy_name")) or (
-        _strategy_name_from_strategy_id(candidate.get("strategy_id"))
+    return explicit_runtime_strategy_name_or_family_harness(
+        runtime_strategy_name=candidate.get("runtime_strategy_name"),
+        strategy_name=candidate.get("strategy_name"),
+        strategy_id=candidate.get("strategy_id"),
     )
 
 
@@ -1509,7 +1508,8 @@ def _runtime_ledger_paper_probation_import_plan(
             candidate.get("strategy_lookup_names"),
             strategy_name,
             candidate_strategy_name,
-            _strategy_name_from_strategy_id(strategy_id),
+            strategy_names_from_strategy_id(strategy_id),
+            derived_strategy_name_from_strategy_id(strategy_id),
         )
         account_label = _safe_text(candidate.get("account")) or "TORGHUT_SIM"
         window_start = _safe_text(candidate.get("bucket_started_at"))
