@@ -7,10 +7,11 @@ type SourceNoteProps = {
 }
 
 export const sourceNoteClassNames = {
-  aside: 'not-prose my-6 rounded-md border px-3 py-2 text-xs leading-6 text-zinc-400 shadow-sm',
+  aside:
+    'not-prose my-6 overflow-x-auto rounded-md border px-3 py-2 text-xs leading-6 whitespace-nowrap text-zinc-400 shadow-sm',
   label: 'mr-2 font-medium text-zinc-200',
-  list: 'm-0 inline list-none p-0',
-  item: 'inline',
+  list: 'm-0 inline list-none p-0 whitespace-nowrap',
+  item: 'inline whitespace-nowrap',
   link: 'font-medium text-zinc-100 underline decoration-zinc-500 underline-offset-2 transition hover:text-white hover:decoration-zinc-200',
   meta: 'text-zinc-500',
   separator: 'mx-2 text-zinc-700',
@@ -21,15 +22,28 @@ export const sourceNoteStyles = {
   borderColor: '#27272a',
 } satisfies CSSProperties
 
+export const sourceNoteListStyles = {
+  display: 'inline',
+  listStyle: 'none',
+  margin: 0,
+  padding: 0,
+  whiteSpace: 'nowrap',
+} satisfies CSSProperties
+
+export const sourceNoteItemStyles = {
+  display: 'inline',
+  whiteSpace: 'nowrap',
+} satisfies CSSProperties
+
 export function SourceNote({ ids }: SourceNoteProps) {
   const sources = wikiSources.filter((source) => ids.includes(source.id))
 
   return (
     <aside className={sourceNoteClassNames.aside} style={sourceNoteStyles} aria-label="Sources">
       <span className={sourceNoteClassNames.label}>Sources:</span>
-      <ul className={sourceNoteClassNames.list}>
+      <ul className={sourceNoteClassNames.list} style={sourceNoteListStyles}>
         {sources.map((source, index) => (
-          <li key={source.id} className={sourceNoteClassNames.item}>
+          <li key={source.id} className={sourceNoteClassNames.item} style={sourceNoteItemStyles}>
             <a className={sourceNoteClassNames.link} href={source.url}>
               {source.title}
             </a>

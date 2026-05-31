@@ -10,7 +10,12 @@ import { referenceCategories } from '@/src/data/olden/reference'
 import { roadmapItems } from '@/src/data/olden/roadmap'
 import { sourceIds, wikiSources } from '@/src/data/olden/sources'
 import { videoTranscriptAudits } from '@/src/data/olden/video-guides'
-import { sourceNoteClassNames, sourceNoteStyles } from '@/src/components/wiki/source-note'
+import {
+  sourceNoteClassNames,
+  sourceNoteItemStyles,
+  sourceNoteListStyles,
+  sourceNoteStyles,
+} from '@/src/components/wiki/source-note'
 
 const contentRoot = join(import.meta.dir, '../../../../content/docs')
 const publicRoot = join(import.meta.dir, '../../../../public')
@@ -97,11 +102,19 @@ describe('Olden Era wiki components', () => {
   it('keeps source notes compact and readable on the dark docs surface', () => {
     expect(sourceNoteClassNames.aside).toContain('px-3')
     expect(sourceNoteClassNames.aside).toContain('py-2')
+    expect(sourceNoteClassNames.aside).toContain('overflow-x-auto')
+    expect(sourceNoteClassNames.aside).toContain('whitespace-nowrap')
+    expect(sourceNoteClassNames.list).toContain('whitespace-nowrap')
+    expect(sourceNoteClassNames.item).toContain('whitespace-nowrap')
     expect(sourceNoteClassNames.label).toContain('text-zinc-200')
     expect(sourceNoteClassNames.link).toContain('text-zinc-100')
     expect(sourceNoteClassNames.meta).toContain('text-zinc-500')
     expect(sourceNoteStyles.backgroundColor).toBe('#09090b')
     expect(sourceNoteStyles.borderColor).toBe('#27272a')
+    expect(sourceNoteListStyles.display).toBe('inline')
+    expect(sourceNoteListStyles.whiteSpace).toBe('nowrap')
+    expect(sourceNoteItemStyles.display).toBe('inline')
+    expect(sourceNoteItemStyles.whiteSpace).toBe('nowrap')
 
     for (const className of Object.values(sourceNoteClassNames)) {
       expect(className).not.toContain('dark:')
