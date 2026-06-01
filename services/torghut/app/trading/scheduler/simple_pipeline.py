@@ -28,9 +28,14 @@ from ..paper_route_target_plan import (
     paper_route_target_plan_targets,
 )
 from ..prices import MarketSnapshot
-from ..quote_quality import QuoteQualityPolicy, QuoteQualityStatus, assess_signal_quote_quality
+from ..quote_quality import (
+    QuoteQualityPolicy,
+    QuoteQualityStatus,
+    assess_signal_quote_quality,
+)
 from ..proof_floor import build_profitability_proof_floor_receipt
 from ..runtime_decision_authority import (
+    BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
     ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
     STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE,
     normalize_source_decision_mode,
@@ -847,6 +852,26 @@ def _paper_route_probe_entry_metadata(
     ):
         return None
     if _target_bool(probe_metadata.get("profit_proof_eligible")) is True:
+        return None
+    return probe_metadata
+
+
+def _bounded_paper_route_collection_entry_metadata(
+    params: Mapping[str, Any],
+) -> Mapping[str, Any] | None:
+    metadata = params.get("paper_route_probe")
+    if not isinstance(metadata, Mapping):
+        return None
+    probe_metadata = cast(Mapping[str, Any], metadata)
+    source_decision_mode = normalize_source_decision_mode(
+        params.get("source_decision_mode")
+    ) or normalize_source_decision_mode(probe_metadata.get("source_decision_mode"))
+    if source_decision_mode != BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE:
+        return None
+    if not (
+        _target_bool(params.get("profit_proof_eligible")) is True
+        or _target_bool(probe_metadata.get("profit_proof_eligible")) is True
+    ):
         return None
     return probe_metadata
 
@@ -1710,11 +1735,15 @@ class SimpleTradingPipeline(TradingPipeline):
                 continue
             params = decision.params
             probe_entry_metadata = _paper_route_probe_entry_metadata(params)
+            bounded_collection_entry_metadata = (
+                _bounded_paper_route_collection_entry_metadata(params)
+            )
             strategy_signal_entry_metadata = _strategy_signal_paper_entry_metadata(
                 params
             )
             is_entry = (
                 probe_entry_metadata is not None
+                or bounded_collection_entry_metadata is not None
                 or strategy_signal_entry_metadata is not None
             )
             is_exit = isinstance(params.get("paper_route_probe_exit"), Mapping)
@@ -1762,6 +1791,10 @@ class SimpleTradingPipeline(TradingPipeline):
             )
             if strategy_signal_entry_metadata is not None:
                 exposure["exit_source"] = "filled_strategy_signal_paper_executions"
+            elif bounded_collection_entry_metadata is not None:
+                exposure["exit_source"] = (
+                    "filled_bounded_paper_route_collection_executions"
+                )
             elif (
                 probe_entry_metadata is not None and exposure.get("exit_source") is None
             ):
@@ -2470,7 +2503,9 @@ class SimpleTradingPipeline(TradingPipeline):
             return True
         if isinstance(decision.params.get("strategy_signal_paper"), Mapping):
             return True
-        mode = normalize_source_decision_mode(decision.params.get("source_decision_mode"))
+        mode = normalize_source_decision_mode(
+            decision.params.get("source_decision_mode")
+        )
         return mode in {
             ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
             STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE,
@@ -3641,6 +3676,24 @@ class SimpleTradingPipeline(TradingPipeline):
                     if _target_requires_bounded_sim_collection_gate(target)
                     else {}
                 )
+                source_decision_mode = ROUTE_ACQUISITION_SOURCE_DECISION_MODE
+                profit_proof_eligible = False
+                if (
+                    _safe_text(execution_metadata.get("submit_path"))
+                    == "bounded_paper_route_collection"
+                ):
+                    source_decision_mode = (
+                        BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE
+                    )
+                    profit_proof_eligible = True
+                    metadata["source_decision_mode"] = source_decision_mode
+                    metadata["profit_proof_eligible"] = profit_proof_eligible
+                    metadata["bounded_paper_route_submit_path"] = execution_metadata[
+                        "submit_path"
+                    ]
+                    metadata["bounded_paper_route_execution_policy"] = (
+                        execution_metadata["execution_policy"]
+                    )
                 simple_lane = {
                     "source": "external_target_plan_url",
                     "target_plan_source_decision": True,
@@ -3667,14 +3720,26 @@ class SimpleTradingPipeline(TradingPipeline):
                     "paper_route_target_plan": metadata,
                     "paper_route_target_plan_source_decision": metadata,
                     "simple_lane": simple_lane,
-                    "source_decision_mode": ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
-                    "profit_proof_eligible": False,
+                    "source_decision_mode": source_decision_mode,
+                    "profit_proof_eligible": profit_proof_eligible,
                     "promotion_allowed": False,
                     "final_promotion_authorized": False,
                     "final_authority_ok": False,
                     "final_promotion_allowed": False,
                     "live_capital_routing_enabled": False,
                     **execution_metadata,
+                    **(
+                        {
+                            "bounded_paper_route_submit_path": execution_metadata[
+                                "submit_path"
+                            ],
+                            "bounded_paper_route_execution_policy": (
+                                execution_metadata["execution_policy"]
+                            ),
+                        }
+                        if execution_metadata
+                        else {}
+                    ),
                     **_target_plan_lineage([dict(target)], symbol),
                 }
                 if "exit_minute_after_open" in metadata:
@@ -4343,11 +4408,41 @@ class SimpleTradingPipeline(TradingPipeline):
         ):
             return None
 
-        return {
+        source_decision_mode = ROUTE_ACQUISITION_SOURCE_DECISION_MODE
+        profit_proof_eligible = False
+        context_mode = "paper_route_acquisition"
+        bounded_execution_policy: Mapping[str, Any] | None = None
+        bounded_submit_path: str | None = None
+        if target_source_authorized:
+            requested_source_decision_mode = normalize_source_decision_mode(
+                decision.params.get("source_decision_mode")
+            )
+            if (
+                requested_source_decision_mode
+                == BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE
+                and _target_bool(decision.params.get("profit_proof_eligible")) is True
+            ):
+                source_decision_mode = (
+                    BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE
+                )
+                profit_proof_eligible = True
+                context_mode = "bounded_paper_route_collection"
+                raw_bounded_policy = decision.params.get(
+                    "bounded_paper_route_execution_policy"
+                )
+                if isinstance(raw_bounded_policy, Mapping):
+                    bounded_execution_policy = cast(
+                        Mapping[str, Any], raw_bounded_policy
+                    )
+                bounded_submit_path = _safe_text(
+                    decision.params.get("bounded_paper_route_submit_path")
+                )
+
+        context: dict[str, object] = {
             "enabled": True,
-            "mode": "paper_route_acquisition",
-            "source_decision_mode": ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
-            "profit_proof_eligible": False,
+            "mode": context_mode,
+            "source_decision_mode": source_decision_mode,
+            "profit_proof_eligible": profit_proof_eligible,
             "max_notional": str(cap),
             "symbol": symbol,
             "side": decision.action,
@@ -4368,6 +4463,13 @@ class SimpleTradingPipeline(TradingPipeline):
             if not settings.trading_simple_submit_enabled
             else None,
         }
+        if bounded_execution_policy is not None:
+            context["bounded_paper_route_execution_policy"] = dict(
+                bounded_execution_policy
+            )
+        if bounded_submit_path is not None:
+            context["bounded_paper_route_submit_path"] = bounded_submit_path
+        return context
 
     @staticmethod
     def _paper_route_probe_retry_metadata(
