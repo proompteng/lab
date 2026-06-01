@@ -212,6 +212,7 @@ def _runtime_import(
     proof_blockers: list[str] | None = None,
     authoritative: bool = True,
     materialization_target: bool = True,
+    readback: bool = True,
 ) -> dict[str, object]:
     blocker_payloads = [{"blocker": blocker} for blocker in proof_blockers or []]
     target_payload: dict[str, object] = {
@@ -246,6 +247,44 @@ def _runtime_import(
         "proof_blockers": blocker_payloads,
         "materialized": authoritative and proof_status == "ok" and not blocker_payloads,
     }
+    if readback:
+        target_payload["readback"] = {
+            "schema_version": "torghut.runtime-window-import-readback.v1",
+            "run_id": "runtime-import-run-1",
+            "candidate_id": "c88421d619759b2cfaa6f4d0",
+            "hypothesis_id": "H-PAIRS-01",
+            "observed_stage": "paper",
+            "window_start": "2026-05-26T13:30:00+00:00",
+            "window_end": "2026-05-26T20:00:00+00:00",
+            "metric_window_count": 1,
+            "promotion_decision_count": 1,
+            "runtime_ledger_bucket_count": 1 if authoritative else 0,
+            "evidence_grade_runtime_ledger_bucket_count": 1 if authoritative else 0,
+            "metric_window_refs": [
+                "strategy_hypothesis_metric_windows:metric-window-1"
+            ],
+            "promotion_decision_refs": [
+                "strategy_promotion_decisions:promotion-decision-1"
+            ],
+            "runtime_ledger_bucket_refs": [
+                "strategy_runtime_ledger_buckets:runtime-ledger-bucket-1"
+            ]
+            if authoritative
+            else [],
+            "evidence_grade_runtime_ledger_bucket_refs": [
+                "strategy_runtime_ledger_buckets:runtime-ledger-bucket-1"
+            ]
+            if authoritative
+            else [],
+            "source_refs": [
+                "postgres:trade_decisions",
+                "postgres:executions",
+                "postgres:execution_order_events",
+                "postgres:order_feed_source_windows",
+            ]
+            if authoritative
+            else [],
+        }
     if authoritative:
         target_payload["tigerbeetle"] = {
             "schema_version": "torghut.tigerbeetle-runtime-ledger-proof-refs.v1",
@@ -301,6 +340,8 @@ def _runtime_import(
     }
     if materialization_target:
         summary["runtime_materialization_target"] = target_payload
+    if readback:
+        summary["runtime_window_import_readback"] = target_payload["readback"]
     return {
         "status": "ok",
         "proof_status": proof_status,
@@ -931,7 +972,8 @@ class TestRuntimeLedgerProofPacket(TestCase):
         self.assertFalse(result["final_authority_ok"])
         self.assertIn("runtime_window_import_missing", result["blockers"])
         self.assertEqual(
-            result["next_action"], "run_runtime_window_import_from_paper_route_target_plan"
+            result["next_action"],
+            "run_runtime_window_import_from_paper_route_target_plan",
         )
 
     def test_smoke_packet_cannot_grant_promotion_authority(self) -> None:
@@ -1245,7 +1287,9 @@ class TestRuntimeLedgerProofPacket(TestCase):
                     ),
                 },
             )
-            self.assertRegex(local_payload["artifact"]["payload_sha256"], r"^[0-9a-f]{64}$")
+            self.assertRegex(
+                local_payload["artifact"]["payload_sha256"], r"^[0-9a-f]{64}$"
+            )
             lineage = local_payload["evidence"]["runtime_window_import"]["lineage"]
             self.assertEqual(
                 lineage["run_id"],
@@ -1968,7 +2012,9 @@ class TestRuntimeLedgerProofPacket(TestCase):
         self.assertIn("runtime_ledger_post_cost_expectancy_not_positive", blockers)
         self.assertIn("runtime_ledger_net_pnl_below_target", blockers)
         self.assertIn("runtime_ledger_trading_days_below_target", blockers)
-        self.assertIn("runtime_ledger_mean_daily_net_pnl_after_costs_below_floor", blockers)
+        self.assertIn(
+            "runtime_ledger_mean_daily_net_pnl_after_costs_below_floor", blockers
+        )
         self.assertIn(
             "keep_promotion_blocked_until_live_gate_and_proof_floor_pass",
             result["required_actions"],
@@ -2039,6 +2085,81 @@ class TestRuntimeLedgerProofPacket(TestCase):
             "c88421d619759b2cfaa6f4d0",
         )
         self.assertTrue(materialization["materialized_targets"][0]["materialized"])
+        self.assertEqual(
+            materialization["materialized_targets"][0]["readback"][
+                "runtime_ledger_bucket_refs"
+            ],
+            ["strategy_runtime_ledger_buckets:runtime-ledger-bucket-1"],
+        )
+        self.assertEqual(
+            materialization["materialized_targets"][0]["readback"]["source_refs"],
+            [
+                "postgres:trade_decisions",
+                "postgres:executions",
+                "postgres:execution_order_events",
+                "postgres:order_feed_source_windows",
+            ],
+        )
+
+    def test_packet_blocks_authority_when_runtime_import_readback_missing(self) -> None:
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            proof_mode="authority",
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=_runtime_import(readback=False),
+            completion_status=_completion(),
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        materialization = result["evidence"]["runtime_window_import"]["materialization"]
+        self.assertFalse(result["ok"])
+        self.assertFalse(
+            result["checks"]["runtime_window_import_materialization"]["passed"]
+        )
+        self.assertEqual(materialization["materialized_target_count"], 0)
+        self.assertEqual(materialization["unmaterialized_target_count"], 1)
+        self.assertIn(
+            "runtime_window_import_readback_missing", materialization["blockers"]
+        )
+        self.assertIn(
+            "runtime_window_import_readback_missing",
+            result["promotion_authority"]["blocking_reasons"],
+        )
+
+    def test_packet_blocks_authority_when_runtime_import_readback_lacks_source_refs(
+        self,
+    ) -> None:
+        runtime_import = _runtime_import()
+        target = runtime_import["imports"][0]["summary"][
+            "runtime_materialization_target"
+        ]
+        assert isinstance(target, dict)
+        readback = target["readback"]
+        assert isinstance(readback, dict)
+        readback["source_refs"] = []
+
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            proof_mode="authority",
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=runtime_import,
+            completion_status=_completion(),
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        materialization = result["evidence"]["runtime_window_import"]["materialization"]
+        self.assertFalse(result["ok"])
+        self.assertFalse(
+            result["checks"]["runtime_window_import_materialization"]["passed"]
+        )
+        self.assertIn(
+            "runtime_window_import_readback_source_refs_missing",
+            materialization["blockers"],
+        )
+        self.assertIn(
+            "runtime_window_import_readback_source_refs_missing",
+            result["promotion_authority"]["blocking_reasons"],
+        )
 
     def test_packet_blocks_runtime_import_profit_proof_blockers(self) -> None:
         runtime_import = _runtime_import()
@@ -2611,6 +2732,26 @@ class TestRuntimeLedgerProofPacket(TestCase):
                         "evidence_grade_runtime_ledger_bucket_ids": [
                             "runtime-ledger-bucket-1"
                         ],
+                        "readback": {
+                            "schema_version": "torghut.runtime-window-import-readback.v1",
+                            "metric_window_count": 1,
+                            "promotion_decision_count": 1,
+                            "runtime_ledger_bucket_count": 1,
+                            "evidence_grade_runtime_ledger_bucket_count": 1,
+                            "metric_window_refs": [
+                                "strategy_hypothesis_metric_windows:metric-window-1"
+                            ],
+                            "promotion_decision_refs": [
+                                "strategy_promotion_decisions:promotion-decision-1"
+                            ],
+                            "runtime_ledger_bucket_refs": [
+                                "strategy_runtime_ledger_buckets:runtime-ledger-bucket-1"
+                            ],
+                            "evidence_grade_runtime_ledger_bucket_refs": [
+                                "strategy_runtime_ledger_buckets:runtime-ledger-bucket-1"
+                            ],
+                            "source_refs": ["postgres:executions"],
+                        },
                     },
                 },
             },

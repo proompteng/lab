@@ -1461,6 +1461,97 @@ class TestRuntimeWindowImport(TestCase):
         )
         self.assertNotIn("runtime_ledger_readback_source", ledger_rows[0].payload_json)
 
+    def test_persist_source_backed_paper_window_returns_deterministic_readback(
+        self,
+    ) -> None:
+        buckets = build_observed_runtime_buckets(
+            bucket_ranges=[
+                (
+                    datetime(2026, 6, 1, 13, 30, tzinfo=timezone.utc),
+                    datetime(2026, 6, 1, 14, 0, tzinfo=timezone.utc),
+                    6,
+                )
+            ],
+            decision_times=[
+                datetime(2026, 6, 1, 13, 41, tzinfo=timezone.utc),
+                datetime(2026, 6, 1, 13, 45, tzinfo=timezone.utc),
+            ],
+            execution_times=[
+                datetime(2026, 6, 1, 13, 42, tzinfo=timezone.utc),
+                datetime(2026, 6, 1, 13, 46, tzinfo=timezone.utc),
+            ],
+            tca_rows=[
+                {
+                    "computed_at": datetime(2026, 6, 1, 13, 46, tzinfo=timezone.utc),
+                    "abs_slippage_bps": Decimal("1"),
+                    "post_cost_expectancy_bps": Decimal("40"),
+                    "runtime_ledger_bucket": _runtime_ledger_bucket(
+                        ledger_schema_version="torghut.runtime-ledger-bucket.v1",
+                        bucket_started_at="2026-06-01T13:41:00+00:00",
+                        bucket_ended_at="2026-06-01T13:46:00+00:00",
+                        source_window_start="2026-06-01T13:41:00+00:00",
+                        source_window_end="2026-06-01T13:46:00+00:00",
+                        account_label="TORGHUT_SIM",
+                        strategy_id="microbar-cross-sectional-pairs-v1",
+                        cost_basis_counts={"broker_reported_commission_and_fees": 2},
+                        net_strategy_pnl_after_costs="0.80",
+                    ),
+                    **_runtime_pnl_basis(),
+                }
+            ],
+            continuity_ok=True,
+            drift_ok=True,
+            dependency_quorum_decision="allow",
+        )
+
+        with self.session_local() as session:
+            summary = persist_observed_runtime_windows(
+                session=session,
+                run_id="import-hpairs-source-backed-readback",
+                candidate_id="cand-hpairs-source-backed",
+                hypothesis_id="H-PAIRS-01",
+                observed_stage="paper",
+                strategy_family="microbar_cross_sectional_pairs",
+                source_manifest_ref="config/trading/hypotheses/h-pairs-01.json",
+                buckets=buckets,
+                runtime_observation_payload={
+                    "authoritative": True,
+                    "authority_reason": "runtime_ledger_profit_proof",
+                    "promotion_authority": "runtime_ledger",
+                    "runtime_ledger_profit_proof_present": True,
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_name": "microbar-cross-sectional-pairs-v1",
+                    "source_kind": "runtime_ledger_source_collection_candidate",
+                },
+            )
+            session.commit()
+
+        readback = summary["runtime_window_import_readback"]
+        self.assertEqual(
+            readback["schema_version"], "torghut.runtime-window-import-readback.v1"
+        )
+        self.assertEqual(readback["metric_window_count"], 1)
+        self.assertEqual(readback["promotion_decision_count"], 1)
+        self.assertEqual(readback["runtime_ledger_bucket_count"], 1)
+        self.assertEqual(readback["evidence_grade_runtime_ledger_bucket_count"], 1)
+        self.assertEqual(readback["runtime_ledger_closed_trade_count"], 1)
+        self.assertEqual(readback["runtime_ledger_open_position_count"], 0)
+        self.assertEqual(readback["runtime_ledger_filled_notional"], "200")
+        self.assertIn("postgres:trade_decisions", readback["source_refs"])
+        self.assertIn(
+            "runtime_order_feed_execution_source", readback["authority_classes"]
+        )
+        self.assertEqual(summary["proof_status"], "ok")
+        self.assertEqual(summary["proof_blockers"], [])
+        self.assertFalse(summary["promotion_allowed"])
+        self.assertIn(
+            "paper_stage_evidence_collection_only",
+            summary["promotion_blocking_reasons"],
+        )
+        self.assertEqual(
+            summary["runtime_materialization_target"]["readback"], readback
+        )
+
     def test_persist_observed_runtime_windows_uses_notional_weighted_ledger_summary(
         self,
     ) -> None:

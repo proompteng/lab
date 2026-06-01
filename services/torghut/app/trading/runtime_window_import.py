@@ -1439,6 +1439,164 @@ def _runtime_ledger_bucket_payloads(payload: Mapping[str, Any]) -> list[dict[str
     return [single_payload] if single_payload else []
 
 
+def _candidate_filter(column: Any, candidate_id: str | None) -> ColumnElement[bool]:
+    if candidate_id is None:
+        return column.is_(None)
+    return column == candidate_id
+
+
+def _row_ref(table_name: str, row_id: Any) -> str:
+    return f"{table_name}:{row_id}"
+
+
+def _runtime_window_import_readback(
+    *,
+    session: Session,
+    run_id: str,
+    candidate_id: str | None,
+    hypothesis_id: str,
+    observed_stage: str,
+    window_start: datetime,
+    window_end: datetime,
+) -> dict[str, Any]:
+    metric_rows = (
+        session.execute(
+            select(StrategyHypothesisMetricWindow)
+            .where(
+                StrategyHypothesisMetricWindow.run_id == run_id,
+                _candidate_filter(
+                    StrategyHypothesisMetricWindow.candidate_id, candidate_id
+                ),
+                StrategyHypothesisMetricWindow.hypothesis_id == hypothesis_id,
+                StrategyHypothesisMetricWindow.observed_stage == observed_stage,
+            )
+            .order_by(
+                StrategyHypothesisMetricWindow.window_started_at,
+                StrategyHypothesisMetricWindow.window_ended_at,
+                StrategyHypothesisMetricWindow.id,
+            )
+        )
+        .scalars()
+        .all()
+    )
+    promotion_rows = (
+        session.execute(
+            select(StrategyPromotionDecision)
+            .where(
+                StrategyPromotionDecision.run_id == run_id,
+                _candidate_filter(StrategyPromotionDecision.candidate_id, candidate_id),
+                StrategyPromotionDecision.hypothesis_id == hypothesis_id,
+                StrategyPromotionDecision.promotion_target == observed_stage,
+            )
+            .order_by(
+                StrategyPromotionDecision.created_at, StrategyPromotionDecision.id
+            )
+        )
+        .scalars()
+        .all()
+    )
+    ledger_rows = (
+        session.execute(
+            select(StrategyRuntimeLedgerBucket)
+            .where(
+                StrategyRuntimeLedgerBucket.run_id == run_id,
+                _candidate_filter(
+                    StrategyRuntimeLedgerBucket.candidate_id, candidate_id
+                ),
+                StrategyRuntimeLedgerBucket.hypothesis_id == hypothesis_id,
+                StrategyRuntimeLedgerBucket.observed_stage == observed_stage,
+            )
+            .order_by(
+                StrategyRuntimeLedgerBucket.bucket_started_at,
+                StrategyRuntimeLedgerBucket.bucket_ended_at,
+                StrategyRuntimeLedgerBucket.id,
+            )
+        )
+        .scalars()
+        .all()
+    )
+    evidence_grade_ledger_rows = [
+        row
+        for row in ledger_rows
+        if _persisted_runtime_ledger_bucket_evidence_grade(row)
+    ]
+    source_refs: list[str] = []
+    authority_classes: list[str] = []
+    source_materializations: list[str] = []
+    blockers: list[str] = []
+    for row in ledger_rows:
+        payload_json = _mapping(row.payload_json)
+        for ref in _string_list(payload_json.get("source_refs")):
+            if ref not in source_refs:
+                source_refs.append(ref)
+        if (authority_class := _text(payload_json.get("authority_class"))) is not None:
+            if authority_class not in authority_classes:
+                authority_classes.append(authority_class)
+        if (
+            source_materialization := _text(payload_json.get("source_materialization"))
+        ) is not None:
+            if source_materialization not in source_materializations:
+                source_materializations.append(source_materialization)
+        for blocker in _string_list(row.blockers_json):
+            if blocker not in blockers:
+                blockers.append(blocker)
+    return {
+        "schema_version": "torghut.runtime-window-import-readback.v1",
+        "run_id": run_id,
+        "candidate_id": candidate_id,
+        "hypothesis_id": hypothesis_id,
+        "observed_stage": observed_stage,
+        "window_start": window_start.isoformat(),
+        "window_end": window_end.isoformat(),
+        "metric_window_count": len(metric_rows),
+        "promotion_decision_count": len(promotion_rows),
+        "runtime_ledger_bucket_count": len(ledger_rows),
+        "evidence_grade_runtime_ledger_bucket_count": len(evidence_grade_ledger_rows),
+        "runtime_ledger_fill_count": sum(
+            max(0, int(row.fill_count or 0)) for row in ledger_rows
+        ),
+        "runtime_ledger_submitted_order_count": sum(
+            max(0, int(row.submitted_order_count or 0)) for row in ledger_rows
+        ),
+        "runtime_ledger_closed_trade_count": sum(
+            max(0, int(row.closed_trade_count or 0)) for row in ledger_rows
+        ),
+        "runtime_ledger_open_position_count": sum(
+            max(0, int(row.open_position_count or 0)) for row in ledger_rows
+        ),
+        "runtime_ledger_filled_notional": str(
+            sum((row.filled_notional for row in ledger_rows), Decimal("0"))
+        ),
+        "runtime_ledger_cost_amount": str(
+            sum((row.cost_amount for row in ledger_rows), Decimal("0"))
+        ),
+        "runtime_ledger_net_strategy_pnl_after_costs": str(
+            sum(
+                (row.net_strategy_pnl_after_costs for row in ledger_rows),
+                Decimal("0"),
+            )
+        ),
+        "metric_window_refs": [
+            _row_ref("strategy_hypothesis_metric_windows", row.id)
+            for row in metric_rows
+        ],
+        "promotion_decision_refs": [
+            _row_ref("strategy_promotion_decisions", row.id) for row in promotion_rows
+        ],
+        "runtime_ledger_bucket_refs": [
+            _row_ref("strategy_runtime_ledger_buckets", row.id) for row in ledger_rows
+        ],
+        "evidence_grade_runtime_ledger_bucket_refs": [
+            _row_ref("strategy_runtime_ledger_buckets", row.id)
+            for row in evidence_grade_ledger_rows
+        ],
+        "source_refs": source_refs,
+        "authority_classes": authority_classes,
+        "source_materializations": source_materializations,
+        "runtime_ledger_blockers": blockers,
+    }
+
+
 def _runtime_ledger_bucket_replacement_scopes(
     *,
     buckets: Sequence[ObservedRuntimeBucket],
@@ -2676,12 +2834,22 @@ def persist_observed_runtime_windows(
             )
     proof_status = "blocked" if proof_blockers else "ok"
     tigerbeetle_proof_refs = _runtime_ledger_tigerbeetle_proof_refs(runtime_ledger_rows)
+    runtime_import_readback = _runtime_window_import_readback(
+        session=session,
+        run_id=run_id,
+        candidate_id=candidate_id,
+        hypothesis_id=hypothesis_id,
+        observed_stage=observed_stage,
+        window_start=import_window_start,
+        window_end=import_window_end,
+    )
     runtime_materialization_target.update(
         {
             "proof_status": proof_status,
             "proof_blockers": proof_blockers,
             "materialized": not proof_blockers,
             "materialization_blockers": materialization_blockers,
+            "readback": runtime_import_readback,
             **materialization_counts,
             "metric_window_ids": [str(row.id) for row in metric_window_rows],
             "promotion_decision_id": str(promotion_decision_row.id),
@@ -2736,6 +2904,7 @@ def persist_observed_runtime_windows(
             current_runtime_ledger_bucket_replacement_count
         ),
         "replaced_runtime_ledger_bucket_count": replaced_runtime_ledger_bucket_count,
+        "runtime_window_import_readback": runtime_import_readback,
         "runtime_materialization_target": runtime_materialization_target,
         "runtime_observation": runtime_payload,
         "delay_adjusted_depth_stress": delay_depth_stress_summary,
