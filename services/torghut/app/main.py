@@ -5396,11 +5396,8 @@ def _build_tigerbeetle_ledger_status(session: Session) -> dict[str, object]:
     if settings.tigerbeetle_enabled and not bool(protocol.get("protocol_ok")):
         blockers.append("tigerbeetle_protocol_unhealthy")
     reconciliation_ok = True
-    reconciliation_required = (
-        settings.tigerbeetle_enabled
-        or settings.tigerbeetle_required
-        or settings.tigerbeetle_reconcile_required
-        or claimed_by_runtime_evidence
+    reconciliation_required = bool(
+        settings.tigerbeetle_required or settings.tigerbeetle_reconcile_required
     )
     if latest_reconciliation is None:
         if reconciliation_required:

@@ -288,6 +288,13 @@ class TigerBeetleRuntimeLedgerTransferPlan:
     runtime_key: str
 
 
+@dataclass(frozen=True)
+class TigerBeetleSourceTransferPlan:
+    account_specs: tuple[TigerBeetleAccountSpec, ...]
+    transfer_spec: TigerBeetleTransferSpec
+    amount_source: Decimal
+
+
 def _submitted_pending_key(event: ExecutionOrderEvent) -> str:
     source_id = (
         str(event.execution_id)
@@ -781,6 +788,75 @@ def build_runtime_ledger_bucket_transfer_plan(
     )
 
 
+def build_execution_transfer_plan(
+    execution: Execution,
+) -> TigerBeetleSourceTransferPlan | None:
+    amount_source = _execution_notional_usd(execution)
+    amount = _amount_to_micros(amount_source)
+    if amount is None or amount_source is None:
+        return None
+    strategy_id = (
+        str(execution.trade_decision_id) if execution.trade_decision_id else None
+    )
+    account_specs = tuple(
+        _evidence_account_specs(
+            account_label=execution.alpaca_account_label,
+            symbol=execution.symbol,
+            strategy_id=strategy_id,
+        )
+    )
+    accounts = {spec.account_key: spec for spec in account_specs}
+    control = accounts[f"evidence_control:{execution.alpaca_account_label}:usd"]
+    execution_account = accounts[
+        f"execution_evidence:{execution.alpaca_account_label}:{execution.symbol}:{strategy_id or 'unknown'}"
+    ]
+    return TigerBeetleSourceTransferPlan(
+        account_specs=account_specs,
+        transfer_spec=_source_transfer_spec(
+            transfer_id=execution_transfer_id(execution),
+            transfer_kind=TRANSFER_KIND_EXECUTION_FILL,
+            amount=amount,
+            debit=control,
+            credit=execution_account,
+        ),
+        amount_source=amount_source,
+    )
+
+
+def build_execution_tca_metric_transfer_plan(
+    metric: ExecutionTCAMetric,
+) -> TigerBeetleSourceTransferPlan | None:
+    amount_source = metric.shortfall_notional
+    amount = _amount_to_micros(amount_source)
+    if amount is None or amount_source is None:
+        return None
+    strategy_id = str(metric.strategy_id) if metric.strategy_id else None
+    account_specs = tuple(
+        _evidence_account_specs(
+            account_label=metric.alpaca_account_label,
+            symbol=metric.symbol,
+            strategy_id=strategy_id,
+        )
+    )
+    account_label = metric.alpaca_account_label or "unknown"
+    accounts = {spec.account_key: spec for spec in account_specs}
+    control = accounts[f"evidence_control:{account_label}:usd"]
+    cost_account = accounts[
+        f"execution_cost:{account_label}:{metric.symbol}:{strategy_id or 'unknown'}"
+    ]
+    return TigerBeetleSourceTransferPlan(
+        account_specs=account_specs,
+        transfer_spec=_source_transfer_spec(
+            transfer_id=execution_cost_transfer_id(metric),
+            transfer_kind=TRANSFER_KIND_EXECUTION_COST,
+            amount=amount,
+            debit=control,
+            credit=cost_account,
+        ),
+        amount_source=amount_source,
+    )
+
+
 class TigerBeetleLedgerJournal:
     def __init__(
         self,
@@ -987,32 +1063,13 @@ class TigerBeetleLedgerJournal:
             or not self._settings.tigerbeetle_journal_enabled
         ):
             return None
-        amount = _amount_to_micros(_execution_notional_usd(execution))
-        if amount is None:
+        plan = build_execution_transfer_plan(execution)
+        if plan is None:
             return None
-        strategy_id = (
-            str(execution.trade_decision_id) if execution.trade_decision_id else None
-        )
-        account_specs = _evidence_account_specs(
-            account_label=execution.alpaca_account_label,
-            symbol=execution.symbol,
-            strategy_id=strategy_id,
-        )
-        accounts = {spec.account_key: spec for spec in account_specs}
-        control = accounts[f"evidence_control:{execution.alpaca_account_label}:usd"]
-        execution_account = accounts[
-            f"execution_evidence:{execution.alpaca_account_label}:{execution.symbol}:{strategy_id or 'unknown'}"
-        ]
-        transfer_spec = _source_transfer_spec(
-            transfer_id=execution_transfer_id(execution),
-            transfer_kind=TRANSFER_KIND_EXECUTION_FILL,
-            amount=amount,
-            debit=control,
-            credit=execution_account,
-        )
+        transfer_spec = plan.transfer_spec
         return self._persist_transfer(
             session,
-            account_specs=account_specs,
+            account_specs=plan.account_specs,
             transfer_spec=transfer_spec,
             trade_decision_id=execution.trade_decision_id,
             execution_id=execution.id,
@@ -1024,7 +1081,7 @@ class TigerBeetleLedgerJournal:
                 "client_order_id": execution.client_order_id,
                 "filled_qty": str(execution.filled_qty),
                 "avg_fill_price": str(execution.avg_fill_price),
-                "notional_micros": amount,
+                "notional_micros": transfer_spec.amount,
                 "debit_account_id": u128_decimal(transfer_spec.debit_account_id),
                 "credit_account_id": u128_decimal(transfer_spec.credit_account_id),
             },
@@ -1038,31 +1095,13 @@ class TigerBeetleLedgerJournal:
             or not self._settings.tigerbeetle_journal_enabled
         ):
             return None
-        amount = _amount_to_micros(metric.shortfall_notional)
-        if amount is None:
+        plan = build_execution_tca_metric_transfer_plan(metric)
+        if plan is None:
             return None
-        strategy_id = str(metric.strategy_id) if metric.strategy_id else None
-        account_specs = _evidence_account_specs(
-            account_label=metric.alpaca_account_label,
-            symbol=metric.symbol,
-            strategy_id=strategy_id,
-        )
-        account_label = metric.alpaca_account_label or "unknown"
-        accounts = {spec.account_key: spec for spec in account_specs}
-        control = accounts[f"evidence_control:{account_label}:usd"]
-        cost_account = accounts[
-            f"execution_cost:{account_label}:{metric.symbol}:{strategy_id or 'unknown'}"
-        ]
-        transfer_spec = _source_transfer_spec(
-            transfer_id=execution_cost_transfer_id(metric),
-            transfer_kind=TRANSFER_KIND_EXECUTION_COST,
-            amount=amount,
-            debit=control,
-            credit=cost_account,
-        )
+        transfer_spec = plan.transfer_spec
         return self._persist_transfer(
             session,
-            account_specs=account_specs,
+            account_specs=plan.account_specs,
             transfer_spec=transfer_spec,
             trade_decision_id=metric.trade_decision_id,
             execution_id=metric.execution_id,
@@ -1074,7 +1113,7 @@ class TigerBeetleLedgerJournal:
                 "shortfall_notional": str(metric.shortfall_notional),
                 "realized_shortfall_bps": str(metric.realized_shortfall_bps),
                 "simulator_version": metric.simulator_version,
-                "cost_micros": amount,
+                "cost_micros": transfer_spec.amount,
                 "debit_account_id": u128_decimal(transfer_spec.debit_account_id),
                 "credit_account_id": u128_decimal(transfer_spec.credit_account_id),
             },
