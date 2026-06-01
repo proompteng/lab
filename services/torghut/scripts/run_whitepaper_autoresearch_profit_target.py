@@ -117,8 +117,9 @@ from app.whitepapers.claim_compiler import (
     sources_from_jsonl,
 )
 
-import scripts.run_strategy_factory_v2 as strategy_factory_runner
 import scripts.local_intraday_tsmom_replay as replay_mod
+import scripts.materialize_replay_tape as replay_materializer
+import scripts.run_strategy_factory_v2 as strategy_factory_runner
 
 
 _DEFAULT_CHIP_UNIVERSE_CSV = ",".join(LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE)
@@ -557,6 +558,53 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--full-window-end-date", default="")
     parser.add_argument("--expected-last-trading-day", default="")
     parser.add_argument("--allow-stale-tape", action="store_true")
+    parser.add_argument(
+        "--coverage-diagnostic-output",
+        type=Path,
+        default=None,
+        help="Optional JSON path for cheap source-window coverage diagnostics before replay-tape materialization.",
+    )
+    parser.add_argument(
+        "--latest-complete-window-min-days",
+        type=int,
+        default=0,
+        help=(
+            "When materializing a replay tape, preflight source coverage and retarget "
+            "to the latest covered exchange-session sub-window with at least this many days."
+        ),
+    )
+    parser.add_argument(
+        "--latest-complete-window-receipt-output",
+        type=Path,
+        default=None,
+        help="Optional JSON receipt path for replay source-window preflight selection.",
+    )
+    parser.add_argument(
+        "--min-executable-rows-per-symbol-day",
+        type=int,
+        default=int(
+            os.environ.get("TORGHUT_REPLAY_MIN_EXECUTABLE_ROWS_PER_SYMBOL_DAY", "1")
+        ),
+        help="Minimum executable rows per requested symbol/day for source-window preflight.",
+    )
+    parser.add_argument(
+        "--min-quote-valid-ratio",
+        default=os.environ.get("TORGHUT_REPLAY_MIN_QUOTE_VALID_RATIO", "0"),
+        help="Minimum spread-sane/executable quote ratio for source-window preflight.",
+    )
+    parser.add_argument(
+        "--max-coverage-spread-bps",
+        default=os.environ.get("TORGHUT_REPLAY_MAX_COVERAGE_SPREAD_BPS", "1000000000"),
+        help="Maximum spread in bps for a row to count as quote-valid in source-window preflight.",
+    )
+    parser.add_argument(
+        "--max-executable-gap-seconds",
+        type=int,
+        default=int(
+            os.environ.get("TORGHUT_REPLAY_MAX_EXECUTABLE_GAP_SECONDS", "999999")
+        ),
+        help="Maximum intra-symbol executable-row gap allowed by source-window preflight.",
+    )
     parser.add_argument("--prefetch-full-window-rows", action="store_true")
     parser.add_argument(
         "--replay-tape-path",
@@ -6747,6 +6795,70 @@ def _auto_materialize_staged_replay_tape(args: argparse.Namespace) -> bool:
     return True
 
 
+def _maybe_preflight_materialized_replay_tape_window(
+    *,
+    args: argparse.Namespace,
+    output_dir: Path,
+) -> tuple[argparse.Namespace, dict[str, Any] | None]:
+    explicit_materialize = bool(getattr(args, "materialize_replay_tape", False))
+    auto_materialize = _auto_materialize_staged_replay_tape(args)
+    if not explicit_materialize and not auto_materialize:
+        return args, None
+    if getattr(args, "replay_tape_path", None) is not None:
+        return args, None
+    if str(getattr(args, "replay_mode", "") or "") != "real":
+        return args, None
+    if bool(getattr(args, "selection_only", False)):
+        return args, None
+    min_days = max(0, int(getattr(args, "latest_complete_window_min_days", 0) or 0))
+    if min_days <= 0:
+        return args, None
+
+    requested_start_date = _materialized_replay_tape_date_arg(
+        args, "full_window_start_date"
+    )
+    requested_end_date = _materialized_replay_tape_date_arg(
+        args, "full_window_end_date"
+    )
+    coverage_diagnostic_output = (
+        Path(getattr(args, "coverage_diagnostic_output")).resolve()
+        if getattr(args, "coverage_diagnostic_output", None) is not None
+        else output_dir / "replay-source-coverage-diagnostics.json"
+    )
+    latest_window_receipt_output = (
+        Path(getattr(args, "latest_complete_window_receipt_output")).resolve()
+        if getattr(args, "latest_complete_window_receipt_output", None) is not None
+        else output_dir / "replay-source-latest-complete-window.json"
+    )
+    preflight_args = argparse.Namespace(
+        **{
+            **vars(args),
+            "coverage_diagnostic_output": coverage_diagnostic_output,
+            "latest_complete_window_receipt_output": latest_window_receipt_output,
+        }
+    )
+    symbols = _candidate_universe_symbols_from_args(args)
+    selected_start, selected_end, receipt = (
+        replay_materializer._select_effective_window(
+            args=preflight_args,
+            symbols=symbols,
+            requested_start_date=requested_start_date,
+            requested_end_date=requested_end_date,
+        )
+    )
+    updated_args = argparse.Namespace(
+        **{
+            **vars(args),
+            "full_window_start_date": selected_start.isoformat(),
+            "full_window_end_date": selected_end.isoformat(),
+            "expected_last_trading_day": selected_end.isoformat(),
+            "coverage_diagnostic_output": coverage_diagnostic_output,
+            "latest_complete_window_receipt_output": latest_window_receipt_output,
+        }
+    )
+    return updated_args, receipt
+
+
 def _materialized_replay_tape_date_arg(
     args: argparse.Namespace,
     key: str,
@@ -11233,6 +11345,31 @@ def run_whitepaper_autoresearch_profit_target(
         }
     )
     target = _decimal(args.target_net_pnl_per_day, default=_DEFAULT_DAILY_PROFIT_TARGET)
+    replay_source_window_preflight: dict[str, Any] | None = None
+    try:
+        args, replay_source_window_preflight = (
+            _maybe_preflight_materialized_replay_tape_window(
+                args=args,
+                output_dir=output_dir,
+            )
+        )
+    except Exception as exc:
+        return _write_failure_summary(
+            output_dir=output_dir,
+            epoch_id=epoch_id,
+            status="replay_tape_source_window_preflight_failed",
+            reason=str(exc),
+            started_at=started_at,
+            extra={
+                "symbols": str(getattr(args, "symbols", "") or ""),
+                "full_window_start_date": str(
+                    getattr(args, "full_window_start_date", "") or ""
+                ),
+                "full_window_end_date": str(
+                    getattr(args, "full_window_end_date", "") or ""
+                ),
+            },
+        )
     oracle_policy = _oracle_policy_from_args(args)
     selection_only = bool(getattr(args, "selection_only", False))
     ranker_backend_preference = _ranker_backend_preference(args)
@@ -11441,6 +11578,11 @@ def run_whitepaper_autoresearch_profit_target(
         candidate_selection = {
             **candidate_selection,
             "replay_tape_materialization": materialized_replay_tape_receipt,
+        }
+    if replay_source_window_preflight is not None:
+        candidate_selection = {
+            **candidate_selection,
+            "replay_tape_source_window_preflight": replay_source_window_preflight,
         }
     try:
         replay_candidate_specs, candidate_selection = (

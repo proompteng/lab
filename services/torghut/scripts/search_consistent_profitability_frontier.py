@@ -57,6 +57,7 @@ from app.trading.discovery.replay_tape import (
     slice_tape_by_window,
     validate_tape_freshness,
 )
+from app.trading.session_context import iter_regular_equities_session_dates
 from app.trading.runtime_ledger import (
     POST_COST_PNL_BASIS,
     RuntimeLedgerBucket,
@@ -865,15 +866,7 @@ def _resolve_frontier_replay_windows(
 
 
 def _business_days(start_day: date, end_day: date) -> tuple[date, ...]:
-    if start_day > end_day:
-        return ()
-    current = start_day
-    values: list[date] = []
-    while current <= end_day:
-        if current.weekday() < 5:
-            values.append(current)
-        current += timedelta(days=1)
-    return tuple(values)
+    return iter_regular_equities_session_dates(start_day, end_day)
 
 
 def _snapshot_expected_days(

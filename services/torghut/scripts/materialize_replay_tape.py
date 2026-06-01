@@ -13,6 +13,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Mapping
 
+from app.trading.session_context import iter_regular_equities_session_dates
 from app.trading.discovery.replay_tape import (
     ReplayTapeCoverageError,
     build_source_query_digest,
@@ -283,15 +284,7 @@ def _source_query_payload(
 
 
 def _business_days(start_day: date, end_day: date) -> tuple[date, ...]:
-    if start_day > end_day:
-        return ()
-    days: list[date] = []
-    current = start_day
-    while current <= end_day:
-        if current.weekday() < 5:
-            days.append(current)
-        current += timedelta(days=1)
-    return tuple(days)
+    return iter_regular_equities_session_dates(start_day, end_day)
 
 
 def _coverage_diagnostics_query(

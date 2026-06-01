@@ -65,15 +65,15 @@ class TestDiscoveryHarnessV2(TestCase):
         self.assertEqual(_business_days(date(2026, 4, 7), date(2026, 4, 6)), ())
         self.assertEqual(
             _business_days(date(2026, 4, 3), date(2026, 4, 6)),
-            (date(2026, 4, 3), date(2026, 4, 6)),
+            (date(2026, 4, 6),),
         )
-        self.assertEqual(_most_recent_business_day(date(2026, 4, 5)), date(2026, 4, 3))
+        self.assertEqual(_most_recent_business_day(date(2026, 4, 5)), date(2026, 4, 2))
         self.assertEqual(
             resolve_expected_last_trading_day(
                 explicit_day=None,
                 now_utc=datetime(2026, 4, 6, 18, 0, tzinfo=timezone.utc),
             ),
-            date(2026, 4, 3),
+            date(2026, 4, 2),
         )
         self.assertEqual(
             resolve_expected_last_trading_day(

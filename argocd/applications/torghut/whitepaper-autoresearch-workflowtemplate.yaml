@@ -94,6 +94,16 @@ spec:
         value: '2'
       - name: allowStaleTape
         value: 'false'
+      - name: latestCompleteWindowMinDays
+        value: '0'
+      - name: minExecutableRowsPerSymbolDay
+        value: '1'
+      - name: minQuoteValidRatio
+        value: '0'
+      - name: maxCoverageSpreadBps
+        value: '1000000000'
+      - name: maxExecutableGapSeconds
+        value: '999999'
       - name: selectionOnly
         value: 'false'
       - name: persistResults
@@ -141,6 +151,11 @@ spec:
           - name: replayTapePreviewTopK
           - name: replayTapePreviewMinRows
           - name: allowStaleTape
+          - name: latestCompleteWindowMinDays
+          - name: minExecutableRowsPerSymbolDay
+          - name: minQuoteValidRatio
+          - name: maxCoverageSpreadBps
+          - name: maxExecutableGapSeconds
           - name: selectionOnly
           - name: persistResults
       container:
@@ -240,6 +255,13 @@ spec:
               --train-days "{{inputs.parameters.trainDays}}"
               --holdout-days "{{inputs.parameters.holdoutDays}}"
               --second-oos-days "{{inputs.parameters.secondOosDays}}"
+              --coverage-diagnostic-output "${OUTPUT_DIR}/replay-source-coverage-diagnostics.json"
+              --latest-complete-window-receipt-output "${OUTPUT_DIR}/replay-source-latest-complete-window.json"
+              --latest-complete-window-min-days "{{inputs.parameters.latestCompleteWindowMinDays}}"
+              --min-executable-rows-per-symbol-day "{{inputs.parameters.minExecutableRowsPerSymbolDay}}"
+              --min-quote-valid-ratio "{{inputs.parameters.minQuoteValidRatio}}"
+              --max-coverage-spread-bps "{{inputs.parameters.maxCoverageSpreadBps}}"
+              --max-executable-gap-seconds "{{inputs.parameters.maxExecutableGapSeconds}}"
             )
 
             if [ "{{inputs.parameters.seedRecentWhitepapers}}" = "true" ]; then
