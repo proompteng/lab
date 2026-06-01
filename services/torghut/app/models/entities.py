@@ -1622,6 +1622,12 @@ class StrategyHypothesisMetricWindow(Base, TimestampMixin):
         Index("ix_strategy_hypothesis_metric_windows_candidate_id", "candidate_id"),
         Index("ix_strategy_hypothesis_metric_windows_hypothesis_id", "hypothesis_id"),
         Index("ix_strategy_hypothesis_metric_windows_observed_stage", "observed_stage"),
+        Index(
+            "ix_strategy_hypothesis_metric_windows_hypothesis_ended_created",
+            "hypothesis_id",
+            "window_ended_at",
+            "created_at",
+        ),
     )
 
 
@@ -1770,6 +1776,11 @@ class StrategyPromotionDecision(Base, TimestampMixin):
         Index("ix_strategy_promotion_decisions_run_id", "run_id"),
         Index("ix_strategy_promotion_decisions_candidate_id", "candidate_id"),
         Index("ix_strategy_promotion_decisions_hypothesis_id", "hypothesis_id"),
+        Index(
+            "ix_strategy_promotion_decisions_hypothesis_created",
+            "hypothesis_id",
+            "created_at",
+        ),
         Index(
             "uq_strategy_promotion_decisions_run_hypothesis_target",
             "run_id",
@@ -3015,6 +3026,11 @@ class AutoresearchPortfolioCandidate(Base, TimestampMixin):
     __table_args__ = (
         Index("ix_autoresearch_portfolio_candidates_epoch_id", "epoch_id"),
         Index("ix_autoresearch_portfolio_candidates_status", "status"),
+        Index(
+            "ix_autoresearch_portfolio_candidates_status_created",
+            "status",
+            "created_at",
+        ),
     )
 
 

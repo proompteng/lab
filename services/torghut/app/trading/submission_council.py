@@ -108,6 +108,9 @@ _AUTORESEARCH_PORTFOLIO_READY_STATUSES = (
 _RUNTIME_LEDGER_REPAIR_SCAN_LIMIT = 256
 _RUNTIME_LEDGER_REPAIR_CANDIDATE_LIMIT = 8
 _RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_MS = 750
+_PROMOTION_TABLE_COUNT_SCAN_LIMIT = 1000
+_PROMOTION_PORTFOLIO_READY_SCAN_LIMIT = 256
+_CERTIFICATE_EVIDENCE_PER_HYPOTHESIS_LIMIT = 8
 _RUNTIME_WINDOW_IMPORT_CONTINUITY_READY_STATES = frozenset(
     {
         "signals_present",
@@ -166,29 +169,43 @@ def _empty_profit_promotion_table_counts(
         "autoresearch_portfolio_ready": 0,
         "autoresearch_portfolio_blocked": 0,
         "autoresearch_portfolio_ready_refs": [],
+        "count_basis": "bounded_latest_rows",
+        "count_limit": _PROMOTION_TABLE_COUNT_SCAN_LIMIT,
+        "autoresearch_portfolio_scan_limit": _PROMOTION_PORTFOLIO_READY_SCAN_LIMIT,
+        "truncated_counts": [],
         "count_errors": sorted(set(count_errors or ())),
     }
 
 
-def _load_profit_promotion_scalar_count(
+def _load_profit_promotion_bounded_row_count(
     session: Session,
     *,
     table_name: str,
-    statement: Any,
+    model: Any,
     count_errors: list[str],
+    truncated_counts: list[str],
 ) -> int:
     try:
         _maybe_set_runtime_ledger_status_statement_timeout(session)
-        return int(session.execute(statement).scalar_one())
+        rows = list(
+            session.execute(
+                select(model.id)
+                .order_by(model.created_at.desc())
+                .limit(_PROMOTION_TABLE_COUNT_SCAN_LIMIT + 1)
+            )
+        )
     except SQLAlchemyError as exc:
         logger.warning(
-            "Failed to load profit promotion table count table=%s error=%s",
+            "Failed to load bounded profit promotion table rows table=%s error=%s",
             table_name,
             exc,
         )
         count_errors.append(table_name)
         _rollback_runtime_ledger_status_session(session)
         return 0
+    if len(rows) > _PROMOTION_TABLE_COUNT_SCAN_LIMIT:
+        truncated_counts.append(table_name)
+    return min(len(rows), _PROMOTION_TABLE_COUNT_SCAN_LIMIT)
 
 
 def _runtime_window_import_continuity_signal(state: object) -> tuple[str, str, str]:
@@ -702,6 +719,32 @@ def build_hypothesis_runtime_summary(
         registry=registry,
         dependency_quorum=dependency_quorum,
     )
+    summary["runtime_ledger_read_status"] = {
+        "status": runtime_ledger_summary.get("query_status", "unknown"),
+        "reason_codes": list(
+            cast(
+                Sequence[object],
+                runtime_ledger_summary.get("query_reason_codes") or [],
+            )
+        ),
+        "query_limit": runtime_ledger_summary.get("query_limit"),
+    }
+    certificate_reason_codes = sorted(
+        {
+            str(reason).strip()
+            for row in evidence
+            for reason in cast(
+                Sequence[object],
+                row.get("query_reason_codes") or [],
+            )
+            if str(reason).strip()
+        }
+    )
+    summary["certificate_evidence_read_status"] = {
+        "status": "ok" if not certificate_reason_codes else "degraded",
+        "reason_codes": certificate_reason_codes,
+        "per_hypothesis_limit": _CERTIFICATE_EVIDENCE_PER_HYPOTHESIS_LIMIT,
+    }
     summary["items"] = items
     return summary
 
@@ -1141,7 +1184,13 @@ def _load_latest_runtime_ledger_summary(
     ]
     by_hypothesis: dict[str, dict[str, object]] = {}
     if not normalized_ids:
-        return {"by_hypothesis": by_hypothesis, "runtime_ledger_buckets": []}
+        return {
+            "by_hypothesis": by_hypothesis,
+            "runtime_ledger_buckets": [],
+            "query_status": "skipped",
+            "query_reason_codes": ["runtime_ledger_hypothesis_scope_missing"],
+            "query_limit": _RUNTIME_LEDGER_REPAIR_SCAN_LIMIT,
+        }
 
     rows_by_hypothesis: dict[str, int] = {}
     retained_rows: list[dict[str, object]] = []
@@ -1174,8 +1223,27 @@ def _load_latest_runtime_ledger_summary(
     except SQLAlchemyError as exc:
         logger.warning("Runtime ledger latest summary unavailable: %s", exc)
         _rollback_runtime_ledger_status_session(session)
-        return {"by_hypothesis": by_hypothesis, "runtime_ledger_buckets": []}
-    return {"by_hypothesis": by_hypothesis, "runtime_ledger_buckets": retained_rows}
+        reason_code = (
+            "runtime_ledger_summary_query_timeout"
+            if _sqlalchemy_error_indicates_statement_timeout(exc)
+            else "runtime_ledger_summary_query_unavailable"
+        )
+        return {
+            "by_hypothesis": by_hypothesis,
+            "runtime_ledger_buckets": [],
+            "query_status": "timeout"
+            if reason_code == "runtime_ledger_summary_query_timeout"
+            else "unavailable",
+            "query_reason_codes": [reason_code],
+            "query_limit": _RUNTIME_LEDGER_REPAIR_SCAN_LIMIT,
+        }
+    return {
+        "by_hypothesis": by_hypothesis,
+        "runtime_ledger_buckets": retained_rows,
+        "query_status": "ok",
+        "query_reason_codes": [],
+        "query_limit": _RUNTIME_LEDGER_REPAIR_SCAN_LIMIT,
+    }
 
 
 def _runtime_ledger_selection_score(payload: Mapping[str, object] | None) -> int:
@@ -2140,6 +2208,10 @@ def _load_latest_certificate_evidence(
     ]
     if not normalized_ids:
         return []
+    total_limit = max(
+        1,
+        len(normalized_ids) * _CERTIFICATE_EVIDENCE_PER_HYPOTHESIS_LIMIT,
+    )
 
     windows_by_hypothesis: dict[str, list[StrategyHypothesisMetricWindow]] = {}
     try:
@@ -2151,18 +2223,28 @@ def _load_latest_certificate_evidence(
                 StrategyHypothesisMetricWindow.window_ended_at.desc().nullslast(),
                 StrategyHypothesisMetricWindow.created_at.desc(),
             )
+            .limit(total_limit)
         ).scalars()
         for row in window_rows:
             windows_by_hypothesis.setdefault(row.hypothesis_id, []).append(row)
     except SQLAlchemyError as exc:
         logger.warning("Metric-window certificate evidence unavailable: %s", exc)
         _rollback_runtime_ledger_status_session(session)
+        reason_code = (
+            "certificate_metric_window_query_timeout"
+            if _sqlalchemy_error_indicates_statement_timeout(exc)
+            else "certificate_metric_window_query_unavailable"
+        )
         return [
             {
                 "hypothesis_id": hypothesis_id,
                 "metric_window": None,
                 "promotion_decision": None,
                 "runtime_ledger_bucket": None,
+                "query_status": "timeout"
+                if reason_code == "certificate_metric_window_query_timeout"
+                else "unavailable",
+                "query_reason_codes": [reason_code],
             }
             for hypothesis_id in normalized_ids
         ]
@@ -2176,18 +2258,28 @@ def _load_latest_certificate_evidence(
                 StrategyPromotionDecision.hypothesis_id.in_(normalized_ids),
             )
             .order_by(StrategyPromotionDecision.created_at.desc())
+            .limit(total_limit)
         ).scalars()
         for row in promotion_rows:
             latest_promotions.setdefault(row.hypothesis_id, []).append(row)
     except SQLAlchemyError as exc:
         logger.warning("Promotion-decision certificate evidence unavailable: %s", exc)
         _rollback_runtime_ledger_status_session(session)
+        reason_code = (
+            "certificate_promotion_decision_query_timeout"
+            if _sqlalchemy_error_indicates_statement_timeout(exc)
+            else "certificate_promotion_decision_query_unavailable"
+        )
         return [
             {
                 "hypothesis_id": hypothesis_id,
                 "metric_window": None,
                 "promotion_decision": None,
                 "runtime_ledger_bucket": None,
+                "query_status": "timeout"
+                if reason_code == "certificate_promotion_decision_query_timeout"
+                else "unavailable",
+                "query_reason_codes": [reason_code],
             }
             for hypothesis_id in normalized_ids
         ]
@@ -2210,6 +2302,13 @@ def _load_latest_certificate_evidence(
         logger.warning("Runtime ledger certificate evidence unavailable: %s", exc)
         _rollback_runtime_ledger_status_session(session)
         latest_runtime_ledgers = {}
+        runtime_ledger_reason_code = (
+            "certificate_runtime_ledger_query_timeout"
+            if _sqlalchemy_error_indicates_statement_timeout(exc)
+            else "certificate_runtime_ledger_query_unavailable"
+        )
+    else:
+        runtime_ledger_reason_code = None
 
     evidence: list[dict[str, object]] = []
     for hypothesis_id in normalized_ids:
@@ -2245,6 +2344,15 @@ def _load_latest_certificate_evidence(
                     "metric_window": metric_window,
                     "promotion_decision": promotion_decision,
                     "runtime_ledger_bucket": runtime_ledger_bucket,
+                    "query_status": "ok"
+                    if runtime_ledger_reason_code is None
+                    else "timeout"
+                    if runtime_ledger_reason_code
+                    == "certificate_runtime_ledger_query_timeout"
+                    else "unavailable",
+                    "query_reason_codes": []
+                    if runtime_ledger_reason_code is None
+                    else [runtime_ledger_reason_code],
                 }
             )
         if not candidate_rows:
@@ -2254,6 +2362,15 @@ def _load_latest_certificate_evidence(
                     "metric_window": None,
                     "promotion_decision": None,
                     "runtime_ledger_bucket": None,
+                    "query_status": "ok"
+                    if runtime_ledger_reason_code is None
+                    else "timeout"
+                    if runtime_ledger_reason_code
+                    == "certificate_runtime_ledger_query_timeout"
+                    else "unavailable",
+                    "query_reason_codes": []
+                    if runtime_ledger_reason_code is None
+                    else [runtime_ledger_reason_code],
                 }
             )
             continue
@@ -3115,10 +3232,15 @@ def _attach_lineage_refs(
 
 def _load_profit_promotion_table_counts(session: Session) -> dict[str, Any]:
     count_errors: list[str] = []
+    truncated_counts: list[str] = []
     try:
         _maybe_set_runtime_ledger_status_statement_timeout(session)
         portfolio_rows = list(
-            session.execute(select(AutoresearchPortfolioCandidate)).scalars()
+            session.execute(
+                select(AutoresearchPortfolioCandidate)
+                .order_by(AutoresearchPortfolioCandidate.created_at.desc())
+                .limit(_PROMOTION_PORTFOLIO_READY_SCAN_LIMIT + 1)
+            ).scalars()
         )
     except SQLAlchemyError as exc:
         logger.warning(
@@ -3129,6 +3251,9 @@ def _load_profit_promotion_table_counts(session: Session) -> dict[str, Any]:
         return _empty_profit_promotion_table_counts(
             count_errors=["autoresearch_portfolio_candidates"]
         )
+    if len(portfolio_rows) > _PROMOTION_PORTFOLIO_READY_SCAN_LIMIT:
+        portfolio_rows = portfolio_rows[:_PROMOTION_PORTFOLIO_READY_SCAN_LIMIT]
+        count_errors.append("autoresearch_portfolio_candidates_bounded_scan_truncated")
 
     current_oracle_ready = 0
     current_policy_blocked = 0
@@ -3182,57 +3307,69 @@ def _load_profit_promotion_table_counts(session: Session) -> dict[str, Any]:
             _rollback_runtime_ledger_status_session(session)
 
     return {
-        "research_candidates": _load_profit_promotion_scalar_count(
+        "research_candidates": _load_profit_promotion_bounded_row_count(
             session,
             table_name="research_candidates",
-            statement=select(func.count(ResearchCandidate.id)),
             count_errors=count_errors,
+            truncated_counts=truncated_counts,
+            model=ResearchCandidate,
         ),
-        "research_promotions": _load_profit_promotion_scalar_count(
+        "research_promotions": _load_profit_promotion_bounded_row_count(
             session,
             table_name="research_promotions",
-            statement=select(func.count(ResearchPromotion.id)),
             count_errors=count_errors,
+            truncated_counts=truncated_counts,
+            model=ResearchPromotion,
         ),
-        "strategy_promotion_decisions": _load_profit_promotion_scalar_count(
+        "strategy_promotion_decisions": _load_profit_promotion_bounded_row_count(
             session,
             table_name="strategy_promotion_decisions",
-            statement=select(func.count(StrategyPromotionDecision.id)),
             count_errors=count_errors,
+            truncated_counts=truncated_counts,
+            model=StrategyPromotionDecision,
         ),
-        "vnext_promotion_decisions": _load_profit_promotion_scalar_count(
+        "vnext_promotion_decisions": _load_profit_promotion_bounded_row_count(
             session,
             table_name="vnext_promotion_decisions",
-            statement=select(func.count(VNextPromotionDecision.id)),
             count_errors=count_errors,
+            truncated_counts=truncated_counts,
+            model=VNextPromotionDecision,
         ),
-        "autoresearch_epochs": _load_profit_promotion_scalar_count(
+        "autoresearch_epochs": _load_profit_promotion_bounded_row_count(
             session,
             table_name="autoresearch_epochs",
-            statement=select(func.count(AutoresearchEpoch.id)),
             count_errors=count_errors,
+            truncated_counts=truncated_counts,
+            model=AutoresearchEpoch,
         ),
-        "autoresearch_candidate_specs": _load_profit_promotion_scalar_count(
+        "autoresearch_candidate_specs": _load_profit_promotion_bounded_row_count(
             session,
             table_name="autoresearch_candidate_specs",
-            statement=select(func.count(AutoresearchCandidateSpec.id)),
             count_errors=count_errors,
+            truncated_counts=truncated_counts,
+            model=AutoresearchCandidateSpec,
         ),
-        "autoresearch_proposal_scores": _load_profit_promotion_scalar_count(
+        "autoresearch_proposal_scores": _load_profit_promotion_bounded_row_count(
             session,
             table_name="autoresearch_proposal_scores",
-            statement=select(func.count(AutoresearchProposalScore.id)),
             count_errors=count_errors,
+            truncated_counts=truncated_counts,
+            model=AutoresearchProposalScore,
         ),
-        "autoresearch_portfolio_candidates": _load_profit_promotion_scalar_count(
+        "autoresearch_portfolio_candidates": _load_profit_promotion_bounded_row_count(
             session,
             table_name="autoresearch_portfolio_candidates",
-            statement=select(func.count(AutoresearchPortfolioCandidate.id)),
             count_errors=count_errors,
+            truncated_counts=truncated_counts,
+            model=AutoresearchPortfolioCandidate,
         ),
         "autoresearch_portfolio_ready": current_oracle_ready,
         "autoresearch_portfolio_blocked": current_policy_blocked,
         "autoresearch_portfolio_ready_refs": sorted(ready_refs),
+        "count_basis": "bounded_latest_rows",
+        "count_limit": _PROMOTION_TABLE_COUNT_SCAN_LIMIT,
+        "autoresearch_portfolio_scan_limit": _PROMOTION_PORTFOLIO_READY_SCAN_LIMIT,
+        "truncated_counts": sorted(set(truncated_counts)),
         "count_errors": sorted(set(count_errors)),
     }
 

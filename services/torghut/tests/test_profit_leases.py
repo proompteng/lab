@@ -323,6 +323,51 @@ class TestProfitLeaseProjection(TestCase):
             "autoresearch_candidate_specs_empty", lease["blocking_reason_codes"]
         )
 
+    def test_promotion_table_read_errors_fail_closed_with_specific_blockers(
+        self,
+    ) -> None:
+        counts = _promotion_counts(0)
+        counts.update(
+            {
+                "autoresearch_candidate_specs": 2,
+                "autoresearch_proposal_scores": 2,
+                "autoresearch_portfolio_candidates": 1,
+                "autoresearch_portfolio_ready": 1,
+                "autoresearch_portfolio_ready_refs": [
+                    "hypothesis_id:H-CONT-01",
+                ],
+                "count_errors": ["autoresearch_portfolio_candidates"],
+                "truncated_counts": ["autoresearch_epochs"],
+            }
+        )
+
+        projection = build_profit_lease_projection(
+            runtime_items=[_runtime_item()],
+            quant_evidence=_healthy_quant(),
+            empirical_jobs_status=_current_empirical(),
+            dependency_quorum={"decision": "allow", "reasons": []},
+            rejection_summary={
+                "rejected": 0,
+                "blocked": 0,
+                "filled": 10,
+                "total": 10,
+            },
+            promotion_table_counts=counts,
+            data_readiness={"equity_ta_rows": 100, "equity_ta_symbols": 20},
+            now=datetime(2026, 5, 13, 12, 0, tzinfo=timezone.utc),
+        )
+
+        lease = projection["leases"][0]
+        self.assertEqual(lease["capital_decision"], "repair_only")
+        self.assertIn(
+            "promotion_table_read_unavailable:autoresearch_portfolio_candidates",
+            lease["blocking_reason_codes"],
+        )
+        self.assertIn(
+            "promotion_table_count_truncated:autoresearch_epochs",
+            lease["blocking_reason_codes"],
+        )
+
     def test_autoresearch_ledgers_block_on_missing_proposal_scores(self) -> None:
         counts = _promotion_counts(0)
         counts.update(

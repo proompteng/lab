@@ -6107,6 +6107,30 @@ def _load_options_catalog_freshness_summary(
     cached_payload = _load_cached_options_catalog_freshness_summary(scoped_symbols)
     if cached_payload is not None:
         return cached_payload
+    if not scoped_symbols:
+        return _store_options_catalog_freshness_summary(
+            scoped_symbols,
+            {
+                "status": "unavailable",
+                "scope": "route_symbols",
+                "bounded": True,
+                "coverage_exact": False,
+                "active_contracts_exact": False,
+                "active_contracts": 0,
+                "newest_last_seen_ts": None,
+                "missing_provider_updated_ts_count": 0,
+                "provider_updated_ts_present": False,
+                "newest_provider_updated_ts": None,
+                "missing_close_price_count": 0,
+                "zero_open_interest_count": 0,
+                "route_symbols": [],
+                "route_symbol_freshness": {},
+                "reason_codes": [
+                    "options_catalog_freshness_route_scope_missing",
+                    "options_catalog_freshness_unbounded_global_scan_skipped",
+                ],
+            },
+        )
     try:
         session.execute(text("SET LOCAL statement_timeout = 500"))
         if scoped_symbols:
