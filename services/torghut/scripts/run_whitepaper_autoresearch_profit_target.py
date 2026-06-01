@@ -56,7 +56,11 @@ from app.trading.discovery.evidence_bundles import (
 from app.trading.discovery.factor_acceptance import (
     build_factor_acceptance_artifact_from_scorecard,
 )
-from app.trading.discovery.fast_replay import build_fast_replay_preview
+from app.trading.discovery.fast_replay import (
+    FAST_REPLAY_PROOF_SEMANTICS_LABEL,
+    FAST_REPLAY_WHITEPAPER_MECHANISMS,
+    build_fast_replay_preview,
+)
 from app.trading.discovery.hypothesis_cards import HypothesisCard
 from app.trading.discovery.mlx_snapshot import build_mlx_snapshot_manifest
 from app.trading.discovery.mlx_snapshot import MlxSnapshotManifest
@@ -136,6 +140,9 @@ _CANDIDATE_BOARD_RUNTIME_SESSION_OPEN = time(hour=9, minute=30)
 _CANDIDATE_BOARD_RUNTIME_SESSION_CLOSE = time(hour=16, minute=0)
 _DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC = 8
 _DEFAULT_REAL_REPLAY_MAX_PARALLEL_FRONTIER_CANDIDATES = 16
+_DEFAULT_FAST_REPLAY_EXACT_CANDIDATE_CAP = 6
+_DEFAULT_FAST_REPLAY_EXPLOITATION_SLOTS = 4
+_DEFAULT_FAST_REPLAY_EXPLORATION_SLOTS = 2
 _DEFAULT_CLICKHOUSE_HTTP_URL = (
     "http://torghut-clickhouse.torghut.svc.cluster.local:8123"
 )
@@ -576,6 +583,27 @@ def _parse_args() -> argparse.Namespace:
         type=int,
         default=2,
         help="Minimum manifest-verified tape rows required to score a candidate in preview narrowing.",
+    )
+    parser.add_argument(
+        "--replay-tape-exact-candidate-cap",
+        type=int,
+        default=_DEFAULT_FAST_REPLAY_EXACT_CANDIDATE_CAP,
+        help=(
+            "Maximum candidate specs forwarded from preview ranking to exact replay. "
+            "Defaults to a bounded 4 exploitation + 2 exploration frontier."
+        ),
+    )
+    parser.add_argument(
+        "--replay-tape-frontier-exploitation-slots",
+        type=int,
+        default=_DEFAULT_FAST_REPLAY_EXPLOITATION_SLOTS,
+        help="Preview frontier exploitation slots forwarded to exact replay.",
+    )
+    parser.add_argument(
+        "--replay-tape-frontier-exploration-slots",
+        type=int,
+        default=_DEFAULT_FAST_REPLAY_EXPLORATION_SLOTS,
+        help="Preview frontier exploration slots forwarded to exact replay.",
     )
     parser.add_argument(
         "--materialize-replay-tape",
@@ -6303,6 +6331,42 @@ def _apply_fast_replay_preview_narrowing(
     tape_path = getattr(args, "replay_tape_path", None)
     if tape_path is None:
         raise ValueError("fast_replay_preview_requires_replay_tape_path")
+    exact_replay_candidate_cap = max(
+        1,
+        min(
+            preview_top_k,
+            int(
+                getattr(
+                    args,
+                    "replay_tape_exact_candidate_cap",
+                    _DEFAULT_FAST_REPLAY_EXACT_CANDIDATE_CAP,
+                )
+                or _DEFAULT_FAST_REPLAY_EXACT_CANDIDATE_CAP
+            ),
+        ),
+    )
+    exploitation_slots = max(
+        0,
+        int(
+            getattr(
+                args,
+                "replay_tape_frontier_exploitation_slots",
+                _DEFAULT_FAST_REPLAY_EXPLOITATION_SLOTS,
+            )
+            or 0
+        ),
+    )
+    exploration_slots = max(
+        0,
+        int(
+            getattr(
+                args,
+                "replay_tape_frontier_exploration_slots",
+                _DEFAULT_FAST_REPLAY_EXPLORATION_SLOTS,
+            )
+            or 0
+        ),
+    )
 
     start_date = _fast_replay_preview_date_arg(args, "full_window_start_date")
     end_date = _fast_replay_preview_date_arg(args, "full_window_end_date")
@@ -6337,6 +6401,9 @@ def _apply_fast_replay_preview_narrowing(
         min_rows_per_candidate=max(
             1, int(getattr(args, "replay_tape_preview_min_rows", 2) or 2)
         ),
+        exploitation_count=exploitation_slots,
+        exploration_count=exploration_slots,
+        exact_replay_candidate_cap=exact_replay_candidate_cap,
     )
     preview_scores_path = output_dir / "replay-tape-preview-scores.jsonl"
     preview_manifest_path = output_dir / "replay-tape-preview-manifest.json"
@@ -6344,6 +6411,7 @@ def _apply_fast_replay_preview_narrowing(
     preview_manifest = {
         **preview.to_manifest_payload(),
         "validation": validation,
+        "proof_semantics": _fast_replay_preview_proof_semantics(),
         "artifacts": {
             "scores_jsonl": str(preview_scores_path),
             "manifest_json": str(preview_manifest_path),
@@ -6399,6 +6467,10 @@ def _apply_fast_replay_preview_narrowing(
             updated["fast_replay_preview_impact_liquidity_penalty_bps"] = preview_row[
                 "impact_liquidity_penalty_bps"
             ]
+            updated["fast_replay_frontier_bucket"] = preview_row["frontier_bucket"]
+            updated["fast_replay_proof_semantics_label"] = preview_row[
+                "proof_semantics_label"
+            ]
         if candidate_spec_id in original_selected_ids:
             updated["pre_fast_replay_preview_selected_for_replay"] = bool(
                 row.get("selected_for_replay")
@@ -6415,6 +6487,9 @@ def _apply_fast_replay_preview_narrowing(
             **_mapping(candidate_selection.get("budget")),
             "fast_replay_preview_enabled": True,
             "fast_replay_preview_requested_top_k": preview_top_k,
+            "fast_replay_exact_replay_candidate_cap": exact_replay_candidate_cap,
+            "fast_replay_frontier_exploitation_slots": exploitation_slots,
+            "fast_replay_frontier_exploration_slots": exploration_slots,
             "fast_replay_preview_selected_count": len(narrowed_specs),
             "pre_fast_replay_preview_selected_count": len(specs),
             "selected_count": len(narrowed_specs),
@@ -6428,8 +6503,74 @@ def _apply_fast_replay_preview_narrowing(
             "scores_artifact": str(preview_scores_path),
             "manifest_artifact": str(preview_manifest_path),
         },
+        "bounded_sim_target_queue": _bounded_sim_target_queue_metadata(
+            preview_rows=[row.to_payload() for row in preview.rows],
+            exact_replay_candidate_cap=exact_replay_candidate_cap,
+            exploitation_slots=exploitation_slots,
+            exploration_slots=exploration_slots,
+        ),
     }
     return narrowed_specs, updated_selection
+
+
+def _fast_replay_preview_proof_semantics() -> dict[str, Any]:
+    return {
+        "schema_version": "torghut.fast-replay-proof-semantics.v1",
+        "label": FAST_REPLAY_PROOF_SEMANTICS_LABEL,
+        "promotion_proof": False,
+        "authority": "preview_prefilter_only",
+        "final_promotion_requires": [
+            "exact_replay_evidence",
+            "source_backed_runtime_ledger",
+            "live_paper_runtime_evidence",
+            "unchanged_promotion_gates",
+        ],
+        "whitepaper_gpu_fast_replay_policy": (
+            "whitepaper-derived fast/GPU preview signals rank candidates only and cannot unlock final promotion"
+        ),
+    }
+
+
+def _bounded_sim_target_queue_metadata(
+    *,
+    preview_rows: Sequence[Mapping[str, Any]],
+    exact_replay_candidate_cap: int,
+    exploitation_slots: int,
+    exploration_slots: int,
+) -> dict[str, Any]:
+    selected_rows = [
+        dict(row)
+        for row in preview_rows
+        if bool(row.get("selected"))
+    ][:exact_replay_candidate_cap]
+    entries: list[dict[str, Any]] = []
+    for index, row in enumerate(selected_rows, start=1):
+        entries.append(
+            {
+                "queue_priority": index,
+                "candidate_spec_id": _string(row.get("candidate_spec_id")),
+                "frontier_bucket": _string(row.get("frontier_bucket")),
+                "preview_rank": row.get("rank"),
+                "preview_score": row.get("preview_score"),
+                "proof_semantics_label": row.get("proof_semantics_label"),
+                "promotion_proof": False,
+            }
+        )
+    return {
+        "schema_version": "torghut.fast-replay-bounded-sim-target-queue.v1",
+        "status": "metadata_only_preview_to_exact_replay_queue",
+        "authority": "not_promotion_proof",
+        "promotion_proof": False,
+        "proof_semantics": _fast_replay_preview_proof_semantics(),
+        "whitepaper_mechanisms": list(FAST_REPLAY_WHITEPAPER_MECHANISMS),
+        "queue_policy": "top_exploitation_plus_exploration_exact_replay_cap",
+        "exact_replay_candidate_cap": exact_replay_candidate_cap,
+        "exploitation_slots": exploitation_slots,
+        "exploration_slots": exploration_slots,
+        "exact_replay_candidate_count": len(entries),
+        "candidate_spec_ids": [entry["candidate_spec_id"] for entry in entries],
+        "entries": entries,
+    }
 
 
 def _maybe_materialize_epoch_replay_tape(

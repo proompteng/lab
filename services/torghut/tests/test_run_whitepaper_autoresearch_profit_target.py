@@ -284,6 +284,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             replay_tape_manifest=None,
             replay_tape_preview_top_k=0,
             replay_tape_preview_min_rows=2,
+            replay_tape_exact_candidate_cap=runner._DEFAULT_FAST_REPLAY_EXACT_CANDIDATE_CAP,
+            replay_tape_frontier_exploitation_slots=runner._DEFAULT_FAST_REPLAY_EXPLOITATION_SLOTS,
+            replay_tape_frontier_exploration_slots=runner._DEFAULT_FAST_REPLAY_EXPLORATION_SLOTS,
             materialize_replay_tape=False,
             min_daily_net_pnl=None,
             persist_results=False,
@@ -4603,6 +4606,99 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertFalse(aapl_row["selected_for_replay"])
         self.assertEqual(aapl_row["selection_reason"], "fast_replay_preview_filtered")
 
+    def test_fast_replay_preview_builds_bounded_sim_target_queue_and_caps_exact_replay(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "epoch"
+            output_dir.mkdir()
+            tape_path = Path(tmpdir) / "tape.jsonl"
+            rows = [
+                SignalEnvelope(
+                    event_ts=datetime(
+                        2026, 2, 23, 14, 30 + index, tzinfo=timezone.utc
+                    ),
+                    symbol=symbol,
+                    timeframe="1Min",
+                    seq=index,
+                    source="ta",
+                    payload={
+                        "price": Decimal(str(100 + index)),
+                        "spread_bps": Decimal("2"),
+                        "ofi": Decimal("0.35"),
+                        "microbar_volume": Decimal("100000"),
+                        "event_type": "trade",
+                    },
+                )
+                for index, symbol in enumerate(["NVDA", "AAPL", "INTC"] * 3)
+            ]
+            materialize_signal_tape(
+                rows=rows,
+                tape_path=tape_path,
+                dataset_snapshot_ref="frontier-preview",
+                symbols=("NVDA", "AAPL", "INTC"),
+                start_date=date(2026, 2, 23),
+                end_date=date(2026, 2, 23),
+                source_query_digest=build_source_query_digest({"window": "frontier"}),
+            )
+            specs = [
+                self._candidate_spec(f"spec-frontier-{index}") for index in range(8)
+            ]
+            args = self._args(output_dir)
+            args.replay_mode = "real"
+            args.full_window_start_date = "2026-02-23"
+            args.full_window_end_date = "2026-02-23"
+            args.symbols = "NVDA,AAPL,INTC"
+            args.replay_tape_path = tape_path
+            args.replay_tape_preview_top_k = 8
+            candidate_selection = {
+                "schema_version": "torghut.whitepaper-autoresearch-selection.v1",
+                "budget": {"selected_count": len(specs)},
+                "selected_candidate_spec_ids": [
+                    spec.candidate_spec_id for spec in specs
+                ],
+                "rows": [
+                    {
+                        "candidate_spec_id": spec.candidate_spec_id,
+                        "selected_for_replay": True,
+                        "selection_reason": "test",
+                    }
+                    for spec in specs
+                ],
+            }
+
+            narrowed_specs, updated_selection = (
+                runner._apply_fast_replay_preview_narrowing(
+                    args=args,
+                    output_dir=output_dir,
+                    specs=specs,
+                    candidate_selection=candidate_selection,
+                )
+            )
+
+        self.assertEqual(len(narrowed_specs), 6)
+        self.assertEqual(
+            updated_selection["budget"]["fast_replay_exact_replay_candidate_cap"], 6
+        )
+        queue_payload = updated_selection["bounded_sim_target_queue"]
+        self.assertEqual(queue_payload["exact_replay_candidate_count"], 6)
+        self.assertFalse(queue_payload["promotion_proof"])
+        self.assertEqual(
+            queue_payload["proof_semantics"]["label"],
+            fast_replay.FAST_REPLAY_PROOF_SEMANTICS_LABEL,
+        )
+        self.assertEqual(
+            [entry["frontier_bucket"] for entry in queue_payload["entries"]],
+            [
+                "exploitation",
+                "exploitation",
+                "exploitation",
+                "exploitation",
+                "exploration",
+                "exploration",
+            ],
+        )
+
     def test_fast_replay_preview_scores_microstructure_diagnostics_preview_only(
         self,
     ) -> None:
@@ -4691,10 +4787,15 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         manifest_payload = preview.to_manifest_payload()
 
         self.assertEqual(
-            row_payload["schema_version"], "torghut.fast-replay-preview-row.v2"
+            row_payload["schema_version"], "torghut.fast-replay-preview-row.v3"
         )
         self.assertEqual(manifest_payload["status"], "preview_only")
         self.assertFalse(manifest_payload["promotion_proof"])
+        self.assertEqual(
+            row_payload["proof_semantics_label"],
+            fast_replay.FAST_REPLAY_PROOF_SEMANTICS_LABEL,
+        )
+        self.assertFalse(row_payload["promotion_proof"])
         self.assertIn("exact_replay_required", manifest_payload["blockers"])
         self.assertGreater(Decimal(row_payload["ofi_pressure_score"]), Decimal("0"))
         self.assertGreater(Decimal(row_payload["microprice_bias_bps"]), Decimal("0"))
@@ -4702,6 +4803,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertGreater(
             Decimal(row_payload["impact_liquidity_penalty_bps"]), Decimal("0")
         )
+        self.assertIn("conformal_tail_risk", manifest_payload["implemented_mechanisms"])
 
     def test_materialize_replay_tape_writes_run_artifacts_and_updates_args(
         self,
