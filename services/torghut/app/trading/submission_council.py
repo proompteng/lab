@@ -141,6 +141,47 @@ def _rollback_runtime_ledger_status_session(session: Session) -> None:
         logger.warning("Failed to roll back runtime-ledger status session")
 
 
+def _empty_profit_promotion_table_counts(
+    *,
+    count_errors: Sequence[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "research_candidates": 0,
+        "research_promotions": 0,
+        "strategy_promotion_decisions": 0,
+        "vnext_promotion_decisions": 0,
+        "autoresearch_epochs": 0,
+        "autoresearch_candidate_specs": 0,
+        "autoresearch_proposal_scores": 0,
+        "autoresearch_portfolio_candidates": 0,
+        "autoresearch_portfolio_ready": 0,
+        "autoresearch_portfolio_blocked": 0,
+        "autoresearch_portfolio_ready_refs": [],
+        "count_errors": sorted(set(count_errors or ())),
+    }
+
+
+def _load_profit_promotion_scalar_count(
+    session: Session,
+    *,
+    table_name: str,
+    statement: Any,
+    count_errors: list[str],
+) -> int:
+    try:
+        _maybe_set_runtime_ledger_status_statement_timeout(session)
+        return int(session.execute(statement).scalar_one())
+    except SQLAlchemyError as exc:
+        logger.warning(
+            "Failed to load profit promotion table count table=%s error=%s",
+            table_name,
+            exc,
+        )
+        count_errors.append(table_name)
+        _rollback_runtime_ledger_status_session(session)
+        return 0
+
+
 def _runtime_window_import_continuity_signal(state: object) -> tuple[str, str, str]:
     state_text = _safe_attr_text(state, "last_signal_continuity_state")
     reason = _safe_attr_text(state, "last_signal_continuity_reason")
@@ -2982,9 +3023,22 @@ def _attach_lineage_refs(
 
 
 def _load_profit_promotion_table_counts(session: Session) -> dict[str, Any]:
-    portfolio_rows = list(
-        session.execute(select(AutoresearchPortfolioCandidate)).scalars()
-    )
+    count_errors: list[str] = []
+    try:
+        _maybe_set_runtime_ledger_status_statement_timeout(session)
+        portfolio_rows = list(
+            session.execute(select(AutoresearchPortfolioCandidate)).scalars()
+        )
+    except SQLAlchemyError as exc:
+        logger.warning(
+            "Failed to load profit promotion portfolio rows error=%s",
+            exc,
+        )
+        _rollback_runtime_ledger_status_session(session)
+        return _empty_profit_promotion_table_counts(
+            count_errors=["autoresearch_portfolio_candidates"]
+        )
+
     current_oracle_ready = 0
     current_policy_blocked = 0
     ready_refs: set[str] = set()
@@ -3016,53 +3070,79 @@ def _load_profit_promotion_table_counts(session: Session) -> dict[str, Any]:
             current_policy_blocked += 1
 
     if ready_source_candidate_ids:
-        spec_rows = session.execute(
-            select(AutoresearchCandidateSpec).where(
-                AutoresearchCandidateSpec.candidate_spec_id.in_(
-                    sorted(ready_source_candidate_ids)
+        try:
+            _maybe_set_runtime_ledger_status_statement_timeout(session)
+            spec_rows = session.execute(
+                select(AutoresearchCandidateSpec).where(
+                    AutoresearchCandidateSpec.candidate_spec_id.in_(
+                        sorted(ready_source_candidate_ids)
+                    )
                 )
+            ).scalars()
+            for spec_row in spec_rows:
+                if hypothesis_id := _safe_text(spec_row.hypothesis_id):
+                    ready_refs.add(f"hypothesis_id:{hypothesis_id}")
+        except SQLAlchemyError as exc:
+            logger.warning(
+                "Failed to load profit promotion ready spec refs error=%s",
+                exc,
             )
-        ).scalars()
-        for spec_row in spec_rows:
-            if hypothesis_id := _safe_text(spec_row.hypothesis_id):
-                ready_refs.add(f"hypothesis_id:{hypothesis_id}")
+            count_errors.append("autoresearch_candidate_specs")
+            _rollback_runtime_ledger_status_session(session)
 
     return {
-        "research_candidates": int(
-            session.execute(select(func.count(ResearchCandidate.id))).scalar_one()
+        "research_candidates": _load_profit_promotion_scalar_count(
+            session,
+            table_name="research_candidates",
+            statement=select(func.count(ResearchCandidate.id)),
+            count_errors=count_errors,
         ),
-        "research_promotions": int(
-            session.execute(select(func.count(ResearchPromotion.id))).scalar_one()
+        "research_promotions": _load_profit_promotion_scalar_count(
+            session,
+            table_name="research_promotions",
+            statement=select(func.count(ResearchPromotion.id)),
+            count_errors=count_errors,
         ),
-        "strategy_promotion_decisions": int(
-            session.execute(
-                select(func.count(StrategyPromotionDecision.id))
-            ).scalar_one()
+        "strategy_promotion_decisions": _load_profit_promotion_scalar_count(
+            session,
+            table_name="strategy_promotion_decisions",
+            statement=select(func.count(StrategyPromotionDecision.id)),
+            count_errors=count_errors,
         ),
-        "vnext_promotion_decisions": int(
-            session.execute(select(func.count(VNextPromotionDecision.id))).scalar_one()
+        "vnext_promotion_decisions": _load_profit_promotion_scalar_count(
+            session,
+            table_name="vnext_promotion_decisions",
+            statement=select(func.count(VNextPromotionDecision.id)),
+            count_errors=count_errors,
         ),
-        "autoresearch_epochs": int(
-            session.execute(select(func.count(AutoresearchEpoch.id))).scalar_one()
+        "autoresearch_epochs": _load_profit_promotion_scalar_count(
+            session,
+            table_name="autoresearch_epochs",
+            statement=select(func.count(AutoresearchEpoch.id)),
+            count_errors=count_errors,
         ),
-        "autoresearch_candidate_specs": int(
-            session.execute(
-                select(func.count(AutoresearchCandidateSpec.id))
-            ).scalar_one()
+        "autoresearch_candidate_specs": _load_profit_promotion_scalar_count(
+            session,
+            table_name="autoresearch_candidate_specs",
+            statement=select(func.count(AutoresearchCandidateSpec.id)),
+            count_errors=count_errors,
         ),
-        "autoresearch_proposal_scores": int(
-            session.execute(
-                select(func.count(AutoresearchProposalScore.id))
-            ).scalar_one()
+        "autoresearch_proposal_scores": _load_profit_promotion_scalar_count(
+            session,
+            table_name="autoresearch_proposal_scores",
+            statement=select(func.count(AutoresearchProposalScore.id)),
+            count_errors=count_errors,
         ),
-        "autoresearch_portfolio_candidates": int(
-            session.execute(
-                select(func.count(AutoresearchPortfolioCandidate.id))
-            ).scalar_one()
+        "autoresearch_portfolio_candidates": _load_profit_promotion_scalar_count(
+            session,
+            table_name="autoresearch_portfolio_candidates",
+            statement=select(func.count(AutoresearchPortfolioCandidate.id)),
+            count_errors=count_errors,
         ),
         "autoresearch_portfolio_ready": current_oracle_ready,
         "autoresearch_portfolio_blocked": current_policy_blocked,
         "autoresearch_portfolio_ready_refs": sorted(ready_refs),
+        "count_errors": sorted(set(count_errors)),
     }
 
 
