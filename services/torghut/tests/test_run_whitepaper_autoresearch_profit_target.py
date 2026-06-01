@@ -10429,6 +10429,8 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                         "recommended_flags": {
                             "--top-k": "not-a-number",
                             "--max-total-frontier-candidates": "48",
+                            "--kubernetes-fanout": "32",
+                            "--real-replay-shard-workers": "16",
                         },
                     }
                 ]
@@ -10448,7 +10450,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(plan["flags"]["--real-replay-timeout-seconds"], "7200")
         self.assertEqual(plan["flags"]["--real-replay-shard-size"], "2")
         self.assertEqual(plan["flags"]["--real-replay-shard-timeout-seconds"], "900")
-        self.assertEqual(plan["flags"]["--real-replay-shard-workers"], "3")
+        self.assertEqual(plan["flags"]["--real-replay-shard-workers"], "2")
         self.assertEqual(plan["flags"]["--real-replay-failed-spec-retries"], "2")
         self.assertEqual(plan["flags"]["--real-replay-retry-timeout-seconds"], "1800")
         self.assertEqual(
@@ -10469,6 +10471,40 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             },
             plan["rejected_recommended_flags"],
         )
+        self.assertIn(
+            {
+                "action": "increase_breadth_and_portfolio_diversity",
+                "flag": "--kubernetes-fanout",
+                "current_value": "",
+                "recommended_value": "32",
+                "reason": "rejected_unsafe_cluster_fanout_or_promotion_flag",
+            },
+            plan["rejected_recommended_flags"],
+        )
+        self.assertIn(
+            {
+                "action": "increase_breadth_and_portfolio_diversity",
+                "flag": "--real-replay-shard-workers",
+                "current_value": "2",
+                "recommended_value": "16",
+                "reason": "rejected_broad_replay_worker_fanout",
+            },
+            plan["rejected_recommended_flags"],
+        )
+        self.assertIn(
+            {
+                "flag": "--real-replay-shard-workers",
+                "requested_value": "3",
+                "capped_value": "2",
+                "reason": "capped_to_local_worker_limit_no_kubernetes_fanout",
+            },
+            plan["capped_runtime_flags"],
+        )
+        self.assertTrue(plan["no_fast_path_policy"]["no_kubernetes_fanout"])
+        self.assertEqual(
+            plan["no_fast_path_policy"]["max_generated_real_replay_shard_workers"], 2
+        )
+        self.assertNotIn("--kubernetes-fanout", plan["flags"])
 
     def test_train_ranker_script_main_writes_model_and_scores(self) -> None:
         with TemporaryDirectory() as tmpdir:
