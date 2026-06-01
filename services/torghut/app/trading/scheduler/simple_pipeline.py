@@ -10,7 +10,7 @@ from decimal import Decimal, ROUND_DOWN
 from typing import Any, Literal, Optional, cast
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select  # pyright: ignore[reportUnknownVariableType]
 from sqlalchemy.orm import Session
 
 from ...config import settings
