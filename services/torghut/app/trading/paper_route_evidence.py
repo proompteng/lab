@@ -33,6 +33,7 @@ from ..models import (
 )
 from .runtime_cost_authority import cost_basis_counts_have_non_promotion_grade_costs
 from .runtime_decision_authority import (
+    BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
     ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
     normalize_source_decision_mode,
     source_decision_mode_is_profit_proof_eligible,
@@ -2054,6 +2055,15 @@ def _next_paper_route_runtime_window_targets(
             and _safe_decimal(next_notional) > 0
             and bool(target_probe_symbols)
         )
+        bounded_collection_authorized = bool(canary_collection_authorized)
+        source_decision_mode = (
+            BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE
+            if bounded_collection_authorized
+            else ROUTE_ACQUISITION_SOURCE_DECISION_MODE
+        )
+        profit_proof_eligible = source_decision_mode_is_profit_proof_eligible(
+            source_decision_mode
+        )
         planned_target: dict[str, object] = {
             "hypothesis_id": hypothesis_id,
             "candidate_id": candidate_id,
@@ -2181,8 +2191,10 @@ def _next_paper_route_runtime_window_targets(
             "canary_collection_authorized": canary_collection_authorized,
             "capital_promotion_allowed": False,
             "final_authority_ok": False,
-            "bounded_evidence_collection_authorized": canary_collection_authorized,
-            "bounded_live_paper_collection_authorized": (canary_collection_authorized),
+            "bounded_evidence_collection_authorized": bounded_collection_authorized,
+            "bounded_live_paper_collection_authorized": (
+                bounded_collection_authorized
+            ),
             "bounded_evidence_collection_scope": (
                 "paper_route_probe_next_session_only"
             ),
@@ -2193,8 +2205,9 @@ def _next_paper_route_runtime_window_targets(
             "probation_reason": "paper_route_probe_next_session_runtime_window",
             "selection_reason": "paper_route_probe_next_session_evidence_collection",
             "selected_by": "paper_route_evidence_audit",
-            "source_decision_mode": ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
-            "profit_proof_eligible": False,
+            "source_decision_mode": source_decision_mode,
+            "source_decision_mode_profit_proof_eligible": profit_proof_eligible,
+            "profit_proof_eligible": profit_proof_eligible,
             "promotion_allowed": False,
             "final_promotion_authorized": False,
             "final_promotion_allowed": False,

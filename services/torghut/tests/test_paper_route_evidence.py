@@ -1474,6 +1474,11 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(target["paper_route_clean_window_baseline_blockers"], [])
         self.assertTrue(target["evidence_collection_ok"])
         self.assertTrue(target["bounded_evidence_collection_authorized"])
+        self.assertEqual(
+            target["source_decision_mode"], "bounded_paper_route_collection"
+        )
+        self.assertTrue(target["source_decision_mode_profit_proof_eligible"])
+        self.assertTrue(target["profit_proof_eligible"])
         self.assertFalse(target["promotion_allowed"])
         self.assertFalse(target["final_promotion_allowed"])
         clean_readiness = plan["clean_window_baseline_readiness"]
@@ -1551,6 +1556,11 @@ class TestPaperRouteEvidenceAudit(TestCase):
         )
         self.assertTrue(target["evidence_collection_ok"])
         self.assertTrue(target["bounded_evidence_collection_authorized"])
+        self.assertEqual(
+            target["source_decision_mode"], "bounded_paper_route_collection"
+        )
+        self.assertTrue(target["source_decision_mode_profit_proof_eligible"])
+        self.assertTrue(target["profit_proof_eligible"])
         self.assertFalse(target["promotion_allowed"])
         self.assertFalse(target["final_promotion_allowed"])
 
@@ -1607,6 +1617,9 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertFalse(target["canary_collection_authorized"])
         self.assertFalse(target["bounded_evidence_collection_authorized"])
         self.assertFalse(target["bounded_live_paper_collection_authorized"])
+        self.assertEqual(target["source_decision_mode"], "route_acquisition_probe")
+        self.assertFalse(target["source_decision_mode_profit_proof_eligible"])
+        self.assertFalse(target["profit_proof_eligible"])
         self.assertEqual(plan["target_account_audit_readiness"]["state"], "unavailable")
 
     def test_clean_baseline_allows_collection_when_health_gate_blocks_promotion(
@@ -1697,6 +1710,11 @@ class TestPaperRouteEvidenceAudit(TestCase):
         )
         self.assertTrue(target["evidence_collection_ok"])
         self.assertTrue(target["bounded_evidence_collection_authorized"])
+        self.assertEqual(
+            target["source_decision_mode"], "bounded_paper_route_collection"
+        )
+        self.assertTrue(target["source_decision_mode_profit_proof_eligible"])
+        self.assertTrue(target["profit_proof_eligible"])
         self.assertIn("evidence_continuity_not_ok", target["candidate_blockers"])
         self.assertIn(
             "evidence_continuity_not_ok",
@@ -2994,8 +3012,11 @@ class TestPaperRouteEvidenceAudit(TestCase):
             target["source_collection_reason_codes"],
             ["source_window_evidence_collection_pending"],
         )
-        self.assertEqual(target["source_decision_mode"], "route_acquisition_probe")
-        self.assertFalse(target["profit_proof_eligible"])
+        self.assertEqual(
+            target["source_decision_mode"], "bounded_paper_route_collection"
+        )
+        self.assertTrue(target["source_decision_mode_profit_proof_eligible"])
+        self.assertTrue(target["profit_proof_eligible"])
         self.assertFalse(target["promotion_allowed"])
         self.assertFalse(target["final_promotion_authorized"])
         self.assertFalse(target["final_promotion_allowed"])
@@ -3017,9 +3038,10 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertTrue(summary_target["pair_balance_required"])
         self.assertEqual(summary_target["pair_balance_state"], "balanced")
         self.assertEqual(
-            summary_target["source_decision_mode"], "route_acquisition_probe"
+            summary_target["source_decision_mode"],
+            "bounded_paper_route_collection",
         )
-        self.assertFalse(summary_target["profit_proof_eligible"])
+        self.assertTrue(summary_target["profit_proof_eligible"])
 
     def test_hpairs_next_window_requires_aapl_amzn_pair_legs(self) -> None:
         generated_at = datetime(2026, 5, 24, 12, tzinfo=timezone.utc)
