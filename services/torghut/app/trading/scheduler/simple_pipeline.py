@@ -234,6 +234,113 @@ def _target_probe_exit_minute_after_open(
     return None, False
 
 
+def _target_strategy_family_tokens(target: Mapping[str, Any]) -> set[str]:
+    tokens: set[str] = set()
+    for key in (
+        "strategy_family",
+        "strategy_name",
+        "runtime_strategy_name",
+        "strategy_id",
+        "universe_type",
+    ):
+        value = _safe_text(target.get(key))
+        if value:
+            tokens.add(value.strip().lower().replace("-", "_"))
+    return tokens
+
+
+def _target_requires_balanced_pair_legs(target: Mapping[str, Any]) -> bool:
+    explicit = _target_bool(target.get("paper_route_probe_pair_balance_required"))
+    if explicit is not None:
+        return explicit
+    return any(
+        "microbar_cross_sectional_pairs" in token
+        for token in _target_strategy_family_tokens(target)
+    )
+
+
+def _target_probe_symbol_actions(
+    target: Mapping[str, Any],
+    symbols: Sequence[str],
+) -> dict[str, Literal["buy", "sell"]]:
+    normalized_symbols = [
+        symbol.strip().upper() for symbol in symbols if symbol.strip()
+    ]
+    actions: dict[str, Literal["buy", "sell"]] = {}
+    raw_actions = target.get("paper_route_probe_symbol_actions")
+    if isinstance(raw_actions, Mapping):
+        for raw_symbol, raw_action in cast(
+            Mapping[object, object], raw_actions
+        ).items():
+            symbol = str(raw_symbol).strip().upper()
+            action = str(raw_action or "").strip().lower()
+            if symbol in normalized_symbols and action in {"buy", "long"}:
+                actions[symbol] = "buy"
+            elif symbol in normalized_symbols and action in {"sell", "short"}:
+                actions[symbol] = "sell"
+    elif isinstance(raw_actions, Sequence) and not isinstance(
+        raw_actions, (str, bytes, bytearray)
+    ):
+        for raw_item in cast(Sequence[object], raw_actions):
+            if not isinstance(raw_item, Mapping):
+                continue
+            item = cast(Mapping[str, object], raw_item)
+            symbol = str(item.get("symbol") or "").strip().upper()
+            action = str(item.get("action") or item.get("side") or "").strip().lower()
+            if symbol in normalized_symbols and action in {"buy", "long"}:
+                actions[symbol] = "buy"
+            elif symbol in normalized_symbols and action in {"sell", "short"}:
+                actions[symbol] = "sell"
+
+    missing_symbols = [symbol for symbol in normalized_symbols if symbol not in actions]
+    if missing_symbols and _target_requires_balanced_pair_legs(target):
+        selection_mode = (
+            str(target.get("selection_mode") or "continuation").strip().lower()
+        )
+        first_action: Literal["buy", "sell"] = (
+            "sell" if selection_mode == "reversal" else "buy"
+        )
+        second_action: Literal["buy", "sell"] = (
+            "buy" if first_action == "sell" else "sell"
+        )
+        buy_count = sum(1 for action in actions.values() if action == "buy")
+        sell_count = sum(1 for action in actions.values() if action == "sell")
+        balanced_seed_index = 0
+        for symbol in missing_symbols:
+            if buy_count < sell_count:
+                action = "buy"
+            elif sell_count < buy_count:
+                action = "sell"
+            else:
+                action = (
+                    first_action if balanced_seed_index % 2 == 0 else second_action
+                )
+                balanced_seed_index += 1
+            actions[symbol] = action
+            if action == "buy":
+                buy_count += 1
+            else:
+                sell_count += 1
+
+    default_action = _target_probe_action(target)
+    return {
+        symbol: actions.get(symbol, default_action) for symbol in normalized_symbols
+    }
+
+
+def _target_pair_balance_state(
+    target: Mapping[str, Any],
+    symbol_actions: Mapping[str, Literal["buy", "sell"]],
+) -> str:
+    if not _target_requires_balanced_pair_legs(target):
+        return "not_required"
+    buy_count = sum(1 for action in symbol_actions.values() if action == "buy")
+    sell_count = sum(1 for action in symbol_actions.values() if action == "sell")
+    if buy_count > 0 and buy_count == sell_count:
+        return "balanced"
+    return "imbalanced"
+
+
 def _target_truthy(value: object) -> bool:
     if isinstance(value, bool):
         return value
@@ -2470,10 +2577,31 @@ class SimpleTradingPipeline(TradingPipeline):
                 symbols = [symbol for symbol in symbols if symbol in normalized_allowed]
             if strategy_symbols:
                 symbols = [symbol for symbol in symbols if symbol in strategy_symbols]
-            action = _target_probe_action(target)
-            if action == "sell" and not settings.trading_allow_shorts:
+            symbol_actions = _target_probe_symbol_actions(target, symbols)
+            pair_balance_state = _target_pair_balance_state(target, symbol_actions)
+            if pair_balance_state == "imbalanced":
+                logger.warning(
+                    "Skipping imbalanced paper-route pair target strategy=%s symbols=%s actions=%s",
+                    strategy.name,
+                    symbols,
+                    symbol_actions,
+                )
+                continue
+            if (
+                pair_balance_state == "balanced"
+                and any(action == "sell" for action in symbol_actions.values())
+                and not settings.trading_allow_shorts
+            ):
+                logger.warning(
+                    "Skipping balanced paper-route pair target because shorts are disabled strategy=%s symbols=%s",
+                    strategy.name,
+                    symbols,
+                )
                 continue
             for symbol in symbols:
+                action = symbol_actions.get(symbol, _target_probe_action(target))
+                if action == "sell" and not settings.trading_allow_shorts:
+                    continue
                 if self._paper_route_target_symbol_has_open_position(
                     positions,
                     symbol,
@@ -2502,12 +2630,21 @@ class SimpleTradingPipeline(TradingPipeline):
                     window_end=window_end,
                     max_notional=target_cap,
                 )
+                metadata["paper_route_probe_symbol_actions"] = dict(symbol_actions)
+                metadata["paper_route_probe_pair_balance_required"] = (
+                    pair_balance_state != "not_required"
+                )
+                metadata["paper_route_probe_pair_balance_state"] = pair_balance_state
+                metadata["paper_route_probe_leg_action"] = action
                 simple_lane = {
                     "source": "external_target_plan_url",
                     "target_plan_source_decision": True,
                     "paper_route_probe_max_notional": str(target_cap),
                     "paper_route_probe_window_start": window_start.isoformat(),
                     "paper_route_probe_window_end": window_end.isoformat(),
+                    "paper_route_probe_symbol_actions": dict(symbol_actions),
+                    "paper_route_probe_pair_balance_state": pair_balance_state,
+                    "paper_route_probe_leg_action": action,
                 }
                 params: dict[str, Any] = {
                     "paper_route_target_plan": metadata,

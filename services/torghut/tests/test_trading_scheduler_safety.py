@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 import json
 import tempfile
 from pathlib import Path
@@ -9,6 +10,12 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from app import config
+from app.models import Strategy
+from app.trading.scheduler.simple_pipeline import (
+    SimpleTradingPipeline,
+    _target_pair_balance_state,
+    _target_probe_symbol_actions,
+)
 from app.trading.scheduler.runtime import TradingScheduler
 from app.trading.scheduler.safety import (
     _coerce_recovery_reason_sequence,
@@ -115,7 +122,9 @@ class TestTradingSchedulerSafety(TestCase):
         scheduler.state.signal_continuity_alert_active = True
         scheduler.state.signal_continuity_alert_reason = "no_signals_in_window"
         scheduler.state.signal_continuity_alert_started_at = datetime.now(timezone.utc)
-        scheduler.state.signal_continuity_alert_last_seen_at = datetime.now(timezone.utc)
+        scheduler.state.signal_continuity_alert_last_seen_at = datetime.now(
+            timezone.utc
+        )
         scheduler.state.signal_continuity_recovery_streak = 2
         scheduler.state.autonomy_no_signal_streak = 4
         scheduler.state.last_evidence_continuity_report = {"status": "stale"}
@@ -123,7 +132,9 @@ class TestTradingSchedulerSafety(TestCase):
         scheduler.state.universe_fail_safe_blocked = True
         scheduler.state.universe_fail_safe_block_reason = "stale_block"
         scheduler.state.emergency_stop_active = True
-        scheduler.state.emergency_stop_reason = "signal_staleness_streak_exceeded:no_signals_in_window:3"
+        scheduler.state.emergency_stop_reason = (
+            "signal_staleness_streak_exceeded:no_signals_in_window:3"
+        )
         scheduler.state.emergency_stop_triggered_at = datetime.now(timezone.utc)
         scheduler.state.emergency_stop_resolved_at = datetime.now(timezone.utc)
         scheduler.state.emergency_stop_recovery_streak = 1
@@ -172,7 +183,73 @@ class TestTradingSchedulerSafety(TestCase):
         self.assertIsNone(scheduler.state.metrics.signal_lag_seconds)
         self.assertEqual(scheduler.state.metrics.signal_continuity_actionable, 0)
         self.assertEqual(scheduler.state.metrics.signal_continuity_alert_active, 0)
-        self.assertEqual(scheduler.state.metrics.signal_continuity_alert_recovery_streak, 0)
+        self.assertEqual(
+            scheduler.state.metrics.signal_continuity_alert_recovery_streak, 0
+        )
+
+    def test_hpairs_target_plan_uses_balanced_pair_actions_and_identity(self) -> None:
+        window_start = datetime(2026, 6, 1, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 6, 1, 20, 0, tzinfo=timezone.utc)
+        target = {
+            "hypothesis_id": "H-PAIRS-01",
+            "candidate_id": "c88421d619759b2cfaa6f4d0",
+            "strategy_family": "microbar_cross_sectional_pairs",
+            "strategy_name": "microbar-cross-sectional-pairs-v1",
+            "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+            "paper_route_probe_symbols": ["AAPL", "AMZN"],
+        }
+        strategy = Strategy(
+            name="microbar-cross-sectional-pairs-v1",
+            description="H-PAIRS",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="microbar_cross_sectional_pairs_v1",
+            universe_symbols=["AAPL", "AMZN"],
+            max_notional_per_trade=Decimal("75000"),
+        )
+
+        symbol_actions = _target_probe_symbol_actions(
+            target,
+            ["AAPL", "AMZN"],
+        )
+        metadata = SimpleTradingPipeline._paper_route_target_source_decision_metadata(
+            target=target,
+            strategy=strategy,
+            symbol="AAPL",
+            window_start=window_start,
+            window_end=window_end,
+            max_notional=Decimal("63180"),
+        )
+        metadata["paper_route_probe_symbol_actions"] = symbol_actions
+        metadata["paper_route_probe_pair_balance_state"] = _target_pair_balance_state(
+            target,
+            symbol_actions,
+        )
+
+        self.assertEqual(symbol_actions, {"AAPL": "buy", "AMZN": "sell"})
+        self.assertEqual(metadata["paper_route_probe_pair_balance_state"], "balanced")
+        self.assertEqual(metadata["candidate_id"], "c88421d619759b2cfaa6f4d0")
+        self.assertEqual(metadata["hypothesis_id"], "H-PAIRS-01")
+        self.assertEqual(
+            metadata["source_candidate_ids"],
+            ["c88421d619759b2cfaa6f4d0"],
+        )
+        self.assertEqual(metadata["source_hypothesis_ids"], ["H-PAIRS-01"])
+        self.assertFalse(metadata["promotion_allowed"])
+        self.assertFalse(metadata["final_promotion_allowed"])
+
+    def test_hpairs_target_plan_balances_missing_leg_from_existing_action(
+        self,
+    ) -> None:
+        target = {
+            "strategy_family": "microbar_cross_sectional_pairs",
+            "paper_route_probe_symbol_actions": {"AAPL": "buy"},
+        }
+
+        symbol_actions = _target_probe_symbol_actions(target, ["AAPL", "AMZN"])
+
+        self.assertEqual(symbol_actions, {"AAPL": "buy", "AMZN": "sell"})
+        self.assertEqual(_target_pair_balance_state(target, symbol_actions), "balanced")
 
     def test_emergency_stop_triggers_on_signal_lag(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -236,7 +313,9 @@ class TestTradingSchedulerSafety(TestCase):
             self.assertFalse(scheduler.state.emergency_stop_active)
             self.assertEqual(scheduler.state.rollback_incidents_total, 0)
 
-    def test_critical_no_signal_streak_is_suppressed_during_bootstrap_grace(self) -> None:
+    def test_critical_no_signal_streak_is_suppressed_during_bootstrap_grace(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             config.settings.trading_autonomy_artifact_dir = tmpdir
             config.settings.trading_emergency_stop_enabled = True
@@ -262,7 +341,9 @@ class TestTradingSchedulerSafety(TestCase):
             self.assertFalse(scheduler.state.emergency_stop_active)
             self.assertEqual(scheduler.state.rollback_incidents_total, 0)
 
-    def test_critical_no_signal_streak_triggers_after_bootstrap_grace_expires(self) -> None:
+    def test_critical_no_signal_streak_triggers_after_bootstrap_grace_expires(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             config.settings.trading_autonomy_artifact_dir = tmpdir
             config.settings.trading_emergency_stop_enabled = True
