@@ -330,6 +330,18 @@ class OrderFeedSourceWindow(Base, TimestampMixin):
             "end_offset",
         ),
         Index(
+            "ix_order_feed_source_windows_consumer_scope_revision_offsets",
+            "consumer_group",
+            "source_topic",
+            "source_partition",
+            "alpaca_account_label",
+            "assignment_mode",
+            "collector_identity",
+            "source_revision",
+            "start_offset",
+            "end_offset",
+        ),
+        Index(
             "ix_order_feed_source_windows_account_window",
             "alpaca_account_label",
             "window_started_at",

@@ -235,6 +235,7 @@ class OrderFeedIngestor:
             source_topic=source_topic,
             source_partition=source_partition,
             source_offset=source_offset,
+            broker_high_watermark=_broker_high_watermark_from_record(record),
             alpaca_account_label=(
                 self._default_account_label
                 if out_of_scope_account
@@ -542,6 +543,7 @@ def _create_order_feed_source_window(
     source_partition: int | None,
     source_offset: int | None,
     alpaca_account_label: str,
+    broker_high_watermark: int | None = None,
 ) -> OrderFeedSourceWindow | None:
     if source_partition is None or source_offset is None:
         return None
@@ -559,7 +561,7 @@ def _create_order_feed_source_window(
         window_ended_at=now,
         start_offset=source_offset,
         end_offset=source_offset,
-        broker_high_watermark=None,
+        broker_high_watermark=broker_high_watermark,
         consumed_count=1,
         inserted_count=0,
         duplicate_count=0,
@@ -582,6 +584,27 @@ def _create_order_feed_source_window(
     session.add(source_window)
     session.flush()
     return source_window
+
+
+def _broker_high_watermark_from_record(record: Any) -> int | None:
+    """Return a broker high watermark carried by Kafka-like records when present.
+
+    ``kafka-python`` ``ConsumerRecord`` values do not expose partition end offsets,
+    but test harnesses and collector wrappers can attach one. Treat this as optional
+    source telemetry: it enriches the window ledger without affecting cursor
+    authority or offset-commit decisions.
+    """
+
+    for attribute in (
+        "broker_high_watermark",
+        "high_watermark",
+        "highwater",
+        "log_end_offset",
+    ):
+        value = _coerce_int(getattr(record, attribute, None))
+        if value is not None:
+            return value
+    return None
 
 
 def _classify_source_window_drop(

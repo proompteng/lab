@@ -61,6 +61,7 @@ class FakeRecord:
     topic: str = "torghut.trade-updates.v1"
     partition: int = 0
     offset: int = 0
+    broker_high_watermark: int | None = None
 
 
 class FakeConsumer:
@@ -1898,6 +1899,44 @@ class TestOrderFeed(TestCase):
         self.assertEqual(source_window.inserted_count, 1)
         self.assertEqual(source_window.unlinked_execution_count, 0)
         self.assertEqual(source_window.unlinked_decision_count, 0)
+
+    def test_source_window_records_scope_revision_and_available_high_watermark(
+        self,
+    ) -> None:
+        settings.trading_order_feed_group_id = "torghut-paper-order-feed-v2"
+        settings.trading_order_feed_client_id = "paper-collector-7"
+        settings.trading_order_feed_assignment_mode = "manual"
+        record = FakeRecord(
+            value=(
+                b'{"channel":"trade_updates","payload":{"event":"fill","timestamp":"2026-02-01T10:00:00Z",'
+                b'"order":{"id":"order-1","client_order_id":"client-1","symbol":"AAPL","status":"filled",'
+                b'"qty":"1","filled_qty":"1","filled_avg_price":"190.2"}},"seq":10}'
+            ),
+            offset=31,
+            broker_high_watermark=37,
+        )
+        consumer = FakeManualConsumer(
+            [record], partitions={"torghut.trade-updates.v1": {0}}
+        )
+        ingestor = OrderFeedIngestor(consumer_factory=lambda: consumer)
+
+        with Session(self.engine) as session:
+            self._seed_execution(session)
+            counters = ingestor.ingest_once(session)
+            source_window = session.execute(select(OrderFeedSourceWindow)).scalar_one()
+
+        self.assertEqual(counters["events_persisted_total"], 1)
+        self.assertEqual(source_window.consumer_group, "torghut-paper-order-feed-v2")
+        self.assertEqual(source_window.source_topic, "torghut.trade-updates.v1")
+        self.assertEqual(source_window.source_partition, 0)
+        self.assertEqual(source_window.alpaca_account_label, "paper")
+        self.assertEqual(source_window.assignment_mode, "manual")
+        self.assertEqual(source_window.collector_identity, "paper-collector-7")
+        self.assertEqual(source_window.source_revision, ORDER_FEED_SOURCE_REVISION)
+        self.assertEqual(source_window.start_offset, 31)
+        self.assertEqual(source_window.end_offset, 31)
+        self.assertEqual(source_window.broker_high_watermark, 37)
+        self.assertEqual(source_window.status, "inserted")
 
     def test_invalid_json_is_durably_classified_before_cursor_advance(self) -> None:
         record = FakeRecord(value=b"{not-json", offset=17)
