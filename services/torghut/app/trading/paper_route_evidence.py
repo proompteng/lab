@@ -807,6 +807,76 @@ def _target_probe_symbols(
     return _paper_route_probe_symbols(probe)
 
 
+def _target_requires_balanced_pair_probe(target: Mapping[str, object]) -> bool:
+    explicit = _safe_text(target.get("paper_route_probe_pair_balance_required"))
+    if explicit is not None:
+        return explicit.lower() in {"1", "true", "yes", "on"}
+    for key in (
+        "strategy_family",
+        "strategy_name",
+        "runtime_strategy_name",
+        "strategy_id",
+        "universe_type",
+    ):
+        value = _safe_text(target.get(key))
+        if value and "microbar_cross_sectional_pairs" in value.lower().replace(
+            "-", "_"
+        ):
+            return True
+    return False
+
+
+def _balanced_pair_probe_symbol_actions(
+    target: Mapping[str, object],
+    symbols: Sequence[str],
+) -> dict[str, str]:
+    normalized_symbols = [
+        str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()
+    ]
+    raw_actions = _as_mapping(target.get("paper_route_probe_symbol_actions"))
+    actions: dict[str, str] = {}
+    for symbol in normalized_symbols:
+        raw_action = _safe_text(raw_actions.get(symbol))
+        if raw_action is not None and raw_action.lower() in {"buy", "long"}:
+            actions[symbol] = "buy"
+        elif raw_action is not None and raw_action.lower() in {"sell", "short"}:
+            actions[symbol] = "sell"
+    missing_symbols = [symbol for symbol in normalized_symbols if symbol not in actions]
+    if missing_symbols and _target_requires_balanced_pair_probe(target):
+        selection_mode = (
+            _safe_text(target.get("selection_mode")) or "continuation"
+        ).lower()
+        first_action = "sell" if selection_mode == "reversal" else "buy"
+        second_action = "buy" if first_action == "sell" else "sell"
+        buy_count = sum(1 for action in actions.values() if action == "buy")
+        sell_count = sum(1 for action in actions.values() if action == "sell")
+        balanced_seed_index = 0
+        for symbol in missing_symbols:
+            if buy_count < sell_count:
+                action = "buy"
+            elif sell_count < buy_count:
+                action = "sell"
+            else:
+                action = (
+                    first_action if balanced_seed_index % 2 == 0 else second_action
+                )
+                balanced_seed_index += 1
+            actions[symbol] = action
+            if action == "buy":
+                buy_count += 1
+            else:
+                sell_count += 1
+    return actions
+
+
+def _pair_probe_balance_state(actions: Mapping[str, str]) -> str:
+    buy_count = sum(1 for action in actions.values() if action == "buy")
+    sell_count = sum(1 for action in actions.values() if action == "sell")
+    if buy_count > 0 and buy_count == sell_count:
+        return "balanced"
+    return "imbalanced"
+
+
 def _target_allows_strategy_universe_probe_fallback(
     target: Mapping[str, object],
 ) -> bool:
@@ -1431,10 +1501,31 @@ def _next_paper_route_runtime_window_targets(
             strategy_names_from_strategy_id(strategy_id),
             derived_strategy_name_from_strategy_id(strategy_id),
         )
+        pair_balance_target = {
+            **dict(target),
+            "strategy_name": canonical_strategy_name or strategy_name or "",
+            "runtime_strategy_name": canonical_strategy_name
+            or runtime_strategy_name
+            or strategy_name
+            or "",
+        }
+        pair_balance_required = _target_requires_balanced_pair_probe(
+            pair_balance_target
+        )
+        pair_symbol_actions = _balanced_pair_probe_symbol_actions(
+            pair_balance_target,
+            target_probe_symbols,
+        )
+        pair_balance_state = (
+            _pair_probe_balance_state(pair_symbol_actions)
+            if pair_balance_required
+            else "not_required"
+        )
         target_probe_ready = (
             bool(probe.get("configured_enabled"))
             and _safe_decimal(next_notional) > 0
             and bool(target_probe_symbols)
+            and pair_balance_state != "imbalanced"
         )
         source_manifest_ref = _safe_text(target.get("source_manifest_ref"))
         missing = [
@@ -1457,6 +1548,8 @@ def _next_paper_route_runtime_window_targets(
                     reasons.append("paper_route_probe_notional_missing")
                 if not target_probe_symbols:
                     reasons.append("paper_route_probe_symbol_missing")
+                if pair_balance_state == "imbalanced":
+                    reasons.append("paper_route_probe_pair_imbalanced")
             skipped_targets.append(
                 {
                     "hypothesis_id": hypothesis_id,
@@ -1577,6 +1670,11 @@ def _next_paper_route_runtime_window_targets(
                 *health_gate_blockers,
                 *_unique_text_items(source_decision_readiness.get("blockers")),
                 *account_pre_session_blockers,
+                *(
+                    ["paper_route_probe_pair_imbalanced"]
+                    if pair_balance_state == "imbalanced"
+                    else []
+                ),
             ]
         )
         evidence_collection_ok = not evidence_collection_blockers
@@ -1620,6 +1718,9 @@ def _next_paper_route_runtime_window_targets(
             "paper_route_probe_symbols": target_probe_symbols,
             "paper_route_probe_symbol_count": len(target_probe_symbols),
             "paper_route_probe_raw_target_symbols": raw_target_probe_symbols,
+            "paper_route_probe_symbol_actions": pair_symbol_actions,
+            "paper_route_probe_pair_balance_required": pair_balance_required,
+            "paper_route_probe_pair_balance_state": pair_balance_state,
             "paper_route_probe_strategy_scope_applied": bool(strategy_universe_symbols),
             "paper_route_probe_strategy_universe_fallback": (
                 strategy_universe_probe_fallback
@@ -4093,6 +4194,16 @@ def _next_paper_route_target_summaries(
                 "account_label": _safe_text(target.get("account_label")),
                 "source_kind": _safe_text(target.get("source_kind")),
                 "symbols": _unique_text_items(target.get("paper_route_probe_symbols")),
+                "symbol_actions": dict(
+                    _as_mapping(target.get("paper_route_probe_symbol_actions"))
+                ),
+                "pair_balance_required": bool(
+                    target.get("paper_route_probe_pair_balance_required")
+                ),
+                "pair_balance_state": _safe_text(
+                    target.get("paper_route_probe_pair_balance_state")
+                )
+                or "not_required",
                 "session_start": _safe_text(target.get("window_start")),
                 "session_end": _safe_text(target.get("window_end")),
                 "next_session_max_notional": _safe_text(

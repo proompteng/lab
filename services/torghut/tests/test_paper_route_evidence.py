@@ -26,9 +26,11 @@ from app.models import (
 from app.trading.paper_route_evidence import (
     RUNTIME_LEDGER_PROOF_PACKET_HANDOFF_SCHEMA_VERSION,
     _account_window_start_snapshot_audit,
+    _balanced_pair_probe_symbol_actions,
     _next_regular_equities_session_window,
     _normalized_open_positions,
     _paper_route_probe_summary,
+    _pair_probe_balance_state,
     _runtime_ledger_bucket_evidence_grade,
     _runtime_ledger_non_evidence_diagnostic_summary,
     _runtime_ledger_row_diagnostic_expectancy_bps,
@@ -48,6 +50,20 @@ class TestPaperRouteEvidenceAudit(TestCase):
             poolclass=StaticPool,
         )
         Base.metadata.create_all(self.engine)
+
+    def test_balanced_pair_probe_infers_missing_leg_opposite_existing_action(
+        self,
+    ) -> None:
+        actions = _balanced_pair_probe_symbol_actions(
+            {
+                "strategy_family": "microbar_cross_sectional_pairs",
+                "paper_route_probe_symbol_actions": {"AAPL": "buy"},
+            },
+            ["AAPL", "AMZN"],
+        )
+
+        self.assertEqual(actions, {"AAPL": "buy", "AMZN": "sell"})
+        self.assertEqual(_pair_probe_balance_state(actions), "balanced")
 
     def _runtime_ledger_source_authority_payload(
         self,
@@ -2005,6 +2021,12 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(target["max_notional"], "0")
         self.assertEqual(target["paper_route_probe_next_session_max_notional"], "63180")
         self.assertEqual(target["paper_route_probe_effective_max_notional"], "63180")
+        self.assertEqual(
+            target["paper_route_probe_symbol_actions"],
+            {"AAPL": "buy", "AMZN": "sell"},
+        )
+        self.assertTrue(target["paper_route_probe_pair_balance_required"])
+        self.assertEqual(target["paper_route_probe_pair_balance_state"], "balanced")
         self.assertTrue(target["evidence_collection_ok"])
         self.assertTrue(target["canary_collection_authorized"])
         self.assertFalse(target["capital_promotion_allowed"])
@@ -2041,6 +2063,11 @@ class TestPaperRouteEvidenceAudit(TestCase):
             summary_target["bounded_evidence_collection_max_notional"], "63180"
         )
         self.assertTrue(summary_target["source_collection_authorized"])
+        self.assertEqual(
+            summary_target["symbol_actions"], {"AAPL": "buy", "AMZN": "sell"}
+        )
+        self.assertTrue(summary_target["pair_balance_required"])
+        self.assertEqual(summary_target["pair_balance_state"], "balanced")
         self.assertEqual(
             summary_target["source_decision_mode"], "route_acquisition_probe"
         )

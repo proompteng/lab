@@ -57,6 +57,31 @@ class FakeFlattenClient:
         return order
 
 
+class RejectingFlattenClient(FakeFlattenClient):
+    def submit_order(
+        self,
+        symbol: str,
+        side: str,
+        qty: float,
+        order_type: str,
+        time_in_force: str,
+        limit_price: float | None = None,
+        stop_price: float | None = None,
+        extra_params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        _ = (
+            symbol,
+            side,
+            qty,
+            order_type,
+            time_in_force,
+            limit_price,
+            stop_price,
+            extra_params,
+        )
+        raise RuntimeError("simulated close rejection")
+
+
 class SequencedFlattenClient(FakeFlattenClient):
     def __init__(self, position_snapshots: list[list[dict[str, Any]]]) -> None:
         super().__init__(position_snapshots[0] if position_snapshots else [])
@@ -261,6 +286,31 @@ class TestFlattenPaperAccountPositions(TestCase):
         self.assertEqual(payload["status"], "submitted_not_flat")
         self.assertEqual(payload["position_count"], 1)
         self.assertEqual(payload["final_position_count"], 1)
+
+    def test_apply_reports_rejected_close_orders_as_stable_blocker(self) -> None:
+        client = RejectingFlattenClient(
+            [{"symbol": "AMAT", "qty": "2", "side": "long", "current_price": "100"}]
+        )
+
+        payload = flatten_paper_account_positions(
+            client=client,
+            account_label="TORGHUT_SIM",
+            expected_account_label="TORGHUT_SIM",
+            trading_mode="paper",
+            apply=True,
+            max_gross_market_value=Decimal("2500"),
+            max_position_count=10,
+        )
+
+        self.assertEqual(payload["status"], "failed_close_orders")
+        self.assertIn("paper_account_flatten_close_order_rejected", payload["blockers"])
+        self.assertEqual(payload["rejected_close_order_count"], 1)
+        self.assertEqual(
+            payload["rejected_close_orders"][0]["reason"],
+            "paper_account_flatten_close_order_rejected",
+        )
+        self.assertEqual(payload["submitted_order_count"], 0)
+        self.assertTrue(client.cancelled)
 
     def test_wait_flat_marks_flattened_when_positions_clear(self) -> None:
         client = SequencedFlattenClient(
@@ -548,7 +598,9 @@ class TestFlattenPaperAccountPositions(TestCase):
             patch.object(
                 flatten_script, "OrderFirewall", side_effect=lambda wrapped: wrapped
             ),
-            patch.object(flatten_script, "SessionLocal", return_value=FakeSessionContext()),
+            patch.object(
+                flatten_script, "SessionLocal", return_value=FakeSessionContext()
+            ),
             patch.object(
                 flatten_script, "snapshot_account_and_positions", return_value=snapshot
             ) as snapshot_account,
@@ -586,7 +638,9 @@ class TestFlattenPaperAccountPositions(TestCase):
                 flatten_script, "OrderFirewall", side_effect=lambda wrapped: wrapped
             ),
             patch.object(flatten_script, "SessionLocal") as session_local,
-            patch.object(flatten_script, "snapshot_account_and_positions") as snapshot_account,
+            patch.object(
+                flatten_script, "snapshot_account_and_positions"
+            ) as snapshot_account,
             redirect_stdout(StringIO()) as output,
         ):
             exit_code = flatten_script.main()

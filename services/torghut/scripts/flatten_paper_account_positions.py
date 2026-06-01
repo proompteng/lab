@@ -307,6 +307,7 @@ def flatten_paper_account_positions(
     status = "clean" if not positions and not blockers else "blocked"
     cancelled_orders: list[dict[str, Any]] = []
     submitted_orders: list[dict[str, Any]] = []
+    rejected_close_orders: list[dict[str, Any]] = []
     final_positions = positions
     if blockers:
         status = "blocked"
@@ -326,18 +327,36 @@ def flatten_paper_account_positions(
             }
             if extended_hours_limit:
                 extra_params["extended_hours"] = True
-            submitted_orders.append(
-                client.submit_order(
-                    symbol=position.symbol,
-                    side=position.close_side,
-                    qty=float(position.close_qty),
-                    order_type=order_type,
-                    time_in_force="day",
-                    limit_price=float(limit_price) if limit_price is not None else None,
-                    extra_params=extra_params,
+            try:
+                submitted_orders.append(
+                    client.submit_order(
+                        symbol=position.symbol,
+                        side=position.close_side,
+                        qty=float(position.close_qty),
+                        order_type=order_type,
+                        time_in_force="day",
+                        limit_price=float(limit_price)
+                        if limit_price is not None
+                        else None,
+                        extra_params=extra_params,
+                    )
                 )
-            )
-        if wait_flat_seconds > 0:
+            except Exception as exc:
+                rejected_close_orders.append(
+                    {
+                        "symbol": position.symbol,
+                        "side": position.close_side,
+                        "qty": str(position.close_qty),
+                        "order_type": order_type,
+                        "reason": "paper_account_flatten_close_order_rejected",
+                        "error_type": type(exc).__name__,
+                        "error": str(exc),
+                    }
+                )
+        if rejected_close_orders:
+            blockers.append("paper_account_flatten_close_order_rejected")
+            status = "failed_close_orders"
+        elif wait_flat_seconds > 0:
             status, final_positions = _wait_until_flat(
                 client=client,
                 deadline_seconds=wait_flat_seconds,
@@ -364,9 +383,13 @@ def flatten_paper_account_positions(
         "max_gross_market_value": str(max_gross_market_value),
         "max_position_count": max_position_count,
         "blockers": blockers,
+        "rejected_close_order_count": len(rejected_close_orders),
+        "rejected_close_orders": rejected_close_orders,
         "extended_hours_limit_missing_symbols": missing_limit_symbols,
         "positions": [_position_payload(position) for position in positions],
-        "final_positions": [_position_payload(position) for position in final_positions],
+        "final_positions": [
+            _position_payload(position) for position in final_positions
+        ],
         "cancelled_order_count": len(cancelled_orders),
         "cancelled_orders": cancelled_orders,
         "submitted_order_count": len(submitted_orders),
