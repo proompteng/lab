@@ -3,6 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal
 
+from app.config import settings
+from app.models import Strategy
+from app.trading.scheduler.simple_pipeline import SimpleTradingPipeline
 from app.trading.runtime_window_import import (
     _runtime_promotion_blocking_reasons,
     resolve_hypothesis_manifest,
@@ -202,3 +205,47 @@ def test_live_paper_runtime_ledger_close_loop_still_respects_profitability_gates
     )
 
     assert 'runtime_ledger_mean_daily_net_pnl_after_costs_below_target' in final_gate_blockers
+
+
+def test_paper_route_target_metadata_is_collection_only_without_live_capital_mutation() -> None:
+    trading_mode_before = settings.trading_mode
+    target = {
+        'hypothesis_id': 'H-PAIRS-01',
+        'candidate_id': 'c88421d619759b2cfaa6f4d0',
+        'account_label': 'TORGHUT_SIM',
+        'observed_stage': 'paper',
+        'runtime_strategy_name': 'microbar-cross-sectional-pairs-v1',
+        'source_kind': 'paper_route_probe_runtime_observed',
+        'paper_probation_authorized': True,
+        'bounded_evidence_collection_scope': 'paper_route_probe_next_session_only',
+        'paper_route_probe_symbols': ['AAPL', 'AMZN'],
+    }
+
+    metadata = SimpleTradingPipeline._paper_route_target_source_decision_metadata(
+        target=target,
+        strategy=Strategy(
+            name='microbar-cross-sectional-pairs-v1',
+            description='metadata fixture',
+            enabled=True,
+            base_timeframe='1Sec',
+            universe_type='static',
+            universe_symbols=['AAPL', 'AMZN'],
+        ),
+        symbol='AAPL',
+        window_start=datetime(2026, 6, 1, 13, 30, tzinfo=timezone.utc),
+        window_end=datetime(2026, 6, 1, 20, 0, tzinfo=timezone.utc),
+        max_notional=Decimal('25'),
+    )
+
+    assert settings.trading_mode == trading_mode_before
+    assert metadata['bounded_evidence_collection_authorized'] is True
+    assert metadata['promotion_allowed'] is False
+    assert metadata['final_authority_ok'] is False
+    assert metadata['final_promotion_allowed'] is False
+    assert metadata['account_stage_runtime_identity'] == {
+        'account_label': 'TORGHUT_SIM',
+        'source_account_label': None,
+        'observed_stage': 'paper',
+        'runtime_strategy_name': 'microbar-cross-sectional-pairs-v1',
+        'source_kind': 'paper_route_probe_runtime_observed',
+    }

@@ -2459,6 +2459,15 @@ class SimpleTradingPipeline(TradingPipeline):
             "source_decision_mode": ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
             "profit_proof_eligible": False,
             "source_kind": _safe_text(target.get("source_kind")),
+            "account_stage_runtime_identity": {
+                "account_label": _safe_text(target.get("account_label")),
+                "source_account_label": _safe_text(target.get("source_account_label")),
+                "observed_stage": _safe_text(target.get("observed_stage")) or "paper",
+                "runtime_strategy_name": _safe_text(
+                    target.get("runtime_strategy_name")
+                ),
+                "source_kind": _safe_text(target.get("source_kind")),
+            },
             "source_manifest_ref": _safe_text(target.get("source_manifest_ref")),
             "paper_probation_authorized": bool(
                 target.get("paper_probation_authorized")
@@ -2484,6 +2493,7 @@ class SimpleTradingPipeline(TradingPipeline):
             "bounded_evidence_collection_max_notional": str(max_notional),
             "promotion_allowed": False,
             "final_promotion_authorized": False,
+            "final_authority_ok": False,
             "final_promotion_allowed": False,
             **lineage,
         }
@@ -2654,6 +2664,7 @@ class SimpleTradingPipeline(TradingPipeline):
                     "profit_proof_eligible": False,
                     "promotion_allowed": False,
                     "final_promotion_authorized": False,
+                    "final_authority_ok": False,
                     "final_promotion_allowed": False,
                     **_target_plan_lineage([dict(target)], symbol),
                 }
@@ -2940,6 +2951,7 @@ class SimpleTradingPipeline(TradingPipeline):
             "paper_probation_authorized": True,
             "promotion_allowed": False,
             "final_promotion_authorized": False,
+            "final_authority_ok": False,
             "final_promotion_allowed": False,
             **lineage,
         }

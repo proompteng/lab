@@ -27,6 +27,7 @@ from app.trading.paper_route_evidence import (
     RUNTIME_LEDGER_PROOF_PACKET_HANDOFF_SCHEMA_VERSION,
     _account_window_start_snapshot_audit,
     _balanced_pair_probe_symbol_actions,
+    _hpairs_round_trip_identity_blockers,
     _next_regular_equities_session_window,
     _normalized_open_positions,
     _paper_route_probe_summary,
@@ -77,6 +78,112 @@ class TestPaperRouteEvidenceAudit(TestCase):
 
         self.assertEqual(actions, {"AAPL": "sell", "AMZN": "buy"})
         self.assertEqual(_pair_probe_balance_state(actions), "balanced")
+
+    def test_hpairs_bounded_collection_requires_torghut_sim_paper_identity(
+        self,
+    ) -> None:
+        self.assertEqual(
+            _hpairs_round_trip_identity_blockers(
+                {
+                    "hypothesis_id": "H-CONTROL-01",
+                    "candidate_id": "candidate-control",
+                    "account_label": "TORGHUT_SIM",
+                    "observed_stage": "paper",
+                    "runtime_strategy_name": "control-strategy",
+                    "source_kind": "paper_route_probe_runtime_observed",
+                }
+            ),
+            [],
+        )
+        self.assertEqual(
+            _hpairs_round_trip_identity_blockers(
+                {
+                    "hypothesis_id": "H-PAIRS-01",
+                    "candidate_id": "candidate-hpairs",
+                    "account_label": "TORGHUT_SIM",
+                    "observed_stage": "paper",
+                    "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                    "source_kind": "paper_route_probe_runtime_observed",
+                }
+            ),
+            [],
+        )
+
+        missing_identity_blockers = _hpairs_round_trip_identity_blockers(
+            {
+                "source_manifest_ref": "H-PAIRS-01",
+                "bounded_evidence_collection_authorized": True,
+            }
+        )
+
+        self.assertIn(
+            "paper_route_hpairs_candidate_id_missing",
+            missing_identity_blockers,
+        )
+        self.assertIn(
+            "paper_route_hpairs_hypothesis_id_missing",
+            missing_identity_blockers,
+        )
+        self.assertIn(
+            "paper_route_hpairs_account_label_missing",
+            missing_identity_blockers,
+        )
+        self.assertIn(
+            "paper_route_hpairs_paper_stage_required",
+            missing_identity_blockers,
+        )
+        self.assertIn(
+            "paper_route_hpairs_runtime_strategy_name_missing",
+            missing_identity_blockers,
+        )
+        self.assertIn(
+            "paper_route_hpairs_source_kind_missing",
+            missing_identity_blockers,
+        )
+
+        blockers = _hpairs_round_trip_identity_blockers(
+            {
+                "hypothesis_id": "H-PAIRS-01",
+                "candidate_id": "candidate-hpairs",
+                "account_label": "TORGHUT_LIVE",
+                "observed_stage": "live",
+                "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                "source_kind": "paper_route_probe_runtime_observed",
+            }
+        )
+
+        self.assertIn("paper_route_hpairs_torghut_sim_account_required", blockers)
+        self.assertIn("paper_route_hpairs_paper_stage_required", blockers)
+
+        missing_blockers = _hpairs_round_trip_identity_blockers(
+            {
+                "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
+                "observed_stage": "paper",
+                "bounded_evidence_collection_authorized": True,
+            }
+        )
+        for blocker in (
+            "paper_route_hpairs_candidate_id_missing",
+            "paper_route_hpairs_hypothesis_id_missing",
+            "paper_route_hpairs_account_label_missing",
+            "paper_route_hpairs_runtime_strategy_name_missing",
+            "paper_route_hpairs_source_kind_missing",
+        ):
+            self.assertIn(blocker, missing_blockers)
+
+        self.assertEqual(
+            _hpairs_round_trip_identity_blockers(
+                {
+                    "hypothesis_id": "H-PAIRS-01",
+                    "candidate_id": "candidate-hpairs",
+                    "account_label": "TORGHUT_SIM",
+                    "observed_stage": "paper",
+                    "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                    "source_kind": "paper_route_probe_runtime_observed",
+                }
+            ),
+            [],
+        )
 
     def test_target_audit_timeout_fails_closed_with_explicit_blockers(self) -> None:
         with Session(self.engine) as session:
@@ -2381,6 +2488,41 @@ class TestPaperRouteEvidenceAudit(TestCase):
                 session.add(execution)
                 session.flush()
                 session.add(
+                    ExecutionOrderEvent(
+                        event_fingerprint=f"flatten-handoff-fill-{index}",
+                        source_topic="trade_updates",
+                        source_partition=0,
+                        source_offset=200 + index,
+                        alpaca_account_label="TORGHUT_SIM",
+                        feed_seq=200 + index,
+                        event_ts=event_at,
+                        symbol=symbol,
+                        alpaca_order_id=f"flatten-handoff-order-{index}",
+                        client_order_id=f"flatten-handoff-{side}-{symbol.lower()}-{index}",
+                        event_type="fill",
+                        status="filled",
+                        qty=Decimal("1"),
+                        filled_qty=Decimal("1"),
+                        filled_qty_delta=Decimal("1"),
+                        filled_notional_delta=Decimal("100"),
+                        avg_fill_price=Decimal("100"),
+                        raw_event={
+                            "event": "fill",
+                            "side": side,
+                            "order": {
+                                "id": f"flatten-handoff-order-{index}",
+                                "client_order_id": f"flatten-handoff-{side}-{symbol.lower()}-{index}",
+                                "symbol": symbol,
+                                "side": side,
+                                "status": "filled",
+                            },
+                        },
+                        execution_id=execution.id,
+                        trade_decision_id=decision.id,
+                        created_at=event_at,
+                    )
+                )
+                session.add(
                     ExecutionTCAMetric(
                         execution_id=execution.id,
                         trade_decision_id=decision.id,
@@ -4126,6 +4268,8 @@ class TestPaperRouteEvidenceAudit(TestCase):
                     created_at=event_at,
                 )
             )
+            decision_ref = str(decision.id)
+            execution_ref = str(execution.id)
             self._add_flat_account_start_snapshot(
                 session,
                 account_label="TORGHUT_SIM",
@@ -4192,6 +4336,13 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(source_activity["complete_fill_order_event_count"], 1)
         self.assertEqual(source_activity["last_order_event_at"], event_at.isoformat())
         self.assertEqual(source_activity["missing_reasons"], [])
+        self.assertEqual(source_activity["decision_refs"], [decision_ref])
+        self.assertEqual(source_activity["execution_refs"], [execution_ref])
+        self.assertEqual(len(source_activity["order_lifecycle_refs"]), 1)
+        self.assertIn(
+            "source_explicit_costs_missing",
+            source_activity["source_reference_blockers"],
+        )
         import_audit = payload["runtime_window_import_audit"]
         self.assertEqual(import_audit["state"], "import_due_runtime_ledger_missing")
         self.assertEqual(import_audit["counts"]["targets_with_source_activity"], 1)
@@ -4199,6 +4350,157 @@ class TestPaperRouteEvidenceAudit(TestCase):
             "paper_route_source_activity_missing", import_audit["blockers"]
         )
         self.assertNotIn("source_tca_missing", import_audit["blockers"])
+
+    def test_hpairs_collection_blocks_missing_lifecycle_costs_and_flatten(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, tzinfo=timezone.utc)
+        event_at = window_start + timedelta(minutes=20)
+        strategy_name = "hpairs-missing-roundtrip"
+        candidate_id = "candidate-hpairs-missing-roundtrip"
+        with Session(self.engine) as session:
+            strategy = Strategy(
+                name=strategy_name,
+                description="H-PAIRS missing round-trip fixture",
+                enabled=True,
+                base_timeframe="1Sec",
+                universe_type="static",
+                universe_symbols=["AAPL", "AMZN"],
+                created_at=window_start,
+                updated_at=window_start,
+            )
+            session.add(strategy)
+            session.flush()
+            decision = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="TORGHUT_SIM",
+                symbol="AAPL",
+                timeframe="1Sec",
+                decision_json={
+                    "action": "buy",
+                    "qty": "1",
+                    "candidate_id": candidate_id,
+                    "hypothesis_id": "H-PAIRS-01",
+                },
+                rationale="H-PAIRS missing round-trip fixture",
+                status="executed",
+                created_at=event_at,
+                executed_at=event_at,
+            )
+            session.add(decision)
+            session.flush()
+            execution = Execution(
+                trade_decision_id=decision.id,
+                alpaca_account_label="TORGHUT_SIM",
+                alpaca_order_id="hpairs-missing-roundtrip-order",
+                client_order_id="hpairs-missing-roundtrip-client",
+                symbol="AAPL",
+                side="buy",
+                order_type="limit",
+                time_in_force="day",
+                submitted_qty=Decimal("1"),
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("100"),
+                status="filled",
+                raw_order={},
+                created_at=event_at,
+                updated_at=event_at,
+                last_update_at=event_at,
+            )
+            session.add(execution)
+            self._add_flat_account_start_snapshot(
+                session,
+                account_label="TORGHUT_SIM",
+                window_start=window_start,
+            )
+            session.flush()
+            decision_ref = str(decision.id)
+            execution_ref = str(execution.id)
+            session.commit()
+
+            payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "paper_route_probe_only",
+                    "blocked_reasons": [],
+                    "promotion_eligible_total": 0,
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "target_count": 1,
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-PAIRS-01",
+                                "candidate_id": candidate_id,
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_cross_sectional_pairs",
+                                "strategy_name": strategy_name,
+                                "runtime_strategy_name": strategy_name,
+                                "source_kind": "paper_route_probe_runtime_observed",
+                                "account_label": "TORGHUT_SIM",
+                                "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
+                                "window_start": window_start.isoformat(),
+                                "window_end": window_end.isoformat(),
+                                "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                                "paper_probation_authorized": True,
+                                "promotion_allowed": False,
+                                "final_promotion_authorized": False,
+                                "max_notional": "0",
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "summary": {
+                        "paper_route_probe_eligible_symbols": ["AAPL", "AMZN"],
+                        "paper_route_probe_active_symbols": ["AAPL", "AMZN"],
+                    },
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": True,
+                        "next_session_max_notional": "25",
+                        "eligible_symbol_count": 2,
+                    },
+                },
+                generated_at=window_end + timedelta(hours=2),
+            )
+
+        source_activity = payload["targets"][0]["source_activity"]
+        self.assertTrue(source_activity["missing"])
+        self.assertEqual(source_activity["decision_refs"], [decision_ref])
+        self.assertEqual(source_activity["execution_refs"], [execution_ref])
+        self.assertEqual(source_activity["order_lifecycle_refs"], [])
+        self.assertIn(
+            "source_order_lifecycle_refs_missing",
+            source_activity["source_reference_blockers"],
+        )
+        self.assertIn(
+            "source_explicit_costs_missing",
+            source_activity["source_reference_blockers"],
+        )
+        for blocker in (
+            "source_order_lifecycle_refs_missing",
+            "source_explicit_costs_missing",
+            "source_close_missing",
+            "source_closed_round_trip_missing",
+        ):
+            self.assertIn(blocker, source_activity["source_lifecycle_blockers"])
+        readiness = payload["targets"][0]["readiness"]
+        self.assertEqual(readiness["state"], "evidence_collection_blocked")
+        self.assertFalse(readiness["evidence_collection_ok"])
+        self.assertFalse(readiness["capital_promotion_allowed"])
+        self.assertFalse(readiness["final_authority_ok"])
+        for blocker in (
+            "source_tca_missing",
+            "runtime_ledger_bucket_missing",
+            "runtime_ledger_evidence_grade_bucket_missing",
+        ):
+            self.assertIn(blocker, readiness["evidence_collection_blockers"])
+        self.assertFalse(readiness["promotion_authority"]["allowed"])
+        self.assertFalse(readiness["promotion_authority"]["final_authority_ok"])
 
     def test_current_paper_route_probe_symbols_extend_next_window_target_scope(
         self,
@@ -5051,6 +5353,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
             audit["readiness"]["promotion_authority"],
             {
                 "allowed": False,
+                "final_authority_ok": False,
                 "reason": "paper_route_evidence_audit_observability_only",
                 "source_promotion_allowed": True,
                 "source_final_promotion_allowed": True,

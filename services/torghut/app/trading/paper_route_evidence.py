@@ -779,6 +779,50 @@ def _target_is_hpairs(target: Mapping[str, object]) -> bool:
     return False
 
 
+def _target_requires_hpairs_round_trip_identity(target: Mapping[str, object]) -> bool:
+    """Return whether a target is a bounded H-PAIRS collection handoff.
+
+    Historical paper-probation imports can point at already-materialized buckets with
+    legacy metadata. The stricter account/stage/runtime identity contract is for
+    the bounded paper-route/live-paper collection handoff that will submit new
+    TORGHUT_SIM source decisions.
+    """
+
+    if not _target_is_hpairs(target):
+        return False
+    source_kind = _safe_text(target.get("source_kind"))
+    return (
+        source_kind == "paper_route_probe_runtime_observed"
+        or bool(target.get("bounded_evidence_collection_authorized"))
+        or bool(target.get("canary_collection_authorized"))
+    )
+
+
+def _hpairs_round_trip_identity_blockers(target: Mapping[str, object]) -> list[str]:
+    if not _target_requires_hpairs_round_trip_identity(target):
+        return []
+    blockers: list[str] = []
+    if _safe_text(target.get("candidate_id")) is None:
+        blockers.append("paper_route_hpairs_candidate_id_missing")
+    if _safe_text(target.get("hypothesis_id")) is None:
+        blockers.append("paper_route_hpairs_hypothesis_id_missing")
+    account_label = _safe_text(target.get("account_label"))
+    if account_label is None:
+        blockers.append("paper_route_hpairs_account_label_missing")
+    elif account_label != PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL:
+        blockers.append("paper_route_hpairs_torghut_sim_account_required")
+    observed_stage = (_safe_text(target.get("observed_stage")) or "").lower()
+    if observed_stage != "paper":
+        blockers.append("paper_route_hpairs_paper_stage_required")
+    if _safe_text(target.get("runtime_strategy_name")) is None and _safe_text(
+        target.get("strategy_name")
+    ) is None:
+        blockers.append("paper_route_hpairs_runtime_strategy_name_missing")
+    if _safe_text(target.get("source_kind")) is None:
+        blockers.append("paper_route_hpairs_source_kind_missing")
+    return blockers
+
+
 def _target_requires_balanced_pair_probe(target: Mapping[str, object]) -> bool:
     explicit = _safe_text(target.get("paper_route_probe_pair_balance_required"))
     if explicit is not None:
@@ -1117,6 +1161,13 @@ def _target_identity(
         "runtime_ledger_bucket_ref": _safe_text(
             target.get("runtime_ledger_bucket_ref")
         ),
+        "account_stage_runtime_identity": {
+            "account_label": _safe_text(target.get("account_label")),
+            "source_account_label": _safe_text(target.get("source_account_label")),
+            "observed_stage": _safe_text(target.get("observed_stage")) or "paper",
+            "runtime_strategy_name": runtime_strategy_name,
+            "source_kind": _safe_text(target.get("source_kind")),
+        },
         "paper_probation_authorized": bool(target.get("paper_probation_authorized")),
         "paper_probation_authorization_scope": _safe_text(
             target.get("paper_probation_authorization_scope")
@@ -1133,6 +1184,7 @@ def _target_identity(
             or target.get("bounded_evidence_collection_authorized")
         ),
         "capital_promotion_allowed": False,
+        "final_authority_ok": False,
         "source_promotion_allowed": source_promotion_allowed,
         "source_final_promotion_allowed": source_final_promotion_allowed,
         "promotion_allowed": False,
@@ -1769,6 +1821,13 @@ def _next_paper_route_runtime_window_targets(
                 "window_end": _isoformat(window_end),
                 "paper_route_probe_symbols": target_probe_symbols,
             },
+            "account_stage_runtime_identity": {
+                "account_label": PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
+                "source_account_label": source_account_label or "",
+                "observed_stage": "paper",
+                "runtime_strategy_name": canonical_strategy_name or "",
+                "source_kind": "paper_route_probe_runtime_observed",
+            },
             "source_decision_readiness": source_decision_readiness,
             "paper_route_session_readiness_state": _safe_text(
                 session_readiness.get("state")
@@ -1794,6 +1853,7 @@ def _next_paper_route_runtime_window_targets(
             "evidence_collection_ok": evidence_collection_ok,
             "canary_collection_authorized": canary_collection_authorized,
             "capital_promotion_allowed": False,
+            "final_authority_ok": False,
             "bounded_evidence_collection_authorized": canary_collection_authorized,
             "bounded_evidence_collection_scope": (
                 "paper_route_probe_next_session_only"
@@ -2059,6 +2119,15 @@ def _unavailable_source_activity(
         "raw_decision_count": raw_decision_count,
         "lineage_matched_decision_count": lineage_matched_decision_count,
         "lineage_blockers": [],
+        "decision_refs": [],
+        "execution_refs": [],
+        "order_lifecycle_refs": [],
+        "tca_metric_refs": [],
+        "source_reference_blockers": [
+            "source_execution_refs_missing",
+            "source_order_lifecycle_refs_missing",
+            "source_explicit_costs_missing",
+        ],
         "decision_count": lineage_matched_decision_count,
         "execution_count": 0,
         "filled_execution_count": 0,
@@ -2072,6 +2141,11 @@ def _unavailable_source_activity(
         "last_tca_at": None,
         "missing": True,
         "missing_reasons": [missing_reason],
+        "source_lifecycle_blockers": [
+            "source_execution_refs_missing",
+            "source_order_lifecycle_refs_missing",
+            "source_explicit_costs_missing",
+        ],
         "query_unavailable": True,
         "unavailable_source": source,
     }
@@ -2231,6 +2305,16 @@ def _strategy_source_activity(
             "raw_decision_count": 0,
             "lineage_matched_decision_count": 0,
             "lineage_blockers": [],
+            "decision_refs": [],
+            "execution_refs": [],
+            "order_lifecycle_refs": [],
+            "tca_metric_refs": [],
+            "source_reference_blockers": [
+                "source_decision_refs_missing",
+                "source_execution_refs_missing",
+                "source_order_lifecycle_refs_missing",
+                "source_explicit_costs_missing",
+            ],
             "decision_count": 0,
             "execution_count": 0,
             "filled_execution_count": 0,
@@ -2244,6 +2328,12 @@ def _strategy_source_activity(
             "last_tca_at": None,
             "missing": True,
             "missing_reasons": ["strategy_name_missing"],
+            "source_lifecycle_blockers": [
+                "source_decision_refs_missing",
+                "source_execution_refs_missing",
+                "source_order_lifecycle_refs_missing",
+                "source_explicit_costs_missing",
+            ],
         }
 
     decision_stmt = (
@@ -2458,6 +2548,28 @@ def _strategy_source_activity(
         order_event_rows=order_event_rows,
         tca_rows=tca_rows,
     )
+    decision_refs = [str(row.id) for row in decision_rows]
+    execution_refs = [str(row.id) for row in execution_rows]
+    order_lifecycle_refs = [str(row.id) for row in order_event_rows]
+    tca_metric_refs = [str(row.id) for row in tca_rows]
+    source_reference_blockers = _unique_text_items(
+        [
+            *(["source_decision_refs_missing"] if not decision_refs else []),
+            *(["source_execution_refs_missing"] if not execution_refs else []),
+            *(
+                ["source_order_lifecycle_refs_missing"]
+                if not order_lifecycle_refs
+                else []
+            ),
+            *(["source_explicit_costs_missing"] if not tca_metric_refs else []),
+        ]
+    )
+    source_lifecycle_blockers = _unique_text_items(
+        [
+            *_unique_text_items(lifecycle_summary.get("blockers")),
+            *source_reference_blockers,
+        ]
+    )
     return {
         "strategy_name": strategy_name,
         "strategy_lookup_names": strategy_filters,
@@ -2469,6 +2581,11 @@ def _strategy_source_activity(
         "raw_decision_count": raw_decision_count,
         "lineage_matched_decision_count": decision_count,
         "lineage_blockers": lineage_blockers,
+        "decision_refs": decision_refs,
+        "execution_refs": execution_refs,
+        "order_lifecycle_refs": order_lifecycle_refs,
+        "tca_metric_refs": tca_metric_refs,
+        "source_reference_blockers": source_reference_blockers,
         "decision_count": decision_count,
         "execution_count": execution_count,
         "filled_execution_count": filled_execution_count,
@@ -2478,9 +2595,7 @@ def _strategy_source_activity(
         "tca_sample_count": tca_sample_count,
         "submitted_order_count": execution_count,
         "source_lifecycle": lifecycle_summary,
-        "source_lifecycle_blockers": _unique_text_items(
-            lifecycle_summary.get("blockers")
-        ),
+        "source_lifecycle_blockers": source_lifecycle_blockers,
         "last_decision_at": _isoformat(
             decision_rows[0].created_at if decision_rows else None
         ),
@@ -2519,6 +2634,16 @@ def _database_unavailable_source_activity(
         "raw_decision_count": 0,
         "lineage_matched_decision_count": 0,
         "lineage_blockers": [source_blocker],
+        "decision_refs": [],
+        "execution_refs": [],
+        "order_lifecycle_refs": [],
+        "tca_metric_refs": [],
+        "source_reference_blockers": [
+            "source_decision_refs_missing",
+            "source_execution_refs_missing",
+            "source_order_lifecycle_refs_missing",
+            "source_explicit_costs_missing",
+        ],
         "decision_count": 0,
         "execution_count": 0,
         "filled_execution_count": 0,
@@ -2537,6 +2662,12 @@ def _database_unavailable_source_activity(
             "source_decisions_missing",
             "source_executions_missing",
             "source_tca_missing",
+        ],
+        "source_lifecycle_blockers": [
+            "source_decision_refs_missing",
+            "source_execution_refs_missing",
+            "source_order_lifecycle_refs_missing",
+            "source_explicit_costs_missing",
         ],
         "db_load_error": _paper_route_audit_error_payload(
             error_source=error_source,
@@ -3672,6 +3803,7 @@ def _readiness_blockers(
         if str(item).strip()
     )
     if _target_is_hpairs(target) and not bool(source_activity.get("missing")):
+        blockers.update(_hpairs_round_trip_identity_blockers(target))
         blockers.update(
             str(item).strip()
             for item in _as_sequence(source_activity.get("source_lifecycle_blockers"))
@@ -3728,14 +3860,20 @@ def _source_backed_import_ready_metadata(
         "source_backed": True,
         "synthetic_pnl_used": False,
         "decision_count": _safe_int(source_activity.get("decision_count")),
+        "decision_refs": _unique_text_items(source_activity.get("decision_refs")),
         "submitted_order_count": _safe_int(
             source_lifecycle.get("submitted_order_count")
             or source_activity.get("submitted_order_count")
+        ),
+        "execution_refs": _unique_text_items(source_activity.get("execution_refs")),
+        "order_lifecycle_refs": _unique_text_items(
+            source_activity.get("order_lifecycle_refs")
         ),
         "fill_count": _safe_int(source_lifecycle.get("fill_count")),
         "fill_order_event_count": _safe_int(
             source_lifecycle.get("fill_order_event_count")
         ),
+        "tca_metric_refs": _unique_text_items(source_activity.get("tca_metric_refs")),
         "filled_notional": _safe_text(source_lifecycle.get("filled_notional")) or "0",
         "closed_round_trip_evidence": bool(
             source_lifecycle.get("closed_round_trip_evidence")
@@ -3757,6 +3895,7 @@ def _source_backed_import_ready_metadata(
                     else []
                 ),
                 *_unique_text_items(source_activity.get("source_lifecycle_blockers")),
+                *_unique_text_items(source_activity.get("source_reference_blockers")),
                 *_unique_text_items(account_close_state.get("blockers")),
                 *(
                     ["runtime_ledger_evidence_grade_bucket_missing"]
@@ -3917,12 +4056,14 @@ def _target_audit(
             )
             and not evidence_collection_blockers,
             "capital_promotion_allowed": False,
+            "final_authority_ok": False,
             "promotion_allowed": bool(target.get("promotion_allowed")),
             "final_promotion_allowed": bool(target.get("final_promotion_allowed")),
             "blockers": blockers,
             "evidence_collection_blockers": evidence_collection_blockers,
             "promotion_authority": {
                 "allowed": False,
+                "final_authority_ok": False,
                 "reason": "paper_route_evidence_audit_observability_only",
                 "source_promotion_allowed": bool(
                     target.get("source_promotion_allowed")
@@ -3984,6 +4125,16 @@ def _database_unavailable_target_audit(
         "raw_decision_count": 0,
         "lineage_matched_decision_count": 0,
         "lineage_blockers": [source_blocker],
+        "decision_refs": [],
+        "execution_refs": [],
+        "order_lifecycle_refs": [],
+        "tca_metric_refs": [],
+        "source_reference_blockers": [
+            "source_decision_refs_missing",
+            "source_execution_refs_missing",
+            "source_order_lifecycle_refs_missing",
+            "source_explicit_costs_missing",
+        ],
         "decision_count": 0,
         "execution_count": 0,
         "filled_execution_count": 0,
@@ -4002,6 +4153,12 @@ def _database_unavailable_target_audit(
             "source_decisions_missing",
             "source_executions_missing",
             "source_tca_missing",
+        ],
+        "source_lifecycle_blockers": [
+            "source_decision_refs_missing",
+            "source_execution_refs_missing",
+            "source_order_lifecycle_refs_missing",
+            "source_explicit_costs_missing",
         ],
         "db_load_error": error_payload,
     }
@@ -4115,12 +4272,17 @@ def _database_unavailable_target_audit(
         },
         "readiness": {
             "state": "evidence_collection_blocked",
+            "evidence_collection_ok": False,
+            "canary_collection_authorized": False,
+            "capital_promotion_allowed": False,
+            "final_authority_ok": False,
             "promotion_allowed": bool(target.get("promotion_allowed")),
             "final_promotion_allowed": bool(target.get("final_promotion_allowed")),
             "blockers": blockers,
             "evidence_collection_blockers": blockers,
             "promotion_authority": {
                 "allowed": False,
+                "final_authority_ok": False,
                 "reason": "paper_route_evidence_audit_observability_only",
                 "source_promotion_allowed": bool(
                     target.get("source_promotion_allowed")
