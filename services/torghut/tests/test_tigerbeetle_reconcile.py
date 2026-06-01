@@ -20,12 +20,15 @@ from app.models import (
 )
 from app.trading.tigerbeetle_client import FakeTigerBeetleClient
 from app.trading.tigerbeetle_journal import (
+    SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
     build_runtime_ledger_bucket_transfer_plan,
 )
 from app.trading.tigerbeetle_ledger_model import (
     LEDGER_USD_MICRO,
     TRANSFER_CODE_EXECUTION_FILL,
     TRANSFER_CODE_FILL_POST,
+    TRANSFER_CODE_RUNTIME_NET_PNL,
+    TRANSFER_KIND_RUNTIME_NET_PNL,
     TigerBeetleTransferSpec,
 )
 from app.trading.tigerbeetle_reconcile import (
@@ -46,6 +49,7 @@ from app.trading.tigerbeetle_reconcile import (
     BLOCKER_TRANSFER_MISSING,
     BLOCKER_UNLINKED_EVENT,
     _attr,
+    _archived_runtime_ledger_amount_micros,
     _cost_amount_micros,
     _expected_source_amount_micros,
     _execution_amount_micros,
@@ -374,6 +378,100 @@ class TestTigerBeetleReconcile(TestCase):
             self.assertTrue(payload["ok"], payload)
             self.assertEqual(payload["runtime_ledger_checked_transfer_count"], 2)
             self.assertEqual(payload["runtime_ledger_signed_transfer_count"], 2)
+
+    def test_reconciliation_reports_archived_runtime_ref_without_blocking_current_ref(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            bucket = _runtime_bucket(net_pnl=Decimal("2.50"))
+            session.add(bucket)
+            session.flush()
+            client = FakeTigerBeetleClient()
+            plan = build_runtime_ledger_bucket_transfer_plan(bucket)
+            self.assertIsNotNone(plan)
+            assert plan is not None
+            current_transfer = plan.transfer_spec
+            session.add(
+                TigerBeetleTransferRef(
+                    cluster_id=2001,
+                    transfer_id=str(current_transfer.transfer_id),
+                    transfer_kind=current_transfer.transfer_kind,
+                    ledger=current_transfer.ledger,
+                    code=current_transfer.code,
+                    amount=Decimal(current_transfer.amount),
+                    status="created",
+                    runtime_ledger_bucket_id=bucket.id,
+                    source_type=SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                    source_id=str(bucket.id),
+                    payload_json={
+                        "source": SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                        "run_id": bucket.run_id,
+                        "candidate_id": bucket.candidate_id,
+                        "hypothesis_id": bucket.hypothesis_id,
+                        "observed_stage": bucket.observed_stage,
+                        "pnl_basis": bucket.pnl_basis,
+                        "ledger_schema_version": bucket.ledger_schema_version,
+                        "amount_source": str(plan.amount_source),
+                        "signed_amount_micros": plan.signed_amount_micros,
+                        "pnl_direction": plan.pnl_direction,
+                        "runtime_key": plan.runtime_key,
+                        "debit_account_id": str(current_transfer.debit_account_id),
+                        "credit_account_id": str(current_transfer.credit_account_id),
+                    },
+                )
+            )
+            archived_transfer = TigerBeetleTransferSpec(
+                transfer_id=7001,
+                transfer_kind=TRANSFER_KIND_RUNTIME_NET_PNL,
+                debit_account_id=11,
+                credit_account_id=12,
+                amount=2500000,
+                ledger=LEDGER_USD_MICRO,
+                code=TRANSFER_CODE_RUNTIME_NET_PNL,
+            )
+            session.add(
+                TigerBeetleTransferRef(
+                    cluster_id=2001,
+                    transfer_id=str(archived_transfer.transfer_id),
+                    transfer_kind=archived_transfer.transfer_kind,
+                    ledger=archived_transfer.ledger,
+                    code=archived_transfer.code,
+                    amount=Decimal(archived_transfer.amount),
+                    status="exists",
+                    source_type=SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                    source_id="6f767a53-6b44-428a-bd85-2f662642f637",
+                    payload_json={
+                        "source": SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                        "run_id": "archived-runtime-run",
+                        "candidate_id": "candidate",
+                        "hypothesis_id": "hypothesis",
+                        "amount_source": "2.50",
+                        "net_strategy_pnl_after_costs": "2.50",
+                        "debit_account_id": str(archived_transfer.debit_account_id),
+                        "credit_account_id": str(archived_transfer.credit_account_id),
+                    },
+                )
+            )
+            session.flush()
+            client.transfers[current_transfer.transfer_id] = current_transfer
+            client.transfers[archived_transfer.transfer_id] = archived_transfer
+
+            payload = reconcile_tigerbeetle_transfers(
+                session,
+                settings_obj=_settings(),
+                client=client,
+            )
+
+            self.assertTrue(payload["ok"], payload)
+            self.assertEqual(payload["runtime_ledger_checked_transfer_count"], 2)
+            self.assertEqual(payload["runtime_ledger_signed_transfer_count"], 1)
+            self.assertEqual(
+                payload["archived_runtime_ledger_source_missing_count"],
+                1,
+            )
+            self.assertEqual(payload["source_row_missing_count"], 0)
+            self.assertEqual(payload["source_missing_count"], 0)
+            self.assertNotIn(BLOCKER_SOURCE_ROW_MISSING, payload["blockers"])
 
     def test_reconciliation_blocks_runtime_ledger_signed_direction_mismatch(
         self,
@@ -823,6 +921,26 @@ class TestTigerBeetleReconcile(TestCase):
         self.assertIsNone(_execution_amount_micros(None))
         self.assertIsNone(_cost_amount_micros(None))
         self.assertIsNone(_runtime_ledger_amount_micros(None))
+        archived_ref = TigerBeetleTransferRef(
+            cluster_id=2001,
+            transfer_id="9001",
+            transfer_kind=TRANSFER_KIND_RUNTIME_NET_PNL,
+            ledger=LEDGER_USD_MICRO,
+            code=TRANSFER_CODE_RUNTIME_NET_PNL,
+            amount=Decimal("1250000"),
+            status="exists",
+            source_type=SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+            source_id="6f767a53-6b44-428a-bd85-2f662642f637",
+            payload_json={},
+        )
+        self.assertIsNone(_archived_runtime_ledger_amount_micros(archived_ref))
+        archived_ref.payload_json = {"amount_source": object()}
+        self.assertIsNone(_archived_runtime_ledger_amount_micros(archived_ref))
+        archived_ref.payload_json = {"amount_source": "-1.25"}
+        self.assertEqual(
+            _archived_runtime_ledger_amount_micros(archived_ref),
+            Decimal("1250000"),
+        )
 
     def test_expected_source_amount_supports_cost_and_runtime_refs(self) -> None:
         with Session(self.engine) as session:

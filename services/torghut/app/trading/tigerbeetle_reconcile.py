@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any, cast
 from uuid import UUID
 
@@ -231,6 +231,26 @@ def _runtime_ledger_amount_micros(
     return _usd_to_micros(runtime_ledger_amount_source(bucket))
 
 
+def _archived_runtime_ledger_amount_micros(
+    ref: TigerBeetleTransferRef,
+) -> Decimal | None:
+    if (
+        ref.source_type != SOURCE_TYPE_RUNTIME_LEDGER_BUCKET
+        or ref.runtime_ledger_bucket_id is not None
+    ):
+        return None
+    payload = _payload_mapping(ref)
+    raw_amount = payload.get("amount_source") or payload.get(
+        "net_strategy_pnl_after_costs"
+    )
+    if raw_amount is None:
+        return None
+    try:
+        return _usd_to_micros(Decimal(str(raw_amount)))
+    except (InvalidOperation, ValueError):
+        return None
+
+
 def _expected_source_amount_micros(
     session: Session,
     ref: TigerBeetleTransferRef,
@@ -363,6 +383,9 @@ def _latest_run_payload(
         "runtime_ledger_signed_transfer_count": _payload_int(
             payload, "runtime_ledger_signed_transfer_count"
         ),
+        "archived_runtime_ledger_source_missing_count": _payload_int(
+            payload, "archived_runtime_ledger_source_missing_count"
+        ),
         "runtime_ledger_direction_mismatch_count": _payload_int(
             payload, "runtime_ledger_direction_mismatch_count"
         ),
@@ -428,6 +451,7 @@ def reconcile_tigerbeetle_transfers(
     source_amount_mismatch_count = 0
     runtime_ledger_checked_transfer_count = 0
     runtime_ledger_signed_transfer_count = 0
+    archived_runtime_ledger_source_missing_count = 0
     runtime_ledger_direction_mismatch_count = 0
     runtime_ledger_metadata_mismatch_count = 0
     blockers: list[str] = []
@@ -489,8 +513,12 @@ def reconcile_tigerbeetle_transfers(
         }:
             expected_source_amount = _expected_source_amount_micros(session, ref)
             if expected_source_amount is None:
-                source_row_missing_count += 1
-                blockers.append(BLOCKER_SOURCE_ROW_MISSING)
+                archived_amount = _archived_runtime_ledger_amount_micros(ref)
+                if archived_amount is not None and ref.amount == archived_amount:
+                    archived_runtime_ledger_source_missing_count += 1
+                else:
+                    source_row_missing_count += 1
+                    blockers.append(BLOCKER_SOURCE_ROW_MISSING)
             elif ref.amount != expected_source_amount:
                 source_amount_mismatch_count += 1
                 blockers.append(BLOCKER_SOURCE_AMOUNT_MISMATCH)
@@ -648,6 +676,7 @@ def reconcile_tigerbeetle_transfers(
         "source_amount_mismatch_count": source_amount_mismatch_count,
         "runtime_ledger_checked_transfer_count": runtime_ledger_checked_transfer_count,
         "runtime_ledger_signed_transfer_count": runtime_ledger_signed_transfer_count,
+        "archived_runtime_ledger_source_missing_count": archived_runtime_ledger_source_missing_count,
         "runtime_ledger_direction_mismatch_count": (
             runtime_ledger_direction_mismatch_count
         ),

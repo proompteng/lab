@@ -214,17 +214,23 @@ def _select_unlinked_runtime_buckets(
     account_label: str | None,
     limit: int,
 ) -> list[StrategyRuntimeLedgerBucket]:
-    linked_ref = _source_ref_exists(
-        session,
-        settings_obj=settings_obj,
-        source_type=SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
-        source_id_column=StrategyRuntimeLedgerBucket.id.cast(String),
-        transfer_kind=TRANSFER_KIND_RUNTIME_NET_PNL,
+    complete_ref = (
+        select(TigerBeetleTransferRef.id)
+        .where(
+            TigerBeetleTransferRef.cluster_id == settings_obj.tigerbeetle_cluster_id,
+            TigerBeetleTransferRef.source_type == SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+            TigerBeetleTransferRef.source_id
+            == StrategyRuntimeLedgerBucket.id.cast(String),
+            TigerBeetleTransferRef.transfer_kind == TRANSFER_KIND_RUNTIME_NET_PNL,
+            TigerBeetleTransferRef.runtime_ledger_bucket_id
+            == StrategyRuntimeLedgerBucket.id,
+        )
+        .exists()
     )
     stmt = (
         select(StrategyRuntimeLedgerBucket)
         .where(
-            ~linked_ref,
+            ~complete_ref,
             (StrategyRuntimeLedgerBucket.net_strategy_pnl_after_costs != 0)
             | (StrategyRuntimeLedgerBucket.cost_amount != 0),
         )

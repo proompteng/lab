@@ -29,6 +29,7 @@ from app.trading.tigerbeetle_ledger_model import (
     LEDGER_USD_MICRO,
     TRANSFER_CODE_FILL_POST,
     TRANSFER_KIND_FILL_POST,
+    TRANSFER_KIND_RUNTIME_NET_PNL,
 )
 from scripts import journal_tigerbeetle_order_events as script
 
@@ -434,6 +435,79 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
 
         self.assertEqual([event.id for event in events.rows], [selected.id])
         self.assertEqual(events.scan_failed, 0)
+
+    def test_select_runtime_buckets_repairs_legacy_ref_missing_bucket_fk(
+        self,
+    ) -> None:
+        settings_obj = Settings(TORGHUT_TIGERBEETLE_ENABLED=True)
+        observed_at = datetime.now(timezone.utc)
+        with Session(self.engine) as session:
+            bucket = StrategyRuntimeLedgerBucket(
+                run_id="runtime-run-legacy-ref",
+                candidate_id="candidate",
+                hypothesis_id="hypothesis",
+                observed_stage="paper",
+                bucket_started_at=observed_at,
+                bucket_ended_at=observed_at,
+                account_label="paper",
+                runtime_strategy_name="demo-runtime",
+                strategy_family="demo",
+                fill_count=1,
+                decision_count=1,
+                submitted_order_count=1,
+                cancelled_order_count=0,
+                rejected_order_count=0,
+                unfilled_order_count=0,
+                closed_trade_count=1,
+                open_position_count=0,
+                filled_notional=Decimal("190.25"),
+                gross_strategy_pnl=Decimal("3.00"),
+                cost_amount=Decimal("0.50"),
+                net_strategy_pnl_after_costs=Decimal("2.50"),
+                post_cost_expectancy_bps=Decimal("12.50"),
+                ledger_schema_version="torghut.runtime-ledger.v1",
+                pnl_basis="post_cost",
+                payload_json={"source": "test"},
+            )
+            session.add(bucket)
+            session.flush()
+            legacy_ref = TigerBeetleTransferRef(
+                cluster_id=settings_obj.tigerbeetle_cluster_id,
+                transfer_id="1234",
+                transfer_kind=TRANSFER_KIND_RUNTIME_NET_PNL,
+                ledger=LEDGER_USD_MICRO,
+                code=TRANSFER_CODE_FILL_POST,
+                amount=Decimal("2500000"),
+                status="created",
+                source_type=script.SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                source_id=str(bucket.id),
+                payload_json={
+                    "source": script.SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                },
+            )
+            session.add(legacy_ref)
+            session.flush()
+
+            selected = script._select_unlinked_runtime_buckets(
+                session,
+                settings_obj=settings_obj,
+                account_label="paper",
+                limit=10,
+            )
+
+            self.assertEqual([row.id for row in selected], [bucket.id])
+
+            legacy_ref.runtime_ledger_bucket_id = bucket.id
+            session.add(legacy_ref)
+            session.flush()
+            selected_after_repair = script._select_unlinked_runtime_buckets(
+                session,
+                settings_obj=settings_obj,
+                account_label="paper",
+                limit=10,
+            )
+
+        self.assertEqual(selected_after_repair, [])
 
     def test_main_journals_selected_events_and_reconciles(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
