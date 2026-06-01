@@ -103,6 +103,9 @@ _BOUNDED_SIM_COLLECTION_RESERVATION_BLOCKERS = frozenset(
         "unlinked_order_events_present",
     }
 )
+_PAPER_ROUTE_TARGET_ACCOUNT_AUDIT_UNAVAILABLE_BLOCKER = (
+    "paper_route_target_account_audit_unavailable"
+)
 _BOUNDED_SIM_COLLECTION_ALLOWED_HEALTH_GATE_BLOCKERS = frozenset(
     {"evidence_continuity_not_ok"}
 )
@@ -254,6 +257,7 @@ def _bounded_sim_collection_blockers(
         blockers.append("bounded_sim_collection_authorization_missing")
     if not _target_truthy(target.get("evidence_collection_ok")):
         blockers.append("bounded_sim_collection_evidence_collection_not_ready")
+    blockers.extend(_bounded_sim_collection_account_audit_blockers(target))
     if (
         _target_truthy(target.get("promotion_allowed"))
         or _target_truthy(target.get("final_promotion_allowed"))
@@ -290,6 +294,110 @@ def _bounded_sim_collection_blockers(
             ]
         blockers.extend(field_blockers)
     return list(dict.fromkeys(blockers))
+
+
+def _bounded_sim_collection_account_audit_blockers(
+    target: Mapping[str, Any],
+) -> list[str]:
+    audit_state = target.get("paper_route_target_account_audit_state")
+    nested_blockers: list[str] = []
+    audit_available: bool | None = None
+    if isinstance(audit_state, Mapping):
+        typed_audit_state = cast(Mapping[str, Any], audit_state)
+        nested_blockers = _lineage_text_values(typed_audit_state.get("blockers"))
+        raw_available = _target_bool(typed_audit_state.get("audit_available"))
+        state = _safe_text(typed_audit_state.get("state"))
+        audit_available = (
+            bool(raw_available)
+            if raw_available is not None
+            else state == "available"
+            if state in {"available", "unavailable"}
+            else None
+        )
+
+    blockers = [
+        *nested_blockers,
+        *_lineage_text_values(target.get("paper_route_target_account_audit_blockers")),
+    ]
+    if blockers:
+        return blockers
+    if audit_available is True:
+        return []
+    if (
+        not isinstance(audit_state, Mapping)
+        and "paper_route_target_account_audit_blockers" not in target
+        and _PAPER_ROUTE_TARGET_ACCOUNT_AUDIT_UNAVAILABLE_BLOCKER
+        not in _lineage_text_values(target.get("bounded_evidence_collection_blockers"))
+    ):
+        return []
+    return [_PAPER_ROUTE_TARGET_ACCOUNT_AUDIT_UNAVAILABLE_BLOCKER]
+
+
+def _without_lineage_text_values(value: object, excluded: set[str]) -> list[str]:
+    return [item for item in _lineage_text_values(value) if item not in excluded]
+
+
+def _bounded_sim_collection_target_with_runtime_account_audit(
+    target: Mapping[str, Any],
+    *,
+    positions: Sequence[Mapping[str, Any]] | None,
+    account_label: str | None,
+) -> dict[str, Any]:
+    normalized = dict(target)
+    if positions is None:
+        return normalized
+
+    unavailable = {_PAPER_ROUTE_TARGET_ACCOUNT_AUDIT_UNAVAILABLE_BLOCKER}
+    normalized["paper_route_target_account_audit_state"] = {
+        "schema_version": "torghut.paper-route-target-account-audit.v1",
+        "scope": "local_torghut_sim_paper_runtime_account_state",
+        "state": "available",
+        "account_label": _safe_text(account_label)
+        or _safe_text(target.get("account_label"))
+        or _BOUNDED_SIM_COLLECTION_ACCOUNT_LABEL,
+        "required_account_label": _BOUNDED_SIM_COLLECTION_ACCOUNT_LABEL,
+        "symbols": sorted(_target_symbols(target)),
+        "audit_available": True,
+        "blockers": [],
+        "source": "simple_pipeline_runtime_account_snapshot",
+    }
+    normalized["paper_route_target_account_audit_blockers"] = []
+    for key in (
+        "bounded_evidence_collection_blockers",
+        "candidate_blockers",
+    ):
+        if key in normalized:
+            normalized[key] = _without_lineage_text_values(normalized.get(key), unavailable)
+
+    evidence_blockers: list[str] = []
+    for key in _BOUNDED_SIM_COLLECTION_BLOCKER_FIELDS:
+        if key == "paper_route_target_account_audit_blockers":
+            continue
+        field_blockers = _lineage_text_values(normalized.get(key))
+        if key == "runtime_window_import_health_gate_blockers":
+            field_blockers = [
+                blocker
+                for blocker in field_blockers
+                if blocker not in _BOUNDED_SIM_COLLECTION_ALLOWED_HEALTH_GATE_BLOCKERS
+            ]
+        evidence_blockers.extend(field_blockers)
+    readiness = normalized.get("source_decision_readiness")
+    if isinstance(readiness, Mapping):
+        typed_readiness = cast(Mapping[str, Any], readiness)
+        if not _target_truthy(typed_readiness.get("ready")):
+            evidence_blockers.append("bounded_sim_collection_source_decision_not_ready")
+        evidence_blockers.extend(_lineage_text_values(typed_readiness.get("blockers")))
+    else:
+        evidence_blockers.append("bounded_sim_collection_source_decision_readiness_missing")
+    if _safe_text(normalized.get("paper_route_probe_pair_balance_state")) == "imbalanced":
+        evidence_blockers.append("paper_route_probe_pair_imbalanced")
+
+    if not list(dict.fromkeys(evidence_blockers)):
+        normalized["evidence_collection_ok"] = True
+        normalized["bounded_evidence_collection_authorized"] = True
+        normalized["bounded_live_paper_collection_authorized"] = True
+        normalized["canary_collection_authorized"] = True
+    return normalized
 
 
 def _bounded_sim_collection_runtime_account_aliases(
@@ -2982,9 +3090,12 @@ class SimpleTradingPipeline(TradingPipeline):
         }
         for key in (
             "source_decision_readiness",
+            "paper_route_target_account_audit_state",
+            "paper_route_target_account_audit_blockers",
             "bounded_evidence_collection_blockers",
             "runtime_window_import_health_gate_blockers",
             "paper_route_account_pre_session_blockers",
+            "paper_route_account_contamination_blockers",
             "paper_route_hpairs_symbol_blockers",
             "paper_route_probe_pair_balance_state",
         ):
@@ -3118,7 +3229,16 @@ class SimpleTradingPipeline(TradingPipeline):
         }
         decisions: list[StrategyDecision] = []
         seen: set[tuple[str, str, str, str]] = set()
-        for target in target_plan_targets:
+        for raw_target in target_plan_targets:
+            target = _bounded_sim_collection_target_with_runtime_account_audit(
+                raw_target,
+                positions=(
+                    positions
+                    if _target_requires_bounded_sim_collection_gate(raw_target)
+                    else None
+                ),
+                account_label=self.account_label,
+            )
             if _target_requires_bounded_sim_collection_gate(target):
                 collection_blockers = _bounded_sim_collection_blockers(
                     target,

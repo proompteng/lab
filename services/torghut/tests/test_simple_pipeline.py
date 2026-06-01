@@ -286,7 +286,19 @@ def _bounded_hpairs_target(**overrides: object) -> dict[str, object]:
         'bounded_evidence_collection_scope': 'paper_route_probe_next_session_only',
         'bounded_evidence_collection_blockers': [],
         'runtime_window_import_health_gate_blockers': [],
+        'paper_route_target_account_audit_state': {
+            'schema_version': 'torghut.paper-route-target-account-audit.v1',
+            'scope': 'local_torghut_sim_paper_runtime_account_state',
+            'state': 'available',
+            'account_label': 'TORGHUT_SIM',
+            'required_account_label': 'TORGHUT_SIM',
+            'symbols': ['AAPL', 'AMZN'],
+            'audit_available': True,
+            'blockers': [],
+        },
+        'paper_route_target_account_audit_blockers': [],
         'paper_route_account_pre_session_blockers': [],
+        'paper_route_account_contamination_blockers': [],
         'paper_route_hpairs_symbol_blockers': [],
         'source_decision_readiness': {'ready': True, 'blockers': []},
         'promotion_allowed': False,
@@ -302,6 +314,10 @@ def test_bounded_sim_collection_authorizes_non_final_hpairs_target_only() -> Non
     target = _bounded_hpairs_target()
 
     assert _bounded_sim_collection_blockers(target, account_label='TORGHUT_SIM') == []
+    assert target['promotion_allowed'] is False
+    assert target['final_promotion_authorized'] is False
+    assert target['final_promotion_allowed'] is False
+    assert target['capital_promotion_allowed'] is False
 
     assert 'bounded_sim_collection_runtime_account_not_target' in (
         _bounded_sim_collection_blockers(target, account_label='TORGHUT_LIVE')
@@ -332,6 +348,145 @@ def test_bounded_sim_collection_blocks_missing_source_lineage_prerequisites() ->
     assert 'bounded_sim_collection_evidence_collection_not_ready' in blockers
     assert 'bounded_sim_collection_source_decision_not_ready' in blockers
     assert 'source_strategy_missing' in blockers
+
+
+def test_bounded_sim_collection_fails_closed_when_account_audit_missing() -> None:
+    target = _bounded_hpairs_target()
+    target.pop('paper_route_target_account_audit_state')
+    target['paper_route_target_account_audit_blockers'] = []
+
+    assert _bounded_sim_collection_blockers(target, account_label='TORGHUT_SIM') == [
+        'paper_route_target_account_audit_unavailable'
+    ]
+    assert target['promotion_allowed'] is False
+    assert target['final_promotion_authorized'] is False
+    assert target['final_promotion_allowed'] is False
+    assert target['capital_promotion_allowed'] is False
+
+
+def test_bounded_sim_collection_fails_closed_when_account_audit_unavailable() -> None:
+    target = _bounded_hpairs_target(
+        evidence_collection_ok=False,
+        canary_collection_authorized=False,
+        bounded_evidence_collection_authorized=False,
+        bounded_live_paper_collection_authorized=False,
+        bounded_evidence_collection_blockers=[
+            'paper_route_target_account_audit_unavailable',
+        ],
+        paper_route_target_account_audit_state={
+            'schema_version': 'torghut.paper-route-target-account-audit.v1',
+            'scope': 'local_torghut_sim_paper_runtime_account_state',
+            'state': 'unavailable',
+            'account_label': 'TORGHUT_SIM',
+            'required_account_label': 'TORGHUT_SIM',
+            'symbols': ['AAPL', 'AMZN'],
+            'audit_available': False,
+            'blockers': ['paper_route_target_account_audit_unavailable'],
+        },
+        paper_route_target_account_audit_blockers=[
+            'paper_route_target_account_audit_unavailable',
+        ],
+    )
+
+    blockers = _bounded_sim_collection_blockers(target, account_label='TORGHUT_SIM')
+
+    assert 'bounded_sim_collection_authorization_missing' in blockers
+    assert 'bounded_sim_collection_evidence_collection_not_ready' in blockers
+    assert 'paper_route_target_account_audit_unavailable' in blockers
+    assert target['promotion_allowed'] is False
+    assert target['final_promotion_authorized'] is False
+    assert target['final_promotion_allowed'] is False
+    assert target['capital_promotion_allowed'] is False
+
+
+def test_bounded_source_collection_authorizes_after_runtime_account_audit_readback(
+    monkeypatch,
+) -> None:
+    trading_mode_before = settings.trading_mode
+    probe_enabled_before = settings.trading_simple_paper_route_probe_enabled
+    allow_shorts_before = settings.trading_allow_shorts
+    try:
+        settings.trading_mode = 'paper'
+        settings.trading_simple_paper_route_probe_enabled = True
+        settings.trading_allow_shorts = True
+        now = datetime(2026, 6, 1, 18, 0, tzinfo=timezone.utc)
+        target = _bounded_hpairs_target(
+            paper_route_probe_window_start='2026-06-01T13:30:00+00:00',
+            paper_route_probe_window_end='2026-06-01T20:00:00+00:00',
+            paper_route_probe_next_session_max_notional='25',
+            paper_route_probe_symbol_actions={'AAPL': 'buy', 'AMZN': 'sell'},
+            evidence_collection_ok=False,
+            canary_collection_authorized=False,
+            bounded_evidence_collection_authorized=False,
+            bounded_live_paper_collection_authorized=False,
+            bounded_evidence_collection_blockers=[
+                'paper_route_target_account_audit_unavailable',
+            ],
+            paper_route_target_account_audit_state={
+                'schema_version': 'torghut.paper-route-target-account-audit.v1',
+                'scope': 'local_torghut_sim_paper_runtime_account_state',
+                'state': 'unavailable',
+                'account_label': 'TORGHUT_SIM',
+                'required_account_label': 'TORGHUT_SIM',
+                'symbols': ['AAPL', 'AMZN'],
+                'audit_available': False,
+                'blockers': ['paper_route_target_account_audit_unavailable'],
+            },
+            paper_route_target_account_audit_blockers=[
+                'paper_route_target_account_audit_unavailable',
+            ],
+        )
+        strategy = Strategy(
+            name='microbar-cross-sectional-pairs-v1',
+            description='metadata fixture',
+            enabled=True,
+            base_timeframe='1Sec',
+            universe_type='static',
+            universe_symbols=['AAPL', 'AMZN'],
+        )
+        pipeline = object.__new__(SimpleTradingPipeline)
+        pipeline.account_label = 'TORGHUT_SIM'
+        pipeline._is_market_session_open = lambda _now: True
+        pipeline._external_paper_route_target_probe_symbols_cached = lambda: (
+            {'AAPL', 'AMZN'},
+            None,
+            [target],
+        )
+        monkeypatch.setattr(
+            'app.trading.scheduler.simple_pipeline.trading_now',
+            lambda account_label=None: now,
+        )
+
+        decisions = pipeline._paper_route_target_source_decisions(
+            strategies=[strategy],
+            allowed_symbols={'AAPL', 'AMZN'},
+            positions=[],
+            session=None,
+        )
+
+        assert {decision.symbol for decision in decisions} == {'AAPL', 'AMZN'}
+        for decision in decisions:
+            metadata = decision.params['paper_route_target_plan_source_decision']
+            assert metadata['bounded_evidence_collection_authorized'] is True
+            assert metadata['bounded_live_paper_collection_authorized'] is True
+            assert metadata['canary_collection_authorized'] is True
+            assert metadata['evidence_collection_ok'] is True
+            assert metadata['promotion_allowed'] is False
+            assert metadata['final_promotion_authorized'] is False
+            assert metadata['final_promotion_allowed'] is False
+            assert decision.params['final_authority_ok'] is False
+            audit_state = metadata['paper_route_target_account_audit_state']
+            assert audit_state['state'] == 'available'
+            assert audit_state['audit_available'] is True
+            assert metadata['paper_route_target_account_audit_blockers'] == []
+            assert (
+                'paper_route_target_account_audit_unavailable'
+                not in metadata['bounded_evidence_collection_blockers']
+            )
+    finally:
+        settings.trading_mode = trading_mode_before
+        settings.trading_simple_paper_route_probe_enabled = probe_enabled_before
+        settings.trading_allow_shorts = allow_shorts_before
 
 
 def test_bounded_sim_collection_accepts_declared_paper_account_alias() -> None:
