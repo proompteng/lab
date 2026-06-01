@@ -3722,6 +3722,59 @@ class SimpleTradingPipeline(TradingPipeline):
             "previous_paper_route_probe_retry_attempts": retry_attempts,
         }
 
+    def _reopen_bounded_sim_collection_decision(
+        self,
+        *,
+        session: Session,
+        decision: StrategyDecision,
+        decision_row: TradeDecision,
+    ) -> TradeDecision | None:
+        retry_metadata = self._paper_route_probe_retry_metadata(decision_row)
+        if retry_metadata is None:
+            return None
+        if self.executor.execution_exists(session, decision_row):
+            return None
+        collection_metadata = _bounded_sim_collection_metadata_from_decision(
+            decision,
+            account_label=self.account_label,
+            trading_mode=settings.trading_mode,
+        )
+        if collection_metadata is None:
+            return None
+        proof_floor = self._profitability_proof_floor(session=session)
+        if self._proof_floor_submission_block_reason(proof_floor) is None:
+            return None
+
+        decision_row.status = "planned"
+        decision_row.created_at = trading_now(account_label=self.account_label)
+        decision_json = dict(cast(Mapping[str, Any], decision_row.decision_json))
+        retry_attempts = _safe_int(
+            decision_json.get("paper_route_probe_retry_attempts")
+        )
+        decision_json["paper_route_probe_retry_attempts"] = retry_attempts + 1
+        decision_json["bounded_sim_collection_retry"] = {
+            **retry_metadata,
+            "submission_stage": "bounded_sim_collection_retry_pending",
+            "symbol": decision.symbol.strip().upper(),
+            "strategy_id": decision.strategy_id,
+            "collection_metadata": dict(collection_metadata),
+        }
+        decision_json["submission_stage"] = "bounded_sim_collection_retry_pending"
+        decision_json.pop("submission_block_reason", None)
+        decision_json.pop("submission_block_atomic", None)
+        decision_row.decision_json = decision_json
+        session.add(decision_row)
+        session.commit()
+        session.refresh(decision_row)
+        logger.warning(
+            "Reopening proof-floor-blocked decision for bounded SIM evidence collection strategy_id=%s decision_id=%s symbol=%s previous_reason=%s",
+            decision.strategy_id,
+            decision_row.id,
+            decision.symbol,
+            retry_metadata["previous_submission_block_reason"],
+        )
+        return decision_row
+
     def _ensure_pending_decision_row(
         self,
         *,
@@ -3758,6 +3811,13 @@ class SimpleTradingPipeline(TradingPipeline):
             session.add(decision_row)
             session.commit()
             session.refresh(decision_row)
+        reopened_bounded_collection = self._reopen_bounded_sim_collection_decision(
+            session=session,
+            decision=decision,
+            decision_row=decision_row,
+        )
+        if reopened_bounded_collection is not None:
+            return reopened_bounded_collection
         retry_metadata = self._paper_route_probe_retry_metadata(decision_row)
         if retry_metadata is None:
             return super()._ensure_pending_decision_row(
