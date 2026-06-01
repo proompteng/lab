@@ -4750,8 +4750,12 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             queue_payload["replay_tape"]["feature_schema_hash"],
             "feature-schema-frontier",
         )
-        self.assertEqual(queue_payload["replay_tape"]["cost_model_hash"], "cost-model-frontier")
-        self.assertEqual(queue_payload["replay_tape"]["strategy_family"], "hpairs-frontier-family")
+        self.assertEqual(
+            queue_payload["replay_tape"]["cost_model_hash"], "cost-model-frontier"
+        )
+        self.assertEqual(
+            queue_payload["replay_tape"]["strategy_family"], "hpairs-frontier-family"
+        )
         self.assertEqual(
             [entry["frontier_bucket"] for entry in queue_payload["entries"]],
             [
@@ -4788,6 +4792,18 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertIn("source_backed_adv_missing", first_entry["lineage_blockers"])
         self.assertFalse(first_entry["promotion_allowed"])
         self.assertFalse(first_entry["final_promotion_allowed"])
+        self.assertIn("hpairs_microstructure_prefilter", first_entry)
+        self.assertEqual(
+            first_entry["hpairs_microstructure_prefilter"]["proof_source"],
+            "prefilter_only",
+        )
+        self.assertFalse(
+            first_entry["hpairs_microstructure_prefilter"]["final_promotion_allowed"]
+        )
+        self.assertIn(
+            "horizon_ofi_features",
+            first_entry["hpairs_microstructure_prefilter"],
+        )
 
     def test_staged_replay_frontier_default_resolvers_fail_closed(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -4940,7 +4956,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         manifest_payload = preview.to_manifest_payload()
 
         self.assertEqual(
-            row_payload["schema_version"], "torghut.fast-replay-preview-row.v4"
+            row_payload["schema_version"], "torghut.fast-replay-preview-row.v5"
         )
         self.assertEqual(manifest_payload["status"], "preview_only")
         self.assertFalse(manifest_payload["promotion_proof"])
@@ -4957,6 +4973,14 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             Decimal(row_payload["impact_liquidity_penalty_bps"]), Decimal("0")
         )
         self.assertIn("conformal_tail_risk", manifest_payload["implemented_mechanisms"])
+        self.assertEqual(row_payload["proof_source"], "prefilter_only")
+        self.assertFalse(row_payload["final_promotion_allowed"])
+        self.assertIn("hpairs_microstructure_prefilter", row_payload)
+        self.assertEqual(
+            row_payload["hpairs_microstructure_prefilter"]["proof_source"],
+            "prefilter_only",
+        )
+        self.assertIn("hpairs_microstructure_prefilter", manifest_payload)
 
     def test_materialize_replay_tape_writes_run_artifacts_and_updates_args(
         self,

@@ -6537,6 +6537,23 @@ def _apply_fast_replay_preview_narrowing(
             updated["fast_replay_proof_semantics_label"] = preview_row[
                 "proof_semantics_label"
             ]
+            microstructure_prefilter = _mapping(
+                preview_row.get("hpairs_microstructure_prefilter")
+                or preview_row.get("microstructure_prefilter")
+            )
+            if microstructure_prefilter:
+                updated["hpairs_microstructure_prefilter_rank"] = (
+                    microstructure_prefilter.get("rank")
+                )
+                updated["hpairs_microstructure_prefilter_score"] = (
+                    microstructure_prefilter.get("prefilter_score")
+                )
+                updated["hpairs_microstructure_behavior_bucket"] = _mapping(
+                    microstructure_prefilter.get("cluster_behavior")
+                ).get("behavior_bucket")
+                updated["hpairs_microstructure_proof_source"] = (
+                    microstructure_prefilter.get("proof_source")
+                )
         if candidate_spec_id in original_selected_ids:
             updated["pre_fast_replay_preview_selected_for_replay"] = bool(
                 row.get("selected_for_replay")
@@ -6694,6 +6711,10 @@ def _bounded_sim_target_queue_metadata(
                 ),
                 "risk_flags": list(cast(Sequence[Any], row.get("risk_flags") or ())),
                 "proof_semantics_label": row.get("proof_semantics_label"),
+                "hpairs_microstructure_prefilter": row.get(
+                    "hpairs_microstructure_prefilter"
+                )
+                or row.get("microstructure_prefilter"),
                 "promotion_proof": False,
                 "proof_authority": False,
                 "promotion_authority": False,

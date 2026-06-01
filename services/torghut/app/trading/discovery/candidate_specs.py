@@ -5800,7 +5800,7 @@ def compile_candidate_specs(
                     "required_max_drawdown": "900",
                     "required_min_regime_slice_pass_rate": "0.45",
                 }
-                parameter_space = {
+                parameter_space: dict[str, Any] = {
                     "mode": "bounded_grid",
                     "source": "whitepaper_autoresearch",
                     "family_selection_rank": family_rank,
@@ -5819,6 +5819,30 @@ def compile_candidate_specs(
                     "requires_shadow_validation": True,
                     "promotion_policy": "research_only",
                 }
+                if family_template_id == "microbar_cross_sectional_pairs_v1":
+                    feature_contract["hpairs_microstructure_prefilter_contract"] = {
+                        "schema_version": "torghut.hpairs-microstructure-prefilter-contract.v1",
+                        "clusterlob_adapter": "consume_lob_or_microbar_order_flow_fields_only",
+                        "fallback_policy": (
+                            "deterministic_microbar_order_flow_fallback_with_explicit_blockers"
+                        ),
+                        "horizon_ofi_microbars": [3, 12, 36],
+                        "ranking_authority": "candidate_discovery_prefilter_only",
+                    }
+                    parameter_space["hpairs_microstructure_prefilter"] = {
+                        "enabled": True,
+                        "bounded_frontier_handoff": True,
+                        "proof_source": "prefilter_only",
+                        "promotion_allowed": False,
+                        "final_promotion_allowed": False,
+                    }
+                    promotion_contract.update(
+                        {
+                            "hpairs_microstructure_prefilter_is_not_promotion_proof": True,
+                            "hpairs_microstructure_prefilter_requires_exact_replay": True,
+                            "hpairs_microstructure_prefilter_requires_runtime_ledger": True,
+                        }
+                    )
                 if validation_requirements:
                     promotion_contract["validation_requirement_claim_ids"] = [
                         str(item.get("claim_id"))

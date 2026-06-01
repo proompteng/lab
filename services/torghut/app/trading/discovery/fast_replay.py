@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timezone
 from decimal import Decimal
 from typing import Any, cast
@@ -12,17 +12,23 @@ import numpy as np
 from numpy.typing import NDArray
 
 from app.trading.discovery.candidate_specs import CandidateSpec
+from app.trading.discovery.microstructure_prefilter import (
+    HPAIRS_PREFILTER_PROOF_SEMANTICS_LABEL,
+    HPAIRS_PREFILTER_PROOF_SOURCE,
+    build_hpairs_microstructure_prefilter,
+)
 from app.trading.discovery.replay_tape import ReplayTapeManifest
 from app.trading.models import SignalEnvelope
 
-FAST_REPLAY_PREVIEW_SCHEMA_VERSION = "torghut.fast-replay-preview.v3"
-FAST_REPLAY_PREVIEW_ROW_SCHEMA_VERSION = "torghut.fast-replay-preview-row.v4"
+FAST_REPLAY_PREVIEW_SCHEMA_VERSION = "torghut.fast-replay-preview.v4"
+FAST_REPLAY_PREVIEW_ROW_SCHEMA_VERSION = "torghut.fast-replay-preview-row.v5"
 FAST_REPLAY_PROOF_SEMANTICS_LABEL = (
     "preview_ranking_only_exact_replay_and_runtime_ledger_required"
 )
 FAST_REPLAY_TARGET_NET_PNL_PER_DAY = Decimal("500")
 FAST_REPLAY_WHITEPAPER_MECHANISMS = (
     "cluster_lob_event_clustering_proxy",
+    "bounded_hpairs_clusterlob_ofi_candidate_prefilter",
     "ofi_horizon_decay_regime_screen",
     "macro_news_ofi_stress_veto_if_present",
     "square_root_impact_capacity_prefilter",
@@ -59,6 +65,9 @@ class FastReplayPreviewRow:
     square_root_impact_capacity_penalty_bps: Decimal
     exploration_score: Decimal
     frontier_bucket: str
+    microstructure_prefilter: Mapping[str, Any] = field(
+        default_factory=lambda: cast(dict[str, Any], {})
+    )
     proof_semantics_label: str = FAST_REPLAY_PROOF_SEMANTICS_LABEL
 
     def to_payload(self) -> dict[str, Any]:
@@ -101,6 +110,10 @@ class FastReplayPreviewRow:
             ),
             "exploration_score": str(self.exploration_score),
             "frontier_bucket": self.frontier_bucket,
+            "microstructure_prefilter": dict(self.microstructure_prefilter),
+            "hpairs_microstructure_prefilter": dict(self.microstructure_prefilter),
+            "proof_source": HPAIRS_PREFILTER_PROOF_SOURCE,
+            "hpairs_prefilter_proof_semantics_label": HPAIRS_PREFILTER_PROOF_SEMANTICS_LABEL,
             "observed_post_cost_expectancy_bps": str(observed_post_cost_expectancy_bps),
             "required_daily_notional": str(required_daily_notional)
             if required_daily_notional is not None
@@ -143,6 +156,8 @@ class FastReplayPreviewRow:
             "promotion_proof": False,
             "proof_authority": False,
             "promotion_authority": False,
+            "promotion_allowed": False,
+            "final_promotion_allowed": False,
             "proof_authority_reason": (
                 "fast_replay_preview_rank_only_exact_replay_and_source_backed_runtime_ledger_required"
             ),
@@ -160,6 +175,9 @@ class FastReplayPreviewResult:
     exploitation_candidate_count: int
     exploration_candidate_count: int
     exact_replay_candidate_cap: int
+    hpairs_microstructure_prefilter: Mapping[str, Any] = field(
+        default_factory=lambda: cast(dict[str, Any], {})
+    )
 
     def to_manifest_payload(self) -> dict[str, Any]:
         return {
@@ -172,6 +190,7 @@ class FastReplayPreviewResult:
             "proof_semantics_label": FAST_REPLAY_PROOF_SEMANTICS_LABEL,
             "whitepaper_mechanisms": list(FAST_REPLAY_WHITEPAPER_MECHANISMS),
             "implemented_mechanisms": {
+                "hpairs_clusterlob_ofi_prefilter": "deterministic bounded H-PAIRS candidate prefilter metadata only; never promotion authority",
                 "cluster_lob": "cheap event-mix/OFI proxy only; exact replay remains authoritative",
                 "ofi_horizon_decay_regime": "EWMA short-vs-long OFI alignment plus spread/liquidity regime score",
                 "macro_news_stress_veto": "penalizes rows carrying macro/news stress fields; absent fields are neutral",
@@ -184,6 +203,9 @@ class FastReplayPreviewResult:
                 "source_backed_runtime_ledger_proof_required",
                 "live_paper_runtime_evidence_required_for_final_promotion",
             ],
+            "hpairs_microstructure_prefilter": dict(
+                self.hpairs_microstructure_prefilter
+            ),
             "requested_top_k": self.requested_top_k,
             "exact_replay_candidate_cap": self.exact_replay_candidate_cap,
             "exploitation_candidate_count": self.exploitation_candidate_count,
@@ -258,6 +280,18 @@ def build_fast_replay_preview(
         min(bounded_top_k - bounded_exploitation_count, int(exploration_count)),
     )
     symbol_stats = _build_symbol_stats(rows)
+    hpairs_prefilter = build_hpairs_microstructure_prefilter(
+        specs=specs,
+        rows=rows,
+        top_k=bounded_top_k,
+        min_rows_per_candidate=max(1, int(min_rows_per_candidate)),
+        exploitation_count=bounded_exploitation_count,
+        exploration_count=bounded_exploration_count,
+        exact_replay_candidate_cap=bounded_top_k,
+    )
+    hpairs_prefilter_payload_by_spec = {
+        row.candidate_spec_id: row.to_payload() for row in hpairs_prefilter.rows
+    }
     scored_rows: list[FastReplayPreviewRow] = []
     for spec in specs:
         scored_rows.append(
@@ -265,16 +299,25 @@ def build_fast_replay_preview(
                 spec=spec,
                 symbol_stats=symbol_stats,
                 min_rows_per_candidate=max(1, int(min_rows_per_candidate)),
+                microstructure_prefilter=hpairs_prefilter_payload_by_spec.get(
+                    spec.candidate_spec_id, {}
+                ),
             )
         )
 
     ranked_rows = sorted(scored_rows, key=_preview_rank_key)
-    selected_bucket_by_id = _select_frontier_buckets(
-        ranked_rows=ranked_rows,
-        exploitation_count=bounded_exploitation_count,
-        exploration_count=bounded_exploration_count,
-        exact_replay_candidate_cap=bounded_top_k,
-    )
+    selected_bucket_by_id = {
+        row.candidate_spec_id: row.frontier_bucket
+        for row in hpairs_prefilter.rows
+        if row.selected
+    }
+    if not selected_bucket_by_id:
+        selected_bucket_by_id = _select_frontier_buckets(
+            ranked_rows=ranked_rows,
+            exploitation_count=bounded_exploitation_count,
+            exploration_count=bounded_exploration_count,
+            exact_replay_candidate_cap=bounded_top_k,
+        )
     final_rows = tuple(
         _row_with_rank_and_selection(
             row=row,
@@ -301,6 +344,7 @@ def build_fast_replay_preview(
             1 for row in final_rows if row.frontier_bucket == "exploration"
         ),
         exact_replay_candidate_cap=bounded_top_k,
+        hpairs_microstructure_prefilter=hpairs_prefilter.to_manifest_payload(),
     )
 
 
@@ -385,6 +429,7 @@ def _score_candidate_spec(
     spec: CandidateSpec,
     symbol_stats: Mapping[str, _SymbolTapeStats],
     min_rows_per_candidate: int,
+    microstructure_prefilter: Mapping[str, Any],
 ) -> FastReplayPreviewRow:
     requested_symbols = _candidate_symbols(spec)
     matched = [
@@ -424,6 +469,7 @@ def _score_candidate_spec(
             square_root_impact_capacity_penalty_bps=Decimal("0"),
             exploration_score=Decimal("0"),
             frontier_bucket="not_selected",
+            microstructure_prefilter=dict(microstructure_prefilter),
         )
 
     return_vectors = [stat.returns_bps for stat in matched if stat.returns_bps.size]
@@ -495,6 +541,11 @@ def _score_candidate_spec(
         - conformal_tail_risk_penalty_bps * 0.12
         - macro_stress_veto_score * 18.0
     )
+    hpairs_prefilter_score = _float_or_none(
+        microstructure_prefilter.get("prefilter_score")
+    )
+    if hpairs_prefilter_score is not None:
+        preview_score = preview_score * 0.65 + hpairs_prefilter_score * 0.35
     exploration_score = (
         cluster_lob_activity_score * 4.0
         + abs(ofi_decay_alignment_score) * 5.0
@@ -536,13 +587,17 @@ def _score_candidate_spec(
         ),
         exploration_score=_decimal_from_float(exploration_score),
         frontier_bucket="not_selected",
+        microstructure_prefilter=dict(microstructure_prefilter),
     )
 
 
 def _preview_rank_key(row: FastReplayPreviewRow) -> tuple[bool, float, str]:
+    prefilter_score = _float_or_none(
+        row.microstructure_prefilter.get("prefilter_score")
+    )
     return (
         row.selection_reason == "insufficient_replay_tape_rows",
-        -float(row.preview_score),
+        -(prefilter_score if prefilter_score is not None else float(row.preview_score)),
         row.candidate_spec_id,
     )
 
@@ -616,6 +671,7 @@ def _row_with_rank_and_selection(
         square_root_impact_capacity_penalty_bps=row.square_root_impact_capacity_penalty_bps,
         exploration_score=row.exploration_score,
         frontier_bucket=frontier_bucket,
+        microstructure_prefilter=dict(row.microstructure_prefilter),
         proof_semantics_label=row.proof_semantics_label,
     )
 
