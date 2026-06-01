@@ -1183,6 +1183,11 @@ def _target_identity(
             target.get("canary_collection_authorized")
             or target.get("bounded_evidence_collection_authorized")
         ),
+        "bounded_live_paper_collection_authorized": bool(
+            target.get("bounded_live_paper_collection_authorized")
+            or target.get("canary_collection_authorized")
+            or target.get("bounded_evidence_collection_authorized")
+        ),
         "capital_promotion_allowed": False,
         "final_authority_ok": False,
         "source_promotion_allowed": source_promotion_allowed,
@@ -1855,6 +1860,9 @@ def _next_paper_route_runtime_window_targets(
             "capital_promotion_allowed": False,
             "final_authority_ok": False,
             "bounded_evidence_collection_authorized": canary_collection_authorized,
+            "bounded_live_paper_collection_authorized": (
+                canary_collection_authorized
+            ),
             "bounded_evidence_collection_scope": (
                 "paper_route_probe_next_session_only"
             ),

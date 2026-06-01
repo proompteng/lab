@@ -5,7 +5,12 @@ from decimal import Decimal
 
 from app.config import settings
 from app.models import Strategy
-from app.trading.scheduler.simple_pipeline import SimpleTradingPipeline
+from app.trading.models import StrategyDecision
+from app.trading.scheduler.simple_pipeline import (
+    SimpleTradingPipeline,
+    _bounded_sim_collection_blockers,
+    _bounded_sim_collection_metadata_from_decision,
+)
 from app.trading.runtime_window_import import (
     _runtime_promotion_blocking_reasons,
     resolve_hypothesis_manifest,
@@ -217,8 +222,14 @@ def test_paper_route_target_metadata_is_collection_only_without_live_capital_mut
         'runtime_strategy_name': 'microbar-cross-sectional-pairs-v1',
         'source_kind': 'paper_route_probe_runtime_observed',
         'paper_probation_authorized': True,
+        'evidence_collection_ok': True,
+        'canary_collection_authorized': True,
+        'bounded_evidence_collection_authorized': True,
+        'bounded_live_paper_collection_authorized': True,
         'bounded_evidence_collection_scope': 'paper_route_probe_next_session_only',
         'paper_route_probe_symbols': ['AAPL', 'AMZN'],
+        'source_manifest_ref': 'config/trading/hypotheses/h-pairs-01.json',
+        'source_decision_readiness': {'ready': True, 'blockers': []},
     }
 
     metadata = SimpleTradingPipeline._paper_route_target_source_decision_metadata(
@@ -239,6 +250,8 @@ def test_paper_route_target_metadata_is_collection_only_without_live_capital_mut
 
     assert settings.trading_mode == trading_mode_before
     assert metadata['bounded_evidence_collection_authorized'] is True
+    assert metadata['bounded_live_paper_collection_authorized'] is True
+    assert metadata['canary_collection_authorized'] is True
     assert metadata['promotion_allowed'] is False
     assert metadata['final_authority_ok'] is False
     assert metadata['final_promotion_allowed'] is False
@@ -249,3 +262,125 @@ def test_paper_route_target_metadata_is_collection_only_without_live_capital_mut
         'runtime_strategy_name': 'microbar-cross-sectional-pairs-v1',
         'source_kind': 'paper_route_probe_runtime_observed',
     }
+
+
+def _bounded_hpairs_target(**overrides: object) -> dict[str, object]:
+    target: dict[str, object] = {
+        'hypothesis_id': 'H-PAIRS-01',
+        'candidate_id': 'c88421d619759b2cfaa6f4d0',
+        'account_label': 'TORGHUT_SIM',
+        'source_account_label': 'TORGHUT_SIM',
+        'observed_stage': 'paper',
+        'strategy_family': 'microbar_cross_sectional_pairs',
+        'strategy_name': 'microbar-cross-sectional-pairs-v1',
+        'runtime_strategy_name': 'microbar-cross-sectional-pairs-v1',
+        'source_kind': 'paper_route_probe_runtime_observed',
+        'source_manifest_ref': 'config/trading/hypotheses/h-pairs-01.json',
+        'paper_route_probe_symbols': ['AAPL', 'AMZN'],
+        'paper_route_probe_pair_balance_state': 'balanced',
+        'evidence_collection_ok': True,
+        'canary_collection_authorized': True,
+        'bounded_evidence_collection_authorized': True,
+        'bounded_live_paper_collection_authorized': True,
+        'bounded_evidence_collection_scope': 'paper_route_probe_next_session_only',
+        'bounded_evidence_collection_blockers': [],
+        'runtime_window_import_health_gate_blockers': [],
+        'paper_route_account_pre_session_blockers': [],
+        'paper_route_hpairs_symbol_blockers': [],
+        'source_decision_readiness': {'ready': True, 'blockers': []},
+        'promotion_allowed': False,
+        'final_promotion_authorized': False,
+        'final_promotion_allowed': False,
+        'capital_promotion_allowed': False,
+    }
+    target.update(overrides)
+    return target
+
+
+def test_bounded_sim_collection_authorizes_non_final_hpairs_target_only() -> None:
+    target = _bounded_hpairs_target()
+
+    assert _bounded_sim_collection_blockers(target, account_label='TORGHUT_SIM') == []
+
+    assert 'bounded_sim_collection_runtime_account_not_torghut_sim' in (
+        _bounded_sim_collection_blockers(target, account_label='TORGHUT_LIVE')
+    )
+    assert 'bounded_sim_collection_non_final_state_required' in (
+        _bounded_sim_collection_blockers(
+            _bounded_hpairs_target(final_promotion_allowed=True),
+            account_label='TORGHUT_SIM',
+        )
+    )
+
+
+def test_bounded_sim_collection_blocks_missing_source_lineage_prerequisites() -> None:
+    blockers = _bounded_sim_collection_blockers(
+        _bounded_hpairs_target(
+            candidate_id='',
+            hypothesis_id='',
+            source_manifest_ref='',
+            evidence_collection_ok=False,
+            source_decision_readiness={'ready': False, 'blockers': ['source_strategy_missing']},
+        ),
+        account_label='TORGHUT_SIM',
+    )
+
+    assert 'bounded_sim_collection_candidate_id_missing' in blockers
+    assert 'bounded_sim_collection_hypothesis_id_missing' in blockers
+    assert 'bounded_sim_collection_source_manifest_missing' in blockers
+    assert 'bounded_sim_collection_evidence_collection_not_ready' in blockers
+    assert 'bounded_sim_collection_source_decision_not_ready' in blockers
+    assert 'source_strategy_missing' in blockers
+
+
+def test_simple_submit_disabled_bypass_requires_explicit_bounded_sim_collection() -> None:
+    ordinary_probe = StrategyDecision(
+        strategy_id='00000000-0000-0000-0000-000000000001',
+        symbol='AAPL',
+        event_ts=datetime(2026, 6, 1, 14, 30, tzinfo=timezone.utc),
+        timeframe='1Min',
+        action='buy',
+        qty=Decimal('1'),
+        params={
+            'paper_route_probe': {
+                'source_decision_mode': 'route_acquisition',
+                'profit_proof_eligible': False,
+            }
+        },
+    )
+    bounded_probe = ordinary_probe.model_copy(
+        update={'params': {'paper_route_probe': _bounded_hpairs_target()}}
+    )
+
+    assert (
+        _bounded_sim_collection_metadata_from_decision(
+            ordinary_probe,
+            account_label='TORGHUT_SIM',
+            trading_mode='paper',
+        )
+        is None
+    )
+    assert (
+        _bounded_sim_collection_metadata_from_decision(
+            bounded_probe,
+            account_label='TORGHUT_SIM',
+            trading_mode='paper',
+        )
+        is not None
+    )
+    assert (
+        _bounded_sim_collection_metadata_from_decision(
+            bounded_probe,
+            account_label='TORGHUT_LIVE',
+            trading_mode='paper',
+        )
+        is None
+    )
+    assert (
+        _bounded_sim_collection_metadata_from_decision(
+            bounded_probe,
+            account_label='TORGHUT_SIM',
+            trading_mode='live',
+        )
+        is None
+    )

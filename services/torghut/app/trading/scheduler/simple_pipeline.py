@@ -79,6 +79,32 @@ _PAPER_ROUTE_TARGET_PLAN_CACHE_SECONDS = 60
 _PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS = 600
 _PAPER_ROUTE_TARGET_PROFIT_PROOF_EXPOSURE_LOOKBACK = timedelta(days=7)
 _PAPER_ROUTE_TARGET_OPEN_EXPOSURE_EPSILON = Decimal("0.00000001")
+_BOUNDED_SIM_COLLECTION_ACCOUNT_LABEL = "TORGHUT_SIM"
+_BOUNDED_SIM_COLLECTION_SOURCE_KIND = "paper_route_probe_runtime_observed"
+_BOUNDED_SIM_COLLECTION_SCOPE = "paper_route_probe_next_session_only"
+_BOUNDED_SIM_COLLECTION_BLOCKER_FIELDS = (
+    "bounded_evidence_collection_blockers",
+    "runtime_window_import_health_gate_blockers",
+    "paper_route_account_pre_session_blockers",
+    "paper_route_hpairs_symbol_blockers",
+)
+_BOUNDED_SIM_COLLECTION_LINEAGE_KEYS = (
+    "account_label",
+    "source_account_label",
+    "observed_stage",
+    "runtime_strategy_name",
+    "source_kind",
+    "source_manifest_ref",
+    "bounded_evidence_collection_scope",
+    "bounded_evidence_collection_max_notional",
+)
+_BOUNDED_SIM_COLLECTION_LINEAGE_BOOL_KEYS = (
+    "bounded_evidence_collection_authorized",
+    "bounded_live_paper_collection_authorized",
+    "canary_collection_authorized",
+    "evidence_collection_ok",
+)
+_BOUNDED_SIM_COLLECTION_LINEAGE_MAPPING_KEYS = ("source_decision_readiness",)
 
 
 def _safe_int(value: object) -> int:
@@ -155,6 +181,126 @@ def _target_plan_lineage(
         "source_hypothesis_ids": hypothesis_ids,
         "source_strategy_names": strategy_names,
     }
+
+
+def _bounded_sim_collection_blockers(
+    target: Mapping[str, Any],
+    *,
+    account_label: str | None,
+) -> list[str]:
+    blockers: list[str] = []
+    runtime_account = _safe_text(account_label)
+    target_account = _safe_text(target.get("account_label"))
+    if (
+        runtime_account is not None
+        and runtime_account != _BOUNDED_SIM_COLLECTION_ACCOUNT_LABEL
+    ):
+        blockers.append("bounded_sim_collection_runtime_account_not_torghut_sim")
+    if target_account != _BOUNDED_SIM_COLLECTION_ACCOUNT_LABEL:
+        blockers.append("bounded_sim_collection_target_account_not_torghut_sim")
+    if _safe_text(target.get("observed_stage")) != "paper":
+        blockers.append("bounded_sim_collection_paper_stage_required")
+    if _safe_text(target.get("source_kind")) != _BOUNDED_SIM_COLLECTION_SOURCE_KIND:
+        blockers.append("bounded_sim_collection_source_kind_required")
+    if not (
+        _safe_text(target.get("candidate_id"))
+        or _lineage_text_values(target.get("source_candidate_ids"))
+    ):
+        blockers.append("bounded_sim_collection_candidate_id_missing")
+    if not (
+        _safe_text(target.get("hypothesis_id"))
+        or _lineage_text_values(target.get("source_hypothesis_ids"))
+    ):
+        blockers.append("bounded_sim_collection_hypothesis_id_missing")
+    if not (
+        _safe_text(target.get("runtime_strategy_name"))
+        or _safe_text(target.get("strategy_name"))
+        or _lineage_text_values(target.get("source_strategy_names"))
+    ):
+        blockers.append("bounded_sim_collection_runtime_strategy_missing")
+    if _safe_text(target.get("source_manifest_ref")) is None:
+        blockers.append("bounded_sim_collection_source_manifest_missing")
+    if not (
+        _target_truthy(target.get("bounded_evidence_collection_authorized"))
+        or _target_truthy(target.get("bounded_live_paper_collection_authorized"))
+        or _target_truthy(target.get("canary_collection_authorized"))
+    ):
+        blockers.append("bounded_sim_collection_authorization_missing")
+    if not _target_truthy(target.get("evidence_collection_ok")):
+        blockers.append("bounded_sim_collection_evidence_collection_not_ready")
+    if (
+        _target_truthy(target.get("promotion_allowed"))
+        or _target_truthy(target.get("final_promotion_allowed"))
+        or _target_truthy(target.get("final_promotion_authorized"))
+        or _target_truthy(target.get("capital_promotion_allowed"))
+    ):
+        blockers.append("bounded_sim_collection_non_final_state_required")
+    if _safe_text(target.get("bounded_evidence_collection_scope")) not in {
+        None,
+        _BOUNDED_SIM_COLLECTION_SCOPE,
+    }:
+        blockers.append("bounded_sim_collection_scope_not_supported")
+    if not _target_symbols(target):
+        blockers.append("bounded_sim_collection_probe_symbols_missing")
+
+    readiness = target.get("source_decision_readiness")
+    if isinstance(readiness, Mapping):
+        typed_readiness = cast(Mapping[str, Any], readiness)
+        if not _target_truthy(typed_readiness.get("ready")):
+            blockers.append("bounded_sim_collection_source_decision_not_ready")
+        blockers.extend(_lineage_text_values(typed_readiness.get("blockers")))
+    else:
+        blockers.append("bounded_sim_collection_source_decision_readiness_missing")
+
+    if _safe_text(target.get("paper_route_probe_pair_balance_state")) == "imbalanced":
+        blockers.append("paper_route_probe_pair_imbalanced")
+    for key in _BOUNDED_SIM_COLLECTION_BLOCKER_FIELDS:
+        blockers.extend(_lineage_text_values(target.get(key)))
+    return list(dict.fromkeys(blockers))
+
+
+def _bounded_sim_collection_authorized(
+    target: Mapping[str, Any],
+    *,
+    account_label: str | None,
+) -> bool:
+    return not _bounded_sim_collection_blockers(target, account_label=account_label)
+
+
+def _target_requires_bounded_sim_collection_gate(target: Mapping[str, Any]) -> bool:
+    hypothesis_id = _safe_text(target.get("hypothesis_id"))
+    candidate_id = _safe_text(target.get("candidate_id"))
+    account_label = _safe_text(target.get("account_label"))
+    family_tokens = _target_strategy_family_tokens(target)
+    return (
+        hypothesis_id == "H-PAIRS-01"
+        or candidate_id == "c88421d619759b2cfaa6f4d0"
+        or account_label == _BOUNDED_SIM_COLLECTION_ACCOUNT_LABEL
+        or any("microbar_cross_sectional_pairs" in token for token in family_tokens)
+    )
+
+
+def _bounded_sim_collection_metadata_from_decision(
+    decision: StrategyDecision,
+    *,
+    account_label: str | None,
+    trading_mode: str,
+) -> Mapping[str, Any] | None:
+    if trading_mode != "paper":
+        return None
+    for key in (
+        "paper_route_target_plan_source_decision",
+        "paper_route_target_plan",
+        "paper_route_probe",
+        "paper_route_probe_exit",
+    ):
+        value = decision.params.get(key)
+        if not isinstance(value, Mapping):
+            continue
+        metadata = cast(Mapping[str, Any], value)
+        if _bounded_sim_collection_authorized(metadata, account_label=account_label):
+            return metadata
+    return None
 
 
 def _target_lookup_names(target: Mapping[str, Any]) -> list[str]:
@@ -401,6 +547,7 @@ def _paper_route_probe_lineage_from_params(params: Mapping[str, Any]) -> dict[st
     profit_proof_eligible = _target_bool(params.get("profit_proof_eligible"))
     fallback_source_decision_modes: list[str] = []
     fallback_profit_proof_values: list[bool] = []
+    collection_lineage: dict[str, Any] = {}
     for payload in payloads:
         _merge_unique_texts(
             candidate_ids, _lineage_text_values(payload.get("source_candidate_id"))
@@ -427,6 +574,23 @@ def _paper_route_probe_lineage_from_params(params: Mapping[str, Any]) -> dict[st
                 eligible := _target_bool(payload.get("profit_proof_eligible"))
             ) is not None:
                 fallback_profit_proof_values.append(eligible)
+        for key in _BOUNDED_SIM_COLLECTION_LINEAGE_KEYS:
+            if key not in collection_lineage and (
+                value := _safe_text(payload.get(key))
+            ):
+                collection_lineage[key] = value
+        for key in _BOUNDED_SIM_COLLECTION_LINEAGE_BOOL_KEYS:
+            value = _target_bool(payload.get(key))
+            if key not in collection_lineage and value is not None:
+                collection_lineage[key] = value
+        if "paper_route_probe_symbols" not in collection_lineage:
+            symbols = _lineage_text_values(payload.get("paper_route_probe_symbols"))
+            if symbols:
+                collection_lineage["paper_route_probe_symbols"] = symbols
+        for key in _BOUNDED_SIM_COLLECTION_LINEAGE_MAPPING_KEYS:
+            value = payload.get(key)
+            if key not in collection_lineage and isinstance(value, Mapping):
+                collection_lineage[key] = dict(cast(Mapping[str, Any], value))
 
         raw_targets = payload.get("paper_route_probe_lineage_targets")
         if isinstance(raw_targets, Sequence) and not isinstance(
@@ -464,6 +628,7 @@ def _paper_route_probe_lineage_from_params(params: Mapping[str, Any]) -> dict[st
         lineage["profit_proof_eligible"] = profit_proof_eligible
     elif fallback_profit_proof_values:
         lineage["profit_proof_eligible"] = all(fallback_profit_proof_values)
+    lineage.update(collection_lineage)
     return lineage
 
 
@@ -537,6 +702,21 @@ def _merge_paper_route_probe_lineage(
     for key in ("source_decision_mode", "profit_proof_eligible"):
         if key in lineage and key not in target:
             target[key] = lineage[key]
+    for key in _BOUNDED_SIM_COLLECTION_LINEAGE_KEYS:
+        value = _safe_text(lineage.get(key))
+        if value is not None and key not in target:
+            target[key] = value
+    for key in _BOUNDED_SIM_COLLECTION_LINEAGE_BOOL_KEYS:
+        value = _target_bool(lineage.get(key))
+        if value is not None and key not in target:
+            target[key] = value
+    symbols = _lineage_text_values(lineage.get("paper_route_probe_symbols"))
+    if symbols and "paper_route_probe_symbols" not in target:
+        target["paper_route_probe_symbols"] = symbols
+    for key in _BOUNDED_SIM_COLLECTION_LINEAGE_MAPPING_KEYS:
+        value = lineage.get(key)
+        if key not in target and isinstance(value, Mapping):
+            target[key] = dict(cast(Mapping[str, Any], value))
 
     raw_targets = lineage.get("paper_route_probe_lineage_targets")
     if not isinstance(raw_targets, Sequence) or isinstance(
@@ -2442,6 +2622,11 @@ class SimpleTradingPipeline(TradingPipeline):
         max_notional: Decimal,
     ) -> dict[str, Any]:
         lineage = _target_plan_lineage([dict(target)], symbol)
+        bounded_collection_authorized = (
+            _target_truthy(target.get("bounded_evidence_collection_authorized"))
+            or _target_truthy(target.get("bounded_live_paper_collection_authorized"))
+            or _target_truthy(target.get("canary_collection_authorized"))
+        )
         metadata: dict[str, Any] = {
             "mode": "paper_route_target_plan_source_decision",
             "source": "external_target_plan_url",
@@ -2485,7 +2670,11 @@ class SimpleTradingPipeline(TradingPipeline):
                 )
                 if str(item).strip()
             ],
-            "bounded_evidence_collection_authorized": True,
+            "bounded_evidence_collection_authorized": bounded_collection_authorized,
+            "bounded_live_paper_collection_authorized": (
+                bounded_collection_authorized
+            ),
+            "canary_collection_authorized": bounded_collection_authorized,
             "bounded_evidence_collection_scope": (
                 _safe_text(target.get("bounded_evidence_collection_scope"))
                 or "paper_route_probe_next_session_only"
@@ -2497,6 +2686,16 @@ class SimpleTradingPipeline(TradingPipeline):
             "final_promotion_allowed": False,
             **lineage,
         }
+        for key in (
+            "source_decision_readiness",
+            "bounded_evidence_collection_blockers",
+            "runtime_window_import_health_gate_blockers",
+            "paper_route_account_pre_session_blockers",
+            "paper_route_hpairs_symbol_blockers",
+            "paper_route_probe_pair_balance_state",
+        ):
+            if key in target:
+                metadata[key] = target[key]
         exit_minute, exit_defaulted = _target_probe_exit_minute_after_open(target)
         if exit_minute is not None:
             effective_exit_minute = min(exit_minute, _REGULAR_SESSION_MINUTES - 1)
@@ -2567,6 +2766,17 @@ class SimpleTradingPipeline(TradingPipeline):
         decisions: list[StrategyDecision] = []
         seen: set[tuple[str, str, str, str]] = set()
         for target in target_plan_targets:
+            if _target_requires_bounded_sim_collection_gate(target):
+                collection_blockers = _bounded_sim_collection_blockers(
+                    target,
+                    account_label=self.account_label,
+                )
+                if collection_blockers:
+                    logger.warning(
+                        "Skipping paper-route target source collection because bounded SIM collection is not authorized blockers=%s",
+                        ",".join(collection_blockers),
+                    )
+                    continue
             window = _target_probe_window(target)
             if window is None:
                 continue
@@ -3408,6 +3618,30 @@ class SimpleTradingPipeline(TradingPipeline):
         )
         paper_route_probe_applied = False
         if proof_floor_block_reason is not None:
+            if not settings.trading_simple_submit_enabled:
+                collection_metadata = _bounded_sim_collection_metadata_from_decision(
+                    decision,
+                    account_label=self.account_label,
+                    trading_mode=settings.trading_mode,
+                )
+                if collection_metadata is None:
+                    self._block_decision_submission(
+                        session=session,
+                        decision=decision,
+                        decision_row=decision_row,
+                        reason="simple_submit_disabled",
+                        submission_stage="blocked_simple_submit_disabled",
+                        capital_stage="shadow",
+                        extra_metadata={
+                            "simple_lane": {
+                                "submit_enabled": False,
+                                "bounded_sim_collection_bypass": False,
+                                "bounded_sim_collection_required": True,
+                                "proof_floor_block_reason": proof_floor_block_reason,
+                            }
+                        },
+                    )
+                    return False
             if settings.trading_mode == "paper" and (
                 self._paper_route_probe_exit_metadata(decision) is not None
                 or _paper_route_probe_entry_metadata(decision.params) is not None
