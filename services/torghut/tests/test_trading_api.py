@@ -7495,6 +7495,12 @@ class TestTradingApi(TestCase):
                     "app.main.build_paper_route_evidence_audit",
                     side_effect=AssertionError("full audit should not run"),
                 ),
+                patch(
+                    "app.trading.paper_route_evidence._target_audit",
+                    side_effect=AssertionError(
+                        "target-plan endpoint should not run per-target audits"
+                    ),
+                ),
             ):
                 response = self.client.get("/trading/paper-route-target-plan")
             self.assertEqual(response.status_code, 200)
@@ -7503,6 +7509,10 @@ class TestTradingApi(TestCase):
                 payload["schema_version"], "torghut.paper-route-target-plan.v1"
             )
             self.assertNotIn("next_runtime_window_target_audits", payload)
+            self.assertEqual(
+                payload["runtime_window_import_audit_mode"],
+                "deferred_until_import_ready",
+            )
             plan = payload["runtime_window_import_plan"]
             self.assertEqual(plan["target_count"], 1)
             self.assertEqual(

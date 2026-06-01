@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from unittest import TestCase
+from unittest.mock import patch
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -133,6 +134,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
         session: Session,
         *,
         generated_at: datetime,
+        include_runtime_window_import_audit: bool | None = True,
     ) -> dict[str, object]:
         return build_paper_route_target_plan_payload(
             session,
@@ -185,6 +187,43 @@ class TestPaperRouteEvidenceAudit(TestCase):
                 },
             },
             generated_at=generated_at,
+            include_runtime_window_import_audit=include_runtime_window_import_audit,
+        )
+
+    def test_target_plan_can_defer_full_runtime_window_audit(self) -> None:
+        generated_at = datetime(2026, 5, 26, 12, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            with patch(
+                "app.trading.paper_route_evidence._target_audit",
+                side_effect=AssertionError("full runtime-window audit should defer"),
+            ):
+                payload = self._build_basic_paper_route_target_plan(
+                    session,
+                    generated_at=generated_at,
+                    include_runtime_window_import_audit=False,
+                )
+
+        self.assertEqual(
+            payload["runtime_window_import_audit_mode"],
+            "deferred_until_import_ready",
+        )
+        import_audit = payload["runtime_window_import_audit"]
+        self.assertEqual(import_audit["state"], "import_due_source_activity_missing")
+        self.assertEqual(
+            import_audit["next_action"],
+            "inspect_paper_route_source_activity_before_import",
+        )
+        self.assertIn(
+            "runtime_window_import_audit_deferred_until_import_ready",
+            import_audit["blockers"],
+        )
+        self.assertEqual(
+            import_audit["counts"]["source_plan_target_count"],
+            1,
+        )
+        self.assertEqual(
+            import_audit["counts"]["selected_target_count"],
+            1,
         )
 
     def test_normalized_open_positions_handles_flat_short_and_implicit_market_value(
@@ -368,12 +407,8 @@ class TestPaperRouteEvidenceAudit(TestCase):
             audit["readiness"]["evidence_collection_blockers"],
         )
         import_audit = payload["runtime_window_import_audit"]
-        self.assertNotEqual(
-            import_audit["state"], "import_due_account_state_not_clean"
-        )
-        self.assertEqual(
-            import_audit["diagnostics"]["account_state_blockers"], []
-        )
+        self.assertNotEqual(import_audit["state"], "import_due_account_state_not_clean")
+        self.assertEqual(import_audit["diagnostics"]["account_state_blockers"], [])
 
     def test_pre_session_dirty_account_skips_next_paper_route_target(self) -> None:
         generated_at = datetime(2026, 5, 26, 13, 20, tzinfo=timezone.utc)
@@ -707,7 +742,9 @@ class TestPaperRouteEvidenceAudit(TestCase):
             cost_model_hash_counts={"cost-a": 1},
             lineage_hash_counts={"lineage-a": 1},
             blockers_json=["unclosed_position"],
-            payload_json={"source_decision_mode_counts": {"route_acquisition_probe": 10}},
+            payload_json={
+                "source_decision_mode_counts": {"route_acquisition_probe": 10}
+            },
         )
 
         summary = _runtime_ledger_non_evidence_diagnostic_summary(
@@ -723,9 +760,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
             {"route_acquisition_probe": 1, "strategy_signal_paper": 1},
         )
         self.assertEqual(
-            summary["profit_proof_eligible_diagnostic"][
-                "net_strategy_pnl_after_costs"
-            ],
+            summary["profit_proof_eligible_diagnostic"]["net_strategy_pnl_after_costs"],
             "19",
         )
         self.assertEqual(
