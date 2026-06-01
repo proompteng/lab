@@ -5,12 +5,14 @@ metadata:
   namespace: synthesis
   annotations:
     argocd.argoproj.io/sync-options: Prune=false
-    proompteng.ai/account-isolation-mode: read-only-shared-paper-account
+    proompteng.ai/account-isolation-mode: suspended-until-dedicated-paper-account
+    proompteng.ai/suspension-reason: torghut-runtime-ledger-proof-account-contamination
   labels:
     app.kubernetes.io/part-of: synthesis
     app.kubernetes.io/component: autonomous-trader
 spec:
   cron: "15 9 * * 1-5"
+  suspend: true
   timezone: America/New_York
   targetRef:
     apiVersion: agents.proompteng.ai/v1alpha1

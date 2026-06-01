@@ -14,7 +14,7 @@ spec:
   implementationSpecRef:
     name: autonomous-trader-v1
   goal:
-    objective: Run a read-only autonomous-trader dry run while the Alpaca paper account is shared with Torghut profitability proof collection; do not mutate broker state.
+    objective: Keep the market-open autonomous trader suspended while the Alpaca paper account is shared with Torghut profitability proof collection; do not mutate broker state until a dedicated broker account or isolated order namespace is configured.
   vcsRef:
     name: github
   vcsPolicy:

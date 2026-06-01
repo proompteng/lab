@@ -238,6 +238,38 @@ describe('supporting primitives controller', () => {
     })
   })
 
+  it('removes Schedule runner resources when a schedule is suspended', async () => {
+    const { kube, applied, deleted, statuses } = createKubeMock()
+
+    await __test__.reconcileSchedule(
+      kube,
+      {
+        apiVersion: 'schedules.proompteng.ai/v1alpha1',
+        kind: 'Schedule',
+        metadata: { name: 'demo-schedule', namespace: 'agents', uid: 'schedule-uid', generation: 2 },
+        spec: {
+          cron: '*/15 * * * *',
+          suspend: true,
+          targetRef: { kind: 'AgentRun', name: 'template-run' },
+        },
+      },
+      'agents',
+    )
+
+    expect(applied).toHaveLength(0)
+    expect(deleted).toEqual([
+      { resource: 'configmap', name: 'demo-schedule-template', namespace: 'agents' },
+      { resource: 'cronjob', name: 'demo-schedule-cron', namespace: 'agents' },
+    ])
+    expect(statuses.at(-1)).toMatchObject({
+      kind: 'Schedule',
+      status: {
+        phase: 'Suspended',
+        conditions: [expect.objectContaining({ type: 'Ready', status: 'True', reason: 'Suspended' })],
+      },
+    })
+  })
+
   it('materializes canonical delivery placeholders in the schedule runner', () => {
     const manifest = scheduleRunnerTest.materializeManifest(
       JSON.stringify({
