@@ -56,6 +56,13 @@ spec:
                   set -euo pipefail
                   cd /app
                   /opt/venv/bin/python scripts/journal_tigerbeetle_order_events.py \
+                    --dsn-env DB_DSN \
+                    --batch-size 125 \
+                    --max-batches 8 \
+                    --event-scan-limit 1000 \
+                    --reconcile-limit 1000 \
+                    --json
+                  /opt/venv/bin/python scripts/journal_tigerbeetle_order_events.py \
                     --dsn-env SIM_DB_DSN \
                     --account-label TORGHUT_SIM \
                     --batch-size 75 \
@@ -64,6 +71,11 @@ spec:
                     --reconcile-limit 250 \
                     --json
               env:
+                - name: DB_DSN
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: uri
                 - name: TORGHUT_SIM_DB_HOST
                   valueFrom:
                     secretKeyRef:

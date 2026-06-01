@@ -1365,7 +1365,7 @@ class TestLiveConfigManifestContract(TestCase):
         )
         self.assertEqual(seccomp_profile.get("type"), "Unconfined")
 
-    def test_tigerbeetle_journal_order_events_cronjob_is_independent_sim_only(
+    def test_tigerbeetle_journal_order_events_cronjob_covers_live_and_sim(
         self,
     ) -> None:
         relative_path = (
@@ -1431,12 +1431,17 @@ class TestLiveConfigManifestContract(TestCase):
             item.get("name"): item
             for item in cast(list[Mapping[str, object]], container.get("env", []))
         }
+        db_dsn = cast(Mapping[str, object], env["DB_DSN"])
+        db_value_from = cast(Mapping[str, object], db_dsn.get("valueFrom", {}))
+        self.assertEqual(
+            db_value_from.get("secretKeyRef"),
+            {"name": "torghut-db-app", "key": "uri"},
+        )
         self.assertEqual(
             env["SIM_DB_DSN"].get("value"),
             "postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@"
             "$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default",
         )
-        self.assertNotIn("DB_DSN", env)
         for name, key in {
             "TORGHUT_SIM_DB_HOST": "host",
             "TORGHUT_SIM_DB_PORT": "port",
@@ -1467,12 +1472,18 @@ class TestLiveConfigManifestContract(TestCase):
         args = "\n".join(str(item) for item in container.get("args", []))
         self.assertIn("scripts/journal_tigerbeetle_order_events.py", args)
         self.assertNotIn("scripts/repair_order_feed_source_windows.py", args)
+        self.assertIn("--dsn-env DB_DSN", args)
+        self.assertIn("--batch-size 125", args)
+        self.assertIn("--max-batches 8", args)
+        self.assertIn("--event-scan-limit 1000", args)
+        self.assertIn("--reconcile-limit 1000", args)
         self.assertIn("--dsn-env SIM_DB_DSN", args)
         self.assertIn("--account-label TORGHUT_SIM", args)
         self.assertIn("--batch-size 75", args)
         self.assertIn("--max-batches 4", args)
         self.assertIn("--event-scan-limit 300", args)
         self.assertIn("--reconcile-limit 250", args)
+        self.assertEqual(args.count("scripts/journal_tigerbeetle_order_events.py"), 2)
         self.assertNotIn("--fail-on-degraded", args)
         self.assertIn("--json", args)
         security_context = cast(
