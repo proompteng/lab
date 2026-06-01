@@ -93,7 +93,7 @@ describe('torghut post-deploy verifier workflow', () => {
   })
 
   it('rotates the options TA Kafka transactional client prefix with the restart nonce', () => {
-    expect(optionsTaFlinkDeployment).toContain('restartNonce: 8')
+    expect(optionsTaFlinkDeployment).toContain('restartNonce: 9')
     expect(optionsTaConfigmap).toContain('TA_KAFKA_TRANSACTION_TIMEOUT_MS: "120000"')
     expect(optionsTaConfigmap).toContain('TA_CLIENT_ID: "torghut-options-ta-r8"')
     expect(optionsTaConfigmap).toContain('TA_GROUP_ID: "torghut-options-ta-2026-03-08"')
@@ -106,5 +106,13 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).toContain('codex/torghut-rollback-')
     expect(workflow).toContain('revert(torghut): rollback failed promotion ')
     expect(workflow).toContain('gh pr close "${pr_number}" -R "${GH_REPO}" --delete-branch --comment "${comment}"')
+  })
+
+  it('closes older automatic rollback pull requests before opening a new failed-promotion rollback', () => {
+    expect(workflow).toContain('Close older failed-promotion rollback pull requests')
+    expect(workflow).toContain("failure() && steps.rollback.outputs.should_rollback == 'true'")
+    expect(workflow).toContain('current_branch="codex/torghut-rollback-${{ github.run_id }}-${{ github.run_attempt }}"')
+    expect(workflow).toContain('select(.headRefName != \\"${current_branch}\\")')
+    expect(workflow).toContain('because a newer failed promotion rollback is being opened')
   })
 })
