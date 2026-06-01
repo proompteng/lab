@@ -6,12 +6,18 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
 
-from app.trading.discovery.candidate_specs import CANDIDATE_SPEC_SCHEMA_VERSION, CandidateSpec
+from app.trading.discovery.candidate_specs import (
+    CANDIDATE_SPEC_SCHEMA_VERSION,
+    CandidateSpec,
+)
 from app.trading.discovery.fast_replay import (
     FAST_REPLAY_PROOF_SEMANTICS_LABEL,
     build_fast_replay_preview,
 )
-from app.trading.discovery.replay_tape import build_source_query_digest, materialize_signal_tape
+from app.trading.discovery.replay_tape import (
+    build_source_query_digest,
+    materialize_signal_tape,
+)
 from app.trading.models import SignalEnvelope
 
 
@@ -61,7 +67,8 @@ class TestFastReplayPreview(TestCase):
         event_type: str = "trade",
     ) -> SignalEnvelope:
         return SignalEnvelope(
-            event_ts=datetime(2026, 2, 23, 14, 30, tzinfo=timezone.utc) + timedelta(minutes=offset),
+            event_ts=datetime(2026, 2, 23, 14, 30, tzinfo=timezone.utc)
+            + timedelta(minutes=offset),
             symbol=symbol,
             timeframe="1Min",
             seq=offset,
@@ -82,12 +89,24 @@ class TestFastReplayPreview(TestCase):
     def test_whitepaper_features_rank_and_label_preview_only(self) -> None:
         with TemporaryDirectory() as tmpdir:
             rows = [
-                self._signal(symbol="AAA", offset=1, price="100", ofi="0.65", event_type="add"),
-                self._signal(symbol="AAA", offset=2, price="101", ofi="0.80", event_type="trade"),
-                self._signal(symbol="AAA", offset=3, price="102", ofi="0.85", event_type="cancel"),
-                self._signal(symbol="BBB", offset=1, price="100", ofi="-0.10", stress=True),
-                self._signal(symbol="BBB", offset=2, price="99", ofi="-0.20", stress=True),
-                self._signal(symbol="BBB", offset=3, price="98", ofi="-0.20", stress=True),
+                self._signal(
+                    symbol="AAA", offset=1, price="100", ofi="0.65", event_type="add"
+                ),
+                self._signal(
+                    symbol="AAA", offset=2, price="101", ofi="0.80", event_type="trade"
+                ),
+                self._signal(
+                    symbol="AAA", offset=3, price="102", ofi="0.85", event_type="cancel"
+                ),
+                self._signal(
+                    symbol="BBB", offset=1, price="100", ofi="-0.10", stress=True
+                ),
+                self._signal(
+                    symbol="BBB", offset=2, price="99", ofi="-0.20", stress=True
+                ),
+                self._signal(
+                    symbol="BBB", offset=3, price="98", ofi="-0.20", stress=True
+                ),
             ]
             manifest = materialize_signal_tape(
                 rows=rows,
@@ -113,7 +132,9 @@ class TestFastReplayPreview(TestCase):
             exact_replay_candidate_cap=2,
         )
 
-        self.assertEqual(preview.selected_candidate_spec_ids, ("spec-good", "spec-stress"))
+        self.assertEqual(
+            preview.selected_candidate_spec_ids, ("spec-good", "spec-stress")
+        )
         good, stress = preview.rows
         self.assertEqual(good.candidate_spec_id, "spec-good")
         self.assertGreater(good.cluster_lob_activity_score, Decimal("0"))
@@ -122,15 +143,33 @@ class TestFastReplayPreview(TestCase):
         self.assertEqual(stress.frontier_bucket, "exploration")
         self.assertGreater(stress.macro_stress_veto_score, Decimal("0"))
         payload = preview.to_manifest_payload()
+        row_payload = good.to_payload()
         self.assertFalse(payload["promotion_proof"])
-        self.assertEqual(payload["proof_semantics_label"], FAST_REPLAY_PROOF_SEMANTICS_LABEL)
-        self.assertIn("source_backed_runtime_ledger_proof_required", payload["blockers"])
+        self.assertEqual(
+            payload["proof_semantics_label"], FAST_REPLAY_PROOF_SEMANTICS_LABEL
+        )
+        self.assertIn(
+            "source_backed_runtime_ledger_proof_required", payload["blockers"]
+        )
         self.assertIn("conformal_tail_risk", payload["implemented_mechanisms"])
+        self.assertEqual(
+            row_payload["target_implied_notional_context"]["target_net_pnl_per_day"],
+            "500",
+        )
+        self.assertIn("observed_post_cost_expectancy_bps", row_payload)
+        self.assertIn("cost_impact_lineage", row_payload)
+        self.assertEqual(
+            row_payload["adv_capacity_context"]["status"], "missing_source_backed_adv"
+        )
+        self.assertIn("source_backed_adv_missing", row_payload["lineage_blockers"])
+        self.assertFalse(row_payload["promotion_proof"])
 
     def test_frontier_selection_caps_exact_replay_with_exploration_slots(self) -> None:
         with TemporaryDirectory() as tmpdir:
             rows = [
-                self._signal(symbol="AAA", offset=index, price=str(100 + index), ofi="0.50")
+                self._signal(
+                    symbol="AAA", offset=index, price=str(100 + index), ofi="0.50"
+                )
                 for index in range(1, 8)
             ]
             manifest = materialize_signal_tape(
@@ -142,7 +181,9 @@ class TestFastReplayPreview(TestCase):
                 end_date=date(2026, 2, 23),
                 source_query_digest=build_source_query_digest({"window": "cap"}),
             )
-        specs = tuple(self._spec(f"spec-{index}", symbols=["AAA"]) for index in range(8))
+        specs = tuple(
+            self._spec(f"spec-{index}", symbols=["AAA"]) for index in range(8)
+        )
 
         preview = build_fast_replay_preview(
             specs=specs,
@@ -161,5 +202,12 @@ class TestFastReplayPreview(TestCase):
         self.assertEqual(preview.exact_replay_candidate_cap, 6)
         self.assertEqual(
             [row.frontier_bucket for row in preview.rows if row.selected],
-            ["exploitation", "exploitation", "exploitation", "exploitation", "exploration", "exploration"],
+            [
+                "exploitation",
+                "exploitation",
+                "exploitation",
+                "exploitation",
+                "exploration",
+                "exploration",
+            ],
         )

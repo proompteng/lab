@@ -139,7 +139,8 @@ _CANDIDATE_BOARD_RUNTIME_SESSION_TZ = ZoneInfo("America/New_York")
 _CANDIDATE_BOARD_RUNTIME_SESSION_OPEN = time(hour=9, minute=30)
 _CANDIDATE_BOARD_RUNTIME_SESSION_CLOSE = time(hour=16, minute=0)
 _DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC = 8
-_DEFAULT_REAL_REPLAY_MAX_PARALLEL_FRONTIER_CANDIDATES = 16
+_DEFAULT_REAL_REPLAY_MAX_PARALLEL_FRONTIER_CANDIDATES = 12
+_DEFAULT_FAST_REPLAY_PREVIEW_TOP_K = 48
 _DEFAULT_FAST_REPLAY_EXACT_CANDIDATE_CAP = 6
 _DEFAULT_FAST_REPLAY_EXPLOITATION_SLOTS = 4
 _DEFAULT_FAST_REPLAY_EXPLORATION_SLOTS = 2
@@ -575,7 +576,9 @@ def _parse_args() -> argparse.Namespace:
         default=0,
         help=(
             "Preview-only tape-vectorized narrowing budget before exact replay. "
-            "Requires --replay-tape-path and never counts as promotion proof."
+            "When omitted, real H-PAIRS replay runs with a replay tape default "
+            f"to {_DEFAULT_FAST_REPLAY_PREVIEW_TOP_K} preview candidates. "
+            "Never counts as promotion proof."
         ),
     )
     parser.add_argument(
@@ -591,6 +594,15 @@ def _parse_args() -> argparse.Namespace:
         help=(
             "Maximum candidate specs forwarded from preview ranking to exact replay. "
             "Defaults to a bounded 4 exploitation + 2 exploration frontier."
+        ),
+    )
+    parser.add_argument(
+        "--allow-unsafe-replay-tape-exact-cap-override",
+        action="store_true",
+        help=(
+            "Allow --replay-tape-exact-candidate-cap above the production-safe "
+            f"default cap of {_DEFAULT_FAST_REPLAY_EXACT_CANDIDATE_CAP}. "
+            "Keep disabled for CI and normal research runs."
         ),
     )
     parser.add_argument(
@@ -611,6 +623,14 @@ def _parse_args() -> argparse.Namespace:
         help=(
             "Fetch the resolved full-window signal rows once, write a run-scoped "
             "manifest-verified replay tape, and use it for preview narrowing and exact replay."
+        ),
+    )
+    parser.add_argument(
+        "--disable-staged-replay-frontier",
+        action="store_true",
+        help=(
+            "Disable the default bounded replay-tape -> fast-preview -> exact-top-six "
+            "frontier when a replay tape is available."
         ),
     )
     parser.add_argument(
@@ -664,6 +684,7 @@ def _parse_args() -> argparse.Namespace:
     parser.set_defaults(
         persist_results=True,
         collect_train_gate_diagnostics=True,
+        staged_replay_frontier_default=True,
     )
     return parser.parse_args()
 
@@ -6323,7 +6344,7 @@ def _apply_fast_replay_preview_narrowing(
     specs: Sequence[CandidateSpec],
     candidate_selection: Mapping[str, Any],
 ) -> tuple[list[CandidateSpec], dict[str, Any]]:
-    preview_top_k = max(0, int(getattr(args, "replay_tape_preview_top_k", 0) or 0))
+    preview_top_k = _resolved_fast_replay_preview_top_k(args)
     if preview_top_k <= 0:
         return list(specs), dict(candidate_selection)
     if str(getattr(args, "replay_mode", "") or "") != "real":
@@ -6331,19 +6352,9 @@ def _apply_fast_replay_preview_narrowing(
     tape_path = getattr(args, "replay_tape_path", None)
     if tape_path is None:
         raise ValueError("fast_replay_preview_requires_replay_tape_path")
-    exact_replay_candidate_cap = max(
-        1,
-        min(
-            preview_top_k,
-            int(
-                getattr(
-                    args,
-                    "replay_tape_exact_candidate_cap",
-                    _DEFAULT_FAST_REPLAY_EXACT_CANDIDATE_CAP,
-                )
-                or _DEFAULT_FAST_REPLAY_EXACT_CANDIDATE_CAP
-            ),
-        ),
+    exact_replay_candidate_cap = _resolved_fast_replay_exact_candidate_cap(
+        args,
+        preview_top_k=preview_top_k,
     )
     exploitation_slots = max(
         0,
@@ -6513,12 +6524,58 @@ def _apply_fast_replay_preview_narrowing(
     return narrowed_specs, updated_selection
 
 
+def _resolved_fast_replay_preview_top_k(args: argparse.Namespace) -> int:
+    explicit_top_k = max(
+        0,
+        int(getattr(args, "replay_tape_preview_top_k", 0) or 0),
+    )
+    if explicit_top_k > 0:
+        return explicit_top_k
+    if not bool(getattr(args, "staged_replay_frontier_default", False)):
+        return 0
+    if bool(getattr(args, "disable_staged_replay_frontier", False)):
+        return 0
+    if str(getattr(args, "replay_mode", "") or "") != "real":
+        return 0
+    if getattr(args, "replay_tape_path", None) is None:
+        return 0
+    return max(
+        _DEFAULT_FAST_REPLAY_PREVIEW_TOP_K,
+        int(getattr(args, "max_candidates", 0) or 0),
+    )
+
+
+def _resolved_fast_replay_exact_candidate_cap(
+    args: argparse.Namespace,
+    *,
+    preview_top_k: int,
+) -> int:
+    requested_cap = max(
+        1,
+        int(
+            getattr(
+                args,
+                "replay_tape_exact_candidate_cap",
+                _DEFAULT_FAST_REPLAY_EXACT_CANDIDATE_CAP,
+            )
+            or _DEFAULT_FAST_REPLAY_EXACT_CANDIDATE_CAP
+        ),
+    )
+    if not bool(getattr(args, "allow_unsafe_replay_tape_exact_cap_override", False)):
+        requested_cap = min(requested_cap, _DEFAULT_FAST_REPLAY_EXACT_CANDIDATE_CAP)
+    return max(1, min(max(1, preview_top_k), requested_cap))
+
+
 def _fast_replay_preview_proof_semantics() -> dict[str, Any]:
     return {
         "schema_version": "torghut.fast-replay-proof-semantics.v1",
         "label": FAST_REPLAY_PROOF_SEMANTICS_LABEL,
         "promotion_proof": False,
         "authority": "preview_prefilter_only",
+        "prefilter_only": True,
+        "no_kubernetes_fanout": True,
+        "default_local_worker_cap": 2,
+        "safe_exact_replay_candidate_cap": _DEFAULT_FAST_REPLAY_EXACT_CANDIDATE_CAP,
         "final_promotion_requires": [
             "exact_replay_evidence",
             "source_backed_runtime_ledger",
@@ -6538,11 +6595,9 @@ def _bounded_sim_target_queue_metadata(
     exploitation_slots: int,
     exploration_slots: int,
 ) -> dict[str, Any]:
-    selected_rows = [
-        dict(row)
-        for row in preview_rows
-        if bool(row.get("selected"))
-    ][:exact_replay_candidate_cap]
+    selected_rows = [dict(row) for row in preview_rows if bool(row.get("selected"))][
+        :exact_replay_candidate_cap
+    ]
     entries: list[dict[str, Any]] = []
     for index, row in enumerate(selected_rows, start=1):
         entries.append(
@@ -6552,15 +6607,32 @@ def _bounded_sim_target_queue_metadata(
                 "frontier_bucket": _string(row.get("frontier_bucket")),
                 "preview_rank": row.get("rank"),
                 "preview_score": row.get("preview_score"),
+                "observed_post_cost_expectancy_bps": row.get(
+                    "observed_post_cost_expectancy_bps"
+                ),
+                "required_daily_notional": row.get("required_daily_notional"),
+                "target_implied_notional_context": row.get(
+                    "target_implied_notional_context"
+                ),
+                "cost_impact_lineage": row.get("cost_impact_lineage"),
+                "adv_capacity_context": row.get("adv_capacity_context"),
+                "lineage_blockers": list(
+                    cast(Sequence[Any], row.get("lineage_blockers") or ())
+                ),
                 "proof_semantics_label": row.get("proof_semantics_label"),
                 "promotion_proof": False,
+                "promotion_allowed": False,
+                "final_promotion_allowed": False,
             }
         )
     return {
         "schema_version": "torghut.fast-replay-bounded-sim-target-queue.v1",
         "status": "metadata_only_preview_to_exact_replay_queue",
         "authority": "not_promotion_proof",
+        "prefilter_only": True,
         "promotion_proof": False,
+        "promotion_allowed": False,
+        "final_promotion_allowed": False,
         "proof_semantics": _fast_replay_preview_proof_semantics(),
         "whitepaper_mechanisms": list(FAST_REPLAY_WHITEPAPER_MECHANISMS),
         "queue_policy": "top_exploitation_plus_exploration_exact_replay_cap",
@@ -6579,7 +6651,9 @@ def _maybe_materialize_epoch_replay_tape(
     output_dir: Path,
     epoch_id: str,
 ) -> tuple[argparse.Namespace, dict[str, Any] | None]:
-    if not bool(getattr(args, "materialize_replay_tape", False)):
+    explicit_materialize = bool(getattr(args, "materialize_replay_tape", False))
+    auto_materialize = _auto_materialize_staged_replay_tape(args)
+    if not explicit_materialize and not auto_materialize:
         return args, None
     if getattr(args, "replay_tape_path", None) is not None:
         return args, None
@@ -6621,6 +6695,9 @@ def _maybe_materialize_epoch_replay_tape(
         start_date=start_date,
         end_date=end_date,
         source_query_digest=source_query_digest,
+        feature_schema_hash=_materialized_replay_tape_feature_schema_hash(args),
+        cost_model_hash=_materialized_replay_tape_cost_model_hash(args),
+        strategy_family=_materialized_replay_tape_strategy_family(args),
         require_complete_coverage=not bool(getattr(args, "allow_stale_tape", False)),
     )
     receipt_path = output_dir / "replay-tape-receipt.json"
@@ -6636,6 +6713,10 @@ def _maybe_materialize_epoch_replay_tape(
         "row_symbols": list(manifest.row_symbols),
         "content_sha256": manifest.content_sha256,
         "source_query_digest": manifest.source_query_digest,
+        "replay_cache_key": manifest.replay_cache_key,
+        "feature_schema_hash": manifest.feature_schema_hash,
+        "cost_model_hash": manifest.cost_model_hash,
+        "strategy_family": manifest.strategy_family,
     }
     _write_json(receipt_path, receipt)
     updated_args = argparse.Namespace(
@@ -6646,6 +6727,24 @@ def _maybe_materialize_epoch_replay_tape(
         }
     )
     return updated_args, receipt
+
+
+def _auto_materialize_staged_replay_tape(args: argparse.Namespace) -> bool:
+    if not bool(getattr(args, "staged_replay_frontier_default", False)):
+        return False
+    if bool(getattr(args, "disable_staged_replay_frontier", False)):
+        return False
+    if str(getattr(args, "replay_mode", "") or "") != "real":
+        return False
+    if bool(getattr(args, "selection_only", False)):
+        return False
+    if getattr(args, "replay_tape_path", None) is not None:
+        return False
+    if not str(getattr(args, "full_window_start_date", "") or "").strip():
+        return False
+    if not str(getattr(args, "full_window_end_date", "") or "").strip():
+        return False
+    return True
 
 
 def _materialized_replay_tape_date_arg(
@@ -6678,6 +6777,35 @@ def _materialized_replay_tape_source_query_digest(
             "join": "torghut.ta_microbars",
         }
     )
+
+
+def _materialized_replay_tape_feature_schema_hash(args: argparse.Namespace) -> str:
+    return _stable_hash(
+        {
+            "schema_version": "torghut.replay-tape-feature-schema.v1",
+            "signal_schema": "SignalEnvelope",
+            "source": "ta",
+            "window_size": "PT1S",
+            "microbar_join": "torghut.ta_microbars",
+            "chunk_minutes": max(1, int(getattr(args, "chunk_minutes", 10) or 10)),
+        }
+    )
+
+
+def _materialized_replay_tape_cost_model_hash(args: argparse.Namespace) -> str:
+    return _stable_hash(
+        {
+            "schema_version": "torghut.replay-tape-cost-model.v1",
+            "pnl_basis": POST_COST_PNL_BASIS,
+            "start_equity": str(getattr(args, "start_equity", "31590.02")),
+            "preview_cost_lineage": "spread_plus_square_root_impact_prefilter",
+        }
+    )
+
+
+def _materialized_replay_tape_strategy_family(args: argparse.Namespace) -> str:
+    path = Path(getattr(args, "strategy_configmap", "strategy-configmap.yaml"))
+    return f"whitepaper-autoresearch:{path.name}"
 
 
 def _fast_replay_preview_date_arg(args: argparse.Namespace, key: str) -> date:

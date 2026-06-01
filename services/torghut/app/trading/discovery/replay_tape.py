@@ -58,6 +58,9 @@ class ReplayTapeManifest:
     artifact_refs: Mapping[str, str]
     source_table_versions: Mapping[str, str]
     created_at: datetime
+    feature_schema_hash: str = ""
+    cost_model_hash: str = ""
+    strategy_family: str = ""
     replay_cache_key: str = ""
     requested_trading_days: tuple[date, ...] = ()
     observed_trading_days: tuple[date, ...] = ()
@@ -90,6 +93,9 @@ class ReplayTapeManifest:
             "row_count": self.row_count,
             "source_query_digest": self.source_query_digest,
             "content_sha256": self.content_sha256,
+            "feature_schema_hash": self.feature_schema_hash,
+            "cost_model_hash": self.cost_model_hash,
+            "strategy_family": self.strategy_family,
             "replay_cache_key": self.replay_cache_key,
             "artifact_refs": dict(self.artifact_refs),
             "source_table_versions": dict(self.source_table_versions),
@@ -143,6 +149,9 @@ class ReplayTapeManifest:
             row_count=int(payload.get("row_count") or 0),
             source_query_digest=str(payload.get("source_query_digest") or ""),
             content_sha256=str(payload.get("content_sha256") or ""),
+            feature_schema_hash=str(payload.get("feature_schema_hash") or ""),
+            cost_model_hash=str(payload.get("cost_model_hash") or ""),
+            strategy_family=str(payload.get("strategy_family") or ""),
             replay_cache_key=str(payload.get("replay_cache_key") or ""),
             artifact_refs=_string_mapping(payload.get("artifact_refs")),
             source_table_versions=_string_mapping(payload.get("source_table_versions")),
@@ -188,6 +197,9 @@ def build_replay_tape_cache_key(
     start_date: date,
     end_date: date,
     source_query_digest: str,
+    feature_schema_hash: str = "",
+    cost_model_hash: str = "",
+    strategy_family: str = "",
     source_table_versions: Mapping[str, str] | None = None,
 ) -> str:
     """Build a stable cache key for a manifest-verified replay tape input set."""
@@ -200,6 +212,9 @@ def build_replay_tape_cache_key(
             "start_date": start_date,
             "end_date": end_date,
             "source_query_digest": source_query_digest,
+            "feature_schema_hash": str(feature_schema_hash or ""),
+            "cost_model_hash": str(cost_model_hash or ""),
+            "strategy_family": str(strategy_family or ""),
             "source_table_versions": dict(source_table_versions or {}),
         }
     )
@@ -215,6 +230,9 @@ def materialize_signal_tape(
     start_date: date,
     end_date: date,
     source_query_digest: str,
+    feature_schema_hash: str = "",
+    cost_model_hash: str = "",
+    strategy_family: str = "",
     source_table_versions: Mapping[str, str] | None = None,
     artifact_refs: Mapping[str, str] | None = None,
     created_at: datetime | None = None,
@@ -283,6 +301,9 @@ def materialize_signal_tape(
         start_date=start_date,
         end_date=end_date,
         source_query_digest=source_query_digest,
+        feature_schema_hash=feature_schema_hash,
+        cost_model_hash=cost_model_hash,
+        strategy_family=strategy_family,
         source_table_versions=source_table_versions,
     )
     manifest = ReplayTapeManifest(
@@ -300,6 +321,9 @@ def materialize_signal_tape(
         row_count=len(ordered_rows),
         source_query_digest=source_query_digest,
         content_sha256=content_hash.hexdigest(),
+        feature_schema_hash=str(feature_schema_hash or ""),
+        cost_model_hash=str(cost_model_hash or ""),
+        strategy_family=str(strategy_family or ""),
         replay_cache_key=replay_cache_key,
         artifact_refs=resolved_artifact_refs,
         source_table_versions=dict(source_table_versions or {}),

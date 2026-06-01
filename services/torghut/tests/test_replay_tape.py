@@ -209,9 +209,48 @@ class TestReplayTape(TestCase):
             source_query_digest=first_digest,
             source_table_versions={"signals": "v1"},
         )
+        changed_dataset_key = build_replay_tape_cache_key(
+            dataset_snapshot_ref="snapshot-b",
+            symbols=("AAPL", "NVDA"),
+            start_date=date(2026, 3, 27),
+            end_date=date(2026, 3, 27),
+            source_query_digest=first_digest,
+            source_table_versions={"signals": "v1"},
+        )
+        changed_feature_schema_key = build_replay_tape_cache_key(
+            dataset_snapshot_ref="snapshot-a",
+            symbols=("AAPL", "NVDA"),
+            start_date=date(2026, 3, 27),
+            end_date=date(2026, 3, 27),
+            source_query_digest=first_digest,
+            feature_schema_hash="feature-schema-v2",
+            source_table_versions={"signals": "v1"},
+        )
+        changed_cost_model_key = build_replay_tape_cache_key(
+            dataset_snapshot_ref="snapshot-a",
+            symbols=("AAPL", "NVDA"),
+            start_date=date(2026, 3, 27),
+            end_date=date(2026, 3, 27),
+            source_query_digest=first_digest,
+            cost_model_hash="cost-model-v2",
+            source_table_versions={"signals": "v1"},
+        )
+        changed_family_key = build_replay_tape_cache_key(
+            dataset_snapshot_ref="snapshot-a",
+            symbols=("AAPL", "NVDA"),
+            start_date=date(2026, 3, 27),
+            end_date=date(2026, 3, 27),
+            source_query_digest=first_digest,
+            strategy_family="hpairs-v2",
+            source_table_versions={"signals": "v1"},
+        )
 
         self.assertEqual(first_key, reordered_key)
         self.assertNotEqual(first_key, changed_key)
+        self.assertNotEqual(first_key, changed_dataset_key)
+        self.assertNotEqual(first_key, changed_feature_schema_key)
+        self.assertNotEqual(first_key, changed_cost_model_key)
+        self.assertNotEqual(first_key, changed_family_key)
 
         with TemporaryDirectory() as tmpdir:
             manifest = materialize_signal_tape(
@@ -222,11 +261,32 @@ class TestReplayTape(TestCase):
                 start_date=date(2026, 3, 27),
                 end_date=date(2026, 3, 27),
                 source_query_digest=first_digest,
+                feature_schema_hash="feature-schema-v1",
+                cost_model_hash="cost-model-v1",
+                strategy_family="hpairs-v1",
                 source_table_versions={"signals": "v1"},
             )
 
-        self.assertEqual(manifest.replay_cache_key, first_key)
-        self.assertEqual(manifest.to_payload()["replay_cache_key"], first_key)
+        expected_materialized_key = build_replay_tape_cache_key(
+            dataset_snapshot_ref="snapshot-a",
+            symbols=("NVDA", "AAPL"),
+            start_date=date(2026, 3, 27),
+            end_date=date(2026, 3, 27),
+            source_query_digest=first_digest,
+            feature_schema_hash="feature-schema-v1",
+            cost_model_hash="cost-model-v1",
+            strategy_family="hpairs-v1",
+            source_table_versions={"signals": "v1"},
+        )
+        self.assertEqual(manifest.replay_cache_key, expected_materialized_key)
+        self.assertEqual(
+            manifest.to_payload()["replay_cache_key"], expected_materialized_key
+        )
+        self.assertEqual(
+            manifest.to_payload()["feature_schema_hash"], "feature-schema-v1"
+        )
+        self.assertEqual(manifest.to_payload()["cost_model_hash"], "cost-model-v1")
+        self.assertEqual(manifest.to_payload()["strategy_family"], "hpairs-v1")
 
     def test_materialize_manifest_session_window_follows_new_york_dst(self) -> None:
         with TemporaryDirectory() as tmpdir:

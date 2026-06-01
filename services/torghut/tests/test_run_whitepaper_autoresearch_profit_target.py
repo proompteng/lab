@@ -4615,9 +4615,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             tape_path = Path(tmpdir) / "tape.jsonl"
             rows = [
                 SignalEnvelope(
-                    event_ts=datetime(
-                        2026, 2, 23, 14, 30 + index, tzinfo=timezone.utc
-                    ),
+                    event_ts=datetime(2026, 2, 23, 14, 30 + index, tzinfo=timezone.utc),
                     symbol=symbol,
                     timeframe="1Min",
                     seq=index,
@@ -4651,6 +4649,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             args.symbols = "NVDA,AAPL,INTC"
             args.replay_tape_path = tape_path
             args.replay_tape_preview_top_k = 8
+            args.replay_tape_exact_candidate_cap = 99
             candidate_selection = {
                 "schema_version": "torghut.whitepaper-autoresearch-selection.v1",
                 "budget": {"selected_count": len(specs)},
@@ -4687,6 +4686,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             queue_payload["proof_semantics"]["label"],
             fast_replay.FAST_REPLAY_PROOF_SEMANTICS_LABEL,
         )
+        self.assertTrue(queue_payload["prefilter_only"])
+        self.assertFalse(queue_payload["promotion_allowed"])
+        self.assertFalse(queue_payload["final_promotion_allowed"])
         self.assertEqual(
             [entry["frontier_bucket"] for entry in queue_payload["entries"]],
             [
@@ -4698,6 +4700,80 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 "exploration",
             ],
         )
+        first_entry = queue_payload["entries"][0]
+        self.assertIn("observed_post_cost_expectancy_bps", first_entry)
+        self.assertIn("required_daily_notional", first_entry)
+        self.assertIn("target_implied_notional_context", first_entry)
+        self.assertIn("cost_impact_lineage", first_entry)
+        self.assertEqual(
+            first_entry["adv_capacity_context"]["status"], "missing_source_backed_adv"
+        )
+        self.assertIn("source_backed_adv_missing", first_entry["lineage_blockers"])
+        self.assertFalse(first_entry["promotion_allowed"])
+        self.assertFalse(first_entry["final_promotion_allowed"])
+
+    def test_staged_replay_frontier_default_resolvers_fail_closed(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            args = self._args(Path(tmpdir))
+            args.staged_replay_frontier_default = False
+            args.disable_staged_replay_frontier = False
+            args.replay_mode = "real"
+            args.replay_tape_path = Path(tmpdir) / "tape.jsonl"
+            args.selection_only = False
+            args.full_window_start_date = "2026-02-23"
+            args.full_window_end_date = "2026-02-27"
+
+            self.assertEqual(runner._resolved_fast_replay_preview_top_k(args), 0)
+            self.assertFalse(runner._auto_materialize_staged_replay_tape(args))
+
+            args.staged_replay_frontier_default = True
+            args.disable_staged_replay_frontier = True
+            self.assertEqual(runner._resolved_fast_replay_preview_top_k(args), 0)
+            self.assertFalse(runner._auto_materialize_staged_replay_tape(args))
+
+            args.disable_staged_replay_frontier = False
+            args.replay_mode = "synthetic"
+            self.assertEqual(runner._resolved_fast_replay_preview_top_k(args), 0)
+            self.assertFalse(runner._auto_materialize_staged_replay_tape(args))
+
+            args.replay_mode = "real"
+            args.replay_tape_path = None
+            self.assertEqual(runner._resolved_fast_replay_preview_top_k(args), 0)
+
+            args.selection_only = True
+            self.assertFalse(runner._auto_materialize_staged_replay_tape(args))
+
+            args.selection_only = False
+            args.replay_tape_path = Path(tmpdir) / "provided-tape.jsonl"
+            self.assertFalse(runner._auto_materialize_staged_replay_tape(args))
+
+            args.replay_tape_path = None
+            args.full_window_start_date = ""
+            self.assertFalse(runner._auto_materialize_staged_replay_tape(args))
+
+            args.full_window_start_date = "2026-02-23"
+            args.full_window_end_date = ""
+            self.assertFalse(runner._auto_materialize_staged_replay_tape(args))
+
+    def test_staged_replay_frontier_default_resolvers_enable_bounded_real_path(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            args = self._args(Path(tmpdir))
+            args.staged_replay_frontier_default = True
+            args.disable_staged_replay_frontier = False
+            args.replay_mode = "real"
+            args.replay_tape_path = Path(tmpdir) / "tape.jsonl"
+            args.replay_tape_preview_top_k = 0
+            args.max_candidates = 77
+            args.selection_only = False
+            args.full_window_start_date = "2026-02-23"
+            args.full_window_end_date = "2026-02-27"
+
+            self.assertEqual(runner._resolved_fast_replay_preview_top_k(args), 77)
+
+            args.replay_tape_path = None
+            self.assertTrue(runner._auto_materialize_staged_replay_tape(args))
 
     def test_fast_replay_preview_scores_microstructure_diagnostics_preview_only(
         self,

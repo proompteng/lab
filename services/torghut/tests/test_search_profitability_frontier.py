@@ -239,6 +239,31 @@ class TestSearchProfitabilityFrontier(TestCase):
     ) -> None:
         self.assertEqual(iter_parameter_candidates({}), [{}])
 
+    def test_frontier_ranking_helpers_cover_sparse_and_invalid_payloads(self) -> None:
+        self.assertEqual(frontier._daily_decimal_mapping({}, field="net_pnl"), {})
+        self.assertEqual(
+            frontier._daily_decimal_mapping(
+                {"daily": {"2026-03-21": "not-a-mapping"}}, field="net_pnl"
+            ),
+            {},
+        )
+        self.assertEqual(
+            frontier._total_filled_notional(
+                holdout_payload={"filled_notional": "999"},
+                daily_filled_notional={"2026-03-21": Decimal("250")},
+            ),
+            Decimal("250"),
+        )
+        self.assertEqual(frontier._median_decimal([]), Decimal("0"))
+        self.assertEqual(
+            frontier._median_decimal([Decimal("10"), Decimal("20")]), Decimal("15")
+        )
+        self.assertEqual(frontier._quantile_floor([], Decimal("0.10")), Decimal("0"))
+        self.assertEqual(
+            frontier._best_day_share({"2026-03-21": Decimal("-1")}), Decimal("1")
+        )
+        self.assertEqual(frontier._decimal_or_zero("not-a-decimal"), Decimal("0"))
+
     def test_apply_candidate_to_configmap_updates_target_and_disables_others(
         self,
     ) -> None:
@@ -694,6 +719,20 @@ class TestSearchProfitabilityFrontier(TestCase):
                 ],
                 "0.55",
             )
+            self.assertTrue(
+                payload["frontier_ranking_policy"][
+                    "prefers_distribution_over_single_lucky_day"
+                ]
+            )
+            ranking = payload["top"][0]["frontier_ranking"]
+            self.assertEqual(ranking["median_daily_net_pnl"], "300")
+            self.assertEqual(ranking["p10_daily_net_pnl"], "0")
+            self.assertIn("best_day_share", ranking)
+            self.assertIn("drawdown", ranking)
+            self.assertEqual(ranking["closed_trade_count"], 3)
+            self.assertIn("filled_notional", ranking)
+            self.assertIn("target_implied_notional", ranking)
+            self.assertIn("filled_notional_missing", ranking["blockers"])
 
     def test_main_ranks_three_candidates_deterministically(self) -> None:
         with TemporaryDirectory() as tmpdir:

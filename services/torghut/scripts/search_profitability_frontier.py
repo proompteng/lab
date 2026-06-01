@@ -11,7 +11,7 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, ROUND_FLOOR
 from pathlib import Path
 from typing import Any, Iterable, Mapping, cast
 
@@ -32,6 +32,7 @@ from scripts.local_intraday_tsmom_replay import (
 _SWEEP_SCHEMA_VERSION = "torghut.replay-frontier-sweep.v1"
 _REPLAY_SIGNAL_TABLE = "torghut.ta_signals"
 _LOCAL_ONLY_STRATEGY_OVERRIDE_KEYS = frozenset({"normalization_regime"})
+_DEFAULT_FRONTIER_TARGET_NET_PNL_PER_DAY = Decimal("500")
 
 
 @dataclass(frozen=True)
@@ -384,7 +385,14 @@ def main() -> int:
         for symbol in str(args.symbols or "").split(",")
         if symbol.strip()
     )
-    scored = []
+    target_net_pnl_per_day = Decimal(
+        str(
+            constraints.get(
+                "target_net_pnl_per_day", _DEFAULT_FRONTIER_TARGET_NET_PNL_PER_DAY
+            )
+        )
+    )
+    scored: list[tuple[Any, dict[str, Any]]] = []
 
     with tempfile.TemporaryDirectory(
         prefix="torghut-profitability-frontier-"
@@ -447,31 +455,34 @@ def main() -> int:
                         ),
                     )
                 )
+                result = score_replay_profitability_candidate(
+                    family=family,
+                    strategy_name=strategy_name,
+                    replay_config={
+                        "candidate_index": index,
+                        "params": candidate,
+                        "strategy_overrides": dict(strategy_overrides),
+                        "train_start_date": window.train_start.isoformat(),
+                        "train_end_date": window.train_end.isoformat(),
+                        "holdout_start_date": window.holdout_start.isoformat(),
+                        "holdout_end_date": window.holdout_end.isoformat(),
+                    },
+                    train_payload=train_payload,
+                    holdout_payload=holdout_payload,
+                    policy=policy,
+                )
                 scored.append(
-                    score_replay_profitability_candidate(
-                        family=family,
-                        strategy_name=strategy_name,
-                        replay_config={
-                            "candidate_index": index,
-                            "params": candidate,
-                            "strategy_overrides": dict(strategy_overrides),
-                            "train_start_date": window.train_start.isoformat(),
-                            "train_end_date": window.train_end.isoformat(),
-                            "holdout_start_date": window.holdout_start.isoformat(),
-                            "holdout_end_date": window.holdout_end.isoformat(),
-                        },
-                        train_payload=train_payload,
-                        holdout_payload=holdout_payload,
-                        policy=policy,
+                    (
+                        result,
+                        _frontier_ranking_diagnostics(
+                            holdout_payload=holdout_payload,
+                            target_net_pnl_per_day=target_net_pnl_per_day,
+                        ),
                     )
                 )
 
     scored.sort(
-        key=lambda item: (
-            item.score,
-            item.holdout_net_per_day,
-            item.profit_factor or Decimal("-1"),
-        ),
+        key=lambda item: _frontier_ranking_key(item[0], item[1]),
         reverse=True,
     )
     payload = {
@@ -499,7 +510,23 @@ def main() -> int:
             "require_holdout_decisions": policy.require_holdout_decisions,
         },
         "candidate_count": len(scored),
-        "top": [item.to_payload() for item in scored[: max(1, int(args.top_n))]],
+        "frontier_ranking_policy": {
+            "schema_version": "torghut.replay-frontier-ranking-policy.v1",
+            "target_net_pnl_per_day": str(target_net_pnl_per_day),
+            "prefers_distribution_over_single_lucky_day": True,
+            "sort_terms": [
+                "target_implied_notional_feasible",
+                "median_daily_net_pnl",
+                "p10_daily_net_pnl",
+                "inverse_best_day_share",
+                "inverse_drawdown",
+                "score",
+            ],
+        },
+        "top": [
+            _sweep_candidate_payload_with_frontier_metrics(item, metrics)
+            for item, metrics in scored[: max(1, int(args.top_n))]
+        ],
     }
 
     if args.json_output:
@@ -516,6 +543,186 @@ def cli_main() -> int:
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
+
+
+def _frontier_ranking_diagnostics(
+    *,
+    holdout_payload: Mapping[str, Any],
+    target_net_pnl_per_day: Decimal,
+) -> dict[str, Any]:
+    daily_net = _daily_decimal_mapping(holdout_payload, field="net_pnl")
+    daily_filled_notional = _daily_decimal_mapping(
+        holdout_payload, field="filled_notional"
+    )
+    values = list(daily_net.values())
+    total_net = sum(values, Decimal("0"))
+    total_filled_notional = _total_filled_notional(
+        holdout_payload=holdout_payload,
+        daily_filled_notional=daily_filled_notional,
+    )
+    day_count = len(values)
+    avg_filled_notional_per_day = (
+        total_filled_notional / Decimal(day_count) if day_count > 0 else Decimal("0")
+    )
+    observed_post_cost_expectancy_bps = (
+        (total_net / total_filled_notional) * Decimal("10000")
+        if total_filled_notional > 0
+        else Decimal("0")
+    )
+    required_daily_notional = (
+        target_net_pnl_per_day / (observed_post_cost_expectancy_bps / Decimal("10000"))
+        if observed_post_cost_expectancy_bps > 0
+        else None
+    )
+    best_day_share = _best_day_share(daily_net)
+    drawdown = _daily_drawdown(daily_net)
+    closed_trade_count = int(holdout_payload.get("filled_count", 0) or 0)
+    feasible = (
+        required_daily_notional is not None
+        and avg_filled_notional_per_day >= required_daily_notional
+    )
+    blockers: list[str] = []
+    if total_filled_notional <= 0:
+        blockers.append("filled_notional_missing")
+    if required_daily_notional is None:
+        blockers.append("positive_post_cost_expectancy_missing")
+    if not feasible:
+        blockers.append("target_implied_notional_not_observed_feasible")
+    return {
+        "schema_version": "torghut.replay-frontier-ranking-metrics.v1",
+        "median_daily_net_pnl": str(_median_decimal(values)),
+        "p10_daily_net_pnl": str(_quantile_floor(values, Decimal("0.10"))),
+        "worst_day_net_pnl": str(min(values) if values else Decimal("0")),
+        "best_day_share": str(best_day_share),
+        "drawdown": str(drawdown),
+        "closed_trade_count": closed_trade_count,
+        "filled_notional": str(total_filled_notional),
+        "avg_filled_notional_per_day": str(avg_filled_notional_per_day),
+        "observed_post_cost_expectancy_bps": str(observed_post_cost_expectancy_bps),
+        "target_implied_notional": {
+            "target_net_pnl_per_day": str(target_net_pnl_per_day),
+            "required_daily_notional": str(required_daily_notional)
+            if required_daily_notional is not None
+            else None,
+            "feasible": feasible,
+            "feasibility_status": "observed_feasible"
+            if feasible
+            else "not_observed_feasible",
+        },
+        "blockers": blockers,
+    }
+
+
+def _frontier_ranking_key(result: Any, metrics: Mapping[str, Any]) -> tuple[Any, ...]:
+    target_implied = metrics.get("target_implied_notional")
+    feasible = (
+        bool(target_implied.get("feasible"))
+        if isinstance(target_implied, Mapping)
+        else False
+    )
+    return (
+        feasible,
+        _decimal_from_mapping(metrics, "median_daily_net_pnl"),
+        _decimal_from_mapping(metrics, "p10_daily_net_pnl"),
+        -_decimal_from_mapping(metrics, "best_day_share"),
+        -_decimal_from_mapping(metrics, "drawdown"),
+        result.score,
+        result.holdout_net_per_day,
+        result.profit_factor or Decimal("-1"),
+    )
+
+
+def _sweep_candidate_payload_with_frontier_metrics(
+    result: Any,
+    metrics: Mapping[str, Any],
+) -> dict[str, Any]:
+    payload = result.to_payload()
+    payload["frontier_ranking"] = dict(metrics)
+    return payload
+
+
+def _daily_decimal_mapping(
+    payload: Mapping[str, Any], *, field: str
+) -> dict[str, Decimal]:
+    daily_payload = payload.get("daily")
+    if not isinstance(daily_payload, Mapping):
+        return {}
+    values: dict[str, Decimal] = {}
+    for day, raw in cast(Mapping[str, Any], daily_payload).items():
+        if not isinstance(raw, Mapping):
+            continue
+        values[str(day)] = _decimal_or_zero(cast(Mapping[str, Any], raw).get(field))
+    return values
+
+
+def _total_filled_notional(
+    *,
+    holdout_payload: Mapping[str, Any],
+    daily_filled_notional: Mapping[str, Decimal],
+) -> Decimal:
+    total = sum(daily_filled_notional.values(), Decimal("0"))
+    if total > 0:
+        return total
+    return _decimal_or_zero(
+        holdout_payload.get("filled_notional")
+        or holdout_payload.get("total_filled_notional")
+        or holdout_payload.get("turnover_notional")
+    )
+
+
+def _median_decimal(values: list[Decimal]) -> Decimal:
+    if not values:
+        return Decimal("0")
+    ordered = sorted(values)
+    midpoint = len(ordered) // 2
+    if len(ordered) % 2 == 1:
+        return ordered[midpoint]
+    return (ordered[midpoint - 1] + ordered[midpoint]) / Decimal("2")
+
+
+def _quantile_floor(values: list[Decimal], quantile: Decimal) -> Decimal:
+    if not values:
+        return Decimal("0")
+    ordered = sorted(values)
+    index = int(
+        (
+            Decimal(len(ordered) - 1) * min(max(quantile, Decimal("0")), Decimal("1"))
+        ).to_integral_value(rounding=ROUND_FLOOR)
+    )
+    return ordered[index]
+
+
+def _best_day_share(daily_net: Mapping[str, Decimal]) -> Decimal:
+    positive_total = sum(
+        (value for value in daily_net.values() if value > 0), Decimal("0")
+    )
+    if positive_total <= 0:
+        return Decimal("1")
+    return max(daily_net.values(), default=Decimal("0")) / positive_total
+
+
+def _daily_drawdown(daily_net: Mapping[str, Decimal]) -> Decimal:
+    peak = Decimal("0")
+    cumulative = Decimal("0")
+    drawdown = Decimal("0")
+    for day in sorted(daily_net):
+        cumulative += daily_net[day]
+        peak = max(peak, cumulative)
+        drawdown = max(drawdown, peak - cumulative)
+    return drawdown
+
+
+def _decimal_or_zero(value: Any) -> Decimal:
+    if value is None:
+        return Decimal("0")
+    try:
+        return Decimal(str(value))
+    except Exception:
+        return Decimal("0")
+
+
+def _decimal_from_mapping(payload: Mapping[str, Any], key: str) -> Decimal:
+    return _decimal_or_zero(payload.get(key))
 
 
 if __name__ == "__main__":

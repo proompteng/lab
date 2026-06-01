@@ -17,7 +17,10 @@ from app.trading.models import SignalEnvelope
 
 FAST_REPLAY_PREVIEW_SCHEMA_VERSION = "torghut.fast-replay-preview.v2"
 FAST_REPLAY_PREVIEW_ROW_SCHEMA_VERSION = "torghut.fast-replay-preview-row.v3"
-FAST_REPLAY_PROOF_SEMANTICS_LABEL = "preview_ranking_only_exact_replay_and_runtime_ledger_required"
+FAST_REPLAY_PROOF_SEMANTICS_LABEL = (
+    "preview_ranking_only_exact_replay_and_runtime_ledger_required"
+)
+FAST_REPLAY_TARGET_NET_PNL_PER_DAY = Decimal("500")
 FAST_REPLAY_WHITEPAPER_MECHANISMS = (
     "cluster_lob_event_clustering_proxy",
     "ofi_horizon_decay_regime_screen",
@@ -59,6 +62,11 @@ class FastReplayPreviewRow:
     proof_semantics_label: str = FAST_REPLAY_PROOF_SEMANTICS_LABEL
 
     def to_payload(self) -> dict[str, Any]:
+        observed_post_cost_expectancy_bps = _observed_post_cost_expectancy_bps(self)
+        required_daily_notional = _required_daily_notional_for_target(
+            observed_post_cost_expectancy_bps
+        )
+        lineage_blockers = _lineage_blockers_for_row(self)
         return {
             "schema_version": FAST_REPLAY_PREVIEW_ROW_SCHEMA_VERSION,
             "candidate_spec_id": self.candidate_spec_id,
@@ -84,12 +92,50 @@ class FastReplayPreviewRow:
             "ofi_decay_alignment_score": str(self.ofi_decay_alignment_score),
             "liquidity_regime_score": str(self.liquidity_regime_score),
             "macro_stress_veto_score": str(self.macro_stress_veto_score),
-            "conformal_tail_risk_penalty_bps": str(self.conformal_tail_risk_penalty_bps),
+            "conformal_tail_risk_penalty_bps": str(
+                self.conformal_tail_risk_penalty_bps
+            ),
             "square_root_impact_capacity_penalty_bps": str(
                 self.square_root_impact_capacity_penalty_bps
             ),
             "exploration_score": str(self.exploration_score),
             "frontier_bucket": self.frontier_bucket,
+            "observed_post_cost_expectancy_bps": str(observed_post_cost_expectancy_bps),
+            "required_daily_notional": str(required_daily_notional)
+            if required_daily_notional is not None
+            else None,
+            "target_implied_notional_context": {
+                "target_net_pnl_per_day": str(FAST_REPLAY_TARGET_NET_PNL_PER_DAY),
+                "observed_post_cost_expectancy_bps": str(
+                    observed_post_cost_expectancy_bps
+                ),
+                "required_daily_notional": str(required_daily_notional)
+                if required_daily_notional is not None
+                else None,
+                "feasibility_status": "unknown_source_backed_adv_required",
+                "prefilter_only": True,
+            },
+            "cost_impact_lineage": {
+                "status": "preview_prefilter_only",
+                "source": "manifest_verified_replay_tape",
+                "cost_basis": "signed_return_minus_spread_plus_square_root_impact_penalty",
+                "median_spread_bps": str(self.median_spread_bps),
+                "impact_liquidity_penalty_bps": str(self.impact_liquidity_penalty_bps),
+                "square_root_impact_capacity_penalty_bps": str(
+                    self.square_root_impact_capacity_penalty_bps
+                ),
+                "observed_post_cost_expectancy_bps": str(
+                    observed_post_cost_expectancy_bps
+                ),
+            },
+            "adv_capacity_context": {
+                "status": "missing_source_backed_adv",
+                "source": "missing_external_adv_source",
+                "as_of": None,
+                "as_of_status": "missing",
+                "prefilter_only": True,
+            },
+            "lineage_blockers": list(lineage_blockers),
             "proof_semantics_label": self.proof_semantics_label,
             "whitepaper_mechanisms": list(FAST_REPLAY_WHITEPAPER_MECHANISMS),
             "promotion_proof": False,
@@ -221,7 +267,9 @@ def build_fast_replay_preview(
         _row_with_rank_and_selection(
             row=row,
             rank=index,
-            frontier_bucket=selected_bucket_by_id.get(row.candidate_spec_id, "not_selected"),
+            frontier_bucket=selected_bucket_by_id.get(
+                row.candidate_spec_id, "not_selected"
+            ),
         )
         for index, row in enumerate(ranked_rows, start=1)
     )
@@ -282,7 +330,9 @@ def _build_symbol_stats(rows: Sequence[SignalEnvelope]) -> dict[str, _SymbolTape
         volume_values = [
             volume for row in ordered if (volume := _extract_volume(row)) is not None
         ]
-        abs_returns = np.abs(returns) if returns.size else np.asarray([], dtype=np.float64)
+        abs_returns = (
+            np.abs(returns) if returns.size else np.asarray([], dtype=np.float64)
+        )
         stats[symbol] = _SymbolTapeStats(
             symbol=symbol,
             row_count=len(ordered),
@@ -325,7 +375,9 @@ def _score_candidate_spec(
     min_rows_per_candidate: int,
 ) -> FastReplayPreviewRow:
     requested_symbols = _candidate_symbols(spec)
-    matched = [stat for symbol in requested_symbols if (stat := symbol_stats.get(symbol))]
+    matched = [
+        stat for symbol in requested_symbols if (stat := symbol_stats.get(symbol))
+    ]
     matched_row_count = sum(stat.row_count for stat in matched)
     requested_symbol_count = len(requested_symbols)
     matched_symbol_count = len(matched)
@@ -339,7 +391,9 @@ def _score_candidate_spec(
             matched_row_count=matched_row_count,
             matched_symbol_count=matched_symbol_count,
             requested_symbol_count=requested_symbol_count,
-            trading_day_count=max((stat.trading_day_count for stat in matched), default=0),
+            trading_day_count=max(
+                (stat.trading_day_count for stat in matched), default=0
+            ),
             signed_return_bps=Decimal("0"),
             avg_abs_return_bps=Decimal("0"),
             median_spread_bps=Decimal("0"),
@@ -361,9 +415,15 @@ def _score_candidate_spec(
         )
 
     return_vectors = [stat.returns_bps for stat in matched if stat.returns_bps.size]
-    returns = np.concatenate(return_vectors) if return_vectors else np.asarray([], dtype=np.float64)
+    returns = (
+        np.concatenate(return_vectors)
+        if return_vectors
+        else np.asarray([], dtype=np.float64)
+    )
     direction = _candidate_direction(spec)
-    signed_returns = returns * direction if returns.size else np.asarray([], dtype=np.float64)
+    signed_returns = (
+        returns * direction if returns.size else np.asarray([], dtype=np.float64)
+    )
     signed_return_bps = float(np.mean(signed_returns)) if signed_returns.size else 0.0
     avg_abs_return_bps = float(np.mean(np.abs(returns))) if returns.size else 0.0
     median_spread_bps = float(np.median([stat.median_spread_bps for stat in matched]))
@@ -377,7 +437,9 @@ def _score_candidate_spec(
     microprice_bias_bps = _weighted_average(
         [(stat.microprice_bias_bps, stat.row_count) for stat in matched]
     )
-    return_tail_abs_bps = float(np.median([stat.return_tail_abs_bps for stat in matched]))
+    return_tail_abs_bps = float(
+        np.median([stat.return_tail_abs_bps for stat in matched])
+    )
     median_volume = float(np.median([stat.median_volume for stat in matched]))
     median_price = float(np.median([stat.median_price for stat in matched]))
     activity_score = float(np.log1p(matched_row_count))
@@ -454,7 +516,9 @@ def _score_candidate_spec(
         ofi_decay_alignment_score=_decimal_from_float(ofi_decay_alignment_score),
         liquidity_regime_score=_decimal_from_float(liquidity_regime_score),
         macro_stress_veto_score=_decimal_from_float(macro_stress_veto_score),
-        conformal_tail_risk_penalty_bps=_decimal_from_float(conformal_tail_risk_penalty_bps),
+        conformal_tail_risk_penalty_bps=_decimal_from_float(
+            conformal_tail_risk_penalty_bps
+        ),
         square_root_impact_capacity_penalty_bps=_decimal_from_float(
             square_root_impact_capacity_penalty_bps
         ),
@@ -478,7 +542,11 @@ def _select_frontier_buckets(
     exploration_count: int,
     exact_replay_candidate_cap: int,
 ) -> dict[str, str]:
-    eligible = [row for row in ranked_rows if row.selection_reason != "insufficient_replay_tape_rows"]
+    eligible = [
+        row
+        for row in ranked_rows
+        if row.selection_reason != "insufficient_replay_tape_rows"
+    ]
     selected: dict[str, str] = {}
     for row in eligible[:exploitation_count]:
         if len(selected) >= exact_replay_candidate_cap:
@@ -560,7 +628,9 @@ def _ewma_last(values: NDArray[np.float64], *, half_life: float) -> float:
     return float(np.sum(values * weights) / total)
 
 
-def _cluster_lob_activity_score(rows: Sequence[SignalEnvelope], ofi_values: NDArray[np.float64]) -> float:
+def _cluster_lob_activity_score(
+    rows: Sequence[SignalEnvelope], ofi_values: NDArray[np.float64]
+) -> float:
     event_labels = [_event_label(row) for row in rows]
     label_entropy = _normalized_entropy(event_labels)
     pressure = float(np.mean(np.abs(ofi_values))) if ofi_values.size else 0.0
@@ -569,12 +639,21 @@ def _cluster_lob_activity_score(rows: Sequence[SignalEnvelope], ofi_values: NDAr
         burstiness = float(np.clip(np.percentile(changes, 75), 0.0, 1.0))
     else:
         burstiness = 0.0
-    return float(np.clip(0.35 * label_entropy + 0.45 * pressure + 0.20 * burstiness, 0.0, 1.0))
+    return float(
+        np.clip(0.35 * label_entropy + 0.45 * pressure + 0.20 * burstiness, 0.0, 1.0)
+    )
 
 
 def _event_label(signal: SignalEnvelope) -> str:
     payload = signal.payload
-    for key in ("cluster_lob_label", "order_cluster", "event_type", "order_event_type", "side", "liquidity_side"):
+    for key in (
+        "cluster_lob_label",
+        "order_cluster",
+        "event_type",
+        "order_event_type",
+        "side",
+        "liquidity_side",
+    ):
         value = str(payload.get(key) or "").strip().lower()
         if value:
             return value
@@ -589,7 +668,9 @@ def _normalized_entropy(labels: Sequence[str]) -> float:
         counts[label] = counts.get(label, 0) + 1
     if len(counts) <= 1:
         return 0.0
-    probabilities = np.asarray([count / len(labels) for count in counts.values()], dtype=np.float64)
+    probabilities = np.asarray(
+        [count / len(labels) for count in counts.values()], dtype=np.float64
+    )
     entropy = -float(np.sum(probabilities * np.log(probabilities)))
     return float(np.clip(entropy / np.log(len(counts)), 0.0, 1.0))
 
@@ -604,7 +685,13 @@ def _liquidity_regime_score(
     tight_spread_score = 1.0 / (1.0 + max(0.0, median_spread) / 10.0)
     volume_score = float(np.clip(np.log1p(max(0.0, median_volume)) / 12.0, 0.0, 1.0))
     coverage_score = float(np.clip(np.log1p(row_count) / 8.0, 0.0, 1.0))
-    return float(np.clip(0.45 * tight_spread_score + 0.35 * volume_score + 0.20 * coverage_score, 0.0, 1.0))
+    return float(
+        np.clip(
+            0.45 * tight_spread_score + 0.35 * volume_score + 0.20 * coverage_score,
+            0.0,
+            1.0,
+        )
+    )
 
 
 def _macro_stress_veto_score(rows: Sequence[SignalEnvelope]) -> float:
@@ -654,7 +741,11 @@ def _conformal_tail_risk_penalty_bps(signed_returns_bps: NDArray[np.float64]) ->
 
 
 def _square_root_impact_capacity_penalty_bps(
-    *, spec: CandidateSpec, median_price: float, median_volume: float, median_spread_bps: float
+    *,
+    spec: CandidateSpec,
+    median_price: float,
+    median_volume: float,
+    median_spread_bps: float,
 ) -> float:
     notional = _candidate_notional(spec)
     if notional <= 0.0:
@@ -663,7 +754,13 @@ def _square_root_impact_capacity_penalty_bps(
     if dollar_volume <= 0.0:
         return 25.0 + median_spread_bps
     participation = notional / dollar_volume
-    return float(np.clip(np.sqrt(max(0.0, participation)) * 100.0 + median_spread_bps * 0.25, 0.0, 500.0))
+    return float(
+        np.clip(
+            np.sqrt(max(0.0, participation)) * 100.0 + median_spread_bps * 0.25,
+            0.0,
+            500.0,
+        )
+    )
 
 
 def _candidate_notional(spec: CandidateSpec) -> float:
@@ -675,7 +772,9 @@ def _candidate_symbols(spec: CandidateSpec) -> tuple[str, ...]:
     if isinstance(raw, Sequence) and not isinstance(raw, (str, bytes, bytearray)):
         raw_symbols = cast(Sequence[Any], raw)
         symbols = tuple(
-            sorted({_string(item).upper() for item in raw_symbols if _string(item).strip()})
+            sorted(
+                {_string(item).upper() for item in raw_symbols if _string(item).strip()}
+            )
         )
         if symbols:
             return symbols
@@ -695,7 +794,9 @@ def _candidate_direction(spec: CandidateSpec) -> float:
         )
         if item
     ).lower()
-    if any(token in text for token in ("reversal", "rebound", "washout", "mean_revert")):
+    if any(
+        token in text for token in ("reversal", "rebound", "washout", "mean_revert")
+    ):
         return -1.0
     return 1.0
 
@@ -753,11 +854,25 @@ def _extract_quote_depth_imbalance(signal: SignalEnvelope) -> float | None:
     payload = signal.payload
     bid_size = _first_float(
         payload,
-        ("bid_size", "bid_qty", "best_bid_size", "best_bid_qty", "bid_depth", "bid_volume"),
+        (
+            "bid_size",
+            "bid_qty",
+            "best_bid_size",
+            "best_bid_qty",
+            "bid_depth",
+            "bid_volume",
+        ),
     )
     ask_size = _first_float(
         payload,
-        ("ask_size", "ask_qty", "best_ask_size", "best_ask_qty", "ask_depth", "ask_volume"),
+        (
+            "ask_size",
+            "ask_qty",
+            "best_ask_size",
+            "best_ask_qty",
+            "ask_depth",
+            "ask_volume",
+        ),
     )
     if (
         bid_size is None
@@ -779,8 +894,12 @@ def _extract_microprice_bias_bps(signal: SignalEnvelope) -> float | None:
     if explicit_microprice is not None and price is not None and price > 0.0:
         return (explicit_microprice - price) / price * 10_000.0
 
-    bid_size = _first_float(payload, ("bid_size", "bid_qty", "best_bid_size", "best_bid_qty"))
-    ask_size = _first_float(payload, ("ask_size", "ask_qty", "best_ask_size", "best_ask_qty"))
+    bid_size = _first_float(
+        payload, ("bid_size", "bid_qty", "best_bid_size", "best_bid_qty")
+    )
+    ask_size = _first_float(
+        payload, ("ask_size", "ask_qty", "best_ask_size", "best_ask_qty")
+    )
     if (
         bid is None
         or ask is None
@@ -847,6 +966,31 @@ def _float_or_none(value: Any) -> float | None:
 
 def _decimal_from_float(value: float) -> Decimal:
     return Decimal(str(round(float(value), 8)))
+
+
+def _observed_post_cost_expectancy_bps(row: FastReplayPreviewRow) -> Decimal:
+    return (
+        row.signed_return_bps - row.median_spread_bps - row.impact_liquidity_penalty_bps
+    )
+
+
+def _required_daily_notional_for_target(expectancy_bps: Decimal) -> Decimal | None:
+    if expectancy_bps <= 0:
+        return None
+    return FAST_REPLAY_TARGET_NET_PNL_PER_DAY / (expectancy_bps / Decimal("10000"))
+
+
+def _lineage_blockers_for_row(row: FastReplayPreviewRow) -> tuple[str, ...]:
+    blockers = [
+        "source_backed_adv_missing",
+        "adv_as_of_missing",
+        "source_backed_cost_impact_model_required",
+        "exact_replay_required",
+        "live_paper_runtime_ledger_required",
+    ]
+    if _observed_post_cost_expectancy_bps(row) <= 0:
+        blockers.append("positive_post_cost_expectancy_missing")
+    return tuple(blockers)
 
 
 def _mapping(value: Any) -> dict[str, Any]:
