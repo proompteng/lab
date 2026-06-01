@@ -267,8 +267,8 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             consistency_repair_candidates=0,
             real_replay_timeout_seconds=0,
             real_replay_shard_size=0,
-            real_replay_shard_timeout_seconds=0,
-            real_replay_shard_workers=1,
+            real_replay_shard_timeout_seconds=runner._DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS,
+            real_replay_shard_workers=runner._DEFAULT_REAL_REPLAY_SHARD_WORKERS,
             real_replay_max_parallel_frontier_candidates=runner._DEFAULT_REAL_REPLAY_MAX_PARALLEL_FRONTIER_CANDIDATES,
             real_replay_failed_spec_retries=1,
             real_replay_retry_timeout_seconds=0,
@@ -4678,6 +4678,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 start_date=date(2026, 2, 23),
                 end_date=date(2026, 2, 23),
                 source_query_digest=build_source_query_digest({"window": "frontier"}),
+                feature_schema_hash="feature-schema-frontier",
+                cost_model_hash="cost-model-frontier",
+                strategy_family="hpairs-frontier-family",
             )
             specs = [
                 self._candidate_spec(f"spec-frontier-{index}") for index in range(8)
@@ -4727,8 +4730,28 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             fast_replay.FAST_REPLAY_PROOF_SEMANTICS_LABEL,
         )
         self.assertTrue(queue_payload["prefilter_only"])
+        self.assertFalse(queue_payload["proof_authority"])
         self.assertFalse(queue_payload["promotion_allowed"])
         self.assertFalse(queue_payload["final_promotion_allowed"])
+        self.assertEqual(
+            queue_payload["runner_policy"]["default_shard_timeout_seconds"], 900
+        )
+        self.assertEqual(queue_payload["runner_policy"]["default_worker_cap"], 2)
+        self.assertFalse(queue_payload["runner_policy"]["kubernetes_fanout_enabled"])
+        self.assertEqual(
+            queue_payload["runner_policy"]["default_parallel_frontier_candidate_cap"],
+            6,
+        )
+        self.assertEqual(
+            queue_payload["target_queue"]["status"],
+            "sim_target_queue_ready_live_paper_blocked",
+        )
+        self.assertEqual(
+            queue_payload["replay_tape"]["feature_schema_hash"],
+            "feature-schema-frontier",
+        )
+        self.assertEqual(queue_payload["replay_tape"]["cost_model_hash"], "cost-model-frontier")
+        self.assertEqual(queue_payload["replay_tape"]["strategy_family"], "hpairs-frontier-family")
         self.assertEqual(
             [entry["frontier_bucket"] for entry in queue_payload["entries"]],
             [
@@ -4743,6 +4766,20 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         first_entry = queue_payload["entries"][0]
         self.assertIn("observed_post_cost_expectancy_bps", first_entry)
         self.assertIn("required_daily_notional", first_entry)
+        self.assertFalse(first_entry["proof_authority"])
+        self.assertIn("risk_flags", first_entry)
+        self.assertEqual(
+            first_entry["reproducibility_metadata"]["dataset_snapshot_ref"],
+            "frontier-preview",
+        )
+        self.assertEqual(
+            first_entry["reproducibility_metadata"]["feature_schema_hash"],
+            "feature-schema-frontier",
+        )
+        self.assertEqual(
+            first_entry["reproducibility_metadata"]["preview_score"],
+            first_entry["preview_score"],
+        )
         self.assertIn("target_implied_notional_context", first_entry)
         self.assertIn("cost_impact_lineage", first_entry)
         self.assertEqual(
@@ -4903,7 +4940,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         manifest_payload = preview.to_manifest_payload()
 
         self.assertEqual(
-            row_payload["schema_version"], "torghut.fast-replay-preview-row.v3"
+            row_payload["schema_version"], "torghut.fast-replay-preview-row.v4"
         )
         self.assertEqual(manifest_payload["status"], "preview_only")
         self.assertFalse(manifest_payload["promotion_proof"])
@@ -10754,8 +10791,14 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(parsed.consistency_repair_iterations, 1)
         self.assertEqual(parsed.consistency_repair_candidates, 5)
         self.assertEqual(parsed.real_replay_shard_size, 0)
-        self.assertEqual(parsed.real_replay_shard_timeout_seconds, 0)
-        self.assertEqual(parsed.real_replay_shard_workers, 1)
+        self.assertEqual(
+            parsed.real_replay_shard_timeout_seconds,
+            runner._DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS,
+        )
+        self.assertEqual(
+            parsed.real_replay_shard_workers,
+            runner._DEFAULT_REAL_REPLAY_SHARD_WORKERS,
+        )
         self.assertEqual(
             parsed.real_replay_max_parallel_frontier_candidates,
             runner._DEFAULT_REAL_REPLAY_MAX_PARALLEL_FRONTIER_CANDIDATES,
@@ -11453,6 +11496,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             args.replay_mode = "real"
             args.real_replay_shard_size = 1
             args.real_replay_shard_timeout_seconds = 7
+            args.real_replay_shard_workers = 1
             args.real_replay_failed_spec_retries = 0
             with (
                 patch.object(runner, "signal", _FakeSigalrmSignal()),
@@ -11943,6 +11987,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             args.replay_mode = "real"
             args.real_replay_shard_size = 1
             args.real_replay_shard_timeout_seconds = 7
+            args.real_replay_shard_workers = 1
             args.real_replay_failed_spec_retries = 1
             args.real_replay_retry_timeout_seconds = 11
             args.real_replay_retry_max_frontier_candidates_per_spec = 1
@@ -12277,7 +12322,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     shard_timeout_seconds=7,
                 )
 
-        self.assertEqual(workers_seen, [3])
+        self.assertEqual(workers_seen, [2])
         self.assertEqual(len(submitted), 3)
         self.assertTrue(
             all(fn is runner._execute_real_replay_shard for fn, _plan in submitted)

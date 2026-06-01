@@ -1663,6 +1663,20 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             self.assertEqual(
                 exact_ledger_artifact["artifact_kind"], "exact_replay_ledger"
             )
+            self.assertFalse(exact_ledger_artifact["proof_authority"])
+            self.assertEqual(
+                exact_ledger_artifact["authority"],
+                "exact_replay_probation_only",
+            )
+            self.assertIn(
+                "source_backed_runtime_ledger_required",
+                exact_ledger_artifact["authority_blockers"],
+            )
+            self.assertFalse(
+                scorecard["exact_replay_ledger_artifact_proof_authority"]
+            )
+            self.assertFalse(scorecard["runtime_ledger_artifact_proof_authority"])
+            self.assertFalse(scorecard["final_promotion_authority"])
             self.assertEqual(scorecard["runtime_ledger_artifact_row_count"], 6)
             self.assertEqual(scorecard["runtime_ledger_artifact_fill_count"], 2)
             self.assertEqual(scorecard["runtime_ledger_closed_trade_count"], 1)

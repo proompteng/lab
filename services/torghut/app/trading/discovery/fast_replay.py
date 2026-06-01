@@ -15,8 +15,8 @@ from app.trading.discovery.candidate_specs import CandidateSpec
 from app.trading.discovery.replay_tape import ReplayTapeManifest
 from app.trading.models import SignalEnvelope
 
-FAST_REPLAY_PREVIEW_SCHEMA_VERSION = "torghut.fast-replay-preview.v2"
-FAST_REPLAY_PREVIEW_ROW_SCHEMA_VERSION = "torghut.fast-replay-preview-row.v3"
+FAST_REPLAY_PREVIEW_SCHEMA_VERSION = "torghut.fast-replay-preview.v3"
+FAST_REPLAY_PREVIEW_ROW_SCHEMA_VERSION = "torghut.fast-replay-preview-row.v4"
 FAST_REPLAY_PROOF_SEMANTICS_LABEL = (
     "preview_ranking_only_exact_replay_and_runtime_ledger_required"
 )
@@ -67,6 +67,7 @@ class FastReplayPreviewRow:
             observed_post_cost_expectancy_bps
         )
         lineage_blockers = _lineage_blockers_for_row(self)
+        risk_flags = _risk_flags_for_row(self, lineage_blockers=lineage_blockers)
         return {
             "schema_version": FAST_REPLAY_PREVIEW_ROW_SCHEMA_VERSION,
             "candidate_spec_id": self.candidate_spec_id,
@@ -136,9 +137,15 @@ class FastReplayPreviewRow:
                 "prefilter_only": True,
             },
             "lineage_blockers": list(lineage_blockers),
+            "risk_flags": list(risk_flags),
             "proof_semantics_label": self.proof_semantics_label,
             "whitepaper_mechanisms": list(FAST_REPLAY_WHITEPAPER_MECHANISMS),
             "promotion_proof": False,
+            "proof_authority": False,
+            "promotion_authority": False,
+            "proof_authority_reason": (
+                "fast_replay_preview_rank_only_exact_replay_and_source_backed_runtime_ledger_required"
+            ),
         }
 
 
@@ -159,6 +166,8 @@ class FastReplayPreviewResult:
             "schema_version": FAST_REPLAY_PREVIEW_SCHEMA_VERSION,
             "status": "preview_only",
             "promotion_proof": False,
+            "proof_authority": False,
+            "promotion_authority": False,
             "authority": "not_promotion_proof",
             "proof_semantics_label": FAST_REPLAY_PROOF_SEMANTICS_LABEL,
             "whitepaper_mechanisms": list(FAST_REPLAY_WHITEPAPER_MECHANISMS),
@@ -187,6 +196,9 @@ class FastReplayPreviewResult:
                 "dataset_snapshot_ref": self.replay_tape_manifest.dataset_snapshot_ref,
                 "content_sha256": self.replay_tape_manifest.content_sha256,
                 "replay_cache_key": self.replay_tape_manifest.replay_cache_key,
+                "feature_schema_hash": self.replay_tape_manifest.feature_schema_hash,
+                "cost_model_hash": self.replay_tape_manifest.cost_model_hash,
+                "strategy_family": self.replay_tape_manifest.strategy_family,
                 "row_count": self.replay_tape_manifest.row_count,
                 "trading_day_count": self.replay_tape_manifest.trading_day_count,
                 "start_date": self.replay_tape_manifest.start_date.isoformat(),
@@ -991,6 +1003,25 @@ def _lineage_blockers_for_row(row: FastReplayPreviewRow) -> tuple[str, ...]:
     if _observed_post_cost_expectancy_bps(row) <= 0:
         blockers.append("positive_post_cost_expectancy_missing")
     return tuple(blockers)
+
+
+def _risk_flags_for_row(
+    row: FastReplayPreviewRow, *, lineage_blockers: Sequence[str]
+) -> tuple[str, ...]:
+    flags = set(lineage_blockers)
+    if row.macro_stress_veto_score > 0:
+        flags.add("macro_news_stress_veto_active")
+    if row.conformal_tail_risk_penalty_bps > 0:
+        flags.add("conformal_tail_risk_penalty_active")
+    if row.square_root_impact_capacity_penalty_bps > 0:
+        flags.add("square_root_impact_capacity_penalty_active")
+    if row.matched_symbol_count < row.requested_symbol_count:
+        flags.add("partial_symbol_coverage")
+    if row.trading_day_count <= 0:
+        flags.add("no_trading_day_coverage")
+    if row.selection_reason == "insufficient_replay_tape_rows":
+        flags.add("insufficient_replay_tape_rows")
+    return tuple(sorted(flags))
 
 
 def _mapping(value: Any) -> dict[str, Any]:
