@@ -2199,6 +2199,55 @@ def _strategy_source_activity(
     }
 
 
+def _database_unavailable_source_activity(
+    *,
+    target: Mapping[str, Any],
+    probe: Mapping[str, object],
+    error_source: str,
+    error: BaseException,
+) -> dict[str, object]:
+    source_blocker = _paper_route_audit_error_source_blocker(error_source)
+    return {
+        "strategy_name": _safe_text(target.get("strategy_name")),
+        "strategy_lookup_names": [
+            str(item)
+            for item in _as_sequence(target.get("strategy_lookup_names"))
+            if str(item).strip()
+        ],
+        "account_label": _safe_text(target.get("account_label")),
+        "symbols": _target_probe_symbols(target, probe),
+        "lineage_required": _target_requires_source_lineage(target),
+        "expected_candidate_id": _safe_text(target.get("candidate_id")),
+        "expected_hypothesis_id": _safe_text(target.get("hypothesis_id")),
+        "raw_decision_count": 0,
+        "lineage_matched_decision_count": 0,
+        "lineage_blockers": [source_blocker],
+        "decision_count": 0,
+        "execution_count": 0,
+        "filled_execution_count": 0,
+        "order_event_count": 0,
+        "fill_order_event_count": 0,
+        "complete_fill_order_event_count": 0,
+        "tca_sample_count": 0,
+        "last_decision_at": None,
+        "last_execution_at": None,
+        "last_order_event_at": None,
+        "last_tca_at": None,
+        "missing": True,
+        "missing_reasons": [
+            PAPER_ROUTE_EVIDENCE_DB_UNAVAILABLE_BLOCKER,
+            source_blocker,
+            "source_decisions_missing",
+            "source_executions_missing",
+            "source_tca_missing",
+        ],
+        "db_load_error": _paper_route_audit_error_payload(
+            error_source=error_source,
+            error=error,
+        ),
+    }
+
+
 def _account_contamination_audit(
     session: Session,
     *,
@@ -3208,6 +3257,7 @@ def _target_audit(
     probe: Mapping[str, object],
     generated_at: datetime,
     lookback_hours: int,
+    error_source: str = "target_audit",
 ) -> dict[str, object]:
     target = _target_identity(raw_target, probe=probe)
     window_start, window_end = _target_window(
@@ -3222,18 +3272,32 @@ def _target_audit(
         for item in _as_sequence(target.get("strategy_lookup_names"))
         if str(item).strip()
     ]
-    source_activity = _strategy_source_activity(
-        session,
-        strategy_name=cast(str | None, target.get("strategy_name")),
-        strategy_lookup_names=strategy_lookup_names,
-        account_label=cast(str | None, target.get("account_label")),
-        symbols=_target_probe_symbols(target, probe),
-        window_start=window_start,
-        window_end=window_end,
-        candidate_id=candidate_id,
-        hypothesis_id=hypothesis_id,
-        require_source_lineage=_target_requires_source_lineage(target),
-    )
+    try:
+        source_activity = _strategy_source_activity(
+            session,
+            strategy_name=cast(str | None, target.get("strategy_name")),
+            strategy_lookup_names=strategy_lookup_names,
+            account_label=cast(str | None, target.get("account_label")),
+            symbols=_target_probe_symbols(target, probe),
+            window_start=window_start,
+            window_end=window_end,
+            candidate_id=candidate_id,
+            hypothesis_id=hypothesis_id,
+            require_source_lineage=_target_requires_source_lineage(target),
+        )
+    except SQLAlchemyError as exc:
+        logger.warning(
+            "Paper-route source activity audit degraded source=%s error=%s",
+            error_source,
+            exc,
+        )
+        _rollback_paper_route_audit_session(session)
+        source_activity = _database_unavailable_source_activity(
+            target=target,
+            probe=probe,
+            error_source=error_source,
+            error=exc,
+        )
     account_contamination = _account_contamination_audit(
         session,
         account_label=cast(str | None, target.get("account_label")),
@@ -3527,6 +3591,7 @@ def _target_audit_fail_closed(
             probe=probe,
             generated_at=generated_at,
             lookback_hours=lookback_hours,
+            error_source=error_source,
         )
     except SQLAlchemyError as exc:
         logger.warning(

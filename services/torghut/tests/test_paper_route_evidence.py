@@ -485,6 +485,128 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertIn("paper_route_next_target_audit_db_unavailable", next_blockers)
         self.assertFalse(payload["summary"]["promotion_authority"]["allowed"])
 
+    def test_source_activity_timeout_keeps_runtime_ledger_evidence_visible(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, tzinfo=timezone.utc)
+        generated_at = datetime(2026, 5, 26, 21, tzinfo=timezone.utc)
+
+        with Session(self.engine) as session:
+            session.add(
+                StrategyRuntimeLedgerBucket(
+                    run_id="paper-route-ledger-source-timeout",
+                    candidate_id="candidate-source-timeout",
+                    hypothesis_id="H-SOURCE-TIMEOUT",
+                    observed_stage="paper",
+                    bucket_started_at=window_start,
+                    bucket_ended_at=window_end,
+                    account_label="TORGHUT_SIM",
+                    runtime_strategy_name="paper-route-candidate-v1",
+                    strategy_family="microbar_pairs",
+                    fill_count=2,
+                    decision_count=1,
+                    submitted_order_count=1,
+                    closed_trade_count=1,
+                    open_position_count=0,
+                    filled_notional=Decimal("200"),
+                    gross_strategy_pnl=Decimal("12"),
+                    cost_amount=Decimal("2"),
+                    net_strategy_pnl_after_costs=Decimal("10"),
+                    post_cost_expectancy_bps=Decimal("500"),
+                    ledger_schema_version="torghut.runtime-ledger-bucket.v1",
+                    pnl_basis="realized_strategy_pnl_after_explicit_costs",
+                    execution_policy_hash_counts={"policy-a": 1},
+                    cost_model_hash_counts={"cost-a": 1},
+                    lineage_hash_counts={"lineage-a": 1},
+                    blockers_json=[],
+                    payload_json=self._runtime_ledger_source_authority_payload(
+                        window_start=window_start,
+                        window_end=window_end,
+                        suffix="source-timeout",
+                    ),
+                )
+            )
+            session.commit()
+
+            with patch(
+                "app.trading.paper_route_evidence._strategy_source_activity",
+                side_effect=SQLAlchemyError("statement timeout"),
+            ):
+                payload = build_paper_route_evidence_audit(
+                    session,
+                    live_submission_gate={
+                        "allowed": False,
+                        "reason": "paper_route_probe_only",
+                        "blocked_reasons": [],
+                        "promotion_eligible_total": 0,
+                        "dependency_quorum_decision": "allow",
+                        "continuity_ok": True,
+                        "continuity_reason": "signal_continuity_nominal",
+                        "drift_ok": True,
+                        "drift_reason": "drift_live_promotion_eligible",
+                        "runtime_ledger_paper_probation_import_plan": {
+                            "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                            "target_count": 1,
+                            "targets": [
+                                {
+                                    "hypothesis_id": "H-SOURCE-TIMEOUT",
+                                    "candidate_id": "candidate-source-timeout",
+                                    "observed_stage": "paper",
+                                    "strategy_family": "microbar_pairs",
+                                    "strategy_name": "paper-route-candidate-v1",
+                                    "account_label": "TORGHUT_SIM",
+                                    "source_kind": "durable_runtime_ledger_bucket",
+                                    "source_manifest_ref": "config/trading/hypotheses/h-source-timeout.json",
+                                    "dataset_snapshot_ref": "dataset://paper-route",
+                                    "window_start": window_start.isoformat(),
+                                    "window_end": window_end.isoformat(),
+                                    "paper_probation_authorized": True,
+                                    "promotion_allowed": False,
+                                    "final_promotion_authorized": False,
+                                    "max_notional": "0",
+                                }
+                            ],
+                        },
+                    },
+                    route_reacquisition_book={
+                        "schema_version": "torghut.route-reacquisition-book.v1",
+                        "state": "repair_only",
+                        "summary": {
+                            "paper_route_probe_eligible_symbols": ["AAPL"],
+                            "paper_route_probe_active_symbols": [],
+                        },
+                        "paper_route_probe": {
+                            "configured_enabled": True,
+                            "active": False,
+                            "next_session_max_notional": "25",
+                            "eligible_symbol_count": 1,
+                            "eligible_symbols": ["AAPL"],
+                            "blocking_reasons": ["market_session_closed"],
+                        },
+                    },
+                    generated_at=generated_at,
+                )
+
+        audit = payload["targets"][0]
+        self.assertTrue(audit["source_activity"]["missing"])
+        self.assertIn(
+            "paper_route_source_target_audit_db_unavailable",
+            audit["source_activity"]["missing_reasons"],
+        )
+        self.assertEqual(audit["runtime_ledger"]["bucket_count"], 1)
+        self.assertEqual(audit["runtime_ledger"]["evidence_grade_bucket_count"], 1)
+        self.assertEqual(audit["runtime_ledger"]["net_strategy_pnl_after_costs"], "10")
+        self.assertEqual(payload["summary"]["target_with_runtime_ledger_count"], 1)
+        self.assertEqual(
+            payload["summary"]["target_with_evidence_grade_runtime_ledger_count"],
+            1,
+        )
+        self.assertEqual(payload["summary"]["target_with_source_activity_count"], 0)
+        blockers = set(audit["readiness"]["blockers"])
+        self.assertIn("paper_route_evidence_db_unavailable", blockers)
+        self.assertIn("paper_route_source_target_audit_db_unavailable", blockers)
+
     def test_normalized_open_positions_handles_flat_short_and_implicit_market_value(
         self,
     ) -> None:
