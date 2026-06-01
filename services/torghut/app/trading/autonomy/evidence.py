@@ -33,6 +33,7 @@ _AUTORESEARCH_PORTFOLIO_READY_STATUSES = {
     "promotion_ready",
     "ready_for_promotion",
     "ready_for_promotion_review",
+    "target_met",
     "accepted",
     "promoted",
 }
@@ -84,7 +85,9 @@ def _autoresearch_continuity_counts(session: Session) -> dict[str, int] | None:
             ).scalar_one()
         ),
         "autoresearch_proposal_scores": int(
-            session.execute(select(func.count(AutoresearchProposalScore.id))).scalar_one()
+            session.execute(
+                select(func.count(AutoresearchProposalScore.id))
+            ).scalar_one()
         ),
         "autoresearch_portfolio_candidates": len(portfolio_rows),
         "autoresearch_portfolio_ready": 0,
@@ -362,9 +365,7 @@ def evaluate_evidence_continuity(
                 )
                 .join(
                     ResearchCostCalibration,
-                    (
-                        ResearchCostCalibration.scope_type == 'candidate_family'
-                    )
+                    (ResearchCostCalibration.scope_type == "candidate_family")
                     & (
                         ResearchCostCalibration.scope_id
                         == ResearchCandidate.candidate_family
@@ -408,8 +409,8 @@ def evaluate_evidence_continuity(
         economic_validity_count = int(
             candidate_economic_validity_counts.get(run_id, 0) or 0
         )
-        discovery_mode = str(run.discovery_mode or '').strip()
-        require_strategy_factory_chain = discovery_mode.startswith('strategy_factory')
+        discovery_mode = str(run.discovery_mode or "").strip()
+        require_strategy_factory_chain = discovery_mode.startswith("strategy_factory")
         missing: list[str] = []
         use_autoresearch_continuity = (
             autoresearch_counts is not None
