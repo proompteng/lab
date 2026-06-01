@@ -360,18 +360,12 @@ def build_fast_replay_preview(
         )
 
     ranked_rows = sorted(scored_rows, key=_preview_rank_key)
-    selected_bucket_by_id = {
-        row.candidate_spec_id: row.frontier_bucket
-        for row in hpairs_prefilter.rows
-        if row.selected and row.frontier_bucket in {"exploitation", "exploration"}
-    }
-    if not selected_bucket_by_id:
-        selected_bucket_by_id = _select_frontier_buckets(
-            ranked_rows=ranked_rows,
-            exploitation_count=bounded_exploitation_count,
-            exploration_count=bounded_exploration_count,
-            exact_replay_candidate_cap=bounded_top_k,
-        )
+    selected_bucket_by_id = _select_frontier_buckets(
+        ranked_rows=ranked_rows,
+        exploitation_count=bounded_exploitation_count,
+        exploration_count=bounded_exploration_count,
+        exact_replay_candidate_cap=bounded_top_k,
+    )
     final_rows = tuple(
         _row_with_rank_and_selection(
             row=row,
@@ -645,15 +639,22 @@ def _score_candidate_spec(
     )
 
 
-def _preview_rank_key(row: FastReplayPreviewRow) -> tuple[bool, float, str]:
+def _preview_rank_key(row: FastReplayPreviewRow) -> tuple[bool, float, float, str]:
     prefilter_score = _float_or_none(
         row.microstructure_prefilter.get("prefilter_score")
     )
     return (
-        row.selection_reason == "insufficient_replay_tape_rows",
+        row.selection_reason == "insufficient_replay_tape_rows"
+        or _row_explicitly_non_hpairs(row),
+        -float(row.preview_score),
         -(prefilter_score if prefilter_score is not None else float(row.preview_score)),
         row.candidate_spec_id,
     )
+
+
+def _row_explicitly_non_hpairs(row: FastReplayPreviewRow) -> bool:
+    value = row.microstructure_prefilter.get("is_hpairs_candidate")
+    return isinstance(value, bool) and not value
 
 
 def _select_frontier_buckets(
@@ -667,6 +668,7 @@ def _select_frontier_buckets(
         row
         for row in ranked_rows
         if row.selection_reason != "insufficient_replay_tape_rows"
+        and not _row_explicitly_non_hpairs(row)
     ]
     selected: dict[str, str] = {}
     for row in eligible[:exploitation_count]:

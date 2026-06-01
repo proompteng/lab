@@ -6604,10 +6604,37 @@ def _apply_fast_replay_preview_narrowing(
             updated["fast_replay_preview_impact_liquidity_penalty_bps"] = preview_row[
                 "impact_liquidity_penalty_bps"
             ]
+            updated["fast_replay_preview_observed_post_cost_expectancy_bps"] = (
+                preview_row.get("observed_post_cost_expectancy_bps")
+            )
+            updated["fast_replay_preview_required_daily_notional"] = preview_row.get(
+                "required_daily_notional"
+            )
+            updated["fast_replay_target_implied_notional_context"] = preview_row.get(
+                "target_implied_notional_context"
+            )
+            updated["fast_replay_cost_impact_lineage"] = preview_row.get(
+                "cost_impact_lineage"
+            )
+            updated["fast_replay_adv_capacity_context"] = preview_row.get(
+                "adv_capacity_context"
+            )
+            updated["fast_replay_lineage_blockers"] = list(
+                cast(Sequence[Any], preview_row.get("lineage_blockers") or ())
+            )
+            updated["fast_replay_risk_flags"] = list(
+                cast(Sequence[Any], preview_row.get("risk_flags") or ())
+            )
             updated["fast_replay_frontier_bucket"] = preview_row["frontier_bucket"]
             updated["fast_replay_proof_semantics_label"] = preview_row[
                 "proof_semantics_label"
             ]
+            updated["fast_replay_prefilter_only"] = True
+            updated["fast_replay_promotion_proof"] = False
+            updated["fast_replay_proof_authority"] = False
+            updated["fast_replay_promotion_authority"] = False
+            updated["fast_replay_promotion_allowed"] = False
+            updated["fast_replay_final_promotion_allowed"] = False
             microstructure_prefilter = _mapping(
                 preview_row.get("hpairs_microstructure_prefilter")
                 or preview_row.get("microstructure_prefilter")

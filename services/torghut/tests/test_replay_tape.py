@@ -350,6 +350,24 @@ class TestReplayTape(TestCase):
         self.assertEqual(manifest.to_payload()["cost_model_hash"], "cost-model-v1")
         self.assertEqual(manifest.to_payload()["strategy_family"], "hpairs-v1")
 
+        validation = validate_tape_freshness(
+            manifest,
+            start_date=date(2026, 3, 27),
+            end_date=date(2026, 3, 27),
+            symbols=("NVDA",),
+        )
+        self.assertEqual(validation["replay_cache_key"], expected_materialized_key)
+        self.assertEqual(validation["source_query_digest"], first_digest)
+        self.assertEqual(validation["source_table_versions"], {"signals": "v1"})
+        self.assertEqual(validation["feature_schema_hash"], "feature-schema-v1")
+        self.assertEqual(validation["cost_model_hash"], "cost-model-v1")
+        self.assertEqual(validation["strategy_family"], "hpairs-v1")
+        self.assertEqual(validation["cache_identity"]["status"], "complete")
+        self.assertEqual(
+            validation["cache_identity"]["components"]["date_range"],
+            {"start_date": "2026-03-27", "end_date": "2026-03-27"},
+        )
+
     def test_replay_tape_cache_identity_reports_missing_components(self) -> None:
         with TemporaryDirectory() as tmpdir:
             manifest = materialize_signal_tape(
