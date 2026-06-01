@@ -589,13 +589,13 @@ class TestPaperRouteEvidenceAudit(TestCase):
             "deferred_until_import_ready",
         )
         import_audit = payload["runtime_window_import_audit"]
-        self.assertEqual(import_audit["state"], "import_due_source_activity_missing")
+        self.assertEqual(import_audit["state"], "waiting_for_session_open")
         self.assertEqual(
             import_audit["next_action"],
-            "inspect_paper_route_source_activity_before_import",
+            "wait_for_regular_session_open",
         )
         self.assertIn(
-            "runtime_window_import_audit_deferred_until_import_ready",
+            "paper_route_session_window_not_open",
             import_audit["blockers"],
         )
         self.assertEqual(
@@ -1109,7 +1109,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
             ["paper_route_account_pre_session_snapshot_missing"],
         )
 
-    def test_target_plan_import_plan_uses_latest_closed_window_on_weekend(
+    def test_target_plan_import_plan_skips_closed_window_without_source_evidence(
         self,
     ) -> None:
         generated_at = datetime(2026, 5, 30, 8, 23, tzinfo=timezone.utc)
@@ -1122,30 +1122,31 @@ class TestPaperRouteEvidenceAudit(TestCase):
         import_plan = payload["runtime_window_import_plan"]
         self.assertEqual(
             import_plan["purpose"],
-            "latest_closed_session_paper_route_runtime_window_import",
+            "next_session_paper_route_runtime_window_evidence_collection",
         )
         self.assertEqual(
             import_plan["session_window"],
-            {
-                "start": "2026-05-29T13:30:00+00:00",
-                "end": "2026-05-29T20:00:00+00:00",
-            },
-        )
-        self.assertTrue(import_plan["session_readiness"]["import_ready"])
-        self.assertEqual(import_plan["target_count"], 1)
-        latest_closed = payload["latest_closed_paper_route_runtime_window_targets"]
-        self.assertEqual(latest_closed["session_window"], import_plan["session_window"])
-        next_plan = payload["next_paper_route_runtime_window_targets"]
-        self.assertEqual(
-            next_plan["session_window"],
             {
                 "start": "2026-06-01T13:30:00+00:00",
                 "end": "2026-06-01T20:00:00+00:00",
             },
         )
+        self.assertFalse(import_plan["session_readiness"]["import_ready"])
+        self.assertEqual(import_plan["target_count"], 1)
+        latest_closed = payload["latest_closed_paper_route_runtime_window_targets"]
+        self.assertEqual(
+            latest_closed["session_window"],
+            {
+                "start": "2026-05-29T13:30:00+00:00",
+                "end": "2026-05-29T20:00:00+00:00",
+            },
+        )
+        self.assertTrue(latest_closed["session_readiness"]["import_ready"])
+        next_plan = payload["next_paper_route_runtime_window_targets"]
+        self.assertEqual(next_plan["session_window"], import_plan["session_window"])
         self.assertEqual(
             payload["summary"]["runtime_window_import_plan_purpose"],
-            "latest_closed_session_paper_route_runtime_window_import",
+            "next_session_paper_route_runtime_window_evidence_collection",
         )
 
     def test_evidence_import_audit_uses_latest_closed_window_before_next_open(
@@ -1864,16 +1865,16 @@ class TestPaperRouteEvidenceAudit(TestCase):
         )
         self.assertEqual(
             payload["runtime_window_import_plan"]["purpose"],
-            "latest_closed_session_paper_route_runtime_window_import",
+            "next_session_paper_route_runtime_window_evidence_collection",
         )
-        self.assertEqual(import_audit["state"], "import_due_account_state_not_clean")
+        self.assertEqual(import_audit["state"], "waiting_for_session_open")
         self.assertEqual(
             import_audit["next_action"],
-            "reset_paper_account_or_discard_contaminated_window",
+            "wait_for_regular_session_open",
         )
-        self.assertTrue(import_audit["import_ready"])
+        self.assertFalse(import_audit["import_ready"])
         self.assertIn(
-            "paper_route_account_window_start_snapshot_missing",
+            "paper_route_session_window_not_open",
             import_audit["blockers"],
         )
         self.assertEqual(import_audit["counts"]["source_plan_target_count"], 2)
@@ -1892,7 +1893,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
         )
         self.assertEqual(
             summary["next_runtime_window_import_next_action"],
-            "reset_paper_account_or_discard_contaminated_window",
+            "wait_for_regular_session_open",
         )
         self.assertEqual(len(summary["next_paper_route_targets"]), 1)
         summary_target = summary["next_paper_route_targets"][0]
@@ -1993,10 +1994,10 @@ class TestPaperRouteEvidenceAudit(TestCase):
         )
         self.assertEqual(
             proof_handoff["runtime_window"]["import_audit_state"],
-            "import_due_account_state_not_clean",
+            "waiting_for_session_open",
         )
         self.assertIn(
-            "paper_route_account_window_start_snapshot_missing",
+            "paper_route_session_window_not_open",
             proof_handoff["runtime_window"]["import_blockers"],
         )
         self.assertEqual(
@@ -2858,7 +2859,9 @@ class TestPaperRouteEvidenceAudit(TestCase):
             1,
         )
         self.assertFalse(payload["runtime_window_import_plan"]["promotion_allowed"])
-        self.assertFalse(payload["runtime_window_import_plan"]["final_promotion_allowed"])
+        self.assertFalse(
+            payload["runtime_window_import_plan"]["final_promotion_allowed"]
+        )
 
     def test_strategy_source_decision_readiness_queries_session_without_prefetch(
         self,
