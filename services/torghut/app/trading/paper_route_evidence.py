@@ -72,7 +72,6 @@ PAPER_ROUTE_RUNTIME_IMPORT_SETTLEMENT_SECONDS = 3600
 PAPER_ROUTE_ACCOUNT_START_SNAPSHOT_STALE_SECONDS = 900
 PAPER_ROUTE_ACCOUNT_START_SNAPSHOT_AFTER_START_GRACE_SECONDS = 300
 PAPER_ROUTE_ACCOUNT_PRE_SESSION_READINESS_SECONDS = 900
-PAPER_ROUTE_ACCOUNT_PRE_SESSION_SNAPSHOT_STALE_SECONDS = 900
 PAPER_ROUTE_ACCOUNT_CLOSE_SNAPSHOT_STALE_SECONDS = 3600
 HPAIRS_REQUIRED_PAPER_ROUTE_SYMBOLS = ("AAPL", "AMZN")
 PAPER_ROUTE_TARGET_PLAN_ENDPOINT = "/trading/paper-route-target-plan"
@@ -2984,6 +2983,7 @@ def _account_pre_session_snapshot_audit(
         "snapshot_id": None,
         "snapshot_as_of": None,
         "snapshot_age_seconds": None,
+        "snapshot_window_start_offset_seconds": None,
         "flat": None,
         "position_count": 0,
         "target_symbol_position_count": 0,
@@ -3004,11 +3004,12 @@ def _account_pre_session_snapshot_audit(
             "flat": True,
         }
 
+    snapshot_cutoff = min(generated_at, window_start)
     _maybe_set_paper_route_audit_statement_timeout(session)
     snapshot = session.execute(
         select(PositionSnapshot)
         .where(PositionSnapshot.alpaca_account_label == account_label)
-        .where(PositionSnapshot.as_of <= generated_at)
+        .where(PositionSnapshot.as_of <= snapshot_cutoff)
         .order_by(PositionSnapshot.as_of.desc())
         .limit(1)
     ).scalar_one_or_none()
@@ -3025,8 +3026,11 @@ def _account_pre_session_snapshot_audit(
         snapshot_as_of = snapshot_as_of.replace(tzinfo=timezone.utc)
     snapshot_as_of = snapshot_as_of.astimezone(timezone.utc)
     snapshot_age_seconds = int((generated_at - snapshot_as_of).total_seconds())
+    snapshot_window_start_offset_seconds = int(
+        (snapshot_as_of - window_start).total_seconds()
+    )
     blockers: list[str] = []
-    if snapshot_age_seconds > PAPER_ROUTE_ACCOUNT_PRE_SESSION_SNAPSHOT_STALE_SECONDS:
+    if snapshot_as_of < required_after:
         blockers.append("paper_route_account_pre_session_snapshot_stale")
 
     positions = _normalized_open_positions(
@@ -3059,6 +3063,7 @@ def _account_pre_session_snapshot_audit(
         "snapshot_id": str(snapshot.id),
         "snapshot_as_of": _isoformat(snapshot_as_of),
         "snapshot_age_seconds": snapshot_age_seconds,
+        "snapshot_window_start_offset_seconds": snapshot_window_start_offset_seconds,
         "flat": not positions and not blockers,
         "position_count": len(positions),
         "target_symbol_position_count": target_position_count,
