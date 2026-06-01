@@ -976,6 +976,46 @@ class TestTradingPipeline(TestCase):
             if profit_proof_eligible is not None:
                 params["profit_proof_eligible"] = profit_proof_eligible
                 paper_route_probe["profit_proof_eligible"] = profit_proof_eligible
+            if source_decision_mode == STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE:
+                strategy_signal_paper: dict[str, Any] = {
+                    "mode": STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE,
+                    "source": "test",
+                    "symbol": symbol,
+                    "strategy_id": str(strategy.id),
+                    "strategy_name": strategy.name,
+                    "source_decision_mode": STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE,
+                    "profit_proof_eligible": (
+                        profit_proof_eligible
+                        if profit_proof_eligible is not None
+                        else True
+                    ),
+                    "exit_minute_after_open": exit_minute_after_open,
+                }
+                if source_candidate_ids:
+                    strategy_signal_paper["source_candidate_ids"] = list(
+                        source_candidate_ids
+                    )
+                if source_hypothesis_ids:
+                    strategy_signal_paper["source_hypothesis_ids"] = list(
+                        source_hypothesis_ids
+                    )
+                if source_strategy_names:
+                    strategy_signal_paper["source_strategy_names"] = list(
+                        source_strategy_names
+                    )
+                if (
+                    source_candidate_ids
+                    or source_hypothesis_ids
+                    or source_strategy_names
+                ):
+                    strategy_signal_paper["paper_route_probe_lineage_targets"] = [
+                        dict(item)
+                        for item in paper_route_probe.get(
+                            "paper_route_probe_lineage_targets",
+                            [],
+                        )
+                    ]
+                params["strategy_signal_paper"] = strategy_signal_paper
             decision = StrategyDecision(
                 strategy_id=str(strategy.id),
                 symbol=symbol,
@@ -5184,7 +5224,7 @@ class TestTradingPipeline(TestCase):
             payload = cast(dict[str, Any], exit_row.decision_json)
             self.assertNotIn("max_notional_exceeded", payload.get("risk_reasons", []))
 
-    def test_simple_pipeline_does_not_close_strategy_signal_paper_as_probe_inventory(
+    def test_simple_pipeline_closes_strategy_signal_paper_with_linked_exit(
         self,
     ) -> None:
         self._seed_filled_paper_route_probe_entry(
@@ -5203,7 +5243,9 @@ class TestTradingPipeline(TestCase):
             now=datetime(2026, 3, 26, 15, 31, tzinfo=timezone.utc),
         )
 
-        self.assertEqual(alpaca_client.submitted, [])
+        self.assertEqual(len(alpaca_client.submitted), 1)
+        self.assertEqual(alpaca_client.submitted[0]["side"], "sell")
+        self.assertEqual(alpaca_client.submitted[0]["qty"], "2.0")
         with self.session_local() as session:
             decisions = (
                 session.execute(
@@ -5212,12 +5254,32 @@ class TestTradingPipeline(TestCase):
                 .scalars()
                 .all()
             )
-            self.assertEqual(len(decisions), 1)
-            payload = cast(dict[str, Any], decisions[0].decision_json)
+            self.assertEqual(len(decisions), 2)
+            payload = cast(dict[str, Any], decisions[-1].decision_json)
             params = cast(dict[str, Any], payload["params"])
+            exit_metadata = cast(dict[str, Any], params.get("paper_route_probe_exit"))
+
+            self.assertEqual(payload.get("action"), "sell")
             self.assertEqual(params["source_decision_mode"], "strategy_signal_paper")
             self.assertTrue(params["profit_proof_eligible"])
-            self.assertNotIn("paper_route_probe_exit", params)
+            self.assertEqual(exit_metadata.get("mode"), "paper_route_exit")
+            self.assertEqual(
+                exit_metadata.get("source"),
+                "filled_strategy_signal_paper_executions",
+            )
+            self.assertEqual(
+                exit_metadata.get("source_decision_mode"),
+                "strategy_signal_paper",
+            )
+            self.assertTrue(exit_metadata.get("profit_proof_eligible"))
+            self.assertEqual(
+                exit_metadata.get("source_candidate_ids"), ["cand-h-pairs"]
+            )
+            self.assertEqual(exit_metadata.get("source_hypothesis_ids"), ["H-PAIRS-01"])
+            self.assertEqual(
+                exit_metadata.get("source_strategy_names"),
+                ["microbar-cross-sectional-pairs-v1"],
+            )
 
     def test_paper_route_probe_entry_metadata_rejects_proof_and_non_probe_rows(
         self,
