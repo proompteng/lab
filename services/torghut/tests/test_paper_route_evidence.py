@@ -103,9 +103,38 @@ class TestPaperRouteEvidenceAudit(TestCase):
                     "account_label": "TORGHUT_SIM",
                     "observed_stage": "paper",
                     "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                    "source_kind": "paper_route_probe_runtime_observed",
                 }
             ),
             [],
+        )
+
+        missing_identity_blockers = _hpairs_round_trip_identity_blockers(
+            {
+                "source_manifest_ref": "H-PAIRS-01",
+                "bounded_evidence_collection_authorized": True,
+            }
+        )
+
+        self.assertIn(
+            "paper_route_hpairs_candidate_id_missing",
+            missing_identity_blockers,
+        )
+        self.assertIn(
+            "paper_route_hpairs_hypothesis_id_missing",
+            missing_identity_blockers,
+        )
+        self.assertIn(
+            "paper_route_hpairs_account_label_missing",
+            missing_identity_blockers,
+        )
+        self.assertIn(
+            "paper_route_hpairs_runtime_strategy_name_missing",
+            missing_identity_blockers,
+        )
+        self.assertIn(
+            "paper_route_hpairs_source_kind_missing",
+            missing_identity_blockers,
         )
 
         blockers = _hpairs_round_trip_identity_blockers(
