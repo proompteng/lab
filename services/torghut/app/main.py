@@ -6386,19 +6386,10 @@ LIMIT 200
         reason_codes = ["options_catalog_freshness_summary_unavailable"]
         if _sqlalchemy_error_indicates_statement_timeout(exc):
             reason_codes.append("options_catalog_freshness_query_timeout")
-            return _store_options_catalog_freshness_summary(
-                scoped_symbols,
-                {
-                    "status": "unavailable",
-                    "scope": "route_symbols" if scoped_symbols else "global",
-                    "route_symbols": list(scoped_symbols),
-                    "reason_codes": reason_codes,
-                },
-            )
         bounded_payload = _load_bounded_options_catalog_freshness_summary(
             session,
             scoped_symbols,
-            reason="options_catalog_freshness_summary_unavailable",
+            reason=reason_codes[-1],
         )
         if bounded_payload is not None:
             return _store_options_catalog_freshness_summary(
