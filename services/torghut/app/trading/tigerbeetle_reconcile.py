@@ -31,6 +31,8 @@ from app.trading.tigerbeetle_journal import (
     SOURCE_TYPE_EXECUTION_TCA_METRIC,
     SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
     build_order_event_transfer_plan,
+    build_runtime_ledger_bucket_transfer_plan,
+    runtime_ledger_amount_source,
 )
 from app.trading.tigerbeetle_ledger_model import (
     TRANSFER_KIND_EXECUTION_COST,
@@ -54,6 +56,12 @@ BLOCKER_UNLINKED_COST = "tigerbeetle_unlinked_execution_cost"
 BLOCKER_UNLINKED_RUNTIME_LEDGER = "tigerbeetle_unlinked_runtime_ledger"
 BLOCKER_SOURCE_ROW_MISSING = "tigerbeetle_source_row_missing"
 BLOCKER_SOURCE_AMOUNT_MISMATCH = "tigerbeetle_source_amount_mismatch"
+BLOCKER_RUNTIME_LEDGER_DIRECTION_MISMATCH = (
+    "tigerbeetle_runtime_ledger_direction_mismatch"
+)
+BLOCKER_RUNTIME_LEDGER_METADATA_MISMATCH = (
+    "tigerbeetle_runtime_ledger_metadata_mismatch"
+)
 BLOCKER_CLIENT_UNAVAILABLE = "tigerbeetle_client_unavailable"
 
 
@@ -80,6 +88,13 @@ def _payload_value(row: TigerBeetleTransferRef, key: str) -> str | None:
     )
     value: object | None = payload.get(key)
     return None if value is None else str(value)
+
+
+def _payload_mapping(row: TigerBeetleTransferRef) -> Mapping[str, object]:
+    raw_payload = cast(object, row.payload_json)
+    if isinstance(raw_payload, Mapping):
+        return cast(Mapping[str, object], raw_payload)
+    return {}
 
 
 def _ref_matches_expected_event(
@@ -157,12 +172,7 @@ def _runtime_ledger_amount_micros(
 ) -> Decimal | None:
     if bucket is None:
         return None
-    amount_source = (
-        bucket.net_strategy_pnl_after_costs
-        if bucket.net_strategy_pnl_after_costs != Decimal("0")
-        else bucket.cost_amount
-    )
-    return _usd_to_micros(amount_source)
+    return _usd_to_micros(runtime_ledger_amount_source(bucket))
 
 
 def _expected_source_amount_micros(
@@ -181,6 +191,51 @@ def _expected_source_amount_micros(
             session.get(StrategyRuntimeLedgerBucket, source_uuid)
         )
     return None
+
+
+def _runtime_ledger_ref_matches_expected_bucket(
+    ref: TigerBeetleTransferRef,
+    actual: object,
+    bucket: StrategyRuntimeLedgerBucket,
+) -> tuple[bool, bool]:
+    plan = build_runtime_ledger_bucket_transfer_plan(bucket)
+    if plan is None:
+        return False, False
+    expected = plan.transfer_spec
+    payload = _payload_mapping(ref)
+    direction_matches = (
+        ref.transfer_id == str(expected.transfer_id)
+        and ref.transfer_kind == TRANSFER_KIND_RUNTIME_NET_PNL
+        and ref.amount == Decimal(expected.amount)
+        and ref.ledger == expected.ledger
+        and ref.code == expected.code
+        and int(_attr(actual, "amount")) == expected.amount
+        and int(_attr(actual, "ledger")) == expected.ledger
+        and int(_attr(actual, "code")) == expected.code
+        and int(_attr(actual, "debit_account_id")) == expected.debit_account_id
+        and int(_attr(actual, "credit_account_id")) == expected.credit_account_id
+        and str(payload.get("debit_account_id")) == str(expected.debit_account_id)
+        and str(payload.get("credit_account_id")) == str(expected.credit_account_id)
+        and str(payload.get("signed_amount_micros")) == str(plan.signed_amount_micros)
+        and str(payload.get("pnl_direction")) == plan.pnl_direction
+    )
+    expected_metadata = {
+        "source": SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+        "run_id": bucket.run_id,
+        "candidate_id": bucket.candidate_id,
+        "hypothesis_id": bucket.hypothesis_id,
+        "observed_stage": bucket.observed_stage,
+        "pnl_basis": bucket.pnl_basis,
+        "ledger_schema_version": bucket.ledger_schema_version,
+        "amount_source": str(plan.amount_source),
+        "runtime_key": plan.runtime_key,
+    }
+    metadata_matches = all(
+        str(payload.get(key)) == str(value)
+        for key, value in expected_metadata.items()
+        if value is not None
+    )
+    return direction_matches, metadata_matches
 
 
 def tigerbeetle_ref_counts(session: Session, *, cluster_id: int) -> dict[str, object]:
@@ -246,6 +301,18 @@ def _latest_run_payload(
         "source_amount_mismatch_count": _payload_int(
             payload, "source_amount_mismatch_count"
         ),
+        "runtime_ledger_checked_transfer_count": _payload_int(
+            payload, "runtime_ledger_checked_transfer_count"
+        ),
+        "runtime_ledger_signed_transfer_count": _payload_int(
+            payload, "runtime_ledger_signed_transfer_count"
+        ),
+        "runtime_ledger_direction_mismatch_count": _payload_int(
+            payload, "runtime_ledger_direction_mismatch_count"
+        ),
+        "runtime_ledger_metadata_mismatch_count": _payload_int(
+            payload, "runtime_ledger_metadata_mismatch_count"
+        ),
         "unlinked_event_count": _payload_int(payload, "unlinked_event_count"),
         "unlinked_execution_count": _payload_int(payload, "unlinked_execution_count"),
         "unlinked_cost_count": _payload_int(payload, "unlinked_cost_count"),
@@ -303,6 +370,10 @@ def reconcile_tigerbeetle_transfers(
     mismatched_transfer_count = 0
     source_row_missing_count = 0
     source_amount_mismatch_count = 0
+    runtime_ledger_checked_transfer_count = 0
+    runtime_ledger_signed_transfer_count = 0
+    runtime_ledger_direction_mismatch_count = 0
+    runtime_ledger_metadata_mismatch_count = 0
     blockers: list[str] = []
 
     transfer_lookup: dict[str, object] = {}
@@ -367,6 +438,28 @@ def reconcile_tigerbeetle_transfers(
             elif ref.amount != expected_source_amount:
                 source_amount_mismatch_count += 1
                 blockers.append(BLOCKER_SOURCE_AMOUNT_MISMATCH)
+        if ref.source_type == SOURCE_TYPE_RUNTIME_LEDGER_BUCKET:
+            runtime_ledger_checked_transfer_count += 1
+            source_uuid = _uuid_or_none(ref.source_id)
+            bucket = (
+                session.get(StrategyRuntimeLedgerBucket, source_uuid)
+                if source_uuid is not None
+                else None
+            )
+            if bucket is not None:
+                direction_matches, metadata_matches = (
+                    _runtime_ledger_ref_matches_expected_bucket(ref, actual, bucket)
+                )
+                if direction_matches:
+                    runtime_ledger_signed_transfer_count += 1
+                else:
+                    runtime_ledger_direction_mismatch_count += 1
+                    mismatched_transfer_count += 1
+                    blockers.append(BLOCKER_RUNTIME_LEDGER_DIRECTION_MISMATCH)
+                if not metadata_matches:
+                    runtime_ledger_metadata_mismatch_count += 1
+                    mismatched_transfer_count += 1
+                    blockers.append(BLOCKER_RUNTIME_LEDGER_METADATA_MISMATCH)
 
     event_ids_with_refs = {
         item
@@ -527,6 +620,14 @@ def reconcile_tigerbeetle_transfers(
         "source_missing_count": source_missing_count,
         "source_row_missing_count": source_row_missing_count,
         "source_amount_mismatch_count": source_amount_mismatch_count,
+        "runtime_ledger_checked_transfer_count": runtime_ledger_checked_transfer_count,
+        "runtime_ledger_signed_transfer_count": runtime_ledger_signed_transfer_count,
+        "runtime_ledger_direction_mismatch_count": (
+            runtime_ledger_direction_mismatch_count
+        ),
+        "runtime_ledger_metadata_mismatch_count": (
+            runtime_ledger_metadata_mismatch_count
+        ),
         "unlinked_event_count": unlinked_event_count,
         "unlinked_execution_count": unlinked_execution_count,
         "unlinked_cost_count": unlinked_cost_count,

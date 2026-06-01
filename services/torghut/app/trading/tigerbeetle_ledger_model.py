@@ -6,6 +6,9 @@ from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 
 
+PNL_DIRECTION_PROFIT = "profit"
+PNL_DIRECTION_LOSS = "loss"
+
 LEDGER_USD_MICRO = 840001
 USD_MICRO_SCALE = Decimal("1000000")
 

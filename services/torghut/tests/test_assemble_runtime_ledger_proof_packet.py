@@ -40,8 +40,12 @@ class _FakeObjectStoreClient:
         }
 
 
-def _status(*, blockers: list[str] | None = None) -> dict[str, object]:
-    return {
+def _status(
+    *,
+    blockers: list[str] | None = None,
+    tigerbeetle_ledger: dict[str, object] | None = None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
         "mode": "paper",
         "running": True,
         "live_submission_gate": {
@@ -52,6 +56,42 @@ def _status(*, blockers: list[str] | None = None) -> dict[str, object]:
         "proof_floor": {
             "blocking_reasons": [],
         },
+    }
+    if tigerbeetle_ledger is not None:
+        payload["tigerbeetle_ledger"] = tigerbeetle_ledger
+    return payload
+
+
+def _tigerbeetle_ledger_status(
+    *,
+    ok: bool = True,
+    runtime_ledger_ref_count: int = 1,
+    signed_ref_count: int = 1,
+    blockers: list[str] | None = None,
+) -> dict[str, object]:
+    return {
+        "schema_version": "torghut.tigerbeetle-ledger-status.v1",
+        "enabled": True,
+        "journal_enabled": True,
+        "required": False,
+        "reconcile_required": True,
+        "ok": ok and not blockers,
+        "protocol_ok": True,
+        "reconciliation_ok": ok and not blockers,
+        "ref_counts": {
+            "runtime_ledger_ref_count": runtime_ledger_ref_count,
+        },
+        "latest_reconciliation": {
+            "schema_version": "torghut.tigerbeetle-reconciliation.v1",
+            "ok": ok and not blockers,
+            "runtime_ledger_checked_transfer_count": runtime_ledger_ref_count,
+            "runtime_ledger_signed_transfer_count": signed_ref_count,
+            "ref_counts": {
+                "runtime_ledger_ref_count": runtime_ledger_ref_count,
+            },
+            "blockers": blockers or [],
+        },
+        "blockers": blockers or [],
     }
 
 
@@ -532,6 +572,57 @@ class TestRuntimeLedgerProofPacket(TestCase):
         self.assertEqual(
             result["candidate"]["candidate_id"],
             "c88421d619759b2cfaa6f4d0",
+        )
+
+    def test_authority_packet_allows_reconciled_tigerbeetle_runtime_refs(
+        self,
+    ) -> None:
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(tigerbeetle_ledger=_tigerbeetle_ledger_status()),
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=_runtime_import(),
+            completion_status=_completion(),
+            min_runtime_ledger_net_pnl=Decimal("500"),
+            min_runtime_ledger_daily_net_pnl=Decimal("500"),
+            min_runtime_ledger_trading_days=1,
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        self.assertTrue(result["ok"], result)
+        self.assertTrue(result["promotion_authority"]["allowed"], result)
+        check = result["checks"]["tigerbeetle_runtime_pnl_authority_refs"]
+        self.assertTrue(check["passed"], check)
+        self.assertTrue(check["observed"]["required_for_authority"])
+        self.assertEqual(check["observed"]["runtime_ledger_signed_transfer_count"], 1)
+
+    def test_authority_packet_blocks_claimed_tigerbeetle_without_signed_refs(
+        self,
+    ) -> None:
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(
+                tigerbeetle_ledger=_tigerbeetle_ledger_status(
+                    runtime_ledger_ref_count=1,
+                    signed_ref_count=0,
+                )
+            ),
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=_runtime_import(),
+            completion_status=_completion(),
+            min_runtime_ledger_net_pnl=Decimal("500"),
+            min_runtime_ledger_daily_net_pnl=Decimal("500"),
+            min_runtime_ledger_trading_days=1,
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertFalse(result["promotion_authority"]["allowed"])
+        self.assertIn(
+            "tigerbeetle_runtime_ledger_signed_refs_missing",
+            result["promotion_authority"]["blocking_reasons"],
+        )
+        self.assertIn(
+            "tigerbeetle_runtime_pnl_authority_refs",
+            result["promotion_authority"]["failed_checks"],
         )
 
     def test_authority_packet_requires_daily_distribution_and_scale(self) -> None:
