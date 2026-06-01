@@ -3485,6 +3485,20 @@ class TestTradingPipeline(TestCase):
             target=target,
             strategy=strategy,
         )
+        blocked_metadata = SimpleTradingPipeline._strategy_signal_paper_metadata(
+            decision=base_decision,
+            target={
+                **target,
+                "paper_route_account_pre_session_blockers": [
+                    "unlinked_order_events_present",
+                ],
+            },
+            strategy=strategy,
+        )
+        self.assertEqual(
+            blocked_metadata.get("paper_route_account_pre_session_blockers"),
+            ["unlinked_order_events_present"],
+        )
         decision = base_decision.model_copy(
             update={
                 "params": {
@@ -8135,6 +8149,17 @@ class TestTradingPipeline(TestCase):
             ("missing hypothesis", good_decision, [make_target(hypothesis_id=None)]),
             ("wrong stage", good_decision, [make_target(observed_stage="backtest")]),
             ("wrong source kind", good_decision, [make_target(source_kind="manual")]),
+            (
+                "bounded collection blockers",
+                good_decision,
+                [
+                    make_target(
+                        paper_route_account_pre_session_blockers=[
+                            "unlinked_order_events_present"
+                        ]
+                    )
+                ],
+            ),
             (
                 "probation unauthorized",
                 good_decision,
