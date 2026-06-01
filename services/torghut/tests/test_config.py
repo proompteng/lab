@@ -1070,6 +1070,7 @@ class TestConfig(TestCase):
             "trading_simple_submit_enabled",
             "trading_simple_order_feed_telemetry_enabled",
             "trading_simple_paper_route_probe_enabled",
+            "trading_options_catalog_freshness_exact_route_scope_enabled",
             "trading_empirical_jobs_health_required",
             "trading_jangar_quant_health_required",
             "tigerbeetle_enabled",
