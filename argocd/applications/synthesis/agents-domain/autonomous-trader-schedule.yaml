@@ -5,6 +5,7 @@ metadata:
   namespace: synthesis
   annotations:
     argocd.argoproj.io/sync-options: Prune=false
+    proompteng.ai/account-isolation-mode: read-only-shared-paper-account
   labels:
     app.kubernetes.io/part-of: synthesis
     app.kubernetes.io/component: autonomous-trader

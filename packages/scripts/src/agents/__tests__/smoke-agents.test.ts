@@ -595,7 +595,7 @@ describe('scheduled AgentRun templates', () => {
 })
 
 describe('synthesis autonomous trader provider', () => {
-  it('enables the market-open trader template for scheduled paper trading', () => {
+  it('keeps the market-open trader schedule read-only while the paper account is shared', () => {
     const kustomization = readYamlObjects('argocd/applications/synthesis/agents-domain/kustomization.yaml')[0]
     const resources = objectAt(kustomization, 'resources') as string[] | undefined
     const provider = readYamlObjects(
@@ -623,9 +623,10 @@ describe('synthesis autonomous trader provider', () => {
     expect(objectAt(scheduleSpec, 'cron')).toBe('15 9 * * 1-5')
     expect(objectAt(scheduleSpec, 'timezone')).toBe('America/New_York')
     expect(objectAt(objectAt(scheduleSpec, 'targetRef'), 'name')).toBe('autonomous-trader-template')
-    expect(objectAt(objectAt(templateSpec, 'goal'), 'objective')).toContain('Reach 500000 USD account equity')
-    expect(objectAt(parameters, 'mode')).toBe('market-open')
-    expect(objectAt(parameters, 'synthesisSessionMode')).toBe('market_open')
+    expect(objectAt(objectAt(templateSpec, 'goal'), 'objective')).toContain('read-only autonomous-trader dry run')
+    expect(objectAt(objectAt(templateSpec, 'goal'), 'objective')).toContain('do not mutate broker state')
+    expect(objectAt(parameters, 'mode')).toBe('dry-run')
+    expect(objectAt(parameters, 'synthesisSessionMode')).toBe('dry_run')
     expect(objectAt(parameters, 'accountType')).toBe('paper')
     expect(objectAt(parameters, 'targetEquityUsd')).toBe('500000')
     expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_MODE')).toBe('{{parameters.mode}}')

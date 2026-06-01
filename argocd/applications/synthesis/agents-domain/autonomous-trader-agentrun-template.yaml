@@ -14,7 +14,7 @@ spec:
   implementationSpecRef:
     name: autonomous-trader-v1
   goal:
-    objective: Reach 500000 USD account equity in the Alpaca paper account using autonomous day trading through Alpaca MCP across stocks, ETFs, options, or any other financial instruments available in the account.
+    objective: Run a read-only autonomous-trader dry run while the Alpaca paper account is shared with Torghut profitability proof collection; do not mutate broker state.
   vcsRef:
     name: github
   vcsPolicy:
@@ -31,8 +31,8 @@ spec:
     repository: proompteng/lab
     base: main
     head: codex/synthesis-autonomous-trader-session
-    mode: market-open
-    synthesisSessionMode: market_open
+    mode: dry-run
+    synthesisSessionMode: dry_run
     accountType: paper
     targetEquityUsd: "500000"
     marketOpenTimezone: America/New_York
