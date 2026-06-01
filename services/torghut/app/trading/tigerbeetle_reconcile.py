@@ -17,6 +17,7 @@ from app.models import (
     ExecutionOrderEvent,
     ExecutionTCAMetric,
     StrategyRuntimeLedgerBucket,
+    TigerBeetleAccountRef,
     TigerBeetleReconciliationRun,
     TigerBeetleTransferRef,
     coerce_json_payload,
@@ -61,6 +62,12 @@ BLOCKER_RUNTIME_LEDGER_DIRECTION_MISMATCH = (
 )
 BLOCKER_RUNTIME_LEDGER_METADATA_MISMATCH = (
     "tigerbeetle_runtime_ledger_metadata_mismatch"
+)
+BLOCKER_RUNTIME_LEDGER_SIGNED_REFS_MISSING = (
+    "tigerbeetle_runtime_ledger_signed_refs_missing"
+)
+BLOCKER_RUNTIME_LEDGER_ACCOUNT_REFS_MISSING = (
+    "tigerbeetle_runtime_ledger_account_refs_missing"
 )
 BLOCKER_CLIENT_UNAVAILABLE = "tigerbeetle_client_unavailable"
 
@@ -191,6 +198,18 @@ def _payload_int(payload: Mapping[str, object], key: str) -> int:
         return 0
 
 
+def _payload_string_list(payload: Mapping[str, object], key: str) -> list[str]:
+    value = payload.get(key)
+    if isinstance(value, Sequence) and not isinstance(
+        value, (str, bytes, bytearray)
+    ):
+        items = cast(Sequence[object], value)
+        return [str(item) for item in items if item is not None]
+    if value is None:
+        return []
+    return [str(value)]
+
+
 def _uuid_or_none(value: str | None) -> UUID | None:
     if not value:
         return None
@@ -269,6 +288,135 @@ def _expected_source_amount_micros(
     return None
 
 
+def _runtime_ledger_ref_is_signed(ref: TigerBeetleTransferRef) -> bool:
+    payload = _payload_mapping(ref)
+    signed_amount = payload.get("signed_amount_micros")
+    pnl_direction = str(payload.get("pnl_direction") or "")
+    debit_account_id = payload.get("debit_account_id")
+    credit_account_id = payload.get("credit_account_id")
+    try:
+        signed_amount_int = int(str(signed_amount))
+    except (TypeError, ValueError):
+        return False
+    return (
+        signed_amount_int != 0
+        and pnl_direction in {"profit", "loss"}
+        and debit_account_id is not None
+        and credit_account_id is not None
+    )
+
+
+def _runtime_ledger_payload_account_ids(ref: TigerBeetleTransferRef) -> list[str]:
+    payload = _payload_mapping(ref)
+    account_ids = _payload_string_list(payload, "account_ids")
+    for key in ("debit_account_id", "credit_account_id"):
+        value = payload.get(key)
+        if value is None:
+            continue
+        account_id = str(value)
+        if account_id not in account_ids:
+            account_ids.append(account_id)
+    return account_ids
+
+
+def _runtime_ledger_ref_coverage(
+    session: Session,
+    *,
+    cluster_id: int,
+    sample_limit: int = 50,
+) -> dict[str, object]:
+    runtime_refs = (
+        session.execute(
+            select(TigerBeetleTransferRef)
+            .where(
+                TigerBeetleTransferRef.cluster_id == cluster_id,
+                TigerBeetleTransferRef.source_type == SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                TigerBeetleTransferRef.transfer_kind == TRANSFER_KIND_RUNTIME_NET_PNL,
+            )
+            .order_by(TigerBeetleTransferRef.created_at.desc())
+        )
+        .scalars()
+        .all()
+    )
+    current_bucket_ids = {
+        str(bucket_id)
+        for bucket_id in session.execute(
+            select(StrategyRuntimeLedgerBucket.id).where(
+                (StrategyRuntimeLedgerBucket.net_strategy_pnl_after_costs != 0)
+                | (StrategyRuntimeLedgerBucket.cost_amount != 0)
+            )
+        ).scalars()
+    }
+    current_runtime_refs = [
+        ref
+        for ref in runtime_refs
+        if (
+            ref.runtime_ledger_bucket_id is not None
+            and str(ref.runtime_ledger_bucket_id) in current_bucket_ids
+        )
+        or (ref.source_id is not None and ref.source_id in current_bucket_ids)
+    ]
+    required_runtime_bucket_count = int(
+        session.scalar(
+            select(func.count(StrategyRuntimeLedgerBucket.id)).where(
+                (StrategyRuntimeLedgerBucket.net_strategy_pnl_after_costs != 0)
+                | (StrategyRuntimeLedgerBucket.cost_amount != 0)
+            )
+        )
+        or 0
+    )
+    signed_refs = [
+        ref for ref in current_runtime_refs if _runtime_ledger_ref_is_signed(ref)
+    ]
+    signed_bucket_ids = {
+        str(ref.runtime_ledger_bucket_id or ref.source_id)
+        for ref in signed_refs
+        if ref.runtime_ledger_bucket_id is not None or ref.source_id
+    }
+    runtime_source_ids = [
+        str(ref.source_id)
+        for ref in runtime_refs
+        if ref.source_id is not None
+    ][:sample_limit]
+    runtime_transfer_ids = [str(ref.transfer_id) for ref in runtime_refs][:sample_limit]
+    runtime_account_ids: list[str] = []
+    for ref in current_runtime_refs:
+        for account_id in _runtime_ledger_payload_account_ids(ref):
+            if account_id not in runtime_account_ids:
+                runtime_account_ids.append(account_id)
+    account_ref_ids = {
+        str(account_id)
+        for account_id in session.execute(
+            select(TigerBeetleAccountRef.account_id).where(
+                TigerBeetleAccountRef.cluster_id == cluster_id
+            )
+        ).scalars()
+    }
+    missing_account_ids = [
+        account_id
+        for account_id in runtime_account_ids
+        if account_id not in account_ref_ids
+    ]
+    missing_signed_ref_count = max(
+        required_runtime_bucket_count - len(signed_bucket_ids),
+        len(current_runtime_refs) - len(signed_refs),
+        0,
+    )
+    return {
+        "runtime_ledger_required_bucket_count": required_runtime_bucket_count,
+        "runtime_ledger_ref_count": len(runtime_refs),
+        "runtime_ledger_signed_ref_count": len(signed_refs),
+        "runtime_ledger_missing_signed_ref_count": missing_signed_ref_count,
+        "runtime_ledger_account_ref_count": len(runtime_account_ids)
+        - len(missing_account_ids),
+        "runtime_ledger_missing_account_ref_count": len(missing_account_ids),
+        "runtime_ledger_missing_account_ids": missing_account_ids[:sample_limit],
+        "runtime_ledger_source_ids": runtime_source_ids,
+        "runtime_ledger_transfer_ids": runtime_transfer_ids,
+        "runtime_ledger_signed_bucket_ids": sorted(signed_bucket_ids)[:sample_limit],
+    }
+
+
 def _runtime_ledger_ref_matches_expected_bucket(
     ref: TigerBeetleTransferRef,
     actual: object,
@@ -315,6 +463,11 @@ def _runtime_ledger_ref_matches_expected_bucket(
 
 
 def tigerbeetle_ref_counts(session: Session, *, cluster_id: int) -> dict[str, object]:
+    account_total = session.scalar(
+        select(func.count(TigerBeetleAccountRef.id)).where(
+            TigerBeetleAccountRef.cluster_id == cluster_id
+        )
+    )
     source_rows = session.execute(
         select(
             TigerBeetleTransferRef.source_type,
@@ -331,9 +484,14 @@ def tigerbeetle_ref_counts(session: Session, *, cluster_id: int) -> dict[str, ob
             TigerBeetleTransferRef.cluster_id == cluster_id
         )
     )
+    runtime_coverage = _runtime_ledger_ref_coverage(
+        session,
+        cluster_id=cluster_id,
+    )
     return {
         "schema_version": "torghut.tigerbeetle-ref-counts.v1",
         "cluster_id": cluster_id,
+        "account_ref_count": int(account_total or 0),
         "transfer_ref_count": int(total or 0),
         "by_source_type": by_source,
         "order_event_ref_count": by_source.get(SOURCE_TYPE_EXECUTION_ORDER_EVENT, 0),
@@ -343,6 +501,15 @@ def tigerbeetle_ref_counts(session: Session, *, cluster_id: int) -> dict[str, ob
             SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
             0,
         ),
+        "source_materialization": {
+            "account_ref_table": "tigerbeetle_account_refs",
+            "transfer_ref_table": "tigerbeetle_transfer_refs",
+            "reconciliation_run_table": "tigerbeetle_reconciliation_runs",
+            "runtime_ledger_source_table": "strategy_runtime_ledger_buckets",
+            "runtime_ledger_source_type": SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+            "runtime_ledger_transfer_kind": TRANSFER_KIND_RUNTIME_NET_PNL,
+        },
+        **runtime_coverage,
     }
 
 
@@ -382,6 +549,14 @@ def _latest_run_payload(
         ),
         "runtime_ledger_signed_transfer_count": _payload_int(
             payload, "runtime_ledger_signed_transfer_count"
+        ),
+        "runtime_ledger_missing_signed_ref_count": _payload_int(
+            payload,
+            "runtime_ledger_missing_signed_ref_count",
+        ),
+        "runtime_ledger_missing_account_ref_count": _payload_int(
+            payload,
+            "runtime_ledger_missing_account_ref_count",
         ),
         "archived_runtime_ledger_source_missing_count": _payload_int(
             payload, "archived_runtime_ledger_source_missing_count"
@@ -451,6 +626,8 @@ def reconcile_tigerbeetle_transfers(
     source_amount_mismatch_count = 0
     runtime_ledger_checked_transfer_count = 0
     runtime_ledger_signed_transfer_count = 0
+    runtime_ledger_missing_signed_ref_count = 0
+    runtime_ledger_missing_account_ref_count = 0
     archived_runtime_ledger_source_missing_count = 0
     runtime_ledger_direction_mismatch_count = 0
     runtime_ledger_metadata_mismatch_count = 0
@@ -649,8 +826,6 @@ def reconcile_tigerbeetle_transfers(
     if unlinked_runtime_ledger_count:
         blockers.append(BLOCKER_UNLINKED_RUNTIME_LEDGER)
 
-    unique_blockers = sorted(set(blockers))
-    ok = not unique_blockers
     finished_at = datetime.now(timezone.utc)
     source_missing_count = (
         unlinked_event_count
@@ -664,6 +839,20 @@ def reconcile_tigerbeetle_transfers(
         session,
         cluster_id=settings_obj.tigerbeetle_cluster_id,
     )
+    runtime_ledger_missing_signed_ref_count = _payload_int(
+        ref_counts,
+        "runtime_ledger_missing_signed_ref_count",
+    )
+    runtime_ledger_missing_account_ref_count = _payload_int(
+        ref_counts,
+        "runtime_ledger_missing_account_ref_count",
+    )
+    if runtime_ledger_missing_signed_ref_count:
+        blockers.append(BLOCKER_RUNTIME_LEDGER_SIGNED_REFS_MISSING)
+    if runtime_ledger_missing_account_ref_count:
+        blockers.append(BLOCKER_RUNTIME_LEDGER_ACCOUNT_REFS_MISSING)
+    unique_blockers = sorted(set(blockers))
+    ok = not unique_blockers
     payload: dict[str, object] = {
         "schema_version": SCHEMA_VERSION,
         "ok": ok,
@@ -676,6 +865,12 @@ def reconcile_tigerbeetle_transfers(
         "source_amount_mismatch_count": source_amount_mismatch_count,
         "runtime_ledger_checked_transfer_count": runtime_ledger_checked_transfer_count,
         "runtime_ledger_signed_transfer_count": runtime_ledger_signed_transfer_count,
+        "runtime_ledger_missing_signed_ref_count": (
+            runtime_ledger_missing_signed_ref_count
+        ),
+        "runtime_ledger_missing_account_ref_count": (
+            runtime_ledger_missing_account_ref_count
+        ),
         "archived_runtime_ledger_source_missing_count": archived_runtime_ledger_source_missing_count,
         "runtime_ledger_direction_mismatch_count": (
             runtime_ledger_direction_mismatch_count

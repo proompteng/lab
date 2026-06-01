@@ -5,7 +5,7 @@ from decimal import Decimal
 from unittest import TestCase
 from unittest.mock import patch
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from app.config import Settings
@@ -15,6 +15,7 @@ from app.models import (
     ExecutionOrderEvent,
     ExecutionTCAMetric,
     StrategyRuntimeLedgerBucket,
+    TigerBeetleAccountRef,
     TigerBeetleReconciliationRun,
     TigerBeetleTransferRef,
 )
@@ -39,8 +40,10 @@ from app.trading.tigerbeetle_reconcile import (
     BLOCKER_DEBIT_ACCOUNT_MISMATCH,
     BLOCKER_LEDGER_MISMATCH,
     BLOCKER_POSTGRES_REF_MISMATCH,
+    BLOCKER_RUNTIME_LEDGER_ACCOUNT_REFS_MISSING,
     BLOCKER_RUNTIME_LEDGER_DIRECTION_MISMATCH,
     BLOCKER_RUNTIME_LEDGER_METADATA_MISMATCH,
+    BLOCKER_RUNTIME_LEDGER_SIGNED_REFS_MISSING,
     BLOCKER_SOURCE_ROW_MISSING,
     BLOCKER_UNLINKED_COST,
     BLOCKER_UNLINKED_EXECUTION,
@@ -54,11 +57,14 @@ from app.trading.tigerbeetle_reconcile import (
     _expected_source_amount_micros,
     _execution_amount_micros,
     _payload_int,
+    _payload_string_list,
+    _runtime_ledger_payload_account_ids,
     _runtime_ledger_amount_micros,
     _usd_to_micros,
     _uuid_or_none,
     latest_tigerbeetle_reconciliation_payload,
     reconcile_tigerbeetle_transfers,
+    tigerbeetle_ref_counts,
 )
 
 
@@ -150,6 +156,35 @@ def _runtime_bucket(
         pnl_basis="post_cost",
         payload_json={"source": "representative-runtime-ledger"},
     )
+
+
+def _add_account_refs_for_plan(
+    session: Session,
+    plan: object,
+    *,
+    cluster_id: int = 2001,
+) -> None:
+    for spec in getattr(plan, "account_specs"):
+        existing = session.scalar(
+            select(TigerBeetleAccountRef.id).where(
+                TigerBeetleAccountRef.cluster_id == cluster_id,
+                TigerBeetleAccountRef.account_id == str(spec.account_id),
+            )
+        )
+        if existing is not None:
+            continue
+        session.add(
+            TigerBeetleAccountRef(
+                cluster_id=cluster_id,
+                account_id=str(spec.account_id),
+                account_key=spec.account_key,
+                ledger=spec.ledger,
+                code=spec.code,
+                account_label=spec.account_label,
+                symbol=spec.symbol,
+                strategy_id=spec.strategy_id,
+            )
+        )
 
 
 class TestTigerBeetleReconcile(TestCase):
@@ -323,6 +358,34 @@ class TestTigerBeetleReconcile(TestCase):
             self.assertEqual(payload["source_row_missing_count"], 1)
             self.assertEqual(payload["source_missing_count"], 1)
 
+    def test_runtime_payload_account_ids_normalize_sequence_scalar_and_missing_values(
+        self,
+    ) -> None:
+        self.assertEqual(
+            _payload_string_list({"account_ids": ["11", None, 12]}, "account_ids"),
+            ["11", "12"],
+        )
+        self.assertEqual(_payload_string_list({"account_ids": "11"}, "account_ids"), ["11"])
+
+        ref = TigerBeetleTransferRef(
+            cluster_id=2001,
+            transfer_id="runtime-account-ref",
+            transfer_kind=TRANSFER_KIND_RUNTIME_NET_PNL,
+            ledger=LEDGER_USD_MICRO,
+            code=TRANSFER_CODE_RUNTIME_NET_PNL,
+            amount=Decimal("2500000"),
+            status="created",
+            source_type=SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+            source_id="runtime-source",
+            payload_json={
+                "account_ids": ["11"],
+                "debit_account_id": None,
+                "credit_account_id": "12",
+            },
+        )
+
+        self.assertEqual(_runtime_ledger_payload_account_ids(ref), ["11", "12"])
+
     def test_reconciliation_accepts_signed_runtime_ledger_profit_and_loss_refs(
         self,
     ) -> None:
@@ -336,6 +399,7 @@ class TestTigerBeetleReconcile(TestCase):
                 plan = build_runtime_ledger_bucket_transfer_plan(bucket)
                 self.assertIsNotNone(plan)
                 assert plan is not None
+                _add_account_refs_for_plan(session, plan)
                 transfer = plan.transfer_spec
                 session.add(
                     TigerBeetleTransferRef(
@@ -378,6 +442,19 @@ class TestTigerBeetleReconcile(TestCase):
             self.assertTrue(payload["ok"], payload)
             self.assertEqual(payload["runtime_ledger_checked_transfer_count"], 2)
             self.assertEqual(payload["runtime_ledger_signed_transfer_count"], 2)
+            self.assertEqual(payload["runtime_ledger_missing_signed_ref_count"], 0)
+            self.assertEqual(payload["runtime_ledger_missing_account_ref_count"], 0)
+            ref_counts = payload["ref_counts"]
+            assert isinstance(ref_counts, dict)
+            self.assertEqual(ref_counts["runtime_ledger_signed_ref_count"], 2)
+            self.assertEqual(ref_counts["runtime_ledger_missing_signed_ref_count"], 0)
+            self.assertEqual(ref_counts["runtime_ledger_missing_account_ref_count"], 0)
+            source_materialization = ref_counts["source_materialization"]
+            assert isinstance(source_materialization, dict)
+            self.assertEqual(
+                source_materialization["runtime_ledger_source_type"],
+                SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+            )
 
     def test_reconciliation_reports_archived_runtime_ref_without_blocking_current_ref(
         self,
@@ -390,6 +467,7 @@ class TestTigerBeetleReconcile(TestCase):
             plan = build_runtime_ledger_bucket_transfer_plan(bucket)
             self.assertIsNotNone(plan)
             assert plan is not None
+            _add_account_refs_for_plan(session, plan)
             current_transfer = plan.transfer_spec
             session.add(
                 TigerBeetleTransferRef(
@@ -473,6 +551,110 @@ class TestTigerBeetleReconcile(TestCase):
             self.assertEqual(payload["source_missing_count"], 0)
             self.assertNotIn(BLOCKER_SOURCE_ROW_MISSING, payload["blockers"])
 
+    def test_reconciliation_blocks_runtime_ledger_signed_ref_coverage_gap(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            bucket = _runtime_bucket(net_pnl=Decimal("2.50"))
+            session.add(bucket)
+            session.flush()
+            plan = build_runtime_ledger_bucket_transfer_plan(bucket)
+            self.assertIsNotNone(plan)
+            assert plan is not None
+            transfer = plan.transfer_spec
+            session.add(
+                TigerBeetleTransferRef(
+                    cluster_id=2001,
+                    transfer_id=str(transfer.transfer_id),
+                    transfer_kind=transfer.transfer_kind,
+                    ledger=transfer.ledger,
+                    code=transfer.code,
+                    amount=Decimal(transfer.amount),
+                    status="created",
+                    runtime_ledger_bucket_id=bucket.id,
+                    source_type=SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                    source_id=str(bucket.id),
+                    payload_json={
+                        "source": SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                        "debit_account_id": str(transfer.debit_account_id),
+                        "credit_account_id": str(transfer.credit_account_id),
+                    },
+                )
+            )
+            session.flush()
+            client = FakeTigerBeetleClient()
+            client.transfers[transfer.transfer_id] = transfer
+
+            payload = reconcile_tigerbeetle_transfers(
+                session,
+                settings_obj=_settings(),
+                client=client,
+            )
+
+            self.assertFalse(payload["ok"], payload)
+            self.assertIn(
+                BLOCKER_RUNTIME_LEDGER_SIGNED_REFS_MISSING,
+                payload["blockers"],
+            )
+            self.assertIn(
+                BLOCKER_RUNTIME_LEDGER_ACCOUNT_REFS_MISSING,
+                payload["blockers"],
+            )
+            self.assertEqual(payload["runtime_ledger_missing_signed_ref_count"], 1)
+            self.assertEqual(payload["runtime_ledger_missing_account_ref_count"], 2)
+
+    def test_ref_counts_expose_source_materialization_identifiers(self) -> None:
+        with Session(self.engine) as session:
+            bucket = _runtime_bucket(net_pnl=Decimal("2.50"))
+            session.add(bucket)
+            session.flush()
+            plan = build_runtime_ledger_bucket_transfer_plan(bucket)
+            self.assertIsNotNone(plan)
+            assert plan is not None
+            _add_account_refs_for_plan(session, plan)
+            transfer = plan.transfer_spec
+            session.add(
+                TigerBeetleTransferRef(
+                    cluster_id=2001,
+                    transfer_id=str(transfer.transfer_id),
+                    transfer_kind=transfer.transfer_kind,
+                    ledger=transfer.ledger,
+                    code=transfer.code,
+                    amount=Decimal(transfer.amount),
+                    status="created",
+                    runtime_ledger_bucket_id=bucket.id,
+                    source_type=SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                    source_id=str(bucket.id),
+                    payload_json={
+                        "source": SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                        "signed_amount_micros": plan.signed_amount_micros,
+                        "pnl_direction": plan.pnl_direction,
+                        "debit_account_id": str(transfer.debit_account_id),
+                        "credit_account_id": str(transfer.credit_account_id),
+                    },
+                )
+            )
+            session.flush()
+
+            payload = tigerbeetle_ref_counts(session, cluster_id=2001)
+
+        self.assertEqual(payload["account_ref_count"], 4)
+        self.assertEqual(payload["runtime_ledger_ref_count"], 1)
+        self.assertEqual(payload["runtime_ledger_signed_ref_count"], 1)
+        self.assertEqual(payload["runtime_ledger_missing_signed_ref_count"], 0)
+        self.assertEqual(payload["runtime_ledger_missing_account_ref_count"], 0)
+        self.assertEqual(payload["runtime_ledger_source_ids"], [str(bucket.id)])
+        self.assertEqual(
+            payload["runtime_ledger_transfer_ids"],
+            [str(transfer.transfer_id)],
+        )
+        source_materialization = payload["source_materialization"]
+        assert isinstance(source_materialization, dict)
+        self.assertEqual(
+            source_materialization["runtime_ledger_source_table"],
+            "strategy_runtime_ledger_buckets",
+        )
+
     def test_reconciliation_blocks_runtime_ledger_signed_direction_mismatch(
         self,
     ) -> None:
@@ -483,6 +665,7 @@ class TestTigerBeetleReconcile(TestCase):
             plan = build_runtime_ledger_bucket_transfer_plan(bucket)
             self.assertIsNotNone(plan)
             assert plan is not None
+            _add_account_refs_for_plan(session, plan)
             expected = plan.transfer_spec
             wrong_transfer = TigerBeetleTransferSpec(
                 transfer_id=expected.transfer_id,

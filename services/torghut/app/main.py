@@ -5358,6 +5358,17 @@ def _check_tigerbeetle_protocol_health() -> dict[str, object]:
     return payload
 
 
+def _tigerbeetle_status_int(value: object) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _build_tigerbeetle_ledger_status(session: Session) -> dict[str, object]:
     protocol = _check_tigerbeetle_protocol_health()
     latest_reconciliation = latest_tigerbeetle_reconciliation_payload(
@@ -5368,12 +5379,31 @@ def _build_tigerbeetle_ledger_status(session: Session) -> dict[str, object]:
         session,
         cluster_id=settings.tigerbeetle_cluster_id,
     )
+    runtime_ledger_ref_count = _tigerbeetle_status_int(
+        ref_counts.get("runtime_ledger_ref_count")
+    )
+    runtime_ledger_signed_ref_count = _tigerbeetle_status_int(
+        ref_counts.get("runtime_ledger_signed_ref_count")
+    )
+    runtime_ledger_missing_signed_ref_count = _tigerbeetle_status_int(
+        ref_counts.get("runtime_ledger_missing_signed_ref_count")
+    )
+    runtime_ledger_missing_account_ref_count = _tigerbeetle_status_int(
+        ref_counts.get("runtime_ledger_missing_account_ref_count")
+    )
+    claimed_by_runtime_evidence = runtime_ledger_ref_count > 0
     blockers: list[str] = []
     if settings.tigerbeetle_enabled and not bool(protocol.get("protocol_ok")):
         blockers.append("tigerbeetle_protocol_unhealthy")
     reconciliation_ok = True
+    reconciliation_required = (
+        settings.tigerbeetle_enabled
+        or settings.tigerbeetle_required
+        or settings.tigerbeetle_reconcile_required
+        or claimed_by_runtime_evidence
+    )
     if latest_reconciliation is None:
-        if settings.tigerbeetle_reconcile_required:
+        if reconciliation_required:
             reconciliation_ok = False
             blockers.append("tigerbeetle_reconciliation_missing")
     else:
@@ -5384,15 +5414,26 @@ def _build_tigerbeetle_ledger_status(session: Session) -> dict[str, object]:
         ):
             blocker_items = cast(Sequence[object], raw_blockers)
             blockers.extend(str(item) for item in blocker_items)
+    if runtime_ledger_missing_signed_ref_count:
+        reconciliation_ok = False
+        blockers.append("tigerbeetle_runtime_ledger_signed_refs_missing")
+    if runtime_ledger_ref_count and runtime_ledger_signed_ref_count <= 0:
+        reconciliation_ok = False
+        blockers.append("tigerbeetle_runtime_ledger_signed_refs_missing")
+    if runtime_ledger_missing_account_ref_count:
+        reconciliation_ok = False
+        blockers.append("tigerbeetle_runtime_ledger_account_refs_missing")
 
     protocol_gate_ok = bool(protocol.get("ok"))
-    reconcile_gate_ok = reconciliation_ok or not settings.tigerbeetle_reconcile_required
+    reconcile_gate_ok = reconciliation_ok or not reconciliation_required
     return {
         "schema_version": "torghut.tigerbeetle-ledger-status.v1",
         "enabled": settings.tigerbeetle_enabled,
         "journal_enabled": settings.tigerbeetle_journal_enabled,
         "required": settings.tigerbeetle_required,
         "reconcile_required": settings.tigerbeetle_reconcile_required,
+        "claimed_by_runtime_evidence": claimed_by_runtime_evidence,
+        "reconciliation_required": reconciliation_required,
         "ok": protocol_gate_ok and reconcile_gate_ok,
         "protocol_ok": bool(protocol.get("protocol_ok")),
         "reconciliation_ok": reconciliation_ok,
@@ -5400,6 +5441,17 @@ def _build_tigerbeetle_ledger_status(session: Session) -> dict[str, object]:
         "replica_addresses": protocol.get("replica_addresses", []),
         "last_error": protocol.get("last_error"),
         "ref_counts": ref_counts,
+        "account_ref_count": ref_counts.get("account_ref_count", 0),
+        "transfer_ref_count": ref_counts.get("transfer_ref_count", 0),
+        "runtime_ledger_ref_count": runtime_ledger_ref_count,
+        "runtime_ledger_signed_ref_count": runtime_ledger_signed_ref_count,
+        "runtime_ledger_missing_signed_ref_count": (
+            runtime_ledger_missing_signed_ref_count
+        ),
+        "runtime_ledger_missing_account_ref_count": (
+            runtime_ledger_missing_account_ref_count
+        ),
+        "source_materialization": ref_counts.get("source_materialization", {}),
         "latest_reconciliation": latest_reconciliation,
         "blockers": sorted(set(blockers)),
     }
