@@ -4600,6 +4600,7 @@ def trading_paper_route_evidence(
         live_submission_gate,
         simple_lane_status=simple_lane_status,
         state=scheduler.state,
+        session=session,
     )
     if route_reacquisition_book is None:
         proof_floor = _build_profitability_proof_floor_payload(

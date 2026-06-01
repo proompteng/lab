@@ -413,6 +413,36 @@ jobs:
 
           echo "should_rollback=true" >> "$GITHUB_OUTPUT"
 
+      - name: Close older failed-promotion rollback pull requests
+        if: failure() && steps.rollback.outputs.should_rollback == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          FAILED_SHA: ${{ github.sha }}
+          FAILED_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          current_branch="codex/torghut-rollback-${{ github.run_id }}-${{ github.run_attempt }}"
+          mapfile -t rollback_pr_numbers < <(
+            gh pr list -R "${GH_REPO}" --state open --base main --limit 200 \
+              --json number,title,headRefName \
+              --jq ".[] | select(.headRefName | startswith(\"codex/torghut-rollback-\")) | select(.headRefName != \"${current_branch}\") | select(.title | startswith(\"revert(torghut): rollback failed promotion \")) | .number"
+          )
+
+          if [ "${#rollback_pr_numbers[@]}" -eq 0 ]; then
+            echo "No older Torghut rollback pull requests to close"
+            exit 0
+          fi
+
+          for pr_number in "${rollback_pr_numbers[@]}"; do
+            printf -v comment "Closing this older automatic Torghut rollback PR because a newer failed promotion rollback is being opened for %s.\n\nNew failed run: %s\n" \
+              "${FAILED_SHA}" \
+              "${FAILED_RUN_URL}"
+            gh pr close "${pr_number}" -R "${GH_REPO}" --delete-branch --comment "${comment}"
+          done
+
       - name: Open rollback pull request
         if: failure() && steps.rollback.outputs.should_rollback == 'true'
         uses: peter-evans/create-pull-request@v7

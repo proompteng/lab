@@ -8315,6 +8315,121 @@ class TestTradingApi(TestCase):
             else:
                 app.state.trading_scheduler = original_scheduler
 
+    def test_trading_paper_route_evidence_resolves_target_plan_strategy_universe(
+        self,
+    ) -> None:
+        original_scheduler = getattr(app.state, "trading_scheduler", None)
+        original_target_plan_url = settings.trading_paper_route_target_plan_url
+        settings.trading_paper_route_target_plan_url = ""
+        strategy_symbols = [
+            "NVDA",
+            "AAPL",
+            "AMZN",
+            "GOOGL",
+            "AVGO",
+            "AMD",
+            "ORCL",
+            "INTC",
+        ]
+        target = {
+            "hypothesis_id": "H-TSMOM-LIQ-01",
+            "candidate_id": "ca4e6e3c7d639e3363dc5860",
+            "observed_stage": "paper",
+            "strategy_family": "intraday_tsmom",
+            "strategy_name": "intraday-tsmom-profit-v3",
+            "runtime_strategy_name": "intraday-tsmom-profit-v3",
+            "strategy_lookup_names": [
+                "intraday-tsmom-profit-v3",
+                "intraday-tsmom-v2",
+            ],
+            "account_label": "TORGHUT_REPLAY",
+            "source_kind": "runtime_ledger_paper_probation_candidates",
+            "source_manifest_ref": (
+                "config/trading/hypotheses/h-tsmom-liq-01.json"
+            ),
+            "dataset_snapshot_ref": "portfolio-profit-autoresearch-500-v1",
+            "window_start": "2026-05-22T13:30:00+00:00",
+            "window_end": "2026-05-22T20:00:00+00:00",
+            "paper_route_probe_next_session_max_notional": "75000",
+            "paper_probation_authorized": True,
+            "source_collection_authorized": True,
+            "promotion_allowed": False,
+            "final_promotion_allowed": False,
+            "max_notional": "0",
+        }
+        live_gate = {
+            "allowed": False,
+            "reason": "simple_submit_disabled",
+            "blocked_reasons": ["simple_submit_disabled"],
+            "promotion_eligible_total": 0,
+            "runtime_ledger_paper_probation_import_plan": {
+                "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                "target_count": 1,
+                "skipped_target_count": 0,
+                "promotion_allowed": False,
+                "final_promotion_allowed": False,
+                "targets": [target],
+            },
+        }
+        with self.session_local() as session:
+            session.add(
+                Strategy(
+                    name="intraday-tsmom-profit-v3",
+                    description="tsmom runtime strategy",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=strategy_symbols,
+                )
+            )
+            session.commit()
+        try:
+            if hasattr(app.state, "trading_scheduler"):
+                del app.state.trading_scheduler
+            with (
+                patch(
+                    "app.main._build_live_submission_gate_payload",
+                    return_value=live_gate,
+                ),
+                patch(
+                    "app.main._build_simple_lane_status_payload",
+                    return_value={
+                        "paper_route_probe_enabled": True,
+                        "paper_route_probe_max_notional": "75000",
+                    },
+                ),
+                patch(
+                    "app.main._build_profitability_proof_floor_payload",
+                    side_effect=AssertionError(
+                        "target-plan strategy universe should avoid proof-floor fallback"
+                    ),
+                ),
+            ):
+                response = self.client.get("/trading/paper-route-evidence")
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(
+                payload["paper_route_probe"]["eligible_symbols"], strategy_symbols
+            )
+            next_target = payload["next_paper_route_runtime_window_targets"][
+                "targets"
+            ][0]
+            self.assertEqual(next_target["paper_route_probe_symbols"], strategy_symbols)
+            self.assertEqual(
+                next_target["paper_route_probe_strategy_universe_symbols"],
+                strategy_symbols,
+            )
+            self.assertEqual(
+                next_target["paper_route_probe_missing_strategy_universe_symbols"], []
+            )
+        finally:
+            settings.trading_paper_route_target_plan_url = original_target_plan_url
+            if original_scheduler is None:
+                if hasattr(app.state, "trading_scheduler"):
+                    del app.state.trading_scheduler
+            else:
+                app.state.trading_scheduler = original_scheduler
+
     def test_paper_route_target_plan_from_payload_prefers_next_window_targets(
         self,
     ) -> None:
