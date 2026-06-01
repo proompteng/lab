@@ -211,6 +211,45 @@ describe('validatePostDeployEvidence', () => {
     ).toThrow('torghut-sim paper-route target symbols differ from live target')
   })
 
+  it('accepts a sim paper-route plan scoped to a smaller strategy universe', () => {
+    const result = validatePostDeployEvidence({
+      readyzHttpStatus: '200',
+      readyz: { status: 'ok' },
+      revenueRepairDigest: { ...baseDigest, repair_queue: [] },
+      tradingStatus: baseTradingStatus,
+      paperRouteEvidence: buildPaperRouteEvidence([
+        { ...paperRouteTarget, paper_route_probe_symbols: ['AAPL', 'AMZN', 'INTC', 'NVDA'] },
+      ]),
+      simPaperRouteEvidence: buildPaperRouteEvidence([
+        {
+          ...paperRouteTarget,
+          paper_route_probe_symbols: ['AAPL', 'AMZN'],
+          paper_route_probe_strategy_scope_applied: true,
+          paper_route_probe_scope_authority: 'strategy_universe',
+        },
+      ]),
+    })
+
+    expect(result.summaryLines.join('\n')).toContain('Sim constrained target count: `1`')
+  })
+
+  it('rejects a narrower sim paper-route plan without explicit strategy-universe scope', () => {
+    expect(() =>
+      validatePostDeployEvidence({
+        readyzHttpStatus: '200',
+        readyz: { status: 'ok' },
+        revenueRepairDigest: { ...baseDigest, repair_queue: [] },
+        tradingStatus: baseTradingStatus,
+        paperRouteEvidence: buildPaperRouteEvidence([
+          { ...paperRouteTarget, paper_route_probe_symbols: ['AAPL', 'AMZN', 'INTC'] },
+        ]),
+        simPaperRouteEvidence: buildPaperRouteEvidence([
+          { ...paperRouteTarget, paper_route_probe_symbols: ['AAPL', 'AMZN'] },
+        ]),
+      }),
+    ).toThrow('torghut-sim paper-route target symbols differ from live target')
+  })
+
   it('rejects a sim paper-route plan with a different notional envelope than live', () => {
     expect(() =>
       validatePostDeployEvidence({
