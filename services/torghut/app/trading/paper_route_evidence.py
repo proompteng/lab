@@ -3481,14 +3481,45 @@ def _positive_hash_count(value: object) -> bool:
     return bool(counts) and any(_safe_int(count) > 0 for count in counts.values())
 
 
+def _runtime_ledger_bucket_authority_payload(
+    row: StrategyRuntimeLedgerBucket,
+) -> dict[str, Any]:
+    payload = _as_mapping(row.payload_json)
+    cost_basis_counts = payload.get("cost_basis_counts") or payload.get(
+        "post_cost_basis_counts"
+    )
+    merged: dict[str, Any] = {
+        **payload,
+        "fill_count": row.fill_count,
+        "decision_count": row.decision_count,
+        "submitted_order_count": row.submitted_order_count,
+        "closed_trade_count": row.closed_trade_count,
+        "open_position_count": row.open_position_count,
+        "filled_notional": row.filled_notional,
+        "gross_strategy_pnl": row.gross_strategy_pnl,
+        "cost_amount": row.cost_amount,
+        "net_strategy_pnl_after_costs": row.net_strategy_pnl_after_costs,
+        "post_cost_expectancy_bps": row.post_cost_expectancy_bps,
+        "ledger_schema_version": row.ledger_schema_version,
+        "pnl_basis": row.pnl_basis,
+        "execution_policy_hash_counts": row.execution_policy_hash_counts,
+        "cost_model_hash_counts": row.cost_model_hash_counts,
+        "lineage_hash_counts": row.lineage_hash_counts,
+    }
+    if cost_basis_counts is not None:
+        merged.setdefault("cost_basis_counts", cost_basis_counts)
+    return merged
+
+
 def _runtime_ledger_bucket_evidence_grade(row: StrategyRuntimeLedgerBucket) -> bool:
     blockers = [
         str(item).strip()
         for item in _as_sequence(row.blockers_json)
         if str(item).strip()
     ]
+    authority_payload = _runtime_ledger_bucket_authority_payload(row)
     source_authority_blockers = runtime_ledger_promotion_source_authority_blockers(
-        _as_mapping(row.payload_json)
+        authority_payload
     )
     return (
         row.pnl_basis == POST_COST_PNL_BASIS
@@ -3501,7 +3532,7 @@ def _runtime_ledger_bucket_evidence_grade(row: StrategyRuntimeLedgerBucket) -> b
         and _positive_hash_count(row.cost_model_hash_counts)
         and _positive_hash_count(row.lineage_hash_counts)
         and not cost_basis_counts_have_non_promotion_grade_costs(
-            _as_mapping(row.payload_json).get("cost_basis_counts")
+            authority_payload.get("cost_basis_counts")
         )
         and not blockers
         and not source_authority_blockers
@@ -3518,7 +3549,7 @@ def _runtime_ledger_bucket_diagnostic_blockers(
     ]
     blockers.extend(
         runtime_ledger_promotion_source_authority_blockers(
-            _as_mapping(row.payload_json)
+            _runtime_ledger_bucket_authority_payload(row)
         )
     )
     return list(dict.fromkeys(blockers))

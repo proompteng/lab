@@ -12,6 +12,46 @@ from app.trading.runtime_ledger_source_authority import (
 )
 
 
+def _economics_payload() -> dict[str, object]:
+    return {
+        "filled_notional": "1000",
+        "cost_amount": "0",
+        "cost_basis_counts": {"broker_reported_zero_cost": 1},
+        "cost_model_hash_counts": {"cost-model": 1},
+    }
+
+
+def _source_backed_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "source_window_start": "2026-05-29T14:30:00+00:00",
+        "source_window_end": "2026-05-29T15:00:00+00:00",
+        "source_refs": [
+            "postgres:trade_decisions",
+            "postgres:executions",
+            "postgres:execution_order_events",
+            "postgres:order_feed_source_windows",
+        ],
+        "source_row_counts": {
+            "trade_decisions": 1,
+            "executions": 1,
+            "execution_order_events": 1,
+            "order_feed_source_windows": 1,
+        },
+        **_economics_payload(),
+        "trade_decision_id": "decision-1",
+        "execution_id": "execution-1",
+        "execution_order_event_id": "event-1",
+        "source_window_id": "source-window-1",
+        "source_offsets": [
+            {"topic": "alpaca.trade_updates", "partition": 0, "offset": 42}
+        ],
+        "source_materialization": "execution_order_events",
+        "authority_class": "runtime_order_feed_execution_source",
+    }
+    payload.update(overrides)
+    return payload
+
+
 class TestRuntimeLedgerSourceAuthority(TestCase):
     def test_source_window_accepts_naive_datetime_objects(self) -> None:
         self.assertTrue(
@@ -102,6 +142,7 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
 
         source_backed = {
             **aggregate_only,
+            **_economics_payload(),
             "trade_decision_ids": ["decision-1", "decision-2"],
             "execution_ids": ["execution-1", "execution-2"],
             "execution_order_event_ids": ["event-1", "event-2"],
@@ -112,6 +153,44 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
             ],
             "source_materialization": "execution_order_events",
             "authority_class": "runtime_order_feed_execution_source",
+        }
+
+        self.assertEqual(
+            runtime_ledger_promotion_source_authority_blockers(source_backed),
+            [],
+        )
+
+    def test_promotion_source_authority_accepts_post_cost_basis_counts(
+        self,
+    ) -> None:
+        source_backed = {
+            "source_window_start": "2026-05-29T14:30:00+00:00",
+            "source_window_end": "2026-05-29T15:00:00+00:00",
+            "source_refs": [
+                "postgres:trade_decisions",
+                "postgres:executions",
+                "postgres:execution_order_events",
+                "postgres:order_feed_source_windows",
+            ],
+            "source_row_counts": {
+                "trade_decisions": 1,
+                "executions": 1,
+                "execution_order_events": 1,
+                "order_feed_source_windows": 1,
+            },
+            "trade_decision_id": "decision-1",
+            "execution_id": "execution-1",
+            "execution_order_event_id": "event-1",
+            "source_window_id": "source-window-1",
+            "source_offsets": [
+                {"topic": "alpaca.trade_updates", "partition": 0, "offset": 42}
+            ],
+            "source_materialization": "execution_order_events",
+            "authority_class": "runtime_order_feed_execution_source",
+            "filled_notional": "1000",
+            "cost_amount": "0",
+            "post_cost_basis_counts": {"broker_reported_zero_cost": 1},
+            "cost_model_hash_counts": {"cost-model": 1},
         }
 
         self.assertEqual(
@@ -175,6 +254,7 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
                     "execution_order_events": 1,
                     "order_feed_source_windows": 1,
                 },
+                **_economics_payload(),
                 "trade_decision_id": "decision-1",
                 "execution_id": "execution-1",
                 "execution_order_event_id": "event-1",
@@ -332,6 +412,76 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
 
         self.assertIn("runtime_ledger_authority_class_missing", blockers)
 
+    def test_promotion_source_authority_requires_explicit_economics(
+        self,
+    ) -> None:
+        blockers = runtime_ledger_promotion_source_authority_blockers(
+            {
+                "source_window_start": "2026-05-29T14:30:00+00:00",
+                "source_window_end": "2026-05-29T15:00:00+00:00",
+                "source_refs": [
+                    "postgres:trade_decisions",
+                    "postgres:executions",
+                    "postgres:execution_order_events",
+                    "postgres:order_feed_source_windows",
+                ],
+                "source_row_counts": {
+                    "trade_decisions": 1,
+                    "executions": 1,
+                    "execution_order_events": 1,
+                    "order_feed_source_windows": 1,
+                },
+                "trade_decision_id": "decision-1",
+                "execution_id": "execution-1",
+                "execution_order_event_id": "event-1",
+                "source_window_id": "source-window-1",
+                "source_offsets": [
+                    {"topic": "alpaca.trade_updates", "partition": 0, "offset": 42}
+                ],
+                "source_materialization": "execution_order_events",
+                "authority_class": "runtime_order_feed_execution_source",
+                "execution_economics_complete": False,
+            }
+        )
+
+        self.assertIn("execution_economics_missing", blockers)
+
+    def test_promotion_source_authority_rejects_probe_route_authority(
+        self,
+    ) -> None:
+        blockers = runtime_ledger_promotion_source_authority_blockers(
+            {
+                "source_window_start": "2026-05-29T14:30:00+00:00",
+                "source_window_end": "2026-05-29T15:00:00+00:00",
+                "source_refs": [
+                    "postgres:trade_decisions",
+                    "postgres:executions",
+                    "postgres:execution_order_events",
+                    "postgres:order_feed_source_windows",
+                ],
+                "source_row_counts": {
+                    "trade_decisions": 1,
+                    "executions": 1,
+                    "execution_order_events": 1,
+                    "order_feed_source_windows": 1,
+                },
+                **_economics_payload(),
+                "trade_decision_id": "decision-1",
+                "execution_id": "execution-1",
+                "execution_order_event_id": "event-1",
+                "source_window_id": "source-window-1",
+                "source_offsets": [
+                    {"topic": "alpaca.trade_updates", "partition": 0, "offset": 42}
+                ],
+                "source_materialization": "execution_order_events",
+                "authority_class": "runtime_order_feed_execution_source",
+                "source_kind": "paper_route_probe_runtime_observed",
+                "promotion_authority": False,
+            }
+        )
+
+        self.assertIn("runtime_ledger_authority_class_missing", blockers)
+
     def test_promotion_source_authority_accepts_runtime_authority_reason_only(
         self,
     ) -> None:
@@ -351,6 +501,7 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
                     "execution_order_events": 1,
                     "order_feed_source_windows": 1,
                 },
+                **_economics_payload(),
                 "trade_decision_id": "decision-1",
                 "execution_id": "execution-1",
                 "execution_order_event_id": "event-1",
@@ -415,6 +566,7 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
                 "execution_order_events": 1,
                 "order_feed_source_windows": 1,
             },
+            **_economics_payload(),
             "trade_decision_id": "decision-1",
             "execution_id": "execution-1",
             "execution_order_event_id": "event-1",
@@ -493,6 +645,7 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
                 "execution_order_events": 1,
                 "order_feed_source_windows": 1,
             },
+            **_economics_payload(),
             "trade_decision_id": "decision-1",
             "execution_id": "execution-1",
             "execution_order_event_id": "event-1",
@@ -539,6 +692,7 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
                 "execution_order_events": 1,
                 "order_feed_source_windows": 1,
             },
+            **_economics_payload(),
             "trade_decision_id": "decision-1",
             "execution_id": "execution-1",
             "execution_order_event_id": "event-1",
@@ -578,3 +732,49 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
         self.assertNotIn("order_feed_lifecycle_missing", economics_blockers)
         self.assertNotIn("order_feed_lifecycle_missing", unknown_flag_blockers)
         self.assertNotIn("execution_economics_missing", unknown_flag_blockers)
+
+    def test_promotion_source_authority_accepts_required_economics_aliases(
+        self,
+    ) -> None:
+        payload = _source_backed_payload(
+            execution_economics_required=True,
+            cost_amount=None,
+            broker_fee="0",
+            filled_notional="not-a-decimal",
+            runtime_ledger_filled_notional="1000",
+        )
+
+        self.assertEqual(runtime_ledger_promotion_source_authority_blockers(payload), [])
+
+    def test_promotion_source_authority_rejects_non_promotion_cost_basis_inputs(
+        self,
+    ) -> None:
+        for overrides in (
+            {"cost_basis": "paper_cost_model_estimate"},
+            {"cost_basis_counts": {"paper_cost_model_estimate": 1}},
+            {
+                "cost_basis_counts": {},
+                "post_cost_basis_counts": {"paper_cost_model_estimate": 1},
+            },
+        ):
+            with self.subTest(overrides=overrides):
+                blockers = runtime_ledger_promotion_source_authority_blockers(
+                    _source_backed_payload(
+                        execution_economics_required=True,
+                        **overrides,
+                    )
+                )
+
+                self.assertIn("execution_economics_missing", blockers)
+
+    def test_promotion_source_authority_accepts_cost_model_ref_for_zero_cost_bucket(
+        self,
+    ) -> None:
+        payload = _source_backed_payload(
+            execution_economics_required=True,
+            cost_amount=None,
+            cost_model_hash_counts={},
+            cost_model_hash="broker-cost-v1",
+        )
+
+        self.assertEqual(runtime_ledger_promotion_source_authority_blockers(payload), [])
