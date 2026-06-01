@@ -5,8 +5,11 @@ from typing import Any
 from unittest import TestCase
 from unittest.mock import patch
 
+import numpy as np
+
 import app.trading.discovery.candidate_specs as candidate_specs_module
 import app.trading.discovery.evidence_bundles as evidence_bundles_module
+import app.trading.discovery.mlx_training_data as mlx_training_data_module
 from app.trading.discovery.candidate_specs import (
     candidate_spec_from_payload,
     compile_candidate_specs,
@@ -23,12 +26,87 @@ from app.trading.discovery.hypothesis_cards import (
     hypothesis_card_from_payload,
 )
 from app.trading.discovery.mlx_training_data import (
+    MlxTrainingRow,
     build_mlx_training_rows,
     mlx_ranker_model_from_payload,
     rank_training_rows,
     train_mlx_ranker,
 )
 from app.trading.discovery.portfolio_optimizer import optimize_portfolio_candidate
+
+
+class _FakeTorchTensor:
+    def __init__(self, value: Any) -> None:
+        self._value = np.array(value, dtype=float)
+
+    @property
+    def T(self) -> _FakeTorchTensor:
+        return _FakeTorchTensor(self._value.T)
+
+    def __matmul__(self, other: Any) -> _FakeTorchTensor:
+        return _FakeTorchTensor(self._value @ self._coerce(other))
+
+    def __add__(self, other: Any) -> _FakeTorchTensor:
+        return _FakeTorchTensor(self._value + self._coerce(other))
+
+    def __radd__(self, other: Any) -> _FakeTorchTensor:
+        return _FakeTorchTensor(self._coerce(other) + self._value)
+
+    def __sub__(self, other: Any) -> _FakeTorchTensor:
+        return _FakeTorchTensor(self._value - self._coerce(other))
+
+    def __rsub__(self, other: Any) -> _FakeTorchTensor:
+        return _FakeTorchTensor(self._coerce(other) - self._value)
+
+    def __mul__(self, other: Any) -> _FakeTorchTensor:
+        return _FakeTorchTensor(self._value * self._coerce(other))
+
+    def __rmul__(self, other: Any) -> _FakeTorchTensor:
+        return _FakeTorchTensor(self._coerce(other) * self._value)
+
+    def mean(self) -> _FakeTorchTensor:
+        return _FakeTorchTensor(self._value.mean())
+
+    def item(self) -> float:
+        return float(self._value.item())
+
+    def tolist(self) -> list[float]:
+        return list(self._value.tolist())
+
+    @staticmethod
+    def _coerce(value: Any) -> Any:
+        if isinstance(value, _FakeTorchTensor):
+            return value._value
+        return value
+
+
+class _FakeTorchCuda:
+    @staticmethod
+    def is_available() -> bool:
+        return True
+
+
+class _FakeTorchCpu:
+    @staticmethod
+    def is_available() -> bool:
+        return False
+
+
+class _FakeTorchModule:
+    float32 = "float32"
+    cuda = _FakeTorchCuda()
+
+    @staticmethod
+    def tensor(value: Any, **_: Any) -> _FakeTorchTensor:
+        return _FakeTorchTensor(value)
+
+    @staticmethod
+    def zeros(value: Any, **_: Any) -> _FakeTorchTensor:
+        return _FakeTorchTensor(np.zeros(value, dtype=float))
+
+
+class _FakeTorchCpuModule(_FakeTorchModule):
+    cuda = _FakeTorchCpu()
 
 
 def _profile_ids_for_family(family_template_id: str) -> list[str]:
@@ -235,6 +313,70 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
         self.assertEqual(model.row_count, 2)
         self.assertEqual(ranked[0].candidate_spec_id, high_spec.candidate_spec_id)
         self.assertGreater(ranked[0].score, ranked[1].score)
+
+    def test_ranker_uses_torch_cuda_backend_when_requested(self) -> None:
+        rows = [
+            MlxTrainingRow(
+                candidate_spec_id="low",
+                feature_names=("edge", "risk"),
+                feature_values=(0.1, 0.9),
+                target=10.0,
+            ),
+            MlxTrainingRow(
+                candidate_spec_id="high",
+                feature_names=("edge", "risk"),
+                feature_values=(0.9, 0.1),
+                target=100.0,
+            ),
+        ]
+
+        with patch.dict("sys.modules", {"torch": _FakeTorchModule()}):
+            model = train_mlx_ranker(rows, backend_preference="torch-cuda", steps=8)
+
+        ranked = rank_training_rows(model=model, rows=rows)
+
+        self.assertEqual(model.backend, "torch-cuda")
+        self.assertEqual(ranked[0].candidate_spec_id, "high")
+
+    def test_torch_ranker_backend_selection_covers_fallback_edges(self) -> None:
+        with patch.object(
+            mlx_training_data_module.importlib,
+            "import_module",
+            side_effect=ModuleNotFoundError("torch"),
+        ):
+            self.assertIsNone(
+                mlx_training_data_module._import_torch_array_backend("torch-cuda")
+            )
+
+        with patch.object(
+            mlx_training_data_module.importlib,
+            "import_module",
+            return_value=_FakeTorchCpuModule(),
+        ):
+            self.assertIsNone(
+                mlx_training_data_module._import_torch_array_backend("torch-cuda")
+            )
+            self.assertEqual(
+                mlx_training_data_module._import_array_backend("cuda")[0],
+                "numpy-fallback",
+            )
+            self.assertEqual(
+                mlx_training_data_module._import_torch_array_backend("torch")[0],
+                "torch",
+            )
+            self.assertIsNone(
+                mlx_training_data_module._import_torch_array_backend("unsupported")
+            )
+
+        with patch.object(
+            mlx_training_data_module.importlib,
+            "import_module",
+            return_value=_FakeTorchModule(),
+        ):
+            self.assertEqual(
+                mlx_training_data_module._import_torch_array_backend("torch")[0],
+                "torch-cuda",
+            )
 
     def test_hypothesis_cards_cover_failure_and_threshold_edges(self) -> None:
         self.assertEqual(

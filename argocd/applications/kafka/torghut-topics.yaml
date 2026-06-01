@@ -10,7 +10,7 @@ spec:
   replicas: 3
   config:
     compression.type: lz4
-    retention.ms: 604800000
+    retention.ms: 3024000000
     cleanup.policy: delete
 ---
 apiVersion: kafka.strimzi.io/v1
@@ -25,7 +25,7 @@ spec:
   replicas: 3
   config:
     compression.type: lz4
-    retention.ms: 604800000
+    retention.ms: 3024000000
     cleanup.policy: delete
 ---
 apiVersion: kafka.strimzi.io/v1
@@ -40,7 +40,7 @@ spec:
   replicas: 3
   config:
     compression.type: lz4
-    retention.ms: 2592000000
+    retention.ms: 3024000000
     cleanup.policy: delete
 ---
 apiVersion: kafka.strimzi.io/v1
@@ -85,7 +85,7 @@ spec:
   replicas: 3
   config:
     compression.type: lz4
-    retention.ms: 1209600000
+    retention.ms: 3024000000
     cleanup.policy: delete
 ---
 apiVersion: kafka.strimzi.io/v1
@@ -100,7 +100,7 @@ spec:
   replicas: 3
   config:
     compression.type: lz4
-    retention.ms: 1209600000
+    retention.ms: 3024000000
     cleanup.policy: delete
 ---
 apiVersion: kafka.strimzi.io/v1

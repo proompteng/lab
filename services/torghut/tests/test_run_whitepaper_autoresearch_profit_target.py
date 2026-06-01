@@ -45,6 +45,22 @@ from app.trading.models import SignalEnvelope
 _CHIP_UNIVERSE = list(runner.LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE)
 
 
+class _FakeSigalrmSignal:
+    SIGALRM = object()
+
+    @staticmethod
+    def getsignal(_signum: object) -> None:
+        return None
+
+    @staticmethod
+    def signal(_signum: object, _handler: Any) -> None:
+        return None
+
+    @staticmethod
+    def alarm(_seconds: int) -> None:
+        return None
+
+
 def _authoritative_exact_replay_ledger_rows() -> list[dict[str, object]]:
     base_row: dict[str, object] = {
         "account_label": "paper",
@@ -337,6 +353,70 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             expected_failure_modes=(),
             promotion_contract={},
         )
+
+    def test_ranker_backend_preference_reaches_pre_and_post_replay_models(self) -> None:
+        specs = [
+            self._candidate_spec("spec-low"),
+            self._candidate_spec("spec-high"),
+        ]
+        evidence_bundles = [
+            runner.evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=specs[0].candidate_spec_id,
+                candidate={
+                    "candidate_id": "candidate-low",
+                    "objective_scorecard": {"net_pnl_per_day": "50"},
+                },
+                dataset_snapshot_id="snapshot",
+                result_path="/tmp/low.json",
+            ),
+            runner.evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=specs[1].candidate_spec_id,
+                candidate={
+                    "candidate_id": "candidate-high",
+                    "objective_scorecard": {"net_pnl_per_day": "500"},
+                },
+                dataset_snapshot_id="snapshot",
+                result_path="/tmp/high.json",
+            ),
+        ]
+        captured_backend_preferences: list[str] = []
+        real_train_mlx_ranker = runner.train_mlx_ranker
+
+        def capture_train_mlx_ranker(rows: Sequence[Any], **kwargs: Any) -> Any:
+            captured_backend_preferences.append(str(kwargs.get("backend_preference")))
+            return real_train_mlx_ranker(
+                rows,
+                backend_preference="numpy-fallback",
+                steps=2,
+            )
+
+        with patch.object(
+            runner,
+            "train_mlx_ranker",
+            side_effect=capture_train_mlx_ranker,
+        ):
+            runner._pre_replay_proposal_model_and_rows(
+                specs=specs,
+                feedback_evidence_bundles=(),
+                oracle_policy=runner.ProfitTargetOraclePolicy(),
+                ranker_backend_preference="torch-cuda",
+            )
+            runner._proposal_model_and_rows(
+                specs=specs,
+                evidence_bundles=evidence_bundles,
+                replay_selection_by_spec=None,
+                ranker_backend_preference="cuda",
+            )
+
+        self.assertEqual(captured_backend_preferences, ["torch-cuda", "cuda"])
+
+    def test_ranker_backend_preference_falls_back_for_invalid_internal_value(
+        self,
+    ) -> None:
+        args = self._args(Path("unused"))
+        args.ranker_backend_preference = "not-a-backend"
+
+        self.assertEqual(runner._ranker_backend_preference(args), "mlx")
 
     def test_candidate_board_adds_factor_acceptance_replay_metadata(self) -> None:
         spec = replace(
@@ -10017,7 +10097,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertEqual(
             plan["flags"]["--shadow-validation-artifact"],
-            "/tmp/shadow-validation.json",
+            str(Path("/tmp/shadow-validation.json")),
         )
         self.assertIn(
             {
@@ -11079,7 +11159,10 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             args.real_replay_shard_size = 1
             args.real_replay_shard_timeout_seconds = 7
             args.real_replay_failed_spec_retries = 0
-            with patch.object(runner, "_run_real_replay", side_effect=fake_replay):
+            with (
+                patch.object(runner, "signal", _FakeSigalrmSignal()),
+                patch.object(runner, "_run_real_replay", side_effect=fake_replay),
+            ):
                 result = runner._run_replay_with_optional_timeout(
                     args=args,
                     output_dir=output_dir,
@@ -11104,6 +11187,413 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertIn(
             "TimeoutError:real_replay_timeout_seconds:7", result.failure_reasons
         )
+
+    def test_real_replay_timeout_wrapper_uses_child_process_without_sigalrm(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "epoch"
+            args = self._args(output_dir)
+            args.replay_mode = "real"
+            spec = self._candidate_spec("spec-no-sigalrm")
+            bundle = runner.evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=spec.candidate_spec_id,
+                candidate={
+                    "candidate_id": "candidate-no-sigalrm",
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "10",
+                        "active_day_ratio": "1",
+                        "positive_day_ratio": "1",
+                    },
+                },
+                dataset_snapshot_id="snap-no-sigalrm",
+                result_path=str(output_dir / "candidate-no-sigalrm.json"),
+            )
+
+            with (
+                patch.object(runner, "signal", object()),
+                patch.object(
+                    runner,
+                    "_run_real_replay_once_in_child_process",
+                    return_value=runner.EpochReplayResult(
+                        evidence_bundles=(bundle,),
+                        replay_results=({"status": "ok"},),
+                    ),
+                ) as child_replay,
+            ):
+                result = runner._run_real_replay_once_with_optional_timeout(
+                    args=args,
+                    output_dir=output_dir,
+                    specs=(spec,),
+                    timeout_seconds=7,
+                )
+
+        self.assertEqual(
+            result.evidence_bundles[0].candidate_spec_id, spec.candidate_spec_id
+        )
+        child_replay.assert_called_once_with(
+            args=args,
+            output_dir=output_dir,
+            specs=(spec,),
+            timeout_seconds=7,
+        )
+
+    def test_real_replay_child_process_timeout_terminates_worker(self) -> None:
+        class FakeQueue:
+            closed = False
+            joined = False
+
+            def get(self, *, timeout: float) -> Any:
+                raise runner.queue.Empty
+
+            def close(self) -> None:
+                self.closed = True
+
+            def join_thread(self) -> None:
+                self.joined = True
+
+        class FakeProcess:
+            def __init__(self) -> None:
+                self.exitcode: int | None = None
+                self.started = False
+                self.terminated = False
+
+            def start(self) -> None:
+                self.started = True
+
+            def is_alive(self) -> bool:
+                return self.exitcode is None
+
+            def terminate(self) -> None:
+                self.terminated = True
+                self.exitcode = -15
+
+            def join(self, *, timeout: float | None = None) -> None:
+                return None
+
+        class FakeContext:
+            def __init__(self) -> None:
+                self.queue = FakeQueue()
+                self.process = FakeProcess()
+
+            def Queue(self, *, maxsize: int) -> FakeQueue:
+                return self.queue
+
+            def Process(self, **_: Any) -> FakeProcess:
+                return self.process
+
+        with TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "epoch"
+            args = self._args(output_dir)
+            spec = self._candidate_spec("spec-child-timeout")
+            fake_context = FakeContext()
+
+            with (
+                patch.object(
+                    runner.multiprocessing,
+                    "get_context",
+                    return_value=fake_context,
+                ),
+                patch.object(
+                    runner.monotonic_time, "monotonic", side_effect=[0.0, 0.0, 8.0]
+                ),
+            ):
+                with self.assertRaisesRegex(
+                    TimeoutError, "real_replay_timeout_seconds:7"
+                ):
+                    runner._run_real_replay_once_in_child_process(
+                        args=args,
+                        output_dir=output_dir,
+                        specs=(spec,),
+                        timeout_seconds=7,
+                    )
+
+        self.assertTrue(fake_context.process.started)
+        self.assertTrue(fake_context.process.terminated)
+        self.assertTrue(fake_context.queue.closed)
+        self.assertTrue(fake_context.queue.joined)
+
+    def test_real_replay_worker_reports_success_error_and_error_payload(
+        self,
+    ) -> None:
+        class CaptureQueue:
+            def __init__(self, *, fail_error_put: bool = False) -> None:
+                self.items: list[tuple[str, Any]] = []
+                self.fail_error_put = fail_error_put
+
+            def put(self, item: tuple[str, Any]) -> None:
+                if self.fail_error_put and item[0] == "error":
+                    raise RuntimeError("queue-put-failed")
+                self.items.append(item)
+
+        args = self._args(Path("unused"))
+        spec = self._candidate_spec("spec-worker")
+        expected = runner.EpochReplayResult(
+            evidence_bundles=(),
+            replay_results=({"status": "ok"},),
+        )
+        success_queue = CaptureQueue()
+        with patch.object(runner, "_run_real_replay", return_value=expected):
+            runner._real_replay_worker(success_queue, args, "worker-output", (spec,))
+        self.assertEqual(success_queue.items, [("ok", expected)])
+
+        error_queue = CaptureQueue()
+        with patch.object(
+            runner, "_run_real_replay", side_effect=ValueError("worker-failed")
+        ):
+            runner._real_replay_worker(error_queue, args, "worker-output", (spec,))
+        self.assertEqual(error_queue.items[0][0], "error")
+        self.assertIsInstance(error_queue.items[0][1], ValueError)
+
+        payload_queue = CaptureQueue(fail_error_put=True)
+        with patch.object(
+            runner, "_run_real_replay", side_effect=ValueError("worker-failed")
+        ):
+            runner._real_replay_worker(payload_queue, args, "worker-output", (spec,))
+        self.assertEqual(
+            payload_queue.items,
+            [("error_payload", ("ValueError", "worker-failed"))],
+        )
+
+    def test_terminate_process_covers_inactive_and_kill_fallback(self) -> None:
+        class InactiveProcess:
+            terminated = False
+
+            def is_alive(self) -> bool:
+                return False
+
+            def terminate(self) -> None:
+                self.terminated = True
+
+        inactive = InactiveProcess()
+        runner._terminate_process(inactive)
+        self.assertFalse(inactive.terminated)
+
+        class StubbornProcess:
+            def __init__(self) -> None:
+                self.terminated = False
+                self.killed = False
+                self.join_calls = 0
+
+            def is_alive(self) -> bool:
+                return not self.killed
+
+            def terminate(self) -> None:
+                self.terminated = True
+
+            def kill(self) -> None:
+                self.killed = True
+
+            def join(self, *, timeout: float | None = None) -> None:
+                self.join_calls += 1
+
+        stubborn = StubbornProcess()
+        runner._terminate_process(stubborn)
+        self.assertTrue(stubborn.terminated)
+        self.assertTrue(stubborn.killed)
+        self.assertEqual(stubborn.join_calls, 2)
+
+    def test_real_replay_child_process_returns_queue_result(self) -> None:
+        class FakeQueue:
+            closed = False
+            joined = False
+
+            def __init__(self, item: tuple[str, Any]) -> None:
+                self.item = item
+
+            def get(self, *, timeout: float) -> tuple[str, Any]:
+                return self.item
+
+            def close(self) -> None:
+                self.closed = True
+
+            def join_thread(self) -> None:
+                self.joined = True
+
+        class FakeProcess:
+            exitcode: int | None = None
+
+            def __init__(self) -> None:
+                self.started = False
+                self.terminated = False
+
+            def start(self) -> None:
+                self.started = True
+
+            def join(self, *, timeout: float | None = None) -> None:
+                return None
+
+            def is_alive(self) -> bool:
+                return False
+
+            def terminate(self) -> None:
+                self.terminated = True
+
+        class FakeContext:
+            def __init__(self, queue: FakeQueue, process: FakeProcess) -> None:
+                self.queue = queue
+                self.process = process
+
+            def Queue(self, *, maxsize: int) -> FakeQueue:
+                return self.queue
+
+            def Process(self, **_: Any) -> FakeProcess:
+                return self.process
+
+        with TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "epoch"
+            args = self._args(output_dir)
+            spec = self._candidate_spec("spec-child-ok")
+            expected = runner.EpochReplayResult(
+                evidence_bundles=(),
+                replay_results=({"status": "ok"},),
+            )
+            fake_queue = FakeQueue(("ok", expected))
+            fake_process = FakeProcess()
+            fake_context = FakeContext(fake_queue, fake_process)
+
+            with patch.object(
+                runner.multiprocessing, "get_context", return_value=fake_context
+            ):
+                result = runner._run_real_replay_once_in_child_process(
+                    args=args,
+                    output_dir=output_dir,
+                    specs=(spec,),
+                    timeout_seconds=7,
+                )
+
+        self.assertIs(result, expected)
+        self.assertTrue(fake_process.started)
+        self.assertFalse(fake_process.terminated)
+        self.assertTrue(fake_queue.closed)
+        self.assertTrue(fake_queue.joined)
+
+    def test_real_replay_child_process_raises_worker_statuses(self) -> None:
+        class FakeQueue:
+            closed = False
+            joined = False
+
+            def __init__(self, item: tuple[str, Any]) -> None:
+                self.item = item
+
+            def get(self, *, timeout: float) -> tuple[str, Any]:
+                return self.item
+
+            def close(self) -> None:
+                self.closed = True
+
+            def join_thread(self) -> None:
+                self.joined = True
+
+        class FakeProcess:
+            exitcode: int | None = None
+
+            def start(self) -> None:
+                return None
+
+            def join(self, *, timeout: float | None = None) -> None:
+                return None
+
+            def is_alive(self) -> bool:
+                return False
+
+        class FakeContext:
+            def __init__(self, queue: FakeQueue) -> None:
+                self.queue = queue
+
+            def Queue(self, *, maxsize: int) -> FakeQueue:
+                return self.queue
+
+            def Process(self, **_: Any) -> FakeProcess:
+                return FakeProcess()
+
+        with TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "epoch"
+            args = self._args(output_dir)
+            spec = self._candidate_spec("spec-child-error")
+
+            for item, expected_error in (
+                (("error", ValueError("worker-failed")), ValueError),
+                (("error_payload", ("RuntimeError", "payload-failed")), RuntimeError),
+            ):
+                fake_queue = FakeQueue(item)
+                fake_context = FakeContext(fake_queue)
+                with (
+                    self.subTest(status=item[0]),
+                    patch.object(
+                        runner.multiprocessing,
+                        "get_context",
+                        return_value=fake_context,
+                    ),
+                    self.assertRaises(expected_error),
+                ):
+                    runner._run_real_replay_once_in_child_process(
+                        args=args,
+                        output_dir=output_dir,
+                        specs=(spec,),
+                        timeout_seconds=7,
+                    )
+                self.assertTrue(fake_queue.closed)
+                self.assertTrue(fake_queue.joined)
+
+    def test_real_replay_child_process_detects_worker_exit_without_result(
+        self,
+    ) -> None:
+        class FakeQueue:
+            closed = False
+            joined = False
+
+            def get(self, *, timeout: float) -> Any:
+                raise runner.queue.Empty
+
+            def close(self) -> None:
+                self.closed = True
+
+            def join_thread(self) -> None:
+                self.joined = True
+
+        class FakeProcess:
+            exitcode: int | None = 1
+
+            def start(self) -> None:
+                return None
+
+            def is_alive(self) -> bool:
+                return False
+
+        class FakeContext:
+            def __init__(self) -> None:
+                self.queue = FakeQueue()
+
+            def Queue(self, *, maxsize: int) -> FakeQueue:
+                return self.queue
+
+            def Process(self, **_: Any) -> FakeProcess:
+                return FakeProcess()
+
+        with TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "epoch"
+            args = self._args(output_dir)
+            spec = self._candidate_spec("spec-child-no-result")
+            fake_context = FakeContext()
+
+            with (
+                patch.object(
+                    runner.multiprocessing, "get_context", return_value=fake_context
+                ),
+                self.assertRaisesRegex(
+                    RuntimeError, "real_replay_worker_exited_without_result"
+                ),
+            ):
+                runner._run_real_replay_once_in_child_process(
+                    args=args,
+                    output_dir=output_dir,
+                    specs=(spec,),
+                    timeout_seconds=7,
+                )
+
+        self.assertTrue(fake_context.queue.closed)
+        self.assertTrue(fake_context.queue.joined)
 
     def test_sharded_real_replay_retries_failed_specs_individually(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -11161,7 +11651,10 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             args.real_replay_failed_spec_retries = 1
             args.real_replay_retry_timeout_seconds = 11
             args.real_replay_retry_max_frontier_candidates_per_spec = 1
-            with patch.object(runner, "_run_real_replay", side_effect=fake_replay):
+            with (
+                patch.object(runner, "signal", _FakeSigalrmSignal()),
+                patch.object(runner, "_run_real_replay", side_effect=fake_replay),
+            ):
                 result = runner._run_replay_with_optional_timeout(
                     args=args,
                     output_dir=output_dir,

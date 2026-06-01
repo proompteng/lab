@@ -169,7 +169,7 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
         }
 
     def _passing_kafka_retention(
-        self, *, required_calendar_days: int = 7
+        self, *, required_calendar_days: int = 35
     ) -> dict[str, object]:
         topics = []
         for role, topic_name in runner.DEFAULT_KAFKA_RETENTION_TOPICS.items():
@@ -177,7 +177,7 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
                 {
                     "role": role,
                     "topic": topic_name,
-                    "retention_days": 30.0,
+                    "retention_days": 35.0,
                     "ready": "True",
                 }
             )
@@ -447,9 +447,9 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
     def test_replay_feasibility_allows_replay_when_sources_and_ttl_pass(self) -> None:
         feasibility = runner._build_replay_feasibility(
             coverage=self._coverage(),
-            kafka_retention=self._passing_kafka_retention(required_calendar_days=7),
-            required_trading_days=5,
-            required_calendar_days=7,
+            kafka_retention=self._passing_kafka_retention(required_calendar_days=35),
+            required_trading_days=25,
+            required_calendar_days=35,
         )
 
         assert feasibility is not None
@@ -467,9 +467,9 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
     ) -> None:
         feasibility = runner._build_replay_feasibility(
             coverage=self._coverage(),
-            kafka_retention=self._passing_kafka_retention(required_calendar_days=35),
-            required_trading_days=25,
-            required_calendar_days=35,
+            kafka_retention=self._passing_kafka_retention(required_calendar_days=45),
+            required_trading_days=32,
+            required_calendar_days=45,
         )
 
         assert feasibility is not None
@@ -480,7 +480,11 @@ class TestTaReplayRunnerCoveragePreflight(TestCase):
         self.assertFalse(feasibility["ok"])
         self.assertFalse(feasibility["non_destructive_replay_admission"])
         self.assertIn(
-            "clickhouse_ttl_shortfall:ta_signals:14<35",
+            "clickhouse_ttl_shortfall:ta_signals:35<45",
+            feasibility["blockers"],
+        )
+        self.assertIn(
+            "clickhouse_ttl_shortfall:ta_microbars:35<45",
             feasibility["blockers"],
         )
         self.assertIn(

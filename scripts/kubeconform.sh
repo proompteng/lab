@@ -36,10 +36,30 @@ if [[ -d "$SCHEMA_DIR" ]]; then
   )
 fi
 
-kubeconform --strict --summary --ignore-missing-schemas \
-  --ignore-filename-pattern 'overlays/' \
-  --ignore-filename-pattern 'charts/' \
-  --ignore-filename-pattern 'Chart.yaml' \
-  --ignore-filename-pattern 'values.yaml' \
-  "${SCHEMA_ARGS[@]}" \
-  "${filtered[@]}"
+KUBECONFORM_ARGS=(
+  --strict
+  --summary
+  --ignore-missing-schemas
+  --ignore-filename-pattern 'overlays/'
+  --ignore-filename-pattern 'charts/'
+  --ignore-filename-pattern 'Chart.yaml'
+  --ignore-filename-pattern 'values.yaml'
+  "${SCHEMA_ARGS[@]}"
+)
+
+status=0
+batch=()
+batch_size=100
+for file in "${filtered[@]}"; do
+  batch+=("$file")
+  if [[ ${#batch[@]} -ge $batch_size ]]; then
+    kubeconform "${KUBECONFORM_ARGS[@]}" "${batch[@]}" || status=$?
+    batch=()
+  fi
+done
+
+if [[ ${#batch[@]} -gt 0 ]]; then
+  kubeconform "${KUBECONFORM_ARGS[@]}" "${batch[@]}" || status=$?
+fi
+
+exit "$status"

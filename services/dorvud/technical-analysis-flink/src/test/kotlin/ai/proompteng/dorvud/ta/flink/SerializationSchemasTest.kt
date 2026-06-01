@@ -136,6 +136,8 @@ class SerializationSchemasTest {
         ?.trim()
     assertNotNull(schema)
     assertTrue(schema.contains("microstructure_signal_v1 Nullable(String)"))
+    assertTrue(schema.contains("ALTER TABLE torghut.ta_signals ON CLUSTER default"))
+    assertTrue(schema.contains("MODIFY TTL toDateTime(event_ts) + INTERVAL 35 DAY"))
   }
 
   @Test
