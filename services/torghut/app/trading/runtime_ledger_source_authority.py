@@ -328,12 +328,19 @@ def _non_promotion_authority_marker_present(value: object) -> bool:
     return any(marker in normalized for marker in _NON_PROMOTION_AUTHORITY_MARKERS)
 
 
+def _promotion_grade_authority_field_present(
+    bucket: Mapping[str, object],
+    key: str,
+) -> bool:
+    marker = _text(bucket.get(key))
+    return marker is not None and marker in _PROMOTION_GRADE_AUTHORITY_MARKERS
+
+
 def _promotion_grade_authority_marker_present(bucket: Mapping[str, object]) -> bool:
-    for key in ("authority_class", "authority_reason"):
-        marker = _text(bucket.get(key))
-        if marker in _PROMOTION_GRADE_AUTHORITY_MARKERS:
-            return True
-    return False
+    return _promotion_grade_authority_field_present(
+        bucket,
+        "authority_class",
+    ) or _promotion_grade_authority_field_present(bucket, "authority_reason")
 
 
 def _non_promotion_derivation_present(bucket: Mapping[str, object]) -> bool:
@@ -492,15 +499,24 @@ def runtime_ledger_promotion_source_authority_blockers(
         bucket,
         "source_window_ids",
         "source_window_id",
+        "source_window_refs",
+        "source_window_ref",
         "runtime_ledger_source_window_ids",
         "runtime_ledger_source_window_id",
+        "runtime_ledger_source_window_refs",
+        "runtime_ledger_source_window_ref",
     ) or _source_ref_count(
         bucket,
         "source_window_ids",
         "source_window_id",
+        "source_window_refs",
+        "source_window_ref",
         "runtime_ledger_source_window_ids",
         "runtime_ledger_source_window_id",
+        "runtime_ledger_source_window_refs",
+        "runtime_ledger_source_window_ref",
     ) < _source_row_count(bucket, "order_feed_source_windows"):
+        blockers.append(RUNTIME_LEDGER_SOURCE_WINDOW_MISSING_BLOCKER)
         blockers.append(RUNTIME_LEDGER_SOURCE_WINDOW_IDS_MISSING_BLOCKER)
     if not _source_refs_present(
         bucket,

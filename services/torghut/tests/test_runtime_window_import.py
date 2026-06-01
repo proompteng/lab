@@ -106,6 +106,7 @@ def _runtime_ledger_bucket(**overrides: object) -> dict[str, object]:
         ],
         "source_materialization": "execution_order_events",
         "authority_class": "runtime_order_feed_execution_source",
+        "authority_reason": "event_sourced_runtime_ledger_profit_proof",
         "blockers": [],
     }
     payload.update(overrides)

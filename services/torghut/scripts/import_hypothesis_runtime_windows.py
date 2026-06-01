@@ -1127,6 +1127,7 @@ def _with_runtime_ledger_source_authority_context(
     execution_economics_complete: bool | None = None,
     source_materialization: str | None = None,
     authority_class: str | None = None,
+    authority_reason: str | None = None,
 ) -> dict[str, object]:
     payload = dict(bucket)
     payload.setdefault("source_window_start", source_window_start.isoformat())
@@ -1213,6 +1214,8 @@ def _with_runtime_ledger_source_authority_context(
         payload.setdefault("source_materialization", source_materialization)
     if authority_class:
         payload.setdefault("authority_class", authority_class)
+    if authority_reason:
+        payload.setdefault("authority_reason", authority_reason)
     existing_counts = _as_mapping(payload.get("source_row_counts"))
     merged_counts: dict[str, int] = {
         str(key): _nonnegative_int(value) for key, value in existing_counts.items()
@@ -3112,6 +3115,7 @@ def _runtime_source_context_for_bucket(
     ]
     source_materialization = None
     authority_class = None
+    authority_reason = None
     source_offsets = _source_offset_values(source_authority_lifecycle_rows)
     source_window_status_counts = _source_window_status_counts(
         source_authority_lifecycle_rows
@@ -3131,11 +3135,13 @@ def _runtime_source_context_for_bucket(
         if order_feed_fill_economics_complete:
             source_materialization = "execution_order_events"
             authority_class = "runtime_order_feed_execution_source"
+            authority_reason = "event_sourced_runtime_ledger_profit_proof"
         elif (
             execution_fill_economics_complete and source_backed_fill_lifecycle_complete
         ):
             source_materialization = "source_execution_lifecycle"
             authority_class = "source_execution_lifecycle_materialized_runtime_ledger"
+            authority_reason = "source_execution_lifecycle_materialized_runtime_ledger"
     return {
         "execution_rows": bucket_execution_rows,
         "decision_rows": bucket_decision_rows,
@@ -3173,6 +3179,7 @@ def _runtime_source_context_for_bucket(
         "source_offsets": source_offsets,
         "source_materialization": source_materialization,
         "authority_class": authority_class,
+        "authority_reason": authority_reason,
         "order_feed_lifecycle_complete": source_backed_fill_lifecycle_complete,
         "fill_economics_complete": (
             order_feed_fill_economics_complete or execution_fill_economics_complete
@@ -3667,6 +3674,7 @@ def _build_realized_strategy_pnl_rows(
             str | None, source_context["source_materialization"]
         )
         authority_class = cast(str | None, source_context["authority_class"])
+        authority_reason = cast(str | None, source_context["authority_reason"])
         order_feed_lifecycle_complete = bool(
             source_context["order_feed_lifecycle_complete"]
         )
@@ -3737,6 +3745,7 @@ def _build_realized_strategy_pnl_rows(
                 execution_economics_complete=fill_economics_complete,
                 source_materialization=source_materialization,
                 authority_class=authority_class,
+                authority_reason=authority_reason,
             )
             row["runtime_ledger_bucket"] = bucket_payload
         source_backed_runtime_ledger = (
