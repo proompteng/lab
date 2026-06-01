@@ -13,8 +13,9 @@ themselves.
 from __future__ import annotations
 
 import argparse
-import os
+import hashlib
 import json
+import os
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
@@ -406,6 +407,8 @@ def _attach_and_upload_artifact(
     require_artifact_upload: bool,
     runtime_window_import: Mapping[str, Any] | None,
 ) -> bytes:
+    if require_artifact_upload and not artifact_prefix.strip():
+        raise SystemExit("runtime_ledger_proof_artifact_upload_prefix_missing")
     client, bucket = _ceph_client_from_env()
     if client is None and require_artifact_upload:
         raise SystemExit("runtime_ledger_proof_artifact_upload_not_configured")
@@ -430,15 +433,76 @@ def _attach_and_upload_artifact(
         "uploaded": client is not None,
         "upload_required": require_artifact_upload,
     }
+    canonical_body = json.dumps(packet, indent=2, sort_keys=True).encode("utf-8")
+    packet["artifact"]["payload_sha256"] = hashlib.sha256(canonical_body).hexdigest()
+    packet["artifact"]["payload_digest_scope"] = (
+        "packet_before_artifact_digest_and_upload_receipt"
+    )
+    packet["artifact"]["payload_size_bytes"] = len(canonical_body)
     encoded = json.dumps(packet, indent=2, sort_keys=True).encode("utf-8")
     if client is not None:
-        client.put_object(
-            bucket=bucket,
-            key=key,
-            body=encoded,
-            content_type="application/json",
+        try:
+            receipt = client.put_object(
+                bucket=bucket,
+                key=key,
+                body=encoded,
+                content_type="application/json",
+            )
+        except Exception as exc:
+            raise SystemExit(
+                f"runtime_ledger_proof_artifact_upload_failed:{type(exc).__name__}"
+            ) from exc
+        receipt_mapping = _mapping(receipt)
+        receipt_blockers = _artifact_upload_receipt_blockers(
+            receipt_mapping,
+            expected_bucket=bucket,
+            expected_key=key,
         )
+        if receipt_blockers:
+            raise SystemExit(
+                "runtime_ledger_proof_artifact_upload_receipt_incomplete:"
+                + ",".join(receipt_blockers)
+            )
+        packet["artifact"]["upload_receipt"] = dict(receipt_mapping)
+        packet["artifact"]["receipt_verified"] = True
+        lineage = _mapping(packet.get("lineage"))
+        if lineage:
+            lineage_copy = dict(lineage)
+            lineage_copy["artifact"] = {
+                "uri": packet["artifact"]["uri"],
+                "bucket": bucket,
+                "key": key,
+                "payload_sha256": packet["artifact"]["payload_sha256"],
+                "receipt_verified": True,
+            }
+            packet["lineage"] = lineage_copy
+        encoded = json.dumps(packet, indent=2, sort_keys=True).encode("utf-8")
     return encoded
+
+
+def _artifact_upload_receipt_blockers(
+    receipt: Mapping[str, Any],
+    *,
+    expected_bucket: str,
+    expected_key: str,
+) -> list[str]:
+    blockers: list[str] = []
+    if not receipt:
+        return ["runtime_ledger_proof_artifact_upload_receipt_missing"]
+    receipt_bucket = _text(receipt.get("bucket"))
+    receipt_key = _text(receipt.get("key"))
+    receipt_uri = _text(receipt.get("uri"))
+    if not receipt_bucket:
+        blockers.append("runtime_ledger_proof_artifact_upload_receipt_bucket_missing")
+    elif receipt_bucket != expected_bucket:
+        blockers.append("runtime_ledger_proof_artifact_upload_receipt_bucket_mismatch")
+    if not receipt_key:
+        blockers.append("runtime_ledger_proof_artifact_upload_receipt_key_missing")
+    elif receipt_key != expected_key:
+        blockers.append("runtime_ledger_proof_artifact_upload_receipt_key_mismatch")
+    if not receipt_uri:
+        blockers.append("runtime_ledger_proof_artifact_upload_receipt_uri_missing")
+    return blockers
 
 
 def _load_optional_json_object(
@@ -1263,6 +1327,147 @@ def _first_identity(
                 identity[key] = value
                 break
     return identity
+
+
+def _first_env_text(names: Sequence[str]) -> str:
+    for name in names:
+        value = _text(os.getenv(name))
+        if value:
+            return value
+    return ""
+
+
+def _runtime_ledger_immutable_lineage(
+    *,
+    identity: Mapping[str, object],
+    paper_targets: Sequence[Mapping[str, Any]],
+    runtime_import: Mapping[str, Any],
+    runtime_summary: Mapping[str, Any],
+    ledger_refs: Sequence[str],
+    unbacked_refs: Sequence[str],
+    materialization_summary: Mapping[str, Any],
+) -> dict[str, Any]:
+    source_row_ids: list[str] = []
+    source_refs: list[str] = []
+    bucket_ids: list[str] = []
+    metric_window_ids: list[str] = []
+    promotion_decision_ids: list[str] = []
+
+    def collect_from(source: Mapping[str, Any]) -> None:
+        for key in (
+            "source_row_id",
+            "source_row_ids",
+            "source_execution_row_ids",
+            "runtime_ledger_source_row_ids",
+            "runtime_ledger_source_execution_row_ids",
+        ):
+            _extend_unique(source_row_ids, _text_list(source.get(key)))
+            if not _sequence(source.get(key)):
+                text = _text(source.get(key))
+                if text:
+                    _extend_unique(source_row_ids, [text])
+        for key in (
+            "source_ref",
+            "source_refs",
+            "source_window_ref",
+            "source_window_refs",
+            "runtime_ledger_source_ref",
+            "runtime_ledger_source_refs",
+            "runtime_ledger_source_window_refs",
+            "source_manifest_ref",
+        ):
+            _extend_unique(source_refs, _text_list(source.get(key)))
+            if not _sequence(source.get(key)):
+                text = _text(source.get(key))
+                if text:
+                    _extend_unique(source_refs, [text])
+        for key in (
+            "runtime_ledger_bucket_id",
+            "runtime_ledger_bucket_ids",
+            "evidence_grade_runtime_ledger_bucket_ids",
+        ):
+            _extend_unique(bucket_ids, _text_list(source.get(key)))
+            if not _sequence(source.get(key)):
+                text = _text(source.get(key))
+                if text:
+                    _extend_unique(bucket_ids, [text])
+        _extend_unique(metric_window_ids, _text_list(source.get("metric_window_ids")))
+        promotion_decision_id = _text(source.get("promotion_decision_id"))
+        if promotion_decision_id:
+            _extend_unique(promotion_decision_ids, [promotion_decision_id])
+
+    for target in paper_targets:
+        collect_from(target)
+    for item in _runtime_window_import_items(runtime_import):
+        collect_from(item)
+        summary = _mapping(item.get("summary"))
+        collect_from(summary)
+        collect_from(_mapping(summary.get("runtime_observation")))
+        collect_from(_mapping(summary.get("runtime_materialization_target")))
+    collect_from(runtime_summary)
+    for target in _sequence(materialization_summary.get("materialized_targets")):
+        materialized_target = _mapping(target)
+        collect_from(materialized_target)
+        tigerbeetle = _mapping(materialized_target.get("tigerbeetle"))
+        _extend_unique(source_refs, _text_list(tigerbeetle.get("source_refs")))
+        for bucket_ref in _sequence(tigerbeetle.get("runtime_ledger_buckets")):
+            collect_from(_mapping(bucket_ref))
+
+    runtime_strategy = _text(
+        identity.get("runtime_strategy_name") or identity.get("strategy_name")
+    )
+    code_commit = _first_env_text(
+        (
+            "TORGHUT_IMAGE_COMMIT",
+            "GIT_COMMIT",
+            "SOURCE_COMMIT",
+            "CODE_COMMIT",
+            "COMMIT_SHA",
+        )
+    )
+    image_digest = _first_env_text(
+        (
+            "TORGHUT_IMAGE_DIGEST",
+            "IMAGE_DIGEST",
+            "CONTAINER_IMAGE_DIGEST",
+            "K_REVISION_IMAGE_DIGEST",
+        )
+    )
+    image = _first_env_text(("TORGHUT_IMAGE", "CONTAINER_IMAGE", "IMAGE"))
+    return {
+        "schema_version": "torghut.runtime-ledger-proof-packet-lineage.v1",
+        "hypothesis_id": _text(identity.get("hypothesis_id")),
+        "candidate_id": _text(identity.get("candidate_id")),
+        "runtime_strategy": runtime_strategy,
+        "strategy_family": _text(identity.get("strategy_family")),
+        "account_label": _text(identity.get("account_label")),
+        "stage": _text(identity.get("observed_stage")),
+        "window_start": _text(identity.get("window_start")),
+        "window_end": _text(identity.get("window_end")),
+        "source_row_ids": source_row_ids,
+        "source_refs": source_refs,
+        "strategy_runtime_ledger_bucket_refs": list(ledger_refs),
+        "unbacked_metric_window_refs": list(unbacked_refs),
+        "runtime_ledger_bucket_ids": bucket_ids,
+        "metric_window_ids": metric_window_ids,
+        "promotion_decision_ids": promotion_decision_ids,
+        "counts": {
+            "source_row_id_count": len(source_row_ids),
+            "source_ref_count": len(source_refs),
+            "strategy_runtime_ledger_bucket_ref_count": len(ledger_refs),
+            "unbacked_metric_window_ref_count": len(unbacked_refs),
+            "runtime_ledger_bucket_id_count": len(bucket_ids),
+            "metric_window_id_count": len(metric_window_ids),
+            "promotion_decision_id_count": len(promotion_decision_ids),
+        },
+        "code": {
+            "commit": code_commit,
+            "image": image,
+            "image_digest": image_digest,
+            "commit_available": bool(code_commit),
+            "image_digest_available": bool(image_digest),
+        },
+    }
 
 
 def _status_blockers(status: Mapping[str, Any]) -> list[str]:
@@ -2412,6 +2617,20 @@ def build_runtime_ledger_proof_packet(
         promotion_reason = reason
         capital_reason = "post_cost_proof_not_satisfied"
     required_actions = _required_actions(promotion_blockers, verdict=verdict)
+    candidate_identity = _first_identity(
+        paper_targets=paper_targets,
+        runtime_import=runtime_import,
+        completion_gate=live_scale_gate,
+    )
+    immutable_lineage = _runtime_ledger_immutable_lineage(
+        identity=candidate_identity,
+        paper_targets=paper_targets,
+        runtime_import=runtime_import,
+        runtime_summary=runtime_summary,
+        ledger_refs=ledger_refs,
+        unbacked_refs=unbacked_refs,
+        materialization_summary=materialization_summary,
+    )
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -2504,11 +2723,8 @@ def build_runtime_ledger_proof_packet(
                 target_implied_avg_daily_filled_notional
             ),
         },
-        "candidate": _first_identity(
-            paper_targets=paper_targets,
-            runtime_import=runtime_import,
-            completion_gate=live_scale_gate,
-        ),
+        "candidate": candidate_identity,
+        "lineage": immutable_lineage,
         "required_actions": required_actions,
         "checks": checks,
         "evidence": {
@@ -2666,8 +2882,8 @@ def _parser() -> argparse.ArgumentParser:
         "--require-artifact-upload",
         action="store_true",
         help=(
-            "Fail closed when --artifact-prefix is set but empirical artifact "
-            "object-store credentials are unavailable."
+            "Fail closed unless an artifact prefix, object-store credentials, "
+            "and a complete upload receipt are available."
         ),
     )
     parser.add_argument(
@@ -2807,7 +3023,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             require_artifact_upload=bool(args.require_artifact_upload),
             runtime_window_import=runtime_window_import,
         )
-        if artifact_prefix
+        if artifact_prefix or args.require_artifact_upload
         else json.dumps(packet, indent=2, sort_keys=True).encode("utf-8")
     )
     if args.output_file is not None:
