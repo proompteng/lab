@@ -146,6 +146,16 @@ class MicrostructurePrefilterTest(TestCase):
             payload["warnings"],
         )
         self.assertEqual(payload["horizon_ofi_features"]["status"], "missing_inputs")
+        self.assertIn(
+            "missing_price_return_microbar_fields",
+            payload["source_input_blockers"],
+        )
+        self.assertEqual(payload["macro_window_stress"]["status"], "missing_inputs")
+        self.assertEqual(payload["impact_capacity_lineage"]["status"], "missing_inputs")
+        self.assertIn(
+            "median_price_missing",
+            payload["impact_capacity_lineage"]["blockers"],
+        )
         self.assertEqual(payload["proof_source"], HPAIRS_PREFILTER_PROOF_SOURCE)
 
     def test_prefilter_metadata_never_grants_promotion_authority(self) -> None:
@@ -234,4 +244,13 @@ class MicrostructurePrefilterTest(TestCase):
         self.assertEqual(payload["cluster_behavior"]["source"], "cluster_lob_fields")
         self.assertIn("behavior_bucket", payload["cluster_behavior"])
         self.assertEqual(payload["regime_stress_veto"]["status"], "available")
+        self.assertEqual(payload["macro_window_stress"]["status"], "available")
+        self.assertEqual(payload["macro_window_stress"]["sample_count"], 3)
+        self.assertFalse(payload["macro_window_stress"]["proof_authority"])
+        self.assertEqual(
+            payload["impact_capacity_lineage"]["model"],
+            "square_root_power_law_impact_proxy",
+        )
+        self.assertEqual(payload["impact_capacity_lineage"]["status"], "available")
+        self.assertFalse(payload["impact_capacity_lineage"]["proof_authority"])
         self.assertEqual(payload["proof_source"], "prefilter_only")

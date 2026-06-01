@@ -5827,6 +5827,10 @@ def compile_candidate_specs(
                             "deterministic_microbar_order_flow_fallback_with_explicit_blockers"
                         ),
                         "horizon_ofi_microbars": [3, 12, 36],
+                        "macro_window_concentration_metadata": True,
+                        "impact_capacity_lineage": (
+                            "square_root_power_law_prefilter_only_requires_source_backed_adv"
+                        ),
                         "ranking_authority": "candidate_discovery_prefilter_only",
                     }
                     parameter_space["hpairs_microstructure_prefilter"] = {

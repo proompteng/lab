@@ -163,6 +163,17 @@ class TestFastReplayPreview(TestCase):
         )
         self.assertIn("observed_post_cost_expectancy_bps", row_payload)
         self.assertIn("cost_impact_lineage", row_payload)
+        self.assertIn("impact_capacity_lineage", row_payload)
+        self.assertEqual(
+            row_payload["cost_impact_lineage"]["impact_model"],
+            "square_root_power_law_capacity_proxy",
+        )
+        self.assertEqual(
+            row_payload["impact_capacity_lineage"]["model"],
+            "square_root_power_law_impact_proxy",
+        )
+        self.assertIn("hpairs_macro_window_stress", row_payload)
+        self.assertFalse(row_payload["hpairs_macro_window_stress"]["proof_authority"])
         self.assertEqual(
             row_payload["adv_capacity_context"]["status"], "missing_source_backed_adv"
         )

@@ -81,6 +81,12 @@ class FastReplayPreviewRow:
         notional_blocked = required_daily_notional is None
         lineage_blockers = _lineage_blockers_for_row(self)
         risk_flags = _risk_flags_for_row(self, lineage_blockers=lineage_blockers)
+        prefilter_capacity_lineage = _mapping(
+            self.microstructure_prefilter.get("impact_capacity_lineage")
+        )
+        prefilter_macro_window_stress = _mapping(
+            self.microstructure_prefilter.get("macro_window_stress")
+        )
         return {
             "schema_version": FAST_REPLAY_PREVIEW_ROW_SCHEMA_VERSION,
             "candidate_spec_id": self.candidate_spec_id,
@@ -116,6 +122,8 @@ class FastReplayPreviewRow:
             "frontier_bucket": self.frontier_bucket,
             "microstructure_prefilter": dict(self.microstructure_prefilter),
             "hpairs_microstructure_prefilter": dict(self.microstructure_prefilter),
+            "hpairs_macro_window_stress": prefilter_macro_window_stress,
+            "hpairs_impact_capacity_lineage": prefilter_capacity_lineage,
             "proof_source": HPAIRS_PREFILTER_PROOF_SOURCE,
             "hpairs_prefilter_proof_semantics_label": HPAIRS_PREFILTER_PROOF_SEMANTICS_LABEL,
             "observed_post_cost_expectancy_bps": str(observed_post_cost_expectancy_bps),
@@ -143,6 +151,7 @@ class FastReplayPreviewRow:
                 "status": "preview_prefilter_only",
                 "source": "manifest_verified_replay_tape",
                 "cost_basis": "signed_return_minus_spread_plus_square_root_impact_penalty",
+                "impact_model": "square_root_power_law_capacity_proxy",
                 "median_spread_bps": str(self.median_spread_bps),
                 "impact_liquidity_penalty_bps": str(self.impact_liquidity_penalty_bps),
                 "square_root_impact_capacity_penalty_bps": str(
@@ -151,7 +160,9 @@ class FastReplayPreviewRow:
                 "observed_post_cost_expectancy_bps": str(
                     observed_post_cost_expectancy_bps
                 ),
+                "hpairs_prefilter_impact_capacity_lineage": prefilter_capacity_lineage,
             },
+            "impact_capacity_lineage": prefilter_capacity_lineage,
             "adv_capacity_context": {
                 "status": "missing_source_backed_adv",
                 "source": "missing_external_adv_source",
@@ -594,12 +605,19 @@ def _score_candidate_spec(
     )
     if hpairs_prefilter_score is not None:
         preview_score = preview_score * 0.65 + hpairs_prefilter_score * 0.35
+    macro_window_stress = _mapping(microstructure_prefilter.get("macro_window_stress"))
+    macro_window_concentration = _float_or_none(
+        macro_window_stress.get("concentration")
+    )
+    if macro_window_concentration is not None:
+        preview_score -= macro_window_concentration * 6.0
     exploration_score = (
         cluster_lob_activity_score * 4.0
         + abs(ofi_decay_alignment_score) * 5.0
         + liquidity_regime_score * 2.0
         + coverage_score * 6.0
         - macro_stress_veto_score * 8.0
+        - (macro_window_concentration or 0.0) * 3.0
         - conformal_tail_risk_penalty_bps * 0.04
         - square_root_impact_capacity_penalty_bps * 0.08
     )
@@ -1111,6 +1129,12 @@ def _lineage_blockers_for_row(row: FastReplayPreviewRow) -> tuple[str, ...]:
     if _observed_post_cost_expectancy_bps(row) <= 0:
         blockers.append("positive_post_cost_expectancy_missing")
         blockers.append("target_implied_notional_blocked_non_positive_expectancy")
+    source_input_blockers = row.microstructure_prefilter.get("source_input_blockers")
+    if isinstance(source_input_blockers, Sequence) and not isinstance(
+        source_input_blockers, (str, bytes, bytearray)
+    ):
+        if source_input_blockers:
+            blockers.append("hpairs_prefilter_source_inputs_missing")
     return tuple(blockers)
 
 
