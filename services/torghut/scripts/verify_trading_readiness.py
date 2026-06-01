@@ -266,7 +266,23 @@ def _paper_route_target_plan_summary(
         )
         if _text(reason)
     ]
+    runtime_window_audit = _mapping(evidence.get("runtime_window_import_audit"))
+    runtime_window_diagnostics = _mapping(runtime_window_audit.get("diagnostics"))
+    account_clean_blockers: list[str] = []
+
+    def add_account_blocker(reason: Any) -> None:
+        blocker = _text(reason)
+        if blocker and blocker not in account_clean_blockers:
+            account_clean_blockers.append(blocker)
+
+    account_pre_session_readiness = _mapping(plan.get("account_pre_session_readiness"))
+    for reason in _sequence(account_pre_session_readiness.get("blockers")):
+        add_account_blocker(reason)
+    for key in ("account_state_blockers", "account_contamination_blockers"):
+        for reason in _sequence(runtime_window_diagnostics.get(key)):
+            add_account_blocker(reason)
     target_summaries: list[dict[str, Any]] = []
+    skipped_target_summaries: list[dict[str, Any]] = []
     missing_identity_count = 0
     probe_contract_count = 0
     promotion_blocked_count = 0
@@ -371,6 +387,22 @@ def _paper_route_target_plan_summary(
             health_gate_continuity_reasons.append(continuity_reason)
         if drift_reason and drift_reason not in health_gate_drift_reasons:
             health_gate_drift_reasons.append(drift_reason)
+        target_account_state = _mapping(
+            target.get("paper_route_account_pre_session_state")
+        )
+        target_account_blockers = [
+            _text(reason)
+            for reason in _sequence(
+                target.get("paper_route_account_pre_session_blockers")
+            )
+            if _text(reason)
+        ]
+        for reason in _sequence(target_account_state.get("blockers")):
+            blocker = _text(reason)
+            if blocker and blocker not in target_account_blockers:
+                target_account_blockers.append(blocker)
+        for blocker in target_account_blockers:
+            add_account_blocker(blocker)
         target_summaries.append(
             {
                 "hypothesis_id": _text(target.get("hypothesis_id")),
@@ -395,7 +427,51 @@ def _paper_route_target_plan_summary(
                 "runtime_window_import_promotion_blockers": (
                     target_health_promotion_blockers
                 ),
+                "paper_route_account_pre_session_state": _text(
+                    target_account_state.get("state")
+                ),
+                "paper_route_account_pre_session_blockers": sorted(
+                    set(target_account_blockers)
+                ),
                 "missing_identity_fields": missing_identity,
+            }
+        )
+    for skipped_target in (
+        _mapping(target) for target in _sequence(plan.get("skipped_targets"))
+    ):
+        skipped_blockers = [
+            _text(reason)
+            for reason in _sequence(skipped_target.get("missing_or_blocking_fields"))
+            if _text(reason)
+        ]
+        for reason in _sequence(
+            skipped_target.get("paper_route_account_pre_session_blockers")
+        ):
+            blocker = _text(reason)
+            if blocker and blocker not in skipped_blockers:
+                skipped_blockers.append(blocker)
+        skipped_account_state = _mapping(
+            skipped_target.get("paper_route_account_pre_session_state")
+        )
+        for reason in _sequence(skipped_account_state.get("blockers")):
+            blocker = _text(reason)
+            if blocker and blocker not in skipped_blockers:
+                skipped_blockers.append(blocker)
+        if (
+            _text(skipped_target.get("reason"))
+            == "paper_route_account_pre_session_not_clean"
+        ):
+            for blocker in skipped_blockers:
+                add_account_blocker(blocker)
+        skipped_target_summaries.append(
+            {
+                "hypothesis_id": _text(skipped_target.get("hypothesis_id")),
+                "candidate_id": _text(skipped_target.get("candidate_id")),
+                "reason": _text(skipped_target.get("reason")),
+                "blockers": sorted(set(skipped_blockers)),
+                "paper_route_account_pre_session_state": _text(
+                    skipped_account_state.get("state")
+                ),
             }
         )
     target_count = _int(plan.get("target_count"), default=len(targets))
@@ -415,9 +491,12 @@ def _paper_route_target_plan_summary(
         "required_flags": sorted(required_flags),
         "missing_required_flags": missing_required_flags,
         "targets": target_summaries,
+        "skipped_targets": skipped_target_summaries,
         "missing_identity_count": missing_identity_count,
         "probe_contract_count": probe_contract_count,
         "promotion_blocked_count": promotion_blocked_count,
+        "account_clean": not account_clean_blockers,
+        "account_clean_blockers": sorted(account_clean_blockers),
         "runtime_window_import_health_gate": {
             "ready": bool(targets)
             and health_gate_ready_count == len(targets)
@@ -515,6 +594,9 @@ def _paper_route_preopen_evidence_collection_ready(
         )
         == _int(paper_route_target_plan.get("actual_target_count"))
         and _int(paper_route_target_plan.get("actual_target_count")) > 0,
+        "target_plan_account_clean": _bool(
+            paper_route_target_plan.get("account_clean")
+        ),
         "target_plan_health_gate_ready": _bool(target_plan_health_gate.get("ready")),
         "target_plan_import_blockers_only_session_not_open": all(
             blocker in allowed_import_blockers for blocker in import_blockers
@@ -527,6 +609,9 @@ def _paper_route_preopen_evidence_collection_ready(
         "softened_checks": sorted(_PAPER_ROUTE_PREOPEN_SOFT_CHECKS) if ready else [],
         "probe_blockers": probe_blockers,
         "import_blockers": import_blockers,
+        "account_clean_blockers": list(
+            _sequence(paper_route_target_plan.get("account_clean_blockers"))
+        ),
         "note": (
             "pre-open evidence collection only; not promotion, runtime-ledger, "
             "or profitability proof"
@@ -621,6 +706,8 @@ def _add_runtime_ledger_proof_packet_check(
         observed={
             "present": bool(packet),
             "schema_version": schema_version,
+            "proof_mode": _text(packet.get("proof_mode")),
+            "final_authority_ok": packet.get("final_authority_ok"),
             "ok": packet.get("ok"),
             "verdict": _text(packet.get("verdict")),
             "authority_allowed": authority.get("allowed"),
@@ -1162,6 +1249,20 @@ def evaluate_trading_readiness(
                 "targets": paper_route_target_plan["targets"],
             },
             expected="every_target_zero_notional_and_not_final_promotion",
+        )
+        _add_check(
+            checks,
+            "paper_route_target_plan_account_clean",
+            passed=bool(paper_route_target_plan["account_clean"]),
+            observed={
+                "account_clean": paper_route_target_plan["account_clean"],
+                "account_clean_blockers": paper_route_target_plan[
+                    "account_clean_blockers"
+                ],
+                "targets": paper_route_target_plan["targets"],
+                "skipped_targets": paper_route_target_plan["skipped_targets"],
+            },
+            expected={"account_clean": True, "account_clean_blockers": []},
         )
         import_health_gate = _mapping(
             paper_route_target_plan["runtime_window_import_health_gate"]

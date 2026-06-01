@@ -7,5 +7,4 @@ use (
 	./services/miel
 	./services/prt
 	./services/saigak/proxy
-	./services/tigresse
 )

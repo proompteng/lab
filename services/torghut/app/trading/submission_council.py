@@ -37,9 +37,31 @@ from .hypotheses import (
     resolve_hypothesis_dependency_quorum,
     summarize_hypothesis_runtime_statuses,
 )
+from .market_context_domains import (
+    active_market_context_mapping,
+    active_market_context_reasons,
+)
 from .discovery.profit_target_oracle import evaluate_profit_target_oracle
 from .profit_windows import build_profit_window_contract
 from .profit_leases import build_profit_lease_projection
+from .runtime_ledger import POST_COST_PNL_BASIS
+from .runtime_ledger_source_authority import (
+    RUNTIME_LEDGER_AUTHORITY_CLASS_MISSING_BLOCKER,
+    RUNTIME_LEDGER_EXECUTION_ORDER_EVENT_REFS_MISSING_BLOCKER,
+    RUNTIME_LEDGER_EXECUTION_REFS_MISSING_BLOCKER,
+    RUNTIME_LEDGER_SOURCE_MATERIALIZATION_MISSING_BLOCKER,
+    RUNTIME_LEDGER_SOURCE_OFFSETS_MISSING_BLOCKER,
+    RUNTIME_LEDGER_SOURCE_REFS_MISSING_BLOCKER,
+    RUNTIME_LEDGER_SOURCE_WINDOW_IDS_MISSING_BLOCKER,
+    RUNTIME_LEDGER_SOURCE_WINDOW_MISSING_BLOCKER,
+    RUNTIME_LEDGER_TRADE_DECISION_REFS_MISSING_BLOCKER,
+    runtime_ledger_promotion_source_authority_blockers,
+)
+from .runtime_strategy_resolution import (
+    derived_strategy_name_from_strategy_id,
+    explicit_runtime_strategy_name_or_family_harness,
+    strategy_names_from_strategy_id,
+)
 from .tca import build_tca_gate_inputs
 
 _CAPITAL_STAGE_ORDER = (
@@ -74,10 +96,10 @@ _AUTORESEARCH_PORTFOLIO_READY_STATUSES = (
     "promotion_ready",
     "ready_for_promotion",
     "ready_for_promotion_review",
+    "target_met",
     "accepted",
     "promoted",
 )
-_PROMOTION_GRADE_RUNTIME_LEDGER_PNL_BASIS = "realized_strategy_pnl_after_explicit_costs"
 _RUNTIME_LEDGER_REPAIR_SCAN_LIMIT = 256
 _RUNTIME_LEDGER_REPAIR_CANDIDATE_LIMIT = 8
 _RUNTIME_WINDOW_IMPORT_CONTINUITY_READY_STATES = frozenset(
@@ -606,6 +628,15 @@ def build_hypothesis_runtime_summary(
 def _runtime_ledger_bucket_payload(
     row: StrategyRuntimeLedgerBucket,
 ) -> dict[str, object]:
+    payload_json: Mapping[str, object]
+    raw_payload_json: object = row.payload_json
+    if isinstance(raw_payload_json, Mapping):
+        payload_json = {
+            str(key): value
+            for key, value in cast(Mapping[object, object], raw_payload_json).items()
+        }
+    else:
+        payload_json = {}
     return {
         "run_id": row.run_id,
         "candidate_id": row.candidate_id,
@@ -636,6 +667,28 @@ def _runtime_ledger_bucket_payload(
         "execution_policy_hash_counts": row.execution_policy_hash_counts or {},
         "cost_model_hash_counts": row.cost_model_hash_counts or {},
         "lineage_hash_counts": row.lineage_hash_counts or {},
+        "source_window_start": payload_json.get("source_window_start")
+        or payload_json.get("runtime_ledger_source_window_start"),
+        "source_window_end": payload_json.get("source_window_end")
+        or payload_json.get("runtime_ledger_source_window_end"),
+        "source_refs": payload_json.get("source_refs") or [],
+        "source_ref": payload_json.get("source_ref"),
+        "source_row_counts": payload_json.get("source_row_counts") or {},
+        "source_window_ids": payload_json.get("source_window_ids")
+        or payload_json.get("runtime_ledger_source_window_ids")
+        or [],
+        "source_window_id": payload_json.get("source_window_id")
+        or payload_json.get("runtime_ledger_source_window_id"),
+        "trade_decision_ids": payload_json.get("trade_decision_ids") or [],
+        "execution_ids": payload_json.get("execution_ids") or [],
+        "execution_order_event_ids": (
+            payload_json.get("execution_order_event_ids") or []
+        ),
+        "source_offsets": payload_json.get("source_offsets") or [],
+        "source_materialization": payload_json.get("source_materialization"),
+        "authority_class": payload_json.get("authority_class"),
+        "authority_reason": payload_json.get("authority_reason"),
+        "pnl_derivation": payload_json.get("pnl_derivation"),
         "blockers": row.blockers_json or [],
     }
 
@@ -661,6 +714,9 @@ def _runtime_ledger_hash_count(
             if count > 0:
                 total += count
         return total
+    payload_count = _safe_int(payload_counts)
+    if payload_count > 0:
+        return payload_count
     return _safe_int(observed.get(observed_key))
 
 
@@ -696,6 +752,28 @@ def _runtime_ledger_payload_from_runtime_item(
         "blockers": observed.get("runtime_ledger_blockers"),
         "ledger_schema_version": observed.get("runtime_ledger_schema_version"),
         "pnl_basis": observed.get("runtime_ledger_pnl_basis"),
+        "source_window_start": observed.get("runtime_ledger_source_window_start"),
+        "source_window_end": observed.get("runtime_ledger_source_window_end"),
+        "source_refs": observed.get("runtime_ledger_source_refs") or [],
+        "source_ref": observed.get("runtime_ledger_source_ref"),
+        "source_row_counts": observed.get("runtime_ledger_source_row_counts") or {},
+        "source_window_ids": observed.get("runtime_ledger_source_window_ids") or [],
+        "source_window_id": observed.get("runtime_ledger_source_window_id"),
+        "trade_decision_ids": observed.get("runtime_ledger_trade_decision_ids") or [],
+        "execution_ids": observed.get("runtime_ledger_execution_ids") or [],
+        "execution_order_event_ids": (
+            observed.get("runtime_ledger_execution_order_event_ids") or []
+        ),
+        "source_offsets": observed.get("runtime_ledger_source_offsets") or [],
+        "source_materialization": observed.get("runtime_ledger_source_materialization"),
+        "authority_class": observed.get("runtime_ledger_authority_class"),
+        "authority_reason": observed.get("runtime_ledger_authority_reason"),
+        "pnl_derivation": observed.get("runtime_ledger_pnl_derivation"),
+        "execution_policy_hash_counts": observed.get(
+            "runtime_ledger_execution_policy_hash_counts"
+        ),
+        "cost_model_hash_counts": observed.get("runtime_ledger_cost_model_hash_counts"),
+        "lineage_hash_counts": observed.get("runtime_ledger_lineage_hash_counts"),
     }
 
 
@@ -856,10 +934,7 @@ def _certificate_runtime_ledger_reason_codes(
     ]
     reasons.extend(blockers)
 
-    if (
-        _safe_text(ledger_payload.get("pnl_basis"))
-        != "realized_strategy_pnl_after_explicit_costs"
-    ):
+    if _safe_text(ledger_payload.get("pnl_basis")) != POST_COST_PNL_BASIS:
         reasons.append("runtime_ledger_pnl_basis_missing")
 
     filled_notional = _safe_decimal(ledger_payload.get("filled_notional"))
@@ -1027,10 +1102,7 @@ def _runtime_ledger_selection_score(payload: Mapping[str, object] | None) -> int
     ]
     if not blockers:
         score += 1
-    if (
-        _safe_text(payload.get("pnl_basis"))
-        == "realized_strategy_pnl_after_explicit_costs"
-    ):
+    if _safe_text(payload.get("pnl_basis")) == POST_COST_PNL_BASIS:
         score += 1
     if (_safe_decimal(payload.get("filled_notional")) or Decimal("0")) > 0:
         score += 1
@@ -1138,13 +1210,11 @@ def _runtime_ledger_repair_reason_codes(
         for reason in cast(Sequence[object], payload.get("blockers") or [])
         if str(reason).strip()
     ]
+    reasons.extend(runtime_ledger_promotion_source_authority_blockers(payload))
     reasons.extend(_runtime_ledger_target_reason_codes(payload, manifest=manifest))
     if _safe_text(payload.get("observed_stage")) != "live":
         reasons.append("runtime_ledger_stage_not_live")
-    if (
-        _safe_text(payload.get("pnl_basis"))
-        != _PROMOTION_GRADE_RUNTIME_LEDGER_PNL_BASIS
-    ):
+    if _safe_text(payload.get("pnl_basis")) != POST_COST_PNL_BASIS:
         reasons.append("runtime_ledger_pnl_basis_missing")
     if (_safe_decimal(payload.get("filled_notional")) or Decimal("0")) <= 0:
         reasons.append("runtime_ledger_filled_notional_missing")
@@ -1256,6 +1326,33 @@ _RUNTIME_LEDGER_PAPER_PROBATION_PROMOTION_BLOCKERS = (
     "paper_probation_evidence_collection_only",
     "live_runtime_ledger_required",
 )
+_RUNTIME_LEDGER_SOURCE_COLLECTION_SOURCE_KIND = (
+    "runtime_ledger_source_collection_candidate"
+)
+_RUNTIME_LEDGER_SOURCE_COLLECTION_SOURCE_DSN_ENV = "SIM_DB_DSN"
+_RUNTIME_LEDGER_SOURCE_COLLECTION_TRIGGER_REASONS = frozenset(
+    {
+        RUNTIME_LEDGER_SOURCE_WINDOW_MISSING_BLOCKER,
+        RUNTIME_LEDGER_SOURCE_WINDOW_IDS_MISSING_BLOCKER,
+        RUNTIME_LEDGER_SOURCE_REFS_MISSING_BLOCKER,
+        RUNTIME_LEDGER_TRADE_DECISION_REFS_MISSING_BLOCKER,
+        RUNTIME_LEDGER_EXECUTION_REFS_MISSING_BLOCKER,
+        RUNTIME_LEDGER_EXECUTION_ORDER_EVENT_REFS_MISSING_BLOCKER,
+        RUNTIME_LEDGER_SOURCE_OFFSETS_MISSING_BLOCKER,
+        RUNTIME_LEDGER_SOURCE_MATERIALIZATION_MISSING_BLOCKER,
+        RUNTIME_LEDGER_AUTHORITY_CLASS_MISSING_BLOCKER,
+        "execution_reconstruction_not_runtime_ledger_proof",
+        "source_decision_mode_not_profit_proof_eligible",
+        "runtime_ledger_pnl_basis_invalid",
+        "runtime_ledger_pnl_basis_missing",
+        "runtime_ledger_expectancy_missing",
+    }
+)
+_RUNTIME_LEDGER_SOURCE_COLLECTION_PROMOTION_BLOCKERS = (
+    "runtime_ledger_source_collection_only",
+    "runtime_ledger_source_window_evidence_pending",
+    "live_runtime_ledger_required",
+)
 
 
 def _runtime_ledger_paper_probation_eligible(
@@ -1269,8 +1366,7 @@ def _runtime_ledger_paper_probation_eligible(
     return (
         _safe_text(candidate.get("observed_stage")) == "paper"
         and reasons == _RUNTIME_LEDGER_PAPER_PROBATION_ALLOWED_REASONS
-        and _safe_text(candidate.get("pnl_basis"))
-        == _PROMOTION_GRADE_RUNTIME_LEDGER_PNL_BASIS
+        and _safe_text(candidate.get("pnl_basis")) == POST_COST_PNL_BASIS
         and (_safe_decimal(candidate.get("filled_notional")) or Decimal("0")) > 0
         and _safe_int(candidate.get("fill_count")) > 0
         and _safe_int(candidate.get("closed_trade_count")) > 0
@@ -1301,12 +1397,53 @@ def _runtime_ledger_paper_probation_candidates(
     ]
 
 
-def _strategy_name_from_strategy_id(strategy_id: object) -> str | None:
-    text = _safe_text(strategy_id)
-    if text is None:
-        return None
-    base = text.split("@", 1)[0].strip()
-    return base.replace("_", "-") if base else None
+def _runtime_ledger_source_collection_candidate(
+    candidate: Mapping[str, object],
+) -> bool:
+    if _runtime_ledger_paper_probation_eligible(candidate):
+        return False
+    reasons = {
+        str(reason).strip()
+        for reason in cast(Sequence[object], candidate.get("reason_codes") or [])
+        if str(reason).strip()
+    }
+    filled_notional = _safe_decimal(candidate.get("filled_notional")) or Decimal("0")
+    return (
+        _safe_text(candidate.get("observed_stage")) == "paper"
+        and bool(reasons & _RUNTIME_LEDGER_SOURCE_COLLECTION_TRIGGER_REASONS)
+        and filled_notional > 0
+        and _safe_int(candidate.get("fill_count")) > 0
+        and _safe_int(candidate.get("submitted_order_count")) > 0
+    )
+
+
+def _runtime_ledger_source_collection_candidates(
+    candidates: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    return [
+        {
+            **dict(candidate),
+            "source_collection_candidate": True,
+            "source_collection_authorized": True,
+            "source_collection_scope": "source_window_evidence_collection_only",
+            "source_collection_reason_codes": [
+                reason
+                for reason in _normalize_reason_codes(
+                    [
+                        str(raw_reason).strip()
+                        for raw_reason in cast(
+                            Sequence[object], candidate.get("reason_codes") or []
+                        )
+                        if str(raw_reason).strip()
+                    ]
+                )
+                if reason in _RUNTIME_LEDGER_SOURCE_COLLECTION_TRIGGER_REASONS
+            ],
+            "max_notional": "0",
+        }
+        for candidate in candidates
+        if _runtime_ledger_source_collection_candidate(candidate)
+    ]
 
 
 def _strategy_lookup_names(*values: object) -> list[str]:
@@ -1337,8 +1474,10 @@ def _hypothesis_manifest_ref(hypothesis_id: object) -> str | None:
 def _runtime_ledger_paper_probation_strategy_name(
     candidate: Mapping[str, object],
 ) -> str | None:
-    return _safe_text(candidate.get("runtime_strategy_name")) or (
-        _strategy_name_from_strategy_id(candidate.get("strategy_id"))
+    return explicit_runtime_strategy_name_or_family_harness(
+        runtime_strategy_name=candidate.get("runtime_strategy_name"),
+        strategy_name=candidate.get("strategy_name"),
+        strategy_id=candidate.get("strategy_id"),
     )
 
 
@@ -1370,7 +1509,8 @@ def _runtime_ledger_paper_probation_import_plan(
             candidate.get("strategy_lookup_names"),
             strategy_name,
             candidate_strategy_name,
-            _strategy_name_from_strategy_id(strategy_id),
+            strategy_names_from_strategy_id(strategy_id),
+            derived_strategy_name_from_strategy_id(strategy_id),
         )
         account_label = _safe_text(candidate.get("account")) or "TORGHUT_SIM"
         window_start = _safe_text(candidate.get("bucket_started_at"))
@@ -1403,6 +1543,22 @@ def _runtime_ledger_paper_probation_import_plan(
             )
             continue
 
+        source_collection = bool(candidate.get("source_collection_candidate"))
+        source_kind = (
+            _RUNTIME_LEDGER_SOURCE_COLLECTION_SOURCE_KIND
+            if source_collection
+            else _RUNTIME_LEDGER_PAPER_PROBATION_SOURCE_KIND
+        )
+        source_dsn_env = (
+            _RUNTIME_LEDGER_SOURCE_COLLECTION_SOURCE_DSN_ENV
+            if source_collection
+            else _RUNTIME_LEDGER_PAPER_PROBATION_SOURCE_DSN_ENV
+        )
+        final_blockers = list(
+            _RUNTIME_LEDGER_SOURCE_COLLECTION_PROMOTION_BLOCKERS
+            if source_collection
+            else _RUNTIME_LEDGER_PAPER_PROBATION_PROMOTION_BLOCKERS
+        )
         target_key = (
             hypothesis_id or "",
             candidate_id or "",
@@ -1411,7 +1567,7 @@ def _runtime_ledger_paper_probation_import_plan(
             account_label,
             dataset_snapshot_ref or "",
             source_manifest_ref or "",
-            _RUNTIME_LEDGER_PAPER_PROBATION_SOURCE_KIND,
+            source_kind,
             window_start or "",
             window_end or "",
         )
@@ -1451,31 +1607,59 @@ def _runtime_ledger_paper_probation_import_plan(
             "runtime_strategy_name": strategy_name,
             "strategy_lookup_names": strategy_lookup_names,
             "account_label": account_label,
-            "source_dsn_env": _RUNTIME_LEDGER_PAPER_PROBATION_SOURCE_DSN_ENV,
+            "source_dsn_env": source_dsn_env,
             "dataset_snapshot_ref": dataset_snapshot_ref or "",
             "source_manifest_ref": source_manifest_ref,
-            "source_kind": _RUNTIME_LEDGER_PAPER_PROBATION_SOURCE_KIND,
+            "source_kind": source_kind,
             "window_start": window_start,
             "window_end": window_end,
-            "paper_probation_authorized": True,
-            "paper_probation_authorization_scope": "evidence_collection_only",
+            "paper_probation_authorized": not source_collection,
+            "paper_probation_authorization_scope": (
+                "evidence_collection_only" if not source_collection else ""
+            ),
+            "source_collection_authorized": source_collection,
+            "source_collection_authorization_scope": (
+                "source_window_evidence_collection_only" if source_collection else ""
+            ),
+            "source_collection_reason_codes": (
+                list(
+                    cast(
+                        Sequence[object],
+                        candidate.get("source_collection_reason_codes") or [],
+                    )
+                )
+                if source_collection
+                else []
+            ),
             "evidence_collection_stage": "paper",
-            "probation_allowed": True,
-            "probation_reason": "paper_stage_runtime_ledger_positive_after_costs",
+            "probation_allowed": not source_collection,
+            "probation_reason": (
+                "source_window_evidence_collection_pending"
+                if source_collection
+                else "paper_stage_runtime_ledger_positive_after_costs"
+            ),
             "promotion_allowed": False,
             "final_promotion_authorized": False,
             "final_promotion_allowed": False,
-            "final_promotion_blockers": list(
-                _RUNTIME_LEDGER_PAPER_PROBATION_PROMOTION_BLOCKERS
-            ),
+            "final_promotion_blockers": final_blockers,
             "candidate_blockers": reason_codes,
-            "runtime_ledger_target_metadata_blockers": list(
-                _RUNTIME_LEDGER_PAPER_PROBATION_PROMOTION_BLOCKERS
+            "runtime_ledger_target_metadata_blockers": final_blockers,
+            "handoff": (
+                "runtime_ledger_source_collection_import"
+                if source_collection
+                else "runtime_ledger_paper_probation_import"
             ),
-            "handoff": "runtime_ledger_paper_probation_import",
             "promotion_gate": "runtime_ledger_live_or_live_paper_required",
-            "selected_by": "runtime_ledger_paper_probation",
-            "selection_reason": "positive_post_cost_runtime_ledger_bucket",
+            "selected_by": (
+                "runtime_ledger_source_collection"
+                if source_collection
+                else "runtime_ledger_paper_probation"
+            ),
+            "selection_reason": (
+                "positive_activity_needs_source_window_runtime_evidence"
+                if source_collection
+                else "positive_post_cost_runtime_ledger_bucket"
+            ),
             "max_notional": "0",
         }
         if bucket_ref:
@@ -1484,12 +1668,18 @@ def _runtime_ledger_paper_probation_import_plan(
 
     return {
         "schema_version": _RUNTIME_LEDGER_PAPER_PROBATION_IMPORT_SCHEMA_VERSION,
-        "source": "runtime_ledger_paper_probation_candidates",
-        "purpose": "paper_stage_runtime_ledger_evidence_collection",
+        "source": "runtime_ledger_paper_probation_and_source_collection_candidates",
+        "purpose": "paper_stage_runtime_ledger_source_evidence_collection",
         "promotion_allowed": False,
         "final_promotion_authorized": False,
         "final_promotion_allowed": False,
         "target_count": len(targets),
+        "paper_probation_target_count": sum(
+            1 for target in targets if bool(target.get("paper_probation_authorized"))
+        ),
+        "source_collection_target_count": sum(
+            1 for target in targets if bool(target.get("source_collection_authorized"))
+        ),
         "skipped_target_count": len(skipped_targets),
         "targets": targets,
         "skipped_targets": skipped_targets,
@@ -1601,6 +1791,10 @@ def _load_runtime_ledger_repair_candidates(
                 "post_cost_expectancy_bps": payload.get("post_cost_expectancy_bps"),
                 "ledger_schema_version": payload.get("ledger_schema_version"),
                 "pnl_basis": payload.get("pnl_basis"),
+                "source_window_start": payload.get("source_window_start"),
+                "source_window_end": payload.get("source_window_end"),
+                "source_refs": payload.get("source_refs"),
+                "source_row_counts": payload.get("source_row_counts"),
                 "reason_codes": reason_codes,
                 "runtime_ledger_bucket": payload,
             }
@@ -1776,6 +1970,27 @@ def _refresh_runtime_summary_totals(
 
 
 def build_submission_gate_market_context_status(state: object) -> dict[str, object]:
+    last_domain_states = {
+        key: str(value).strip().lower()
+        for key, value in active_market_context_mapping(
+            cast(
+                Mapping[str, Any],
+                getattr(state, "last_market_context_domain_states", {}),
+            )
+        ).items()
+    }
+    last_risk_flags = active_market_context_reasons(
+        cast(Sequence[str], getattr(state, "last_market_context_risk_flags", []))
+    )
+    raw_alert_active = bool(getattr(state, "market_context_alert_active", False))
+    alert_reason = (
+        getattr(state, "market_context_alert_reason", None)
+        or "market_context_alert_active"
+        if raw_alert_active
+        else None
+    )
+    active_alert_reasons = active_market_context_reasons([alert_reason])
+    filtered_alert_reason = active_alert_reasons[0] if active_alert_reasons else None
     return {
         "last_symbol": getattr(state, "last_market_context_symbol", None),
         "last_checked_at": getattr(state, "last_market_context_checked_at", None),
@@ -1783,17 +1998,10 @@ def build_submission_gate_market_context_status(state: object) -> dict[str, obje
         "last_freshness_seconds": getattr(
             state, "last_market_context_freshness_seconds", None
         ),
-        "last_domain_states": dict(
-            cast(
-                Mapping[str, str],
-                getattr(state, "last_market_context_domain_states", {}),
-            )
-        ),
-        "last_risk_flags": list(
-            cast(Sequence[str], getattr(state, "last_market_context_risk_flags", []))
-        ),
-        "alert_active": bool(getattr(state, "market_context_alert_active", False)),
-        "alert_reason": getattr(state, "market_context_alert_reason", None),
+        "last_domain_states": last_domain_states,
+        "last_risk_flags": last_risk_flags,
+        "alert_active": raw_alert_active and filtered_alert_reason is not None,
+        "alert_reason": filtered_alert_reason,
     }
 
 
@@ -2288,16 +2496,22 @@ def _segment_summary(
 ) -> dict[str, dict[str, object]]:
     market_context_ref = build_submission_gate_market_context_status(state)
     domain_states = {
-        str(key): str(value).strip().lower()
-        for key, value in cast(
-            Mapping[str, Any], market_context_ref.get("last_domain_states", {})
+        key: str(value).strip().lower()
+        for key, value in active_market_context_mapping(
+            cast(Mapping[str, Any], market_context_ref.get("last_domain_states", {}))
         ).items()
-        if str(key).strip()
     }
     market_context_reasons: list[str] = []
     if bool(market_context_ref.get("alert_active")):
-        market_context_reasons.append(
-            str(market_context_ref.get("alert_reason") or "market_context_alert_active")
+        market_context_reasons.extend(
+            active_market_context_reasons(
+                [
+                    str(
+                        market_context_ref.get("alert_reason")
+                        or "market_context_alert_active"
+                    )
+                ]
+            )
         )
     stale_domains = [
         domain
@@ -3066,9 +3280,15 @@ def build_live_submission_gate_payload(
     runtime_ledger_paper_probation_candidates = (
         _runtime_ledger_paper_probation_candidates(runtime_ledger_repair_candidates)
     )
+    runtime_ledger_source_collection_candidates = (
+        _runtime_ledger_source_collection_candidates(runtime_ledger_repair_candidates)
+    )
     runtime_ledger_paper_probation_import_plan = (
         _runtime_ledger_paper_probation_import_plan(
-            runtime_ledger_paper_probation_candidates
+            [
+                *runtime_ledger_paper_probation_candidates,
+                *runtime_ledger_source_collection_candidates,
+            ]
         )
     )
     evidence_rows = (
@@ -3218,6 +3438,12 @@ def build_live_submission_gate_payload(
             "runtime_ledger_paper_probation_candidates": (
                 runtime_ledger_paper_probation_candidates
             ),
+            "runtime_ledger_source_collection_candidates": (
+                runtime_ledger_source_collection_candidates
+            ),
+            "runtime_ledger_source_collection_candidate_total": len(
+                runtime_ledger_source_collection_candidates
+            ),
             "runtime_ledger_paper_probation_eligible_total": len(
                 runtime_ledger_paper_probation_candidates
             ),
@@ -3235,6 +3461,8 @@ def build_live_submission_gate_payload(
         blocked_reasons.append("alpha_readiness_not_promotion_eligible")
         if runtime_ledger_paper_probation_candidates:
             blocked_reasons.append("paper_probation_evidence_collection_only")
+        if runtime_ledger_source_collection_candidates:
+            blocked_reasons.append("runtime_ledger_source_collection_pending")
     if empirical_ready is False:
         blocked_reasons.append("empirical_jobs_not_ready")
     if dspy_live_ready is False:
@@ -3428,6 +3656,12 @@ def build_live_submission_gate_payload(
         "runtime_ledger_repair_candidates": runtime_ledger_repair_candidates,
         "runtime_ledger_paper_probation_candidates": (
             runtime_ledger_paper_probation_candidates
+        ),
+        "runtime_ledger_source_collection_candidates": (
+            runtime_ledger_source_collection_candidates
+        ),
+        "runtime_ledger_source_collection_candidate_total": len(
+            runtime_ledger_source_collection_candidates
         ),
         "runtime_ledger_paper_probation_eligible_total": len(
             runtime_ledger_paper_probation_candidates

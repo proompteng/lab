@@ -8,7 +8,7 @@ import {
   PostgresQueryCompiler,
   type QueryResult,
 } from 'kysely'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createPostgresAtlasStore } from '../atlas-store'
 import type { Database } from '../db'
@@ -16,6 +16,45 @@ import type { Database } from '../db'
 type SqlCall = { sql: string; params: readonly unknown[] }
 
 type FakeDbOptions = { extensions?: string[]; embeddingType?: string | null; selectRows?: unknown[] }
+
+const makeCodeSearchRow = (overrides: Partial<Record<string, unknown>> = {}) => {
+  const now = new Date('2020-01-01T00:00:00.000Z')
+  return {
+    chunk_id: 'chunk-1',
+    chunk_file_version_id: 'file-version-1',
+    chunk_index: 0,
+    chunk_start_line: 10,
+    chunk_end_line: 16,
+    chunk_content: 'const flag = process.env.BUMBA_ATLAS_CHUNK_INDEXING',
+    chunk_token_count: 12,
+    chunk_metadata: {},
+    chunk_created_at: now,
+    file_version_id: 'file-version-1',
+    file_version_file_key_id: 'file-key-1',
+    file_version_repository_ref: 'main',
+    file_version_repository_commit: 'deadbeef',
+    file_version_content_hash: 'hash-1',
+    file_version_language: 'typescript',
+    file_version_byte_size: 128,
+    file_version_line_count: 20,
+    file_version_metadata: {},
+    file_version_source_timestamp: now,
+    file_version_created_at: now,
+    file_version_updated_at: now,
+    file_key_id: 'file-key-1',
+    file_key_repository_id: 'repo-1',
+    file_key_path: 'services/bumba/src/workflows/index.ts',
+    file_key_created_at: now,
+    repository_id: 'repo-1',
+    repository_name: 'proompteng/lab',
+    repository_default_ref: 'main',
+    repository_metadata: {},
+    repository_created_at: now,
+    repository_updated_at: now,
+    lexical_rank: 0.42,
+    ...overrides,
+  }
+}
 
 const makeFakeDb = (options: FakeDbOptions = {}) => {
   const calls: SqlCall[] = []
@@ -159,15 +198,35 @@ const makeFakeDb = (options: FakeDbOptions = {}) => {
 
 describe('atlas store', () => {
   const previousEnv: Record<string, string | undefined> = {}
+  const originalFetch = globalThis.fetch
 
   beforeEach(() => {
-    for (const key of ['OPENAI_EMBEDDING_DIMENSION']) {
+    for (const key of [
+      'OPENAI_API_BASE_URL',
+      'OPENAI_EMBEDDING_API_BASE_URL',
+      'OPENAI_API_KEY',
+      'OPENAI_EMBEDDING_MODEL',
+      'OPENAI_EMBEDDING_DIMENSION',
+      'OPENAI_EMBEDDING_TIMEOUT_MS',
+      'ATLAS_CODE_SEARCH_SEMANTIC_TIMEOUT_MS',
+      'ATLAS_CODE_SEARCH_QUERY_EMBEDDING_CACHE_TTL_MS',
+      'ATLAS_CODE_SEARCH_SEMANTIC_CANDIDATE_LIMIT',
+      'ATLAS_CODE_SEARCH_HEALTH_SAMPLE_LIMIT',
+    ]) {
       previousEnv[key] = process.env[key]
     }
+    process.env.OPENAI_API_BASE_URL = 'http://chat.local/v1'
+    process.env.OPENAI_EMBEDDING_API_BASE_URL = 'http://embedding.local/v1'
+    process.env.OPENAI_EMBEDDING_MODEL = 'test-embedding'
     process.env.OPENAI_EMBEDDING_DIMENSION = '3'
+    process.env.OPENAI_EMBEDDING_TIMEOUT_MS = '1000'
+    process.env.ATLAS_CODE_SEARCH_SEMANTIC_TIMEOUT_MS = '1000'
+    process.env.ATLAS_CODE_SEARCH_QUERY_EMBEDDING_CACHE_TTL_MS = '1'
   })
 
   afterEach(() => {
+    vi.restoreAllMocks()
+    globalThis.fetch = originalFetch
     for (const [key, value] of Object.entries(previousEnv)) {
       if (value === undefined) {
         delete process.env[key]
@@ -300,7 +359,138 @@ describe('atlas store', () => {
     )
   })
 
-  it('applies latest file version filter in code search queries', async () => {
+  it('uses the embedding-specific base URL for semantic code-search query embeddings', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      Response.json({
+        data: [{ embedding: [0.1, 0.2, 0.3] }],
+      }),
+    )
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    const { db } = makeFakeDb({ selectRows: [] })
+    const store = createPostgresAtlasStore({
+      url: 'postgresql://user:pass@localhost:5432/db',
+      createDb: () => db,
+    })
+
+    await store.codeSearch({ query: 'where is source search implemented', limit: 5 })
+
+    expect(fetchMock).toHaveBeenCalled()
+    const firstCall = fetchMock.mock.calls.at(0)
+    expect(firstCall).toBeDefined()
+    if (!firstCall) throw new Error('expected fetch call')
+    const requestUrl =
+      typeof firstCall[0] === 'string'
+        ? firstCall[0]
+        : firstCall[0] instanceof URL
+          ? firstCall[0].toString()
+          : firstCall[0].url
+    expect(requestUrl).toBe('http://embedding.local/v1/embeddings')
+  })
+
+  it('keeps the default semantic code-search candidate set bounded', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      Response.json({
+        data: [{ embedding: [0.1, 0.2, 0.3] }],
+      }),
+    )
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    const { db, calls } = makeFakeDb({ selectRows: [] })
+    const store = createPostgresAtlasStore({
+      url: 'postgresql://user:pass@localhost:5432/db',
+      createDb: () => db,
+    })
+
+    await store.codeSearch({ query: 'where is source search implemented', limit: 5 })
+
+    const semanticSql = calls.find((call) => call.sql.toLowerCase().includes('with candidate_chunks'))
+    expect(semanticSql).toBeDefined()
+    expect(semanticSql?.params).toContain(100)
+    expect(semanticSql?.params).not.toContain(5_000)
+  })
+
+  it('reports sampled semantic code-search coverage health', async () => {
+    const { db } = makeFakeDb({
+      selectRows: [
+        { chunk_id: 'chunk-1', embedded_chunk_id: 'chunk-1' },
+        { chunk_id: 'chunk-2', embedded_chunk_id: null },
+      ],
+    })
+    const store = createPostgresAtlasStore({
+      url: 'postgresql://user:pass@localhost:5432/db',
+      createDb: () => db,
+    })
+
+    const health = await store.codeSearchHealth({
+      repository: 'proompteng/lab',
+      ref: 'main',
+      pathPrefix: 'services/jangar',
+      minSemanticCoverage: 0.75,
+      healthSampleLimit: 2,
+    })
+
+    expect(health.status).toBe('degraded')
+    expect(health.sample).toMatchObject({ chunks: 2, embedded: 1, missing: 1, coverage: 0.5 })
+    expect(health.model).toBe('test-embedding')
+    expect(health.dimension).toBe(3)
+  })
+
+  it('keeps default semantic code-search health sampling bounded', async () => {
+    const { db, calls } = makeFakeDb({
+      selectRows: [{ chunk_id: 'chunk-1', embedded_chunk_id: 'chunk-1' }],
+    })
+    const store = createPostgresAtlasStore({
+      url: 'postgresql://user:pass@localhost:5432/db',
+      createDb: () => db,
+    })
+
+    const health = await store.codeSearchHealth({
+      repository: 'proompteng/lab',
+      ref: 'main',
+      pathPrefix: 'services/jangar',
+    })
+
+    const healthSql = calls.find((call) => call.sql.toLowerCase().includes('left join "atlas"."chunk_embeddings"'))
+    expect(health.sample.limit).toBe(50)
+    expect(healthSql?.params).toContain(50)
+    expect(healthSql?.params).not.toContain(500)
+  })
+
+  it('ranks exact identifier matches above weaker lexical-only matches', async () => {
+    const { db } = makeFakeDb({
+      selectRows: [
+        makeCodeSearchRow({
+          chunk_id: 'weak-chunk',
+          chunk_content: 'const flag = process.env.otherValue',
+          lexical_rank: 0.9,
+          file_key_path: 'weak.ts',
+        }),
+        makeCodeSearchRow({
+          chunk_id: 'exact-chunk',
+          chunk_content: 'const flag = process.env.BUMBA_ATLAS_CHUNK_INDEXING',
+          lexical_rank: 0.1,
+          file_key_path: 'exact.ts',
+        }),
+      ],
+    })
+    const store = createPostgresAtlasStore({
+      url: 'postgresql://user:pass@localhost:5432/db',
+      createDb: () => db,
+    })
+
+    const matches = await store.codeSearch({
+      query: 'BUMBA_ATLAS_CHUNK_INDEXING',
+      repository: 'proompteng/lab',
+      ref: 'main',
+      limit: 2,
+    })
+
+    expect(matches.map((match) => match.chunk.id)).toEqual(['exact-chunk', 'weak-chunk'])
+    expect(matches[0]?.signals.matchedIdentifiers).toEqual(['BUMBA_ATLAS_CHUNK_INDEXING'])
+  })
+
+  it('applies indexed latest file version filter in code search queries', async () => {
     const now = new Date('2020-01-01T00:00:00.000Z')
     const lexicalRow = {
       chunk_id: 'chunk-1',
@@ -357,18 +547,16 @@ describe('atlas store', () => {
     expect(lexicalSql).toBeTruthy()
 
     const normalized = String(lexicalSql).toLowerCase().replace(/\s+/g, ' ')
-    expect(normalized).toContain('file_versions.id in ( select ranked.id from ( select fv.id')
-    expect(normalized).toContain('row_number() over ( partition by fv.file_key_id, fv.repository_ref')
-    expect(normalized).toContain('order by fv.updated_at desc, fv.created_at desc, fv.id desc')
-    expect(normalized).toContain('from atlas.file_versions as fv')
-    expect(normalized).toContain('inner join atlas.file_keys as file_keys_scope on file_keys_scope.id = fv.file_key_id')
+    expect(normalized).toContain('not exists ( select 1 from atlas.file_versions as newer_file_versions')
+    expect(normalized).toContain('newer_file_versions.file_key_id = file_versions.file_key_id')
+    expect(normalized).toContain('newer_file_versions.repository_ref = file_versions.repository_ref')
+    expect(normalized).toContain('newer_file_versions.language =')
     expect(normalized).toContain(
-      'inner join atlas.repositories as repositories_scope on repositories_scope.id = file_keys_scope.repository_id',
+      '( newer_file_versions.updated_at, newer_file_versions.created_at, newer_file_versions.id ) >',
     )
-    expect(normalized).toContain('where repositories_scope.name =')
-    expect(normalized).toContain('fv.repository_ref =')
-    expect(normalized).toContain('file_keys_scope.path like')
-    expect(normalized).toContain('fv.language =')
-    expect(normalized).toContain('where ranked.latest_rank = 1 )')
+    expect(normalized).toContain('"repositories"."name" =')
+    expect(normalized).toContain('"file_versions"."repository_ref" =')
+    expect(normalized).toContain('"file_keys"."path" like')
+    expect(normalized).toContain('"file_versions"."language" =')
   })
 })

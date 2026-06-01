@@ -8,6 +8,9 @@ const metricsMocks = vi.hoisted(() => ({
   recordAgentRunResyncAdoptions: vi.fn(),
   recordAgentRunUntouchedBacklog: vi.fn(),
   recordAgentRunUntouchedOldestAgeSeconds: vi.fn(),
+  recordRuntimeDebrisDeletedPods: vi.fn(),
+  recordRuntimeDebrisDeleteErrors: vi.fn(),
+  recordRuntimeDebrisOrphanPods: vi.fn(),
   recordAgentConcurrency: vi.fn(),
   recordAgentQueueDepth: vi.fn(),
   recordAgentRateLimitRejection: vi.fn(),
@@ -389,6 +392,55 @@ describe('agents controller startup', () => {
     expect(kube.patch).not.toHaveBeenCalled()
     expect(kube.applyStatus).not.toHaveBeenCalled()
     expect(__test.getRuntimeMutableState().agentRunIngestionState.get('agents')?.untouchedRunCount).toBe(0)
+  })
+
+  it('cleans stale terminal runtime Pods during controller resync', async () => {
+    stopAgentsController()
+    const previousMode = process.env.AGENTS_CONTROLLER_RUNTIME_DEBRIS_CLEANUP_MODE
+    const previousRetention = process.env.AGENTS_CONTROLLER_ORPHAN_POD_RETENTION_SECONDS
+    const previousMaxDeletes = process.env.AGENTS_CONTROLLER_RUNTIME_DEBRIS_MAX_DELETES_PER_NAMESPACE
+    process.env.AGENTS_CONTROLLER_RUNTIME_DEBRIS_CLEANUP_MODE = 'delete'
+    process.env.AGENTS_CONTROLLER_ORPHAN_POD_RETENTION_SECONDS = '1'
+    process.env.AGENTS_CONTROLLER_RUNTIME_DEBRIS_MAX_DELETES_PER_NAMESPACE = '10'
+
+    try {
+      const state = { namespaces: new Map() }
+      const deleteMock = vi.fn(async () => ({}))
+      const kube = buildKube({
+        delete: deleteMock,
+        list: vi.fn(async (resource: string) => {
+          if (resource === RESOURCE_MAP.AgentRun) return { items: [] }
+          if (resource === 'pods') {
+            return {
+              items: [
+                {
+                  metadata: {
+                    name: 'run-1-step-1-attempt-1-abcd',
+                    creationTimestamp: '2026-01-20T00:00:00.000Z',
+                    labels: { 'agents.proompteng.ai/agent-run': 'run-1' },
+                  },
+                  status: { phase: 'Succeeded' },
+                },
+              ],
+            }
+          }
+          if (resource === 'jobs') return { items: [] }
+          return { items: [] }
+        }),
+      })
+
+      await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
+
+      expect(deleteMock).toHaveBeenCalledWith('pod', 'run-1-step-1-attempt-1-abcd', 'agents', { wait: false })
+    } finally {
+      if (previousMode === undefined) delete process.env.AGENTS_CONTROLLER_RUNTIME_DEBRIS_CLEANUP_MODE
+      else process.env.AGENTS_CONTROLLER_RUNTIME_DEBRIS_CLEANUP_MODE = previousMode
+      if (previousRetention === undefined) delete process.env.AGENTS_CONTROLLER_ORPHAN_POD_RETENTION_SECONDS
+      else process.env.AGENTS_CONTROLLER_ORPHAN_POD_RETENTION_SECONDS = previousRetention
+      if (previousMaxDeletes === undefined)
+        delete process.env.AGENTS_CONTROLLER_RUNTIME_DEBRIS_MAX_DELETES_PER_NAMESPACE
+      else process.env.AGENTS_CONTROLLER_RUNTIME_DEBRIS_MAX_DELETES_PER_NAMESPACE = previousMaxDeletes
+    }
   })
 
   it('adopts missed AgentRuns on watch restart resync', async () => {

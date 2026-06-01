@@ -5,7 +5,6 @@ resources:
   - torghut-db-ca-sealedsecret.yaml
   - rook-ceph-rgw-jangar-sealedsecret.yaml
   - cnpg-jangar-db-objectbucketclaim.yaml
-  - market-context-providers-secret.yaml
   - deployment.yaml
   - service.yaml
   - github-token.yaml
@@ -38,5 +37,5 @@ helmCharts:
     valuesFile: openwebui-values.yaml
 images:
   - name: registry.ide-newton.ts.net/lab/jangar
-    newTag: fee7acbb
-    digest: sha256:8475ba0446fcc3ef6ea84e95bd6aec2835a2a441f49b89352c1eac7609d474a0
+    newTag: 530cd7ef
+    digest: sha256:ef1eb428bd43c9872ca2b24ffb82baecf0eb784051fbf01e9ddbb79b3ec6b8dd

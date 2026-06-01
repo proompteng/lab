@@ -42,11 +42,8 @@ export type MarketContextRuntimeConfig = {
   enabledFlagKey: string
   cacheSeconds: number
   maxStalenessSeconds: number
-  providerTimeoutMs: number
-  newsSourceUrl: string
   technicalsMaxFreshnessSeconds: number
   newsMaxFreshnessSeconds: number
-  newsTradingHoursMaxFreshnessSeconds: number
   regimeMaxFreshnessSeconds: number
   batchRequireOpenSession: boolean
   batchTradingStatusUrl: string
@@ -83,14 +80,8 @@ export const resolveMarketContextRuntimeConfig = (env: EnvSource = process.env):
     normalizeNonEmpty(env.JANGAR_MARKET_CONTEXT_ENABLED_FLAG_KEY) ?? DEFAULT_MARKET_CONTEXT_ENABLED_FLAG_KEY,
   cacheSeconds: parsePositiveInt(env.JANGAR_MARKET_CONTEXT_CACHE_SECONDS, 60),
   maxStalenessSeconds: parsePositiveInt(env.JANGAR_MARKET_CONTEXT_MAX_STALENESS_SECONDS, 300),
-  providerTimeoutMs: parsePositiveInt(env.JANGAR_MARKET_CONTEXT_PROVIDER_TIMEOUT_MS, 10_000),
-  newsSourceUrl: normalizeNonEmpty(env.JANGAR_MARKET_CONTEXT_NEWS_URL) ?? '',
   technicalsMaxFreshnessSeconds: parsePositiveInt(env.JANGAR_MARKET_CONTEXT_TECHNICALS_MAX_FRESHNESS_SECONDS, 60),
   newsMaxFreshnessSeconds: parsePositiveInt(env.JANGAR_MARKET_CONTEXT_NEWS_MAX_FRESHNESS_SECONDS, 300),
-  newsTradingHoursMaxFreshnessSeconds: parsePositiveInt(
-    env.JANGAR_MARKET_CONTEXT_NEWS_TRADING_HOURS_MAX_FRESHNESS_SECONDS,
-    600,
-  ),
   regimeMaxFreshnessSeconds: parsePositiveInt(env.JANGAR_MARKET_CONTEXT_REGIME_MAX_FRESHNESS_SECONDS, 120),
   batchRequireOpenSession: parseBoolean(env.JANGAR_MARKET_CONTEXT_BATCH_REQUIRE_OPEN_SESSION, true),
   batchTradingStatusUrl:
@@ -110,7 +101,7 @@ export const resolveMarketContextRuntimeConfig = (env: EnvSource = process.env):
   onDemandDispatchServiceAccountName:
     normalizeNonEmpty(env.JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_SERVICE_ACCOUNT_NAME) ?? 'agents-sa',
   onDemandDispatchPriorityClassName:
-    normalizeNonEmpty(env.JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_PRIORITY_CLASS_NAME) ?? 'torghut-market-context-low',
+    normalizeNonEmpty(env.JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_PRIORITY_CLASS_NAME) ?? '',
   onDemandDispatchCallbackUrl:
     normalizeNonEmpty(env.JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_CALLBACK_URL) ??
     'http://jangar.jangar.svc.cluster.local/api/torghut/market-context',
@@ -139,7 +130,6 @@ export const resolveMarketContextIngestAuthConfig = (env: EnvSource = process.en
 
 export const validateMarketContextConfig = (env: EnvSource = process.env) => {
   const runtime = resolveMarketContextRuntimeConfig(env)
-  if (runtime.newsSourceUrl) new URL(runtime.newsSourceUrl)
   new URL(runtime.batchTradingStatusUrl)
   new URL(runtime.onDemandDispatchCallbackUrl)
   resolveMarketContextIngestAuthConfig(env)

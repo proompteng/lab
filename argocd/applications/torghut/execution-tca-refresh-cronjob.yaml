@@ -23,8 +23,17 @@ spec:
             kubernetes.io/arch: arm64
           containers:
             - name: refresh-execution-tca
-              image: registry.ide-newton.ts.net/lab/torghut@sha256:2d6b42ba410d533bed86414ab3b0d7c1b6651993dac64c08fc8b7301056bdb95
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:97dfaea944bbdf5c2e0d7a6cde3c1e4e96b5a544305b88c51a9d6d42562c4608
               imagePullPolicy: IfNotPresent
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                  ephemeral-storage: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 1Gi
+                  ephemeral-storage: 512Mi
               env:
                 - name: DB_DSN
                   valueFrom:
@@ -40,7 +49,7 @@ spec:
                   cd /app
                   /opt/venv/bin/python scripts/refresh_execution_tca_metrics.py \
                     --older-than-seconds 900 \
-                    --batch-size 250 \
-                    --max-batches 1 \
+                    --batch-size 100 \
+                    --max-batches 3 \
                     --apply \
                     --json

@@ -52,6 +52,8 @@ _DIAGNOSTIC_EXPECTANCY_SUPPRESSING_BLOCKERS = frozenset(
         "closed_round_trip_missing",
         "filled_notional_missing",
         "filled_qty_missing_or_non_positive",
+        "fill_quantity_delta_basis_missing",
+        "fill_quantity_delta_missing",
         "fill_price_missing",
         "side_missing_or_invalid",
         "explicit_cost_missing",
@@ -71,6 +73,9 @@ class RuntimeLedgerFill:
     filled_qty: Decimal
     avg_fill_price: Decimal | None = None
     filled_notional: Decimal | None = None
+    filled_qty_delta: Decimal | None = None
+    filled_notional_delta: Decimal | None = None
+    fill_quantity_basis: str | None = None
     cost_amount: Decimal | None = None
     cost_basis: str | None = None
     account_label: str | None = None
@@ -139,6 +144,9 @@ class _NormalizedFill:
     lineage_hash: str | None
     replay_data_hash: str | None
     blockers: tuple[str, ...]
+    filled_qty_delta: Decimal | None = None
+    filled_notional_delta: Decimal | None = None
+    fill_quantity_basis: str | None = None
 
     @property
     def is_usable_fill(self) -> bool:
@@ -181,6 +189,7 @@ def build_runtime_ledger_buckets(
     bucket_ranges: Sequence[tuple[datetime, datetime]],
     group_by: Sequence[str] = (),
     require_order_lifecycle: bool = False,
+    carry_in_rows: Sequence[RuntimeLedgerFill | Mapping[str, object]] = (),
 ) -> list[RuntimeLedgerBucket]:
     """Aggregate runtime fills into fail-closed post-cost PnL buckets.
 
@@ -192,6 +201,10 @@ def build_runtime_ledger_buckets(
     normalized_rows = [
         _normalize_fill_row(row, row_index=index) for index, row in enumerate(rows)
     ]
+    normalized_carry_in_rows = [
+        _normalize_fill_row(row, row_index=-(index + 1))
+        for index, row in enumerate(carry_in_rows)
+    ]
     normalized_ranges = [(_utc(start), _utc(end)) for start, end in bucket_ranges]
     for start, end in normalized_ranges:
         if end <= start:
@@ -200,6 +213,7 @@ def build_runtime_ledger_buckets(
     buckets: list[RuntimeLedgerBucket] = []
     if not group_by:
         positions: dict[tuple[str | None, str | None, str | None], _PositionState] = {}
+        applied_carry_in_row_indexes: set[int] = set()
         for bucket_start, bucket_end in normalized_ranges:
             bucket_rows = [
                 row
@@ -207,17 +221,28 @@ def build_runtime_ledger_buckets(
                 if row.executed_at is not None
                 and bucket_start <= row.executed_at < bucket_end
             ]
+            bucket_carry_in_rows = _carry_in_rows_before_bucket(
+                normalized_carry_in_rows,
+                bucket_start=bucket_start,
+                applied_row_indexes=applied_carry_in_row_indexes,
+            )
             buckets.append(
                 _build_bucket(
                     bucket_start=bucket_start,
                     bucket_end=bucket_end,
                     rows=bucket_rows,
+                    carry_in_rows=bucket_carry_in_rows,
                     carried_positions=positions,
                     require_order_lifecycle=require_order_lifecycle,
                 )
             )
         return buckets
 
+    grouped_positions: dict[
+        tuple[str | None, ...],
+        dict[tuple[str | None, str | None, str | None], _PositionState],
+    ] = {}
+    grouped_applied_carry_in_row_indexes: set[int] = set()
     for bucket_start, bucket_end in normalized_ranges:
         bucket_rows = [
             row
@@ -229,13 +254,24 @@ def build_runtime_ledger_buckets(
         for row in bucket_rows:
             grouped_rows.setdefault(_group_key(row, group_by), []).append(row)
         for key in sorted(grouped_rows):
+            bucket_carry_in_rows = _carry_in_rows_before_bucket(
+                [
+                    row
+                    for row in normalized_carry_in_rows
+                    if _group_key(row, group_by) == key
+                ],
+                bucket_start=bucket_start,
+                applied_row_indexes=grouped_applied_carry_in_row_indexes,
+            )
             buckets.append(
                 _build_bucket(
                     bucket_start=bucket_start,
                     bucket_end=bucket_end,
                     rows=grouped_rows[key],
+                    carry_in_rows=bucket_carry_in_rows,
                     group_by=group_by,
                     group_key=key,
+                    carried_positions=grouped_positions.setdefault(key, {}),
                     require_order_lifecycle=require_order_lifecycle,
                 )
             )
@@ -247,6 +283,7 @@ def _build_bucket(
     bucket_start: datetime,
     bucket_end: datetime,
     rows: Sequence[_NormalizedFill],
+    carry_in_rows: Sequence[_NormalizedFill] = (),
     group_by: Sequence[str] = (),
     group_key: tuple[str | None, ...] = (),
     carried_positions: dict[tuple[str | None, str | None, str | None], _PositionState]
@@ -254,10 +291,12 @@ def _build_bucket(
     require_order_lifecycle: bool = False,
 ) -> RuntimeLedgerBucket:
     blockers: list[str] = []
-    for row in rows:
+    for row in [*carry_in_rows, *rows]:
         blockers.extend(row.blockers)
 
-    lifecycle_rows = [row for row in rows if row.event_type in _LIFECYCLE_EVENTS]
+    lifecycle_rows = [
+        row for row in [*carry_in_rows, *rows] if row.event_type in _LIFECYCLE_EVENTS
+    ]
     decision_count = sum(1 for row in rows if row.event_type in _DECISION_EVENTS)
     submitted_order_count = sum(
         1 for row in rows if row.event_type in _SUBMITTED_ORDER_EVENTS
@@ -272,6 +311,8 @@ def _build_bucket(
         1 for row in rows if row.event_type in _UNFILLED_ORDER_EVENTS
     )
     usable_fills = [row for row in rows if row.is_usable_fill]
+    carry_in_usable_fills = [row for row in carry_in_rows if row.is_usable_fill]
+    all_usable_fills = [*carry_in_usable_fills, *usable_fills]
     if not usable_fills:
         blockers.append("runtime_fills_missing")
 
@@ -283,14 +324,36 @@ def _build_bucket(
     for row in lifecycle_rows:
         if row.execution_policy_hash is not None:
             execution_policy_hash_counter[row.execution_policy_hash] += 1
-        if row.cost_model_hash is not None:
-            cost_model_hash_counter[row.cost_model_hash] += 1
         if (lineage_hash := row.lineage_hash or row.replay_data_hash) is not None:
             lineage_hash_counter[lineage_hash] += 1
+    for row in all_usable_fills:
+        if row.cost_model_hash is not None:
+            cost_model_hash_counter[row.cost_model_hash] += 1
 
     positions: dict[tuple[str | None, str | None, str | None], _PositionState] = (
         carried_positions if carried_positions is not None else {}
     )
+    carry_in_accumulator = _LedgerAccumulator()
+    for fill in sorted(
+        carry_in_usable_fills,
+        key=lambda item: (item.executed_at or bucket_start, item.row_index),
+    ):
+        assert fill.side is not None
+        assert fill.filled_qty is not None
+        assert fill.avg_fill_price is not None
+        assert fill.filled_notional is not None
+        assert fill.cost_amount is not None
+        assert fill.cost_basis is not None
+
+        cost_basis_counter[fill.cost_basis] += 1
+        position_key = (fill.account_label, fill.strategy_id, fill.symbol)
+        state = positions.setdefault(position_key, _PositionState())
+        _apply_fill_to_position(
+            state=state,
+            fill=fill,
+            accumulator=carry_in_accumulator,
+        )
+
     for fill in sorted(
         usable_fills,
         key=lambda item: (item.executed_at or bucket_start, item.row_index),
@@ -320,7 +383,7 @@ def _build_bucket(
         blockers.extend(
             _order_lifecycle_blockers(
                 lifecycle_rows=lifecycle_rows,
-                usable_fills=usable_fills,
+                usable_fills=all_usable_fills,
                 decision_count=decision_count,
                 submitted_order_count=submitted_order_count,
                 rejected_order_count=rejected_order_count,
@@ -377,6 +440,23 @@ def _build_bucket(
     )
 
 
+def _carry_in_rows_before_bucket(
+    rows: Sequence[_NormalizedFill],
+    *,
+    bucket_start: datetime,
+    applied_row_indexes: set[int],
+) -> list[_NormalizedFill]:
+    bucket_rows = [
+        row
+        for row in rows
+        if row.row_index not in applied_row_indexes
+        and row.executed_at is not None
+        and row.executed_at < bucket_start
+    ]
+    applied_row_indexes.update(row.row_index for row in bucket_rows)
+    return bucket_rows
+
+
 def _order_lifecycle_blockers(
     *,
     lifecycle_rows: Sequence[_NormalizedFill],
@@ -424,19 +504,17 @@ def _order_lifecycle_blockers(
     if unfilled_order_count > 0:
         blockers.append("unfilled_order_present")
 
-    if any(row.execution_policy_hash is None for row in lifecycle_rows):
+    if not usable_fills or any(
+        row.execution_policy_hash is None for row in usable_fills
+    ):
         blockers.append("execution_policy_hash_missing")
-    if any(row.cost_model_hash is None for row in lifecycle_rows):
+    if not usable_fills or any(row.cost_model_hash is None for row in usable_fills):
         blockers.append("cost_model_hash_missing")
     if any(
         row.lineage_hash is None and row.replay_data_hash is None
         for row in lifecycle_rows
     ):
         blockers.append("proof_lineage_hash_missing")
-    if len(execution_policy_hash_counter) > 1:
-        blockers.append("execution_policy_hash_ambiguous")
-    if len(cost_model_hash_counter) > 1:
-        blockers.append("cost_model_hash_ambiguous")
     if len(lineage_hash_counter) > 1:
         blockers.append("proof_lineage_hash_ambiguous")
     return blockers
@@ -558,6 +636,32 @@ def _normalize_fill_row(
     filled_notional = _positive_decimal(
         _row_value(row, "filled_notional", "notional", "fill_notional")
     )
+    filled_qty_delta = _positive_decimal(
+        _row_value(row, "filled_qty_delta", "fill_qty_delta", "delta_filled_qty")
+    )
+    filled_notional_delta = _positive_decimal(
+        _row_value(
+            row,
+            "filled_notional_delta",
+            "fill_notional_delta",
+            "delta_filled_notional",
+        )
+    )
+    fill_quantity_basis = _coerce_fill_quantity_basis(
+        _row_value(row, "fill_quantity_basis", "quantity_basis")
+    )
+    order_feed_source_fill = _is_order_feed_source_fill(row)
+    if event_type in _FILL_EVENTS and order_feed_source_fill:
+        if fill_quantity_basis in {"delta", "cumulative_to_delta"}:
+            if filled_qty_delta is not None:
+                filled_qty = filled_qty_delta
+                if filled_notional_delta is not None:
+                    filled_notional = filled_notional_delta
+                elif avg_fill_price is not None:
+                    filled_notional = filled_qty_delta * avg_fill_price
+        else:
+            filled_qty = None
+            filled_notional = None
     if (
         filled_notional is None
         and filled_qty is not None
@@ -629,6 +733,17 @@ def _normalize_fill_row(
             blockers.append("side_missing_or_invalid")
         if filled_qty is None:
             blockers.append("filled_qty_missing_or_non_positive")
+        if order_feed_source_fill and fill_quantity_basis not in {
+            "delta",
+            "cumulative_to_delta",
+        }:
+            blockers.append("fill_quantity_delta_basis_missing")
+        elif (
+            order_feed_source_fill
+            and fill_quantity_basis in {"delta", "cumulative_to_delta"}
+            and filled_qty_delta is None
+        ):
+            blockers.append("fill_quantity_delta_missing")
         if avg_fill_price is None:
             blockers.append("fill_price_missing")
         if filled_notional is None:
@@ -650,6 +765,9 @@ def _normalize_fill_row(
         filled_qty=filled_qty,
         avg_fill_price=avg_fill_price,
         filled_notional=filled_notional,
+        filled_qty_delta=filled_qty_delta,
+        filled_notional_delta=filled_notional_delta,
+        fill_quantity_basis=fill_quantity_basis,
         cost_amount=cost_amount,
         cost_basis=cost_basis,
         event_type=event_type,
@@ -723,6 +841,51 @@ def _row_value(
         if value is not None:
             return value
     return None
+
+
+def _coerce_fill_quantity_basis(value: object | None) -> str | None:
+    text = _coerce_text(value)
+    if text is None:
+        return None
+    normalized = text.lower().replace("-", "_").replace(" ", "_")
+    if normalized in {"delta", "fill_delta", "filled_delta"}:
+        return "delta"
+    if normalized in {"cumulative_to_delta", "cumulative_delta", "cum_to_delta"}:
+        return "cumulative_to_delta"
+    if normalized in {"cumulative", "cum"}:
+        return "cumulative"
+    if normalized in {"unknown", "cumulative_non_increasing"}:
+        return normalized
+    return normalized or None
+
+
+def _is_order_feed_source_fill(row: RuntimeLedgerFill | Mapping[str, object]) -> bool:
+    source = _coerce_text(
+        _row_value(row, "source", "pnl_derivation", "source_materialization")
+    )
+    authority_class = _coerce_text(_row_value(row, "authority_class"))
+    if source in {
+        "execution_order_event",
+        "execution_order_events",
+        "execution_order_events_runtime_ledger",
+        "runtime_order_feed_execution_source",
+        "source_execution_lifecycle",
+    }:
+        return True
+    if authority_class in {
+        "runtime_order_feed_execution_source",
+        "source_execution_lifecycle_materialized_runtime_ledger",
+    }:
+        return True
+    return any(
+        _row_value(row, key) is not None
+        for key in (
+            "execution_order_event_id",
+            "event_fingerprint",
+            "source_window_id",
+            "source_offset",
+        )
+    )
 
 
 def _has_tca_pnl_shortcut(row: RuntimeLedgerFill | Mapping[str, object]) -> bool:

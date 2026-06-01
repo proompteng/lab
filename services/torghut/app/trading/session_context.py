@@ -7,42 +7,91 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Any
+from zoneinfo import ZoneInfo
 
-from .features import extract_price, nested_payload_value, optional_decimal, payload_value
+from .features import (
+    extract_price,
+    nested_payload_value,
+    optional_decimal,
+    payload_value,
+)
 from .models import SignalEnvelope
 from .quote_quality import QuoteQualityPolicy, assess_signal_quote_quality
 
-REGULAR_OPEN_UTC = time(hour=13, minute=30)
+US_EQUITIES_TIMEZONE = "America/New_York"
+REGULAR_OPEN_LOCAL = time(hour=9, minute=30)
+REGULAR_CLOSE_LOCAL = time(hour=16, minute=0)
 DEFAULT_OPENING_RANGE_MINUTES = 30
 DEFAULT_RECENT_WINDOW = 30
 DEFAULT_PRICE_HISTORY_WINDOW = 7200
-DEFAULT_POSITION_IN_RANGE = Decimal('0.5')
+DEFAULT_POSITION_IN_RANGE = Decimal("0.5")
+_MARKET_TZ = ZoneInfo(US_EQUITIES_TIMEZONE)
+
+
+def regular_session_open_utc_for(value: datetime | date) -> datetime:
+    return _regular_session_boundary_utc_for(value, boundary=REGULAR_OPEN_LOCAL)
+
+
+def regular_session_close_utc_for(value: datetime | date) -> datetime:
+    return _regular_session_boundary_utc_for(value, boundary=REGULAR_CLOSE_LOCAL)
+
+
+def _regular_session_boundary_utc_for(
+    value: datetime | date, *, boundary: time
+) -> datetime:
+    if isinstance(value, datetime):
+        aware = (
+            value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+        )
+        session_day = aware.astimezone(_MARKET_TZ).date()
+    else:
+        session_day = value
+    return datetime.combine(session_day, boundary, tzinfo=_MARKET_TZ).astimezone(
+        timezone.utc
+    )
+
+
+def regular_session_minutes_elapsed(event_ts: datetime) -> int:
+    ts_utc = (
+        event_ts
+        if event_ts.tzinfo is not None
+        else event_ts.replace(tzinfo=timezone.utc)
+    ).astimezone(timezone.utc)
+    session_open = regular_session_open_utc_for(ts_utc)
+    delta = ts_utc - session_open
+    return max(0, int(delta.total_seconds() // 60))
 
 
 def _extract_price(payload: dict[str, Any]) -> Decimal | None:
     return extract_price(payload)
 
 
-def _extract_spread_bps(payload: dict[str, Any], price: Decimal | None) -> Decimal | None:
+def _extract_spread_bps(
+    payload: dict[str, Any], price: Decimal | None
+) -> Decimal | None:
     if price is None or price <= 0:
         return None
-    spread_value = payload_value(payload, 'spread')
+    spread_value = payload_value(payload, "spread")
     if spread_value is None:
-        spread_value = payload_value(payload, 'imbalance_spread')
+        spread_value = payload_value(payload, "imbalance_spread")
     if spread_value is None:
-        spread_value = nested_payload_value(payload, 'imbalance', 'spread')
+        spread_value = nested_payload_value(payload, "imbalance", "spread")
     spread = optional_decimal(spread_value)
     if spread is None:
         return None
-    return (abs(spread) / price) * Decimal('10000')
+    return (abs(spread) / price) * Decimal("10000")
 
 
 def _extract_imbalance_pressure(payload: dict[str, Any]) -> Decimal | None:
     bid_sz = optional_decimal(
-        payload_value(payload, 'imbalance_bid_sz', block='imbalance', nested_key='bid_sz')
+        payload_value(
+            payload, "imbalance_bid_sz", block="imbalance", nested_key="bid_sz"
+        )
     )
     ask_sz = optional_decimal(
-        payload_value(payload, 'imbalance_ask_sz', block='imbalance', nested_key='ask_sz')
+        payload_value(
+            payload, "imbalance_ask_sz", block="imbalance", nested_key="ask_sz"
+        )
     )
     if bid_sz is None or ask_sz is None:
         return None
@@ -54,16 +103,24 @@ def _extract_imbalance_pressure(payload: dict[str, Any]) -> Decimal | None:
 
 def _extract_microprice_bias_bps(payload: dict[str, Any]) -> Decimal | None:
     bid_px = optional_decimal(
-        payload_value(payload, 'imbalance_bid_px', block='imbalance', nested_key='bid_px')
+        payload_value(
+            payload, "imbalance_bid_px", block="imbalance", nested_key="bid_px"
+        )
     )
     ask_px = optional_decimal(
-        payload_value(payload, 'imbalance_ask_px', block='imbalance', nested_key='ask_px')
+        payload_value(
+            payload, "imbalance_ask_px", block="imbalance", nested_key="ask_px"
+        )
     )
     bid_sz = optional_decimal(
-        payload_value(payload, 'imbalance_bid_sz', block='imbalance', nested_key='bid_sz')
+        payload_value(
+            payload, "imbalance_bid_sz", block="imbalance", nested_key="bid_sz"
+        )
     )
     ask_sz = optional_decimal(
-        payload_value(payload, 'imbalance_ask_sz', block='imbalance', nested_key='ask_sz')
+        payload_value(
+            payload, "imbalance_ask_sz", block="imbalance", nested_key="ask_sz"
+        )
     )
     if (
         bid_px is None
@@ -81,12 +138,13 @@ def _extract_microprice_bias_bps(payload: dict[str, Any]) -> Decimal | None:
     if mid_price <= 0:
         return None
     microprice = ((ask_px * bid_sz) + (bid_px * ask_sz)) / total_size
-    return ((microprice - mid_price) / mid_price) * Decimal('10000')
+    return ((microprice - mid_price) / mid_price) * Decimal("10000")
+
 
 def _bps_delta(price: Decimal | None, reference: Decimal | None) -> Decimal | None:
     if price is None or reference is None or reference == 0:
         return None
-    return ((price - reference) / reference) * Decimal('10000')
+    return ((price - reference) / reference) * Decimal("10000")
 
 
 def _recent_return_bps(
@@ -106,7 +164,7 @@ def _recent_return_bps(
 def _mean_decimal(values: deque[Decimal]) -> Decimal | None:
     if not values:
         return None
-    return sum(values, Decimal('0')) / Decimal(len(values))
+    return sum(values, Decimal("0")) / Decimal(len(values))
 
 
 def _max_decimal(values: deque[Decimal]) -> Decimal | None:
@@ -119,7 +177,7 @@ def _average_decimal(values: list[Decimal | None]) -> Decimal | None:
     present = [value for value in values if value is not None]
     if not present:
         return None
-    return sum(present, Decimal('0')) / Decimal(len(present))
+    return sum(present, Decimal("0")) / Decimal(len(present))
 
 
 def _ratio_decimal(values: list[bool]) -> Decimal | None:
@@ -146,7 +204,7 @@ def _percentile_rank(
         return None
     ordered = sorted(values.items(), key=lambda item: (item[1], item[0]))
     if len(ordered) == 1:
-        return Decimal('1')
+        return Decimal("1")
     for index, (candidate_symbol, _value) in enumerate(ordered):
         if candidate_symbol == normalized_symbol:
             return Decimal(index) / Decimal(len(ordered) - 1)
@@ -154,10 +212,7 @@ def _percentile_rank(
 
 
 def _session_minutes_elapsed(event_ts: datetime) -> int:
-    ts_utc = event_ts.astimezone(timezone.utc)
-    session_open = datetime.combine(ts_utc.date(), REGULAR_OPEN_UTC, tzinfo=timezone.utc)
-    delta = ts_utc - session_open
-    return max(0, int(delta.total_seconds() // 60))
+    return regular_session_minutes_elapsed(event_ts)
 
 
 @dataclass
@@ -170,11 +225,21 @@ class _SymbolSessionState:
     opening_range_high: Decimal
     opening_range_low: Decimal
     opening_window_close_price: Decimal
-    spread_bps_window: deque[Decimal] = field(default_factory=lambda: deque(maxlen=DEFAULT_RECENT_WINDOW))
-    imbalance_pressure_window: deque[Decimal] = field(default_factory=lambda: deque(maxlen=DEFAULT_RECENT_WINDOW))
-    quote_validity_window: deque[Decimal] = field(default_factory=lambda: deque(maxlen=DEFAULT_RECENT_WINDOW))
-    quote_jump_bps_window: deque[Decimal] = field(default_factory=lambda: deque(maxlen=DEFAULT_RECENT_WINDOW))
-    microprice_bias_bps_window: deque[Decimal] = field(default_factory=lambda: deque(maxlen=DEFAULT_RECENT_WINDOW))
+    spread_bps_window: deque[Decimal] = field(
+        default_factory=lambda: deque(maxlen=DEFAULT_RECENT_WINDOW)
+    )
+    imbalance_pressure_window: deque[Decimal] = field(
+        default_factory=lambda: deque(maxlen=DEFAULT_RECENT_WINDOW)
+    )
+    quote_validity_window: deque[Decimal] = field(
+        default_factory=lambda: deque(maxlen=DEFAULT_RECENT_WINDOW)
+    )
+    quote_jump_bps_window: deque[Decimal] = field(
+        default_factory=lambda: deque(maxlen=DEFAULT_RECENT_WINDOW)
+    )
+    microprice_bias_bps_window: deque[Decimal] = field(
+        default_factory=lambda: deque(maxlen=DEFAULT_RECENT_WINDOW)
+    )
     above_opening_range_high_window: deque[Decimal] = field(
         default_factory=lambda: deque(maxlen=DEFAULT_RECENT_WINDOW)
     )
@@ -192,6 +257,7 @@ class _SymbolSessionState:
     latest_price_position_in_session_range: Decimal | None = None
     latest_recent_15m_return_bps: Decimal | None = None
     latest_microbar_volume: Decimal | None = None
+    latest_clusterlob_directional_ofi: Decimal | None = None
     latest_price_vs_vwap_w5m_bps: Decimal | None = None
     latest_opening_window_return_bps: Decimal | None = None
     latest_opening_window_return_from_prev_close_bps: Decimal | None = None
@@ -235,25 +301,23 @@ class SessionContextTracker:
 
         symbol = signal.symbol.strip().upper()
         signal_ts_utc = signal.event_ts.astimezone(timezone.utc)
-        session_day = signal_ts_utc.date()
-        session_open_ts = datetime.combine(
-            session_day,
-            REGULAR_OPEN_UTC,
-            tzinfo=timezone.utc,
-        )
+        session_open_ts = regular_session_open_utc_for(signal_ts_utc)
+        session_day = session_open_ts.astimezone(_MARKET_TZ).date()
         regular_session_started = signal_ts_utc >= session_open_ts
         self._roll_forward_completed_sessions(next_session_day=session_day)
         state = self._state_by_symbol.get(symbol)
         quote_quality = assess_signal_quote_quality(
             signal=signal,
-            previous_price=(state.last_valid_quote_price if state is not None else None),
+            previous_price=(
+                state.last_valid_quote_price if state is not None else None
+            ),
             policy=self.quote_quality_policy,
         )
         if state is None:
             if not regular_session_started:
                 previous_close = self._last_session_close_by_symbol.get(symbol)
                 if previous_close is not None:
-                    payload['prev_session_close_price'] = previous_close
+                    payload["prev_session_close_price"] = previous_close
                 return payload
             state = _SymbolSessionState(
                 session_day=session_day,
@@ -281,16 +345,30 @@ class SessionContextTracker:
         spread_bps = _extract_spread_bps(payload, price)
         imbalance_pressure = _extract_imbalance_pressure(payload)
         microprice_bias_bps = _extract_microprice_bias_bps(payload)
-        rsi14 = optional_decimal(payload_value(payload, 'rsi14', nested_key='rsi'))
-        macd_hist = optional_decimal(payload_value(payload, 'macd_hist', block='macd', nested_key='hist'))
-        microbar_volume = optional_decimal(payload_value(payload, 'microbar_volume'))
+        rsi14 = optional_decimal(payload_value(payload, "rsi14", nested_key="rsi"))
+        macd_hist = optional_decimal(
+            payload_value(payload, "macd_hist", block="macd", nested_key="hist")
+        )
+        microbar_volume = optional_decimal(payload_value(payload, "microbar_volume"))
         if microbar_volume is None:
-            microbar_volume = optional_decimal(payload_value(payload, 'volume'))
+            microbar_volume = optional_decimal(payload_value(payload, "volume"))
+        clusterlob_directional_ofi = optional_decimal(
+            payload_value(payload, "clusterlob_directional_ofi")
+        )
+        clusterlob_opportunistic_ofi = optional_decimal(
+            payload_value(payload, "clusterlob_opportunistic_ofi")
+        )
+        clusterlob_market_making_ofi = optional_decimal(
+            payload_value(payload, "clusterlob_market_making_ofi")
+        )
+        clusterlob_event_cluster_stability_score = optional_decimal(
+            payload_value(payload, "clusterlob_event_cluster_stability_score")
+        )
         vwap_w5m = optional_decimal(
-            payload_value(payload, 'vwap_w5m', block='vwap', nested_key='w5m')
+            payload_value(payload, "vwap_w5m", block="vwap", nested_key="w5m")
         )
         state.quote_validity_window.append(
-            Decimal('1') if quote_quality.valid else Decimal('0')
+            Decimal("1") if quote_quality.valid else Decimal("0")
         )
         if quote_quality.jump_bps is not None:
             state.quote_jump_bps_window.append(quote_quality.jump_bps)
@@ -316,14 +394,16 @@ class SessionContextTracker:
             if microprice_bias_bps is not None:
                 state.microprice_bias_bps_window.append(microprice_bias_bps)
             state.above_opening_range_high_window.append(
-                Decimal('1') if price >= state.opening_range_high else Decimal('0')
+                Decimal("1") if price >= state.opening_range_high else Decimal("0")
             )
             state.above_opening_window_close_window.append(
-                Decimal('1') if price >= state.opening_window_close_price else Decimal('0')
+                Decimal("1")
+                if price >= state.opening_window_close_price
+                else Decimal("0")
             )
             if vwap_w5m is not None:
                 state.above_vwap_w5m_window.append(
-                    Decimal('1') if price >= vwap_w5m else Decimal('0')
+                    Decimal("1") if price >= vwap_w5m else Decimal("0")
                 )
             state.price_history.append((signal_ts_utc, price))
             state.last_valid_quote_price = price
@@ -333,14 +413,20 @@ class SessionContextTracker:
         if session_range > 0:
             position_in_range = (price - state.session_low_price) / session_range
             position_in_range = min(
-                Decimal('1'),
-                max(Decimal('0'), position_in_range),
+                Decimal("1"),
+                max(Decimal("0"), position_in_range),
             )
 
-        opening_range_width_bps = _bps_delta(state.opening_range_high, state.opening_range_low)
-        session_range_bps = _bps_delta(state.session_high_price, state.session_low_price)
+        opening_range_width_bps = _bps_delta(
+            state.opening_range_high, state.opening_range_low
+        )
+        session_range_bps = _bps_delta(
+            state.session_high_price, state.session_low_price
+        )
         price_vs_session_open_bps = _bps_delta(price, state.session_open_price)
-        price_vs_prev_session_close_bps = _bps_delta(price, state.prev_session_close_price)
+        price_vs_prev_session_close_bps = _bps_delta(
+            price, state.prev_session_close_price
+        )
         opening_window_return_bps = _bps_delta(
             state.opening_window_close_price,
             state.session_open_price,
@@ -353,21 +439,21 @@ class SessionContextTracker:
         price_vs_session_low_bps = _bps_delta(price, state.session_low_price)
         price_vs_opening_range_high_bps = _bps_delta(price, state.opening_range_high)
         price_vs_opening_range_low_bps = _bps_delta(price, state.opening_range_low)
-        price_vs_opening_window_close_bps = _bps_delta(price, state.opening_window_close_price)
+        price_vs_opening_window_close_bps = _bps_delta(
+            price, state.opening_window_close_price
+        )
         recent_spread_bps_avg = _mean_decimal(state.spread_bps_window)
         recent_spread_bps_max = _max_decimal(state.spread_bps_window)
         recent_imbalance_pressure_avg = _mean_decimal(state.imbalance_pressure_window)
         recent_quote_validity_avg = _mean_decimal(state.quote_validity_window)
         recent_quote_invalid_ratio = (
-            Decimal('1') - recent_quote_validity_avg
+            Decimal("1") - recent_quote_validity_avg
             if recent_quote_validity_avg is not None
             else None
         )
         recent_quote_jump_bps_avg = _mean_decimal(state.quote_jump_bps_window)
         recent_quote_jump_bps_max = _max_decimal(state.quote_jump_bps_window)
-        recent_microprice_bias_bps_avg = _mean_decimal(
-            state.microprice_bias_bps_window
-        )
+        recent_microprice_bias_bps_avg = _mean_decimal(state.microprice_bias_bps_window)
         recent_above_opening_range_high_ratio = _mean_decimal(
             state.above_opening_range_high_window
         )
@@ -390,10 +476,13 @@ class SessionContextTracker:
 
         if quote_quality.valid:
             state.latest_price_vs_session_open_bps = price_vs_session_open_bps
-            state.latest_price_vs_prev_session_close_bps = price_vs_prev_session_close_bps
+            state.latest_price_vs_prev_session_close_bps = (
+                price_vs_prev_session_close_bps
+            )
             state.latest_price_position_in_session_range = position_in_range
             state.latest_recent_15m_return_bps = recent_15m_return_bps
             state.latest_microbar_volume = microbar_volume
+            state.latest_clusterlob_directional_ofi = clusterlob_directional_ofi
             state.latest_price_vs_vwap_w5m_bps = price_vs_vwap_w5m_bps
             state.latest_opening_window_return_bps = opening_window_return_bps
             state.latest_opening_window_return_from_prev_close_bps = (
@@ -416,57 +505,79 @@ class SessionContextTracker:
         session_open_rank, session_open_rank_universe_size = self._rank_latest_metric(
             current_day=session_day,
             symbol=symbol,
-            accessor='latest_price_vs_session_open_bps',
+            accessor="latest_price_vs_session_open_bps",
         )
-        range_position_rank, range_position_rank_universe_size = self._rank_latest_metric(
-            current_day=session_day,
-            symbol=symbol,
-            accessor='latest_price_position_in_session_range',
+        range_position_rank, range_position_rank_universe_size = (
+            self._rank_latest_metric(
+                current_day=session_day,
+                symbol=symbol,
+                accessor="latest_price_position_in_session_range",
+            )
         )
         vwap_w5m_rank, vwap_w5m_rank_universe_size = self._rank_latest_metric(
             current_day=session_day,
             symbol=symbol,
-            accessor='latest_price_vs_vwap_w5m_bps',
+            accessor="latest_price_vs_vwap_w5m_bps",
         )
-        vwap_w5m_stretch_rank, vwap_w5m_stretch_rank_universe_size = self._rank_latest_metric(
+        vwap_w5m_stretch_rank, vwap_w5m_stretch_rank_universe_size = (
+            self._rank_latest_metric(
+                current_day=session_day,
+                symbol=symbol,
+                accessor="latest_vwap_w5m_stretch_bps",
+            )
+        )
+        recent_15m_return_rank, recent_15m_return_rank_universe_size = (
+            self._rank_latest_metric(
+                current_day=session_day,
+                symbol=symbol,
+                accessor="latest_recent_15m_return_bps",
+            )
+        )
+        microbar_volume_rank, microbar_volume_rank_universe_size = (
+            self._rank_latest_metric(
+                current_day=session_day,
+                symbol=symbol,
+                accessor="latest_microbar_volume",
+            )
+        )
+        (
+            clusterlob_directional_ofi_rank,
+            clusterlob_directional_ofi_rank_universe_size,
+        ) = self._rank_latest_metric(
             current_day=session_day,
             symbol=symbol,
-            accessor='latest_vwap_w5m_stretch_bps',
+            accessor="latest_clusterlob_directional_ofi",
         )
-        recent_15m_return_rank, recent_15m_return_rank_universe_size = self._rank_latest_metric(
-            current_day=session_day,
-            symbol=symbol,
-            accessor='latest_recent_15m_return_bps',
-        )
-        microbar_volume_rank, microbar_volume_rank_universe_size = self._rank_latest_metric(
-            current_day=session_day,
-            symbol=symbol,
-            accessor='latest_microbar_volume',
-        )
-        recent_imbalance_rank, recent_imbalance_rank_universe_size = self._rank_latest_metric(
-            current_day=session_day,
-            symbol=symbol,
-            accessor='latest_recent_imbalance_pressure_avg',
+        recent_imbalance_rank, recent_imbalance_rank_universe_size = (
+            self._rank_latest_metric(
+                current_day=session_day,
+                symbol=symbol,
+                accessor="latest_recent_imbalance_pressure_avg",
+            )
         )
         rsi14_rank, rsi14_rank_universe_size = self._rank_latest_metric(
             current_day=session_day,
             symbol=symbol,
-            accessor='latest_rsi14',
+            accessor="latest_rsi14",
         )
         macd_hist_rank, macd_hist_rank_universe_size = self._rank_latest_metric(
             current_day=session_day,
             symbol=symbol,
-            accessor='latest_macd_hist',
+            accessor="latest_macd_hist",
         )
-        opening_window_return_rank, opening_window_return_rank_universe_size = self._rank_latest_metric(
-            current_day=session_day,
-            symbol=symbol,
-            accessor='latest_opening_window_return_bps',
+        opening_window_return_rank, opening_window_return_rank_universe_size = (
+            self._rank_latest_metric(
+                current_day=session_day,
+                symbol=symbol,
+                accessor="latest_opening_window_return_bps",
+            )
         )
-        prev_session_close_rank, prev_session_close_rank_universe_size = self._rank_latest_metric(
-            current_day=session_day,
-            symbol=symbol,
-            accessor='latest_price_vs_prev_session_close_bps',
+        prev_session_close_rank, prev_session_close_rank_universe_size = (
+            self._rank_latest_metric(
+                current_day=session_day,
+                symbol=symbol,
+                accessor="latest_price_vs_prev_session_close_bps",
+            )
         )
         (
             opening_window_prev_close_return_rank,
@@ -474,43 +585,47 @@ class SessionContextTracker:
         ) = self._rank_latest_metric(
             current_day=session_day,
             symbol=symbol,
-            accessor='latest_opening_window_return_from_prev_close_bps',
+            accessor="latest_opening_window_return_from_prev_close_bps",
         )
         prev_day_open45_return_rank = _percentile_rank(
             self._last_opening_45_return_by_symbol,
             symbol=symbol,
         )
-        prev_day_open45_return_rank_universe_size = len(self._last_opening_45_return_by_symbol)
+        prev_day_open45_return_rank_universe_size = len(
+            self._last_opening_45_return_by_symbol
+        )
         prev_day_open60_return_rank = _percentile_rank(
             self._last_opening_60_return_by_symbol,
             symbol=symbol,
         )
-        prev_day_open60_return_rank_universe_size = len(self._last_opening_60_return_by_symbol)
+        prev_day_open60_return_rank_universe_size = len(
+            self._last_opening_60_return_by_symbol
+        )
         positive_session_open_ratio = self._positive_ratio_latest_metric(
             current_day=session_day,
-            accessor='latest_price_vs_session_open_bps',
+            accessor="latest_price_vs_session_open_bps",
         )
         positive_opening_window_return_ratio = self._positive_ratio_latest_metric(
             current_day=session_day,
-            accessor='latest_opening_window_return_bps',
+            accessor="latest_opening_window_return_bps",
         )
         positive_prev_session_close_ratio = self._positive_ratio_latest_metric(
             current_day=session_day,
-            accessor='latest_price_vs_prev_session_close_bps',
+            accessor="latest_price_vs_prev_session_close_bps",
         )
         positive_opening_window_return_from_prev_close_ratio = (
             self._positive_ratio_latest_metric(
                 current_day=session_day,
-                accessor='latest_opening_window_return_from_prev_close_bps',
+                accessor="latest_opening_window_return_from_prev_close_bps",
             )
         )
         above_vwap_w5m_ratio = self._positive_ratio_latest_metric(
             current_day=session_day,
-            accessor='latest_price_vs_vwap_w5m_bps',
+            accessor="latest_price_vs_vwap_w5m_bps",
         )
         positive_recent_imbalance_ratio = self._positive_ratio_latest_metric(
             current_day=session_day,
-            accessor='latest_recent_imbalance_pressure_avg',
+            accessor="latest_recent_imbalance_pressure_avg",
         )
         positive_prev_day_open45_return_ratio = _ratio_decimal(
             [value > 0 for value in self._last_opening_45_return_by_symbol.values()]
@@ -577,36 +692,34 @@ class SessionContextTracker:
         cross_section_reversal_rank = _average_decimal(
             [
                 (
-                    Decimal('1') - effective_session_drive_rank
+                    Decimal("1") - effective_session_drive_rank
                     if effective_session_drive_rank is not None
                     else None
                 ),
                 (
-                    Decimal('1') - effective_opening_window_return_rank
+                    Decimal("1") - effective_opening_window_return_rank
                     if effective_opening_window_return_rank is not None
                     else None
                 ),
                 (
-                    Decimal('1') - range_position_rank
+                    Decimal("1") - range_position_rank
                     if range_position_rank is not None
                     else None
                 ),
-                (
-                    Decimal('1') - vwap_w5m_rank
-                    if vwap_w5m_rank is not None
-                    else None
-                ),
+                (Decimal("1") - vwap_w5m_rank if vwap_w5m_rank is not None else None),
                 recent_imbalance_rank,
             ]
         )
-        cross_section_reversal_rank_universe_size = cross_section_continuation_rank_universe_size
+        cross_section_reversal_rank_universe_size = (
+            cross_section_continuation_rank_universe_size
+        )
         cross_section_factor_neutral_residual_rank = _average_decimal(
             [
                 effective_opening_window_return_rank,
                 vwap_w5m_rank,
                 recent_imbalance_rank,
                 (
-                    Decimal('1') - effective_session_drive_rank
+                    Decimal("1") - effective_session_drive_rank
                     if effective_session_drive_rank is not None
                     else None
                 ),
@@ -625,6 +738,7 @@ class SessionContextTracker:
                 effective_session_drive_rank,
                 effective_opening_window_return_rank,
                 recent_15m_return_rank,
+                clusterlob_directional_ofi_rank,
             ]
         )
         cross_section_pair_relative_return_rank_universe_size = _rank_universe_size(
@@ -632,6 +746,7 @@ class SessionContextTracker:
                 effective_session_drive_rank_universe_size,
                 effective_opening_window_return_rank_universe_size,
                 recent_15m_return_rank_universe_size,
+                clusterlob_directional_ofi_rank_universe_size,
             ]
         )
         cross_section_residual_spread_zscore_rank = _average_decimal(
@@ -639,7 +754,7 @@ class SessionContextTracker:
                 cross_section_reversal_rank,
                 vwap_w5m_stretch_rank,
                 (
-                    Decimal('1') - recent_imbalance_rank
+                    Decimal("1") - recent_imbalance_rank
                     if recent_imbalance_rank is not None
                     else None
                 ),
@@ -655,95 +770,107 @@ class SessionContextTracker:
 
         payload.update(
             {
-                'session_open_price': state.session_open_price,
-                'prev_session_close_price': state.prev_session_close_price,
-                'session_high_price': state.session_high_price,
-                'session_low_price': state.session_low_price,
-                'opening_range_high': state.opening_range_high,
-                'opening_range_low': state.opening_range_low,
-                'opening_window_close_price': state.opening_window_close_price,
-                'opening_range_width_bps': opening_range_width_bps,
-                'session_range_bps': session_range_bps,
-                'price_vs_session_open_bps': price_vs_session_open_bps,
-                'price_vs_prev_session_close_bps': price_vs_prev_session_close_bps,
-                'opening_window_return_bps': opening_window_return_bps,
-                'opening_window_return_from_prev_close_bps': opening_window_return_from_prev_close_bps,
-                'price_vs_session_high_bps': price_vs_session_high_bps,
-                'price_vs_session_low_bps': price_vs_session_low_bps,
-                'price_vs_opening_range_high_bps': price_vs_opening_range_high_bps,
-                'price_vs_opening_range_low_bps': price_vs_opening_range_low_bps,
-                'price_vs_opening_window_close_bps': price_vs_opening_window_close_bps,
-                'price_position_in_session_range': position_in_range,
-                'recent_spread_bps_avg': recent_spread_bps_avg,
-                'recent_spread_bps_max': recent_spread_bps_max,
-                'recent_imbalance_pressure_avg': recent_imbalance_pressure_avg,
-                'recent_quote_invalid_ratio': recent_quote_invalid_ratio,
-                'recent_quote_jump_bps_avg': recent_quote_jump_bps_avg,
-                'recent_quote_jump_bps_max': recent_quote_jump_bps_max,
-                'recent_microprice_bias_bps_avg': recent_microprice_bias_bps_avg,
-                'recent_above_opening_range_high_ratio': recent_above_opening_range_high_ratio,
-                'recent_above_opening_window_close_ratio': recent_above_opening_window_close_ratio,
-                'recent_above_vwap_w5m_ratio': recent_above_vwap_w5m_ratio,
-                'recent_15m_return_bps': recent_15m_return_bps,
-                'microbar_volume': microbar_volume,
-                'cross_section_session_open_rank': session_open_rank,
-                'cross_section_session_open_rank_universe_size': session_open_rank_universe_size,
-                'cross_section_prev_session_close_rank': prev_session_close_rank,
-                'cross_section_prev_session_close_rank_universe_size': prev_session_close_rank_universe_size,
-                'cross_section_opening_window_return_rank': opening_window_return_rank,
-                'cross_section_opening_window_return_rank_universe_size': opening_window_return_rank_universe_size,
-                'cross_section_opening_window_return_from_prev_close_rank': (
+                "session_open_price": state.session_open_price,
+                "prev_session_close_price": state.prev_session_close_price,
+                "session_high_price": state.session_high_price,
+                "session_low_price": state.session_low_price,
+                "opening_range_high": state.opening_range_high,
+                "opening_range_low": state.opening_range_low,
+                "opening_window_close_price": state.opening_window_close_price,
+                "opening_range_width_bps": opening_range_width_bps,
+                "session_range_bps": session_range_bps,
+                "price_vs_session_open_bps": price_vs_session_open_bps,
+                "price_vs_prev_session_close_bps": price_vs_prev_session_close_bps,
+                "opening_window_return_bps": opening_window_return_bps,
+                "opening_window_return_from_prev_close_bps": opening_window_return_from_prev_close_bps,
+                "price_vs_session_high_bps": price_vs_session_high_bps,
+                "price_vs_session_low_bps": price_vs_session_low_bps,
+                "price_vs_opening_range_high_bps": price_vs_opening_range_high_bps,
+                "price_vs_opening_range_low_bps": price_vs_opening_range_low_bps,
+                "price_vs_opening_window_close_bps": price_vs_opening_window_close_bps,
+                "price_position_in_session_range": position_in_range,
+                "recent_spread_bps_avg": recent_spread_bps_avg,
+                "recent_spread_bps_max": recent_spread_bps_max,
+                "recent_imbalance_pressure_avg": recent_imbalance_pressure_avg,
+                "recent_quote_invalid_ratio": recent_quote_invalid_ratio,
+                "recent_quote_jump_bps_avg": recent_quote_jump_bps_avg,
+                "recent_quote_jump_bps_max": recent_quote_jump_bps_max,
+                "recent_microprice_bias_bps_avg": recent_microprice_bias_bps_avg,
+                "recent_above_opening_range_high_ratio": recent_above_opening_range_high_ratio,
+                "recent_above_opening_window_close_ratio": recent_above_opening_window_close_ratio,
+                "recent_above_vwap_w5m_ratio": recent_above_vwap_w5m_ratio,
+                "recent_15m_return_bps": recent_15m_return_bps,
+                "microbar_volume": microbar_volume,
+                "clusterlob_directional_ofi": clusterlob_directional_ofi,
+                "clusterlob_opportunistic_ofi": clusterlob_opportunistic_ofi,
+                "clusterlob_market_making_ofi": clusterlob_market_making_ofi,
+                "clusterlob_event_cluster_stability_score": (
+                    clusterlob_event_cluster_stability_score
+                ),
+                "cross_section_session_open_rank": session_open_rank,
+                "cross_section_session_open_rank_universe_size": session_open_rank_universe_size,
+                "cross_section_prev_session_close_rank": prev_session_close_rank,
+                "cross_section_prev_session_close_rank_universe_size": prev_session_close_rank_universe_size,
+                "cross_section_opening_window_return_rank": opening_window_return_rank,
+                "cross_section_opening_window_return_rank_universe_size": opening_window_return_rank_universe_size,
+                "cross_section_opening_window_return_from_prev_close_rank": (
                     opening_window_prev_close_return_rank
                 ),
-                'cross_section_opening_window_return_from_prev_close_rank_universe_size': (
+                "cross_section_opening_window_return_from_prev_close_rank_universe_size": (
                     opening_window_prev_close_return_rank_universe_size
                 ),
-                'cross_section_prev_day_open45_return_rank': prev_day_open45_return_rank,
-                'cross_section_prev_day_open45_return_rank_universe_size': prev_day_open45_return_rank_universe_size,
-                'cross_section_prev_day_open60_return_rank': prev_day_open60_return_rank,
-                'cross_section_prev_day_open60_return_rank_universe_size': prev_day_open60_return_rank_universe_size,
-                'cross_section_range_position_rank': range_position_rank,
-                'cross_section_range_position_rank_universe_size': range_position_rank_universe_size,
-                'cross_section_vwap_w5m_rank': vwap_w5m_rank,
-                'cross_section_vwap_w5m_rank_universe_size': vwap_w5m_rank_universe_size,
-                'cross_section_vwap_w5m_stretch_rank': vwap_w5m_stretch_rank,
-                'cross_section_vwap_w5m_stretch_rank_universe_size': vwap_w5m_stretch_rank_universe_size,
-                'cross_section_recent_15m_return_rank': recent_15m_return_rank,
-                'cross_section_recent_15m_return_rank_universe_size': recent_15m_return_rank_universe_size,
-                'cross_section_microbar_volume_rank': microbar_volume_rank,
-                'cross_section_microbar_volume_rank_universe_size': microbar_volume_rank_universe_size,
-                'cross_section_recent_imbalance_rank': recent_imbalance_rank,
-                'cross_section_recent_imbalance_rank_universe_size': recent_imbalance_rank_universe_size,
-                'cross_section_rsi14_rank': rsi14_rank,
-                'cross_section_rsi14_rank_universe_size': rsi14_rank_universe_size,
-                'cross_section_macd_hist_rank': macd_hist_rank,
-                'cross_section_macd_hist_rank_universe_size': macd_hist_rank_universe_size,
-                'cross_section_positive_session_open_ratio': positive_session_open_ratio,
-                'cross_section_positive_prev_session_close_ratio': positive_prev_session_close_ratio,
-                'cross_section_positive_opening_window_return_ratio': positive_opening_window_return_ratio,
-                'cross_section_positive_opening_window_return_from_prev_close_ratio': (
+                "cross_section_prev_day_open45_return_rank": prev_day_open45_return_rank,
+                "cross_section_prev_day_open45_return_rank_universe_size": prev_day_open45_return_rank_universe_size,
+                "cross_section_prev_day_open60_return_rank": prev_day_open60_return_rank,
+                "cross_section_prev_day_open60_return_rank_universe_size": prev_day_open60_return_rank_universe_size,
+                "cross_section_range_position_rank": range_position_rank,
+                "cross_section_range_position_rank_universe_size": range_position_rank_universe_size,
+                "cross_section_vwap_w5m_rank": vwap_w5m_rank,
+                "cross_section_vwap_w5m_rank_universe_size": vwap_w5m_rank_universe_size,
+                "cross_section_vwap_w5m_stretch_rank": vwap_w5m_stretch_rank,
+                "cross_section_vwap_w5m_stretch_rank_universe_size": vwap_w5m_stretch_rank_universe_size,
+                "cross_section_recent_15m_return_rank": recent_15m_return_rank,
+                "cross_section_recent_15m_return_rank_universe_size": recent_15m_return_rank_universe_size,
+                "cross_section_microbar_volume_rank": microbar_volume_rank,
+                "cross_section_microbar_volume_rank_universe_size": microbar_volume_rank_universe_size,
+                "cross_section_clusterlob_directional_ofi_rank": (
+                    clusterlob_directional_ofi_rank
+                ),
+                "cross_section_clusterlob_directional_ofi_rank_universe_size": (
+                    clusterlob_directional_ofi_rank_universe_size
+                ),
+                "cross_section_recent_imbalance_rank": recent_imbalance_rank,
+                "cross_section_recent_imbalance_rank_universe_size": recent_imbalance_rank_universe_size,
+                "cross_section_rsi14_rank": rsi14_rank,
+                "cross_section_rsi14_rank_universe_size": rsi14_rank_universe_size,
+                "cross_section_macd_hist_rank": macd_hist_rank,
+                "cross_section_macd_hist_rank_universe_size": macd_hist_rank_universe_size,
+                "cross_section_positive_session_open_ratio": positive_session_open_ratio,
+                "cross_section_positive_prev_session_close_ratio": positive_prev_session_close_ratio,
+                "cross_section_positive_opening_window_return_ratio": positive_opening_window_return_ratio,
+                "cross_section_positive_opening_window_return_from_prev_close_ratio": (
                     positive_opening_window_return_from_prev_close_ratio
                 ),
-                'cross_section_positive_prev_day_open45_return_ratio': (
+                "cross_section_positive_prev_day_open45_return_ratio": (
                     positive_prev_day_open45_return_ratio
                 ),
-                'cross_section_positive_prev_day_open60_return_ratio': (
+                "cross_section_positive_prev_day_open60_return_ratio": (
                     positive_prev_day_open60_return_ratio
                 ),
-                'cross_section_above_vwap_w5m_ratio': above_vwap_w5m_ratio,
-                'cross_section_positive_recent_imbalance_ratio': positive_recent_imbalance_ratio,
-                'cross_section_continuation_breadth': cross_section_continuation_breadth,
-                'cross_section_continuation_rank': cross_section_continuation_rank,
-                'cross_section_continuation_rank_universe_size': cross_section_continuation_rank_universe_size,
-                'cross_section_reversal_rank': cross_section_reversal_rank,
-                'cross_section_reversal_rank_universe_size': cross_section_reversal_rank_universe_size,
-                'cross_section_factor_neutral_residual_rank': cross_section_factor_neutral_residual_rank,
-                'cross_section_factor_neutral_residual_rank_universe_size': cross_section_factor_neutral_residual_rank_universe_size,
-                'cross_section_pair_relative_return_rank': cross_section_pair_relative_return_rank,
-                'cross_section_pair_relative_return_rank_universe_size': cross_section_pair_relative_return_rank_universe_size,
-                'cross_section_residual_spread_zscore_rank': cross_section_residual_spread_zscore_rank,
-                'cross_section_residual_spread_zscore_rank_universe_size': cross_section_residual_spread_zscore_rank_universe_size,
-                'session_minutes_elapsed': minutes_elapsed,
+                "cross_section_above_vwap_w5m_ratio": above_vwap_w5m_ratio,
+                "cross_section_positive_recent_imbalance_ratio": positive_recent_imbalance_ratio,
+                "cross_section_continuation_breadth": cross_section_continuation_breadth,
+                "cross_section_continuation_rank": cross_section_continuation_rank,
+                "cross_section_continuation_rank_universe_size": cross_section_continuation_rank_universe_size,
+                "cross_section_reversal_rank": cross_section_reversal_rank,
+                "cross_section_reversal_rank_universe_size": cross_section_reversal_rank_universe_size,
+                "cross_section_factor_neutral_residual_rank": cross_section_factor_neutral_residual_rank,
+                "cross_section_factor_neutral_residual_rank_universe_size": cross_section_factor_neutral_residual_rank_universe_size,
+                "cross_section_pair_relative_return_rank": cross_section_pair_relative_return_rank,
+                "cross_section_pair_relative_return_rank_universe_size": cross_section_pair_relative_return_rank_universe_size,
+                "cross_section_residual_spread_zscore_rank": cross_section_residual_spread_zscore_rank,
+                "cross_section_residual_spread_zscore_rank_universe_size": cross_section_residual_spread_zscore_rank_universe_size,
+                "session_minutes_elapsed": minutes_elapsed,
             }
         )
         return payload
@@ -760,9 +887,13 @@ class SessionContextTracker:
             if previous_close > 0:
                 self._last_session_close_by_symbol[candidate_symbol] = previous_close
             if state.opening_45_return_bps is not None:
-                self._last_opening_45_return_by_symbol[candidate_symbol] = state.opening_45_return_bps
+                self._last_opening_45_return_by_symbol[candidate_symbol] = (
+                    state.opening_45_return_bps
+                )
             if state.opening_60_return_bps is not None:
-                self._last_opening_60_return_by_symbol[candidate_symbol] = state.opening_60_return_bps
+                self._last_opening_60_return_by_symbol[candidate_symbol] = (
+                    state.opening_60_return_bps
+                )
             del self._state_by_symbol[candidate_symbol]
 
     def _rank_latest_metric(

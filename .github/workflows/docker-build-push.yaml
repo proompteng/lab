@@ -33,6 +33,11 @@ on:
         required: false
         type: boolean
         default: true
+      build_olden:
+        description: 'Build and publish apps/olden image'
+        required: false
+        type: boolean
+        default: true
 
 jobs:
   changes:
@@ -44,6 +49,7 @@ jobs:
       app: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.app || steps.filter.outputs.app }}
       synthesis: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.synthesis || steps.filter.outputs.synthesis }}
       docs: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.docs || steps.filter.outputs.docs }}
+      olden: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.olden || steps.filter.outputs.olden }}
 
     steps:
       - name: Checkout
@@ -67,6 +73,9 @@ jobs:
             docs:
               - 'apps/docs/**'
               - 'packages/design/**'
+            olden:
+              - 'apps/olden/**'
+              - 'packages/design/**'
 
       - name: Manual build selection
         id: manual
@@ -77,6 +86,7 @@ jobs:
             echo "app=${{ github.event.inputs.build_app }}"
             echo "synthesis=${{ github.event.inputs.build_synthesis }}"
             echo "docs=${{ github.event.inputs.build_docs }}"
+            echo "olden=${{ github.event.inputs.build_olden }}"
           } >> "$GITHUB_OUTPUT"
 
   version:
@@ -84,7 +94,7 @@ jobs:
     permissions:
       contents: write
     needs: changes
-    if: ${{ needs.changes.outputs.proompteng == 'true' || needs.changes.outputs.app == 'true' || needs.changes.outputs.synthesis == 'true' || needs.changes.outputs.docs == 'true' }}
+    if: ${{ needs.changes.outputs.proompteng == 'true' || needs.changes.outputs.app == 'true' || needs.changes.outputs.synthesis == 'true' || needs.changes.outputs.docs == 'true' || needs.changes.outputs.olden == 'true' }}
     outputs:
       new_tag: ${{ steps.tag_version.outputs.new_tag }}
       changelog: ${{ steps.tag_version.outputs.changelog }}
@@ -146,15 +156,54 @@ jobs:
       context: .
       new_tag: ${{ needs.version.outputs.new_tag }}
 
+  build-olden:
+    needs: [changes, version]
+    if: ${{ needs.changes.outputs.olden == 'true' }}
+    uses: ./.github/workflows/docker-build-common.yaml
+    with:
+      image_name: olden
+      dockerfile: ./apps/olden/Dockerfile
+      context: .
+      new_tag: ${{ needs.version.outputs.new_tag }}
+
   cleanup-release:
     runs-on: arc-arm64
     permissions:
       contents: write
-    needs: [version, build-proompteng, build-app, build-synthesis, build-docs]
+    needs: [version, build-proompteng, build-app, build-synthesis, build-docs, build-olden]
     if: failure()
     steps:
-      - name: Delete release if any build failed
-        run: gh release delete ${{ needs.version.outputs.new_tag }} --cleanup-tag --yes
-        continue-on-error: true
+      - name: Delete release and tag if any build failed
+        uses: actions/github-script@v8
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.version.outputs.new_tag }}
+        with:
+          script: |
+            const tag = process.env.RELEASE_TAG;
+            if (!tag) {
+              core.info('No release tag was produced; nothing to clean up.');
+              return;
+            }
+
+            const { owner, repo } = context.repo;
+
+            try {
+              const release = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
+              await github.rest.repos.deleteRelease({ owner, repo, release_id: release.data.id });
+              core.info(`Deleted release ${tag}.`);
+            } catch (error) {
+              if (error.status !== 404) {
+                throw error;
+              }
+              core.info(`Release ${tag} was already absent.`);
+            }
+
+            try {
+              await github.rest.git.deleteRef({ owner, repo, ref: `tags/${tag}` });
+              core.info(`Deleted tag ${tag}.`);
+            } catch (error) {
+              if (error.status !== 404) {
+                throw error;
+              }
+              core.info(`Tag ${tag} was already absent.`);
+            }

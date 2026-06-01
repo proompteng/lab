@@ -61,7 +61,12 @@ import {
 import { buildInFlightCounts } from './queue-state'
 import { resetControllerRateState as resetControllerRateStateMaps } from './rate-limits'
 import { createResourceReconcilers } from './resource-reconcilers'
-import { resolveAgentRunnerDefaultsConfig, resolveAgentsControllerBehaviorConfig } from './runtime-config'
+import {
+  resolveAgentRunnerDefaultsConfig,
+  resolveAgentsControllerBehaviorConfig,
+  resolveRuntimeDebrisCleanupConfig,
+} from './runtime-config'
+import { reconcileRuntimeDebris } from './runtime-debris'
 import { resolveParam, resolveParameters } from './run-utils'
 import { createTemporalRuntimeTools } from './temporal-runtime'
 import { resolveVcsAuthMethod, validateVcsAuthConfig } from './vcs-auth'
@@ -742,6 +747,23 @@ const resyncAgentRunsForNamespace = async (
 
   if (candidateRuns.length > 0) {
     recordAgentRunResyncAdoptions(candidateRuns.length, { namespace, reason })
+  }
+
+  const runtimeDebrisConfig = resolveRuntimeDebrisCleanupConfig()
+  if (runtimeDebrisConfig.mode !== 'disabled') {
+    try {
+      await reconcileRuntimeDebris({
+        config: runtimeDebrisConfig,
+        kube,
+        namespace,
+      })
+    } catch (error) {
+      logAgentsControllerWarn('runtime_debris_reconcile_failed', {
+        namespace,
+        reason,
+        ...toLogError(error),
+      })
+    }
   }
 
   const resyncSummarySignature = [

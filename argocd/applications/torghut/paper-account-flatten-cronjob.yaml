@@ -1,0 +1,92 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: torghut-paper-account-flatten
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut
+    app.kubernetes.io/component: paper-account-flatten
+spec:
+  schedule: "5,20,25 9 * * 1-5"
+  timeZone: America/New_York
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 300
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 300
+      template:
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: torghut-runtime
+          nodeSelector:
+            kubernetes.io/arch: arm64
+          containers:
+            - name: flatten-paper-account
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:97dfaea944bbdf5c2e0d7a6cde3c1e4e96b5a544305b88c51a9d6d42562c4608
+              imagePullPolicy: IfNotPresent
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                  ephemeral-storage: 128Mi
+                limits:
+                  cpu: 250m
+                  memory: 256Mi
+                  ephemeral-storage: 512Mi
+              command:
+                - /bin/bash
+                - -lc
+              args:
+                - |
+                  set -euo pipefail
+                  cd /app
+                  /opt/venv/bin/python scripts/flatten_paper_account_positions.py \
+                    --account-label TORGHUT_SIM \
+                    --expected-account-label TORGHUT_SIM \
+                    --trading-mode paper \
+                    --paper-base-url https://paper-api.alpaca.markets \
+                    --max-gross-market-value 100000 \
+                    --max-position-count 25 \
+                    --extended-hours-limit \
+                    --limit-away-bps 200 \
+                    --wait-flat-seconds 120 \
+                    --poll-seconds 10 \
+                    --persist-snapshot \
+                    --apply \
+                    --json
+              env:
+                - name: DB_DSN
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: uri
+                - name: APCA_API_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-alpaca
+                      key: APCA_API_KEY_ID
+                      optional: true
+                - name: APCA_API_SECRET_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-alpaca
+                      key: APCA_API_SECRET_KEY
+                      optional: true
+                - name: APCA_API_BASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-alpaca
+                      key: APCA_API_BASE_URL
+                      optional: true
+                - name: TRADING_MODE
+                  value: paper
+                - name: TRADING_ACCOUNT_LABEL
+                  value: TORGHUT_SIM
+                - name: TRADING_ACCOUNTS_JSON
+                  value: >
+                    [{"label":"TORGHUT_SIM","mode":"paper","enabled":true}]
+                - name: TRADING_KILL_SWITCH_ENABLED
+                  value: "false"

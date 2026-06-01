@@ -19,6 +19,7 @@ import * as torghutQuantMetricsLatestAccountWindowIndexMigration from '~/server/
 import * as torghutQuantPipelineHealthAccountWindowAsofIndexMigration from '~/server/migrations/20260505_torghut_quant_pipeline_health_account_window_asof_index'
 import * as torghutQuantPipelineHealthWindowIndexMigration from '~/server/migrations/20260505_torghut_quant_pipeline_health_window_index'
 import * as torghutQuantPipelineHealthAccountWindowCreatedAtIndexMigration from '~/server/migrations/20260508_torghut_quant_pipeline_health_account_window_created_at_index'
+import * as atlasCodeSearchPerformanceIndexesMigration from '~/server/migrations/20260531_atlas_code_search_performance_indexes'
 
 type MigrationMap = Record<string, Migration>
 
@@ -52,6 +53,7 @@ const migrations: MigrationMap = {
   '20260505_torghut_quant_pipeline_health_window_index': torghutQuantPipelineHealthWindowIndexMigration,
   '20260508_torghut_quant_pipeline_health_account_window_created_at_index':
     torghutQuantPipelineHealthAccountWindowCreatedAtIndexMigration,
+  '20260531_atlas_code_search_performance_indexes': atlasCodeSearchPerformanceIndexesMigration,
 }
 
 export const getRegisteredMigrationNames = () => Object.keys(migrations).sort()

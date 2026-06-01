@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import logging
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Mapping, Sequence, cast
+from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import delete, select
+from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.elements import ColumnElement
 
+from ..config import settings
 from ..models import (
     StrategyCapitalAllocation,
     StrategyHypothesis,
@@ -19,6 +23,8 @@ from ..models import (
     StrategyHypothesisVersion,
     StrategyPromotionDecision,
     StrategyRuntimeLedgerBucket,
+    TigerBeetleAccountRef,
+    TigerBeetleTransferRef,
     VNextDatasetSnapshot,
 )
 from .hypotheses import (
@@ -39,15 +45,23 @@ from .runtime_decision_authority import (
     source_decision_mode_counts_have_profit_proof_modes,
     source_decision_mode_is_profit_proof_eligible,
 )
+from .runtime_ledger_proof_policy import runtime_ledger_proof_policy_from_env
+from .runtime_ledger_source_authority import (
+    runtime_ledger_promotion_source_authority_blockers,
+)
+from .tigerbeetle_journal import TigerBeetleLedgerJournal
+
+logger = logging.getLogger(__name__)
 
 US_EQUITIES_REGULAR_TIMEZONE = "America/New_York"
 US_EQUITIES_REGULAR_OPEN = time(hour=9, minute=30)
 US_EQUITIES_REGULAR_CLOSE = time(hour=16, minute=0)
 PROMOTION_GRADE_POST_COST_BASES = frozenset(
     {
-        "realized_strategy_pnl_after_explicit_costs",
+        POST_COST_PNL_BASIS,
     }
 )
+RUNTIME_LEDGER_PROOF_POLICY = runtime_ledger_proof_policy_from_env()
 _RUNTIME_LEDGER_PROOF_SATISFIED_METADATA_BLOCKERS = frozenset(
     {
         "paper_route_runtime_ledger_import_pending",
@@ -84,13 +98,6 @@ RUNTIME_LEDGER_BUCKET_SCHEMAS = frozenset(
         "torghut.runtime-ledger-bucket.v1",
     }
 )
-RUNTIME_LEDGER_AUTHORITY_MIN_TRADING_DAYS = 20
-RUNTIME_LEDGER_AUTHORITY_MIN_MEAN_DAILY_NET_PNL = Decimal("500")
-RUNTIME_LEDGER_AUTHORITY_MIN_MEDIAN_DAILY_NET_PNL = Decimal("250")
-RUNTIME_LEDGER_AUTHORITY_MIN_P10_DAILY_NET_PNL = Decimal("-250")
-RUNTIME_LEDGER_AUTHORITY_MIN_WORST_DAY_NET_PNL = Decimal("-750")
-RUNTIME_LEDGER_AUTHORITY_MAX_INTRADAY_DRAWDOWN = Decimal("1500")
-RUNTIME_LEDGER_AUTHORITY_MAX_BEST_DAY_SHARE = Decimal("0.25")
 
 
 @dataclass(frozen=True)
@@ -267,6 +274,7 @@ def _persisted_runtime_ledger_bucket_evidence_grade(
     row: StrategyRuntimeLedgerBucket,
 ) -> bool:
     blockers = _string_list(row.blockers_json)
+    payload_json = _mapping(row.payload_json)
     return (
         row.pnl_basis == POST_COST_PNL_BASIS
         and int(row.fill_count or 0) > 0
@@ -279,8 +287,9 @@ def _persisted_runtime_ledger_bucket_evidence_grade(
         and _hash_count(row.cost_model_hash_counts) > 0
         and _hash_count(row.lineage_hash_counts) > 0
         and not cost_basis_counts_have_non_promotion_grade_costs(
-            _mapping(row.payload_json).get("cost_basis_counts")
+            payload_json.get("cost_basis_counts")
         )
+        and not runtime_ledger_promotion_source_authority_blockers(payload_json)
         and not blockers
     )
 
@@ -304,6 +313,7 @@ def _runtime_ledger_bucket_blockers(bucket: Mapping[str, Any]) -> list[str]:
         blockers.append("runtime_ledger_pnl_basis_missing")
     elif pnl_basis != POST_COST_PNL_BASIS:
         blockers.append("runtime_ledger_pnl_basis_invalid")
+    blockers.extend(runtime_ledger_promotion_source_authority_blockers(bucket))
     if _observation_int(bucket.get("fill_count")) <= 0:
         blockers.append("runtime_fills_missing")
     if _observation_int(bucket.get("decision_count")) <= 0:
@@ -782,28 +792,34 @@ def _runtime_ledger_authority_gate_targets(
     average_post_cost_bps: Decimal,
 ) -> dict[str, Any]:
     target_implied_notional = (
-        RUNTIME_LEDGER_AUTHORITY_MIN_MEAN_DAILY_NET_PNL
+        RUNTIME_LEDGER_PROOF_POLICY.authority_min_mean_daily_net_pnl_after_costs
         * Decimal("10000")
         / average_post_cost_bps
         if average_post_cost_bps > 0
         else None
     )
     return {
-        "min_observed_trading_days": RUNTIME_LEDGER_AUTHORITY_MIN_TRADING_DAYS,
+        "min_observed_trading_days": (
+            RUNTIME_LEDGER_PROOF_POLICY.authority_min_trading_days
+        ),
         "min_mean_daily_net_pnl_after_costs": str(
-            RUNTIME_LEDGER_AUTHORITY_MIN_MEAN_DAILY_NET_PNL
+            RUNTIME_LEDGER_PROOF_POLICY.authority_min_mean_daily_net_pnl_after_costs
         ),
         "min_median_daily_net_pnl_after_costs": str(
-            RUNTIME_LEDGER_AUTHORITY_MIN_MEDIAN_DAILY_NET_PNL
+            RUNTIME_LEDGER_PROOF_POLICY.authority_min_median_daily_net_pnl_after_costs
         ),
         "min_p10_daily_net_pnl_after_costs": str(
-            RUNTIME_LEDGER_AUTHORITY_MIN_P10_DAILY_NET_PNL
+            RUNTIME_LEDGER_PROOF_POLICY.authority_min_p10_daily_net_pnl_after_costs
         ),
         "min_worst_day_net_pnl_after_costs": str(
-            RUNTIME_LEDGER_AUTHORITY_MIN_WORST_DAY_NET_PNL
+            RUNTIME_LEDGER_PROOF_POLICY.authority_min_worst_day_net_pnl_after_costs
         ),
-        "max_intraday_drawdown": str(RUNTIME_LEDGER_AUTHORITY_MAX_INTRADAY_DRAWDOWN),
-        "max_best_day_share": str(RUNTIME_LEDGER_AUTHORITY_MAX_BEST_DAY_SHARE),
+        "max_intraday_drawdown": str(
+            RUNTIME_LEDGER_PROOF_POLICY.authority_max_intraday_drawdown
+        ),
+        "max_best_day_share": str(
+            RUNTIME_LEDGER_PROOF_POLICY.authority_max_best_day_share
+        ),
         "target_implied_avg_daily_filled_notional": (
             _decimal_text(target_implied_notional)
             if target_implied_notional is not None
@@ -914,28 +930,43 @@ def _runtime_promotion_blocking_reasons(
         "runtime_ledger_avg_daily_filled_notional",
     )
 
-    if observed_trading_days < RUNTIME_LEDGER_AUTHORITY_MIN_TRADING_DAYS:
+    if observed_trading_days < RUNTIME_LEDGER_PROOF_POLICY.authority_min_trading_days:
         reasons.append(
             "runtime_ledger_observed_trading_day_count_below_authority_minimum"
         )
-    if mean_daily_net_pnl < RUNTIME_LEDGER_AUTHORITY_MIN_MEAN_DAILY_NET_PNL:
+    if (
+        mean_daily_net_pnl
+        < RUNTIME_LEDGER_PROOF_POLICY.authority_min_mean_daily_net_pnl_after_costs
+    ):
         reasons.append("runtime_ledger_mean_daily_net_pnl_after_costs_below_target")
-    if median_daily_net_pnl < RUNTIME_LEDGER_AUTHORITY_MIN_MEDIAN_DAILY_NET_PNL:
+    if (
+        median_daily_net_pnl
+        < RUNTIME_LEDGER_PROOF_POLICY.authority_min_median_daily_net_pnl_after_costs
+    ):
         reasons.append("runtime_ledger_median_daily_net_pnl_after_costs_below_floor")
-    if p10_daily_net_pnl < RUNTIME_LEDGER_AUTHORITY_MIN_P10_DAILY_NET_PNL:
+    if (
+        p10_daily_net_pnl
+        < RUNTIME_LEDGER_PROOF_POLICY.authority_min_p10_daily_net_pnl_after_costs
+    ):
         reasons.append("runtime_ledger_p10_daily_net_pnl_after_costs_below_floor")
-    if worst_day_net_pnl < RUNTIME_LEDGER_AUTHORITY_MIN_WORST_DAY_NET_PNL:
+    if (
+        worst_day_net_pnl
+        < RUNTIME_LEDGER_PROOF_POLICY.authority_min_worst_day_net_pnl_after_costs
+    ):
         reasons.append("runtime_ledger_worst_day_net_pnl_after_costs_below_floor")
-    if max_intraday_drawdown > RUNTIME_LEDGER_AUTHORITY_MAX_INTRADAY_DRAWDOWN:
+    if (
+        max_intraday_drawdown
+        > RUNTIME_LEDGER_PROOF_POLICY.authority_max_intraday_drawdown
+    ):
         reasons.append("runtime_ledger_max_intraday_drawdown_above_limit")
     if (
         best_day_share is not None
-        and best_day_share > RUNTIME_LEDGER_AUTHORITY_MAX_BEST_DAY_SHARE
+        and best_day_share > RUNTIME_LEDGER_PROOF_POLICY.authority_max_best_day_share
     ):
         reasons.append("runtime_ledger_best_day_share_above_limit")
     if average_post_cost > 0:
         target_implied_notional = (
-            RUNTIME_LEDGER_AUTHORITY_MIN_MEAN_DAILY_NET_PNL
+            RUNTIME_LEDGER_PROOF_POLICY.authority_min_mean_daily_net_pnl_after_costs
             * Decimal("10000")
             / average_post_cost
         )
@@ -1191,6 +1222,106 @@ def _runtime_ledger_bucket_payloads(payload: Mapping[str, Any]) -> list[dict[str
     return [single_payload] if single_payload else []
 
 
+def _runtime_ledger_bucket_replacement_scopes(
+    *,
+    buckets: Sequence[ObservedRuntimeBucket],
+    runtime_payload: Mapping[str, Any],
+) -> list[tuple[datetime, datetime, str | None, str | None]]:
+    scopes: list[tuple[datetime, datetime, str | None, str | None]] = []
+    seen: set[tuple[datetime, datetime, str | None, str | None]] = set()
+
+    def add_scope(
+        *,
+        started_at: datetime,
+        ended_at: datetime,
+        account_label: str | None,
+        runtime_strategy_name: str | None,
+    ) -> None:
+        if ended_at <= started_at:
+            return
+        scope = (started_at, ended_at, account_label, runtime_strategy_name)
+        if scope not in seen:
+            seen.add(scope)
+            scopes.append(scope)
+
+    for bucket in buckets:
+        for ledger_payload in _runtime_ledger_bucket_payloads(bucket.payload_json):
+            bucket_started_at = (
+                _parse_observation_datetime(ledger_payload.get("bucket_started_at"))
+                or bucket.window_started_at
+            )
+            bucket_ended_at = (
+                _parse_observation_datetime(ledger_payload.get("bucket_ended_at"))
+                or bucket.window_ended_at
+            )
+            account_label = _text(ledger_payload.get("account_label")) or _text(
+                runtime_payload.get("account_label")
+            )
+            runtime_strategy_name = _text(ledger_payload.get("strategy_id")) or _text(
+                runtime_payload.get("strategy_name")
+            )
+            add_scope(
+                started_at=bucket_started_at,
+                ended_at=bucket_ended_at,
+                account_label=account_label,
+                runtime_strategy_name=runtime_strategy_name,
+            )
+            source_window_started_at = _parse_observation_datetime(
+                ledger_payload.get("source_window_start")
+            )
+            source_window_ended_at = _parse_observation_datetime(
+                ledger_payload.get("source_window_end")
+            )
+            if (
+                source_window_started_at is not None
+                and source_window_ended_at is not None
+            ):
+                add_scope(
+                    started_at=source_window_started_at,
+                    ended_at=source_window_ended_at,
+                    account_label=account_label,
+                    runtime_strategy_name=runtime_strategy_name,
+                )
+    return scopes
+
+
+def _delete_replaced_runtime_ledger_buckets(
+    *,
+    session: Session,
+    run_id: str,
+    candidate_id: str | None,
+    hypothesis_id: str,
+    observed_stage: str,
+    replacement_scopes: Sequence[tuple[datetime, datetime, str | None, str | None]],
+) -> int:
+    if not replacement_scopes:
+        return 0
+    overlap_predicates = [
+        and_(
+            StrategyRuntimeLedgerBucket.bucket_started_at < bucket_ended_at,
+            StrategyRuntimeLedgerBucket.bucket_ended_at > bucket_started_at,
+            StrategyRuntimeLedgerBucket.account_label == account_label,
+            StrategyRuntimeLedgerBucket.runtime_strategy_name == runtime_strategy_name,
+        )
+        for (
+            bucket_started_at,
+            bucket_ended_at,
+            account_label,
+            runtime_strategy_name,
+        ) in replacement_scopes
+    ]
+    result = session.execute(
+        delete(StrategyRuntimeLedgerBucket).where(
+            StrategyRuntimeLedgerBucket.run_id != run_id,
+            StrategyRuntimeLedgerBucket.candidate_id == candidate_id,
+            StrategyRuntimeLedgerBucket.hypothesis_id == hypothesis_id,
+            StrategyRuntimeLedgerBucket.observed_stage == observed_stage,
+            or_(*overlap_predicates),
+        )
+    )
+    return int(getattr(result, "rowcount", 0) or 0)
+
+
 def _runtime_ledger_post_cost_from_observed_buckets(
     buckets: Sequence[ObservedRuntimeBucket],
 ) -> tuple[Decimal | None, Decimal, Decimal, int]:
@@ -1302,6 +1433,285 @@ def _runtime_ledger_symbol_pnl_items(
     if symbol is None or net_pnl is None:
         return []
     return [(symbol, net_pnl)]
+
+
+def _uuid_values(values: Sequence[str]) -> list[UUID]:
+    uuids: list[UUID] = []
+    for value in values:
+        try:
+            uuids.append(UUID(value))
+        except ValueError:
+            continue
+    return uuids
+
+
+def _tigerbeetle_transfer_account_ids(row: TigerBeetleTransferRef) -> list[str]:
+    payload = _mapping(row.payload_json)
+    account_ids: list[str] = []
+    for key in ("debit_account_id", "credit_account_id"):
+        account_id = _text(payload.get(key))
+        if account_id is not None:
+            account_ids.append(account_id)
+    return account_ids
+
+
+def _tigerbeetle_account_refs_for_ids(
+    *,
+    session: Session,
+    cluster_ids: Sequence[int],
+    account_ids: Sequence[str],
+) -> list[TigerBeetleAccountRef]:
+    if not cluster_ids or not account_ids:
+        return []
+    return list(
+        session.execute(
+            select(TigerBeetleAccountRef)
+            .where(
+                TigerBeetleAccountRef.cluster_id.in_(cluster_ids),
+                TigerBeetleAccountRef.account_id.in_(account_ids),
+            )
+            .order_by(
+                TigerBeetleAccountRef.cluster_id.asc(),
+                TigerBeetleAccountRef.account_key.asc(),
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
+def _tigerbeetle_refs_for_ledger_payload(
+    session: Session,
+    ledger_payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    event_ids = _uuid_values(
+        [
+            *_string_list(ledger_payload.get("execution_order_event_ids")),
+            *_string_list(
+                ledger_payload.get("runtime_ledger_execution_order_event_ids")
+            ),
+        ]
+    )
+    event_fingerprints = [
+        *_string_list(ledger_payload.get("execution_order_event_fingerprints")),
+        *_string_list(ledger_payload.get("event_fingerprints")),
+    ]
+    predicates: list[ColumnElement[bool]] = []
+    if event_ids:
+        predicates.append(
+            cast(
+                ColumnElement[bool],
+                TigerBeetleTransferRef.execution_order_event_id.in_(event_ids),
+            )
+        )
+    if event_fingerprints:
+        predicates.append(
+            cast(
+                ColumnElement[bool],
+                TigerBeetleTransferRef.event_fingerprint.in_(event_fingerprints),
+            )
+        )
+    if not predicates:
+        return {}
+
+    rows = (
+        session.execute(
+            select(TigerBeetleTransferRef)
+            .where(or_(*predicates))
+            .order_by(TigerBeetleTransferRef.created_at.asc())
+        )
+        .scalars()
+        .all()
+    )
+    if not rows:
+        return {}
+    account_ids = sorted(
+        {
+            account_id
+            for row in rows
+            for account_id in _tigerbeetle_transfer_account_ids(row)
+        }
+    )
+    account_rows = _tigerbeetle_account_refs_for_ids(
+        session=session,
+        cluster_ids=sorted({row.cluster_id for row in rows}),
+        account_ids=account_ids,
+    )
+    account_ref_keys = {(row.cluster_id, row.account_id) for row in account_rows}
+    missing_account_ids = sorted(
+        {
+            account_id
+            for row in rows
+            for account_id in _tigerbeetle_transfer_account_ids(row)
+            if (row.cluster_id, account_id) not in account_ref_keys
+        }
+    )
+    return {
+        "schema_version": "torghut.tigerbeetle-ledger-refs.v1",
+        "cluster_ids": sorted({row.cluster_id for row in rows}),
+        "account_count": len(account_rows),
+        "account_ids": sorted({row.account_id for row in account_rows}),
+        "account_keys": sorted({row.account_key for row in account_rows}),
+        "accounts": [
+            {
+                "cluster_id": row.cluster_id,
+                "account_id": row.account_id,
+                "account_key": row.account_key,
+                "ledger": row.ledger,
+                "code": row.code,
+                "account_label": row.account_label,
+                "symbol": row.symbol,
+                "strategy_id": row.strategy_id,
+            }
+            for row in account_rows
+        ],
+        "missing_account_ids": missing_account_ids,
+        "transfer_count": len(rows),
+        "transfer_ids": sorted({row.transfer_id for row in rows}),
+        "transfers": [
+            {
+                "cluster_id": row.cluster_id,
+                "transfer_id": row.transfer_id,
+                "transfer_kind": row.transfer_kind,
+                "ledger": row.ledger,
+                "code": row.code,
+                "amount": str(row.amount),
+                "status": row.status,
+                "execution_order_event_id": str(row.execution_order_event_id)
+                if row.execution_order_event_id
+                else None,
+                "event_fingerprint": row.event_fingerprint,
+            }
+            for row in rows
+        ],
+    }
+
+
+def _ledger_payload_with_tigerbeetle_refs(
+    session: Session,
+    ledger_payload: dict[str, Any],
+) -> dict[str, Any]:
+    tigerbeetle_refs = _tigerbeetle_refs_for_ledger_payload(session, ledger_payload)
+    if not tigerbeetle_refs:
+        return ledger_payload
+    source_refs = _string_list(ledger_payload.get("source_refs"))
+    if "postgres:tigerbeetle_transfer_refs" not in source_refs:
+        source_refs.append("postgres:tigerbeetle_transfer_refs")
+    source_row_counts = _mapping(ledger_payload.get("source_row_counts"))
+    source_row_counts["tigerbeetle_transfer_refs"] = tigerbeetle_refs["transfer_count"]
+    if tigerbeetle_refs.get("account_count"):
+        if "postgres:tigerbeetle_account_refs" not in source_refs:
+            source_refs.append("postgres:tigerbeetle_account_refs")
+        source_row_counts["tigerbeetle_account_refs"] = tigerbeetle_refs[
+            "account_count"
+        ]
+    return {
+        **ledger_payload,
+        "source_refs": source_refs,
+        "source_row_counts": source_row_counts,
+        "tigerbeetle": tigerbeetle_refs,
+        "tigerbeetle_account_ids": tigerbeetle_refs["account_ids"],
+        "tigerbeetle_account_keys": tigerbeetle_refs["account_keys"],
+        "tigerbeetle_transfer_ids": tigerbeetle_refs["transfer_ids"],
+    }
+
+
+def _runtime_ledger_tigerbeetle_proof_refs(
+    rows: Sequence[StrategyRuntimeLedgerBucket],
+) -> dict[str, Any]:
+    if not rows:
+        return {}
+    account_ids: list[str] = []
+    account_keys: list[str] = []
+    transfer_ids: list[str] = []
+    source_refs: list[str] = []
+    missing_account_ids: list[str] = []
+    buckets: list[dict[str, Any]] = []
+    cluster_ids: set[int] = set()
+
+    def extend_unique(target: list[str], values: Sequence[str]) -> None:
+        for value in values:
+            if value not in target:
+                target.append(value)
+
+    for row in rows:
+        payload = _mapping(row.payload_json)
+        refs = _mapping(payload.get("tigerbeetle"))
+        row_account_ids = _string_list(
+            refs.get("account_ids") or payload.get("tigerbeetle_account_ids")
+        )
+        row_account_keys = _string_list(
+            refs.get("account_keys") or payload.get("tigerbeetle_account_keys")
+        )
+        row_transfer_ids = _string_list(
+            refs.get("transfer_ids") or payload.get("tigerbeetle_transfer_ids")
+        )
+        row_missing_account_ids = _string_list(refs.get("missing_account_ids"))
+        row_source_refs = _string_list(payload.get("source_refs"))
+        if not row_account_ids and not row_account_keys and not row_transfer_ids:
+            continue
+        raw_cluster_ids = refs.get("cluster_ids")
+        cluster_items: Sequence[object] = (
+            cast(Sequence[object], raw_cluster_ids)
+            if isinstance(raw_cluster_ids, Sequence)
+            and not isinstance(raw_cluster_ids, (str, bytes, bytearray))
+            else ()
+        )
+        cluster_ids.update(
+            value
+            for value in (_observation_int(item) for item in cluster_items)
+            if value > 0
+        )
+        extend_unique(account_ids, row_account_ids)
+        extend_unique(account_keys, row_account_keys)
+        extend_unique(transfer_ids, row_transfer_ids)
+        extend_unique(missing_account_ids, row_missing_account_ids)
+        extend_unique(source_refs, row_source_refs)
+        buckets.append(
+            {
+                "runtime_ledger_bucket_id": str(row.id),
+                "account_ids": row_account_ids,
+                "account_keys": row_account_keys,
+                "transfer_ids": row_transfer_ids,
+                "missing_account_ids": row_missing_account_ids,
+            }
+        )
+
+    if not account_ids and not account_keys and not transfer_ids:
+        return {}
+    return {
+        "schema_version": "torghut.tigerbeetle-runtime-ledger-proof-refs.v1",
+        "cluster_ids": sorted(cluster_ids),
+        "account_count": len(account_ids),
+        "transfer_count": len(transfer_ids),
+        "account_ids": account_ids,
+        "account_keys": account_keys,
+        "transfer_ids": transfer_ids,
+        "missing_account_ids": missing_account_ids,
+        "source_refs": source_refs,
+        "runtime_ledger_buckets": buckets,
+    }
+
+
+def _journal_tigerbeetle_runtime_ledger_bucket(
+    session: Session,
+    row: StrategyRuntimeLedgerBucket,
+) -> None:
+    if not settings.tigerbeetle_enabled or not settings.tigerbeetle_journal_enabled:
+        return
+    session.flush()
+    try:
+        with TigerBeetleLedgerJournal() as journal, session.begin_nested():
+            journal.journal_runtime_ledger_bucket(session, row)
+    except Exception as exc:
+        if settings.tigerbeetle_required:
+            raise
+        logger.warning(
+            "TigerBeetle runtime-ledger journal failed for bucket_id=%s run_id=%s: %s",
+            row.id,
+            row.run_id,
+            exc,
+        )
 
 
 def _runtime_ledger_daily_summary_from_observed_buckets(
@@ -1561,6 +1971,17 @@ def persist_observed_runtime_windows(
         for bucket in raw_buckets
         if bucket.decision_count > 0 or bucket.trade_count > 0 or bucket.order_count > 0
     ]
+    replaced_runtime_ledger_bucket_count = _delete_replaced_runtime_ledger_buckets(
+        session=session,
+        run_id=run_id,
+        candidate_id=candidate_id,
+        hypothesis_id=hypothesis_id,
+        observed_stage=observed_stage,
+        replacement_scopes=_runtime_ledger_bucket_replacement_scopes(
+            buckets=sorted_buckets,
+            runtime_payload=runtime_payload,
+        ),
+    )
     raw_window_count = len(raw_buckets)
     skipped_zero_activity_window_count = raw_window_count - len(sorted_buckets)
     runtime_ledger_daily_summary = _runtime_ledger_daily_summary_from_observed_buckets(
@@ -1762,7 +2183,11 @@ def persist_observed_runtime_windows(
         )
         session.add(metric_window_row)
         metric_window_rows.append(metric_window_row)
-        for ledger_payload in _runtime_ledger_bucket_payloads(bucket.payload_json):
+        for raw_ledger_payload in _runtime_ledger_bucket_payloads(bucket.payload_json):
+            ledger_payload = _ledger_payload_with_tigerbeetle_refs(
+                session,
+                raw_ledger_payload,
+            )
             bucket_started_at = (
                 _parse_observation_datetime(ledger_payload.get("bucket_started_at"))
                 or bucket.window_started_at
@@ -1836,6 +2261,7 @@ def persist_observed_runtime_windows(
                 },
             )
             session.add(runtime_ledger_row)
+            _journal_tigerbeetle_runtime_ledger_bucket(session, runtime_ledger_row)
             runtime_ledger_rows.append(runtime_ledger_row)
 
     final_capital_stage = _capital_stage_for_runtime_import(
@@ -1936,6 +2362,7 @@ def persist_observed_runtime_windows(
         "evidence_grade_runtime_ledger_bucket_count": len(
             evidence_grade_runtime_ledger_rows
         ),
+        "replaced_runtime_ledger_bucket_count": replaced_runtime_ledger_bucket_count,
         "runtime_ledger_fill_count": sum(
             max(0, int(row.fill_count or 0)) for row in runtime_ledger_rows
         ),
@@ -1987,6 +2414,7 @@ def persist_observed_runtime_windows(
                 }
             )
     proof_status = "blocked" if proof_blockers else "ok"
+    tigerbeetle_proof_refs = _runtime_ledger_tigerbeetle_proof_refs(runtime_ledger_rows)
     runtime_materialization_target.update(
         {
             "proof_status": proof_status,
@@ -2000,6 +2428,14 @@ def persist_observed_runtime_windows(
             "evidence_grade_runtime_ledger_bucket_ids": [
                 str(row.id) for row in evidence_grade_runtime_ledger_rows
             ],
+            **(
+                {"tigerbeetle": tigerbeetle_proof_refs}
+                if tigerbeetle_proof_refs
+                else {}
+            ),
+            "replaced_runtime_ledger_bucket_count": (
+                replaced_runtime_ledger_bucket_count
+            ),
         }
     )
     return {
@@ -2032,6 +2468,7 @@ def persist_observed_runtime_windows(
         "evidence_blocking_reasons": evidence_blocking_reasons,
         "proof_status": proof_status,
         "proof_blockers": proof_blockers,
+        "replaced_runtime_ledger_bucket_count": replaced_runtime_ledger_bucket_count,
         "runtime_materialization_target": runtime_materialization_target,
         "runtime_observation": runtime_payload,
         "delay_adjusted_depth_stress": delay_depth_stress_summary,

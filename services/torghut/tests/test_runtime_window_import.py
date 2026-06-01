@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from unittest import TestCase
+from unittest.mock import patch
+from uuid import uuid4
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
@@ -16,6 +18,8 @@ from app.models import (
     StrategyHypothesisVersion,
     StrategyPromotionDecision,
     StrategyRuntimeLedgerBucket,
+    TigerBeetleAccountRef,
+    TigerBeetleTransferRef,
     VNextDatasetSnapshot,
 )
 from app.trading.runtime_cost_authority import (
@@ -24,8 +28,10 @@ from app.trading.runtime_cost_authority import (
 from app.trading.runtime_decision_authority import (
     source_decision_mode_counts_have_non_profit_proof_modes,
 )
+from app.trading import runtime_window_import as runtime_window_import_module
 from app.trading.runtime_window_import import (
     _delay_adjusted_depth_stress_blocking_reasons,
+    _journal_tigerbeetle_runtime_ledger_bucket,
     _observation_bool,
     _observation_decimal,
     _observation_int,
@@ -75,6 +81,30 @@ def _runtime_ledger_bucket(**overrides: object) -> dict[str, object]:
         "lineage_hash_counts": {"lineage-sha": 2},
         "source_decision_mode_counts": {"strategy_signal_paper": 2},
         "profit_proof_eligible": True,
+        "source_window_start": "2026-03-06T14:30:00+00:00",
+        "source_window_end": "2026-03-06T15:00:00+00:00",
+        "source_refs": [
+            "postgres:trade_decisions",
+            "postgres:executions",
+            "postgres:execution_order_events",
+            "postgres:order_feed_source_windows",
+        ],
+        "source_row_counts": {
+            "trade_decisions": 2,
+            "executions": 2,
+            "execution_order_events": 2,
+            "order_feed_source_windows": 2,
+        },
+        "trade_decision_ids": ["decision-buy", "decision-sell"],
+        "execution_ids": ["execution-buy", "execution-sell"],
+        "execution_order_event_ids": ["event-fill-buy", "event-fill-sell"],
+        "source_window_ids": ["source-window-buy", "source-window-sell"],
+        "source_offsets": [
+            {"topic": "alpaca.trade_updates", "partition": 0, "offset": 100},
+            {"topic": "alpaca.trade_updates", "partition": 0, "offset": 101},
+        ],
+        "source_materialization": "execution_order_events",
+        "authority_class": "runtime_order_feed_execution_source",
         "blockers": [],
     }
     payload.update(overrides)
@@ -125,6 +155,87 @@ class TestRuntimeWindowImport(TestCase):
         )
         self.assertEqual(blockers[0]["promotion_authority"], "blocked")
         self.assertFalse(blockers[0]["runtime_ledger_profit_proof_present"])
+
+    def test_runtime_ledger_bucket_journal_failure_respects_required_flag(
+        self,
+    ) -> None:
+        with self.session_local() as session:
+            row = StrategyRuntimeLedgerBucket(
+                run_id="run-journal-failure",
+                candidate_id="cand",
+                hypothesis_id="hyp",
+                observed_stage="paper",
+                bucket_started_at=datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                bucket_ended_at=datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                account_label="TORGHUT_SIM",
+                runtime_strategy_name="strategy",
+                fill_count=2,
+                decision_count=2,
+                submitted_order_count=2,
+                closed_trade_count=1,
+                open_position_count=0,
+                filled_notional=Decimal("200"),
+                gross_strategy_pnl=Decimal("1"),
+                cost_amount=Decimal("0.20"),
+                net_strategy_pnl_after_costs=Decimal("0.80"),
+                post_cost_expectancy_bps=Decimal("40"),
+                pnl_basis="realized_strategy_pnl_after_explicit_costs",
+                ledger_schema_version="torghut.runtime-ledger-bucket.v1",
+                payload_json={},
+            )
+            session.add(row)
+            session.flush()
+
+            with (
+                patch.object(
+                    runtime_window_import_module.settings,
+                    "tigerbeetle_enabled",
+                    True,
+                ),
+                patch.object(
+                    runtime_window_import_module.settings,
+                    "tigerbeetle_journal_enabled",
+                    True,
+                ),
+                patch.object(
+                    runtime_window_import_module.settings,
+                    "tigerbeetle_required",
+                    False,
+                ),
+                patch(
+                    "app.trading.runtime_window_import.TigerBeetleLedgerJournal.journal_runtime_ledger_bucket",
+                    side_effect=RuntimeError("journal failed"),
+                ),
+            ):
+                with self.assertLogs(
+                    runtime_window_import_module.logger,
+                    level="WARNING",
+                ):
+                    _journal_tigerbeetle_runtime_ledger_bucket(session, row)
+
+            with (
+                patch.object(
+                    runtime_window_import_module.settings,
+                    "tigerbeetle_enabled",
+                    True,
+                ),
+                patch.object(
+                    runtime_window_import_module.settings,
+                    "tigerbeetle_journal_enabled",
+                    True,
+                ),
+                patch.object(
+                    runtime_window_import_module.settings,
+                    "tigerbeetle_required",
+                    True,
+                ),
+                patch(
+                    "app.trading.runtime_window_import.TigerBeetleLedgerJournal.journal_runtime_ledger_bucket",
+                    side_effect=RuntimeError("journal failed"),
+                ),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "journal failed"):
+                    _journal_tigerbeetle_runtime_ledger_bucket(session, row)
 
     def test_build_regular_session_buckets_counts_session_samples(self) -> None:
         buckets = build_regular_session_buckets(
@@ -397,24 +508,7 @@ class TestRuntimeWindowImport(TestCase):
         ):
             with self.subTest(basis=basis):
                 blockers = _runtime_ledger_bucket_blockers(
-                    {
-                        "ledger_schema_version": "torghut.runtime-ledger-bucket.v1",
-                        "pnl_basis": "realized_strategy_pnl_after_explicit_costs",
-                        "fill_count": 2,
-                        "decision_count": 2,
-                        "submitted_order_count": 2,
-                        "closed_trade_count": 1,
-                        "open_position_count": 0,
-                        "filled_notional": "200",
-                        "cost_amount": "0.20",
-                        "cost_basis_counts": {basis: 2},
-                        "source_decision_mode_counts": {"strategy_signal_paper": 2},
-                        "profit_proof_eligible": True,
-                        "post_cost_expectancy_bps": "40",
-                        "execution_policy_hash_counts": {"policy-sha": 2},
-                        "cost_model_hash_counts": {"cost-sha": 2},
-                        "lineage_hash_counts": {"lineage-sha": 2},
-                    }
+                    _runtime_ledger_bucket(cost_basis_counts={basis: 2})
                 )
 
                 self.assertEqual(
@@ -431,23 +525,10 @@ class TestRuntimeWindowImport(TestCase):
         self,
     ) -> None:
         blockers = _runtime_ledger_bucket_blockers(
-            {
-                "ledger_schema_version": "torghut.runtime-ledger-bucket.v1",
-                "pnl_basis": "realized_strategy_pnl_after_explicit_costs",
-                "fill_count": 2,
-                "decision_count": 2,
-                "submitted_order_count": 2,
-                "closed_trade_count": 1,
-                "open_position_count": 0,
-                "filled_notional": "200",
-                "cost_amount": "0.20",
-                "cost_basis_counts": {"broker_reported_commission_and_fees": 2},
-                "source_decision_mode_counts": {"route_acquisition_probe": 2},
-                "post_cost_expectancy_bps": "40",
-                "execution_policy_hash_counts": {"policy-sha": 2},
-                "cost_model_hash_counts": {"cost-sha": 2},
-                "lineage_hash_counts": {"lineage-sha": 2},
-            }
+            _runtime_ledger_bucket(
+                cost_basis_counts={"broker_reported_commission_and_fees": 2},
+                source_decision_mode_counts={"route_acquisition_probe": 2},
+            )
         )
 
         self.assertEqual(blockers, ["source_decision_mode_not_profit_proof_eligible"])
@@ -520,6 +601,56 @@ class TestRuntimeWindowImport(TestCase):
         )
 
         self.assertFalse(_persisted_runtime_ledger_bucket_evidence_grade(row))
+
+    def test_persisted_runtime_ledger_bucket_evidence_grade_requires_source_proof(
+        self,
+    ) -> None:
+        source_backed_payload = _runtime_ledger_bucket()
+        aggregate_only_payload = {
+            key: value
+            for key, value in source_backed_payload.items()
+            if key
+            not in {
+                "trade_decision_ids",
+                "execution_ids",
+                "execution_order_event_ids",
+                "source_window_ids",
+                "source_offsets",
+                "source_materialization",
+                "authority_class",
+            }
+        }
+        row = StrategyRuntimeLedgerBucket(
+            run_id="run-aggregate-only",
+            candidate_id="cand",
+            hypothesis_id="hyp",
+            observed_stage="paper",
+            bucket_started_at=datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+            bucket_ended_at=datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+            account_label="TORGHUT_SIM",
+            runtime_strategy_name="strategy",
+            fill_count=2,
+            decision_count=2,
+            submitted_order_count=2,
+            closed_trade_count=1,
+            open_position_count=0,
+            filled_notional=Decimal("200"),
+            gross_strategy_pnl=Decimal("1"),
+            cost_amount=Decimal("0.20"),
+            net_strategy_pnl_after_costs=Decimal("0.80"),
+            post_cost_expectancy_bps=Decimal("40"),
+            pnl_basis="realized_strategy_pnl_after_explicit_costs",
+            ledger_schema_version="torghut.runtime-ledger-bucket.v1",
+            execution_policy_hash_counts={"policy-sha": 2},
+            cost_model_hash_counts={"cost-sha": 2},
+            lineage_hash_counts={"lineage-sha": 2},
+            blockers_json=[],
+            payload_json=aggregate_only_payload,
+        )
+
+        self.assertFalse(_persisted_runtime_ledger_bucket_evidence_grade(row))
+        row.payload_json = source_backed_payload
+        self.assertTrue(_persisted_runtime_ledger_bucket_evidence_grade(row))
 
     def test_runtime_ledger_bucket_payloads_accept_single_bucket_payload(
         self,
@@ -622,6 +753,7 @@ class TestRuntimeWindowImport(TestCase):
         )
 
     def test_persist_observed_runtime_windows_creates_governance_rows(self) -> None:
+        event_id = uuid4()
         buckets = build_observed_runtime_buckets(
             bucket_ranges=[
                 (
@@ -667,6 +799,7 @@ class TestRuntimeWindowImport(TestCase):
                         "execution_policy_hash_counts": {"policy-sha": 2},
                         "cost_model_hash_counts": {"cost-sha": 2},
                         "lineage_hash_counts": {"lineage-sha": 2},
+                        "execution_order_event_ids": [str(event_id)],
                         "blockers": [],
                     },
                     **_runtime_pnl_basis(),
@@ -684,6 +817,45 @@ class TestRuntimeWindowImport(TestCase):
         )
 
         with self.session_local() as session:
+            session.add_all(
+                [
+                    TigerBeetleAccountRef(
+                        cluster_id=2001,
+                        account_id="100100100100100100100100100100100101",
+                        account_key="TORGHUT_SIM:cash",
+                        ledger=840001,
+                        code=1001,
+                        account_label="paper",
+                    ),
+                    TigerBeetleAccountRef(
+                        cluster_id=2001,
+                        account_id="100100100100100100100100100100100102",
+                        account_key="TORGHUT_SIM:AAPL:position",
+                        ledger=840001,
+                        code=1002,
+                        account_label="paper",
+                        symbol="AAPL",
+                    ),
+                ]
+            )
+            session.add(
+                TigerBeetleTransferRef(
+                    cluster_id=2001,
+                    transfer_id="340282366920938463463374607431768211",
+                    transfer_kind="fill_post",
+                    ledger=840001,
+                    code=2001,
+                    amount=Decimal("200000000"),
+                    status="created",
+                    execution_order_event_id=event_id,
+                    event_fingerprint="runtime-fill-event",
+                    payload_json={
+                        "debit_account_id": "100100100100100100100100100100100101",
+                        "credit_account_id": "100100100100100100100100100100100102",
+                    },
+                )
+            )
+            session.flush()
             summary = persist_observed_runtime_windows(
                 session=session,
                 run_id="import-live-1",
@@ -735,6 +907,78 @@ class TestRuntimeWindowImport(TestCase):
             ledger_buckets[0].lineage_hash_counts,
             {"lineage-sha": 2},
         )
+        payload = ledger_buckets[0].payload_json
+        self.assertIsInstance(payload, dict)
+        tigerbeetle_refs = payload.get("tigerbeetle")
+        self.assertIsInstance(tigerbeetle_refs, dict)
+        self.assertEqual(
+            tigerbeetle_refs.get("account_ids"),
+            [
+                "100100100100100100100100100100100101",
+                "100100100100100100100100100100100102",
+            ],
+        )
+        self.assertEqual(
+            tigerbeetle_refs.get("account_keys"),
+            ["TORGHUT_SIM:AAPL:position", "TORGHUT_SIM:cash"],
+        )
+        self.assertEqual(tigerbeetle_refs.get("missing_account_ids"), [])
+        self.assertEqual(
+            tigerbeetle_refs.get("transfer_ids"),
+            ["340282366920938463463374607431768211"],
+        )
+        self.assertEqual(
+            payload.get("tigerbeetle_account_ids"),
+            tigerbeetle_refs.get("account_ids"),
+        )
+        self.assertEqual(
+            payload.get("tigerbeetle_account_keys"),
+            tigerbeetle_refs.get("account_keys"),
+        )
+        self.assertEqual(
+            payload.get("tigerbeetle_transfer_ids"),
+            tigerbeetle_refs.get("transfer_ids"),
+        )
+        self.assertIn("postgres:tigerbeetle_account_refs", payload.get("source_refs"))
+        self.assertIn("postgres:tigerbeetle_transfer_refs", payload.get("source_refs"))
+        self.assertEqual(
+            payload.get("source_row_counts", {}).get("tigerbeetle_account_refs"),
+            2,
+        )
+        self.assertEqual(
+            payload.get("source_row_counts", {}).get("tigerbeetle_transfer_refs"),
+            1,
+        )
+        target_tigerbeetle_refs = summary["runtime_materialization_target"].get(
+            "tigerbeetle"
+        )
+        self.assertIsInstance(target_tigerbeetle_refs, dict)
+        self.assertEqual(
+            target_tigerbeetle_refs.get("schema_version"),
+            "torghut.tigerbeetle-runtime-ledger-proof-refs.v1",
+        )
+        self.assertEqual(target_tigerbeetle_refs.get("account_count"), 2)
+        self.assertEqual(target_tigerbeetle_refs.get("transfer_count"), 1)
+        self.assertEqual(
+            target_tigerbeetle_refs.get("account_ids"),
+            tigerbeetle_refs.get("account_ids"),
+        )
+        self.assertEqual(
+            target_tigerbeetle_refs.get("transfer_ids"),
+            tigerbeetle_refs.get("transfer_ids"),
+        )
+        self.assertEqual(
+            target_tigerbeetle_refs.get("runtime_ledger_buckets"),
+            [
+                {
+                    "runtime_ledger_bucket_id": str(ledger_buckets[0].id),
+                    "account_ids": tigerbeetle_refs.get("account_ids"),
+                    "account_keys": tigerbeetle_refs.get("account_keys"),
+                    "transfer_ids": tigerbeetle_refs.get("transfer_ids"),
+                    "missing_account_ids": [],
+                }
+            ],
+        )
         self.assertEqual(datasets[0].candidate_id, "cand-1")
         self.assertEqual(datasets[0].artifact_ref, "torghut-runtime-window-cand-1")
         self.assertEqual(datasets[0].source, "live_runtime_observed")
@@ -760,6 +1004,201 @@ class TestRuntimeWindowImport(TestCase):
         )
         self.assertEqual(decisions[0].allowed, False)
         self.assertEqual(decisions[0].state, "shadow")
+
+    def test_persist_observed_runtime_windows_replaces_overlapping_ledger_buckets(
+        self,
+    ) -> None:
+        def buckets_for(net_pnl: str):
+            return build_observed_runtime_buckets(
+                bucket_ranges=[
+                    (
+                        datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                        datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                        6,
+                    )
+                ],
+                decision_times=[datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)],
+                execution_times=[datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc)],
+                tca_rows=[
+                    {
+                        "computed_at": datetime(
+                            2026, 3, 6, 14, 36, tzinfo=timezone.utc
+                        ),
+                        "abs_slippage_bps": Decimal("1"),
+                        "post_cost_expectancy_bps": Decimal("40"),
+                        "runtime_ledger_bucket": _runtime_ledger_bucket(
+                            bucket_started_at="2026-03-06T14:35:00+00:00",
+                            bucket_ended_at="2026-03-06T14:36:00+00:00",
+                            account_label="TORGHUT_SIM",
+                            strategy_id="microbar-cross-sectional-pairs-v1",
+                            net_strategy_pnl_after_costs=net_pnl,
+                        ),
+                        **_runtime_pnl_basis(),
+                    }
+                ],
+                continuity_ok=True,
+                drift_ok=True,
+                dependency_quorum_decision="allow",
+            )
+
+        with self.session_local() as session:
+            old_summary = persist_observed_runtime_windows(
+                session=session,
+                run_id="import-live-dedupe-old",
+                candidate_id="cand-dedupe",
+                hypothesis_id="H-PAIRS-01",
+                observed_stage="paper",
+                strategy_family="microbar_cross_sectional_pairs",
+                source_manifest_ref="config/trading/hypotheses/h-pairs-01.json",
+                buckets=buckets_for("0.80"),
+                runtime_observation_payload={
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_name": "microbar-cross-sectional-pairs-v1",
+                },
+            )
+            new_summary = persist_observed_runtime_windows(
+                session=session,
+                run_id="import-live-dedupe-new",
+                candidate_id="cand-dedupe",
+                hypothesis_id="H-PAIRS-01",
+                observed_stage="paper",
+                strategy_family="microbar_cross_sectional_pairs",
+                source_manifest_ref="config/trading/hypotheses/h-pairs-01.json",
+                buckets=buckets_for("1.25"),
+                runtime_observation_payload={
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_name": "microbar-cross-sectional-pairs-v1",
+                },
+            )
+            session.commit()
+            ledger_rows = (
+                session.execute(
+                    select(StrategyRuntimeLedgerBucket).order_by(
+                        StrategyRuntimeLedgerBucket.created_at
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+        self.assertEqual(old_summary["replaced_runtime_ledger_bucket_count"], 0)
+        self.assertEqual(new_summary["replaced_runtime_ledger_bucket_count"], 1)
+        self.assertEqual(len(ledger_rows), 1)
+        self.assertEqual(ledger_rows[0].run_id, "import-live-dedupe-new")
+        self.assertEqual(ledger_rows[0].net_strategy_pnl_after_costs, Decimal("1.25"))
+
+    def test_persist_observed_runtime_windows_replaces_stale_open_bucket_from_source_window(
+        self,
+    ) -> None:
+        def buckets_for(
+            *,
+            computed_at: datetime,
+            bucket_started_at: str,
+            bucket_ended_at: str,
+            source_window_start: str,
+            source_window_end: str,
+            closed_trade_count: int,
+            open_position_count: int,
+            net_pnl: str,
+        ):
+            return build_observed_runtime_buckets(
+                bucket_ranges=[
+                    (
+                        computed_at - timedelta(minutes=1),
+                        computed_at + timedelta(minutes=1),
+                        6,
+                    )
+                ],
+                decision_times=[computed_at - timedelta(seconds=30)],
+                execution_times=[computed_at],
+                tca_rows=[
+                    {
+                        "computed_at": computed_at,
+                        "abs_slippage_bps": Decimal("1"),
+                        "post_cost_expectancy_bps": Decimal("40"),
+                        "runtime_ledger_bucket": _runtime_ledger_bucket(
+                            bucket_started_at=bucket_started_at,
+                            bucket_ended_at=bucket_ended_at,
+                            source_window_start=source_window_start,
+                            source_window_end=source_window_end,
+                            account_label="TORGHUT_SIM",
+                            strategy_id="microbar-cross-sectional-pairs-v1",
+                            closed_trade_count=closed_trade_count,
+                            open_position_count=open_position_count,
+                            net_strategy_pnl_after_costs=net_pnl,
+                        ),
+                        **_runtime_pnl_basis(),
+                    }
+                ],
+                continuity_ok=True,
+                drift_ok=True,
+                dependency_quorum_decision="allow",
+            )
+
+        with self.session_local() as session:
+            old_summary = persist_observed_runtime_windows(
+                session=session,
+                run_id="import-source-window-old-open",
+                candidate_id="cand-source-window",
+                hypothesis_id="H-PAIRS-01",
+                observed_stage="paper",
+                strategy_family="microbar_cross_sectional_pairs",
+                source_manifest_ref="config/trading/hypotheses/h-pairs-01.json",
+                buckets=buckets_for(
+                    computed_at=datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    bucket_started_at="2026-03-06T14:35:00+00:00",
+                    bucket_ended_at="2026-03-06T14:36:00+00:00",
+                    source_window_start="2026-03-06T14:35:00+00:00",
+                    source_window_end="2026-03-06T14:36:00+00:00",
+                    closed_trade_count=0,
+                    open_position_count=1,
+                    net_pnl="0",
+                ),
+                runtime_observation_payload={
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_name": "microbar-cross-sectional-pairs-v1",
+                },
+            )
+            new_summary = persist_observed_runtime_windows(
+                session=session,
+                run_id="import-source-window-new-close",
+                candidate_id="cand-source-window",
+                hypothesis_id="H-PAIRS-01",
+                observed_stage="paper",
+                strategy_family="microbar_cross_sectional_pairs",
+                source_manifest_ref="config/trading/hypotheses/h-pairs-01.json",
+                buckets=buckets_for(
+                    computed_at=datetime(2026, 3, 6, 14, 56, tzinfo=timezone.utc),
+                    bucket_started_at="2026-03-06T14:55:00+00:00",
+                    bucket_ended_at="2026-03-06T14:56:00+00:00",
+                    source_window_start="2026-03-06T14:35:00+00:00",
+                    source_window_end="2026-03-06T14:56:00+00:00",
+                    closed_trade_count=1,
+                    open_position_count=0,
+                    net_pnl="1.25",
+                ),
+                runtime_observation_payload={
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_name": "microbar-cross-sectional-pairs-v1",
+                },
+            )
+            session.commit()
+            ledger_rows = (
+                session.execute(
+                    select(StrategyRuntimeLedgerBucket).order_by(
+                        StrategyRuntimeLedgerBucket.created_at
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+        self.assertEqual(old_summary["replaced_runtime_ledger_bucket_count"], 0)
+        self.assertEqual(new_summary["replaced_runtime_ledger_bucket_count"], 1)
+        self.assertEqual(len(ledger_rows), 1)
+        self.assertEqual(ledger_rows[0].run_id, "import-source-window-new-close")
+        self.assertEqual(ledger_rows[0].open_position_count, 0)
+        self.assertEqual(ledger_rows[0].closed_trade_count, 1)
 
     def test_persist_observed_runtime_windows_uses_notional_weighted_ledger_summary(
         self,
@@ -1223,6 +1662,65 @@ class TestRuntimeWindowImport(TestCase):
                 "target_implied_avg_daily_filled_notional"
             ],
             "625000",
+        )
+
+    def test_runtime_ledger_bucket_blocks_missing_source_authority(self) -> None:
+        missing_window = _runtime_ledger_bucket(
+            source_window_start=None,
+            source_window_end=None,
+        )
+        self.assertIn(
+            "runtime_ledger_source_window_missing",
+            _runtime_ledger_bucket_blockers(missing_window),
+        )
+
+        missing_refs = _runtime_ledger_bucket(source_refs=[], source_row_counts={})
+        self.assertIn(
+            "runtime_ledger_source_refs_missing",
+            _runtime_ledger_bucket_blockers(missing_refs),
+        )
+
+        complete = _runtime_ledger_bucket()
+        self.assertNotIn(
+            "runtime_ledger_source_window_missing",
+            _runtime_ledger_bucket_blockers(complete),
+        )
+        self.assertNotIn(
+            "runtime_ledger_source_refs_missing",
+            _runtime_ledger_bucket_blockers(complete),
+        )
+
+        missing_source_window_ids = _runtime_ledger_bucket(source_window_ids=[])
+        self.assertIn(
+            "runtime_ledger_source_window_ids_missing",
+            _runtime_ledger_bucket_blockers(missing_source_window_ids),
+        )
+
+    def test_runtime_ledger_bucket_requires_structured_source_offsets(self) -> None:
+        for malformed_offsets in (
+            ["alpaca.trade_updates:0:100"],
+            [{"topic": "alpaca.trade_updates", "offset": 100}],
+            [{"topic": "alpaca.trade_updates", "partition": 0}],
+            {"topic": "alpaca.trade_updates", "offset": 100},
+        ):
+            bucket = _runtime_ledger_bucket(source_offsets=malformed_offsets)
+            self.assertIn(
+                "runtime_ledger_source_offsets_missing",
+                _runtime_ledger_bucket_blockers(bucket),
+            )
+
+    def test_runtime_ledger_bucket_requires_explicit_source_authority_class(
+        self,
+    ) -> None:
+        bucket = _runtime_ledger_bucket(
+            authority_class=None,
+            authority_reason=None,
+            pnl_derivation="execution_order_events_runtime_ledger",
+        )
+
+        self.assertIn(
+            "runtime_ledger_authority_class_missing",
+            _runtime_ledger_bucket_blockers(bucket),
         )
 
     def test_persist_observed_runtime_windows_allows_authority_grade_live_ledger(

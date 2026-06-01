@@ -4,6 +4,7 @@ import {
   resolveAgentRunnerDefaultsConfig,
   resolveAgentsControllerAuthSecretConfig,
   resolveAgentsControllerBehaviorConfig,
+  resolveRuntimeDebrisCleanupConfig,
   resolveImplementationSourceWebhookConfig,
 } from './runtime-config'
 
@@ -53,6 +54,26 @@ describe('Agents controller runtime config', () => {
       retryBaseDelaySeconds: null,
       retryMaxDelaySeconds: null,
       retryMaxAttempts: null,
+    })
+  })
+
+  it('reads runtime debris cleanup env with safe defaults', () => {
+    expect(resolveRuntimeDebrisCleanupConfig({})).toEqual({
+      maxDeletesPerNamespace: 25,
+      mode: 'disabled',
+      orphanPodRetentionSeconds: 86400,
+    })
+
+    expect(
+      resolveRuntimeDebrisCleanupConfig({
+        AGENTS_CONTROLLER_RUNTIME_DEBRIS_CLEANUP_MODE: 'delete',
+        AGENTS_CONTROLLER_ORPHAN_POD_RETENTION_SECONDS: '3600',
+        AGENTS_CONTROLLER_RUNTIME_DEBRIS_MAX_DELETES_PER_NAMESPACE: '7',
+      }),
+    ).toEqual({
+      maxDeletesPerNamespace: 7,
+      mode: 'delete',
+      orphanPodRetentionSeconds: 3600,
     })
   })
 })

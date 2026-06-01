@@ -16,7 +16,7 @@ spec:
   template:
     metadata:
       annotations:
-        client.knative.dev/updateTimestamp: "2026-05-29T15:15:55Z"
+        client.knative.dev/updateTimestamp: "2026-06-01T01:13:51Z"
         autoscaling.knative.dev/minScale: "1"
         autoscaling.knative.dev/maxScale: "1"
         autoscaling.knative.dev/target: "80"
@@ -28,7 +28,10 @@ spec:
       containers:
         - name: user-container
           imagePullPolicy: IfNotPresent
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:2d6b42ba410d533bed86414ab3b0d7c1b6651993dac64c08fc8b7301056bdb95
+          securityContext:
+            seccompProfile:
+              type: Unconfined
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:97dfaea944bbdf5c2e0d7a6cde3c1e4e96b5a544305b88c51a9d6d42562c4608
           ports:
             - name: http1
               containerPort: 8181
@@ -63,6 +66,20 @@ spec:
                   key: password
             - name: DB_DSN
               value: postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default
+            - name: TORGHUT_TIGERBEETLE_ENABLED
+              value: "true"
+            - name: TORGHUT_TIGERBEETLE_REQUIRED
+              value: "false"
+            - name: TORGHUT_TIGERBEETLE_CLUSTER_ID
+              value: "2001"
+            - name: TORGHUT_TIGERBEETLE_REPLICA_ADDRESSES
+              value: torghut-tigerbeetle.torghut.svc.cluster.local:3000
+            - name: TORGHUT_TIGERBEETLE_HEALTH_TIMEOUT_SECONDS
+              value: "5"
+            - name: TORGHUT_TIGERBEETLE_JOURNAL_ENABLED
+              value: "true"
+            - name: TORGHUT_TIGERBEETLE_RECONCILE_REQUIRED
+              value: "false"
             - name: APCA_API_KEY_ID
               valueFrom:
                 secretKeyRef:
@@ -109,7 +126,7 @@ spec:
             - name: TRADING_SIMPLE_PAPER_ROUTE_PROBE_ENABLED
               value: "true"
             - name: TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL
-              value: "63180"
+              value: "75000"
             - name: TRADING_PAPER_ROUTE_TARGET_PLAN_URL
               value: http://torghut.torghut.svc.cluster.local/trading/paper-route-target-plan
             - name: TRADING_PAPER_ROUTE_TARGET_PLAN_TIMEOUT_SECONDS
@@ -231,7 +248,6 @@ spec:
             - name: TRADING_ORDER_FEED_AUTO_OFFSET_RESET
               value: earliest
             - name: TRADING_ORDER_FEED_TOPIC_V2
-              value: ""
             - name: TRADING_SIMULATION_ORDER_UPDATES_TOPIC
               value: torghut.sim.trade-updates.v1
             - name: TRADING_SIMULATION_ORDER_UPDATES_BOOTSTRAP_SERVERS
@@ -513,11 +529,11 @@ spec:
             - name: TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS
               value: "10"
             - name: TORGHUT_VERSION
-              value: v0.580.9-56-g053ace6d3
+              value: v0.586.0-54-g84d08a287
             - name: TORGHUT_COMMIT
-              value: 053ace6d300715fd3be55b64b9e42aa6e09b6677
+              value: 84d08a287fb1a193ac4f6889fbec3bceb03a82ad
             - name: TORGHUT_IMAGE_DIGEST
-              value: sha256:2d6b42ba410d533bed86414ab3b0d7c1b6651993dac64c08fc8b7301056bdb95
+              value: sha256:97dfaea944bbdf5c2e0d7a6cde3c1e4e96b5a544305b88c51a9d6d42562c4608
           envFrom:
             - configMapRef:
                 name: torghut-autonomy-config

@@ -29,6 +29,45 @@ class _MockFlagResponse:
 
 
 class TestConfig(TestCase):
+    def test_tigerbeetle_settings_are_normalized(self) -> None:
+        settings = Settings(
+            TORGHUT_TIGERBEETLE_ENABLED=True,
+            TORGHUT_TIGERBEETLE_REQUIRED=True,
+            TORGHUT_TIGERBEETLE_CLUSTER_ID=2001,
+            TORGHUT_TIGERBEETLE_REPLICA_ADDRESSES=" tb-0:3000, tb-1:3000 ",
+            TORGHUT_TIGERBEETLE_HEALTH_TIMEOUT_SECONDS=1.5,
+            TORGHUT_TIGERBEETLE_JOURNAL_ENABLED=True,
+            TORGHUT_TIGERBEETLE_RECONCILE_REQUIRED=True,
+        )
+
+        self.assertTrue(settings.tigerbeetle_enabled)
+        self.assertTrue(settings.tigerbeetle_required)
+        self.assertEqual(settings.tigerbeetle_cluster_id, 2001)
+        self.assertEqual(settings.tigerbeetle_replica_addresses, "tb-0:3000,tb-1:3000")
+        self.assertEqual(settings.tigerbeetle_health_timeout_seconds, 1.5)
+        self.assertTrue(settings.tigerbeetle_journal_enabled)
+        self.assertTrue(settings.tigerbeetle_reconcile_required)
+
+    def test_tigerbeetle_settings_reject_enabled_empty_addresses(self) -> None:
+        with self.assertRaises(ValidationError):
+            Settings(
+                TORGHUT_TIGERBEETLE_ENABLED=True,
+                TORGHUT_TIGERBEETLE_REPLICA_ADDRESSES=" , ",
+            )
+
+    def test_tigerbeetle_settings_reject_invalid_cluster_id(self) -> None:
+        with self.assertRaisesRegex(
+            ValidationError, "TORGHUT_TIGERBEETLE_CLUSTER_ID must be > 0"
+        ):
+            Settings(TORGHUT_TIGERBEETLE_CLUSTER_ID=0)
+
+    def test_tigerbeetle_settings_reject_invalid_health_timeout(self) -> None:
+        with self.assertRaisesRegex(
+            ValidationError,
+            "TORGHUT_TIGERBEETLE_HEALTH_TIMEOUT_SECONDS must be > 0",
+        ):
+            Settings(TORGHUT_TIGERBEETLE_HEALTH_TIMEOUT_SECONDS=0)
+
     def test_rejects_static_universe_when_trading_enabled_in_legacy_mode(self) -> None:
         with self.assertRaises(ValidationError):
             Settings(
@@ -1033,6 +1072,10 @@ class TestConfig(TestCase):
             "trading_simple_paper_route_probe_enabled",
             "trading_empirical_jobs_health_required",
             "trading_jangar_quant_health_required",
+            "tigerbeetle_enabled",
+            "tigerbeetle_required",
+            "tigerbeetle_journal_enabled",
+            "tigerbeetle_reconcile_required",
         }
         self.assertEqual(
             set(FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD),

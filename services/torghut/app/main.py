@@ -174,6 +174,11 @@ from .trading.simulation_progress import (
     simulation_progress_snapshot,
 )
 from .trading.time_source import trading_time_status
+from .trading.tigerbeetle_client import check_tigerbeetle_health
+from .trading.tigerbeetle_reconcile import (
+    latest_tigerbeetle_reconciliation_payload,
+    tigerbeetle_ref_counts,
+)
 from .trading.zero_notional_repair_executor import run_zero_notional_repair
 from .whitepapers import (
     WhitepaperKafkaWorker,
@@ -531,7 +536,15 @@ async def healthz() -> dict[str, str]:
 def _readiness_dependency_cache_key(include_database_contract: bool) -> str:
     trading_mode = int(settings.trading_enabled)
     cache_mode = int(settings.trading_readiness_dependency_cache_enabled)
-    return f"readyz:{trading_mode}:{cache_mode}:{int(include_database_contract)}"
+    tigerbeetle_mode = ":".join(
+        str(int(value))
+        for value in (
+            settings.tigerbeetle_enabled,
+            settings.tigerbeetle_required,
+            settings.tigerbeetle_reconcile_required,
+        )
+    )
+    return f"readyz:{trading_mode}:{cache_mode}:{int(include_database_contract)}:{tigerbeetle_mode}"
 
 
 def _readiness_dependency_checks(
@@ -551,6 +564,7 @@ def _readiness_dependency_checks(
         "postgres": postgres_status,
         "clickhouse": clickhouse_status,
         "alpaca": alpaca_status,
+        "tigerbeetle": _build_tigerbeetle_ledger_status(session),
     }
 
     if include_database_contract:
@@ -2639,6 +2653,7 @@ def trading_status() -> dict[str, object]:
     with SessionLocal() as session:
         llm_evaluation = _load_llm_evaluation(session)
         tca_summary = _load_tca_summary(session, scheduler=scheduler)
+        tigerbeetle_ledger = _build_tigerbeetle_ledger_status(session)
     market_context_status = scheduler.market_context_status()
     hypothesis_payload, hypothesis_summary, hypothesis_dependency_quorum = (
         _build_hypothesis_runtime_payload(
@@ -2931,6 +2946,7 @@ def trading_status() -> dict[str, object]:
         },
         "running": state.running,
         "live_submission_gate": live_submission_gate,
+        "tigerbeetle_ledger": tigerbeetle_ledger,
         "profit_lease_projection": live_submission_gate.get("profit_lease_projection"),
         "proof_floor": proof_floor,
         "renewal_bond_profit_escrow": renewal_bond_profit_escrow,
@@ -4580,24 +4596,31 @@ def trading_paper_route_evidence(
         cast(Mapping[str, Any], live_submission_gate)
     )
     simple_lane_status = _build_simple_lane_status_payload()
-    proof_floor = _build_profitability_proof_floor_payload(
-        state=scheduler.state,
-        torghut_revision=BUILD_VERSION,
-        live_submission_gate=live_submission_gate,
-        hypothesis_payload=hypothesis_payload,
-        empirical_jobs_status=empirical_jobs,
-        quant_evidence=quant_evidence,
-        market_context_status=market_context_status,
-        tca_summary=tca_summary,
+    route_reacquisition_book = _paper_route_probe_book_from_target_plan(
+        live_submission_gate,
         simple_lane_status=simple_lane_status,
+        state=scheduler.state,
     )
+    if route_reacquisition_book is None:
+        proof_floor = _build_profitability_proof_floor_payload(
+            state=scheduler.state,
+            torghut_revision=BUILD_VERSION,
+            live_submission_gate=live_submission_gate,
+            hypothesis_payload=hypothesis_payload,
+            empirical_jobs_status=empirical_jobs,
+            quant_evidence=quant_evidence,
+            market_context_status=market_context_status,
+            tca_summary=tca_summary,
+            simple_lane_status=simple_lane_status,
+        )
+        route_reacquisition_book = cast(
+            Mapping[str, Any],
+            proof_floor.get("route_reacquisition_book") or {},
+        )
     payload = build_paper_route_evidence_audit(
         session,
         live_submission_gate=cast(Mapping[str, Any], live_submission_gate),
-        route_reacquisition_book=cast(
-            Mapping[str, Any],
-            proof_floor.get("route_reacquisition_book") or {},
-        ),
+        route_reacquisition_book=route_reacquisition_book,
     )
     return JSONResponse(status_code=200, content=jsonable_encoder(payload))
 
@@ -4640,30 +4663,148 @@ def trading_paper_route_target_plan(
     live_submission_gate = _merge_external_paper_route_target_plan(
         cast(Mapping[str, Any], live_submission_gate)
     )
-    proof_floor = _build_profitability_proof_floor_payload(
+    simple_lane_status = _build_simple_lane_status_payload()
+    route_reacquisition_book = _paper_route_probe_book_from_target_plan(
+        live_submission_gate,
+        simple_lane_status=simple_lane_status,
         state=scheduler.state,
-        torghut_revision=BUILD_VERSION,
-        live_submission_gate=live_submission_gate,
-        hypothesis_payload=hypothesis_payload,
-        empirical_jobs_status=empirical_jobs,
-        quant_evidence=quant_evidence,
-        market_context_status=market_context_status,
-        tca_summary=tca_summary,
-        simple_lane_status=_build_simple_lane_status_payload(),
     )
+    if route_reacquisition_book is None:
+        proof_floor = _build_profitability_proof_floor_payload(
+            state=scheduler.state,
+            torghut_revision=BUILD_VERSION,
+            live_submission_gate=live_submission_gate,
+            hypothesis_payload=hypothesis_payload,
+            empirical_jobs_status=empirical_jobs,
+            quant_evidence=quant_evidence,
+            market_context_status=market_context_status,
+            tca_summary=tca_summary,
+            simple_lane_status=simple_lane_status,
+        )
+        route_reacquisition_book = cast(
+            Mapping[str, Any],
+            proof_floor.get("route_reacquisition_book") or {},
+        )
     payload = build_paper_route_target_plan_payload(
         session,
         live_submission_gate=cast(Mapping[str, Any], live_submission_gate),
-        route_reacquisition_book=cast(
-            Mapping[str, Any],
-            proof_floor.get("route_reacquisition_book") or {},
-        ),
+        route_reacquisition_book=route_reacquisition_book,
     )
     return JSONResponse(status_code=200, content=jsonable_encoder(payload))
 
 
 def _mapping_items(value: object) -> list[dict[str, Any]]:
     return _shared_mapping_items(value)
+
+
+def _paper_route_target_plan_probe_symbols(plan: Mapping[str, Any]) -> list[str]:
+    symbols: list[str] = []
+    for target in _paper_route_target_plan_targets(plan):
+        raw_symbols = target.get("paper_route_probe_symbols")
+        if isinstance(raw_symbols, str):
+            values: Sequence[object] = raw_symbols.split(",")
+        elif isinstance(raw_symbols, Sequence) and not isinstance(
+            raw_symbols,
+            (bytes, bytearray),
+        ):
+            values = cast(Sequence[object], raw_symbols)
+        else:
+            values = ()
+        for item in values:
+            symbol = str(item).strip().upper()
+            if symbol and symbol not in symbols:
+                symbols.append(symbol)
+    return symbols
+
+
+def _paper_route_target_plan_probe_notional(
+    plan: Mapping[str, Any],
+    *,
+    simple_lane_status: Mapping[str, Any],
+) -> str | None:
+    candidate_values: list[object] = []
+    for target in _paper_route_target_plan_targets(plan):
+        candidate_values.extend(
+            [
+                target.get("paper_route_probe_next_session_max_notional"),
+                target.get("bounded_evidence_collection_max_notional"),
+                target.get("paper_route_probe_effective_max_notional"),
+            ]
+        )
+    candidate_values.append(simple_lane_status.get("paper_route_probe_max_notional"))
+    positive_values = [
+        amount
+        for value in candidate_values
+        if (amount := _decimal_or_none(value)) is not None and amount > 0
+    ]
+    if not positive_values:
+        return None
+    return _decimal_to_string(max(positive_values))
+
+
+def _paper_route_probe_book_from_target_plan(
+    live_submission_gate: Mapping[str, Any],
+    *,
+    simple_lane_status: Mapping[str, Any],
+    state: object,
+) -> Mapping[str, Any] | None:
+    plan = _paper_route_target_plan_from_payload(live_submission_gate)
+    targets = _paper_route_target_plan_targets(plan)
+    if not targets:
+        return None
+    eligible_symbols = _paper_route_target_plan_probe_symbols(plan)
+    if not eligible_symbols:
+        return None
+    next_session_max_notional = _paper_route_target_plan_probe_notional(
+        plan,
+        simple_lane_status=simple_lane_status,
+    )
+    if next_session_max_notional is None:
+        return None
+
+    configured_enabled = bool(simple_lane_status.get("paper_route_probe_enabled"))
+    if not configured_enabled:
+        return None
+    market_session_open = cast(bool | None, getattr(state, "market_session_open", None))
+    blocking_reasons: list[str] = []
+    if market_session_open is not True:
+        blocking_reasons.append("market_session_closed")
+    active = configured_enabled and market_session_open is True
+    effective_max_notional = next_session_max_notional if active else "0"
+    active_symbols = eligible_symbols if active else []
+    return {
+        "schema_version": "torghut.route-reacquisition-book.v1",
+        "source": "paper_route_target_plan",
+        "state": "repair_only",
+        "account_label": settings.trading_account_label,
+        "trading_mode": settings.trading_mode,
+        "market_session_open": market_session_open,
+        "summary": {
+            "paper_route_probe_eligible_symbols": eligible_symbols,
+            "paper_route_probe_active_symbols": active_symbols,
+        },
+        "paper_route_probe": {
+            "configured_enabled": configured_enabled,
+            "active": active,
+            "effective_max_notional": effective_max_notional,
+            "next_session_max_notional": next_session_max_notional,
+            "eligible_symbol_count": len(eligible_symbols),
+            "eligible_symbols": eligible_symbols,
+            "active_symbols": active_symbols,
+            "blocking_reasons": blocking_reasons,
+            "capital_authority": "none",
+        },
+        "source_refs": {
+            "target_plan_source": live_submission_gate.get(
+                "paper_route_target_plan_source"
+            ),
+            "target_plan_target_count": len(targets),
+        },
+        "rollback_target": {
+            "paper_probe_notional_limit": "0",
+            "live_submit_enabled": False,
+        },
+    }
 
 
 def _paper_route_target_plan_targets(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -4964,6 +5105,92 @@ def _check_postgres(session: Session) -> dict[str, object]:
     except SQLAlchemyError as exc:
         return {"ok": False, "detail": f"postgres error: {exc}"}
     return {"ok": True, "detail": "ok"}
+
+
+def _check_tigerbeetle_protocol_health() -> dict[str, object]:
+    if not settings.tigerbeetle_enabled:
+        health = check_tigerbeetle_health(settings)
+        payload = health.as_dict()
+        payload["protocol_ok"] = True
+        return payload
+
+    timeout_seconds = max(0.1, float(settings.tigerbeetle_health_timeout_seconds))
+    executor = ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(check_tigerbeetle_health, settings)
+    try:
+        health = future.result(timeout=timeout_seconds)
+    except TimeoutError:
+        return {
+            "enabled": True,
+            "required": settings.tigerbeetle_required,
+            "ok": not settings.tigerbeetle_required,
+            "protocol_ok": False,
+            "cluster_id": settings.tigerbeetle_cluster_id,
+            "replica_addresses": [
+                item.strip()
+                for item in settings.tigerbeetle_replica_addresses.split(",")
+                if item.strip()
+            ],
+            "last_error": (
+                f"TimeoutError: tigerbeetle protocol health timed out after "
+                f"{timeout_seconds:.2f}s"
+            ),
+        }
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+    payload = health.as_dict()
+    protocol_ok = bool(payload.get("ok"))
+    payload["protocol_ok"] = protocol_ok
+    payload["ok"] = protocol_ok or not settings.tigerbeetle_required
+    return payload
+
+
+def _build_tigerbeetle_ledger_status(session: Session) -> dict[str, object]:
+    protocol = _check_tigerbeetle_protocol_health()
+    latest_reconciliation = latest_tigerbeetle_reconciliation_payload(
+        session,
+        cluster_id=settings.tigerbeetle_cluster_id,
+    )
+    ref_counts = tigerbeetle_ref_counts(
+        session,
+        cluster_id=settings.tigerbeetle_cluster_id,
+    )
+    blockers: list[str] = []
+    if settings.tigerbeetle_enabled and not bool(protocol.get("protocol_ok")):
+        blockers.append("tigerbeetle_protocol_unhealthy")
+    reconciliation_ok = True
+    if latest_reconciliation is None:
+        if settings.tigerbeetle_reconcile_required:
+            reconciliation_ok = False
+            blockers.append("tigerbeetle_reconciliation_missing")
+    else:
+        reconciliation_ok = bool(latest_reconciliation.get("ok"))
+        raw_blockers = latest_reconciliation.get("blockers")
+        if isinstance(raw_blockers, Sequence) and not isinstance(
+            raw_blockers, (str, bytes, bytearray)
+        ):
+            blocker_items = cast(Sequence[object], raw_blockers)
+            blockers.extend(str(item) for item in blocker_items)
+
+    protocol_gate_ok = bool(protocol.get("ok"))
+    reconcile_gate_ok = reconciliation_ok or not settings.tigerbeetle_reconcile_required
+    return {
+        "schema_version": "torghut.tigerbeetle-ledger-status.v1",
+        "enabled": settings.tigerbeetle_enabled,
+        "journal_enabled": settings.tigerbeetle_journal_enabled,
+        "required": settings.tigerbeetle_required,
+        "reconcile_required": settings.tigerbeetle_reconcile_required,
+        "ok": protocol_gate_ok and reconcile_gate_ok,
+        "protocol_ok": bool(protocol.get("protocol_ok")),
+        "reconciliation_ok": reconciliation_ok,
+        "cluster_id": settings.tigerbeetle_cluster_id,
+        "replica_addresses": protocol.get("replica_addresses", []),
+        "last_error": protocol.get("last_error"),
+        "ref_counts": ref_counts,
+        "latest_reconciliation": latest_reconciliation,
+        "blockers": sorted(set(blockers)),
+    }
 
 
 def _build_control_plane_contract(
@@ -6076,6 +6303,13 @@ def _build_simple_lane_status_payload() -> dict[str, object]:
         "order_feed_telemetry_enabled": (
             settings.trading_simple_order_feed_telemetry_enabled
         ),
+        "order_feed_ingestion_enabled": settings.trading_order_feed_enabled,
+        "order_feed_bootstrap_configured": bool(
+            settings.trading_order_feed_bootstrap_server_list
+        ),
+        "order_feed_topic_count": len(settings.trading_order_feed_topics),
+        "order_feed_assignment_mode": settings.trading_order_feed_assignment_mode,
+        "order_feed_auto_offset_reset": settings.trading_order_feed_auto_offset_reset,
         "order_feed_lifecycle_required": (
             settings.trading_pipeline_mode == "simple"
             and settings.trading_mode in {"paper", "live"}

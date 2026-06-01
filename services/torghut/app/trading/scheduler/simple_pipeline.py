@@ -32,8 +32,10 @@ from ..proof_floor import build_profitability_proof_floor_receipt
 from ..runtime_decision_authority import (
     ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
     STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE,
+    normalize_source_decision_mode,
+    source_decision_mode_is_profit_proof_eligible,
 )
-from ..session_context import REGULAR_OPEN_UTC
+from ..session_context import regular_session_open_utc_for
 from ..simple_risk import (
     position_qty_for_symbol,
     prepare_simple_decision,
@@ -75,6 +77,8 @@ _PAPER_ROUTE_PROBE_QTY_STEP = Decimal("0.0001")
 _REGULAR_SESSION_MINUTES = 390
 _PAPER_ROUTE_TARGET_PLAN_CACHE_SECONDS = 60
 _PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS = 600
+_PAPER_ROUTE_TARGET_PROFIT_PROOF_EXPOSURE_LOOKBACK = timedelta(days=7)
+_PAPER_ROUTE_TARGET_OPEN_EXPOSURE_EPSILON = Decimal("0.00000001")
 
 
 def _safe_int(value: object) -> int:
@@ -218,6 +222,19 @@ def _target_truthy(value: object) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _target_bool(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int | float | Decimal):
+        return bool(value)
+    text = str(value or "").strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return None
+
+
 def _lineage_text_values(value: object) -> list[str]:
     raw_items: Sequence[object]
     if isinstance(value, str):
@@ -253,6 +270,10 @@ def _paper_route_probe_lineage_from_params(params: Mapping[str, Any]) -> dict[st
     strategy_names: list[str] = []
     lineage_targets: list[dict[str, str]] = []
     lineage_target_keys: set[tuple[str | None, str | None, str | None]] = set()
+    source_decision_mode = _safe_text(params.get("source_decision_mode"))
+    profit_proof_eligible = _target_bool(params.get("profit_proof_eligible"))
+    fallback_source_decision_modes: list[str] = []
+    fallback_profit_proof_values: list[bool] = []
     for payload in payloads:
         _merge_unique_texts(
             candidate_ids, _lineage_text_values(payload.get("source_candidate_id"))
@@ -272,6 +293,13 @@ def _paper_route_probe_lineage_from_params(params: Mapping[str, Any]) -> dict[st
         _merge_unique_texts(
             strategy_names, _lineage_text_values(payload.get("source_strategy_names"))
         )
+        if payload is not params:
+            if mode := _safe_text(payload.get("source_decision_mode")):
+                fallback_source_decision_modes.append(mode)
+            if (
+                eligible := _target_bool(payload.get("profit_proof_eligible"))
+            ) is not None:
+                fallback_profit_proof_values.append(eligible)
 
         raw_targets = payload.get("paper_route_probe_lineage_targets")
         if isinstance(raw_targets, Sequence) and not isinstance(
@@ -299,7 +327,46 @@ def _paper_route_probe_lineage_from_params(params: Mapping[str, Any]) -> dict[st
         lineage["source_strategy_names"] = strategy_names
     if lineage_targets:
         lineage["paper_route_probe_lineage_targets"] = lineage_targets
+    if source_decision_mode:
+        lineage["source_decision_mode"] = source_decision_mode
+    else:
+        unique_modes = list(dict.fromkeys(fallback_source_decision_modes))
+        if len(unique_modes) == 1:
+            lineage["source_decision_mode"] = unique_modes[0]
+    if profit_proof_eligible is not None:
+        lineage["profit_proof_eligible"] = profit_proof_eligible
+    elif fallback_profit_proof_values:
+        lineage["profit_proof_eligible"] = all(fallback_profit_proof_values)
     return lineage
+
+
+def _paper_route_probe_entry_metadata(
+    params: Mapping[str, Any],
+) -> Mapping[str, Any] | None:
+    metadata = params.get("paper_route_probe")
+    if not isinstance(metadata, Mapping):
+        return None
+
+    source_decision_mode = normalize_source_decision_mode(
+        params.get("source_decision_mode")
+    )
+    if source_decision_mode == STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE:
+        return None
+    if _target_bool(params.get("profit_proof_eligible")) is True:
+        return None
+
+    probe_metadata = cast(Mapping[str, Any], metadata)
+    probe_source_decision_mode = normalize_source_decision_mode(
+        probe_metadata.get("source_decision_mode")
+    )
+    if (
+        probe_source_decision_mode is not None
+        and probe_source_decision_mode != ROUTE_ACQUISITION_SOURCE_DECISION_MODE
+    ):
+        return None
+    if _target_bool(probe_metadata.get("profit_proof_eligible")) is True:
+        return None
+    return probe_metadata
 
 
 def _lineage_target_from_mapping(raw_target: Mapping[str, object]) -> dict[str, str]:
@@ -339,6 +406,10 @@ def _merge_paper_route_probe_lineage(
         current = target.setdefault(key, [])
         if isinstance(current, list):
             _merge_unique_texts(cast(list[str], current), values)
+
+    for key in ("source_decision_mode", "profit_proof_eligible"):
+        if key in lineage and key not in target:
+            target[key] = lineage[key]
 
     raw_targets = lineage.get("paper_route_probe_lineage_targets")
     if not isinstance(raw_targets, Sequence) or isinstance(
@@ -393,6 +464,7 @@ class SimpleTradingPipeline(TradingPipeline):
             strategies = self._prepare_run_once(session)
             if not strategies:
                 return
+            self._capture_runtime_window_account_snapshot_if_due(session)
             self._warm_session_context_from_open(session, strategies=strategies)
 
             batch = self.ingestor.fetch_signals(session)
@@ -693,7 +765,7 @@ class SimpleTradingPipeline(TradingPipeline):
 
     def _paper_route_probe_retry_session_open(self) -> datetime:
         now = trading_now(account_label=self.account_label).astimezone(timezone.utc)
-        return datetime.combine(now.date(), REGULAR_OPEN_UTC, tzinfo=timezone.utc)
+        return regular_session_open_utc_for(now)
 
     @staticmethod
     def _paper_route_probe_strategy(
@@ -767,7 +839,7 @@ class SimpleTradingPipeline(TradingPipeline):
         ts = (
             value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
         ).astimezone(timezone.utc)
-        return datetime.combine(ts.date(), REGULAR_OPEN_UTC, tzinfo=timezone.utc)
+        return regular_session_open_utc_for(ts)
 
     @staticmethod
     def _paper_route_probe_exit_session_open(
@@ -806,11 +878,7 @@ class SimpleTradingPipeline(TradingPipeline):
         if exit_minute is None:
             return False
         now = trading_now(account_label=self.account_label).astimezone(timezone.utc)
-        session_open = datetime.combine(
-            now.date(),
-            REGULAR_OPEN_UTC,
-            tzinfo=timezone.utc,
-        )
+        session_open = regular_session_open_utc_for(now)
         minutes_elapsed = int((now - session_open).total_seconds() // 60)
         return minutes_elapsed >= exit_minute
 
@@ -910,11 +978,7 @@ class SimpleTradingPipeline(TradingPipeline):
         if not self._is_market_session_open(now):
             return []
 
-        session_open = datetime.combine(
-            now.date(),
-            REGULAR_OPEN_UTC,
-            tzinfo=timezone.utc,
-        )
+        session_open = regular_session_open_utc_for(now)
         exit_lookback_hours = max(
             0,
             _safe_int(settings.trading_simple_paper_route_probe_exit_lookback_hours),
@@ -945,7 +1009,7 @@ class SimpleTradingPipeline(TradingPipeline):
             if not isinstance(decision_json, Mapping):
                 continue
             params = decision.params
-            is_entry = isinstance(params.get("paper_route_probe"), Mapping)
+            is_entry = _paper_route_probe_entry_metadata(params) is not None
             is_exit = isinstance(params.get("paper_route_probe_exit"), Mapping)
             if not is_entry and not is_exit:
                 continue
@@ -1114,6 +1178,12 @@ class SimpleTradingPipeline(TradingPipeline):
                     },
                 },
             }
+            exit_lineage = cast(
+                Mapping[str, Any], exposure.get("paper_route_probe_lineage") or {}
+            )
+            for key in ("source_decision_mode", "profit_proof_eligible"):
+                if key in exit_lineage:
+                    params[key] = exit_lineage[key]
             if avg_entry_price is not None:
                 params["price"] = avg_entry_price
             decisions.append(
@@ -1574,6 +1644,8 @@ class SimpleTradingPipeline(TradingPipeline):
         decisions = self._paper_route_target_source_decisions(
             strategies=strategies,
             allowed_symbols=allowed_symbols,
+            positions=positions,
+            session=session,
         )
         for decision in decisions:
             self.state.metrics.decisions_total += 1
@@ -1631,6 +1703,28 @@ class SimpleTradingPipeline(TradingPipeline):
         decision, snapshot = self._ensure_decision_price(
             decision, signal_price=decision.params.get("price")
         )
+        proof_floor = self._profitability_proof_floor(session=session)
+        proof_floor_block_reason = self._proof_floor_submission_block_reason(
+            proof_floor
+        )
+        if (
+            proof_floor_block_reason is not None
+            and settings.trading_mode == "paper"
+            and self._paper_route_probe_exit_metadata(decision) is None
+            and _paper_route_probe_entry_metadata(decision.params) is None
+        ):
+            probe_context = self._paper_route_probe_context(
+                proof_floor=proof_floor,
+                decision=decision,
+                strategy=strategy,
+            )
+            capped_decision = self._paper_route_probe_capped_decision(
+                decision=decision,
+                proof_floor=proof_floor,
+                context=probe_context or {},
+            )
+            if capped_decision is not None:
+                decision = capped_decision
         max_notional_per_order = _min_optional_decimal(
             _optional_decimal(settings.trading_simple_max_notional_per_order),
             _optional_decimal(settings.trading_max_notional_per_trade),
@@ -1662,22 +1756,25 @@ class SimpleTradingPipeline(TradingPipeline):
             )
             or Decimal("0"),
         )
-        self.executor.sync_decision_state(session, decision_row, preparation.decision)
+        prepared_decision = self._align_prechecked_paper_route_probe_cap(
+            preparation.decision
+        )
+        self.executor.sync_decision_state(session, decision_row, prepared_decision)
         if preparation.diagnostics:
-            params_update = dict(preparation.decision.params)
+            params_update = dict(prepared_decision.params)
             params_update["simple_lane_precheck"] = preparation.diagnostics
             self.executor.update_decision_params(session, decision_row, params_update)
         if not preparation.approved or preparation.reject_reason is not None:
             reason = preparation.reject_reason or "broker_precheck_failed"
             self._record_decision_rejection(
                 session=session,
-                decision=preparation.decision,
+                decision=prepared_decision,
                 decision_row=decision_row,
                 reasons=[reason],
                 log_template="Simple-lane decision rejected strategy_id=%s symbol=%s reason=%s",
             )
             return None
-        return preparation.decision, snapshot
+        return prepared_decision, snapshot
 
     def _passes_risk_verdict(
         self,
@@ -1754,6 +1851,19 @@ class SimpleTradingPipeline(TradingPipeline):
                     "submit_enabled": settings.trading_simple_submit_enabled,
                     "order_feed_telemetry_enabled": (
                         settings.trading_simple_order_feed_telemetry_enabled
+                    ),
+                    "order_feed_ingestion_enabled": (
+                        settings.trading_order_feed_enabled
+                    ),
+                    "order_feed_bootstrap_configured": bool(
+                        settings.trading_order_feed_bootstrap_server_list
+                    ),
+                    "order_feed_topic_count": len(settings.trading_order_feed_topics),
+                    "order_feed_assignment_mode": (
+                        settings.trading_order_feed_assignment_mode
+                    ),
+                    "order_feed_auto_offset_reset": (
+                        settings.trading_order_feed_auto_offset_reset
                     ),
                     "order_feed_lifecycle_required": (
                         settings.trading_pipeline_mode == "simple"
@@ -2196,6 +2306,7 @@ class SimpleTradingPipeline(TradingPipeline):
             "paper_route_probe_window_start": window_start.isoformat(),
             "paper_route_probe_window_end": window_end.isoformat(),
             "paper_route_probe_next_session_max_notional": str(max_notional),
+            "paper_route_probe_effective_max_notional": str(max_notional),
             "paper_route_target_plan_source": "external_target_plan_url",
             "paper_route_probe_scope_authority": "external_target_plan",
             "source_decision_mode": ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
@@ -2205,6 +2316,25 @@ class SimpleTradingPipeline(TradingPipeline):
             "paper_probation_authorized": bool(
                 target.get("paper_probation_authorized")
             ),
+            "source_collection_authorized": bool(
+                target.get("source_collection_authorized")
+            ),
+            "source_collection_authorization_scope": _safe_text(
+                target.get("source_collection_authorization_scope")
+            ),
+            "source_collection_reason_codes": [
+                str(item).strip()
+                for item in _lineage_text_values(
+                    target.get("source_collection_reason_codes")
+                )
+                if str(item).strip()
+            ],
+            "bounded_evidence_collection_authorized": True,
+            "bounded_evidence_collection_scope": (
+                _safe_text(target.get("bounded_evidence_collection_scope"))
+                or "paper_route_probe_next_session_only"
+            ),
+            "bounded_evidence_collection_max_notional": str(max_notional),
             "promotion_allowed": False,
             "final_promotion_authorized": False,
             "final_promotion_allowed": False,
@@ -2256,6 +2386,8 @@ class SimpleTradingPipeline(TradingPipeline):
         *,
         strategies: Sequence[Strategy],
         allowed_symbols: set[str],
+        positions: Sequence[Mapping[str, Any]] | None = None,
+        session: Session | None = None,
     ) -> list[StrategyDecision]:
         if settings.trading_mode != "paper":
             return []
@@ -2300,6 +2432,22 @@ class SimpleTradingPipeline(TradingPipeline):
             if action == "sell" and not settings.trading_allow_shorts:
                 continue
             for symbol in symbols:
+                if self._paper_route_target_symbol_has_open_position(
+                    positions,
+                    symbol,
+                ):
+                    continue
+                if (
+                    session is not None
+                    and self._paper_route_target_symbol_has_open_profit_proof_exposure(
+                        session=session,
+                        strategy=strategy,
+                        symbol=symbol,
+                        account_label=self.account_label,
+                        window_start=window_start,
+                    )
+                ):
+                    continue
                 key = (str(strategy.id), symbol, window_start.isoformat(), action)
                 if key in seen:
                     continue
@@ -2356,9 +2504,105 @@ class SimpleTradingPipeline(TradingPipeline):
                 )
         return decisions
 
+    @staticmethod
+    def _paper_route_target_symbol_has_open_profit_proof_exposure(
+        *,
+        session: Session,
+        strategy: Strategy,
+        symbol: str,
+        account_label: str,
+        window_start: datetime,
+    ) -> bool:
+        strategy_id = getattr(strategy, "id", None)
+        normalized_symbol = symbol.strip().upper()
+        if strategy_id is None or not normalized_symbol:
+            return False
+
+        guard_start = window_start - _PAPER_ROUTE_TARGET_PROFIT_PROOF_EXPOSURE_LOOKBACK
+        try:
+            rows = session.execute(
+                select(
+                    Execution.side,
+                    Execution.filled_qty,
+                    TradeDecision.decision_json,
+                )
+                .join(TradeDecision, Execution.trade_decision_id == TradeDecision.id)
+                .where(
+                    Execution.alpaca_account_label == account_label,
+                    TradeDecision.alpaca_account_label == account_label,
+                    TradeDecision.strategy_id == strategy_id,
+                    Execution.symbol == normalized_symbol,
+                    TradeDecision.symbol == normalized_symbol,
+                    Execution.filled_qty > 0,
+                    Execution.status.in_(("filled", "partially_filled")),
+                    Execution.created_at >= guard_start,
+                )
+            ).all()
+        except Exception:
+            logger.exception(
+                "Failed to inspect paper-route target source proof exposure "
+                "strategy_id=%s symbol=%s account_label=%s",
+                strategy_id,
+                normalized_symbol,
+                account_label,
+            )
+            return True
+
+        signed_qty = Decimal("0")
+        for side, filled_qty, raw_decision_json in rows:
+            if not isinstance(raw_decision_json, Mapping):
+                continue
+            decision_json = cast(Mapping[str, Any], raw_decision_json)
+            raw_params = decision_json.get("params")
+            if not isinstance(raw_params, Mapping):
+                continue
+            params = cast(Mapping[str, Any], raw_params)
+            lineage = _paper_route_probe_lineage_from_params(params)
+            profit_proof_eligible = _target_bool(lineage.get("profit_proof_eligible"))
+            if profit_proof_eligible is False:
+                continue
+            if (
+                profit_proof_eligible is not True
+                and not source_decision_mode_is_profit_proof_eligible(
+                    lineage.get("source_decision_mode")
+                )
+            ):
+                continue
+            qty = _optional_decimal(filled_qty)
+            if qty is None or qty <= 0:
+                continue
+            if str(side or "").strip().lower() == "sell":
+                signed_qty -= qty
+            else:
+                signed_qty += qty
+        return abs(signed_qty) > _PAPER_ROUTE_TARGET_OPEN_EXPOSURE_EPSILON
+
+    @staticmethod
+    def _paper_route_target_symbol_has_open_position(
+        positions: Sequence[Mapping[str, Any]] | None,
+        symbol: str,
+    ) -> bool:
+        if not positions:
+            return False
+        normalized_symbol = symbol.strip().upper()
+        if not normalized_symbol:
+            return False
+        for position in positions:
+            if str(position.get("symbol") or "").strip().upper() != normalized_symbol:
+                continue
+            for qty_key in ("qty", "quantity", "qty_available"):
+                qty = _optional_decimal(position.get(qty_key))
+                if qty is not None and qty != 0:
+                    return True
+            market_value = _optional_decimal(position.get("market_value"))
+            if market_value is not None and market_value != 0:
+                return True
+        return False
+
     def _paper_route_target_lineage_for_decision(
         self,
         decision: StrategyDecision,
+        strategy: Strategy | None,
     ) -> dict[str, Any]:
         if settings.trading_mode != "paper":
             return {}
@@ -2372,7 +2616,21 @@ class SimpleTradingPipeline(TradingPipeline):
         )
         if target_plan_error or symbol not in target_plan_symbols:
             return {}
-        lineage = _target_plan_lineage(target_plan_targets, symbol)
+        matching_targets: list[dict[str, Any]] = []
+        for target in target_plan_targets:
+            target_symbols = _target_symbols(target)
+            if target_symbols and symbol not in target_symbols:
+                continue
+            if not self._target_matches_decision_strategy(target, decision, strategy):
+                continue
+            if _target_probe_window(target) is not None and not (
+                self._decision_event_in_target_window(decision, target)
+            ):
+                continue
+            matching_targets.append(dict(target))
+        if not matching_targets:
+            return {}
+        lineage = _target_plan_lineage(matching_targets, symbol)
         if not any(
             lineage.get(key)
             for key in (
@@ -2440,6 +2698,8 @@ class SimpleTradingPipeline(TradingPipeline):
         if isinstance(
             decision.params.get("paper_route_target_plan_source_decision"), Mapping
         ):
+            return None
+        if isinstance(decision.params.get("paper_route_probe_exit"), Mapping):
             return None
         existing_mode = (
             str(decision.params.get("source_decision_mode") or "")
@@ -2532,7 +2792,7 @@ class SimpleTradingPipeline(TradingPipeline):
         *,
         strategy: Strategy | None = None,
     ) -> StrategyDecision:
-        lineage = self._paper_route_target_lineage_for_decision(decision)
+        lineage = self._paper_route_target_lineage_for_decision(decision, strategy)
         if not lineage:
             return decision
         params = dict(decision.params)
@@ -2610,11 +2870,7 @@ class SimpleTradingPipeline(TradingPipeline):
         if exit_minute is not None:
             effective_exit_minute = min(exit_minute, _REGULAR_SESSION_MINUTES - 1)
             now = trading_now(account_label=self.account_label).astimezone(timezone.utc)
-            session_open = datetime.combine(
-                now.date(),
-                REGULAR_OPEN_UTC,
-                tzinfo=timezone.utc,
-            )
+            session_open = regular_session_open_utc_for(now)
             exit_due_at = (
                 session_open + timedelta(minutes=effective_exit_minute)
             ).isoformat()
@@ -2809,26 +3065,24 @@ class SimpleTradingPipeline(TradingPipeline):
         )
         return decision_row
 
-    def _apply_paper_route_probe_cap(
+    def _paper_route_probe_capped_decision(
         self,
         *,
-        session: Session,
         decision: StrategyDecision,
-        decision_row: TradeDecision,
         proof_floor: Mapping[str, object],
         context: Mapping[str, object],
-    ) -> bool:
+    ) -> StrategyDecision | None:
         cap = _optional_decimal(context.get("max_notional"))
         price = self._paper_route_probe_reference_price(decision)
         if cap is None or cap <= 0 or price is None or price <= 0:
-            return False
+            return None
 
         capped_qty = (cap / price).quantize(
             _PAPER_ROUTE_PROBE_QTY_STEP,
             rounding=ROUND_DOWN,
         )
         if capped_qty <= 0:
-            return False
+            return None
         target_source_authorized = bool(context.get("target_source_authorized"))
         if decision.qty > 0 and not target_source_authorized:
             capped_qty = min(decision.qty, capped_qty)
@@ -2850,19 +3104,36 @@ class SimpleTradingPipeline(TradingPipeline):
             "capital_stage": str(proof_floor.get("capital_state") or "zero_notional"),
             "target_source_notional_sized": target_source_authorized,
         }
-        decision.qty = capped_qty
-        decision.params = params
-        self.executor.sync_decision_state(session, decision_row, decision)
-        self.executor.update_decision_params(session, decision_row, params)
-        logger.warning(
-            "Allowing bounded paper route-acquisition probe strategy_id=%s symbol=%s qty=%s notional=%s reasons=%s",
-            decision.strategy_id,
-            decision.symbol,
-            capped_qty,
-            capped_notional,
-            ",".join(cast(list[str], context.get("blocking_reasons") or [])),
-        )
-        return True
+        return decision.model_copy(update={"qty": capped_qty, "params": params})
+
+    def _align_prechecked_paper_route_probe_cap(
+        self,
+        decision: StrategyDecision,
+    ) -> StrategyDecision:
+        metadata = _paper_route_probe_entry_metadata(decision.params)
+        if metadata is None:
+            return decision
+        price = self._paper_route_probe_reference_price(decision)
+        if price is None or price <= 0:
+            return decision
+
+        notional = decision.qty * price
+        params = dict(decision.params)
+        simple_lane = dict(cast(Mapping[str, Any], params.get("simple_lane") or {}))
+        simple_lane["final_qty"] = str(decision.qty)
+        simple_lane["notional"] = str(notional)
+        simple_lane["paper_route_probe_cap_applied"] = True
+        if bool(metadata.get("target_source_authorized")):
+            simple_lane["target_source_notional_sized"] = True
+
+        probe_metadata = dict(metadata)
+        probe_metadata["reference_price"] = str(price)
+        probe_metadata["capped_qty"] = str(decision.qty)
+        probe_metadata["capped_notional"] = str(notional)
+
+        params["simple_lane"] = simple_lane
+        params["paper_route_probe"] = probe_metadata
+        return decision.model_copy(update={"params": params})
 
     @staticmethod
     def _proof_floor_symbol_block_reason(
@@ -2926,29 +3197,11 @@ class SimpleTradingPipeline(TradingPipeline):
         )
         paper_route_probe_applied = False
         if proof_floor_block_reason is not None:
-            if (
-                settings.trading_mode == "paper"
-                and self._paper_route_probe_exit_metadata(decision) is not None
+            if settings.trading_mode == "paper" and (
+                self._paper_route_probe_exit_metadata(decision) is not None
+                or _paper_route_probe_entry_metadata(decision.params) is not None
             ):
                 paper_route_probe_applied = True
-            else:
-                strategy = self._paper_route_probe_strategy(
-                    session=session,
-                    decision=decision,
-                )
-                probe_context = self._paper_route_probe_context(
-                    proof_floor=proof_floor,
-                    decision=decision,
-                    strategy=strategy,
-                )
-                if probe_context is not None and self._apply_paper_route_probe_cap(
-                    session=session,
-                    decision=decision,
-                    decision_row=decision_row,
-                    proof_floor=proof_floor,
-                    context=probe_context,
-                ):
-                    paper_route_probe_applied = True
             if not paper_route_probe_applied:
                 self._block_decision_submission(
                     session=session,

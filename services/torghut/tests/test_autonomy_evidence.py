@@ -428,7 +428,7 @@ class TestEvidenceContinuity(TestCase):
                     objective_scorecard_json=_passing_autoresearch_scorecard(),
                     optimizer_report_json={"selected_count": 1},
                     payload_json={"portfolio_candidate_id": "portfolio-ready"},
-                    status="promotion_ready",
+                    status="target_met",
                 )
             )
             session.commit()

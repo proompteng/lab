@@ -16,6 +16,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy import func
@@ -228,6 +229,106 @@ class Execution(Base, TimestampMixin):
     )
 
 
+class OrderFeedSourceWindow(Base, TimestampMixin):
+    """Append-only Kafka source-window classification for order-feed auditability."""
+
+    __tablename__ = "order_feed_source_windows"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    consumer_group: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    source_topic: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    source_partition: Mapped[int] = mapped_column(nullable=False)
+    alpaca_account_label: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    assignment_mode: Mapped[str] = mapped_column(String(length=32), nullable=False)
+    collector_identity: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
+    source_revision: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
+    window_started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    window_ended_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    start_offset: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    end_offset: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    broker_high_watermark: Mapped[Optional[int]] = mapped_column(
+        BigInteger, nullable=True
+    )
+    consumed_count: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default=text("0")
+    )
+    inserted_count: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default=text("0")
+    )
+    duplicate_count: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default=text("0")
+    )
+    malformed_count: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default=text("0")
+    )
+    missing_payload_count: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default=text("0")
+    )
+    missing_identity_count: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default=text("0")
+    )
+    out_of_scope_account_count: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default=text("0")
+    )
+    unlinked_execution_count: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default=text("0")
+    )
+    unlinked_decision_count: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default=text("0")
+    )
+    failed_unhandled_count: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default=text("0")
+    )
+    dropped_count: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default=text("0")
+    )
+    gap_count: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default=text("0")
+    )
+    gap_ranges: Mapped[Any] = mapped_column(JSONType, nullable=True)
+    first_event_ts: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_event_ts: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    status: Mapped[str] = mapped_column(String(length=32), nullable=False)
+    status_reason: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
+    payload_json: Mapped[Any] = mapped_column(JSONType, nullable=True)
+
+    events: Mapped[list["ExecutionOrderEvent"]] = relationship(
+        back_populates="source_window"
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_order_feed_source_windows_partition_offsets",
+            "source_topic",
+            "source_partition",
+            "start_offset",
+            "end_offset",
+        ),
+        Index(
+            "ix_order_feed_source_windows_account_window",
+            "alpaca_account_label",
+            "window_started_at",
+            "window_ended_at",
+        ),
+        Index("ix_order_feed_source_windows_status", "status"),
+        Index("ix_order_feed_source_windows_created_at", "created_at"),
+    )
+
+
 class ExecutionOrderEvent(Base, CreatedAtMixin):
     """Normalized order-feed events persisted for execution-state reconciliation."""
 
@@ -258,8 +359,17 @@ class ExecutionOrderEvent(Base, CreatedAtMixin):
     status: Mapped[Optional[str]] = mapped_column(String(length=32), nullable=True)
     qty: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
     filled_qty: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8), nullable=True)
+    filled_qty_delta: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
     avg_fill_price: Mapped[Optional[Decimal]] = mapped_column(
         Numeric(20, 8), nullable=True
+    )
+    filled_notional_delta: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(20, 8), nullable=True
+    )
+    fill_quantity_basis: Mapped[Optional[str]] = mapped_column(
+        String(length=32), nullable=True
     )
     raw_event: Mapped[Any] = mapped_column(JSONType, nullable=False)
     execution_id: Mapped[Optional[uuid.UUID]] = mapped_column(
@@ -268,14 +378,23 @@ class ExecutionOrderEvent(Base, CreatedAtMixin):
     trade_decision_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         GUID(), ForeignKey("trade_decisions.id", ondelete="SET NULL"), nullable=True
     )
+    source_window_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        GUID(),
+        ForeignKey("order_feed_source_windows.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     execution: Mapped[Optional[Execution]] = relationship(back_populates="order_events")
     trade_decision: Mapped[Optional[TradeDecision]] = relationship()
+    source_window: Mapped[Optional[OrderFeedSourceWindow]] = relationship(
+        back_populates="events"
+    )
 
     __table_args__ = (
         Index("ix_execution_order_events_event_ts", "event_ts"),
         Index("ix_execution_order_events_execution_id", "execution_id"),
         Index("ix_execution_order_events_trade_decision_id", "trade_decision_id"),
+        Index("ix_execution_order_events_source_window_id", "source_window_id"),
         Index("ix_execution_order_events_order_id", "alpaca_order_id"),
         Index("ix_execution_order_events_client_order_id", "client_order_id"),
         Index(
@@ -326,6 +445,172 @@ class OrderFeedConsumerCursor(Base, TimestampMixin):
             "ix_order_feed_consumer_cursors_updated_at",
             "updated_at",
         ),
+    )
+
+
+class TigerBeetleAccountRef(Base, TimestampMixin):
+    """Postgres reference row for a deterministic TigerBeetle account."""
+
+    __tablename__ = "tigerbeetle_account_refs"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    cluster_id: Mapped[int] = mapped_column(BigInteger(), nullable=False)
+    account_id: Mapped[str] = mapped_column(String(length=39), nullable=False)
+    account_key: Mapped[str] = mapped_column(String(length=255), nullable=False)
+    ledger: Mapped[int] = mapped_column(BigInteger(), nullable=False)
+    code: Mapped[int] = mapped_column(BigInteger(), nullable=False)
+    account_label: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    symbol: Mapped[Optional[str]] = mapped_column(
+        String(length=MARKET_SYMBOL_MAX_LENGTH), nullable=True
+    )
+    strategy_id: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
+    payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "cluster_id",
+            "account_id",
+            name="uq_tigerbeetle_account_refs_cluster_account_id",
+        ),
+        UniqueConstraint(
+            "cluster_id",
+            "account_key",
+            name="uq_tigerbeetle_account_refs_cluster_account_key",
+        ),
+        Index("ix_tigerbeetle_account_refs_account_label", "account_label"),
+        Index("ix_tigerbeetle_account_refs_symbol", "symbol"),
+    )
+
+
+class TigerBeetleTransferRef(Base, TimestampMixin):
+    """Postgres reference row for an idempotent TigerBeetle transfer."""
+
+    __tablename__ = "tigerbeetle_transfer_refs"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    cluster_id: Mapped[int] = mapped_column(BigInteger(), nullable=False)
+    transfer_id: Mapped[str] = mapped_column(String(length=39), nullable=False)
+    transfer_kind: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    ledger: Mapped[int] = mapped_column(BigInteger(), nullable=False)
+    code: Mapped[int] = mapped_column(BigInteger(), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(39, 0), nullable=False)
+    status: Mapped[str] = mapped_column(String(length=32), nullable=False)
+    result_code: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    trade_decision_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        GUID(), ForeignKey("trade_decisions.id", ondelete="SET NULL"), nullable=True
+    )
+    execution_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        GUID(), ForeignKey("executions.id", ondelete="SET NULL"), nullable=True
+    )
+    execution_order_event_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        GUID(),
+        ForeignKey("execution_order_events.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    execution_tca_metric_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        GUID(),
+        ForeignKey("execution_tca_metrics.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    runtime_ledger_bucket_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        GUID(),
+        ForeignKey("strategy_runtime_ledger_buckets.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    source_type: Mapped[Optional[str]] = mapped_column(String(length=64), nullable=True)
+    source_id: Mapped[Optional[str]] = mapped_column(String(length=128), nullable=True)
+    event_fingerprint: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True
+    )
+    payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+
+    trade_decision: Mapped[Optional[TradeDecision]] = relationship()
+    execution: Mapped[Optional[Execution]] = relationship()
+    execution_order_event: Mapped[Optional[ExecutionOrderEvent]] = relationship()
+    execution_tca_metric: Mapped[Optional["ExecutionTCAMetric"]] = relationship()
+    runtime_ledger_bucket: Mapped[Optional["StrategyRuntimeLedgerBucket"]] = (
+        relationship()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "cluster_id",
+            "transfer_id",
+            name="uq_tigerbeetle_transfer_refs_cluster_transfer_id",
+        ),
+        UniqueConstraint(
+            "cluster_id",
+            "event_fingerprint",
+            "transfer_kind",
+            name="uq_tigerbeetle_transfer_refs_cluster_event_kind",
+        ),
+        UniqueConstraint(
+            "cluster_id",
+            "source_type",
+            "source_id",
+            "transfer_kind",
+            name="uq_tigerbeetle_transfer_refs_cluster_source_kind",
+        ),
+        Index("ix_tigerbeetle_transfer_refs_status", "status"),
+        Index(
+            "ix_tigerbeetle_transfer_refs_source",
+            "cluster_id",
+            "source_type",
+            "source_id",
+        ),
+        Index("ix_tigerbeetle_transfer_refs_trade_decision_id", "trade_decision_id"),
+        Index("ix_tigerbeetle_transfer_refs_execution_id", "execution_id"),
+        Index(
+            "ix_tigerbeetle_transfer_refs_execution_order_event_id",
+            "execution_order_event_id",
+        ),
+        Index(
+            "ix_tigerbeetle_transfer_refs_execution_tca_metric_id",
+            "execution_tca_metric_id",
+        ),
+        Index(
+            "ix_tigerbeetle_transfer_refs_runtime_ledger_bucket_id",
+            "runtime_ledger_bucket_id",
+        ),
+    )
+
+
+class TigerBeetleReconciliationRun(Base, TimestampMixin):
+    """Summary row for TigerBeetle reconciliation checks."""
+
+    __tablename__ = "tigerbeetle_reconciliation_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    cluster_id: Mapped[int] = mapped_column(BigInteger(), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    finished_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    status: Mapped[str] = mapped_column(String(length=32), nullable=False)
+    checked_transfer_count: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, server_default=text("0")
+    )
+    missing_transfer_count: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, server_default=text("0")
+    )
+    mismatched_transfer_count: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, server_default=text("0")
+    )
+    source_missing_count: Mapped[int] = mapped_column(
+        BigInteger(), nullable=False, server_default=text("0")
+    )
+    payload_json: Mapped[Optional[Any]] = mapped_column(JSONType, nullable=True)
+
+    __table_args__ = (
+        Index("ix_tigerbeetle_reconciliation_runs_cluster_id", "cluster_id"),
+        Index("ix_tigerbeetle_reconciliation_runs_status", "status"),
+        Index("ix_tigerbeetle_reconciliation_runs_started_at", "started_at"),
     )
 
 

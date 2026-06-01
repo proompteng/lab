@@ -21,7 +21,7 @@ spec:
             kubernetes.io/arch: arm64
           containers:
             - name: renew
-              image: registry.ide-newton.ts.net/lab/torghut@sha256:2d6b42ba410d533bed86414ab3b0d7c1b6651993dac64c08fc8b7301056bdb95
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:97dfaea944bbdf5c2e0d7a6cde3c1e4e96b5a544305b88c51a9d6d42562c4608
               imagePullPolicy: IfNotPresent
               resources:
                 requests:
@@ -42,11 +42,18 @@ spec:
                   RENEWAL_OUTPUT=/tmp/torghut-empirical-renewal/runtime-window-renewal.json
                   PROOF_PACKET_OUTPUT=/tmp/torghut-empirical-renewal/runtime-ledger-proof-packet.json
                   mkdir -p "$(dirname "${RENEWAL_OUTPUT}")" "$(dirname "${PROOF_PACKET_OUTPUT}")"
+                  /opt/venv/bin/python scripts/repair_order_feed_source_windows.py \
+                    --dsn-env SIM_DB_DSN \
+                    --account-label TORGHUT_SIM \
+                    --batch-size 1000 \
+                    --max-batches 2 \
+                    --apply \
+                    --json
                   /opt/venv/bin/python scripts/renew_latest_empirical_promotion_jobs.py \
                     --output-dir /tmp/torghut-empirical-renewal \
                     --strategy-spec-ref microbar_cross_sectional_pairs_v1@research \
                     --runtime-window-import \
-                    --runtime-window-target-plan-url http://torghut.torghut.svc.cluster.local/trading/paper-route-target-plan \
+                    --runtime-window-target-plan-url http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan \
                     --runtime-window-target-plan-url-timeout-seconds 45 \
                     --runtime-window-target-plan-url-attempts 3 \
                     --runtime-window-target-plan-url-retry-backoff-seconds 5 \
@@ -71,7 +78,14 @@ spec:
                     --status-service-base-url http://torghut.torghut.svc.cluster.local \
                     --paper-route-service-base-url http://torghut-sim.torghut.svc.cluster.local \
                     --completion-service-base-url http://torghut.torghut.svc.cluster.local \
+                    --proof-mode authority \
                     --runtime-window-import-file "${RENEWAL_OUTPUT}" \
+                    --min-runtime-ledger-net-pnl 10000 \
+                    --min-runtime-ledger-daily-net-pnl 500 \
+                    --min-runtime-ledger-trading-days 20 \
+                    --max-runtime-ledger-drawdown-pct-equity 0.03 \
+                    --max-runtime-ledger-best-day-share 0.25 \
+                    --max-runtime-ledger-symbol-concentration-share 0.35 \
                     --output-file "${PROOF_PACKET_OUTPUT}" \
                     --artifact-prefix 'runtime-ledger-proof-packets/{run_id}' \
                     --require-artifact-upload \
@@ -105,7 +119,7 @@ spec:
                 - name: SIM_DB_DSN
                   value: postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default
                 - name: TORGHUT_IMAGE_DIGEST
-                  value: sha256:2d6b42ba410d533bed86414ab3b0d7c1b6651993dac64c08fc8b7301056bdb95
+                  value: sha256:97dfaea944bbdf5c2e0d7a6cde3c1e4e96b5a544305b88c51a9d6d42562c4608
                 - name: TORGHUT_EMPIRICAL_CEPH_BUCKET
                   valueFrom:
                     configMapKeyRef:

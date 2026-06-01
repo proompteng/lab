@@ -23,15 +23,20 @@ from typing import Any, Protocol, cast
 from urllib.parse import urljoin
 from urllib.request import urlopen
 
+from app.trading.runtime_ledger_proof_policy import (
+    DEFAULT_RUNTIME_LEDGER_PROOF_MODE,
+    RUNTIME_LEDGER_PROOF_MODES,
+    normalize_runtime_ledger_proof_mode,
+    runtime_ledger_proof_policy_from_env,
+)
+
 
 SCHEMA_VERSION = "torghut.runtime-ledger-live-paper-proof-packet.v1"
 DOC29_LIVE_SCALE_GATE = "live_scale_observed"
-DEFAULT_MIN_RUNTIME_LEDGER_NET_PNL = Decimal("500")
-DEFAULT_MIN_RUNTIME_LEDGER_DAILY_NET_PNL = Decimal("500")
-DEFAULT_MIN_RUNTIME_LEDGER_TRADING_DAYS = 1
-DEFAULT_MAX_RUNTIME_LEDGER_DRAWDOWN_PCT_EQUITY = Decimal("0.08")
-DEFAULT_MAX_RUNTIME_LEDGER_BEST_DAY_SHARE = Decimal("0.25")
-DEFAULT_MAX_RUNTIME_LEDGER_SYMBOL_CONCENTRATION_SHARE = Decimal("0.50")
+DEFAULT_RUNTIME_LEDGER_PROOF_POLICY = runtime_ledger_proof_policy_from_env()
+RUNTIME_LEDGER_PROOF_MODE_NOT_AUTHORITY_BLOCKER = (
+    "runtime_ledger_proof_mode_not_authority"
+)
 STATUS_ENDPOINT = "/trading/status"
 PAPER_ROUTE_EVIDENCE_ENDPOINT = "/trading/paper-route-evidence"
 COMPLETION_DOC29_ENDPOINT = "/trading/completion/doc29"
@@ -166,6 +171,21 @@ def _mapping(value: object) -> Mapping[str, Any]:
     if isinstance(value, Mapping):
         return cast(Mapping[str, Any], value)
     return {}
+
+
+def _contains_tigerbeetle_claim(value: object) -> bool:
+    if isinstance(value, Mapping):
+        for raw_key, raw_value in cast(Mapping[object, object], value).items():
+            key = str(raw_key).lower()
+            if key == "tigerbeetle" and _mapping(raw_value):
+                return True
+            if key.startswith("tigerbeetle_") and bool(raw_value):
+                return True
+            if _contains_tigerbeetle_claim(raw_value):
+                return True
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return any(_contains_tigerbeetle_claim(item) for item in value)
+    return False
 
 
 def _sequence(value: object) -> Sequence[object]:
@@ -471,9 +491,14 @@ def _paper_route_target_plan(
     paper_route_evidence: Mapping[str, Any] | None,
 ) -> Mapping[str, Any]:
     evidence = paper_route_evidence or {}
-    plan = _mapping(evidence.get("next_paper_route_runtime_window_targets"))
-    if plan:
-        return plan
+    for key in (
+        "runtime_window_import_plan",
+        "latest_closed_paper_route_runtime_window_targets",
+        "next_paper_route_runtime_window_targets",
+    ):
+        plan = _mapping(evidence.get(key))
+        if _paper_route_targets(plan):
+            return plan
     return _mapping(evidence.get("runtime_window_import_plan"))
 
 
@@ -768,6 +793,12 @@ def _runtime_import_target_materialization_ref(
                     return value
         return ""
 
+    tigerbeetle_refs = _runtime_import_tigerbeetle_refs(
+        item,
+        summary,
+        materialization_target,
+        observation,
+    )
     ref: dict[str, Any] = {
         "materialized": materialized,
         "candidate_id": first_text("candidate_id"),
@@ -812,7 +843,60 @@ def _runtime_import_target_materialization_ref(
         ),
         "blockers": list(blockers),
     }
+    if tigerbeetle_refs:
+        ref["tigerbeetle"] = tigerbeetle_refs
     return {key: value for key, value in ref.items() if value not in ("", [], None)}
+
+
+def _runtime_import_tigerbeetle_refs(
+    *sources: Mapping[str, Any],
+) -> dict[str, Any]:
+    account_ids: list[str] = []
+    account_keys: list[str] = []
+    transfer_ids: list[str] = []
+    source_refs: list[str] = []
+    missing_account_ids: list[str] = []
+    cluster_ids: list[str] = []
+    bucket_refs: list[Mapping[str, Any]] = []
+
+    def extend_unique(target: list[str], values: Sequence[str]) -> None:
+        for value in values:
+            if value and value not in target:
+                target.append(value)
+
+    for source in sources:
+        refs = _mapping(source.get("tigerbeetle"))
+        extend_unique(account_ids, _text_list(source.get("tigerbeetle_account_ids")))
+        extend_unique(account_keys, _text_list(source.get("tigerbeetle_account_keys")))
+        extend_unique(transfer_ids, _text_list(source.get("tigerbeetle_transfer_ids")))
+        if refs:
+            extend_unique(cluster_ids, _text_list(refs.get("cluster_ids")))
+            extend_unique(account_ids, _text_list(refs.get("account_ids")))
+            extend_unique(account_keys, _text_list(refs.get("account_keys")))
+            extend_unique(transfer_ids, _text_list(refs.get("transfer_ids")))
+            extend_unique(source_refs, _text_list(refs.get("source_refs")))
+            extend_unique(
+                missing_account_ids, _text_list(refs.get("missing_account_ids"))
+            )
+            for bucket_ref in _sequence(refs.get("runtime_ledger_buckets")):
+                bucket_mapping = _mapping(bucket_ref)
+                if bucket_mapping:
+                    bucket_refs.append(bucket_mapping)
+
+    if not account_ids and not account_keys and not transfer_ids:
+        return {}
+    return {
+        "schema_version": "torghut.tigerbeetle-runtime-ledger-proof-refs.v1",
+        "cluster_ids": cluster_ids,
+        "account_count": len(account_ids),
+        "transfer_count": len(transfer_ids),
+        "account_ids": account_ids,
+        "account_keys": account_keys,
+        "transfer_ids": transfer_ids,
+        "missing_account_ids": missing_account_ids,
+        "source_refs": source_refs,
+        "runtime_ledger_buckets": bucket_refs,
+    }
 
 
 def _runtime_import_target_blocker_codes(value: object) -> list[str]:
@@ -850,14 +934,34 @@ def _runtime_import_target_surface_blockers(
     blockers = _text_list(target.get("materialization_blockers"))
     if _int(target.get("metric_window_count")) <= 0:
         blockers.append("runtime_window_import_metric_window_missing")
+    elif not _text_list(target.get("metric_window_ids")):
+        blockers.append("runtime_window_import_metric_window_refs_missing")
     if _int(target.get("promotion_decision_count")) <= 0:
         blockers.append("runtime_window_import_promotion_decision_missing")
+    elif not _text(target.get("promotion_decision_id")):
+        blockers.append("runtime_window_import_promotion_decision_ref_missing")
     if profit_proof_count > 0:
-        if _int(target.get("runtime_ledger_bucket_count")) <= 0:
+        runtime_ledger_bucket_count = _int(target.get("runtime_ledger_bucket_count"))
+        evidence_grade_runtime_ledger_bucket_count = _int(
+            target.get("evidence_grade_runtime_ledger_bucket_count")
+        )
+        if runtime_ledger_bucket_count <= 0:
             blockers.append("runtime_window_import_runtime_ledger_bucket_missing")
-        if _int(target.get("evidence_grade_runtime_ledger_bucket_count")) <= 0:
+        elif (
+            len(_text_list(target.get("runtime_ledger_bucket_ids")))
+            < runtime_ledger_bucket_count
+        ):
+            blockers.append("runtime_window_import_runtime_ledger_bucket_refs_missing")
+        if evidence_grade_runtime_ledger_bucket_count <= 0:
             blockers.append(
                 "runtime_window_import_evidence_grade_runtime_ledger_bucket_missing"
+            )
+        elif (
+            len(_text_list(target.get("evidence_grade_runtime_ledger_bucket_ids")))
+            < evidence_grade_runtime_ledger_bucket_count
+        ):
+            blockers.append(
+                "runtime_window_import_evidence_grade_runtime_ledger_bucket_refs_missing"
             )
     if target.get("materialized") is False:
         blockers.extend(
@@ -970,6 +1074,10 @@ def _runtime_import_materialization_summary(
             target_blockers.append("runtime_window_import_target_profit_proof_missing")
         _extend_unique(
             target_blockers,
+            _text_list(observation.get("runtime_ledger_profit_proof_blockers")),
+        )
+        _extend_unique(
+            target_blockers,
             _runtime_import_target_surface_blockers(
                 summary=summary,
                 profit_proof_count=profit_proof_count,
@@ -986,6 +1094,10 @@ def _runtime_import_materialization_summary(
         _extend_unique(
             materialization_blockers,
             _text_list(observation.get("runtime_ledger_materialization_blockers")),
+        )
+        _extend_unique(
+            materialization_blockers,
+            _text_list(observation.get("runtime_ledger_profit_proof_blockers")),
         )
         _extend_unique(
             materialization_blockers,
@@ -1179,6 +1291,8 @@ def _required_actions(blockers: Sequence[str], *, verdict: str) -> list[str]:
                 actions,
                 ["improve_runtime_ledger_drawdown_concentration_or_position_sizing"],
             )
+        elif blocker == RUNTIME_LEDGER_PROOF_MODE_NOT_AUTHORITY_BLOCKER:
+            _extend_unique(actions, ["rerun_proof_packet_in_authority_mode"])
         elif blocker.startswith("runtime_ledger_") or blocker in {
             "filled_notional_missing",
             "closed_round_trip_missing",
@@ -1224,26 +1338,82 @@ def _required_actions(blockers: Sequence[str], *, verdict: str) -> list[str]:
 def build_runtime_ledger_proof_packet(
     status: Mapping[str, Any],
     *,
+    proof_mode: str = "authority",
     paper_route_evidence: Mapping[str, Any] | None = None,
     runtime_window_import: Mapping[str, Any] | None = None,
     completion_status: Mapping[str, Any] | None = None,
-    min_runtime_ledger_net_pnl: Decimal = DEFAULT_MIN_RUNTIME_LEDGER_NET_PNL,
-    min_runtime_ledger_daily_net_pnl: Decimal = DEFAULT_MIN_RUNTIME_LEDGER_DAILY_NET_PNL,
-    min_runtime_ledger_trading_days: int = DEFAULT_MIN_RUNTIME_LEDGER_TRADING_DAYS,
+    min_runtime_ledger_net_pnl: Decimal = (
+        DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.min_net_pnl_after_costs
+    ),
+    min_runtime_ledger_daily_net_pnl: Decimal = (
+        DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.min_daily_net_pnl_after_costs
+    ),
+    min_runtime_ledger_trading_days: int = (
+        DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.min_trading_days
+    ),
     max_runtime_ledger_drawdown_pct_equity: Decimal = (
-        DEFAULT_MAX_RUNTIME_LEDGER_DRAWDOWN_PCT_EQUITY
+        DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.max_drawdown_pct_equity
     ),
     max_runtime_ledger_best_day_share: Decimal = (
-        DEFAULT_MAX_RUNTIME_LEDGER_BEST_DAY_SHARE
+        DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.max_best_day_share
     ),
     max_runtime_ledger_symbol_concentration_share: Decimal = (
-        DEFAULT_MAX_RUNTIME_LEDGER_SYMBOL_CONCENTRATION_SHARE
+        DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.max_symbol_concentration_share
     ),
     generated_at: str | None = None,
 ) -> dict[str, Any]:
     checks: dict[str, dict[str, Any]] = {}
     blockers: list[str] = []
     generated_at = generated_at or _utc_now()
+    resolved_proof_mode = normalize_runtime_ledger_proof_mode(proof_mode)
+    proof_mode_targets = DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.targets_for_mode(
+        resolved_proof_mode
+    )
+    min_runtime_ledger_net_pnl = max(
+        min_runtime_ledger_net_pnl,
+        cast(Decimal, proof_mode_targets["min_net_pnl_after_costs"]),
+    )
+    min_runtime_ledger_daily_net_pnl = max(
+        min_runtime_ledger_daily_net_pnl,
+        cast(Decimal, proof_mode_targets["min_daily_net_pnl_after_costs"]),
+    )
+    min_runtime_ledger_trading_days = max(
+        min_runtime_ledger_trading_days,
+        cast(int, proof_mode_targets["min_trading_days"]),
+    )
+    max_runtime_ledger_drawdown_pct_equity = min(
+        max_runtime_ledger_drawdown_pct_equity,
+        cast(Decimal, proof_mode_targets["max_drawdown_pct_equity"]),
+    )
+    max_runtime_ledger_best_day_share = min(
+        max_runtime_ledger_best_day_share,
+        cast(Decimal, proof_mode_targets["max_best_day_share"]),
+    )
+    max_runtime_ledger_symbol_concentration_share = min(
+        max_runtime_ledger_symbol_concentration_share,
+        cast(Decimal, proof_mode_targets["max_symbol_concentration_share"]),
+    )
+    final_authority_mode = bool(proof_mode_targets["final_authority"])
+    mode_authority_blockers = (
+        []
+        if final_authority_mode
+        else [RUNTIME_LEDGER_PROOF_MODE_NOT_AUTHORITY_BLOCKER]
+    )
+    mode_authority_failed_checks = (
+        [] if final_authority_mode else ["runtime_ledger_proof_mode_authority_required"]
+    )
+    _check(
+        checks,
+        "runtime_ledger_proof_mode_contract",
+        passed=True,
+        observed={
+            "proof_mode": resolved_proof_mode,
+            "final_authority": final_authority_mode,
+            "evidence_collection_only": not final_authority_mode,
+        },
+        expected="explicit proof mode; only authority mode can grant promotion authority",
+        blockers=[],
+    )
 
     status_gate = _status_gate_blocker_summary(status)
     raw_live_blockers = status_gate["raw_blockers"]
@@ -1566,6 +1736,15 @@ def build_runtime_ledger_proof_packet(
         if net_pnl is not None and trading_days > 0
         else None
     )
+    median_daily_net_pnl = _decimal(
+        runtime_summary.get("runtime_ledger_median_daily_net_pnl_after_costs")
+    )
+    p10_daily_net_pnl = _decimal(
+        runtime_summary.get("runtime_ledger_p10_daily_net_pnl_after_costs")
+    )
+    worst_day_net_pnl = _decimal(
+        runtime_summary.get("runtime_ledger_worst_day_net_pnl_after_costs")
+    )
     drawdown_pct, drawdown_source = _first_decimal(
         runtime_summary,
         (
@@ -1573,6 +1752,13 @@ def build_runtime_ledger_proof_packet(
             "runtime_ledger_drawdown_pct_equity",
             "max_drawdown_pct_equity",
             "drawdown_pct_equity",
+        ),
+    )
+    max_intraday_drawdown, max_intraday_drawdown_source = _first_decimal(
+        runtime_summary,
+        (
+            "runtime_ledger_max_intraday_drawdown",
+            "max_intraday_drawdown",
         ),
     )
     best_day_share, best_day_share_source = _first_decimal(
@@ -1590,6 +1776,14 @@ def build_runtime_ledger_proof_packet(
             "runtime_ledger_symbol_concentration_share",
             "symbol_concentration_share",
         ),
+    )
+    avg_daily_filled_notional = _decimal(
+        runtime_summary.get("runtime_ledger_avg_daily_filled_notional")
+    )
+    target_implied_avg_daily_filled_notional = (
+        min_runtime_ledger_daily_net_pnl * Decimal("10000") / expectancy_bps
+        if expectancy_bps is not None and expectancy_bps > 0
+        else None
     )
     _check(
         checks,
@@ -1666,6 +1860,110 @@ def build_runtime_ledger_proof_packet(
         status=None if runtime_import_due else deferred_until_runtime_import_due,
     )
     _extend_unique(blockers, pnl_blockers)
+    daily_distribution_blockers: list[str] = []
+    if runtime_import_due and final_authority_mode:
+        if median_daily_net_pnl is None:
+            daily_distribution_blockers.append(
+                "runtime_ledger_median_daily_net_pnl_after_costs_missing"
+            )
+        elif (
+            median_daily_net_pnl
+            < DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.authority_min_median_daily_net_pnl_after_costs
+        ):
+            daily_distribution_blockers.append(
+                "runtime_ledger_median_daily_net_pnl_after_costs_below_floor"
+            )
+        if p10_daily_net_pnl is None:
+            daily_distribution_blockers.append(
+                "runtime_ledger_p10_daily_net_pnl_after_costs_missing"
+            )
+        elif (
+            p10_daily_net_pnl
+            < DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.authority_min_p10_daily_net_pnl_after_costs
+        ):
+            daily_distribution_blockers.append(
+                "runtime_ledger_p10_daily_net_pnl_after_costs_below_floor"
+            )
+        if worst_day_net_pnl is None:
+            daily_distribution_blockers.append(
+                "runtime_ledger_worst_day_net_pnl_after_costs_missing"
+            )
+        elif (
+            worst_day_net_pnl
+            < DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.authority_min_worst_day_net_pnl_after_costs
+        ):
+            daily_distribution_blockers.append(
+                "runtime_ledger_worst_day_net_pnl_after_costs_below_floor"
+            )
+    _check(
+        checks,
+        "runtime_ledger_daily_distribution_authority",
+        passed=not daily_distribution_blockers,
+        observed={
+            "runtime_import_due": runtime_import_due,
+            "final_authority": final_authority_mode,
+            "median_daily_net_pnl_after_costs": _decimal_text(median_daily_net_pnl),
+            "p10_daily_net_pnl_after_costs": _decimal_text(p10_daily_net_pnl),
+            "worst_day_net_pnl_after_costs": _decimal_text(worst_day_net_pnl),
+        },
+        expected={
+            "min_median_daily_net_pnl_after_costs": _decimal_text(
+                DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.authority_min_median_daily_net_pnl_after_costs
+            ),
+            "min_p10_daily_net_pnl_after_costs": _decimal_text(
+                DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.authority_min_p10_daily_net_pnl_after_costs
+            ),
+            "min_worst_day_net_pnl_after_costs": _decimal_text(
+                DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.authority_min_worst_day_net_pnl_after_costs
+            ),
+        },
+        blockers=daily_distribution_blockers,
+        status=None if runtime_import_due else deferred_until_runtime_import_due,
+    )
+    _extend_unique(blockers, daily_distribution_blockers)
+    scale_blockers: list[str] = []
+    if runtime_import_due and final_authority_mode:
+        if avg_daily_filled_notional is None:
+            scale_blockers.append("runtime_ledger_avg_daily_filled_notional_missing")
+        elif (
+            target_implied_avg_daily_filled_notional is not None
+            and avg_daily_filled_notional < target_implied_avg_daily_filled_notional
+        ):
+            scale_blockers.append(
+                "runtime_ledger_avg_daily_filled_notional_below_target_implied_floor"
+            )
+    _check(
+        checks,
+        "runtime_ledger_target_implied_scale",
+        passed=not scale_blockers,
+        observed={
+            "runtime_import_due": runtime_import_due,
+            "final_authority": final_authority_mode,
+            "post_cost_expectancy_bps": _decimal_text(expectancy_bps),
+            "avg_daily_filled_notional": _decimal_text(avg_daily_filled_notional),
+            "target_implied_avg_daily_filled_notional": _decimal_text(
+                target_implied_avg_daily_filled_notional
+            ),
+            "target_implied_avg_daily_filled_notional_basis": (
+                "min_runtime_ledger_daily_net_pnl_after_costs / "
+                "observed_post_cost_expectancy_bps"
+                if target_implied_avg_daily_filled_notional is not None
+                else None
+            ),
+        },
+        expected={
+            "min_runtime_ledger_daily_net_pnl_after_costs": _decimal_text(
+                min_runtime_ledger_daily_net_pnl
+            ),
+            "formula": (
+                "required_daily_notional = min_daily_net_pnl_after_costs "
+                "/ (observed_post_cost_expectancy_bps / 10000)"
+            ),
+        },
+        blockers=scale_blockers,
+        status=None if runtime_import_due else deferred_until_runtime_import_due,
+    )
+    _extend_unique(blockers, scale_blockers)
     risk_blockers: list[str] = []
     if runtime_import_due and drawdown_pct is None:
         risk_blockers.append("runtime_ledger_drawdown_pct_equity_missing")
@@ -1675,6 +1973,16 @@ def build_runtime_ledger_proof_packet(
         and drawdown_pct > max_runtime_ledger_drawdown_pct_equity
     ):
         risk_blockers.append("runtime_ledger_drawdown_pct_equity_above_limit")
+    if runtime_import_due and final_authority_mode and max_intraday_drawdown is None:
+        risk_blockers.append("runtime_ledger_max_intraday_drawdown_missing")
+    elif (
+        runtime_import_due
+        and final_authority_mode
+        and max_intraday_drawdown is not None
+        and max_intraday_drawdown
+        > DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.authority_max_intraday_drawdown
+    ):
+        risk_blockers.append("runtime_ledger_max_intraday_drawdown_above_limit")
     if runtime_import_due and best_day_share is None:
         risk_blockers.append("runtime_ledger_best_day_share_missing")
     elif (
@@ -1699,6 +2007,8 @@ def build_runtime_ledger_proof_packet(
             "runtime_import_due": runtime_import_due,
             "drawdown_pct_equity": _decimal_text(drawdown_pct),
             "drawdown_pct_equity_source": drawdown_source,
+            "max_intraday_drawdown": _decimal_text(max_intraday_drawdown),
+            "max_intraday_drawdown_source": max_intraday_drawdown_source,
             "best_day_share": _decimal_text(best_day_share),
             "best_day_share_source": best_day_share_source,
             "symbol_concentration_share": _decimal_text(symbol_concentration_share),
@@ -1707,6 +2017,9 @@ def build_runtime_ledger_proof_packet(
         expected={
             "max_drawdown_pct_equity": _decimal_text(
                 max_runtime_ledger_drawdown_pct_equity
+            ),
+            "max_intraday_drawdown": _decimal_text(
+                DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.authority_max_intraday_drawdown
             ),
             "max_best_day_share": _decimal_text(max_runtime_ledger_best_day_share),
             "max_symbol_concentration_share": _decimal_text(
@@ -1718,14 +2031,115 @@ def build_runtime_ledger_proof_packet(
     )
     _extend_unique(blockers, risk_blockers)
 
+    tigerbeetle_status = _mapping(
+        status.get("tigerbeetle_ledger") or status.get("tigerbeetle")
+    )
+    latest_tigerbeetle_reconciliation = _mapping(
+        tigerbeetle_status.get("latest_reconciliation")
+    )
+    tigerbeetle_ref_counts = _mapping(
+        tigerbeetle_status.get("ref_counts")
+        or latest_tigerbeetle_reconciliation.get("ref_counts")
+    )
+    tigerbeetle_claimed = (
+        _bool(tigerbeetle_status.get("enabled"))
+        or _bool(tigerbeetle_status.get("required"))
+        or _bool(tigerbeetle_status.get("journal_enabled"))
+        or _bool(tigerbeetle_status.get("reconcile_required"))
+        # Runtime-import TigerBeetle refs are proof artifacts; require live
+        # reconciliation status only when the status or completion gate claims
+        # TigerBeetle authority.
+        or _contains_tigerbeetle_claim(live_scale_gate)
+    )
+    tigerbeetle_required_for_authority = (
+        final_authority_mode and tigerbeetle_claimed and runtime_import_due
+    )
+    tigerbeetle_blockers = _text_list(tigerbeetle_status.get("blockers"))
+    if tigerbeetle_required_for_authority:
+        if not latest_tigerbeetle_reconciliation:
+            _extend_unique(tigerbeetle_blockers, ["tigerbeetle_reconciliation_missing"])
+        elif not _bool(latest_tigerbeetle_reconciliation.get("ok")):
+            _extend_unique(tigerbeetle_blockers, ["tigerbeetle_reconciliation_not_ok"])
+        _extend_unique(
+            tigerbeetle_blockers,
+            _text_list(latest_tigerbeetle_reconciliation.get("blockers")),
+        )
+        required_runtime_ref_count = max(1, len(ledger_refs))
+        runtime_ref_count = _int(tigerbeetle_ref_counts.get("runtime_ledger_ref_count"))
+        signed_ref_count = _int(
+            latest_tigerbeetle_reconciliation.get(
+                "runtime_ledger_signed_transfer_count"
+            )
+        )
+        if runtime_ref_count < required_runtime_ref_count:
+            _extend_unique(
+                tigerbeetle_blockers, ["tigerbeetle_runtime_ledger_refs_missing"]
+            )
+        if signed_ref_count < required_runtime_ref_count:
+            _extend_unique(
+                tigerbeetle_blockers,
+                ["tigerbeetle_runtime_ledger_signed_refs_missing"],
+            )
+    else:
+        required_runtime_ref_count = 0
+        runtime_ref_count = _int(tigerbeetle_ref_counts.get("runtime_ledger_ref_count"))
+        signed_ref_count = _int(
+            latest_tigerbeetle_reconciliation.get(
+                "runtime_ledger_signed_transfer_count"
+            )
+        )
+    _check(
+        checks,
+        "tigerbeetle_runtime_pnl_authority_refs",
+        passed=not tigerbeetle_required_for_authority or not tigerbeetle_blockers,
+        observed={
+            "claimed": tigerbeetle_claimed,
+            "required_for_authority": tigerbeetle_required_for_authority,
+            "runtime_import_due": runtime_import_due,
+            "enabled": tigerbeetle_status.get("enabled"),
+            "required": tigerbeetle_status.get("required"),
+            "journal_enabled": tigerbeetle_status.get("journal_enabled"),
+            "reconcile_required": tigerbeetle_status.get("reconcile_required"),
+            "status_ok": tigerbeetle_status.get("ok"),
+            "reconciliation_ok": tigerbeetle_status.get("reconciliation_ok"),
+            "required_runtime_ledger_ref_count": required_runtime_ref_count,
+            "runtime_ledger_ref_count": runtime_ref_count,
+            "runtime_ledger_signed_transfer_count": signed_ref_count,
+            "latest_reconciliation": dict(latest_tigerbeetle_reconciliation),
+            "blockers": tigerbeetle_blockers,
+        },
+        expected=(
+            "authority packets require reconciled signed TigerBeetle runtime-ledger "
+            "PnL refs when TigerBeetle is enabled or claimed"
+        ),
+        blockers=tigerbeetle_blockers,
+        status=None
+        if tigerbeetle_required_for_authority
+        else "not_claimed_not_due_or_not_authority_mode",
+    )
+    if tigerbeetle_required_for_authority:
+        _extend_unique(blockers, tigerbeetle_blockers)
+
     failed_checks = [key for key, value in checks.items() if not value["passed"]]
-    post_cost_proof_allowed = not failed_checks
-    promotion_prerequisite_blockers = list(capital_status_blockers)
+    post_cost_proof_satisfied = not failed_checks
+    post_cost_proof_authority_allowed = (
+        post_cost_proof_satisfied and final_authority_mode
+    )
+    authority_blockers = list(blockers)
+    _extend_unique(authority_blockers, mode_authority_blockers)
+    authority_failed_checks = list(failed_checks)
+    _extend_unique(authority_failed_checks, mode_authority_failed_checks)
+    promotion_prerequisite_blockers = list(mode_authority_blockers)
+    _extend_unique(promotion_prerequisite_blockers, capital_status_blockers)
     _extend_unique(promotion_prerequisite_blockers, health_gate_promotion_blockers)
     capital_promotion_allowed = (
-        post_cost_proof_allowed and not promotion_prerequisite_blockers
+        post_cost_proof_authority_allowed and not promotion_prerequisite_blockers
     )
     capital_promotion_failed_checks: list[str] = []
+    if mode_authority_blockers:
+        capital_promotion_failed_checks.append(
+            "runtime_ledger_proof_mode_authority_required"
+        )
     if capital_status_blockers:
         capital_promotion_failed_checks.append("capital_promotion_gate")
     if health_gate_promotion_blockers:
@@ -1740,12 +2154,12 @@ def build_runtime_ledger_proof_packet(
         "paper_route_session_settlement_pending",
         "paper_route_import_not_ready",
     }
-    if post_cost_proof_allowed and not promotion_prerequisite_blockers:
+    if post_cost_proof_authority_allowed and not promotion_prerequisite_blockers:
         verdict = "promotion_authority_allowed"
         reason = "runtime_ledger_live_paper_post_cost_proof_satisfied"
         promotion_reason = reason
         capital_reason = "live_capital_promotion_gate_clear"
-    elif post_cost_proof_allowed:
+    elif post_cost_proof_authority_allowed:
         verdict = "post_cost_proof_authority_allowed_capital_promotion_blocked"
         reason = (
             "runtime_ledger_live_paper_post_cost_proof_satisfied_"
@@ -1753,6 +2167,11 @@ def build_runtime_ledger_proof_packet(
         )
         promotion_reason = "live_capital_promotion_gate_blocked"
         capital_reason = "live_capital_promotion_gate_blocked"
+    elif post_cost_proof_satisfied and not final_authority_mode:
+        verdict = f"{resolved_proof_mode}_proof_satisfied_evidence_collection_only"
+        reason = f"runtime_ledger_{resolved_proof_mode}_proof_satisfied"
+        promotion_reason = RUNTIME_LEDGER_PROOF_MODE_NOT_AUTHORITY_BLOCKER
+        capital_reason = RUNTIME_LEDGER_PROOF_MODE_NOT_AUTHORITY_BLOCKER
     elif set(blockers).issubset(waiting_blockers):
         verdict = "waiting_for_runtime_window"
         reason = "paper_route_runtime_window_not_importable_yet"
@@ -1767,21 +2186,25 @@ def build_runtime_ledger_proof_packet(
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": generated_at,
+        "proof_mode": resolved_proof_mode,
         "verdict": verdict,
-        "ok": post_cost_proof_allowed,
+        "ok": post_cost_proof_satisfied,
+        "final_authority_ok": post_cost_proof_authority_allowed,
+        "evidence_collection_only": not final_authority_mode,
         "post_cost_proof_authority": {
-            "allowed": post_cost_proof_allowed,
+            "allowed": post_cost_proof_authority_allowed,
+            "proof_satisfied": post_cost_proof_satisfied,
             "reason": reason,
-            "blocking_reasons": blockers,
-            "failed_checks": failed_checks,
+            "blocking_reasons": authority_blockers,
+            "failed_checks": authority_failed_checks,
         },
         "capital_promotion_authority": {
             "allowed": capital_promotion_allowed,
             "reason": capital_reason,
             "blocking_reasons": promotion_prerequisite_blockers,
-            "proof_prerequisite_blocking_reasons": blockers,
+            "proof_prerequisite_blocking_reasons": authority_blockers,
             "failed_checks": capital_promotion_failed_checks
-            if post_cost_proof_allowed
+            if post_cost_proof_authority_allowed
             else promotion_failed_checks,
         },
         "promotion_authority": {
@@ -1791,6 +2214,9 @@ def build_runtime_ledger_proof_packet(
             "failed_checks": promotion_failed_checks,
         },
         "target": {
+            "proof_mode": resolved_proof_mode,
+            "final_authority": final_authority_mode,
+            "evidence_collection_only": not final_authority_mode,
             "min_runtime_ledger_net_pnl_after_costs": _decimal_text(
                 min_runtime_ledger_net_pnl
             ),
@@ -1798,14 +2224,29 @@ def build_runtime_ledger_proof_packet(
                 min_runtime_ledger_daily_net_pnl
             ),
             "min_runtime_ledger_trading_days": min_runtime_ledger_trading_days,
+            "min_runtime_ledger_median_daily_net_pnl_after_costs": _decimal_text(
+                DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.authority_min_median_daily_net_pnl_after_costs
+            ),
+            "min_runtime_ledger_p10_daily_net_pnl_after_costs": _decimal_text(
+                DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.authority_min_p10_daily_net_pnl_after_costs
+            ),
+            "min_runtime_ledger_worst_day_net_pnl_after_costs": _decimal_text(
+                DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.authority_min_worst_day_net_pnl_after_costs
+            ),
             "max_runtime_ledger_drawdown_pct_equity": _decimal_text(
                 max_runtime_ledger_drawdown_pct_equity
+            ),
+            "max_runtime_ledger_intraday_drawdown": _decimal_text(
+                DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.authority_max_intraday_drawdown
             ),
             "max_runtime_ledger_best_day_share": _decimal_text(
                 max_runtime_ledger_best_day_share
             ),
             "max_runtime_ledger_symbol_concentration_share": _decimal_text(
                 max_runtime_ledger_symbol_concentration_share
+            ),
+            "target_implied_avg_daily_filled_notional": _decimal_text(
+                target_implied_avg_daily_filled_notional
             ),
         },
         "candidate": _first_identity(
@@ -1910,34 +2351,43 @@ def _parser() -> argparse.ArgumentParser:
         "--completion-url", help="URL returning /trading/completion/doc29 JSON."
     )
     parser.add_argument(
+        "--proof-mode",
+        choices=RUNTIME_LEDGER_PROOF_MODES,
+        default=DEFAULT_RUNTIME_LEDGER_PROOF_MODE,
+        help=(
+            "Proof packet mode. smoke/probation prove plumbing or bounded "
+            "evidence collection only; authority is required for promotion."
+        ),
+    )
+    parser.add_argument(
         "--min-runtime-ledger-net-pnl",
-        default=str(DEFAULT_MIN_RUNTIME_LEDGER_NET_PNL),
+        default=str(DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.min_net_pnl_after_costs),
         help="Minimum total runtime-ledger net strategy PnL after costs.",
     )
     parser.add_argument(
         "--min-runtime-ledger-daily-net-pnl",
-        default=str(DEFAULT_MIN_RUNTIME_LEDGER_DAILY_NET_PNL),
+        default=str(DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.min_daily_net_pnl_after_costs),
         help="Minimum runtime-ledger net strategy PnL after costs per observed trading day.",
     )
     parser.add_argument(
         "--min-runtime-ledger-trading-days",
         type=int,
-        default=DEFAULT_MIN_RUNTIME_LEDGER_TRADING_DAYS,
+        default=DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.min_trading_days,
         help="Minimum observed runtime-ledger trading days.",
     )
     parser.add_argument(
         "--max-runtime-ledger-drawdown-pct-equity",
-        default=str(DEFAULT_MAX_RUNTIME_LEDGER_DRAWDOWN_PCT_EQUITY),
+        default=str(DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.max_drawdown_pct_equity),
         help="Maximum observed runtime-ledger drawdown as a fraction of equity.",
     )
     parser.add_argument(
         "--max-runtime-ledger-best-day-share",
-        default=str(DEFAULT_MAX_RUNTIME_LEDGER_BEST_DAY_SHARE),
+        default=str(DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.max_best_day_share),
         help="Maximum share of post-cost runtime-ledger PnL attributable to one trading day.",
     )
     parser.add_argument(
         "--max-runtime-ledger-symbol-concentration-share",
-        default=str(DEFAULT_MAX_RUNTIME_LEDGER_SYMBOL_CONCENTRATION_SHARE),
+        default=str(DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.max_symbol_concentration_share),
         help="Maximum share of post-cost runtime-ledger PnL attributable to one symbol.",
     )
     parser.add_argument("--generated-at", default=None)
@@ -2049,6 +2499,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     assert status is not None
     packet = build_runtime_ledger_proof_packet(
         status,
+        proof_mode=args.proof_mode,
         paper_route_evidence=paper_route_evidence,
         runtime_window_import=runtime_window_import,
         completion_status=completion_status,

@@ -34,6 +34,8 @@ from app.models import (
 )
 from app.trading.discovery import fast_replay
 from app.trading.discovery.replay_tape import (
+    REPLAY_TAPE_MANIFEST_SCHEMA_VERSION,
+    ReplayTapeManifest,
     build_source_query_digest,
     materialize_signal_tape,
 )
@@ -4504,6 +4506,14 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             "exact_replay_required", selection["replay_tape_preview"]["blockers"]
         )
         self.assertTrue(preview_scores_exists)
+        nvda_row = next(
+            row
+            for row in selection["rows"]
+            if row["candidate_spec_id"] == "spec-nvda-continuation"
+        )
+        self.assertIn("fast_replay_preview_ofi_pressure_score", nvda_row)
+        self.assertIn("fast_replay_preview_microprice_bias_bps", nvda_row)
+        self.assertIn("fast_replay_preview_impact_liquidity_penalty_bps", nvda_row)
         aapl_row = next(
             row
             for row in selection["rows"]
@@ -4512,6 +4522,106 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertTrue(aapl_row["pre_fast_replay_preview_selected_for_replay"])
         self.assertFalse(aapl_row["selected_for_replay"])
         self.assertEqual(aapl_row["selection_reason"], "fast_replay_preview_filtered")
+
+    def test_fast_replay_preview_scores_microstructure_diagnostics_preview_only(
+        self,
+    ) -> None:
+        base_spec = self._candidate_spec(
+            "spec-nvda-microstructure-preview",
+            selection_mode="continuation",
+        )
+        spec = replace(
+            base_spec,
+            strategy_overrides={
+                **base_spec.strategy_overrides,
+                "universe_symbols": ["NVDA"],
+            },
+        )
+        rows = [
+            SignalEnvelope(
+                event_ts=datetime(2026, 2, 23, 15, 30, tzinfo=timezone.utc),
+                symbol="NVDA",
+                timeframe="1Sec",
+                seq=1,
+                source="ta",
+                payload={
+                    "bid": Decimal("100.00"),
+                    "ask": Decimal("100.02"),
+                    "bid_size": Decimal("220"),
+                    "ask_size": Decimal("80"),
+                    "microbar_volume": Decimal("15000"),
+                },
+            ),
+            SignalEnvelope(
+                event_ts=datetime(2026, 2, 23, 15, 31, tzinfo=timezone.utc),
+                symbol="NVDA",
+                timeframe="1Sec",
+                seq=2,
+                source="ta",
+                payload={
+                    "bid": Decimal("100.08"),
+                    "ask": Decimal("100.12"),
+                    "bid_size": Decimal("260"),
+                    "ask_size": Decimal("90"),
+                    "microbar_volume": Decimal("17000"),
+                },
+            ),
+            SignalEnvelope(
+                event_ts=datetime(2026, 2, 24, 15, 30, tzinfo=timezone.utc),
+                symbol="NVDA",
+                timeframe="1Sec",
+                seq=3,
+                source="ta",
+                payload={
+                    "bid": Decimal("100.19"),
+                    "ask": Decimal("100.25"),
+                    "order_flow_imbalance": Decimal("0.45"),
+                    "microbar_volume": Decimal("11000"),
+                },
+            ),
+        ]
+        manifest = ReplayTapeManifest(
+            schema_version=REPLAY_TAPE_MANIFEST_SCHEMA_VERSION,
+            dataset_snapshot_ref="microstructure-preview",
+            symbols=("NVDA",),
+            row_symbols=("NVDA",),
+            start_date=date(2026, 2, 23),
+            end_date=date(2026, 2, 24),
+            start_ts=datetime(2026, 2, 23, 14, 30, tzinfo=timezone.utc),
+            end_ts=datetime(2026, 2, 24, 21, 0, tzinfo=timezone.utc),
+            min_event_ts=rows[0].event_ts,
+            max_event_ts=rows[-1].event_ts,
+            trading_day_count=2,
+            row_count=len(rows),
+            source_query_digest="microstructure-preview-query",
+            content_sha256="microstructure-preview-sha",
+            artifact_refs={},
+            source_table_versions={},
+            created_at=datetime(2026, 2, 25, tzinfo=timezone.utc),
+        )
+
+        preview = fast_replay.build_fast_replay_preview(
+            specs=(spec,),
+            rows=rows,
+            replay_tape_manifest=manifest,
+            top_k=1,
+            min_rows_per_candidate=2,
+        )
+        row_payload = preview.rows[0].to_payload()
+        manifest_payload = preview.to_manifest_payload()
+
+        self.assertEqual(
+            row_payload["schema_version"], "torghut.fast-replay-preview-row.v2"
+        )
+        self.assertEqual(manifest_payload["status"], "preview_only")
+        self.assertFalse(manifest_payload["promotion_proof"])
+        self.assertIn("exact_replay_required", manifest_payload["blockers"])
+        self.assertGreater(Decimal(row_payload["ofi_pressure_score"]), Decimal("0"))
+        self.assertGreater(Decimal(row_payload["microprice_bias_bps"]), Decimal("0"))
+        self.assertGreater(Decimal(row_payload["spread_tail_bps"]), Decimal("0"))
+        self.assertGreater(
+            Decimal(row_payload["impact_liquidity_penalty_bps"]), Decimal("0")
+        )
 
     def test_materialize_replay_tape_writes_run_artifacts_and_updates_args(
         self,
@@ -4807,6 +4917,57 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 )
             ),
             5.0,
+        )
+        self.assertAlmostEqual(
+            fast_replay._extract_quote_depth_imbalance(
+                SignalEnvelope(
+                    event_ts=datetime(2026, 2, 23, 15, 30, tzinfo=timezone.utc),
+                    symbol="NVDA",
+                    payload={
+                        "bid_size": Decimal("200"),
+                        "ask_size": Decimal("100"),
+                    },
+                )
+            )
+            or 0.0,
+            1.0 / 3.0,
+        )
+        self.assertAlmostEqual(
+            fast_replay._extract_ofi_pressure(
+                SignalEnvelope(
+                    event_ts=datetime(2026, 2, 23, 15, 30, tzinfo=timezone.utc),
+                    symbol="NVDA",
+                    payload={"order_flow_imbalance": Decimal("50")},
+                )
+            )
+            or 0.0,
+            0.46211715726000974,
+        )
+        self.assertGreater(
+            fast_replay._extract_microprice_bias_bps(
+                SignalEnvelope(
+                    event_ts=datetime(2026, 2, 23, 15, 30, tzinfo=timezone.utc),
+                    symbol="NVDA",
+                    payload={
+                        "bid": Decimal("100"),
+                        "ask": Decimal("101"),
+                        "bid_size": Decimal("200"),
+                        "ask_size": Decimal("100"),
+                    },
+                )
+            )
+            or 0.0,
+            0.0,
+        )
+        self.assertEqual(
+            fast_replay._extract_volume(
+                SignalEnvelope(
+                    event_ts=datetime(2026, 2, 23, 15, 30, tzinfo=timezone.utc),
+                    symbol="NVDA",
+                    payload={"microbar_volume": Decimal("12345")},
+                )
+            ),
+            12345.0,
         )
         self.assertIsNone(
             fast_replay._extract_spread_bps(

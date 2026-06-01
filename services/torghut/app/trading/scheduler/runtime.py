@@ -25,6 +25,11 @@ from ..llm.dspy_programs.runtime import (
 )
 from ..llm.guardrails import evaluate_llm_guardrails
 from ..market_context import MarketContextClient, evaluate_market_context
+from ..market_context_domains import (
+    active_market_context_domain_states,
+    active_market_context_mapping,
+    active_market_context_reasons,
+)
 from ..order_feed import OrderFeedIngestor
 from ..prices import ClickHousePriceFetcher
 from ..reconcile import Reconciler
@@ -211,12 +216,28 @@ class TradingScheduler(TradingSchedulerGovernanceMixin):
         last_as_of = self.state.last_market_context_as_of
         last_freshness_seconds = self.state.last_market_context_freshness_seconds
         last_quality_score = self.state.last_market_context_quality_score
-        last_domain_states = dict(self.state.last_market_context_domain_states)
-        last_risk_flags = list(self.state.last_market_context_risk_flags)
+        last_domain_states = {
+            key: str(value).strip().lower()
+            for key, value in active_market_context_mapping(
+                self.state.last_market_context_domain_states
+            ).items()
+        }
+        last_risk_flags = active_market_context_reasons(
+            self.state.last_market_context_risk_flags
+        )
         last_allow_llm = self.state.last_market_context_allow_llm
         last_reason = self.state.last_market_context_reason
         alert_active = self.state.market_context_alert_active
         alert_reason = self.state.market_context_alert_reason
+        if alert_active:
+            active_alert_reasons = active_market_context_reasons(
+                [alert_reason or "market_context_alert_active"]
+            )
+            if active_alert_reasons:
+                alert_reason = active_alert_reasons[0]
+            else:
+                alert_active = False
+                alert_reason = None
         probe_symbol = self._market_context_probe_symbol()
         fetch_symbol = last_symbol or probe_symbol
         if fetch_symbol:
@@ -260,13 +281,8 @@ class TradingScheduler(TradingSchedulerGovernanceMixin):
                     last_as_of = bundle.as_of_utc
                     last_freshness_seconds = int(bundle.freshness_seconds)
                     last_quality_score = float(bundle.quality_score)
-                    last_domain_states = {
-                        "technicals": bundle.domains.technicals.state,
-                        "fundamentals": bundle.domains.fundamentals.state,
-                        "news": bundle.domains.news.state,
-                        "regime": bundle.domains.regime.state,
-                    }
-                    last_risk_flags = list(bundle.risk_flags)
+                    last_domain_states = active_market_context_domain_states(bundle)
+                    last_risk_flags = active_market_context_reasons(bundle.risk_flags)
                     last_allow_llm = verdict.allow_llm
                     last_reason = verdict.reason
                     alert_active = not verdict.allow_llm
@@ -290,11 +306,8 @@ class TradingScheduler(TradingSchedulerGovernanceMixin):
         return {
             "required": settings.trading_market_context_required,
             "fail_mode": settings.trading_market_context_fail_mode,
-            "allow_degraded_last_good": settings.trading_market_context_allow_degraded_last_good,
             "min_quality": settings.trading_market_context_min_quality,
             "max_staleness_seconds": settings.trading_market_context_max_staleness_seconds,
-            "fundamentals_degraded_max_staleness_seconds": settings.trading_market_context_fundamentals_degraded_max_staleness_seconds,
-            "news_degraded_max_staleness_seconds": settings.trading_market_context_news_degraded_max_staleness_seconds,
             "last_symbol": last_symbol,
             "last_checked_at": last_checked_at,
             "last_as_of": last_as_of,

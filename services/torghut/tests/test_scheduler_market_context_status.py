@@ -184,8 +184,6 @@ class TestTradingSchedulerMarketContextStatus(TestCase):
             status["last_domain_states"],
             {
                 "technicals": "ok",
-                "fundamentals": "ok",
-                "news": "ok",
                 "regime": "ok",
             },
         )
@@ -292,12 +290,14 @@ class TestTradingSchedulerMarketContextStatus(TestCase):
         scheduler.state.last_market_context_domain_states = {
             "technicals": "ok",
             "fundamentals": "ok",
-            "news": "stale",
-            "regime": "ok",
+            "news": "ok",
+            "regime": "stale",
         }
-        scheduler.state.last_market_context_risk_flags = ["news_stale"]
+        scheduler.state.last_market_context_risk_flags = ["regime_stale"]
         scheduler.state.market_context_alert_active = True
-        scheduler.state.market_context_alert_reason = "market_context_domain_news_stale"
+        scheduler.state.market_context_alert_reason = (
+            "market_context_domain_regime_stale"
+        )
 
         with patch("app.trading.market_context.urlopen", side_effect=fake_urlopen):
             status = scheduler.market_context_status()
@@ -310,14 +310,25 @@ class TestTradingSchedulerMarketContextStatus(TestCase):
             status["last_domain_states"],
             {
                 "technicals": "ok",
-                "fundamentals": "ok",
-                "news": "ok",
                 "regime": "ok",
             },
         )
         self.assertFalse(status["alert_active"])
         self.assertFalse(scheduler.state.market_context_alert_active)
         self.assertIsNone(scheduler.state.market_context_alert_reason)
+
+    def test_status_clears_retired_market_context_alert_reason(self) -> None:
+        config.settings.trading_market_context_url = ""
+        config.settings.trading_static_symbols_raw = ""
+
+        scheduler = TradingScheduler()
+        scheduler.state.market_context_alert_active = True
+        scheduler.state.market_context_alert_reason = "market_context_domain_news_stale"
+
+        status = scheduler.market_context_status()
+
+        self.assertFalse(status["alert_active"])
+        self.assertIsNone(status["alert_reason"])
 
     def test_status_records_context_fetch_error(self) -> None:
         config.settings.trading_market_context_url = (

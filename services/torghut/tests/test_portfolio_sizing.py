@@ -988,6 +988,7 @@ class TestPortfolioSizing(TestCase):
         self.assertIn("cap_per_symbol_zero", portfolio_output.get("methods", []))
 
     def test_symbol_capacity_clip_below_one_share_reports_capacity_reason(self) -> None:
+        config.settings.trading_fractional_equities_enabled = False
         sizer = PortfolioSizer(
             PortfolioSizingConfig(
                 notional_per_position=None,

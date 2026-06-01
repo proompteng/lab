@@ -7,6 +7,8 @@ import {
   handleAutotraderGetScorecard,
   handleAutotraderGetSession,
   handleAutotraderListSessions,
+  handleAutotraderRecordOrder,
+  handleAutotraderRecordPositionSnapshot,
   handleAutotraderStartSession,
   handleAutotraderUpsertStatus,
 } from '../autotrader-api'
@@ -400,7 +402,7 @@ describe('synthesis REST auth', () => {
         body: JSON.stringify({
           sessionId,
           cycle: 3,
-          phase: 'scan',
+          phase: 'no_trade',
           currentAction: 'standing down on weak candidates',
           blocker: null,
           payload: { noTradeReason: 'no A setup' },
@@ -499,6 +501,7 @@ describe('synthesis REST auth', () => {
       maxDrawdown: '12',
     })
     expect(detailPayload.session.closingEquity).toBe('38025')
+    expect(detailPayload.status.phase).toBe('no_trade')
     expect(detailPayload.status.currentAction).toContain('standing down')
     expect(detailPayload.events[0].eventType).toBe('no_trade_decision')
     expect(detailPayload.tradeTickets[0].noTradeReason).toBe('C setup blocked')
@@ -513,5 +516,305 @@ describe('synthesis REST auth', () => {
       rejectedInvalid: 1,
     })
     expect(scorecardPayload.setupExamples[0].notes).toBe('C setup correctly blocked')
+  })
+
+  test('clamps future autotrader position snapshot timestamps at ingestion', async () => {
+    const authedHeaders = {
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+    }
+    const startResponse = await handleAutotraderStartSession(
+      new Request('http://synthesis.test/api/autotrader/sessions', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          agentRunName: 'autonomous-trader-position-time-api-test',
+          mode: 'market_open',
+          tradingDate: '2026-05-29',
+          accountId: 'paper-account',
+          goalEquity: '500000',
+          openingEquity: '38400',
+          marketOpenAt: '2026-05-29T13:30:00Z',
+          marketCloseAt: '2026-05-29T20:00:00Z',
+        }),
+      }),
+    )
+    const startPayload = await startResponse.json()
+    const sessionId = startPayload.session.id
+
+    const snapshotResponse = await handleAutotraderRecordPositionSnapshot(
+      new Request('http://synthesis.test/api/autotrader/position-snapshots', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          sessionId,
+          symbol: 'NVDA',
+          quantity: '1',
+          marketValue: '220',
+          capturedAt: '2999-01-01T00:00:00Z',
+          brokerPayload: { source: 'test' },
+        }),
+      }),
+    )
+    const detailResponse = await handleAutotraderGetSession(
+      new Request(`http://synthesis.test/api/autotrader/sessions/${sessionId}`),
+      sessionId,
+    )
+    const snapshotPayload = await snapshotResponse.json()
+    const detailPayload = await detailResponse.json()
+
+    expect(snapshotPayload.positionSnapshot.capturedAt).not.toBe('2999-01-01T00:00:00.000Z')
+    expect(Date.parse(snapshotPayload.positionSnapshot.capturedAt)).toBeLessThanOrEqual(Date.now() + 60_000)
+    expect(detailPayload.positionSnapshots[0].capturedAt).toBe(snapshotPayload.positionSnapshot.capturedAt)
+  })
+
+  test('finalizes idempotently and detaches cross-session ticket references', async () => {
+    const authedHeaders = {
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+    }
+    const startAResponse = await handleAutotraderStartSession(
+      new Request('http://synthesis.test/api/autotrader/sessions', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          agentRunName: 'autonomous-trader-finalize-a',
+          mode: 'market_open',
+          tradingDate: '2026-05-29',
+          accountId: 'paper-account',
+          goalEquity: '500000',
+          marketOpenAt: '2026-05-29T13:30:00Z',
+          marketCloseAt: '2026-05-29T20:00:00Z',
+        }),
+      }),
+    )
+    const startBResponse = await handleAutotraderStartSession(
+      new Request('http://synthesis.test/api/autotrader/sessions', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          agentRunName: 'autonomous-trader-finalize-b',
+          mode: 'market_open',
+          tradingDate: '2026-05-29',
+          accountId: 'paper-account',
+          goalEquity: '500000',
+          marketOpenAt: '2026-05-29T13:30:00Z',
+          marketCloseAt: '2026-05-29T20:00:00Z',
+        }),
+      }),
+    )
+    const sessionA = (await startAResponse.json()).session.id
+    const sessionB = (await startBResponse.json()).session.id
+    const otherTicketResponse = await handleAutotraderCreateTradeTicket(
+      new Request('http://synthesis.test/api/autotrader/trade-tickets', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          sessionId: sessionB,
+          idempotencyKey: 'other-session-ticket',
+          symbol: 'NVDA',
+          instrument: 'stock',
+          side: 'buy',
+          setupType: 'vwap_reclaim',
+          setupGrade: 'A',
+          regime: 'news_driven',
+          timeBucket: 'open_30m',
+          thesis: 'Valid setup in another session.',
+          entryTrigger: 'VWAP reclaim.',
+          invalidation: 'Lose VWAP.',
+          protectionType: 'bracket',
+          status: 'validated',
+        }),
+      }),
+    )
+    const otherTicket = (await otherTicketResponse.json()).ticket.id
+    const finalizeBody = {
+      sessionId: sessionA,
+      terminalReason: 'market_closed',
+      summary: { accountEquity: '38750' },
+      scorecardObservations: [
+        {
+          ticketId: otherTicket,
+          symbol: 'NVDA',
+          setupType: 'vwap_reclaim',
+          setupGrade: 'A',
+          regime: 'news_driven',
+          timeBucket: 'open_30m',
+          outcome: 'win',
+          realizedR: '1.25',
+          notes: 'cross-session ticket should detach',
+        },
+      ],
+    }
+
+    await handleAutotraderFinalizeSession(
+      new Request('http://synthesis.test/api/autotrader/finalize', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify(finalizeBody),
+      }),
+    )
+    const secondFinalizeResponse = await handleAutotraderFinalizeSession(
+      new Request('http://synthesis.test/api/autotrader/finalize', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify(finalizeBody),
+      }),
+    )
+    const scorecardResponse = await handleAutotraderGetScorecard(
+      new Request('http://synthesis.test/api/autotrader/scorecards?symbol=NVDA&setupType=vwap_reclaim&limit=5'),
+    )
+    const detail = await secondFinalizeResponse.json()
+    const scorecards = await scorecardResponse.json()
+
+    expect(detail.session.summary.finalizationWarnings[0]).toMatchObject({
+      type: 'detached_cross_session_ticket_id',
+      ticketId: otherTicket,
+      sessionId: sessionA,
+      ticketSessionId: sessionB,
+    })
+    expect(detail.setupExamples).toHaveLength(1)
+    expect(detail.setupExamples[0]).toMatchObject({
+      ticketId: null,
+      notes: 'cross-session ticket should detach',
+    })
+    expect(scorecards.scorecards[0]).toMatchObject({
+      symbol: 'NVDA',
+      sampleSize: 1,
+      wins: 1,
+    })
+  })
+
+  test('marks replaced broker orders as replaced when recording a replacement order', async () => {
+    const authedHeaders = {
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+    }
+    const startResponse = await handleAutotraderStartSession(
+      new Request('http://synthesis.test/api/autotrader/sessions', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          agentRunName: 'autonomous-trader-order-replace-api-test',
+          mode: 'market_open',
+          tradingDate: '2026-05-29',
+          accountId: 'paper-account',
+          goalEquity: '500000',
+          openingEquity: '38400',
+          marketOpenAt: '2026-05-29T13:30:00Z',
+          marketCloseAt: '2026-05-29T20:00:00Z',
+        }),
+      }),
+    )
+    const startPayload = await startResponse.json()
+    const sessionId = startPayload.session.id
+
+    await handleAutotraderRecordOrder(
+      new Request('http://synthesis.test/api/autotrader/orders', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          sessionId,
+          clientOrderId: 'avgo-original-stop',
+          brokerOrderId: 'alpaca-original-stop',
+          symbol: 'AVGO',
+          instrument: 'stock',
+          side: 'sell',
+          quantity: '50',
+          orderType: 'stop_limit',
+          orderClass: 'bracket_child_stop_broker_generated',
+          limitPrice: '438.75',
+          stopPrice: '438.90',
+          status: 'accepted',
+          brokerPayload: { status: 'held' },
+        }),
+      }),
+    )
+    await handleAutotraderRecordOrder(
+      new Request('http://synthesis.test/api/autotrader/orders', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          sessionId,
+          clientOrderId: 'avgo-tightened-stop',
+          brokerOrderId: 'alpaca-tightened-stop',
+          symbol: 'AVGO',
+          instrument: 'stock',
+          side: 'sell',
+          quantity: '50',
+          orderType: 'stop_limit',
+          orderClass: 'bracket_child_stop_replace',
+          limitPrice: '439.50',
+          stopPrice: '439.70',
+          status: 'accepted',
+          brokerPayload: {
+            status: 'held',
+            replaces: 'alpaca-original-stop',
+          },
+        }),
+      }),
+    )
+
+    const detailResponse = await handleAutotraderGetSession(
+      new Request(`http://synthesis.test/api/autotrader/sessions/${sessionId}`),
+      sessionId,
+    )
+    const detailPayload = await detailResponse.json()
+    const originalStop = detailPayload.orders.find(
+      (order: { clientOrderId: string }) => order.clientOrderId === 'avgo-original-stop',
+    )
+    const tightenedStop = detailPayload.orders.find(
+      (order: { clientOrderId: string }) => order.clientOrderId === 'avgo-tightened-stop',
+    )
+
+    expect(originalStop).toMatchObject({
+      brokerOrderId: 'alpaca-original-stop',
+      status: 'replaced',
+      brokerPayload: {
+        replacedBy: 'alpaca-tightened-stop',
+        replacementClientOrderId: 'avgo-tightened-stop',
+      },
+    })
+    expect(tightenedStop).toMatchObject({
+      brokerOrderId: 'alpaca-tightened-stop',
+      status: 'accepted',
+      brokerPayload: { replaces: 'alpaca-original-stop' },
+    })
+
+    const otherSessionResponse = await handleAutotraderStartSession(
+      new Request('http://synthesis.test/api/autotrader/sessions', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          agentRunName: 'autonomous-trader-order-reuse-api-test',
+          mode: 'market_open',
+          tradingDate: '2026-05-29',
+          accountId: 'paper-account',
+          goalEquity: '500000',
+          openingEquity: '38400',
+          marketOpenAt: '2026-05-29T13:30:00Z',
+          marketCloseAt: '2026-05-29T20:00:00Z',
+        }),
+      }),
+    )
+    const otherSessionPayload = await otherSessionResponse.json()
+    const reusedOrderResponse = await handleAutotraderRecordOrder(
+      new Request('http://synthesis.test/api/autotrader/orders', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          sessionId: otherSessionPayload.session.id,
+          clientOrderId: 'avgo-original-stop',
+          symbol: 'AVGO',
+          instrument: 'stock',
+          side: 'sell',
+          quantity: '50',
+          orderType: 'stop_limit',
+          status: 'accepted',
+        }),
+      }),
+    )
+
+    expect(reusedOrderResponse.status).toBe(500)
   })
 })

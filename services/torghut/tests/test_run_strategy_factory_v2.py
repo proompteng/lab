@@ -875,6 +875,83 @@ class TestRunStrategyFactoryV2(TestCase):
             result["persistence_failures"][0]["candidate_spec_id"], "exp-breakout-1"
         )
 
+    def test_run_strategy_factory_v2_applies_replay_ledger_guidance_before_frontier(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            strategy_configmap = self._write_strategy_configmap(root)
+            family_template_dir = self._write_family_template(root)
+            seed_sweep_dir = self._write_seed_sweep(root)
+            output_dir = root / "artifacts"
+            output_dir.mkdir()
+
+            experiment_row = runner.InMemoryExperimentSpec(
+                run_id="paper-run-1",
+                experiment_id="exp-breakout-guided",
+                payload_json={
+                    "family_template_id": "breakout_reclaim_v2",
+                    "selection_objectives": {"target_net_pnl_per_day": "500"},
+                    "template_overrides": {"params": {"max_entries_per_session": "1"}},
+                    "exact_replay_ledger_remediation": {
+                        "status": "blocked_pending_search_remediation",
+                        "candidate_id": "cand-replay-blocked",
+                        "promotion_blockers": ["avg_filled_notional_per_day_below_min"],
+                        "runtime_ledger_blockers": [],
+                        "recommended_search_actions": [{"required_multiplier": "2.0"}],
+                    },
+                },
+            )
+
+            observed_sweep_configs: list[dict[str, object]] = []
+
+            def fake_frontier(args: Namespace) -> dict[str, object]:
+                observed_sweep_configs.append(
+                    yaml.safe_load(Path(args.sweep_config).read_text(encoding="utf-8"))
+                )
+                return {
+                    "candidate_count": 2,
+                    "dataset_snapshot_receipt": {"snapshot_id": "snap-guided"},
+                    "top": [
+                        {
+                            "candidate_id": "cand-guided",
+                            "full_window": {"net_per_day": "501"},
+                        }
+                    ],
+                }
+
+            with patch(
+                "scripts.run_strategy_factory_v2.run_consistent_profitability_frontier",
+                side_effect=fake_frontier,
+            ):
+                result = runner.run_strategy_factory_v2_from_specs(
+                    Namespace(
+                        **{
+                            **vars(
+                                self._args(
+                                    output_dir=output_dir,
+                                    strategy_configmap=strategy_configmap,
+                                    family_template_dir=family_template_dir,
+                                    seed_sweep_dir=seed_sweep_dir,
+                                )
+                            ),
+                            "persist_results": False,
+                        }
+                    ),
+                    source_specs=[experiment_row],
+                )
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(
+            result["experiments"][0]["replay_ledger_guided_actions"], ["breadth"]
+        )
+        compiled = observed_sweep_configs[0]
+        self.assertEqual(compiled["parameters"]["max_entries_per_session"], ["1", "2"])
+        self.assertEqual(
+            compiled["metadata"]["replay_ledger_guided_search"]["source_candidate_id"],
+            "cand-replay-blocked",
+        )
+
     def test_run_strategy_factory_v2_respects_global_candidate_budget(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

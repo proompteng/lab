@@ -40,8 +40,17 @@ class _FakeObjectStoreClient:
         }
 
 
-def _status(*, blockers: list[str] | None = None) -> dict[str, object]:
-    return {
+_DEFAULT_TIGERBEETLE_LEDGER = object()
+
+
+def _status(
+    *,
+    blockers: list[str] | None = None,
+    tigerbeetle_ledger: dict[str, object] | None | object = (
+        _DEFAULT_TIGERBEETLE_LEDGER
+    ),
+) -> dict[str, object]:
+    payload: dict[str, object] = {
         "mode": "paper",
         "running": True,
         "live_submission_gate": {
@@ -52,6 +61,44 @@ def _status(*, blockers: list[str] | None = None) -> dict[str, object]:
         "proof_floor": {
             "blocking_reasons": [],
         },
+    }
+    if tigerbeetle_ledger is _DEFAULT_TIGERBEETLE_LEDGER:
+        payload["tigerbeetle_ledger"] = _tigerbeetle_ledger_status()
+    elif tigerbeetle_ledger is not None:
+        payload["tigerbeetle_ledger"] = tigerbeetle_ledger
+    return payload
+
+
+def _tigerbeetle_ledger_status(
+    *,
+    ok: bool = True,
+    runtime_ledger_ref_count: int = 1,
+    signed_ref_count: int = 1,
+    blockers: list[str] | None = None,
+) -> dict[str, object]:
+    return {
+        "schema_version": "torghut.tigerbeetle-ledger-status.v1",
+        "enabled": True,
+        "journal_enabled": True,
+        "required": False,
+        "reconcile_required": True,
+        "ok": ok and not blockers,
+        "protocol_ok": True,
+        "reconciliation_ok": ok and not blockers,
+        "ref_counts": {
+            "runtime_ledger_ref_count": runtime_ledger_ref_count,
+        },
+        "latest_reconciliation": {
+            "schema_version": "torghut.tigerbeetle-reconciliation.v1",
+            "ok": ok and not blockers,
+            "runtime_ledger_checked_transfer_count": runtime_ledger_ref_count,
+            "runtime_ledger_signed_transfer_count": signed_ref_count,
+            "ref_counts": {
+                "runtime_ledger_ref_count": runtime_ledger_ref_count,
+            },
+            "blockers": blockers or [],
+        },
+        "blockers": blockers or [],
     }
 
 
@@ -179,6 +226,27 @@ def _runtime_import(
         "proof_blockers": blocker_payloads,
         "materialized": authoritative and proof_status == "ok" and not blocker_payloads,
     }
+    if authoritative:
+        target_payload["tigerbeetle"] = {
+            "schema_version": "torghut.tigerbeetle-runtime-ledger-proof-refs.v1",
+            "cluster_ids": [2001],
+            "account_count": 2,
+            "transfer_count": 1,
+            "account_ids": ["100100100100100100100100100100100101"],
+            "account_keys": ["TORGHUT_SIM:cash", "TORGHUT_SIM:AAPL:position"],
+            "transfer_ids": ["340282366920938463463374607431768211"],
+            "missing_account_ids": [],
+            "source_refs": [
+                "postgres:tigerbeetle_account_refs",
+                "postgres:tigerbeetle_transfer_refs",
+            ],
+            "runtime_ledger_buckets": [
+                {
+                    "runtime_ledger_bucket_id": "runtime-ledger-bucket-1",
+                    "transfer_ids": ["340282366920938463463374607431768211"],
+                }
+            ],
+        }
     summary: dict[str, object] = {
         "promotion_allowed": authoritative,
         "runtime_observation": {
@@ -190,6 +258,21 @@ def _runtime_import(
             "runtime_ledger_tca_profit_proof_count": 1 if authoritative else 0,
             "runtime_ledger_tca_runtime_bucket_row_count": 1 if authoritative else 0,
             "runtime_ledger_tca_authoritative_bucket_count": 1 if authoritative else 0,
+            "runtime_ledger_source_execution_materialized_bucket_count": 1
+            if authoritative
+            else 0,
+            "runtime_ledger_source_bucket_profit_proof_count": 1
+            if authoritative
+            else 0,
+            "runtime_ledger_source_materializations": ["execution_order_events"]
+            if authoritative
+            else [],
+            "runtime_ledger_materialization_pnl_derivations": [
+                "execution_order_events_runtime_ledger"
+            ]
+            if authoritative
+            else [],
+            "runtime_ledger_profit_proof_blockers": [],
             "runtime_ledger_filled_notional": "50000" if authoritative else "0",
             "runtime_ledger_net_strategy_pnl_after_costs": "650"
             if authoritative
@@ -225,10 +308,16 @@ def _runtime_import(
 def _completion(
     *,
     status: str = "satisfied",
-    net_pnl: str = "650",
-    trading_days: int = 1,
+    net_pnl: str = "10000",
+    trading_days: int = 20,
     expectancy_bps: str = "13",
-    drawdown_pct: str | None = "0.04",
+    filled_notional: str = "10000000",
+    avg_daily_filled_notional: str | None = "500000",
+    median_daily_net_pnl: str | None = "500",
+    p10_daily_net_pnl: str | None = "500",
+    worst_day_net_pnl: str | None = "500",
+    max_intraday_drawdown: str | None = "500",
+    drawdown_pct: str | None = "0.02",
     best_day_share: str | None = "0.20",
     symbol_concentration_share: str | None = "0.35",
     ledger_refs: list[str] | None = None,
@@ -238,11 +327,31 @@ def _completion(
         "runtime_ledger_bucket_count": 1,
         "runtime_ledger_fill_count": 4,
         "runtime_ledger_closed_trade_count": 2,
-        "runtime_ledger_filled_notional": "50000",
+        "runtime_ledger_filled_notional": filled_notional,
         "runtime_ledger_net_strategy_pnl_after_costs": net_pnl,
         "runtime_ledger_post_cost_expectancy_bps": expectancy_bps,
         "runtime_ledger_observed_trading_day_count": trading_days,
     }
+    if avg_daily_filled_notional is not None:
+        runtime_ledger_summary["runtime_ledger_avg_daily_filled_notional"] = (
+            avg_daily_filled_notional
+        )
+    if median_daily_net_pnl is not None:
+        runtime_ledger_summary["runtime_ledger_median_daily_net_pnl_after_costs"] = (
+            median_daily_net_pnl
+        )
+    if p10_daily_net_pnl is not None:
+        runtime_ledger_summary["runtime_ledger_p10_daily_net_pnl_after_costs"] = (
+            p10_daily_net_pnl
+        )
+    if worst_day_net_pnl is not None:
+        runtime_ledger_summary["runtime_ledger_worst_day_net_pnl_after_costs"] = (
+            worst_day_net_pnl
+        )
+    if max_intraday_drawdown is not None:
+        runtime_ledger_summary["runtime_ledger_max_intraday_drawdown"] = (
+            max_intraday_drawdown
+        )
     if drawdown_pct is not None:
         runtime_ledger_summary["runtime_ledger_max_drawdown_pct_equity"] = drawdown_pct
     if best_day_share is not None:
@@ -385,17 +494,291 @@ class TestRuntimeLedgerProofPacket(TestCase):
             result["checks"]["runtime_ledger_post_cost_profit_target"]["observed"][
                 "daily_net_pnl_after_costs"
             ],
-            "650",
+            "500",
         )
         self.assertEqual(
             result["checks"]["runtime_ledger_risk_quality"]["observed"][
                 "drawdown_pct_equity"
             ],
-            "0.04",
+            "0.02",
+        )
+        self.assertEqual(
+            result["checks"]["runtime_ledger_daily_distribution_authority"]["observed"][
+                "median_daily_net_pnl_after_costs"
+            ],
+            "500",
+        )
+        self.assertEqual(
+            result["checks"]["runtime_ledger_target_implied_scale"]["observed"][
+                "target_implied_avg_daily_filled_notional"
+            ],
+            "384615.3846153846153846153846",
         )
         self.assertEqual(
             result["target"]["max_runtime_ledger_drawdown_pct_equity"],
-            "0.08",
+            "0.03",
+        )
+        self.assertEqual(
+            result["target"]["min_runtime_ledger_median_daily_net_pnl_after_costs"],
+            "250",
+        )
+        self.assertEqual(
+            result["target"]["max_runtime_ledger_intraday_drawdown"], "1500"
+        )
+        self.assertEqual(
+            result["target"]["target_implied_avg_daily_filled_notional"],
+            "384615.3846153846153846153846",
+        )
+        self.assertEqual(result["proof_mode"], "authority")
+        self.assertTrue(result["final_authority_ok"])
+        self.assertFalse(result["evidence_collection_only"])
+        tigerbeetle_refs = result["evidence"]["runtime_window_import"][
+            "materialization"
+        ]["materialized_targets"][0]["tigerbeetle"]
+        self.assertEqual(
+            tigerbeetle_refs["schema_version"],
+            "torghut.tigerbeetle-runtime-ledger-proof-refs.v1",
+        )
+        self.assertEqual(tigerbeetle_refs["transfer_count"], 1)
+        self.assertEqual(
+            tigerbeetle_refs["source_refs"],
+            [
+                "postgres:tigerbeetle_account_refs",
+                "postgres:tigerbeetle_transfer_refs",
+            ],
+        )
+
+    def test_packet_prefers_importable_paper_route_plan_over_next_session_plan(
+        self,
+    ) -> None:
+        evidence = _paper_route_evidence()
+        import_plan = cast(
+            dict[str, object],
+            evidence["next_paper_route_runtime_window_targets"],
+        )
+        import_plan["purpose"] = (
+            "latest_closed_session_paper_route_runtime_window_import"
+        )
+        evidence["runtime_window_import_plan"] = import_plan
+        evidence["next_paper_route_runtime_window_targets"] = {
+            "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+            "target_count": 1,
+            "purpose": "next_session_paper_route_runtime_window_evidence_collection",
+            "session_readiness": {
+                "import_ready": False,
+                "import_blockers": ["paper_route_session_window_not_open"],
+            },
+            "runtime_window_import_handoff": {
+                "import_ready": False,
+                "import_blockers": ["paper_route_session_window_not_open"],
+            },
+            "targets": [
+                {
+                    "candidate_id": "future-candidate",
+                    "hypothesis_id": "H-FUTURE",
+                    "observed_stage": "paper",
+                    "strategy_family": "microbar_cross_sectional_pairs",
+                    "strategy_name": "future-paper-route-candidate",
+                    "account_label": "TORGHUT_SIM",
+                    "source_manifest_ref": "config/trading/hypotheses/h-future.json",
+                    "window_start": "2026-05-27T13:30:00+00:00",
+                    "window_end": "2026-05-27T20:00:00+00:00",
+                    "dependency_quorum_decision": "allow",
+                    "continuity_ok": "true",
+                    "drift_ok": "true",
+                    "runtime_window_import_health_gate": {
+                        "dependency_quorum_decision": "allow",
+                        "continuity_ok": "true",
+                        "drift_ok": "true",
+                        "blockers": [],
+                    },
+                }
+            ],
+        }
+
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            paper_route_evidence=evidence,
+            runtime_window_import=_runtime_import(),
+            completion_status=_completion(),
+            min_runtime_ledger_net_pnl=Decimal("500"),
+            min_runtime_ledger_daily_net_pnl=Decimal("500"),
+            min_runtime_ledger_trading_days=1,
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(
+            result["evidence"]["paper_route_target_plan"]["session_window"]["start"],
+            "2026-05-26T13:30:00+00:00",
+        )
+        self.assertEqual(
+            result["candidate"]["candidate_id"],
+            "c88421d619759b2cfaa6f4d0",
+        )
+
+    def test_authority_packet_allows_reconciled_tigerbeetle_runtime_refs(
+        self,
+    ) -> None:
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(tigerbeetle_ledger=_tigerbeetle_ledger_status()),
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=_runtime_import(),
+            completion_status=_completion(),
+            min_runtime_ledger_net_pnl=Decimal("500"),
+            min_runtime_ledger_daily_net_pnl=Decimal("500"),
+            min_runtime_ledger_trading_days=1,
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        self.assertTrue(result["ok"], result)
+        self.assertTrue(result["promotion_authority"]["allowed"], result)
+        check = result["checks"]["tigerbeetle_runtime_pnl_authority_refs"]
+        self.assertTrue(check["passed"], check)
+        self.assertTrue(check["observed"]["required_for_authority"])
+        self.assertEqual(check["observed"]["runtime_ledger_signed_transfer_count"], 1)
+
+    def test_authority_packet_blocks_claimed_tigerbeetle_without_signed_refs(
+        self,
+    ) -> None:
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(
+                tigerbeetle_ledger=_tigerbeetle_ledger_status(
+                    runtime_ledger_ref_count=1,
+                    signed_ref_count=0,
+                )
+            ),
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=_runtime_import(),
+            completion_status=_completion(),
+            min_runtime_ledger_net_pnl=Decimal("500"),
+            min_runtime_ledger_daily_net_pnl=Decimal("500"),
+            min_runtime_ledger_trading_days=1,
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertFalse(result["promotion_authority"]["allowed"])
+        self.assertIn(
+            "tigerbeetle_runtime_ledger_signed_refs_missing",
+            result["promotion_authority"]["blocking_reasons"],
+        )
+        self.assertIn(
+            "tigerbeetle_runtime_pnl_authority_refs",
+            result["promotion_authority"]["failed_checks"],
+        )
+
+    def test_authority_packet_requires_daily_distribution_and_scale(self) -> None:
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=_runtime_import(),
+            completion_status=_completion(
+                avg_daily_filled_notional="200000",
+                median_daily_net_pnl="200",
+                p10_daily_net_pnl="-300",
+                worst_day_net_pnl="-800",
+                max_intraday_drawdown="1600",
+            ),
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertFalse(result["final_authority_ok"])
+        daily_blockers = result["checks"][
+            "runtime_ledger_daily_distribution_authority"
+        ]["blockers"]
+        self.assertIn(
+            "runtime_ledger_median_daily_net_pnl_after_costs_below_floor",
+            daily_blockers,
+        )
+        self.assertIn(
+            "runtime_ledger_p10_daily_net_pnl_after_costs_below_floor",
+            daily_blockers,
+        )
+        self.assertIn(
+            "runtime_ledger_worst_day_net_pnl_after_costs_below_floor",
+            daily_blockers,
+        )
+        self.assertIn(
+            "runtime_ledger_avg_daily_filled_notional_below_target_implied_floor",
+            result["checks"]["runtime_ledger_target_implied_scale"]["blockers"],
+        )
+        self.assertIn(
+            "runtime_ledger_max_intraday_drawdown_above_limit",
+            result["checks"]["runtime_ledger_risk_quality"]["blockers"],
+        )
+        self.assertEqual(result["verdict"], "blocked")
+
+    def test_authority_packet_requires_daily_distribution_fields(self) -> None:
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=_runtime_import(),
+            completion_status=_completion(
+                avg_daily_filled_notional=None,
+                median_daily_net_pnl=None,
+                p10_daily_net_pnl=None,
+                worst_day_net_pnl=None,
+                max_intraday_drawdown=None,
+            ),
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertIn(
+            "runtime_ledger_median_daily_net_pnl_after_costs_missing",
+            result["promotion_authority"]["blocking_reasons"],
+        )
+        self.assertIn(
+            "runtime_ledger_p10_daily_net_pnl_after_costs_missing",
+            result["promotion_authority"]["blocking_reasons"],
+        )
+        self.assertIn(
+            "runtime_ledger_worst_day_net_pnl_after_costs_missing",
+            result["promotion_authority"]["blocking_reasons"],
+        )
+        self.assertIn(
+            "runtime_ledger_avg_daily_filled_notional_missing",
+            result["promotion_authority"]["blocking_reasons"],
+        )
+        self.assertIn(
+            "runtime_ledger_max_intraday_drawdown_missing",
+            result["promotion_authority"]["blocking_reasons"],
+        )
+
+    def test_smoke_packet_cannot_grant_promotion_authority(self) -> None:
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            proof_mode="smoke",
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=_runtime_import(),
+            completion_status=_completion(),
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        self.assertTrue(result["ok"], result)
+        self.assertFalse(result["final_authority_ok"])
+        self.assertEqual(result["proof_mode"], "smoke")
+        self.assertEqual(
+            result["verdict"],
+            "smoke_proof_satisfied_evidence_collection_only",
+        )
+        self.assertFalse(result["promotion_authority"]["allowed"])
+        self.assertEqual(
+            result["target"]["max_runtime_ledger_drawdown_pct_equity"], "0.08"
+        )
+        self.assertEqual(
+            result["target"]["max_runtime_ledger_symbol_concentration_share"],
+            "0.5",
+        )
+        self.assertIn(
+            "runtime_ledger_proof_mode_not_authority",
+            result["promotion_authority"]["blocking_reasons"],
+        )
+        self.assertIn(
+            "rerun_proof_packet_in_authority_mode",
+            result["required_actions"],
         )
 
     def test_packet_splits_post_cost_proof_from_capital_promotion_gate(self) -> None:
@@ -562,6 +945,8 @@ class TestRuntimeLedgerProofPacket(TestCase):
                         str(runtime_path),
                         "--completion-file",
                         str(completion_path),
+                        "--proof-mode",
+                        "authority",
                         "--output-file",
                         str(output_path),
                         "--generated-at",
@@ -1111,9 +1496,10 @@ class TestRuntimeLedgerProofPacket(TestCase):
         self.assertEqual(
             result["checks"]["runtime_ledger_risk_quality"]["expected"],
             {
-                "max_drawdown_pct_equity": "0.08",
+                "max_drawdown_pct_equity": "0.03",
+                "max_intraday_drawdown": "1500",
                 "max_best_day_share": "0.25",
-                "max_symbol_concentration_share": "0.5",
+                "max_symbol_concentration_share": "0.35",
             },
         )
 
@@ -1238,6 +1624,38 @@ class TestRuntimeLedgerProofPacket(TestCase):
             "c88421d619759b2cfaa6f4d0",
         )
         self.assertTrue(materialization["materialized_targets"][0]["materialized"])
+
+    def test_packet_blocks_runtime_import_profit_proof_blockers(self) -> None:
+        runtime_import = _runtime_import()
+        observation = runtime_import["imports"][0]["summary"]["runtime_observation"]
+        assert isinstance(observation, dict)
+        observation["runtime_ledger_profit_proof_blockers"] = [
+            "runtime_ledger_source_window_missing",
+            "runtime_ledger_source_refs_missing",
+        ]
+
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=runtime_import,
+            completion_status=_completion(),
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        materialization = result["evidence"]["runtime_window_import"]["materialization"]
+        self.assertFalse(
+            result["checks"]["runtime_window_import_materialization"]["passed"]
+        )
+        self.assertEqual(materialization["materialized_target_count"], 0)
+        self.assertEqual(materialization["unmaterialized_target_count"], 1)
+        self.assertIn(
+            "runtime_ledger_source_window_missing", materialization["blockers"]
+        )
+        self.assertIn("runtime_ledger_source_refs_missing", materialization["blockers"])
+        self.assertIn(
+            "runtime_ledger_source_window_missing",
+            result["promotion_authority"]["blocking_reasons"],
+        )
 
     def test_packet_does_not_treat_promotion_only_import_metadata_as_unmaterialized(
         self,
@@ -1487,6 +1905,8 @@ class TestRuntimeLedgerProofPacket(TestCase):
                 "runtime_ledger_profit_proof_present": False,
                 "runtime_ledger_tca_profit_proof_count": 0,
                 "runtime_ledger_tca_authoritative_bucket_count": 0,
+                "runtime_ledger_source_execution_materialized_bucket_count": 0,
+                "runtime_ledger_source_bucket_profit_proof_count": 0,
             }
         )
         runtime_import["imports"].append(
@@ -1652,6 +2072,53 @@ class TestRuntimeLedgerProofPacket(TestCase):
             target_blockers,
         )
         self.assertIn("source_runtime_ledger_missing", target_blockers)
+
+    def test_packet_blocks_count_only_runtime_import_materialization(self) -> None:
+        runtime_import = _runtime_import()
+        first_import = runtime_import["imports"][0]
+        assert isinstance(first_import, dict)
+        first_summary = first_import["summary"]
+        assert isinstance(first_summary, dict)
+        target = first_summary["runtime_materialization_target"]
+        assert isinstance(target, dict)
+        target["metric_window_ids"] = []
+        target["promotion_decision_id"] = None
+        target["runtime_ledger_bucket_ids"] = []
+        target["evidence_grade_runtime_ledger_bucket_ids"] = []
+
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=runtime_import,
+            completion_status=_completion(),
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        materialization = result["evidence"]["runtime_window_import"]["materialization"]
+        self.assertFalse(result["ok"])
+        self.assertFalse(
+            result["checks"]["runtime_window_import_materialization"]["passed"]
+        )
+        target_blockers = materialization["unmaterialized_targets"][0]["blockers"]
+        self.assertIn(
+            "runtime_window_import_metric_window_refs_missing", target_blockers
+        )
+        self.assertIn(
+            "runtime_window_import_promotion_decision_ref_missing",
+            target_blockers,
+        )
+        self.assertIn(
+            "runtime_window_import_runtime_ledger_bucket_refs_missing",
+            target_blockers,
+        )
+        self.assertIn(
+            "runtime_window_import_evidence_grade_runtime_ledger_bucket_refs_missing",
+            target_blockers,
+        )
+        self.assertIn(
+            "runtime_window_import_runtime_ledger_bucket_refs_missing",
+            result["promotion_authority"]["blocking_reasons"],
+        )
 
     def test_packet_waits_on_target_level_settlement_blocker(self) -> None:
         paper = _paper_route_evidence()
@@ -1950,6 +2417,8 @@ class TestRuntimeLedgerProofPacket(TestCase):
                         "http://torghut.local/",
                         "--runtime-window-import-file",
                         str(import_path),
+                        "--proof-mode",
+                        "authority",
                         "--output-file",
                         str(output_path),
                     ]
@@ -2016,6 +2485,8 @@ class TestRuntimeLedgerProofPacket(TestCase):
                         "http://torghut-live.local/",
                         "--runtime-window-import-file",
                         str(import_path),
+                        "--proof-mode",
+                        "authority",
                         "--output-file",
                         str(output_path),
                     ]

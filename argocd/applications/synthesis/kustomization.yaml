@@ -11,5 +11,5 @@ resources:
   - agents-domain
 images:
   - name: registry.ide-newton.ts.net/lab/synthesis
-    newTag: 0.580.9
+    newTag: 0.580.13
     newName: registry.ide-newton.ts.net/lab/synthesis

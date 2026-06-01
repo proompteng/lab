@@ -71,6 +71,10 @@ FEATURE_VECTOR_V3_VALUE_FIELDS = (
     'recent_above_vwap_w5m_ratio',
     'recent_15m_return_bps',
     'microbar_volume',
+    'clusterlob_directional_ofi',
+    'clusterlob_opportunistic_ofi',
+    'clusterlob_market_making_ofi',
+    'clusterlob_event_cluster_stability_score',
     'cross_section_session_open_rank',
     'cross_section_session_open_rank_universe_size',
     'cross_section_prev_session_close_rank',
@@ -93,6 +97,8 @@ FEATURE_VECTOR_V3_VALUE_FIELDS = (
     'cross_section_recent_15m_return_rank_universe_size',
     'cross_section_microbar_volume_rank',
     'cross_section_microbar_volume_rank_universe_size',
+    'cross_section_clusterlob_directional_ofi_rank',
+    'cross_section_clusterlob_directional_ofi_rank_universe_size',
     'cross_section_recent_imbalance_rank',
     'cross_section_recent_imbalance_rank_universe_size',
     'cross_section_rsi14_rank',
@@ -442,6 +448,12 @@ def map_feature_values_v3(signal: SignalEnvelope) -> dict[str, Any]:
         ),
         'recent_15m_return_bps': optional_decimal(payload.get('recent_15m_return_bps')),
         'microbar_volume': optional_decimal(payload.get('microbar_volume')),
+        'clusterlob_directional_ofi': optional_decimal(payload.get('clusterlob_directional_ofi')),
+        'clusterlob_opportunistic_ofi': optional_decimal(payload.get('clusterlob_opportunistic_ofi')),
+        'clusterlob_market_making_ofi': optional_decimal(payload.get('clusterlob_market_making_ofi')),
+        'clusterlob_event_cluster_stability_score': optional_decimal(
+            payload.get('clusterlob_event_cluster_stability_score')
+        ),
         'cross_section_session_open_rank': optional_decimal(payload.get('cross_section_session_open_rank')),
         'cross_section_session_open_rank_universe_size': optional_decimal(
             payload.get('cross_section_session_open_rank_universe_size')
@@ -499,6 +511,12 @@ def map_feature_values_v3(signal: SignalEnvelope) -> dict[str, Any]:
         ),
         'cross_section_microbar_volume_rank_universe_size': optional_decimal(
             payload.get('cross_section_microbar_volume_rank_universe_size')
+        ),
+        'cross_section_clusterlob_directional_ofi_rank': optional_decimal(
+            payload.get('cross_section_clusterlob_directional_ofi_rank')
+        ),
+        'cross_section_clusterlob_directional_ofi_rank_universe_size': optional_decimal(
+            payload.get('cross_section_clusterlob_directional_ofi_rank_universe_size')
         ),
         'cross_section_recent_imbalance_rank': optional_decimal(payload.get('cross_section_recent_imbalance_rank')),
         'cross_section_recent_imbalance_rank_universe_size': optional_decimal(

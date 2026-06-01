@@ -19,7 +19,7 @@ Provision these via SealedSecrets or your preferred secret management flow. The 
 
 ## TigerBeetle Integration
 
-TigerBeetle support is disabled by default (`TIGERBEETLE_ENABLED=false`). To emit ledger transfers you must update `miel-config` with:
+TigerBeetle support is disabled by default (`TIGERBEETLE_ENABLED=false`). Lab no longer provisions a local TigerBeetle cluster for Miel. If Miel needs TigerBeetle later, deploy a cluster from the standalone `proompteng/tigresse` operator repository and then update `miel-config` with:
 
 - `TIGERBEETLE_ENABLED=true`
 - `TIGERBEETLE_ADDRESSES` (comma-separated replica addresses)

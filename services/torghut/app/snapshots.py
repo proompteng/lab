@@ -153,6 +153,7 @@ def sync_order_to_db(
     try:
         session.commit()
         session.refresh(execution)
+        _link_pending_order_feed_events(session, execution)
         return execution
     except IntegrityError:
         session.rollback()
@@ -361,7 +362,17 @@ def _persist_existing_execution(
     session.add(existing)
     session.commit()
     session.refresh(existing)
+    _link_pending_order_feed_events(session, existing)
     return existing
+
+
+def _link_pending_order_feed_events(session: Session, execution: Execution) -> None:
+    from .trading.order_feed import link_order_events_to_execution
+
+    if link_order_events_to_execution(session, execution) <= 0:
+        return
+    session.commit()
+    session.refresh(execution)
 
 
 def _attach_runtime_ledger_cost_payload(

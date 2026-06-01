@@ -478,6 +478,12 @@ class TestRunEmpiricalPromotionJobs(TestCase):
                                     "observed_stage": "paper",
                                     "strategy_family": "microbar_cross_sectional_pairs",
                                     "strategy_name": "69cf50e3-4815-47c2-b802-1efbaac09ecb",
+                                    "runtime_strategy_name": "69cf50e3-4815-47c2-b802-1efbaac09ecb",
+                                    "strategy_id": "microbar_cross_sectional_pairs_v1@research",
+                                    "strategy_lookup_names": [
+                                        "69cf50e3-4815-47c2-b802-1efbaac09ecb",
+                                        "microbar-cross-sectional-pairs-v1",
+                                    ],
                                     "account_label": "TORGHUT_REPLAY",
                                     "source_dsn_env": "TORGHUT_DURABLE_RUNTIME_LEDGER_SOURCE_DSN",
                                     "source_kind": "durable_runtime_ledger_bucket",
@@ -498,6 +504,12 @@ class TestRunEmpiricalPromotionJobs(TestCase):
                                     "observed_stage": "paper",
                                     "strategy_family": "microbar_cross_sectional_pairs",
                                     "strategy_name": "69cf50e3-4815-47c2-b802-1efbaac09ecb",
+                                    "runtime_strategy_name": "69cf50e3-4815-47c2-b802-1efbaac09ecb",
+                                    "strategy_id": "microbar_cross_sectional_pairs_v1@research",
+                                    "strategy_lookup_names": [
+                                        "69cf50e3-4815-47c2-b802-1efbaac09ecb",
+                                        "microbar-cross-sectional-pairs-v1",
+                                    ],
                                     "account_label": "TORGHUT_REPLAY",
                                     "source_dsn_env": "TORGHUT_DURABLE_RUNTIME_LEDGER_SOURCE_DSN",
                                     "source_kind": "durable_runtime_ledger_bucket",
@@ -553,7 +565,12 @@ class TestRunEmpiricalPromotionJobs(TestCase):
             targets[0].source_dsn_env,
             "TORGHUT_DURABLE_RUNTIME_LEDGER_SOURCE_DSN",
         )
+        self.assertEqual(targets[0].strategy_name, "microbar-cross-sectional-pairs-v1")
         assert targets[0].target_metadata is not None
+        self.assertEqual(
+            targets[0].target_metadata["runtime_strategy_name"],
+            "69cf50e3-4815-47c2-b802-1efbaac09ecb",
+        )
         self.assertEqual(
             targets[0].target_metadata["runtime_ledger_bucket_ref"], "bucket:first"
         )
@@ -770,6 +787,166 @@ class TestRunEmpiricalPromotionJobs(TestCase):
 
         self.assertEqual(top_level_plan["targets"][0]["hypothesis_id"], "H-PAIRS-01")
         self.assertEqual(fallback_plan["targets"][0]["hypothesis_id"], "H-FALLBACK-01")
+
+    def test_runtime_window_target_plan_payload_marks_contaminated_import_audit(
+        self,
+    ) -> None:
+        plan = renewal._runtime_window_target_plan_from_payload(
+            {
+                "schema_version": "torghut.paper-route-target-plan.v1",
+                "runtime_window_import_plan": {
+                    "schema_version": (
+                        "torghut.next-paper-route-runtime-window-targets.v1"
+                    ),
+                    "targets": [
+                        {
+                            "candidate_id": "cand-contaminated",
+                            "hypothesis_id": "H-CONTAMINATED",
+                            "strategy_name": "microbar-cross-sectional-pairs-v1",
+                            "window_start": "2026-05-29T13:30:00+00:00",
+                            "window_end": "2026-05-29T20:00:00+00:00",
+                        }
+                    ],
+                },
+                "runtime_window_import_audit": {
+                    "state": "import_due_account_contamination_detected",
+                    "next_action": "import_with_blockers",
+                    "blockers": [
+                        "paper_route_account_contamination_detected",
+                        "unlinked_order_events_present",
+                    ],
+                    "target_blockers": [
+                        {
+                            "candidate_id": "cand-contaminated",
+                            "hypothesis_id": "H-CONTAMINATED",
+                            "strategy_name": "microbar-cross-sectional-pairs-v1",
+                            "window_start": "2026-05-29T13:30:00+00:00",
+                            "window_end": "2026-05-29T20:00:00+00:00",
+                            "blockers": [
+                                "runtime_ledger_evidence_grade_bucket_missing"
+                            ],
+                        }
+                    ],
+                },
+            }
+        )
+
+        target = plan["targets"][0]
+        self.assertEqual(
+            target["runtime_window_import_audit_state"],
+            "import_due_account_contamination_detected",
+        )
+        self.assertIn(
+            "paper_route_account_contamination_detected",
+            target["runtime_ledger_target_metadata_blockers"],
+        )
+        self.assertIn(
+            "unlinked_order_events_present",
+            target["runtime_window_import_health_gate_blockers"],
+        )
+        self.assertIn(
+            "runtime_ledger_evidence_grade_bucket_missing",
+            target["runtime_window_import_audit_target_blockers"],
+        )
+
+    def test_runtime_window_import_audit_annotation_helper_fallbacks(
+        self,
+    ) -> None:
+        self.assertEqual(
+            renewal._extend_unique_text_items(" existing ", ["new", "existing"]),
+            ["existing", "new"],
+        )
+        self.assertEqual(
+            renewal._runtime_window_import_audit_blockers(
+                {"state": "import_due_source_activity_missing"}
+            ),
+            ["import_due_source_activity_missing"],
+        )
+        self.assertTrue(
+            renewal._runtime_window_audit_target_blocker_matches(
+                target_blocker={
+                    "hypothesis_id": "H-PAIRS-01",
+                    "strategy_lookup_names": ["runtime-strategy"],
+                },
+                target={
+                    "hypothesis_id": "H-PAIRS-01",
+                    "runtime_strategy_name": "runtime-strategy",
+                },
+            )
+        )
+        self.assertFalse(
+            renewal._runtime_window_audit_target_blocker_matches(
+                target_blocker={"candidate_id": "different"},
+                target={"candidate_id": "candidate"},
+            )
+        )
+        self.assertFalse(
+            renewal._runtime_window_audit_target_blocker_matches(
+                target_blocker={"strategy_lookup_names": ["missing-strategy"]},
+                target={"runtime_strategy_name": "runtime-strategy"},
+            )
+        )
+        payload = {
+            "runtime_window_import_audit": {
+                "state": "import_due_source_activity_missing",
+            }
+        }
+        self.assertEqual(
+            renewal._runtime_window_target_plan_with_import_audit_blockers(
+                payload=payload,
+                plan={"targets": "invalid"},
+            ),
+            {"targets": "invalid"},
+        )
+        annotated = renewal._runtime_window_target_plan_with_import_audit_blockers(
+            payload=payload,
+            plan={
+                "targets": [
+                    None,
+                    {
+                        "candidate_id": "candidate",
+                        "hypothesis_id": "H-PAIRS-01",
+                        "strategy_name": "runtime-strategy",
+                    },
+                ]
+            },
+        )
+
+        self.assertIsNone(annotated["targets"][0])
+        self.assertIn(
+            "import_due_source_activity_missing",
+            annotated["targets"][1]["runtime_ledger_target_metadata_blockers"],
+        )
+
+    def test_runtime_window_target_plan_payload_blocks_contaminated_import_audit_without_targets(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(
+            RuntimeError,
+            (
+                "runtime_window_target_plan_import_blocked:"
+                "import_due_account_contamination_detected:.*"
+                "unlinked_order_events_present"
+            ),
+        ):
+            renewal._runtime_window_target_plan_from_payload(
+                {
+                    "schema_version": "torghut.paper-route-target-plan.v1",
+                    "runtime_window_import_plan": {
+                        "schema_version": (
+                            "torghut.next-paper-route-runtime-window-targets.v1"
+                        ),
+                        "targets": [],
+                    },
+                    "runtime_window_import_audit": {
+                        "state": "import_due_account_contamination_detected",
+                        "blockers": [
+                            "paper_route_account_contamination_detected",
+                            "unlinked_order_events_present",
+                        ],
+                    },
+                }
+            )
 
     def test_runtime_window_target_plan_payload_prefers_next_paper_route_plan(
         self,
@@ -2099,6 +2276,49 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         self.assertEqual(metadata["evidence_collection_stage"], "paper")
         self.assertFalse(metadata["promotion_allowed"])
         self.assertFalse(metadata["final_promotion_authorized"])
+
+    def test_runtime_window_target_metadata_defaults_source_collection_blockers(
+        self,
+    ) -> None:
+        metadata = renewal._runtime_window_target_metadata(
+            {
+                "source_collection_authorized": True,
+                "source_collection_reason_codes": [
+                    "source_window_evidence_collection_pending"
+                ],
+                "bounded_evidence_collection_authorized": True,
+                "bounded_evidence_collection_scope": (
+                    "paper_route_probe_next_session_only"
+                ),
+                "bounded_evidence_collection_max_notional": "63180",
+                "paper_route_probe_effective_max_notional": "63180",
+                "source_decision_mode": "route_acquisition_probe",
+                "profit_proof_eligible": False,
+            }
+        )
+
+        self.assertTrue(metadata["source_collection_authorized"])
+        self.assertEqual(
+            metadata["source_collection_authorization_scope"],
+            "source_window_evidence_collection_only",
+        )
+        self.assertEqual(metadata["evidence_collection_stage"], "paper")
+        self.assertEqual(
+            metadata["source_collection_reason_codes"],
+            ["source_window_evidence_collection_pending"],
+        )
+        self.assertTrue(metadata["bounded_evidence_collection_authorized"])
+        self.assertEqual(
+            metadata["bounded_evidence_collection_scope"],
+            "paper_route_probe_next_session_only",
+        )
+        self.assertEqual(metadata["bounded_evidence_collection_max_notional"], "63180")
+        self.assertEqual(metadata["paper_route_probe_effective_max_notional"], "63180")
+        self.assertEqual(metadata["source_decision_mode"], "route_acquisition_probe")
+        self.assertFalse(metadata["profit_proof_eligible"])
+        self.assertFalse(metadata["promotion_allowed"])
+        self.assertFalse(metadata["final_promotion_authorized"])
+        self.assertFalse(metadata["final_promotion_allowed"])
 
     def test_runtime_window_import_runs_same_hypothesis_plan_candidate_lanes(
         self,

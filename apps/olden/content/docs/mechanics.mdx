@@ -1,0 +1,83 @@
+---
+title: Mechanics
+description: Practical mechanics encyclopedia for movement, economy, combat, magic, laws, map objects, and siege decisions.
+---
+
+import {
+  combatObjectEntries,
+  lawEntries,
+  neutralObjectEntries,
+  resourceEntries,
+  skillEntries,
+  spellEntries,
+} from '@/src/data/olden/encyclopedia'
+
+Mechanics need to be framed as decision rules. The point is not to list terms; the point is to tell a player what to check before ending a turn, taking a fight, building a town, or committing the main hero.
+
+<WikiVisual
+  src="/visuals/generated/olden-mechanics-map.png"
+  alt="Fantasy strategy adventure map, tactical battle board, spell circle, resources, and town plan"
+  caption="Original generated raster art for the mechanics hub. Data tables below link back to public source entries."
+/>
+
+<MechanicsFormulaReference />
+
+<MechanicsMatrix />
+
+## Spells
+
+<EncyclopediaEntryTable
+  entries={spellEntries}
+  title="Spell index"
+  description="Public spell rows grouped by magic school and tier."
+  groupBy="Magic School"
+  defaultOpenGroups={8}
+  sourceLabel="Spell page"
+/>
+
+## Skills
+
+<EncyclopediaEntryTable
+  entries={skillEntries}
+  title="Skill index"
+  description="Public skill rows grouped by base skill/category."
+  groupBy="Base Skill / Category"
+  defaultOpenGroups={10}
+  sourceLabel="Skill page"
+/>
+
+## Laws
+
+<EncyclopediaEntryTable
+  entries={lawEntries}
+  title="Law index"
+  description="Public law rows grouped by faction or alignment."
+  groupBy="Faction / Alignment"
+  defaultOpenGroups={10}
+  sourceLabel="Law page"
+/>
+
+## Map objects and resources
+
+<EncyclopediaEntryTable
+  entries={[...neutralObjectEntries, ...combatObjectEntries, ...resourceEntries]}
+  title="Map objects and resources"
+  description="Neutral objects, combat objects, and core resources indexed from public source pages."
+  groupBy="Kind"
+  defaultOpenGroups={3}
+  sourceLabel="Source page"
+/>
+
+<SourceNote
+  ids={[
+    'community-olden-era-spells',
+    'community-olden-era-skills',
+    'community-olden-era-laws',
+    'community-olden-era-objects',
+    'community-olden-era-home',
+    'community-olden-era-sets',
+    'community-olden-era-units',
+    'heroes-olden-era-artifact-sets',
+    'imagegen-original-assets',
+  ]}
+/>

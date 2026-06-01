@@ -2257,12 +2257,66 @@ class TestCandidateSpecs(TestCase):
                     candidate_spec_capital_features(spec)["capital_feasible_flag"], 1.0
                 )
 
+    def test_portfolio_profit_target_adds_h_pairs_replay_ledger_breadth_profiles(
+        self,
+    ) -> None:
+        cards = build_hypothesis_cards(
+            source_run_id="paper-hpairs-ledger-breadth",
+            claims=[
+                {
+                    "claim_id": "claim-hpairs-breadth",
+                    "claim_type": "signal_mechanism",
+                    "claim_text": (
+                        "Cross-sectional pair ranking over intraday order-flow and "
+                        "opening-window signals can improve H-PAIRS notional throughput."
+                    ),
+                    "confidence": "0.86",
+                }
+            ],
+        )
+
+        specs = compile_candidate_specs(
+            hypothesis_cards=cards, target_net_pnl_per_day=Decimal("500")
+        )
+
+        replay_guided_specs = [
+            spec
+            for spec in specs
+            if spec.family_template_id == "microbar_cross_sectional_pairs_v1"
+            and spec.parameter_space.get("replay_ledger_guided_candidate_expansion")
+            and not spec.strategy_overrides["params"].get(
+                "feedback_remediation_profile"
+            )
+        ]
+        self.assertGreaterEqual(len(replay_guided_specs), 2)
+        for spec in replay_guided_specs:
+            params = spec.strategy_overrides["params"]
+            self.assertGreaterEqual(int(params["top_n"]), 4)
+            self.assertGreaterEqual(int(params["max_pair_legs"]), 5)
+            self.assertGreaterEqual(int(params["max_entries_per_session"]), 6)
+            self.assertEqual(
+                params["replay_ledger_guidance_scope"],
+                "bounded_exact_replay_prefilter",
+            )
+            self.assertEqual(
+                spec.promotion_contract["promotion_policy"], "research_only"
+            )
+            self.assertTrue(
+                spec.promotion_contract["requires_runtime_ledger_profit_proof"]
+            )
+            self.assertTrue(
+                spec.promotion_contract[
+                    "replay_ledger_guided_search_is_not_promotion_proof"
+                ]
+            )
+
     def test_feedback_escape_profiles_dedupe_and_fallback_invalid_params(self) -> None:
         profile = {
             "params": {
                 "entry_minute_after_open": "not-a-decimal",
                 "exit_minute_after_open": "invalid",
                 "top_n": "2",
+                "max_pair_legs": "2",
                 "gate_feature": "cross_section_positive_opening_window_return_from_prev_close_ratio",
                 "gate_min": "0.20",
                 "gate_max": "0.80",
@@ -2299,6 +2353,8 @@ class TestCandidateSpecs(TestCase):
             int(notional["params"]["max_entries_per_session"]),
             10,
         )
+        self.assertGreaterEqual(int(notional["params"]["top_n"]), 4)
+        self.assertGreaterEqual(int(notional["params"]["max_pair_legs"]), 4)
         self.assertEqual(notional["params"]["entry_notional_max_multiplier"], "1.0")
         adverse_selection = expanded[4]
         self.assertEqual(

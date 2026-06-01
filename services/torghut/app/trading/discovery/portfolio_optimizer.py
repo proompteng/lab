@@ -104,6 +104,71 @@ def _scorecard_universe_symbols(bundle: CandidateEvidenceBundle) -> list[str]:
     ]
 
 
+def _scorecard_primary_symbol(bundle: CandidateEvidenceBundle) -> str:
+    raw_symbol_shares = _scorecard(bundle).get("symbol_contribution_shares")
+    if isinstance(raw_symbol_shares, Mapping):
+        rows = cast(Mapping[Any, Any], raw_symbol_shares)
+        symbols = [
+            (_string(symbol).upper(), _decimal(share))
+            for symbol, share in rows.items()
+            if _string(symbol)
+        ]
+        if symbols:
+            symbols.sort(key=lambda item: (item[1], item[0]), reverse=True)
+            return symbols[0][0]
+    symbol = _string(_scorecard(bundle).get("symbol")).upper()
+    if symbol:
+        return symbol
+    universe_symbols = _scorecard_universe_symbols(bundle)
+    if universe_symbols:
+        return universe_symbols[0]
+    return "UNKNOWN"
+
+
+def _diversified_candidate_order(
+    candidates: Sequence[CandidateEvidenceBundle],
+) -> list[CandidateEvidenceBundle]:
+    """Interleave sleeves by primary symbol before the bounded beam search.
+
+    Autoresearch proposal scores can produce a long prefix of high raw-PnL sleeves
+    from a single symbol or concentration cluster. The optimizer's beam is bounded,
+    so that prefix can evict the empty/partial states before lower-scoring but
+    diversifying sleeves are ever considered. Interleaving preserves each symbol's
+    internal quality order while ensuring risk-diversifying sleeves enter the beam
+    early enough to prove (or disprove) an oracle-passing portfolio.
+    """
+
+    buckets: dict[str, list[CandidateEvidenceBundle]] = {}
+    for candidate in candidates:
+        buckets.setdefault(_scorecard_primary_symbol(candidate), []).append(candidate)
+    ordered_buckets = sorted(
+        buckets.values(),
+        key=lambda bucket: (
+            _sleeve_score(bucket[0]),
+            _net_per_day(bucket[0]),
+            bucket[0].candidate_id,
+        ),
+        reverse=True,
+    )
+    diversified: list[CandidateEvidenceBundle] = []
+    while ordered_buckets:
+        next_buckets: list[list[CandidateEvidenceBundle]] = []
+        for bucket in ordered_buckets:
+            diversified.append(bucket.pop(0))
+            if bucket:
+                next_buckets.append(bucket)
+        ordered_buckets = sorted(
+            next_buckets,
+            key=lambda bucket: (
+                _sleeve_score(bucket[0]),
+                _net_per_day(bucket[0]),
+                bucket[0].candidate_id,
+            ),
+            reverse=True,
+        )
+    return diversified
+
+
 def _scorecard_sleeve_runtime_limits(bundle: CandidateEvidenceBundle) -> dict[str, str]:
     limits: dict[str, str] = {}
     scorecard = _scorecard(bundle)
@@ -2123,10 +2188,16 @@ def optimize_portfolio_candidate(
         for bundle in evidence_bundles
         if _candidate_passes_minimums(bundle, oracle_policy=oracle_policy)
     ]
-    ordered = sorted(
-        eligible,
-        key=lambda item: (_sleeve_score(item), _net_per_day(item), item.candidate_id),
-        reverse=True,
+    ordered = _diversified_candidate_order(
+        sorted(
+            eligible,
+            key=lambda item: (
+                _sleeve_score(item),
+                _net_per_day(item),
+                item.candidate_id,
+            ),
+            reverse=True,
+        )
     )
     rejected: list[dict[str, Any]] = [
         *invalid_evidence_rejections,

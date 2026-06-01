@@ -182,6 +182,42 @@ class TestReplayTape(TestCase):
             first_manifest.content_sha256, second_manifest.content_sha256
         )
 
+    def test_materialize_manifest_session_window_follows_new_york_dst(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            winter_manifest = materialize_signal_tape(
+                rows=[],
+                tape_path=Path(tmpdir) / "winter.jsonl",
+                dataset_snapshot_ref="snapshot-a",
+                start_date=date(2026, 1, 5),
+                end_date=date(2026, 1, 5),
+                source_query_digest=build_source_query_digest({"window": "winter"}),
+            )
+            summer_manifest = materialize_signal_tape(
+                rows=[],
+                tape_path=Path(tmpdir) / "summer.jsonl",
+                dataset_snapshot_ref="snapshot-a",
+                start_date=date(2026, 5, 29),
+                end_date=date(2026, 5, 29),
+                source_query_digest=build_source_query_digest({"window": "summer"}),
+            )
+
+        self.assertEqual(
+            winter_manifest.start_ts,
+            datetime(2026, 1, 5, 14, 30, tzinfo=timezone.utc),
+        )
+        self.assertEqual(
+            winter_manifest.end_ts,
+            datetime(2026, 1, 5, 21, 0, tzinfo=timezone.utc),
+        )
+        self.assertEqual(
+            summer_manifest.start_ts,
+            datetime(2026, 5, 29, 13, 30, tzinfo=timezone.utc),
+        )
+        self.assertEqual(
+            summer_manifest.end_ts,
+            datetime(2026, 5, 29, 20, 0, tzinfo=timezone.utc),
+        )
+
     def test_manifest_payload_rejects_wrong_schema_and_coerces_loose_metadata(
         self,
     ) -> None:

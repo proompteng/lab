@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/name: jangar
     app.kubernetes.io/part-of: lab
   annotations:
-    deploy.knative.dev/rollout: 2026-05-25T08:21:21Z
+    deploy.knative.dev/rollout: 2026-05-31T11:15:31Z
 spec:
   replicas: 1
   strategy:
@@ -50,16 +50,16 @@ spec:
       containers:
         - name: app
           image: registry.ide-newton.ts.net/lab/jangar:640cb586@sha256:78913053b4bd222d01d2351eb19136edfda3fa4cb8253541b4ac0736f092ac26
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           env:
             - name: NODE_ENV
               value: production
             - name: UI_PORT
               value: "8080"
             - name: JANGAR_SOURCE_HEAD_SHA
-              value: fee7acbbeb0240081676845df598886f439033c3
+              value: 530cd7ef5cc456738da9c27513162137cccdd1dc
             - name: JANGAR_GITOPS_REVISION
-              value: fee7acbbeb0240081676845df598886f439033c3
+              value: 530cd7ef5cc456738da9c27513162137cccdd1dc
             - name: JANGAR_HTTP_IDLE_TIMEOUT_SECONDS
               value: "120"
             - name: JANGAR_CONTROL_PLANE_STATUS_CACHE_TTL_MS
@@ -267,8 +267,6 @@ spec:
               value: "300"
             - name: JANGAR_MARKET_CONTEXT_PROVIDER_CHAIN
               value: codex-spark,codex
-            - name: JANGAR_MARKET_CONTEXT_PROVIDER_TIMEOUT_MS
-              value: "10000"
             - name: JANGAR_MARKET_CONTEXT_PROVIDER_FAILURE_THRESHOLD
               value: "3"
             - name: JANGAR_MARKET_CONTEXT_PROVIDER_COOLDOWN_SECONDS
@@ -283,8 +281,6 @@ spec:
               value: agents
             - name: JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_SERVICE_ACCOUNT_NAME
               value: agents-sa
-            - name: JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_PRIORITY_CLASS_NAME
-              value: torghut-market-context-low
             - name: JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_CALLBACK_URL
               value: http://jangar.jangar.svc.cluster.local/api/torghut/market-context
             - name: JANGAR_MARKET_CONTEXT_ON_DEMAND_DISPATCH_TTL_SECONDS
@@ -301,12 +297,8 @@ spec:
               value: "true"
             - name: JANGAR_MARKET_CONTEXT_TECHNICALS_MAX_FRESHNESS_SECONDS
               value: "60"
-            - name: JANGAR_MARKET_CONTEXT_NEWS_MAX_FRESHNESS_SECONDS
-              value: "300"
             - name: JANGAR_MARKET_CONTEXT_REGIME_MAX_FRESHNESS_SECONDS
               value: "120"
-            - name: JANGAR_MARKET_CONTEXT_NEWS_URL
-              value: http://jangar.jangar.svc.cluster.local/api/torghut/market-context/providers/news
             - name: JANGAR_MARKET_CONTEXT_BATCH_REQUIRE_OPEN_SESSION
               value: "true"
             - name: JANGAR_MARKET_CONTEXT_BATCH_TRADING_STATUS_URL
@@ -355,23 +347,27 @@ spec:
             - name: OPENAI_API_BASE_URL
               value: http://saigak.saigak.svc.cluster.local:11434/v1
             - name: OPENAI_EMBEDDING_API_BASE_URL
-              value: http://saigak.saigak.svc.cluster.local:11435/v1
+              value: http://saigak.saigak.svc.cluster.local:11434/v1
             - name: OPENAI_EMBEDDING_MODEL
               value: qwen3-embedding-saigak:8b
             - name: OPENAI_EMBEDDING_DIMENSION
               value: "4096"
             - name: OPENAI_EMBEDDING_TIMEOUT_MS
               value: "60000"
+            - name: ATLAS_CODE_SEARCH_SEMANTIC_CANDIDATE_LIMIT
+              value: "100"
+            - name: ATLAS_CODE_SEARCH_HEALTH_SAMPLE_LIMIT
+              value: "50"
             - name: JANGAR_SOURCE_CI_RUN_ID
-              value: "26390845614"
+              value: "26711027350"
             - name: JANGAR_SOURCE_CI_CONCLUSION
               value: success
             - name: JANGAR_MANIFEST_IMAGE_DIGEST
-              value: sha256:8475ba0446fcc3ef6ea84e95bd6aec2835a2a441f49b89352c1eac7609d474a0
+              value: sha256:ef1eb428bd43c9872ca2b24ffb82baecf0eb784051fbf01e9ddbb79b3ec6b8dd
             - name: JANGAR_SERVING_BUILD_COMMIT
-              value: fee7acbbeb0240081676845df598886f439033c3
+              value: 530cd7ef5cc456738da9c27513162137cccdd1dc
             - name: JANGAR_SERVING_IMAGE_DIGEST
-              value: sha256:8475ba0446fcc3ef6ea84e95bd6aec2835a2a441f49b89352c1eac7609d474a0
+              value: sha256:ef1eb428bd43c9872ca2b24ffb82baecf0eb784051fbf01e9ddbb79b3ec6b8dd
           ports:
             - name: http
               containerPort: 8080

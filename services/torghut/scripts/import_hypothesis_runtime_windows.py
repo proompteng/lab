@@ -26,6 +26,9 @@ from app.trading.runtime_ledger import (
     RuntimeLedgerBucket,
     build_runtime_ledger_buckets,
 )
+from app.trading.runtime_ledger_source_authority import (
+    runtime_ledger_promotion_source_authority_blockers,
+)
 from app.trading.runtime_cost_authority import (
     cost_basis_counts_have_non_promotion_grade_costs,
     is_non_promotion_grade_runtime_cost_basis,
@@ -74,6 +77,9 @@ EXACT_REPLAY_ARTIFACT_AUTHORITY_BLOCKERS = (
     "runtime_ledger_source_window_missing",
     "runtime_ledger_source_refs_missing",
 )
+RUNTIME_LEDGER_SOURCE_WINDOW_MISSING_BLOCKER = "runtime_ledger_source_window_missing"
+RUNTIME_LEDGER_CARRY_IN_LOOKBACK = timedelta(days=5)
+RUNTIME_LEDGER_SOURCE_REFS_MISSING_BLOCKER = "runtime_ledger_source_refs_missing"
 _RUNTIME_LEDGER_DECISION_EVENTS = frozenset(
     {"decision", "trade_decision", "signal_decision"}
 )
@@ -84,6 +90,21 @@ ORDER_FEED_FILL_LIFECYCLE_MISSING_BLOCKER = "order_feed_fill_lifecycle_missing"
 ORDER_FEED_FILL_LIFECYCLE_INCOMPLETE_BLOCKER = "order_feed_fill_lifecycle_incomplete"
 ORDER_FEED_FILL_LIFECYCLE_ORDER_ID_MISSING_BLOCKER = (
     "order_feed_fill_lifecycle_order_id_missing"
+)
+ORDER_FEED_UNLINKED_FILL_LIFECYCLE_PRESENT_BLOCKER = (
+    "order_feed_unlinked_fill_lifecycle_present"
+)
+ORDER_FEED_FILL_DELTA_BASIS_MISSING_BLOCKER = "order_feed_fill_delta_basis_missing"
+ORDER_FEED_FILL_DELTA_MISSING_BLOCKER = "order_feed_fill_delta_missing"
+_RUNTIME_LIFECYCLE_IDENTIFIER_KEYS = (
+    "execution_id",
+    "trade_decision_id",
+    "decision_id",
+    "decision_hash",
+    "order_id",
+    "alpaca_order_id",
+    "client_order_id",
+    "execution_correlation_id",
 )
 ALPACA_2026_EQUITY_SEC_FEE_RATE = Decimal("20.60") / Decimal("1000000")
 ALPACA_2026_EQUITY_TAF_RATE_PER_SHARE = Decimal("0.000195")
@@ -116,6 +137,7 @@ SOURCE_LINEAGE_HYPOTHESIS_KEYS = (
     "source_hypothesis_id",
     "source_hypothesis_ids",
 )
+SOURCE_DECISION_MODE_MISSING_PARTITION = "source_decision_mode_missing"
 
 
 def _parse_args() -> argparse.Namespace:
@@ -315,12 +337,50 @@ def _first_decimal(row: Mapping[str, object], *keys: str) -> Decimal | None:
     return None
 
 
+def _first_positive_decimal(row: Mapping[str, object], *keys: str) -> Decimal | None:
+    for payload in _row_payloads(row):
+        for key in keys:
+            value = payload.get(key)
+            if (parsed := _decimal_or_none(value)) is not None and parsed > 0:
+                return parsed
+    return None
+
+
 def _first_text(row: Mapping[str, object], *keys: str) -> str | None:
     for payload in _row_payloads(row):
         for key in keys:
             text = str(payload.get(key) or "").strip()
             if text:
                 return text
+    return None
+
+
+def _direct_text(row: Mapping[str, object], *keys: str) -> str | None:
+    for key in keys:
+        text = str(row.get(key) or "").strip()
+        if text:
+            return text
+    return None
+
+
+def _bool_value(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int | float | Decimal):
+        return bool(value)
+    text = str(value or "").strip().lower()
+    if text in {"1", "true", "yes", "on", "pass", "passed", "ok"}:
+        return True
+    if text in {"0", "false", "no", "off", "fail", "failed", "blocked"}:
+        return False
+    return None
+
+
+def _direct_bool(row: Mapping[str, object], *keys: str) -> bool | None:
+    for key in keys:
+        value = row.get(key)
+        if (parsed := _bool_value(value)) is not None:
+            return parsed
     return None
 
 
@@ -346,24 +406,61 @@ def _text_values(row: Mapping[str, object], *keys: str) -> set[str]:
 def _first_bool(row: Mapping[str, object], *keys: str) -> bool | None:
     for payload in _row_payloads(row):
         for key in keys:
-            value = payload.get(key)
-            if isinstance(value, bool):
-                return value
-            if isinstance(value, int | float | Decimal):
-                return bool(value)
-            text = str(value or "").strip().lower()
-            if text in {"1", "true", "yes", "on", "pass", "passed", "ok"}:
-                return True
-            if text in {"0", "false", "no", "off", "fail", "failed", "blocked"}:
-                return False
+            if (parsed := _bool_value(payload.get(key))) is not None:
+                return parsed
     return None
 
 
+def _source_decision_priority_payloads(
+    row: Mapping[str, object],
+) -> list[Mapping[str, object]]:
+    payloads: list[Mapping[str, object]] = [row]
+    decision_json = _as_mapping(row.get("decision_json"))
+    if decision_json:
+        payloads.append(decision_json)
+        for key in (
+            "strategy_signal_paper",
+            "paper_route_target_plan",
+            "paper_route_target",
+        ):
+            if nested := _as_mapping(decision_json.get(key)):
+                payloads.append(nested)
+        params = _as_mapping(decision_json.get("params"))
+        if params:
+            payloads.append(params)
+            for key in (
+                "strategy_signal_paper",
+                "paper_route_target_plan",
+                "paper_route_target",
+            ):
+                if nested := _as_mapping(params.get(key)):
+                    payloads.append(nested)
+    return payloads
+
+
 def _source_decision_mode(row: Mapping[str, object]) -> str | None:
+    for payload in _source_decision_priority_payloads(row):
+        explicit = normalize_source_decision_mode(
+            _direct_text(payload, "source_decision_mode")
+        )
+        if explicit is not None:
+            return explicit
     explicit = normalize_source_decision_mode(_first_text(row, "source_decision_mode"))
     if explicit is not None:
         return explicit
     return normalize_source_decision_mode(row.get("mode"))
+
+
+def _source_decision_profit_proof_flag(row: Mapping[str, object]) -> bool | None:
+    for payload in _source_decision_priority_payloads(row):
+        value = _direct_bool(
+            payload,
+            "profit_proof_eligible",
+            "post_cost_promotion_eligible",
+        )
+        if value is not None:
+            return value
+    return _first_bool(row, "profit_proof_eligible", "post_cost_promotion_eligible")
 
 
 def _source_decision_mode_counts(
@@ -378,6 +475,192 @@ def _source_decision_mode_counts(
     return dict(sorted(counts.items()))
 
 
+def _source_decision_identifier_values(row: Mapping[str, object]) -> set[str]:
+    return _text_values(
+        row,
+        "trade_decision_id",
+        "decision_id",
+        "decision_hash",
+    )
+
+
+def _source_decision_mode_lookup(
+    rows: Sequence[Mapping[str, object]],
+) -> dict[str, str]:
+    modes_by_identifier: dict[str, str] = {}
+    conflicting_identifiers: set[str] = set()
+    for row in rows:
+        mode = _source_decision_mode(row)
+        if mode is None:
+            continue
+        for identifier in _source_decision_identifier_values(row):
+            existing = modes_by_identifier.get(identifier)
+            if existing is not None and existing != mode:
+                conflicting_identifiers.add(identifier)
+                continue
+            modes_by_identifier[identifier] = mode
+    for identifier in conflicting_identifiers:
+        modes_by_identifier.pop(identifier, None)
+    return modes_by_identifier
+
+
+def _source_decision_mode_partition_key(
+    row: Mapping[str, object],
+    *,
+    modes_by_identifier: Mapping[str, str],
+) -> str:
+    explicit = _source_decision_mode(row)
+    if explicit is not None:
+        return explicit
+    inferred_modes = {
+        modes_by_identifier[identifier]
+        for identifier in _source_decision_identifier_values(row)
+        if identifier in modes_by_identifier
+    }
+    if len(inferred_modes) == 1:
+        return next(iter(inferred_modes))
+    return SOURCE_DECISION_MODE_MISSING_PARTITION
+
+
+def _partition_runtime_source_rows_by_decision_mode(
+    *,
+    execution_rows: list[dict[str, object]],
+    decision_lifecycle_rows: list[dict[str, object]] | None,
+    order_lifecycle_rows: list[dict[str, object]] | None,
+    unlinked_order_lifecycle_rows: list[dict[str, object]] | None = None,
+    carry_in_execution_rows: list[dict[str, object]] | None = None,
+    carry_in_decision_lifecycle_rows: list[dict[str, object]] | None = None,
+    carry_in_order_lifecycle_rows: list[dict[str, object]] | None = None,
+) -> (
+    list[
+        tuple[
+            str,
+            list[dict[str, object]],
+            list[dict[str, object]] | None,
+            list[dict[str, object]] | None,
+            list[dict[str, object]] | None,
+            list[dict[str, object]] | None,
+            list[dict[str, object]] | None,
+            list[dict[str, object]] | None,
+        ]
+    ]
+    | None
+):
+    source_rows: list[dict[str, object]] = [
+        *execution_rows,
+        *(decision_lifecycle_rows or []),
+        *(order_lifecycle_rows or []),
+        *(unlinked_order_lifecycle_rows or []),
+        *(carry_in_execution_rows or []),
+        *(carry_in_decision_lifecycle_rows or []),
+        *(carry_in_order_lifecycle_rows or []),
+    ]
+    if not source_rows:
+        return None
+    modes_by_identifier = _source_decision_mode_lookup(source_rows)
+    mode_keys = {
+        _source_decision_mode_partition_key(
+            row,
+            modes_by_identifier=modes_by_identifier,
+        )
+        for row in source_rows
+    }
+    if len(mode_keys) <= 1:
+        return None
+
+    partitions: list[
+        tuple[
+            str,
+            list[dict[str, object]],
+            list[dict[str, object]] | None,
+            list[dict[str, object]] | None,
+            list[dict[str, object]] | None,
+            list[dict[str, object]] | None,
+            list[dict[str, object]] | None,
+            list[dict[str, object]] | None,
+        ]
+    ] = []
+    for mode_key in sorted(mode_keys):
+        partition_execution_rows = [
+            row
+            for row in execution_rows
+            if _source_decision_mode_partition_key(
+                row,
+                modes_by_identifier=modes_by_identifier,
+            )
+            == mode_key
+        ]
+        partition_decision_rows = [
+            row
+            for row in decision_lifecycle_rows or []
+            if _source_decision_mode_partition_key(
+                row,
+                modes_by_identifier=modes_by_identifier,
+            )
+            == mode_key
+        ]
+        partition_order_rows = [
+            row
+            for row in order_lifecycle_rows or []
+            if _source_decision_mode_partition_key(
+                row,
+                modes_by_identifier=modes_by_identifier,
+            )
+            == mode_key
+        ]
+        partition_unlinked_order_rows = []
+        for row in unlinked_order_lifecycle_rows or []:
+            partition_key = _source_decision_mode_partition_key(
+                row,
+                modes_by_identifier=modes_by_identifier,
+            )
+            if partition_key == mode_key or (
+                partition_key == SOURCE_DECISION_MODE_MISSING_PARTITION
+                and mode_key != SOURCE_DECISION_MODE_MISSING_PARTITION
+            ):
+                partition_unlinked_order_rows.append(row)
+        partition_carry_in_execution_rows = [
+            row
+            for row in carry_in_execution_rows or []
+            if _source_decision_mode_partition_key(
+                row,
+                modes_by_identifier=modes_by_identifier,
+            )
+            == mode_key
+        ]
+        partition_carry_in_decision_rows = [
+            row
+            for row in carry_in_decision_lifecycle_rows or []
+            if _source_decision_mode_partition_key(
+                row,
+                modes_by_identifier=modes_by_identifier,
+            )
+            == mode_key
+        ]
+        partition_carry_in_order_rows = [
+            row
+            for row in carry_in_order_lifecycle_rows or []
+            if _source_decision_mode_partition_key(
+                row,
+                modes_by_identifier=modes_by_identifier,
+            )
+            == mode_key
+        ]
+        partitions.append(
+            (
+                mode_key,
+                partition_execution_rows,
+                partition_decision_rows or None,
+                partition_order_rows or None,
+                partition_unlinked_order_rows or None,
+                partition_carry_in_execution_rows or None,
+                partition_carry_in_decision_rows or None,
+                partition_carry_in_order_rows or None,
+            )
+        )
+    return partitions
+
+
 def _source_decision_rows_profit_proof_eligible(
     rows: Sequence[Mapping[str, object]],
 ) -> bool:
@@ -386,11 +669,7 @@ def _source_decision_rows_profit_proof_eligible(
         return False
     explicit: list[bool] = []
     for row in rows:
-        value = _first_bool(
-            row,
-            "profit_proof_eligible",
-            "post_cost_promotion_eligible",
-        )
+        value = _source_decision_profit_proof_flag(row)
         if value is not None:
             explicit.append(value)
     if any(value is False for value in explicit):
@@ -688,6 +967,8 @@ def _runtime_ledger_bucket_profit_proof_blockers(
         add("runtime_ledger_pnl_basis_not_runtime_ledger")
     if bucket.get("ledger_schema_version") not in RUNTIME_LEDGER_BUCKET_SCHEMAS:
         add("runtime_ledger_schema_not_supported")
+    for blocker in runtime_ledger_promotion_source_authority_blockers(bucket):
+        add(blocker)
     for blocker in _metadata_text_list(bucket.get("blockers")):
         add(blocker)
     if _nonnegative_int(bucket.get("fill_count")) <= 0:
@@ -820,6 +1101,337 @@ def _append_runtime_ledger_tca_row_blocker(
         row["runtime_ledger_bucket"] = bucket_payload
         row["runtime_ledger_blockers"] = blockers
         row["post_cost_promotion_eligible"] = False
+
+
+def _with_runtime_ledger_source_authority_context(
+    bucket: Mapping[str, object],
+    *,
+    source_window_start: datetime,
+    source_window_end: datetime,
+    source_refs: Sequence[str],
+    source_row_counts: Mapping[str, int],
+    trade_decision_ids: Sequence[object] = (),
+    execution_ids: Sequence[object] = (),
+    execution_order_event_ids: Sequence[object] = (),
+    source_window_ids: Sequence[object] = (),
+    source_offsets: Sequence[Mapping[str, object]] = (),
+    source_materialization: str | None = None,
+    authority_class: str | None = None,
+) -> dict[str, object]:
+    payload = dict(bucket)
+    payload.setdefault("source_window_start", source_window_start.isoformat())
+    payload.setdefault("source_window_end", source_window_end.isoformat())
+    if source_refs:
+        existing_refs = _metadata_text_list(payload.get("source_refs"))
+        payload["source_refs"] = list(dict.fromkeys([*existing_refs, *source_refs]))
+    for key, values in (
+        ("trade_decision_ids", trade_decision_ids),
+        ("execution_ids", execution_ids),
+        ("execution_order_event_ids", execution_order_event_ids),
+        ("source_window_ids", source_window_ids),
+    ):
+        merged_values = _metadata_text_list(payload.get(key))
+        merged_values.extend(
+            _text for value in values if (_text := _text_or_none(value))
+        )
+        if merged_values:
+            payload[key] = list(dict.fromkeys(merged_values))
+    if source_offsets:
+        existing_offsets = [
+            dict(item)
+            for item in cast(Sequence[object], payload.get("source_offsets") or [])
+            if isinstance(item, Mapping)
+        ]
+        seen_offsets = {
+            (
+                str(item.get("topic") or ""),
+                str(item.get("partition") or ""),
+                str(item.get("offset") or ""),
+            )
+            for item in existing_offsets
+        }
+        for item in source_offsets:
+            offset = {
+                "topic": item.get("topic"),
+                "partition": item.get("partition"),
+                "offset": item.get("offset"),
+            }
+            topic = offset.get("topic")
+            partition = offset.get("partition")
+            source_offset = offset.get("offset")
+            key = (
+                str(topic or ""),
+                "" if partition is None else str(partition),
+                "" if source_offset is None else str(source_offset),
+            )
+            if all(key) and key not in seen_offsets:
+                existing_offsets.append(offset)
+                seen_offsets.add(key)
+        if existing_offsets:
+            payload["source_offsets"] = existing_offsets
+    if source_materialization:
+        payload.setdefault("source_materialization", source_materialization)
+    if authority_class:
+        payload.setdefault("authority_class", authority_class)
+    existing_counts = _as_mapping(payload.get("source_row_counts"))
+    merged_counts: dict[str, int] = {
+        str(key): _nonnegative_int(value) for key, value in existing_counts.items()
+    }
+    for key, value in source_row_counts.items():
+        merged_counts.setdefault(str(key), max(0, int(value)))
+    if merged_counts:
+        payload["source_row_counts"] = dict(sorted(merged_counts.items()))
+    return payload
+
+
+def _source_identifier_values(
+    rows: Sequence[Mapping[str, object]] | None,
+    *keys: str,
+) -> list[str]:
+    values: list[str] = []
+    for row in rows or ():
+        for key in keys:
+            value = _text_or_none(row.get(key))
+            if value is not None:
+                values.append(value)
+                break
+    return list(dict.fromkeys(values))
+
+
+def _source_offset_values(
+    rows: Sequence[Mapping[str, object]] | None,
+) -> list[dict[str, object]]:
+    offsets: list[dict[str, object]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for row in rows or ():
+        topic = _text_or_none(row.get("source_topic"))
+        partition = row.get("source_partition")
+        offset = row.get("source_offset")
+        if topic is None or partition is None or offset is None:
+            continue
+        key = (topic, str(partition), str(offset))
+        if key in seen:
+            continue
+        offsets.append({"topic": topic, "partition": partition, "offset": offset})
+        seen.add(key)
+    return offsets
+
+
+def _decision_lifecycle_query_row(row: Sequence[object]) -> dict[str, object]:
+    if len(row) >= 7:
+        return {
+            "trade_decision_id": str(row[0]),
+            "computed_at": row[1],
+            "event_type": "decision",
+            "symbol": row[2],
+            "account_label": row[3],
+            "strategy_id": row[4],
+            "decision_hash": row[5],
+            "decision_json": row[6],
+        }
+    return {
+        "trade_decision_id": str(row[4]),
+        "computed_at": row[0],
+        "event_type": "decision",
+        "symbol": row[1],
+        "account_label": row[2],
+        "strategy_id": row[3],
+        "decision_hash": row[4],
+        "decision_json": row[5],
+    }
+
+
+def _decision_lifecycle_query_row_has_time(row: Sequence[object]) -> bool:
+    return (row[1] if len(row) >= 7 else row[0]) is not None
+
+
+def _execution_query_row(row: Sequence[object]) -> dict[str, object]:
+    if len(row) >= 19:
+        return {
+            "execution_id": str(row[0]),
+            "trade_decision_id": str(row[1]),
+            "decision_created_at": row[2],
+            "computed_at": row[3],
+            "execution_event_at": row[3],
+            "execution_created_at": row[4],
+            "symbol": row[5],
+            "side": row[6],
+            "filled_qty": row[7],
+            "avg_fill_price": row[8],
+            "shortfall_notional": row[9],
+            "execution_audit_json": row[10],
+            "raw_order": row[11],
+            "account_label": row[12],
+            "strategy_id": row[13],
+            "decision_hash": row[14],
+            "decision_json": row[15],
+            "alpaca_order_id": row[16],
+            "client_order_id": row[17],
+            "order_status": row[18],
+        }
+    return {
+        "execution_id": None,
+        "trade_decision_id": str(row[12]),
+        "decision_created_at": row[0],
+        "computed_at": row[1],
+        "execution_event_at": row[1],
+        "execution_created_at": row[2],
+        "symbol": row[3],
+        "side": row[4],
+        "filled_qty": row[5],
+        "avg_fill_price": row[6],
+        "shortfall_notional": row[7],
+        "execution_audit_json": row[8],
+        "raw_order": row[9],
+        "account_label": row[10],
+        "strategy_id": row[11],
+        "decision_hash": row[12],
+        "decision_json": row[13],
+        "alpaca_order_id": row[14],
+        "client_order_id": row[15],
+        "order_status": row[16],
+    }
+
+
+def _execution_query_row_has_time(row: Sequence[object]) -> bool:
+    return (row[3] if len(row) >= 19 else row[1]) is not None
+
+
+def _order_lifecycle_query_row(row: Sequence[object]) -> dict[str, object]:
+    if len(row) >= 28:
+        return {
+            "execution_order_event_id": str(row[0]),
+            "trade_decision_id": str(row[1]),
+            "execution_id": str(row[2]) if row[2] is not None else None,
+            "event_ts": row[3],
+            "symbol": row[4],
+            "account_label": row[5],
+            "strategy_id": row[6],
+            "decision_hash": row[7],
+            "decision_json": row[8],
+            "alpaca_order_id": row[9],
+            "client_order_id": row[10],
+            "event_type": row[11],
+            "order_status": row[12],
+            "side": row[13],
+            "qty": row[14],
+            "filled_qty": row[15],
+            "filled_qty_delta": row[16],
+            "avg_fill_price": row[17],
+            "filled_notional_delta": row[18],
+            "fill_quantity_basis": row[19],
+            "event_fingerprint": row[20],
+            "source_topic": row[21],
+            "source_partition": row[22],
+            "source_offset": row[23],
+            "source_window_id": str(row[24]) if row[24] is not None else None,
+            "raw_event": row[25],
+            "execution_audit_json": row[26],
+            "raw_order": row[27],
+        }
+    if len(row) >= 25:
+        return {
+            "execution_order_event_id": str(row[0]),
+            "trade_decision_id": str(row[1]),
+            "execution_id": str(row[2]) if row[2] is not None else None,
+            "event_ts": row[3],
+            "symbol": row[4],
+            "account_label": row[5],
+            "strategy_id": row[6],
+            "decision_hash": row[7],
+            "decision_json": row[8],
+            "alpaca_order_id": row[9],
+            "client_order_id": row[10],
+            "event_type": row[11],
+            "order_status": row[12],
+            "side": row[13],
+            "qty": row[14],
+            "filled_qty": row[15],
+            "avg_fill_price": row[16],
+            "event_fingerprint": row[17],
+            "source_topic": row[18],
+            "source_partition": row[19],
+            "source_offset": row[20],
+            "source_window_id": str(row[21]) if row[21] is not None else None,
+            "raw_event": row[22],
+            "execution_audit_json": row[23],
+            "raw_order": row[24],
+        }
+    if len(row) >= 21:
+        return {
+            "execution_order_event_id": str(row[0]),
+            "trade_decision_id": str(row[1]),
+            "execution_id": str(row[2]) if row[2] is not None else None,
+            "event_ts": row[3],
+            "symbol": row[4],
+            "account_label": row[5],
+            "strategy_id": row[6],
+            "decision_hash": row[7],
+            "decision_json": row[8],
+            "alpaca_order_id": row[9],
+            "client_order_id": row[10],
+            "event_type": row[11],
+            "order_status": row[12],
+            "event_fingerprint": row[13],
+            "source_topic": row[14],
+            "source_partition": row[15],
+            "source_offset": row[16],
+            "source_window_id": str(row[17]) if row[17] is not None else None,
+            "raw_event": row[18],
+            "execution_audit_json": row[19],
+            "raw_order": row[20],
+        }
+    if len(row) >= 20:
+        return {
+            "execution_order_event_id": str(row[0]),
+            "trade_decision_id": str(row[1]),
+            "execution_id": str(row[2]) if row[2] is not None else None,
+            "event_ts": row[3],
+            "symbol": row[4],
+            "account_label": row[5],
+            "strategy_id": row[6],
+            "decision_hash": row[7],
+            "decision_json": row[8],
+            "alpaca_order_id": row[9],
+            "client_order_id": row[10],
+            "event_type": row[11],
+            "order_status": row[12],
+            "event_fingerprint": row[13],
+            "source_topic": row[14],
+            "source_partition": row[15],
+            "source_offset": row[16],
+            "source_window_id": None,
+            "raw_event": row[17],
+            "execution_audit_json": row[18],
+            "raw_order": row[19],
+        }
+    return {
+        "execution_order_event_id": str(row[10]),
+        "trade_decision_id": str(row[4]),
+        "execution_id": None,
+        "event_ts": row[0],
+        "symbol": row[1],
+        "account_label": row[2],
+        "strategy_id": row[3],
+        "decision_hash": row[4],
+        "decision_json": row[5],
+        "alpaca_order_id": row[6],
+        "client_order_id": row[7],
+        "event_type": row[8],
+        "order_status": row[9],
+        "event_fingerprint": row[10],
+        "source_topic": row[11],
+        "source_partition": row[12],
+        "source_offset": row[13],
+        "source_window_id": None,
+        "raw_event": row[14],
+        "execution_audit_json": row[15],
+        "raw_order": row[16],
+    }
+
+
+def _order_lifecycle_query_row_has_time(row: Sequence[object]) -> bool:
+    return (row[3] if len(row) >= 20 else row[0]) is not None
 
 
 def _mark_runtime_ledger_tca_rows_as_exact_replay_artifacts(
@@ -1028,9 +1640,24 @@ _AUTHORITATIVE_RUNTIME_LEDGER_MATERIALIZATION_SOURCE_KINDS = frozenset(
     {
         "paper_route_probe_runtime_observed",
         "paper_runtime_observed",
+        "runtime_ledger_source_collection_candidate",
         "live_runtime_observed",
     }
 )
+
+
+def _source_collection_target_authorization_blockers(
+    target_metadata: Mapping[str, Any],
+) -> list[str]:
+    blockers: list[str] = []
+    if target_metadata.get("source_collection_authorized") is not True:
+        blockers.append("source_collection_authorization_missing")
+    if (
+        str(target_metadata.get("source_collection_authorization_scope") or "").strip()
+        != "source_window_evidence_collection_only"
+    ):
+        blockers.append("source_collection_authorization_scope_invalid")
+    return blockers
 
 
 def _source_kind_allows_runtime_ledger_materialization(
@@ -1044,6 +1671,8 @@ def _source_kind_allows_runtime_ledger_materialization(
     ):
         return False
     normalized = source_kind.strip().lower().replace("-", "_")
+    if normalized == "runtime_ledger_source_collection_candidate":
+        return not _source_collection_target_authorization_blockers(target_metadata)
     return normalized in _AUTHORITATIVE_RUNTIME_LEDGER_MATERIALIZATION_SOURCE_KINDS
 
 
@@ -1061,12 +1690,29 @@ def _runtime_window_import_proof_hygiene_blockers(
         target_metadata=target_metadata,
     ):
         blockers.append("runtime_window_target_metadata_missing")
+    if (
+        source_kind.strip().lower().replace("-", "_")
+        == "runtime_ledger_source_collection_candidate"
+    ):
+        blockers.extend(
+            _source_collection_target_authorization_blockers(target_metadata)
+        )
     if not dependency_quorum_decision.strip():
         blockers.append("dependency_quorum_decision_missing")
     if not continuity_ok.strip():
         blockers.append("continuity_gate_missing")
     if not drift_ok.strip():
         blockers.append("drift_gate_missing")
+    for key in (
+        "runtime_ledger_target_metadata_blockers",
+        "runtime_window_import_health_gate_blockers",
+        "runtime_window_import_promotion_blockers",
+        "paper_route_session_import_blockers",
+        "candidate_blockers",
+        "runtime_window_import_audit_blockers",
+        "runtime_window_import_audit_target_blockers",
+    ):
+        blockers.extend(_metadata_text_list(target_metadata.get(key)))
     return blockers
 
 
@@ -1343,13 +1989,13 @@ def _strategy_name_candidates(*values: str | None) -> list[str]:
 
 
 def _execution_signed_qty(*, side: Any, qty: Any) -> Decimal:
-    normalized_side = str(side or "").strip().lower()
+    normalized_side = str(side or "").strip().lower().replace("-", "_")
     quantity = _decimal_or_none(qty)
     if quantity is None or quantity <= 0:
         return Decimal("0")
-    if normalized_side == "buy":
+    if normalized_side in {"buy", "buy_to_cover", "cover"}:
         return quantity
-    if normalized_side == "sell":
+    if normalized_side in {"sell", "sell_short", "short"}:
         return -quantity
     return Decimal("0")
 
@@ -1512,14 +2158,22 @@ def _runtime_lifecycle_ledger_row(
     }
     if event_type in _RUNTIME_LEDGER_FILL_EVENTS:
         side = _first_text(row, "side", "action", "order_side")
-        filled_qty = _first_decimal(
+        source_authority_order_event = _source_authority_order_event_row(row)
+        fill_quantity_basis = _fill_quantity_basis(row)
+        filled_qty_delta = _first_positive_decimal(
+            row,
+            "filled_qty_delta",
+            "fill_qty_delta",
+            "delta_filled_qty",
+        )
+        filled_qty = _first_positive_decimal(
             row,
             "filled_qty",
             "filled_quantity",
             "qty",
             "quantity",
         )
-        avg_fill_price = _first_decimal(
+        avg_fill_price = _first_positive_decimal(
             row,
             "avg_fill_price",
             "filled_avg_price",
@@ -1529,12 +2183,34 @@ def _runtime_lifecycle_ledger_row(
             "filled_price",
             "price",
         )
-        filled_notional = _first_decimal(
+        if (
+            source_authority_order_event
+            and fill_quantity_basis in {"delta", "cumulative_to_delta"}
+            and filled_qty_delta is not None
+        ):
+            filled_qty = filled_qty_delta
+        filled_notional = _first_positive_decimal(
             row,
+            "filled_notional_delta",
+            "fill_notional_delta",
+            "delta_filled_notional",
             "filled_notional",
             "notional",
             "fill_notional",
         )
+        if source_authority_order_event and fill_quantity_basis not in {
+            "delta",
+            "cumulative_to_delta",
+        }:
+            filled_qty = None
+            filled_notional = None
+        elif (
+            source_authority_order_event
+            and fill_quantity_basis in {"delta", "cumulative_to_delta"}
+            and filled_qty_delta is None
+        ):
+            filled_qty = None
+            filled_notional = None
         if (
             filled_notional is None
             and filled_qty is not None
@@ -1579,6 +2255,18 @@ def _runtime_lifecycle_ledger_row(
             ledger_row["avg_fill_price"] = avg_fill_price
         if filled_notional is not None:
             ledger_row["filled_notional"] = filled_notional
+        if filled_qty_delta is not None:
+            ledger_row["filled_qty_delta"] = filled_qty_delta
+        filled_notional_delta = _first_positive_decimal(
+            row,
+            "filled_notional_delta",
+            "fill_notional_delta",
+            "delta_filled_notional",
+        )
+        if filled_notional_delta is not None:
+            ledger_row["filled_notional_delta"] = filled_notional_delta
+        if fill_quantity_basis is not None:
+            ledger_row["fill_quantity_basis"] = fill_quantity_basis
         if cost_amount is not None:
             ledger_row["cost_amount"] = cost_amount
         if cost_basis is not None:
@@ -1600,14 +2288,14 @@ def _runtime_order_id(row: Mapping[str, object]) -> str | None:
 
 
 def _execution_row_has_fill(row: Mapping[str, object]) -> bool:
-    filled_qty = _first_decimal(
+    filled_qty = _first_positive_decimal(
         row,
         "filled_qty",
         "filled_quantity",
         "qty",
         "quantity",
     )
-    avg_fill_price = _first_decimal(
+    avg_fill_price = _first_positive_decimal(
         row,
         "avg_fill_price",
         "filled_avg_price",
@@ -1624,10 +2312,61 @@ def _execution_row_has_fill(row: Mapping[str, object]) -> bool:
     )
 
 
+def _runtime_lifecycle_identifier_values(row: Mapping[str, object]) -> set[str]:
+    values = _text_values(row, *_RUNTIME_LIFECYCLE_IDENTIFIER_KEYS)
+    return {value for value in values if value}
+
+
+def _runtime_lifecycle_strategy_identifier_values(
+    rows: Sequence[Mapping[str, object]],
+) -> set[str]:
+    identifiers: set[str] = set()
+    for row in rows:
+        identifiers.update(_runtime_lifecycle_identifier_values(row))
+    return identifiers
+
+
+def _strategy_relevant_unlinked_fill_lifecycle_rows(
+    *,
+    execution_rows: Sequence[Mapping[str, object]],
+    order_lifecycle_rows: Sequence[Mapping[str, object]] | None,
+    unlinked_order_lifecycle_rows: Sequence[Mapping[str, object]] | None,
+    candidate_id: str | None = None,
+    hypothesis_id: str | None = None,
+) -> list[dict[str, object]]:
+    strategy_identifiers = _runtime_lifecycle_strategy_identifier_values(
+        [
+            *execution_rows,
+            *(order_lifecycle_rows or ()),
+        ]
+    )
+    lineage_filter_present = candidate_id is not None or hypothesis_id is not None
+    relevant_rows: list[dict[str, object]] = []
+    for row in unlinked_order_lifecycle_rows or ():
+        normalized = {str(key): value for key, value in row.items()}
+        if _runtime_ledger_event_type(normalized) not in _RUNTIME_LEDGER_FILL_EVENTS:
+            continue
+        if lineage_filter_present and _source_row_matches_lineage(
+            normalized,
+            candidate_id=candidate_id,
+            hypothesis_id=hypothesis_id,
+            require_source_lineage=True,
+        ):
+            relevant_rows.append(normalized)
+            continue
+        if (
+            strategy_identifiers
+            and _runtime_lifecycle_identifier_values(normalized) & strategy_identifiers
+        ):
+            relevant_rows.append(normalized)
+    return relevant_rows
+
+
 def _order_feed_fill_lifecycle_blockers(
     *,
     execution_rows: list[dict[str, object]],
     order_lifecycle_rows: list[dict[str, object]] | None,
+    unlinked_order_lifecycle_rows: list[dict[str, object]] | None = None,
 ) -> list[str]:
     expected_order_ids: set[str] = set()
     missing_execution_order_id = False
@@ -1644,37 +2383,535 @@ def _order_feed_fill_lifecycle_blockers(
         return []
 
     observed_fill_order_ids: set[str] = set()
-    complete_fill_order_ids: set[str] = set()
     for row in order_lifecycle_rows or []:
-        event_type = _runtime_ledger_event_type(
-            {str(key): value for key, value in row.items()}
-        )
+        normalized = {str(key): value for key, value in row.items()}
+        event_type = _runtime_ledger_event_type(normalized)
         if event_type not in _RUNTIME_LEDGER_FILL_EVENTS:
             continue
         order_id = _runtime_order_id(row)
         if order_id is None:
             continue
         observed_fill_order_ids.add(order_id)
-        if (
-            _runtime_lifecycle_ledger_row(
-                row,
-                event_type=event_type,
-                require_complete_fill=True,
-            )
-            is not None
-        ):
-            complete_fill_order_ids.add(order_id)
 
     blockers: list[str] = []
+    if _strategy_relevant_unlinked_fill_lifecycle_rows(
+        execution_rows=execution_rows,
+        order_lifecycle_rows=order_lifecycle_rows,
+        unlinked_order_lifecycle_rows=unlinked_order_lifecycle_rows,
+    ):
+        blockers.append(ORDER_FEED_UNLINKED_FILL_LIFECYCLE_PRESENT_BLOCKER)
     if missing_execution_order_id:
         blockers.append(ORDER_FEED_FILL_LIFECYCLE_ORDER_ID_MISSING_BLOCKER)
     if not observed_fill_order_ids:
         blockers.append(ORDER_FEED_FILL_LIFECYCLE_MISSING_BLOCKER)
     elif expected_order_ids - observed_fill_order_ids:
         blockers.append(ORDER_FEED_FILL_LIFECYCLE_INCOMPLETE_BLOCKER)
-    elif expected_order_ids - complete_fill_order_ids:
-        blockers.append(ORDER_FEED_FILL_LIFECYCLE_INCOMPLETE_BLOCKER)
     return blockers
+
+
+def _source_authority_order_event_row(row: Mapping[str, object]) -> bool:
+    return any(
+        row.get(key) is not None
+        for key in (
+            "execution_order_event_id",
+            "source_window_id",
+            "source_offset",
+        )
+    )
+
+
+def _fill_quantity_basis(row: Mapping[str, object]) -> str | None:
+    raw = _first_text(row, "fill_quantity_basis", "quantity_basis")
+    if raw is None:
+        return None
+    normalized = raw.strip().lower().replace("-", "_").replace(" ", "_")
+    if normalized in {"delta", "fill_delta", "filled_delta"}:
+        return "delta"
+    if normalized in {"cumulative_to_delta", "cumulative_delta", "cum_to_delta"}:
+        return "cumulative_to_delta"
+    if normalized in {"cumulative", "cum"}:
+        return "cumulative"
+    if normalized in {"unknown", "cumulative_non_increasing"}:
+        return normalized
+    return normalized or None
+
+
+def _order_feed_fill_delta_blockers(row: Mapping[str, object]) -> list[str]:
+    if not _source_authority_order_event_row(row):
+        return []
+    basis = _fill_quantity_basis(row)
+    if basis not in {"delta", "cumulative_to_delta"}:
+        return [ORDER_FEED_FILL_DELTA_BASIS_MISSING_BLOCKER]
+    if (
+        _first_positive_decimal(
+            row,
+            "filled_qty_delta",
+            "fill_qty_delta",
+            "delta_filled_qty",
+        )
+        is None
+    ):
+        return [ORDER_FEED_FILL_DELTA_MISSING_BLOCKER]
+    return []
+
+
+def _runtime_source_row_symbol(row: Mapping[str, object]) -> str | None:
+    symbol = _first_text(row, "symbol", "ticker")
+    return symbol.upper() if symbol is not None else None
+
+
+def _runtime_source_row_in_bucket(
+    row: Mapping[str, object],
+    *,
+    bucket: RuntimeLedgerBucket,
+) -> bool:
+    row_symbol = _runtime_source_row_symbol(row)
+    if (
+        bucket.symbol is not None
+        and row_symbol is not None
+        and row_symbol != bucket.symbol
+    ):
+        return False
+    event_time = _runtime_ledger_row_time(
+        {str(key): value for key, value in row.items()}
+    )
+    return (
+        event_time is None
+        or bucket.bucket_started_at <= event_time < bucket.bucket_ended_at
+    )
+
+
+def _runtime_source_row_before_bucket(
+    row: Mapping[str, object],
+    *,
+    bucket: RuntimeLedgerBucket,
+) -> bool:
+    row_symbol = _runtime_source_row_symbol(row)
+    if (
+        bucket.symbol is not None
+        and row_symbol is not None
+        and row_symbol != bucket.symbol
+    ):
+        return False
+    event_time = _runtime_ledger_row_time(
+        {str(key): value for key, value in row.items()}
+    )
+    return event_time is not None and event_time < bucket.bucket_started_at
+
+
+def _runtime_source_decision_ids(rows: Sequence[Mapping[str, object]]) -> set[str]:
+    identifiers: set[str] = set()
+    for row in rows:
+        for key in ("trade_decision_id", "decision_id", "decision_hash"):
+            value = _text_or_none(row.get(key))
+            if value is not None:
+                identifiers.add(value)
+    return identifiers
+
+
+def _runtime_order_rows_for_bucket(
+    *,
+    bucket: RuntimeLedgerBucket,
+    execution_rows: list[dict[str, object]],
+    order_lifecycle_rows: list[dict[str, object]] | None,
+) -> list[dict[str, object]]:
+    bucket_execution_order_ids = {
+        order_id
+        for row in execution_rows
+        if _runtime_source_row_in_bucket(row, bucket=bucket)
+        and _execution_row_has_fill(row)
+        and (order_id := _runtime_order_id(row)) is not None
+    }
+    bucket_fill_order_ids = {
+        order_id
+        for row in order_lifecycle_rows or []
+        if _runtime_source_row_in_bucket(row, bucket=bucket)
+        and _runtime_ledger_event_type({str(key): value for key, value in row.items()})
+        in _RUNTIME_LEDGER_FILL_EVENTS
+        and (order_id := _runtime_order_id(row)) is not None
+    }
+    bucket_order_ids = bucket_execution_order_ids | bucket_fill_order_ids
+    rows: list[dict[str, object]] = []
+    for row in order_lifecycle_rows or []:
+        if not _runtime_source_row_in_bucket(row, bucket=bucket):
+            continue
+        order_id = _runtime_order_id(row)
+        if bucket_order_ids and order_id not in bucket_order_ids:
+            continue
+        rows.append(dict(row))
+    return rows
+
+
+def _runtime_decision_rows_for_bucket(
+    *,
+    bucket: RuntimeLedgerBucket,
+    decision_lifecycle_rows: list[dict[str, object]] | None,
+    source_rows: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    decision_ids = _runtime_source_decision_ids(source_rows)
+    rows: list[dict[str, object]] = []
+    for row in decision_lifecycle_rows or []:
+        if not _runtime_source_row_in_bucket(row, bucket=bucket):
+            continue
+        row_ids = _runtime_source_decision_ids([row])
+        if decision_ids and not (row_ids & decision_ids):
+            continue
+        rows.append(dict(row))
+    return rows
+
+
+def _runtime_decision_rows_before_bucket(
+    *,
+    bucket: RuntimeLedgerBucket,
+    decision_lifecycle_rows: list[dict[str, object]] | None,
+    source_rows: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    decision_ids = _runtime_source_decision_ids(source_rows)
+    rows: list[dict[str, object]] = []
+    for row in decision_lifecycle_rows or []:
+        if not _runtime_source_row_before_bucket(row, bucket=bucket):
+            continue
+        row_ids = _runtime_source_decision_ids([row])
+        if decision_ids and not (row_ids & decision_ids):
+            continue
+        rows.append(dict(row))
+    return rows
+
+
+def _runtime_unlinked_order_rows_for_bucket(
+    *,
+    bucket: RuntimeLedgerBucket,
+    unlinked_order_lifecycle_rows: list[dict[str, object]] | None,
+    bucket_order_ids: set[str],
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for row in unlinked_order_lifecycle_rows or []:
+        if _runtime_source_row_in_bucket(row, bucket=bucket):
+            rows.append(dict(row))
+            continue
+        row_symbol = _runtime_source_row_symbol(row)
+        if (
+            bucket.symbol is not None
+            and row_symbol is not None
+            and row_symbol != bucket.symbol
+        ):
+            continue
+        order_id = _runtime_order_id(row)
+        if order_id is not None and order_id in bucket_order_ids:
+            rows.append(dict(row))
+    return rows
+
+
+def _event_sourced_fill_economics_order_ids(
+    rows: Sequence[Mapping[str, object]],
+) -> set[str]:
+    order_ids: set[str] = set()
+    for row in rows:
+        normalized = {str(key): value for key, value in row.items()}
+        if _runtime_ledger_event_type(normalized) not in _RUNTIME_LEDGER_FILL_EVENTS:
+            continue
+        if (
+            _runtime_lifecycle_ledger_row(
+                normalized,
+                event_type=_runtime_ledger_event_type(normalized),
+                require_complete_fill=True,
+            )
+            is None
+        ):
+            continue
+        order_id = _runtime_order_id(normalized)
+        if order_id is not None:
+            order_ids.add(order_id)
+    return order_ids
+
+
+def _source_backed_fill_lifecycle_rows(
+    rows: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    source_backed_rows: list[dict[str, object]] = []
+    for row in rows:
+        normalized = {str(key): value for key, value in row.items()}
+        if _runtime_ledger_event_type(normalized) not in _RUNTIME_LEDGER_FILL_EVENTS:
+            continue
+        if _runtime_order_id(normalized) is None:
+            continue
+        if not _source_identifier_values(
+            [normalized], "execution_order_event_id", "event_fingerprint"
+        ):
+            continue
+        if not _source_identifier_values([normalized], "source_window_id"):
+            continue
+        if not _source_offset_values([normalized]):
+            continue
+        source_backed_rows.append(dict(normalized))
+    return source_backed_rows
+
+
+def _source_backed_fill_lifecycle_order_ids(
+    rows: Sequence[Mapping[str, object]],
+) -> set[str]:
+    return {
+        order_id
+        for row in _source_backed_fill_lifecycle_rows(rows)
+        if (order_id := _runtime_order_id(row)) is not None
+    }
+
+
+def _execution_fill_economics_order_ids(
+    rows: Sequence[Mapping[str, object]],
+) -> set[str]:
+    order_ids: set[str] = set()
+    for row in rows:
+        if not _execution_row_has_fill(row):
+            continue
+        order_id = _runtime_order_id(row)
+        if order_id is None:
+            continue
+        filled_notional = _first_positive_decimal(
+            row, "filled_notional", "notional", "turnover_notional"
+        ) or Decimal("0")
+        if filled_notional <= 0:
+            price = _first_positive_decimal(
+                row,
+                "avg_fill_price",
+                "filled_avg_price",
+                "filled_average_price",
+                "average_fill_price",
+                "fill_price",
+                "filled_price",
+            )
+            qty = _first_positive_decimal(
+                row, "filled_qty", "filled_quantity", "qty", "quantity"
+            )
+            if price is None or qty is None or price <= 0 or qty <= 0:
+                continue
+            filled_notional = price * qty
+        cost_amount = _runtime_execution_cost_amount(
+            row,
+            filled_notional=filled_notional,
+            side=_first_text(row, "side", "order_side") or "",
+            filled_qty=(
+                _first_positive_decimal(
+                    row, "filled_qty", "filled_quantity", "qty", "quantity"
+                )
+                or Decimal("0")
+            ),
+        )
+        cost_basis = _runtime_execution_cost_basis(
+            row,
+            cost_amount=cost_amount,
+            side=_first_text(row, "side", "order_side") or "",
+            filled_qty=(
+                _first_positive_decimal(
+                    row, "filled_qty", "filled_quantity", "qty", "quantity"
+                )
+                or Decimal("0")
+            ),
+            filled_notional=filled_notional,
+        )
+        if cost_amount is not None and cost_amount >= 0 and cost_basis is not None:
+            order_ids.add(order_id)
+    return order_ids
+
+
+def _runtime_source_context_for_bucket(
+    *,
+    bucket: RuntimeLedgerBucket,
+    execution_rows: list[dict[str, object]],
+    decision_lifecycle_rows: list[dict[str, object]] | None,
+    order_lifecycle_rows: list[dict[str, object]] | None,
+    unlinked_order_lifecycle_rows: list[dict[str, object]] | None,
+    carry_in_execution_rows: list[dict[str, object]] | None = None,
+    carry_in_decision_lifecycle_rows: list[dict[str, object]] | None = None,
+    carry_in_order_lifecycle_rows: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
+    target_order_rows = _runtime_order_rows_for_bucket(
+        bucket=bucket,
+        execution_rows=execution_rows,
+        order_lifecycle_rows=order_lifecycle_rows,
+    )
+    bucket_carry_in_order_rows = [
+        dict(row)
+        for row in carry_in_order_lifecycle_rows or []
+        if _runtime_source_row_before_bucket(row, bucket=bucket)
+    ]
+    bucket_order_rows = [*bucket_carry_in_order_rows, *target_order_rows]
+    bucket_order_ids = {
+        order_id
+        for row in bucket_order_rows
+        if (order_id := _runtime_order_id(row)) is not None
+    }
+    target_execution_rows = [
+        dict(row)
+        for row in execution_rows
+        if _execution_row_has_fill(row)
+        and (
+            _runtime_source_row_in_bucket(row, bucket=bucket)
+            or (
+                (order_id := _runtime_order_id(row)) is not None
+                and order_id in bucket_order_ids
+            )
+        )
+    ]
+    bucket_carry_in_execution_rows = [
+        dict(row)
+        for row in carry_in_execution_rows or []
+        if _execution_row_has_fill(row)
+        and _runtime_source_row_before_bucket(row, bucket=bucket)
+    ]
+    bucket_execution_rows = [*bucket_carry_in_execution_rows, *target_execution_rows]
+    target_decision_rows = _runtime_decision_rows_for_bucket(
+        bucket=bucket,
+        decision_lifecycle_rows=decision_lifecycle_rows,
+        source_rows=[*bucket_execution_rows, *bucket_order_rows],
+    )
+    carry_in_decision_rows = _runtime_decision_rows_before_bucket(
+        bucket=bucket,
+        decision_lifecycle_rows=carry_in_decision_lifecycle_rows,
+        source_rows=[*bucket_execution_rows, *bucket_order_rows],
+    )
+    bucket_decision_rows = [*carry_in_decision_rows, *target_decision_rows]
+    bucket_unlinked_order_rows = _runtime_unlinked_order_rows_for_bucket(
+        bucket=bucket,
+        unlinked_order_lifecycle_rows=unlinked_order_lifecycle_rows,
+        bucket_order_ids=bucket_order_ids,
+    )
+    source_rows = [*bucket_execution_rows, *bucket_decision_rows, *bucket_order_rows]
+    source_backed_fill_lifecycle_rows = _source_backed_fill_lifecycle_rows(
+        bucket_order_rows
+    )
+    source_backed_fill_lifecycle_times = [
+        event_time
+        for row in source_backed_fill_lifecycle_rows
+        if (
+            event_time := _runtime_ledger_row_time(
+                {str(key): value for key, value in row.items()}
+            )
+        )
+        is not None
+    ]
+    source_window_ids = _source_identifier_values(
+        source_backed_fill_lifecycle_rows,
+        "source_window_id",
+    )
+    source_row_counts = {
+        "trade_decisions": len(bucket_decision_rows),
+        "executions": len(bucket_execution_rows),
+        "execution_order_events": len(source_backed_fill_lifecycle_rows),
+    }
+    if source_window_ids:
+        source_row_counts["order_feed_source_windows"] = len(source_window_ids)
+    source_refs = [
+        ref
+        for table, ref in (
+            ("trade_decisions", "postgres:trade_decisions"),
+            ("executions", "postgres:executions"),
+            ("execution_order_events", "postgres:execution_order_events"),
+            ("order_feed_source_windows", "postgres:order_feed_source_windows"),
+        )
+        if source_row_counts.get(table, 0) > 0
+    ]
+    expected_execution_fill_order_ids = set()
+    for row in bucket_execution_rows:
+        if (
+            _execution_row_has_fill(row)
+            and (order_id := _runtime_order_id(row)) is not None
+        ):
+            expected_execution_fill_order_ids.add(order_id)
+    for row in bucket_order_rows:
+        if (order_id := _runtime_order_id(row)) is not None:
+            expected_execution_fill_order_ids.add(order_id)
+    source_backed_fill_lifecycle_order_ids = _source_backed_fill_lifecycle_order_ids(
+        source_backed_fill_lifecycle_rows
+    )
+    event_sourced_fill_order_ids = _event_sourced_fill_economics_order_ids(
+        source_backed_fill_lifecycle_rows
+    )
+    execution_fill_order_ids = _execution_fill_economics_order_ids(
+        bucket_execution_rows
+    )
+    order_feed_fill_economics_complete = bool(
+        expected_execution_fill_order_ids
+    ) and expected_execution_fill_order_ids.issubset(event_sourced_fill_order_ids)
+    execution_fill_economics_complete = bool(
+        expected_execution_fill_order_ids
+    ) and expected_execution_fill_order_ids.issubset(execution_fill_order_ids)
+    source_backed_fill_lifecycle_complete = bool(
+        expected_execution_fill_order_ids
+    ) and expected_execution_fill_order_ids.issubset(
+        source_backed_fill_lifecycle_order_ids
+    )
+    source_materialization = None
+    authority_class = None
+    source_offsets = _source_offset_values(source_backed_fill_lifecycle_rows)
+    execution_order_event_ids = _source_identifier_values(
+        source_backed_fill_lifecycle_rows,
+        "execution_order_event_id",
+        "event_fingerprint",
+    )
+    if source_offsets and execution_order_event_ids:
+        if order_feed_fill_economics_complete:
+            source_materialization = "execution_order_events"
+            authority_class = "runtime_order_feed_execution_source"
+        elif (
+            execution_fill_economics_complete and source_backed_fill_lifecycle_complete
+        ):
+            source_materialization = "source_execution_lifecycle"
+            authority_class = "source_execution_lifecycle_materialized_runtime_ledger"
+    return {
+        "execution_rows": bucket_execution_rows,
+        "decision_rows": bucket_decision_rows,
+        "order_rows": bucket_order_rows,
+        "unlinked_order_rows": bucket_unlinked_order_rows,
+        "source_rows": source_rows,
+        "source_window_ids": source_window_ids,
+        "source_window_start": (
+            min(source_backed_fill_lifecycle_times)
+            if source_backed_fill_lifecycle_times
+            else bucket.bucket_started_at
+        ),
+        "source_window_end": (
+            max(source_backed_fill_lifecycle_times) + timedelta(microseconds=1)
+            if source_backed_fill_lifecycle_times
+            else bucket.bucket_ended_at
+        ),
+        "source_row_counts": source_row_counts,
+        "source_refs": source_refs,
+        "trade_decision_ids": _source_identifier_values(
+            source_rows,
+            "trade_decision_id",
+            "decision_id",
+            "decision_hash",
+        ),
+        "execution_ids": _source_identifier_values(
+            [*bucket_execution_rows, *bucket_order_rows],
+            "execution_id",
+        ),
+        "execution_order_event_ids": execution_order_event_ids,
+        "source_offsets": source_offsets,
+        "source_materialization": source_materialization,
+        "authority_class": authority_class,
+        "fill_economics_complete": (
+            order_feed_fill_economics_complete or execution_fill_economics_complete
+        ),
+        "order_feed_fill_lifecycle_blockers": _order_feed_fill_lifecycle_blockers(
+            execution_rows=bucket_execution_rows,
+            order_lifecycle_rows=bucket_order_rows,
+            unlinked_order_lifecycle_rows=bucket_unlinked_order_rows,
+        ),
+        "source_account_labels": sorted(
+            {
+                str(row.get("source_account_label") or "").strip()
+                for row in source_rows
+                if str(row.get("source_account_label") or "").strip()
+            }
+        ),
+        "source_decision_mode_counts": _source_decision_mode_counts(source_rows),
+        "source_decision_profit_proof_eligible": (
+            _source_decision_rows_profit_proof_eligible(source_rows)
+        ),
+        "equity_denominator": _runtime_ledger_equity_denominator_from_rows(source_rows),
+    }
 
 
 def _source_activity_diagnostics_blockers(
@@ -1716,6 +2953,15 @@ def _source_activity_diagnostics_blockers(
     source_bucket_profit_proof_count = _nonnegative_int(
         diagnostics.get("runtime_ledger_source_bucket_profit_proof_count")
     )
+    unlinked_fill_lifecycle_count = _nonnegative_int(
+        diagnostics.get("order_feed_unlinked_fill_lifecycle_count")
+    )
+    if "order_feed_unlinked_strategy_fill_lifecycle_count" in diagnostics:
+        strategy_unlinked_fill_lifecycle_count = _nonnegative_int(
+            diagnostics.get("order_feed_unlinked_strategy_fill_lifecycle_count")
+        )
+    else:
+        strategy_unlinked_fill_lifecycle_count = unlinked_fill_lifecycle_count
 
     if (
         decision_query_count
@@ -1739,6 +2985,8 @@ def _source_activity_diagnostics_blockers(
         add(ORDER_FEED_FILL_LIFECYCLE_MISSING_BLOCKER)
     if execution_lineage_count > 0 and tca_lineage_count <= 0:
         add("execution_tca_rows_missing")
+    if strategy_unlinked_fill_lifecycle_count > 0:
+        add(ORDER_FEED_UNLINKED_FILL_LIFECYCLE_PRESENT_BLOCKER)
     if source_bucket_count <= 0:
         add("runtime_ledger_source_bucket_missing")
     elif source_bucket_profit_proof_count <= 0:
@@ -1757,31 +3005,257 @@ def _source_activity_diagnostics_blockers(
     return blockers
 
 
+def _runtime_execution_ledger_fill_from_row(
+    row: Mapping[str, object],
+    *,
+    order_lifecycle_rows: Sequence[Mapping[str, object]] | None,
+) -> tuple[RuntimeLedgerFill | None, list[datetime]]:
+    computed_at = row.get("computed_at")
+    execution_event_at = row.get("execution_event_at")
+    execution_created_at = row.get("execution_created_at")
+    fill_event_at = (
+        execution_created_at
+        if isinstance(execution_created_at, datetime)
+        else computed_at
+    )
+    if isinstance(execution_event_at, datetime):
+        fill_event_at = execution_event_at
+    ledger_computed_at = (
+        fill_event_at if isinstance(fill_event_at, datetime) else computed_at
+    )
+    price = _first_positive_decimal(
+        row,
+        "avg_fill_price",
+        "filled_avg_price",
+        "filled_average_price",
+        "average_fill_price",
+        "fill_price",
+        "filled_price",
+    )
+    side = _first_text(row, "side", "order_side") or ""
+    signed_qty = _execution_signed_qty(
+        side=side,
+        qty=_first_positive_decimal(
+            row,
+            "filled_qty",
+            "filled_quantity",
+            "qty",
+            "quantity",
+        ),
+    )
+    symbol = str(row.get("symbol") or "").strip().upper()
+    if not symbol or not isinstance(ledger_computed_at, datetime):
+        return None, []
+    decision_id = _first_text(row, "decision_id", "trade_decision_id", "decision_hash")
+    order_id = _first_text(
+        row,
+        "order_id",
+        "alpaca_order_id",
+        "client_order_id",
+        "execution_correlation_id",
+    )
+    execution_policy_hash = _first_text(
+        row,
+        "execution_policy_hash",
+        "execution_policy_sha256",
+        "policy_hash",
+    ) or _first_payload_digest(
+        row,
+        "execution_policy",
+        "execution_policy_context",
+        "execution_advisor",
+        "_execution_advice_provenance",
+    )
+    cost_model_hash = _first_text(
+        row, "cost_model_hash", "fee_model_hash", "cost_model_sha256"
+    ) or _first_payload_digest(
+        row,
+        "cost_model",
+        "cost_model_config",
+        "transaction_cost_model",
+        "fee_model",
+        "fees_model",
+        "model",
+    )
+    lineage_hash = _first_text(
+        row,
+        "lineage_hash",
+        "candidate_lineage_hash",
+        "replay_lineage_hash",
+        "candidate_evaluation_key",
+    ) or _first_lineage_digest(row)
+    replay_data_hash = _first_text(
+        row,
+        "replay_data_hash",
+        "replay_tape_content_sha256",
+        "dataset_snapshot_hash",
+        "source_query_digest",
+    )
+    if price is None or price <= 0 or signed_qty == 0:
+        return None, []
+    if order_id is not None and order_id in _event_sourced_fill_economics_order_ids(
+        order_lifecycle_rows or []
+    ):
+        return None, []
+    event_times = [ledger_computed_at]
+    if isinstance(fill_event_at, datetime):
+        event_times.append(fill_event_at)
+    filled_qty = abs(signed_qty)
+    filled_notional = filled_qty * price
+    cost_amount = _runtime_execution_cost_amount(
+        row,
+        filled_notional=filled_notional,
+        side=side,
+        filled_qty=filled_qty,
+    )
+    cost_basis = _runtime_execution_cost_basis(
+        row,
+        cost_amount=cost_amount,
+        side=side,
+        filled_qty=filled_qty,
+        filled_notional=filled_notional,
+    )
+    if _cost_basis_is_alpaca_fee_schedule(cost_basis):
+        cost_model_hash = _alpaca_2026_equity_fee_schedule_hash()
+    return (
+        RuntimeLedgerFill(
+            executed_at=fill_event_at
+            if isinstance(fill_event_at, datetime)
+            else ledger_computed_at,
+            event_type="fill",
+            decision_id=decision_id,
+            order_id=order_id,
+            execution_policy_hash=execution_policy_hash,
+            cost_model_hash=cost_model_hash,
+            lineage_hash=lineage_hash,
+            replay_data_hash=replay_data_hash,
+            side=side,
+            filled_qty=filled_qty,
+            avg_fill_price=price,
+            filled_notional=filled_notional,
+            cost_amount=cost_amount,
+            cost_basis=cost_basis,
+            account_label=str(row.get("account_label") or "") or None,
+            strategy_id=str(row.get("strategy_id") or "") or None,
+            symbol=symbol,
+        ),
+        event_times,
+    )
+
+
 def _build_realized_strategy_pnl_rows(
     execution_rows: list[dict[str, object]],
     *,
     decision_lifecycle_rows: list[dict[str, object]] | None = None,
     order_lifecycle_rows: list[dict[str, object]] | None = None,
+    unlinked_order_lifecycle_rows: list[dict[str, object]] | None = None,
+    carry_in_execution_rows: list[dict[str, object]] | None = None,
+    carry_in_decision_lifecycle_rows: list[dict[str, object]] | None = None,
+    carry_in_order_lifecycle_rows: list[dict[str, object]] | None = None,
     allow_authoritative_runtime_ledger_materialization: bool = False,
+    split_mixed_source_decision_modes: bool = True,
 ) -> list[dict[str, object]]:
+    if split_mixed_source_decision_modes:
+        partitions = _partition_runtime_source_rows_by_decision_mode(
+            execution_rows=execution_rows,
+            decision_lifecycle_rows=decision_lifecycle_rows,
+            order_lifecycle_rows=order_lifecycle_rows,
+            unlinked_order_lifecycle_rows=unlinked_order_lifecycle_rows,
+            carry_in_execution_rows=carry_in_execution_rows,
+            carry_in_decision_lifecycle_rows=carry_in_decision_lifecycle_rows,
+            carry_in_order_lifecycle_rows=carry_in_order_lifecycle_rows,
+        )
+        if partitions is not None:
+            partition_rows: list[dict[str, object]] = []
+            for (
+                mode_key,
+                partition_execution_rows,
+                partition_decision_rows,
+                partition_order_rows,
+                partition_unlinked_order_rows,
+                partition_carry_in_execution_rows,
+                partition_carry_in_decision_rows,
+                partition_carry_in_order_rows,
+            ) in partitions:
+                for row in _build_realized_strategy_pnl_rows(
+                    partition_execution_rows,
+                    decision_lifecycle_rows=partition_decision_rows,
+                    order_lifecycle_rows=partition_order_rows,
+                    unlinked_order_lifecycle_rows=partition_unlinked_order_rows,
+                    carry_in_execution_rows=partition_carry_in_execution_rows,
+                    carry_in_decision_lifecycle_rows=partition_carry_in_decision_rows,
+                    carry_in_order_lifecycle_rows=partition_carry_in_order_rows,
+                    allow_authoritative_runtime_ledger_materialization=(
+                        allow_authoritative_runtime_ledger_materialization
+                    ),
+                    split_mixed_source_decision_modes=False,
+                ):
+                    row["source_decision_mode_partition"] = mode_key
+                    bucket = row.get("runtime_ledger_bucket")
+                    if isinstance(bucket, Mapping):
+                        row["runtime_ledger_bucket"] = {
+                            **dict(bucket),
+                            "source_decision_mode_partition": mode_key,
+                        }
+                    partition_rows.append(row)
+            return partition_rows
+
     ledger_rows: list[RuntimeLedgerFill | dict[str, object]] = []
+    carry_in_ledger_rows: list[RuntimeLedgerFill | dict[str, object]] = []
     event_times: list[datetime] = []
-    event_sourced_lifecycle_rows = 0
-    materialized_order_fill_ids: set[str] = set()
-    order_feed_fill_lifecycle_blockers = _order_feed_fill_lifecycle_blockers(
-        execution_rows=execution_rows,
-        order_lifecycle_rows=order_lifecycle_rows,
-    )
     for row in decision_lifecycle_rows or []:
         lifecycle_row = _runtime_lifecycle_ledger_row(row, event_type="decision")
         if lifecycle_row is None:
             continue
         ledger_rows.append(lifecycle_row)
-        event_sourced_lifecycle_rows += 1
         event_time = lifecycle_row.get("executed_at")
         if isinstance(event_time, datetime):
             event_times.append(event_time)
     for row in order_lifecycle_rows or []:
+        event_type = _runtime_ledger_event_type(
+            {str(key): value for key, value in row.items()}
+        )
+        if event_type in _RUNTIME_LEDGER_FILL_EVENTS:
+            lifecycle_row = _runtime_lifecycle_ledger_row(
+                row,
+                event_type=event_type,
+                require_complete_fill=True,
+            )
+            if lifecycle_row is not None:
+                ledger_rows.append(lifecycle_row)
+                event_time = lifecycle_row.get("executed_at")
+                if isinstance(event_time, datetime):
+                    event_times.append(event_time)
+                continue
+            event_time = _runtime_ledger_row_time(row)
+            if isinstance(event_time, datetime):
+                event_times.append(event_time)
+            continue
+        lifecycle_row = _runtime_lifecycle_ledger_row(
+            row,
+            event_type=event_type,
+        )
+        if lifecycle_row is None:
+            continue
+        ledger_rows.append(lifecycle_row)
+        event_time = lifecycle_row.get("executed_at")
+        if isinstance(event_time, datetime):
+            event_times.append(event_time)
+    for row in execution_rows:
+        ledger_fill, ledger_event_times = _runtime_execution_ledger_fill_from_row(
+            row,
+            order_lifecycle_rows=order_lifecycle_rows,
+        )
+        if ledger_fill is None:
+            continue
+        ledger_rows.append(ledger_fill)
+        event_times.extend(ledger_event_times)
+
+    for row in carry_in_decision_lifecycle_rows or []:
+        lifecycle_row = _runtime_lifecycle_ledger_row(row, event_type="decision")
+        if lifecycle_row is not None:
+            carry_in_ledger_rows.append(lifecycle_row)
+    for row in carry_in_order_lifecycle_rows or []:
         event_type = _runtime_ledger_event_type(
             {str(key): value for key, value in row.items()}
         )
@@ -1790,196 +3264,30 @@ def _build_realized_strategy_pnl_rows(
             event_type=event_type,
             require_complete_fill=event_type in _RUNTIME_LEDGER_FILL_EVENTS,
         )
-        if lifecycle_row is None:
-            continue
-        ledger_rows.append(lifecycle_row)
-        event_sourced_lifecycle_rows += 1
-        if event_type in _RUNTIME_LEDGER_FILL_EVENTS:
-            order_id = _runtime_order_id(lifecycle_row)
-            if order_id is not None:
-                materialized_order_fill_ids.add(order_id)
-        event_time = lifecycle_row.get("executed_at")
-        if isinstance(event_time, datetime):
-            event_times.append(event_time)
-    for row in execution_rows:
-        computed_at = row.get("computed_at")
-        execution_event_at = row.get("execution_event_at")
-        execution_created_at = row.get("execution_created_at")
-        fill_event_at = (
-            execution_created_at
-            if isinstance(execution_created_at, datetime)
-            else computed_at
-        )
-        if isinstance(execution_event_at, datetime):
-            fill_event_at = execution_event_at
-        ledger_computed_at = (
-            fill_event_at if isinstance(fill_event_at, datetime) else computed_at
-        )
-        price = _first_decimal(
+        if lifecycle_row is not None:
+            carry_in_ledger_rows.append(lifecycle_row)
+    combined_order_lifecycle_rows = [
+        *(carry_in_order_lifecycle_rows or []),
+        *(order_lifecycle_rows or []),
+    ]
+    for row in carry_in_execution_rows or []:
+        ledger_fill, _ledger_event_times = _runtime_execution_ledger_fill_from_row(
             row,
-            "avg_fill_price",
-            "filled_avg_price",
-            "filled_average_price",
-            "average_fill_price",
-            "fill_price",
-            "filled_price",
+            order_lifecycle_rows=combined_order_lifecycle_rows,
         )
-        side = _first_text(row, "side", "order_side") or ""
-        signed_qty = _execution_signed_qty(
-            side=side,
-            qty=_first_decimal(
-                row,
-                "filled_qty",
-                "filled_quantity",
-                "qty",
-                "quantity",
-            ),
-        )
-        symbol = str(row.get("symbol") or "").strip().upper()
-        if not symbol or not isinstance(ledger_computed_at, datetime):
-            continue
-        decision_id = _first_text(
-            row, "decision_id", "trade_decision_id", "decision_hash"
-        )
-        order_id = _first_text(
-            row,
-            "order_id",
-            "alpaca_order_id",
-            "client_order_id",
-            "execution_correlation_id",
-        )
-        if order_id is not None and order_id in materialized_order_fill_ids:
-            continue
-        event_times.append(ledger_computed_at)
-        if isinstance(fill_event_at, datetime):
-            event_times.append(fill_event_at)
-        common_ledger_fields = {
-            "executed_at": ledger_computed_at,
-            "account_label": str(row.get("account_label") or "") or None,
-            "strategy_id": str(row.get("strategy_id") or "") or None,
-            "symbol": symbol,
-            "decision_id": decision_id,
-            "order_id": order_id,
-            "execution_policy_hash": _first_text(
-                row,
-                "execution_policy_hash",
-                "execution_policy_sha256",
-                "policy_hash",
-            )
-            or _first_payload_digest(
-                row,
-                "execution_policy",
-                "execution_policy_context",
-                "execution_advisor",
-                "_execution_advice_provenance",
-            ),
-            "cost_model_hash": _first_text(
-                row, "cost_model_hash", "fee_model_hash", "cost_model_sha256"
-            )
-            or _first_payload_digest(
-                row,
-                "cost_model",
-                "cost_model_config",
-                "transaction_cost_model",
-                "fee_model",
-                "fees_model",
-                "model",
-            ),
-            "lineage_hash": _first_text(
-                row,
-                "lineage_hash",
-                "candidate_lineage_hash",
-                "replay_lineage_hash",
-                "candidate_evaluation_key",
-            )
-            or _first_lineage_digest(row),
-            "replay_data_hash": _first_text(
-                row,
-                "replay_data_hash",
-                "replay_tape_content_sha256",
-                "dataset_snapshot_hash",
-                "source_query_digest",
-            ),
-        }
-        if price is None or price <= 0 or signed_qty == 0:
-            continue
-        filled_qty = abs(signed_qty)
-        filled_notional = filled_qty * price
-        cost_amount = _runtime_execution_cost_amount(
-            row,
-            filled_notional=filled_notional,
-            side=side,
-            filled_qty=filled_qty,
-        )
-        cost_basis = _runtime_execution_cost_basis(
-            row,
-            cost_amount=cost_amount,
-            side=side,
-            filled_qty=filled_qty,
-            filled_notional=filled_notional,
-        )
-        if _cost_basis_is_alpaca_fee_schedule(cost_basis):
-            common_ledger_fields["cost_model_hash"] = (
-                _alpaca_2026_equity_fee_schedule_hash()
-            )
-        ledger_rows.append(
-            RuntimeLedgerFill(
-                executed_at=(
-                    fill_event_at
-                    if isinstance(fill_event_at, datetime)
-                    else ledger_computed_at
-                ),
-                event_type="fill",
-                decision_id=decision_id,
-                order_id=order_id,
-                execution_policy_hash=common_ledger_fields["execution_policy_hash"],
-                cost_model_hash=common_ledger_fields["cost_model_hash"],
-                lineage_hash=common_ledger_fields["lineage_hash"],
-                replay_data_hash=common_ledger_fields["replay_data_hash"],
-                side=side,
-                filled_qty=filled_qty,
-                avg_fill_price=price,
-                filled_notional=filled_notional,
-                cost_amount=cost_amount,
-                cost_basis=cost_basis,
-                account_label=str(row.get("account_label") or "") or None,
-                strategy_id=str(row.get("strategy_id") or "") or None,
-                symbol=symbol,
-            )
-        )
+        if ledger_fill is not None:
+            carry_in_ledger_rows.append(ledger_fill)
     if not event_times:
         return []
     unique_times = sorted(set(event_times))
     bucket_ranges = [(unique_times[0], unique_times[-1] + timedelta(microseconds=1))]
-    equity_denominator = _runtime_ledger_equity_denominator_from_rows(
-        [
-            *execution_rows,
-            *(decision_lifecycle_rows or []),
-            *(order_lifecycle_rows or []),
-        ]
-    )
-    source_decision_rows = [
-        *execution_rows,
-        *(decision_lifecycle_rows or []),
-        *(order_lifecycle_rows or []),
-    ]
-    source_account_labels = sorted(
-        {
-            str(row.get("source_account_label") or "").strip()
-            for row in source_decision_rows
-            if str(row.get("source_account_label") or "").strip()
-        }
-    )
-    source_decision_mode_counts = _source_decision_mode_counts(source_decision_rows)
-    source_decision_profit_proof_eligible = _source_decision_rows_profit_proof_eligible(
-        source_decision_rows
-    )
     realized_rows: list[dict[str, object]] = []
     for bucket in build_runtime_ledger_buckets(
         ledger_rows,
         bucket_ranges=bucket_ranges,
         group_by=("symbol",),
         require_order_lifecycle=True,
+        carry_in_rows=carry_in_ledger_rows,
     ):
         if bucket.closed_trade_count <= 0 and not bucket.blockers:
             continue
@@ -1988,6 +3296,47 @@ def _build_realized_strategy_pnl_rows(
             computed_at=unique_times[-1],
         )
         bucket_payload = row.get("runtime_ledger_bucket")
+        source_context = _runtime_source_context_for_bucket(
+            bucket=bucket,
+            execution_rows=execution_rows,
+            decision_lifecycle_rows=decision_lifecycle_rows,
+            order_lifecycle_rows=order_lifecycle_rows,
+            unlinked_order_lifecycle_rows=unlinked_order_lifecycle_rows,
+            carry_in_execution_rows=carry_in_execution_rows,
+            carry_in_decision_lifecycle_rows=carry_in_decision_lifecycle_rows,
+            carry_in_order_lifecycle_rows=carry_in_order_lifecycle_rows,
+        )
+        source_account_labels = cast(list[str], source_context["source_account_labels"])
+        source_decision_mode_counts = cast(
+            dict[str, int], source_context["source_decision_mode_counts"]
+        )
+        source_decision_profit_proof_eligible = bool(
+            source_context["source_decision_profit_proof_eligible"]
+        )
+        source_refs = cast(list[str], source_context["source_refs"])
+        source_row_counts = cast(dict[str, int], source_context["source_row_counts"])
+        trade_decision_ids = cast(list[str], source_context["trade_decision_ids"])
+        execution_ids = cast(list[str], source_context["execution_ids"])
+        execution_order_event_ids = cast(
+            list[str], source_context["execution_order_event_ids"]
+        )
+        source_window_ids = cast(list[str], source_context["source_window_ids"])
+        source_window_start = cast(datetime, source_context["source_window_start"])
+        source_window_end = cast(datetime, source_context["source_window_end"])
+        source_offsets = cast(
+            list[Mapping[str, object]], source_context["source_offsets"]
+        )
+        source_materialization = cast(
+            str | None, source_context["source_materialization"]
+        )
+        authority_class = cast(str | None, source_context["authority_class"])
+        fill_economics_complete = bool(source_context["fill_economics_complete"])
+        bucket_order_feed_fill_lifecycle_blockers = cast(
+            list[str], source_context["order_feed_fill_lifecycle_blockers"]
+        )
+        equity_denominator = cast(
+            tuple[Decimal, str] | None, source_context["equity_denominator"]
+        )
         if source_account_labels and isinstance(bucket_payload, Mapping):
             bucket_payload = {
                 **dict(bucket_payload),
@@ -2000,11 +3349,18 @@ def _build_realized_strategy_pnl_rows(
             row["source_decision_mode_counts"] = source_decision_mode_counts
             row["profit_proof_eligible"] = source_decision_profit_proof_eligible
             if isinstance(bucket_payload, Mapping):
+                source_decision_mode = next(
+                    iter(source_decision_mode_counts),
+                    None,
+                )
                 bucket_payload = {
                     **dict(bucket_payload),
                     "source_decision_mode_counts": source_decision_mode_counts,
                     "profit_proof_eligible": source_decision_profit_proof_eligible,
                 }
+                if len(source_decision_mode_counts) == 1:
+                    row["source_decision_mode"] = source_decision_mode
+                    bucket_payload["source_decision_mode"] = source_decision_mode
                 if not source_decision_profit_proof_eligible:
                     blockers = list(bucket_payload.get("blockers") or [])
                     if (
@@ -2021,10 +3377,31 @@ def _build_realized_strategy_pnl_rows(
                         SOURCE_DECISION_MODE_NOT_PROFIT_PROOF_ELIGIBLE_BLOCKER
                     )
                 row["runtime_ledger_bucket"] = bucket_payload
-        event_sourced_runtime_ledger = (
+        if isinstance(bucket_payload, Mapping):
+            bucket_payload = _with_runtime_ledger_source_authority_context(
+                bucket_payload,
+                source_window_start=source_window_start,
+                source_window_end=source_window_end,
+                source_refs=source_refs,
+                source_row_counts=source_row_counts,
+                trade_decision_ids=trade_decision_ids,
+                execution_ids=execution_ids,
+                execution_order_event_ids=execution_order_event_ids,
+                source_window_ids=source_window_ids,
+                source_offsets=source_offsets,
+                source_materialization=source_materialization,
+                authority_class=authority_class,
+            )
+            row["runtime_ledger_bucket"] = bucket_payload
+        source_backed_runtime_ledger = (
             allow_authoritative_runtime_ledger_materialization
-            and event_sourced_lifecycle_rows > 0
-            and not order_feed_fill_lifecycle_blockers
+            and fill_economics_complete
+            and not bucket_order_feed_fill_lifecycle_blockers
+            and isinstance(bucket_payload, Mapping)
+            and not runtime_ledger_promotion_source_authority_blockers(bucket_payload)
+        )
+        event_sourced_runtime_ledger = (
+            source_backed_runtime_ledger
             and isinstance(bucket_payload, Mapping)
             and _runtime_ledger_bucket_profit_proof_present(bucket_payload)
         )
@@ -2041,7 +3418,41 @@ def _build_realized_strategy_pnl_rows(
                     "authoritative": True,
                     "authority_reason": "event_sourced_runtime_ledger_profit_proof",
                     "pnl_derivation": "execution_order_events_runtime_ledger",
-                    "source_materialization": "execution_order_events",
+                    "source_materialization": (
+                        source_materialization or "source_execution_lifecycle"
+                    ),
+                }
+                if equity_denominator is not None:
+                    runtime_bucket["account_equity"] = str(equity_denominator[0])
+                    runtime_bucket["account_equity_source"] = equity_denominator[1]
+                row["runtime_ledger_bucket"] = runtime_bucket
+        elif source_backed_runtime_ledger:
+            row["post_cost_expectancy_basis"] = POST_COST_BASIS_RUNTIME_LEDGER
+            row["post_cost_promotion_eligible"] = False
+            row["authoritative"] = False
+            row["authority_reason"] = (
+                "source_execution_lifecycle_materialized_runtime_ledger"
+            )
+            row["pnl_derivation"] = "execution_order_events_runtime_ledger"
+            blockers = list(row.get("runtime_ledger_blockers") or [])
+            row["runtime_ledger_blockers"] = blockers
+            if blockers:
+                row["promotion_blocker"] = blockers[0]
+            else:
+                row.pop("promotion_blocker", None)
+            if isinstance(bucket_payload, Mapping):
+                runtime_bucket = {
+                    **dict(bucket_payload),
+                    "blockers": blockers,
+                    "pnl_basis": POST_COST_BASIS_RUNTIME_LEDGER,
+                    "authoritative": False,
+                    "authority_reason": (
+                        "source_execution_lifecycle_materialized_runtime_ledger"
+                    ),
+                    "pnl_derivation": "execution_order_events_runtime_ledger",
+                    "source_materialization": (
+                        source_materialization or "source_execution_lifecycle"
+                    ),
                 }
                 if equity_denominator is not None:
                     runtime_bucket["account_equity"] = str(equity_denominator[0])
@@ -2059,9 +3470,15 @@ def _build_realized_strategy_pnl_rows(
                 "execution_reconstruction_not_runtime_ledger_proof"
             )
             blockers = list(row.get("runtime_ledger_blockers") or [])
-            for blocker in order_feed_fill_lifecycle_blockers:
+            for blocker in bucket_order_feed_fill_lifecycle_blockers:
                 if blocker not in blockers:
                     blockers.append(blocker)
+            if isinstance(bucket_payload, Mapping):
+                for blocker in runtime_ledger_promotion_source_authority_blockers(
+                    bucket_payload
+                ):
+                    if blocker not in blockers:
+                        blockers.append(blocker)
             if "execution_reconstruction_not_runtime_ledger_proof" not in blockers:
                 blockers.append("execution_reconstruction_not_runtime_ledger_proof")
             row["runtime_ledger_blockers"] = blockers
@@ -2472,6 +3889,19 @@ def _runtime_ledger_tca_row_from_payload(
     )
     filled_notional = _decimal_or_none(payload.get("filled_notional"))
     cost_amount = _decimal_or_none(payload.get("cost_amount"))
+    proof_blockers = _runtime_ledger_bucket_profit_proof_blockers(payload)
+    runtime_ledger_blockers = list(
+        dict.fromkeys(
+            [
+                *_metadata_text_list(payload.get("blockers")),
+                *proof_blockers,
+            ]
+        )
+    )
+    bucket_payload = dict(payload)
+    if proof_blockers:
+        bucket_payload["runtime_ledger_profit_proof_blockers"] = proof_blockers
+        bucket_payload["blockers"] = runtime_ledger_blockers
     return {
         "computed_at": computed_at or datetime.now(timezone.utc),
         "abs_slippage_bps": (
@@ -2493,10 +3923,10 @@ def _runtime_ledger_tca_row_from_payload(
             payload.get("net_strategy_pnl_after_costs")
         ),
         "turnover_notional": filled_notional,
-        "runtime_ledger_blockers": payload.get("blockers") or [],
+        "runtime_ledger_blockers": runtime_ledger_blockers,
         "runtime_ledger_cost_basis_counts": payload.get("cost_basis_counts") or {},
         "runtime_ledger_pnl_basis": payload.get("pnl_basis"),
-        "runtime_ledger_bucket": dict(payload),
+        "runtime_ledger_bucket": bucket_payload,
     }
 
 
@@ -2808,6 +4238,11 @@ def _query_timestamps(
     execution_rows: list[dict[str, object]] = []
     decision_lifecycle_rows: list[dict[str, object]] = []
     order_lifecycle_rows: list[dict[str, object]] = []
+    unlinked_order_lifecycle_rows: list[dict[str, object]] = []
+    carry_in_execution_rows: list[dict[str, object]] = []
+    carry_in_decision_lifecycle_rows: list[dict[str, object]] = []
+    carry_in_order_lifecycle_rows: list[dict[str, object]] = []
+    carry_in_window_start = window_start - RUNTIME_LEDGER_CARRY_IN_LOOKBACK
     symbol_filter = _metadata_symbol_list(symbols or ())
     if source_activity_diagnostics is not None:
         source_activity_diagnostics.update(
@@ -2817,6 +4252,8 @@ def _query_timestamps(
                 "source_account_label": source_account_label,
                 "window_start": window_start.isoformat(),
                 "window_end": window_end.isoformat(),
+                "carry_in_window_start": carry_in_window_start.isoformat(),
+                "carry_in_window_end": window_start.isoformat(),
                 "source_activity_symbol_filter": symbol_filter,
                 "candidate_id": candidate_id,
                 "hypothesis_id": hypothesis_id,
@@ -2841,6 +4278,9 @@ def _query_timestamps(
         if symbol_filter
         else ""
     )
+    unlinked_order_event_symbol_clause = (
+        "\n                  and upper(oe.symbol) = any(%s)" if symbol_filter else ""
+    )
     decision_symbol_params: tuple[object, ...] = (
         (symbol_filter,) if symbol_filter else ()
     )
@@ -2855,6 +4295,7 @@ def _query_timestamps(
             cur.execute(
                 f"""
                 select
+                    d.id,
                     d.created_at,
                     d.symbol,
                     d.alpaca_account_label,
@@ -2881,17 +4322,9 @@ def _query_timestamps(
                 ),
             )
             decision_lifecycle_rows = [
-                {
-                    "computed_at": row[0],
-                    "event_type": "decision",
-                    "symbol": row[1],
-                    "account_label": row[2],
-                    "strategy_id": row[3],
-                    "decision_hash": row[4],
-                    "decision_json": row[5],
-                }
+                _decision_lifecycle_query_row(row)
                 for row in cur.fetchall()
-                if row[0] is not None
+                if _decision_lifecycle_query_row_has_time(row)
             ]
             if source_activity_diagnostics is not None:
                 source_activity_diagnostics["decision_rows_before_lineage_filter"] = (
@@ -2924,6 +4357,8 @@ def _query_timestamps(
             cur.execute(
                 f"""
                 select
+                    e.id,
+                    d.id,
                     d.created_at,
                     coalesce(
                         e.order_feed_last_event_ts,
@@ -2983,28 +4418,9 @@ def _query_timestamps(
                 ),
             )
             execution_rows = [
-                {
-                    "decision_created_at": row[0],
-                    "computed_at": row[1],
-                    "execution_event_at": row[1],
-                    "execution_created_at": row[2],
-                    "symbol": row[3],
-                    "side": row[4],
-                    "filled_qty": row[5],
-                    "avg_fill_price": row[6],
-                    "shortfall_notional": row[7],
-                    "execution_audit_json": row[8],
-                    "raw_order": row[9],
-                    "account_label": row[10],
-                    "strategy_id": row[11],
-                    "decision_hash": row[12],
-                    "decision_json": row[13],
-                    "alpaca_order_id": row[14],
-                    "client_order_id": row[15],
-                    "order_status": row[16],
-                }
+                _execution_query_row(row)
                 for row in cur.fetchall()
-                if row[1] is not None
+                if _execution_query_row_has_time(row)
             ]
             if source_activity_diagnostics is not None:
                 source_activity_diagnostics["execution_rows_before_lineage_filter"] = (
@@ -3043,6 +4459,9 @@ def _query_timestamps(
             cur.execute(
                 f"""
                 select
+                    oe.id,
+                    coalesce(oe.trade_decision_id, e.trade_decision_id, d_by_client.id),
+                    e.id,
                     coalesce(oe.event_ts, oe.created_at),
                     oe.symbol,
                     oe.alpaca_account_label,
@@ -3053,17 +4472,65 @@ def _query_timestamps(
                     oe.client_order_id,
                     oe.event_type,
                     oe.status,
+                    e.side,
+                    oe.qty,
+                    oe.filled_qty,
+                    oe.filled_qty_delta,
+                    oe.avg_fill_price,
+                    oe.filled_notional_delta,
+                    oe.fill_quantity_basis,
                     oe.event_fingerprint,
                     oe.source_topic,
                     oe.source_partition,
                     oe.source_offset,
+                    oe.source_window_id,
                     oe.raw_event,
                     e.execution_audit_json,
                     e.raw_order
                 from execution_order_events oe
-                left join executions e on e.id = oe.execution_id
+                left join lateral (
+                    select matched.*
+                    from (
+                        select
+                            array_agg(e_match.id order by e_match.created_at, e_match.id) as ids,
+                            count(*) as match_count
+                        from executions e_match
+                        where coalesce(e_match.alpaca_account_label, oe.alpaca_account_label)
+                              = oe.alpaca_account_label
+                          and (
+                                (
+                                    oe.execution_id is not null
+                                    and e_match.id = oe.execution_id
+                                )
+                                or (
+                                    nullif(oe.alpaca_order_id, '') is not null
+                                    and e_match.alpaca_order_id = oe.alpaca_order_id
+                                )
+                                or (
+                                    nullif(oe.client_order_id, '') is not null
+                                    and e_match.client_order_id = oe.client_order_id
+                                )
+                              )
+                    ) exact_match
+                    join executions matched on matched.id = exact_match.ids[1]
+                    where exact_match.match_count = 1
+                ) e on true
+                left join lateral (
+                    select matched.*
+                    from (
+                        select
+                            array_agg(d_match.id order by d_match.created_at, d_match.id) as ids,
+                            count(*) as match_count
+                        from trade_decisions d_match
+                        where d_match.alpaca_account_label = oe.alpaca_account_label
+                          and nullif(oe.client_order_id, '') is not null
+                          and d_match.decision_hash = oe.client_order_id
+                    ) exact_decision_match
+                    join trade_decisions matched on matched.id = exact_decision_match.ids[1]
+                    where exact_decision_match.match_count = 1
+                ) d_by_client on true
                 join trade_decisions d
-                  on d.id = coalesce(oe.trade_decision_id, e.trade_decision_id)
+                  on d.id = coalesce(oe.trade_decision_id, e.trade_decision_id, d_by_client.id)
                 join strategies s on s.id = d.strategy_id
                 where s.name = any(%s)
                   and d.alpaca_account_label = %s
@@ -3083,27 +4550,9 @@ def _query_timestamps(
                 ),
             )
             order_lifecycle_rows = [
-                {
-                    "event_ts": row[0],
-                    "symbol": row[1],
-                    "account_label": row[2],
-                    "strategy_id": row[3],
-                    "decision_hash": row[4],
-                    "decision_json": row[5],
-                    "alpaca_order_id": row[6],
-                    "client_order_id": row[7],
-                    "event_type": row[8],
-                    "order_status": row[9],
-                    "event_fingerprint": row[10],
-                    "source_topic": row[11],
-                    "source_partition": row[12],
-                    "source_offset": row[13],
-                    "raw_event": row[14],
-                    "execution_audit_json": row[15],
-                    "raw_order": row[16],
-                }
+                _order_lifecycle_query_row(row)
                 for row in cur.fetchall()
-                if row[0] is not None
+                if _order_lifecycle_query_row_has_time(row)
             ]
             if source_activity_diagnostics is not None:
                 source_activity_diagnostics[
@@ -3142,6 +4591,470 @@ def _query_timestamps(
                 candidate_id=candidate_id,
                 hypothesis_id=hypothesis_id,
             )
+            if allow_authoritative_runtime_ledger_materialization:
+                cur.execute(
+                    f"""
+                    select
+                        d.id,
+                        d.created_at,
+                        d.symbol,
+                        d.alpaca_account_label,
+                        s.name,
+                        d.decision_hash,
+                        d.decision_json
+                    from trade_decisions d
+                    join strategies s on s.id = d.strategy_id
+                    where s.name = any(%s)
+                      and d.alpaca_account_label = %s
+                      and d.status = any(%s)
+                      and d.created_at >= %s
+                      and d.created_at < %s
+                      {decision_symbol_clause}
+                    order by d.created_at
+                    """,
+                    (
+                        strategy_names,
+                        account_label,
+                        list(EXECUTION_ELIGIBLE_DECISION_STATUSES),
+                        carry_in_window_start,
+                        window_start,
+                        *decision_symbol_params,
+                    ),
+                )
+                carry_in_decision_lifecycle_rows = [
+                    _decision_lifecycle_query_row(row)
+                    for row in cur.fetchall()
+                    if _decision_lifecycle_query_row_has_time(row)
+                ]
+                if source_activity_diagnostics is not None:
+                    source_activity_diagnostics[
+                        "carry_in_decision_rows_before_lineage_filter"
+                    ] = len(carry_in_decision_lifecycle_rows)
+                carry_in_decision_lifecycle_rows = [
+                    row
+                    for row in carry_in_decision_lifecycle_rows
+                    if _source_row_matches_lineage(
+                        row,
+                        candidate_id=candidate_id,
+                        hypothesis_id=hypothesis_id,
+                        require_source_lineage=require_source_lineage,
+                    )
+                ]
+                if source_activity_diagnostics is not None:
+                    source_activity_diagnostics[
+                        "carry_in_decision_rows_after_lineage_filter"
+                    ] = len(carry_in_decision_lifecycle_rows)
+                carry_in_decision_lifecycle_rows = _attach_source_lineage_context(
+                    carry_in_decision_lifecycle_rows,
+                    candidate_id=candidate_id,
+                    hypothesis_id=hypothesis_id,
+                )
+                cur.execute(
+                    f"""
+                    select
+                        e.id,
+                        d.id,
+                        d.created_at,
+                        coalesce(
+                            e.order_feed_last_event_ts,
+                            e.last_update_at,
+                            e.updated_at,
+                            e.created_at
+                        ) as execution_event_at,
+                        e.created_at,
+                        e.symbol,
+                        e.side,
+                        e.filled_qty,
+                        e.avg_fill_price,
+                        t.shortfall_notional,
+                        e.execution_audit_json,
+                        e.raw_order,
+                        e.alpaca_account_label,
+                        s.name,
+                        d.decision_hash,
+                        d.decision_json,
+                        e.alpaca_order_id,
+                        e.client_order_id,
+                        e.status
+                    from executions e
+                    join trade_decisions d on d.id = e.trade_decision_id
+                    join strategies s on s.id = d.strategy_id
+                    left join execution_tca_metrics t on t.execution_id = e.id
+                    where s.name = any(%s)
+                      and d.alpaca_account_label = %s
+                      and e.alpaca_account_label = %s
+                      and coalesce(
+                            e.order_feed_last_event_ts,
+                            e.last_update_at,
+                            e.updated_at,
+                            e.created_at
+                          ) >= %s
+                      and coalesce(
+                            e.order_feed_last_event_ts,
+                            e.last_update_at,
+                            e.updated_at,
+                            e.created_at
+                          ) < %s
+                      {execution_symbol_clause}
+                    order by coalesce(
+                        e.order_feed_last_event_ts,
+                        e.last_update_at,
+                        e.updated_at,
+                        e.created_at
+                    )
+                    """,
+                    (
+                        strategy_names,
+                        account_label,
+                        account_label,
+                        carry_in_window_start,
+                        window_start,
+                        *execution_symbol_params,
+                    ),
+                )
+                carry_in_execution_rows = [
+                    _execution_query_row(row)
+                    for row in cur.fetchall()
+                    if _execution_query_row_has_time(row)
+                ]
+                if source_activity_diagnostics is not None:
+                    source_activity_diagnostics[
+                        "carry_in_execution_rows_before_lineage_filter"
+                    ] = len(carry_in_execution_rows)
+                    source_activity_diagnostics[
+                        "carry_in_fill_execution_rows_before_lineage_filter"
+                    ] = sum(
+                        1
+                        for row in carry_in_execution_rows
+                        if _execution_row_has_fill(row)
+                    )
+                carry_in_execution_rows = [
+                    row
+                    for row in carry_in_execution_rows
+                    if _source_row_matches_lineage(
+                        row,
+                        candidate_id=candidate_id,
+                        hypothesis_id=hypothesis_id,
+                        require_source_lineage=require_source_lineage,
+                    )
+                ]
+                if source_activity_diagnostics is not None:
+                    source_activity_diagnostics[
+                        "carry_in_execution_rows_after_lineage_filter"
+                    ] = len(carry_in_execution_rows)
+                    source_activity_diagnostics[
+                        "carry_in_fill_execution_rows_after_lineage_filter"
+                    ] = sum(
+                        1
+                        for row in carry_in_execution_rows
+                        if _execution_row_has_fill(row)
+                    )
+                carry_in_execution_rows = _attach_source_lineage_context(
+                    carry_in_execution_rows,
+                    candidate_id=candidate_id,
+                    hypothesis_id=hypothesis_id,
+                )
+                cur.execute(
+                    f"""
+                    select
+                        oe.id,
+                        coalesce(oe.trade_decision_id, e.trade_decision_id, d_by_client.id),
+                        e.id,
+                        coalesce(oe.event_ts, oe.created_at),
+                        oe.symbol,
+                        oe.alpaca_account_label,
+                        s.name,
+                        d.decision_hash,
+                        d.decision_json,
+                        oe.alpaca_order_id,
+                        oe.client_order_id,
+                        oe.event_type,
+                        oe.status,
+                        e.side,
+                        oe.qty,
+                        oe.filled_qty,
+                        oe.filled_qty_delta,
+                        oe.avg_fill_price,
+                        oe.filled_notional_delta,
+                        oe.fill_quantity_basis,
+                        oe.event_fingerprint,
+                        oe.source_topic,
+                        oe.source_partition,
+                        oe.source_offset,
+                        oe.source_window_id,
+                        oe.raw_event,
+                        e.execution_audit_json,
+                        e.raw_order
+                    from execution_order_events oe
+                    left join lateral (
+                        select matched.*
+                        from (
+                            select
+                                array_agg(e_match.id order by e_match.created_at, e_match.id) as ids,
+                                count(*) as match_count
+                            from executions e_match
+                            where coalesce(e_match.alpaca_account_label, oe.alpaca_account_label)
+                                  = oe.alpaca_account_label
+                              and (
+                                    (
+                                        oe.execution_id is not null
+                                        and e_match.id = oe.execution_id
+                                    )
+                                    or (
+                                        nullif(oe.alpaca_order_id, '') is not null
+                                        and e_match.alpaca_order_id = oe.alpaca_order_id
+                                    )
+                                    or (
+                                        nullif(oe.client_order_id, '') is not null
+                                        and e_match.client_order_id = oe.client_order_id
+                                    )
+                                  )
+                        ) exact_match
+                        join executions matched on matched.id = exact_match.ids[1]
+                        where exact_match.match_count = 1
+                    ) e on true
+                    left join lateral (
+                        select matched.*
+                        from (
+                            select
+                                array_agg(d_match.id order by d_match.created_at, d_match.id) as ids,
+                                count(*) as match_count
+                            from trade_decisions d_match
+                            where d_match.alpaca_account_label = oe.alpaca_account_label
+                              and nullif(oe.client_order_id, '') is not null
+                              and d_match.decision_hash = oe.client_order_id
+                        ) exact_decision_match
+                        join trade_decisions matched on matched.id = exact_decision_match.ids[1]
+                        where exact_decision_match.match_count = 1
+                    ) d_by_client on true
+                    join trade_decisions d
+                      on d.id = coalesce(oe.trade_decision_id, e.trade_decision_id, d_by_client.id)
+                    join strategies s on s.id = d.strategy_id
+                    where s.name = any(%s)
+                      and d.alpaca_account_label = %s
+                      and oe.alpaca_account_label = %s
+                      and coalesce(oe.event_ts, oe.created_at) >= %s
+                      and coalesce(oe.event_ts, oe.created_at) < %s
+                      {order_event_symbol_clause}
+                    order by coalesce(oe.event_ts, oe.created_at), oe.created_at
+                    """,
+                    (
+                        strategy_names,
+                        account_label,
+                        account_label,
+                        carry_in_window_start,
+                        window_start,
+                        *order_event_symbol_params,
+                    ),
+                )
+                carry_in_order_lifecycle_rows = [
+                    _order_lifecycle_query_row(row)
+                    for row in cur.fetchall()
+                    if _order_lifecycle_query_row_has_time(row)
+                ]
+                if source_activity_diagnostics is not None:
+                    source_activity_diagnostics[
+                        "carry_in_order_lifecycle_rows_before_lineage_filter"
+                    ] = len(carry_in_order_lifecycle_rows)
+                    source_activity_diagnostics[
+                        "carry_in_fill_order_lifecycle_rows_before_lineage_filter"
+                    ] = sum(
+                        1
+                        for row in carry_in_order_lifecycle_rows
+                        if _runtime_ledger_event_type(row)
+                        in _RUNTIME_LEDGER_FILL_EVENTS
+                    )
+                carry_in_order_lifecycle_rows = [
+                    row
+                    for row in carry_in_order_lifecycle_rows
+                    if _source_row_matches_lineage(
+                        row,
+                        candidate_id=candidate_id,
+                        hypothesis_id=hypothesis_id,
+                        require_source_lineage=require_source_lineage,
+                    )
+                ]
+                if source_activity_diagnostics is not None:
+                    source_activity_diagnostics[
+                        "carry_in_order_lifecycle_rows_after_lineage_filter"
+                    ] = len(carry_in_order_lifecycle_rows)
+                    source_activity_diagnostics[
+                        "carry_in_fill_order_lifecycle_rows_after_lineage_filter"
+                    ] = sum(
+                        1
+                        for row in carry_in_order_lifecycle_rows
+                        if _runtime_ledger_event_type(row)
+                        in _RUNTIME_LEDGER_FILL_EVENTS
+                    )
+                carry_in_order_lifecycle_rows = _attach_source_lineage_context(
+                    carry_in_order_lifecycle_rows,
+                    candidate_id=candidate_id,
+                    hypothesis_id=hypothesis_id,
+                )
+            if symbol_filter:
+                cur.execute(
+                    f"""
+                    select
+                        oe.id,
+                        coalesce(oe.trade_decision_id, e.trade_decision_id, d_by_client.id),
+                        e.id,
+                        coalesce(oe.event_ts, oe.created_at),
+                        oe.symbol,
+                        oe.alpaca_account_label,
+                        null,
+                        null,
+                        null,
+                        oe.alpaca_order_id,
+                        oe.client_order_id,
+                        oe.event_type,
+                        oe.status,
+                        e.side,
+                        oe.qty,
+                        oe.filled_qty,
+                        oe.filled_qty_delta,
+                        oe.avg_fill_price,
+                        oe.filled_notional_delta,
+                        oe.fill_quantity_basis,
+                        oe.event_fingerprint,
+                        oe.source_topic,
+                        oe.source_partition,
+                        oe.source_offset,
+                        oe.source_window_id,
+                        oe.raw_event,
+                        e.execution_audit_json,
+                        e.raw_order
+                    from execution_order_events oe
+                    left join lateral (
+                        select matched.*
+                        from (
+                            select
+                                array_agg(e_match.id order by e_match.created_at, e_match.id) as ids,
+                                count(*) as match_count
+                            from executions e_match
+                            where coalesce(e_match.alpaca_account_label, oe.alpaca_account_label)
+                                  = oe.alpaca_account_label
+                              and (
+                                    (
+                                        oe.execution_id is not null
+                                        and e_match.id = oe.execution_id
+                                    )
+                                    or (
+                                        nullif(oe.alpaca_order_id, '') is not null
+                                        and e_match.alpaca_order_id = oe.alpaca_order_id
+                                    )
+                                    or (
+                                        nullif(oe.client_order_id, '') is not null
+                                        and e_match.client_order_id = oe.client_order_id
+                                    )
+                                  )
+                        ) exact_match
+                        join executions matched on matched.id = exact_match.ids[1]
+                        where exact_match.match_count = 1
+                    ) e on true
+                    left join lateral (
+                        select matched.*
+                        from (
+                            select
+                                array_agg(d_match.id order by d_match.created_at, d_match.id) as ids,
+                                count(*) as match_count
+                            from trade_decisions d_match
+                            where d_match.alpaca_account_label = oe.alpaca_account_label
+                              and nullif(oe.client_order_id, '') is not null
+                              and d_match.decision_hash = oe.client_order_id
+                        ) exact_decision_match
+                        join trade_decisions matched on matched.id = exact_decision_match.ids[1]
+                        where exact_decision_match.match_count = 1
+                    ) d_by_client on true
+                    where oe.alpaca_account_label = %s
+                      and coalesce(oe.event_ts, oe.created_at) >= %s
+                      and coalesce(oe.event_ts, oe.created_at) < %s
+                      and (
+                            e.id is null
+                            or coalesce(oe.trade_decision_id, e.trade_decision_id, d_by_client.id) is null
+                          )
+                      and (
+                            lower(coalesce(oe.event_type, oe.status, '')) in (
+                                'fill', 'filled', 'partial_fill', 'partially_filled'
+                            )
+                            or coalesce(oe.filled_qty, 0) > 0
+                          )
+                      {unlinked_order_event_symbol_clause}
+                    order by coalesce(oe.event_ts, oe.created_at), oe.created_at
+                    """,
+                    (
+                        account_label,
+                        window_start,
+                        window_end,
+                        *([symbol_filter] if symbol_filter else []),
+                    ),
+                )
+                unlinked_order_lifecycle_rows = [
+                    _order_lifecycle_query_row(row)
+                    for row in cur.fetchall()
+                    if _order_lifecycle_query_row_has_time(row)
+                ]
+                strategy_unlinked_order_lifecycle_rows = (
+                    _strategy_relevant_unlinked_fill_lifecycle_rows(
+                        execution_rows=execution_rows,
+                        order_lifecycle_rows=order_lifecycle_rows,
+                        unlinked_order_lifecycle_rows=unlinked_order_lifecycle_rows,
+                        candidate_id=candidate_id,
+                        hypothesis_id=hypothesis_id,
+                    )
+                )
+                strategy_unlinked_ids = set(
+                    _source_identifier_values(
+                        strategy_unlinked_order_lifecycle_rows,
+                        "execution_order_event_id",
+                        "event_fingerprint",
+                    )
+                )
+                unattributed_unlinked_order_lifecycle_rows = [
+                    row
+                    for row in unlinked_order_lifecycle_rows
+                    if not (
+                        set(
+                            _source_identifier_values(
+                                [row],
+                                "execution_order_event_id",
+                                "event_fingerprint",
+                            )
+                        )
+                        & strategy_unlinked_ids
+                    )
+                ]
+                if source_activity_diagnostics is not None:
+                    source_activity_diagnostics[
+                        "order_feed_unlinked_fill_lifecycle_count"
+                    ] = len(unlinked_order_lifecycle_rows)
+                    source_activity_diagnostics[
+                        "order_feed_unlinked_fill_lifecycle_event_ids"
+                    ] = _source_identifier_values(
+                        unlinked_order_lifecycle_rows,
+                        "execution_order_event_id",
+                        "event_fingerprint",
+                    )
+                    source_activity_diagnostics[
+                        "order_feed_unlinked_strategy_fill_lifecycle_count"
+                    ] = len(strategy_unlinked_order_lifecycle_rows)
+                    source_activity_diagnostics[
+                        "order_feed_unlinked_strategy_fill_lifecycle_event_ids"
+                    ] = _source_identifier_values(
+                        strategy_unlinked_order_lifecycle_rows,
+                        "execution_order_event_id",
+                        "event_fingerprint",
+                    )
+                    source_activity_diagnostics[
+                        "order_feed_unattributed_fill_lifecycle_count"
+                    ] = len(unattributed_unlinked_order_lifecycle_rows)
+                    source_activity_diagnostics[
+                        "order_feed_unattributed_fill_lifecycle_event_ids"
+                    ] = _source_identifier_values(
+                        unattributed_unlinked_order_lifecycle_rows,
+                        "execution_order_event_id",
+                        "event_fingerprint",
+                    )
+                unlinked_order_lifecycle_rows = strategy_unlinked_order_lifecycle_rows
             cur.execute(
                 f"""
                 select
@@ -3227,6 +5140,7 @@ def _query_timestamps(
                 lifecycle_blockers = _order_feed_fill_lifecycle_blockers(
                     execution_rows=execution_rows,
                     order_lifecycle_rows=order_lifecycle_rows,
+                    unlinked_order_lifecycle_rows=unlinked_order_lifecycle_rows,
                 )
                 source_activity_diagnostics["order_feed_fill_lifecycle_blockers"] = (
                     lifecycle_blockers
@@ -3246,6 +5160,21 @@ def _query_timestamps(
         target_account_label=materialized_account_label,
         source_account_label=source_account_label,
     )
+    carry_in_decision_lifecycle_rows = _retarget_source_rows_for_materialization(
+        carry_in_decision_lifecycle_rows,
+        target_account_label=materialized_account_label,
+        source_account_label=source_account_label,
+    )
+    carry_in_execution_rows = _retarget_source_rows_for_materialization(
+        carry_in_execution_rows,
+        target_account_label=materialized_account_label,
+        source_account_label=source_account_label,
+    )
+    carry_in_order_lifecycle_rows = _retarget_source_rows_for_materialization(
+        carry_in_order_lifecycle_rows,
+        target_account_label=materialized_account_label,
+        source_account_label=source_account_label,
+    )
     tca_rows = _retarget_runtime_ledger_tca_rows(
         tca_rows,
         target_account_label=materialized_account_label,
@@ -3256,6 +5185,10 @@ def _query_timestamps(
             execution_rows,
             decision_lifecycle_rows=decision_lifecycle_rows,
             order_lifecycle_rows=order_lifecycle_rows,
+            unlinked_order_lifecycle_rows=unlinked_order_lifecycle_rows,
+            carry_in_execution_rows=carry_in_execution_rows,
+            carry_in_decision_lifecycle_rows=carry_in_decision_lifecycle_rows,
+            carry_in_order_lifecycle_rows=carry_in_order_lifecycle_rows,
             allow_authoritative_runtime_ledger_materialization=(
                 allow_authoritative_runtime_ledger_materialization
             ),
@@ -3397,12 +5330,15 @@ def main() -> int:
         hypothesis_id=args.hypothesis_id,
         strategy_family=args.strategy_family.strip() or None,
     )
-    strategy_names = _strategy_name_candidates(
-        args.strategy_name,
-        getattr(manifest, "strategy_id", None),
-    )
     target_metadata = _parse_target_metadata(
         str(getattr(args, "target_metadata_json", "") or "")
+    )
+    strategy_names = _strategy_name_candidates(
+        args.strategy_name,
+        _text_or_none(target_metadata.get("runtime_strategy_name")),
+        _text_or_none(target_metadata.get("strategy_name")),
+        *_metadata_text_list(target_metadata.get("strategy_lookup_names")),
+        getattr(manifest, "strategy_id", None),
     )
     source_activity_symbols = _target_metadata_source_symbols(target_metadata)
     source_kind = args.source_kind.strip() or (

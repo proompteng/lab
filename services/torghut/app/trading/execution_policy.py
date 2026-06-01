@@ -202,7 +202,12 @@ class ExecutionPolicy:
 
         price = _resolve_price(decision, market_snapshot)
         position_qty = _position_summary(decision.symbol, positions)
-        short_increasing = _is_short_increasing(decision, positions)
+        prechecked_reducing_position_qty = _prechecked_reducing_position_qty(decision)
+        if prechecked_reducing_position_qty is not None:
+            position_qty = prechecked_reducing_position_qty
+            short_increasing = False
+        else:
+            short_increasing = _is_short_increasing(decision, positions)
         position_reducing = _is_position_reducing(decision, position_qty)
         qty, notional = self._resolve_qty_and_notional(
             decision=decision,
@@ -1276,6 +1281,72 @@ def _is_position_reducing(
     if decision.action == "buy" and position_qty < 0:
         return qty <= abs(position_qty)
     return False
+
+
+def _prechecked_reducing_position_qty(decision: StrategyDecision) -> Decimal | None:
+    if decision.action.strip().lower() != "sell":
+        return None
+    qty = _optional_decimal(decision.qty)
+    if qty is None or qty <= 0:
+        return None
+    for key in ("simple_lane", "simple_lane_precheck"):
+        section = decision.params.get(key)
+        if not isinstance(section, Mapping):
+            continue
+        section_map = cast(Mapping[str, Any], section)
+        resolution = section_map.get("quantity_resolution")
+        if not isinstance(resolution, Mapping):
+            continue
+        resolution_map = cast(Mapping[str, Any], resolution)
+        if not _quantity_resolution_matches_decision(
+            decision=decision,
+            resolution=resolution_map,
+        ):
+            continue
+        position_qty = _optional_decimal(resolution_map.get("position_qty"))
+        if position_qty is None or position_qty <= 0 or qty > position_qty:
+            continue
+        reason = str(resolution_map.get("reason") or "").strip().lower()
+        short_increasing = _coerce_optional_bool(
+            resolution_map.get("short_increasing")
+        )
+        if short_increasing is False and reason.startswith("sell_reducing_"):
+            return position_qty
+    return None
+
+
+def _quantity_resolution_matches_decision(
+    *,
+    decision: StrategyDecision,
+    resolution: Mapping[str, Any],
+) -> bool:
+    symbol = str(resolution.get("symbol") or "").strip().upper()
+    if symbol and symbol != decision.symbol.strip().upper():
+        return False
+    action = str(resolution.get("action") or "").strip().lower()
+    if action and action != decision.action.strip().lower():
+        return False
+    requested_qty = _optional_decimal(resolution.get("requested_qty"))
+    decision_qty = _optional_decimal(decision.qty)
+    if (
+        requested_qty is not None
+        and decision_qty is not None
+        and requested_qty < decision_qty
+    ):
+        return False
+    return True
+
+
+def _coerce_optional_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "off"}:
+            return False
+    return None
 
 
 def _optional_decimal(value: Any) -> Optional[Decimal]:

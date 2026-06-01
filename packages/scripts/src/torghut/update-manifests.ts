@@ -27,8 +27,14 @@ const defaultEmpiricalBackfillManifestPath = 'argocd/applications/torghut/empiri
 const defaultEmpiricalPromotionRenewalManifestPath =
   'argocd/applications/torghut/empirical-promotion-renewal-cronjob.yaml'
 const defaultExecutionTcaRefreshManifestPath = 'argocd/applications/torghut/execution-tca-refresh-cronjob.yaml'
+const defaultOrderFeedSourceWindowRepairManifestPath =
+  'argocd/applications/torghut/order-feed-source-window-repair-cronjob.yaml'
+const defaultPaperAccountFlattenManifestPath = 'argocd/applications/torghut/paper-account-flatten-cronjob.yaml'
 const defaultWhitepaperSemanticBackfillManifestPath =
   'argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml'
+const defaultTigerBeetleSmokeManifestPath = 'argocd/applications/torghut/tigerbeetle-smoke-job.yaml'
+const defaultTigerBeetleJournalOrderEventsManifestPath =
+  'argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml'
 const defaultOptionsCatalogManifestPath = 'argocd/applications/torghut-options/catalog/deployment.yaml'
 const defaultOptionsEnricherManifestPath = 'argocd/applications/torghut-options/enricher/deployment.yaml'
 
@@ -53,7 +59,11 @@ type UpdateManifestsOptions = {
   empiricalBackfillManifestPath?: string
   empiricalPromotionRenewalManifestPath?: string
   executionTcaRefreshManifestPath?: string
+  orderFeedSourceWindowRepairManifestPath?: string
+  paperAccountFlattenManifestPath?: string
   whitepaperSemanticBackfillManifestPath?: string
+  tigerBeetleSmokeManifestPath?: string
+  tigerBeetleJournalOrderEventsManifestPath?: string
   optionsCatalogManifestPath?: string
   optionsEnricherManifestPath?: string
 }
@@ -79,7 +89,11 @@ type CliOptions = {
   empiricalBackfillManifestPath?: string
   empiricalPromotionRenewalManifestPath?: string
   executionTcaRefreshManifestPath?: string
+  orderFeedSourceWindowRepairManifestPath?: string
+  paperAccountFlattenManifestPath?: string
   whitepaperSemanticBackfillManifestPath?: string
+  tigerBeetleSmokeManifestPath?: string
+  tigerBeetleJournalOrderEventsManifestPath?: string
   optionsCatalogManifestPath?: string
   optionsEnricherManifestPath?: string
 }
@@ -315,10 +329,30 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     options.executionTcaRefreshManifestPath ?? defaultExecutionTcaRefreshManifestPath,
     'torghut-execution-tca-refresh image reference',
   )
+  const orderFeedSourceWindowRepair = updateImageOnlyManifest(
+    options,
+    options.orderFeedSourceWindowRepairManifestPath ?? defaultOrderFeedSourceWindowRepairManifestPath,
+    'torghut-order-feed-source-window-repair image reference',
+  )
+  const paperAccountFlatten = updateImageOnlyManifest(
+    options,
+    options.paperAccountFlattenManifestPath ?? defaultPaperAccountFlattenManifestPath,
+    'torghut-paper-account-flatten image reference',
+  )
   const whitepaperSemanticBackfill = updateImageOnlyManifest(
     options,
     options.whitepaperSemanticBackfillManifestPath ?? defaultWhitepaperSemanticBackfillManifestPath,
     'torghut-whitepaper-semantic-backfill image reference',
+  )
+  const tigerBeetleSmoke = updateImageOnlyManifest(
+    options,
+    options.tigerBeetleSmokeManifestPath ?? defaultTigerBeetleSmokeManifestPath,
+    'torghut-tigerbeetle-smoke image reference',
+  )
+  const tigerBeetleJournalOrderEvents = updateImageOnlyManifest(
+    options,
+    options.tigerBeetleJournalOrderEventsManifestPath ?? defaultTigerBeetleJournalOrderEventsManifestPath,
+    'torghut-tigerbeetle-journal-order-events image reference',
   )
   const optionsCatalog = updateVersionedDeploymentManifest(
     options,
@@ -350,7 +384,11 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     empiricalBackfill,
     empiricalPromotionRenewal,
     executionTcaRefresh,
+    orderFeedSourceWindowRepair,
+    paperAccountFlatten,
     whitepaperSemanticBackfill,
+    tigerBeetleSmoke,
+    tigerBeetleJournalOrderEvents,
     optionsCatalog,
     optionsEnricher,
   ]
@@ -392,7 +430,11 @@ Options:
   --empirical-backfill-manifest-path <path>
   --empirical-promotion-renewal-manifest-path <path>
   --execution-tca-refresh-manifest-path <path>
+  --order-feed-source-window-repair-manifest-path <path>
+  --paper-account-flatten-manifest-path <path>
   --whitepaper-semantic-backfill-manifest-path <path>
+  --tigerbeetle-smoke-manifest-path <path>
+  --tigerbeetle-journal-order-events-manifest-path <path>
   --options-catalog-manifest-path <path>
   --options-enricher-manifest-path <path>`)
       process.exit(0)
@@ -472,8 +514,20 @@ Options:
       case '--execution-tca-refresh-manifest-path':
         options.executionTcaRefreshManifestPath = value
         break
+      case '--order-feed-source-window-repair-manifest-path':
+        options.orderFeedSourceWindowRepairManifestPath = value
+        break
+      case '--paper-account-flatten-manifest-path':
+        options.paperAccountFlattenManifestPath = value
+        break
       case '--whitepaper-semantic-backfill-manifest-path':
         options.whitepaperSemanticBackfillManifestPath = value
+        break
+      case '--tigerbeetle-smoke-manifest-path':
+        options.tigerBeetleSmokeManifestPath = value
+        break
+      case '--tigerbeetle-journal-order-events-manifest-path':
+        options.tigerBeetleJournalOrderEventsManifestPath = value
         break
       case '--options-catalog-manifest-path':
         options.optionsCatalogManifestPath = value
@@ -536,8 +590,18 @@ const main = (cliOptions?: CliOptions) => {
       parsed.empiricalPromotionRenewalManifestPath ?? process.env.TORGHUT_EMPIRICAL_PROMOTION_RENEWAL_MANIFEST_PATH,
     executionTcaRefreshManifestPath:
       parsed.executionTcaRefreshManifestPath ?? process.env.TORGHUT_EXECUTION_TCA_REFRESH_MANIFEST_PATH,
+    orderFeedSourceWindowRepairManifestPath:
+      parsed.orderFeedSourceWindowRepairManifestPath ??
+      process.env.TORGHUT_ORDER_FEED_SOURCE_WINDOW_REPAIR_MANIFEST_PATH,
+    paperAccountFlattenManifestPath:
+      parsed.paperAccountFlattenManifestPath ?? process.env.TORGHUT_PAPER_ACCOUNT_FLATTEN_MANIFEST_PATH,
     whitepaperSemanticBackfillManifestPath:
       parsed.whitepaperSemanticBackfillManifestPath ?? process.env.TORGHUT_WHITEPAPER_SEMANTIC_BACKFILL_MANIFEST_PATH,
+    tigerBeetleSmokeManifestPath:
+      parsed.tigerBeetleSmokeManifestPath ?? process.env.TORGHUT_TIGERBEETLE_SMOKE_MANIFEST_PATH,
+    tigerBeetleJournalOrderEventsManifestPath:
+      parsed.tigerBeetleJournalOrderEventsManifestPath ??
+      process.env.TORGHUT_TIGERBEETLE_JOURNAL_ORDER_EVENTS_MANIFEST_PATH,
     optionsCatalogManifestPath: parsed.optionsCatalogManifestPath ?? process.env.TORGHUT_OPTIONS_CATALOG_MANIFEST_PATH,
     optionsEnricherManifestPath:
       parsed.optionsEnricherManifestPath ?? process.env.TORGHUT_OPTIONS_ENRICHER_MANIFEST_PATH,

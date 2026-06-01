@@ -38,9 +38,11 @@ The repository centers on:
 - `services/torghut`: FastAPI autonomous trading service with research and rollout workflows
 - `services/memories`: memory storage/retrieval service used by agent workflows
 - `services/golink`, `services/oirat`, `services/bumba`, `services/khoshut`, `services/facteur`, `services/graf`,
-  `services/prt`, `services/bonjour`, `services/tigresse`, `services/saigak`, `services/dernier`, `services/dorvud`,
+  `services/prt`, `services/bonjour`, `services/saigak`, `services/dernier`, `services/dorvud`,
   `services/miel`, `services/eclair`, `services/galette`, `services/vecteur`, `services/workers`: supporting product,
   integration, runtime, and infrastructure services implemented across TS, Go, Python, Kotlin, and Ruby
+
+TigerBeetle operator code lives in the standalone `proompteng/tigresse` repository.
 
 ### Platform and infra
 

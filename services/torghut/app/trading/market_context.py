@@ -13,6 +13,12 @@ from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from ..config import settings
 from .llm.schema import MarketContextBundle
+from .market_context_domains import (
+    active_market_context_domain_states,
+    active_market_context_freshness_seconds,
+    active_market_context_quality_score,
+    active_market_context_reasons,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -20,19 +26,11 @@ _BLOCKING_RISK_FLAGS = {
     "market_context_stale",
     "market_context_quality_low",
     "market_context_disabled",
-    "fundamentals_error",
-    "news_error",
     "technicals_error",
     "regime_error",
     "technicals_source_error",
     "regime_source_error",
     "market_context_domain_error",
-}
-
-_DEGRADED_LAST_GOOD_FLAGS = {
-    "market_context_degraded_last_good",
-    "fundamentals_generation_failed_all_models",
-    "news_generation_failed_all_models",
 }
 
 _REASON_PRIORITY = [
@@ -50,35 +48,6 @@ class MarketContextStatus:
     allow_llm: bool
     reason: Optional[str]
     risk_flags: list[str]
-
-
-def _degraded_domains_within_hard_caps(bundle: MarketContextBundle) -> bool:
-    degraded_domains: list[tuple[str, Any, int]] = []
-    risk_flags = set(bundle.risk_flags)
-    if "fundamentals_generation_failed_all_models" in risk_flags:
-        degraded_domains.append(
-            (
-                "fundamentals",
-                bundle.domains.fundamentals,
-                settings.trading_market_context_fundamentals_degraded_max_staleness_seconds,
-            )
-        )
-    if "news_generation_failed_all_models" in risk_flags:
-        degraded_domains.append(
-            (
-                "news",
-                bundle.domains.news,
-                settings.trading_market_context_news_degraded_max_staleness_seconds,
-            )
-        )
-    if not degraded_domains:
-        return False
-    for _, domain, hard_cap_seconds in degraded_domains:
-        if domain.state in {"missing", "error"}:
-            return False
-        if domain.freshness_seconds is None or domain.freshness_seconds > hard_cap_seconds:
-            return False
-    return True
 
 
 class _HttpRequest:
@@ -100,10 +69,12 @@ class _HttpRequest:
 
 
 class _HttpResponseHandle:
-    def __init__(self, connection: HTTPConnection | HTTPSConnection, response: Any) -> None:
+    def __init__(
+        self, connection: HTTPConnection | HTTPSConnection, response: Any
+    ) -> None:
         self._connection = connection
         self._response = response
-        self.status = int(getattr(response, 'status', 200))
+        self.status = int(getattr(response, "status", 200))
 
     def read(self) -> bytes:
         return cast(bytes, self._response.read())
@@ -122,14 +93,14 @@ class _HttpResponseHandle:
 def urlopen(request: _HttpRequest, timeout: int) -> _HttpResponseHandle:
     parsed = urlsplit(request.full_url)
     scheme = parsed.scheme.lower()
-    if scheme not in {'http', 'https'}:
-        raise RuntimeError(f'market_context_invalid_url_scheme:{scheme or "missing"}')
+    if scheme not in {"http", "https"}:
+        raise RuntimeError(f"market_context_invalid_url_scheme:{scheme or 'missing'}")
     if not parsed.hostname:
-        raise RuntimeError('market_context_invalid_url_host')
-    request_path = parsed.path or '/'
+        raise RuntimeError("market_context_invalid_url_host")
+    request_path = parsed.path or "/"
     if parsed.query:
-        request_path = f'{request_path}?{parsed.query}'
-    connection_class = HTTPSConnection if scheme == 'https' else HTTPConnection
+        request_path = f"{request_path}?{parsed.query}"
+    connection_class = HTTPSConnection if scheme == "https" else HTTPConnection
     connection = connection_class(parsed.hostname, parsed.port, timeout=max(timeout, 1))
     try:
         connection.request(request.method, request_path, headers=request.headers)
@@ -160,19 +131,19 @@ class MarketContextClient:
         query = urlencode(query_payload)
         url = self._base_url
         delimiter = "&" if "?" in url else "?"
-        request_url = f'{url}{delimiter}{query}'
+        request_url = f"{url}{delimiter}{query}"
         request = _HttpRequest(
             full_url=request_url,
-            method='GET',
-            headers={'accept': 'application/json'},
+            method="GET",
+            headers={"accept": "application/json"},
         )
-        payload = ''
+        payload = ""
         with urlopen(request, self._timeout_seconds) as response:
-            raw_status = getattr(response, 'status', 200)
+            raw_status = getattr(response, "status", 200)
             status = raw_status if isinstance(raw_status, int) else 200
             if status < 200 or status >= 300:
-                raise RuntimeError(f'market_context_http_{status}')
-            payload = response.read().decode('utf-8')
+                raise RuntimeError(f"market_context_http_{status}")
+            payload = response.read().decode("utf-8")
         data = json.loads(payload)
         if not isinstance(data, dict):
             raise RuntimeError("market_context_invalid_payload")
@@ -192,7 +163,7 @@ class MarketContextClient:
             return None
         cache_key = symbol.strip().upper() or "default"
         if as_of is not None:
-            cache_key = f'{cache_key}:{as_of.astimezone(timezone.utc).isoformat()}'
+            cache_key = f"{cache_key}:{as_of.astimezone(timezone.utc).isoformat()}"
         now = time.monotonic()
         cached = self._health_cache.get(cache_key)
         if cached is not None and now - cached[0] <= 15.0:
@@ -239,44 +210,44 @@ class MarketContextClient:
         return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
 
 
-def evaluate_market_context(bundle: Optional[MarketContextBundle]) -> MarketContextStatus:
+def evaluate_market_context(
+    bundle: Optional[MarketContextBundle],
+) -> MarketContextStatus:
     """Evaluate market context against deterministic quality/staleness policy."""
 
     if bundle is None:
         if settings.trading_market_context_required:
-            return MarketContextStatus(allow_llm=False, reason="market_context_required_missing", risk_flags=[])
+            return MarketContextStatus(
+                allow_llm=False, reason="market_context_required_missing", risk_flags=[]
+            )
         return MarketContextStatus(allow_llm=True, reason=None, risk_flags=[])
 
-    risk_flags = sorted(set(bundle.risk_flags))
-    domain_states = {
-        "technicals": bundle.domains.technicals.state,
-        "fundamentals": bundle.domains.fundamentals.state,
-        "news": bundle.domains.news.state,
-        "regime": bundle.domains.regime.state,
-    }
-    degraded_last_good_allowed = (
-        settings.trading_market_context_allow_degraded_last_good
-        and any(flag in _DEGRADED_LAST_GOOD_FLAGS for flag in risk_flags)
-        and _degraded_domains_within_hard_caps(bundle)
-    )
+    risk_flags = sorted(set(active_market_context_reasons(bundle.risk_flags)))
+    domain_states = active_market_context_domain_states(bundle)
+    effective_freshness_seconds = active_market_context_freshness_seconds(bundle)
+    effective_quality_score = active_market_context_quality_score(bundle)
     blocking_flags = [flag for flag in risk_flags if flag in _BLOCKING_RISK_FLAGS]
     if any(state == "error" for state in domain_states.values()):
         risk_flags.append("market_context_domain_error")
         blocking_flags.append("market_context_domain_error")
     if (
-        bundle.freshness_seconds > settings.trading_market_context_max_staleness_seconds
-        and not degraded_last_good_allowed
+        effective_freshness_seconds
+        > settings.trading_market_context_max_staleness_seconds
     ):
         risk_flags.append("market_context_stale")
         blocking_flags.append("market_context_stale")
-    if bundle.quality_score < settings.trading_market_context_min_quality and not degraded_last_good_allowed:
+    if effective_quality_score < settings.trading_market_context_min_quality:
         risk_flags.append("market_context_quality_low")
         blocking_flags.append("market_context_quality_low")
 
     if blocking_flags:
         unique_blocking_flags = sorted(set(blocking_flags))
         reason = next(
-            (candidate for candidate in _REASON_PRIORITY if candidate in unique_blocking_flags),
+            (
+                candidate
+                for candidate in _REASON_PRIORITY
+                if candidate in unique_blocking_flags
+            ),
             unique_blocking_flags[0],
         )
         return MarketContextStatus(
@@ -284,7 +255,9 @@ def evaluate_market_context(bundle: Optional[MarketContextBundle]) -> MarketCont
             reason=reason,
             risk_flags=sorted(set(risk_flags)),
         )
-    return MarketContextStatus(allow_llm=True, reason=None, risk_flags=sorted(set(risk_flags)))
+    return MarketContextStatus(
+        allow_llm=True, reason=None, risk_flags=sorted(set(risk_flags))
+    )
 
 
 __all__ = ["MarketContextClient", "MarketContextStatus", "evaluate_market_context"]

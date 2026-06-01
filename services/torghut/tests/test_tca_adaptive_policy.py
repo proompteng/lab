@@ -4,11 +4,13 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import cast
 from unittest import TestCase
+from unittest.mock import patch
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.models import Base, Execution, ExecutionTCAMetric, Strategy, TradeDecision
+from app.trading import tca as tca_module
 from app.trading.tca import (
     build_tca_gate_inputs,
     derive_adaptive_execution_policy,
@@ -366,6 +368,47 @@ class TestAdaptiveExecutionPolicyDerivation(TestCase):
         self.assertEqual(metric.arrival_price, Decimal("316.93"))
         self.assertEqual(metric.slippage_bps, Decimal("0"))
         self.assertEqual(metric.shortfall_notional, Decimal("0.0000"))
+
+    def test_upsert_tca_journal_failure_respects_required_flag(self) -> None:
+        with self.session_local() as session:
+            execution = self._insert_tca_execution(
+                session,
+                order_id="order-tca-journal-optional",
+                client_order_id="client-tca-journal-optional",
+            )
+
+            with (
+                patch.object(tca_module.settings, "tigerbeetle_enabled", True),
+                patch.object(tca_module.settings, "tigerbeetle_journal_enabled", True),
+                patch.object(tca_module.settings, "tigerbeetle_required", False),
+                patch(
+                    "app.trading.tca.TigerBeetleLedgerJournal.journal_execution",
+                    side_effect=RuntimeError("journal failed"),
+                ),
+            ):
+                with self.assertLogs(tca_module.logger, level="WARNING"):
+                    metric = upsert_execution_tca_metric(session, execution)
+
+            self.assertEqual(metric.execution_id, execution.id)
+
+        with self.session_local() as session:
+            execution = self._insert_tca_execution(
+                session,
+                order_id="order-tca-journal-required",
+                client_order_id="client-tca-journal-required",
+            )
+
+            with (
+                patch.object(tca_module.settings, "tigerbeetle_enabled", True),
+                patch.object(tca_module.settings, "tigerbeetle_journal_enabled", True),
+                patch.object(tca_module.settings, "tigerbeetle_required", True),
+                patch(
+                    "app.trading.tca.TigerBeetleLedgerJournal.journal_execution",
+                    side_effect=RuntimeError("journal failed"),
+                ),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "journal failed"):
+                    upsert_execution_tca_metric(session, execution)
 
     def test_upsert_tca_refreshes_existing_metric_computed_at(self) -> None:
         with self.session_local() as session:
@@ -799,6 +842,54 @@ class TestAdaptiveExecutionPolicyDerivation(TestCase):
         session.commit()
         session.refresh(strategy)
         return strategy
+
+    def _insert_tca_execution(
+        self,
+        session: Session,
+        *,
+        order_id: str,
+        client_order_id: str,
+    ) -> Execution:
+        strategy = self._insert_strategy(session)
+        decision = TradeDecision(
+            strategy_id=strategy.id,
+            alpaca_account_label="paper",
+            symbol="MU",
+            timeframe="1Min",
+            decision_json={
+                "strategy_id": str(strategy.id),
+                "symbol": "MU",
+                "action": "sell",
+                "qty": "2",
+                "params": {
+                    "price": "412.67",
+                    "price_snapshot": {"price": "316.93"},
+                },
+            },
+            rationale="test",
+            status="submitted",
+            decision_hash=client_order_id,
+        )
+        session.add(decision)
+        session.flush()
+        execution = Execution(
+            trade_decision_id=decision.id,
+            alpaca_order_id=order_id,
+            client_order_id=client_order_id,
+            symbol="MU",
+            side="sell",
+            order_type="market",
+            time_in_force="day",
+            submitted_qty=Decimal("2"),
+            filled_qty=Decimal("2"),
+            avg_fill_price=Decimal("316.93"),
+            status="filled",
+            execution_expected_adapter="alpaca",
+            execution_actual_adapter="alpaca",
+        )
+        session.add(execution)
+        session.flush()
+        return execution
 
     def _insert_observations(
         self,

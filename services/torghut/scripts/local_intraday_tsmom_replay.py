@@ -15,7 +15,7 @@ import time as time_mod
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -57,15 +57,17 @@ from app.trading.quote_quality import (
     SignalQuoteQualityTracker,
     assess_signal_quote_quality,
 )
-from app.trading.session_context import SessionContextTracker
+from app.trading.session_context import (
+    SessionContextTracker,
+    regular_session_close_utc_for,
+    regular_session_open_utc_for,
+)
 from app.trading.strategy_runtime import StrategyRuntime
 
 logging.getLogger("alembic").setLevel(logging.WARNING)
 
 logging.getLogger("alembic").setLevel(logging.WARNING)
 
-REGULAR_OPEN_UTC = time(hour=13, minute=30)
-REGULAR_CLOSE_UTC = time(hour=20, minute=0)
 DEFAULT_CHUNK_MINUTES = 10
 DEFAULT_START_EQUITY = Decimal("31590.02")
 DEFAULT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS = 30
@@ -562,14 +564,10 @@ def _append_ledger_fill(
                 "spread": _decimal_text_or_none(cost_lineage.spread),
                 "volatility": _decimal_text_or_none(cost_lineage.volatility),
                 "spread_cost_bps": _decimal_text(cost_lineage.spread_cost_bps),
-                "volatility_cost_bps": _decimal_text(
-                    cost_lineage.volatility_cost_bps
-                ),
+                "volatility_cost_bps": _decimal_text(cost_lineage.volatility_cost_bps),
                 "impact_cost_bps": _decimal_text(cost_lineage.impact_cost_bps),
                 "commission_cost": _decimal_text(cost_lineage.commission_cost),
-                "commission_cost_bps": _decimal_text(
-                    cost_lineage.commission_cost_bps
-                ),
+                "commission_cost_bps": _decimal_text(cost_lineage.commission_cost_bps),
                 "total_cost_bps": _decimal_text(cost_lineage.total_cost_bps),
                 "max_participation_rate": _decimal_text(
                     cost_lineage.max_participation_rate
@@ -921,12 +919,8 @@ def _iter_signal_rows(config: ReplayConfig) -> Iterable[SignalEnvelope]:
             )
             current_day += timedelta(days=1)
             continue
-        session_start = datetime.combine(
-            current_day, REGULAR_OPEN_UTC, tzinfo=timezone.utc
-        )
-        session_end = datetime.combine(
-            current_day, REGULAR_CLOSE_UTC, tzinfo=timezone.utc
-        )
+        session_start = regular_session_open_utc_for(current_day)
+        session_end = regular_session_close_utc_for(current_day)
         logger.info(
             "replay_day_fetch_start day=%s session_start=%s session_end=%s",
             current_day.isoformat(),
@@ -1746,11 +1740,7 @@ def _pending_censor_time(
     pending: PendingOrder,
     fallback: datetime,
 ) -> datetime:
-    close_ts = datetime.combine(
-        pending.created_at.date(),
-        REGULAR_CLOSE_UTC,
-        tzinfo=timezone.utc,
-    )
+    close_ts = regular_session_close_utc_for(pending.created_at)
     if close_ts > pending.created_at:
         return close_ts
     return fallback
@@ -2947,11 +2937,7 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
                     cash = cash_ref[0]
                 _censor_pending_orders(
                     reason="day_boundary",
-                    fallback=datetime.combine(
-                        current_day,
-                        REGULAR_CLOSE_UTC,
-                        tzinfo=timezone.utc,
-                    ),
+                    fallback=regular_session_close_utc_for(current_day),
                 )
                 completed_day_stats = _active_day_stats(current_day)
                 completed_day_equity = _record_capital_snapshot(
@@ -3368,11 +3354,7 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
         if current_day is not None:
             _censor_pending_orders(
                 reason="replay_end",
-                fallback=datetime.combine(
-                    current_day,
-                    REGULAR_CLOSE_UTC,
-                    tzinfo=timezone.utc,
-                ),
+                fallback=regular_session_close_utc_for(current_day),
             )
         if current_day is not None:
             final_day_stats = _active_day_stats(current_day)
@@ -3719,7 +3701,7 @@ def _flatten_positions(
         fill_price = last_prices.get(symbol, position.avg_entry_price)
         exit_action = "buy" if position.qty < 0 else "sell"
         exit_qty = abs(position.qty)
-        closed_at = datetime.combine(day, REGULAR_CLOSE_UTC, tzinfo=timezone.utc)
+        closed_at = regular_session_close_utc_for(day)
         synthetic_decision = StrategyDecision(
             strategy_id=position.strategy_id,
             symbol=symbol,

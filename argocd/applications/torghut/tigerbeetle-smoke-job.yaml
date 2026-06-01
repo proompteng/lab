@@ -1,0 +1,68 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: torghut-tigerbeetle-smoke
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut-tigerbeetle-smoke
+    app.kubernetes.io/part-of: torghut
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 300
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: torghut-tigerbeetle-smoke
+        app.kubernetes.io/part-of: torghut
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: torghut-runtime
+      nodeSelector:
+        kubernetes.io/arch: arm64
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: smoke
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:97dfaea944bbdf5c2e0d7a6cde3c1e4e96b5a544305b88c51a9d6d42562c4608
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            seccompProfile:
+              type: Unconfined
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          command:
+            - /bin/bash
+            - -lc
+          args:
+            - |
+              set -euo pipefail
+              cd /app
+              /opt/venv/bin/python scripts/verify_tigerbeetle_ledger.py --mode smoke
+          env:
+            - name: TORGHUT_TIGERBEETLE_ENABLED
+              value: "true"
+            - name: TORGHUT_TIGERBEETLE_REQUIRED
+              value: "true"
+            - name: TORGHUT_TIGERBEETLE_CLUSTER_ID
+              value: "2001"
+            - name: TORGHUT_TIGERBEETLE_REPLICA_ADDRESSES
+              value: torghut-tigerbeetle.torghut.svc.cluster.local:3000
+            - name: TORGHUT_TIGERBEETLE_HEALTH_TIMEOUT_SECONDS
+              value: "5"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi

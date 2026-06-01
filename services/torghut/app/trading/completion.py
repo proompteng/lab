@@ -23,7 +23,12 @@ from ..models import (
 )
 from .empirical_jobs import EMPIRICAL_JOB_TYPES, build_empirical_jobs_status
 from .hypotheses import HypothesisManifest, load_hypothesis_registry
+from .runtime_cost_authority import (
+    cost_basis_counts_have_non_promotion_grade_costs,
+    is_non_promotion_grade_runtime_cost_basis,
+)
 from .runtime_ledger import EXACT_REPLAY_LEDGER_SCHEMA_VERSION, POST_COST_PNL_BASIS
+from .runtime_ledger_source_authority import runtime_ledger_promotion_source_authority_blockers
 
 
 def _runtime_matrix_path() -> Path:
@@ -614,6 +619,52 @@ def _positive_hash_count(value: Any) -> bool:
     return bool(mapping) and any(_safe_int(count) > 0 for count in mapping.values())
 
 
+def _runtime_ledger_bucket_promotion_payload(
+    bucket: StrategyRuntimeLedgerBucket,
+) -> dict[str, Any]:
+    payload = _as_dict(bucket.payload_json)
+    canonical_fields = {
+        'run_id': bucket.run_id,
+        'candidate_id': bucket.candidate_id,
+        'hypothesis_id': bucket.hypothesis_id,
+        'observed_stage': bucket.observed_stage,
+        'account_label': bucket.account_label,
+        'runtime_strategy_name': bucket.runtime_strategy_name,
+        'strategy_family': bucket.strategy_family,
+        'fill_count': bucket.fill_count,
+        'decision_count': bucket.decision_count,
+        'submitted_order_count': bucket.submitted_order_count,
+        'cancelled_order_count': bucket.cancelled_order_count,
+        'rejected_order_count': bucket.rejected_order_count,
+        'unfilled_order_count': bucket.unfilled_order_count,
+        'closed_trade_count': bucket.closed_trade_count,
+        'open_position_count': bucket.open_position_count,
+        'filled_notional': bucket.filled_notional,
+        'gross_strategy_pnl': bucket.gross_strategy_pnl,
+        'cost_amount': bucket.cost_amount,
+        'net_strategy_pnl_after_costs': bucket.net_strategy_pnl_after_costs,
+        'post_cost_expectancy_bps': bucket.post_cost_expectancy_bps,
+        'ledger_schema_version': bucket.ledger_schema_version,
+        'pnl_basis': bucket.pnl_basis,
+        'execution_policy_hash_counts': bucket.execution_policy_hash_counts,
+        'cost_model_hash_counts': bucket.cost_model_hash_counts,
+        'lineage_hash_counts': bucket.lineage_hash_counts,
+    }
+    return {**payload, **canonical_fields}
+
+
+def _runtime_ledger_bucket_existing_blockers(
+    bucket: StrategyRuntimeLedgerBucket,
+) -> list[str]:
+    payload = _as_dict(bucket.payload_json)
+    blockers = [
+        str(item).strip()
+        for item in [*_as_list(bucket.blockers_json), *_as_list(payload.get('blockers'))]
+        if str(item).strip()
+    ]
+    return list(dict.fromkeys(blockers))
+
+
 def _runtime_ledger_bucket_matches_window(
     bucket: StrategyRuntimeLedgerBucket,
     window: StrategyHypothesisMetricWindow,
@@ -662,20 +713,28 @@ def _runtime_ledger_bucket_window_match_key(
 def _runtime_ledger_bucket_is_promotion_grade(
     bucket: StrategyRuntimeLedgerBucket,
 ) -> bool:
-    blockers = [item for item in _as_list(bucket.blockers_json) if str(item).strip()]
+    payload = _runtime_ledger_bucket_promotion_payload(bucket)
+    blockers = _runtime_ledger_bucket_existing_blockers(bucket)
+    if blockers:
+        return False
+    if runtime_ledger_promotion_source_authority_blockers(payload):
+        return False
+    if is_non_promotion_grade_runtime_cost_basis(payload.get('cost_basis')):
+        return False
+    if cost_basis_counts_have_non_promotion_grade_costs(payload.get('cost_basis_counts')):
+        return False
     return (
-        _as_text(bucket.ledger_schema_version) in _RUNTIME_LEDGER_BUCKET_SCHEMAS
-        and _as_text(bucket.pnl_basis) == POST_COST_PNL_BASIS
-        and not blockers
-        and _safe_int(bucket.fill_count) > 0
-        and _safe_int(bucket.decision_count) > 0
-        and _safe_int(bucket.submitted_order_count) > 0
-        and _safe_int(bucket.closed_trade_count) > 0
-        and _safe_int(bucket.open_position_count) == 0
-        and bucket.filled_notional > 0
-        and _positive_hash_count(bucket.execution_policy_hash_counts)
-        and _positive_hash_count(bucket.cost_model_hash_counts)
-        and _positive_hash_count(bucket.lineage_hash_counts)
+        _as_text(payload.get('ledger_schema_version')) in _RUNTIME_LEDGER_BUCKET_SCHEMAS
+        and _as_text(payload.get('pnl_basis')) == POST_COST_PNL_BASIS
+        and _safe_int(payload.get('fill_count')) > 0
+        and _safe_int(payload.get('decision_count')) > 0
+        and _safe_int(payload.get('submitted_order_count')) > 0
+        and _safe_int(payload.get('closed_trade_count')) > 0
+        and _safe_int(payload.get('open_position_count')) == 0
+        and _safe_float(payload.get('filled_notional')) > 0
+        and _positive_hash_count(payload.get('execution_policy_hash_counts'))
+        and _positive_hash_count(payload.get('cost_model_hash_counts'))
+        and _positive_hash_count(payload.get('lineage_hash_counts'))
     )
 
 

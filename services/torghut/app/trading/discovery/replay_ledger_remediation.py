@@ -16,6 +16,24 @@ _RUNTIME_PROMOTION_EVIDENCE = (
     "post_cost_net_pnl_after_costs_over_policy_window",
     "promotion_readiness_json_with_no_blockers",
 )
+_RUNTIME_ACTIVITY_BLOCKERS = frozenset(
+    {
+        "runtime_decision_lifecycle_missing",
+        "submitted_order_lifecycle_missing",
+        "runtime_order_count_zero",
+        "runtime_trade_count_zero",
+        "runtime_fills_missing",
+        "filled_notional_missing",
+        "runtime_ledger_filled_notional_missing",
+    }
+)
+_RUNTIME_CLOSURE_BLOCKERS = frozenset(
+    {
+        "closed_round_trip_missing",
+        "runtime_ledger_open_position_count_missing",
+        "unclosed_position",
+    }
+)
 
 
 def build_replay_ledger_remediation_report(
@@ -255,6 +273,46 @@ def _blocker_remediation(
             "action": "rerun_ranking_with_start_equity",
             "reason": "exposure_gate_cannot_be_evaluated_without_equity",
             "parameter_hints": ["set_start_equity"],
+        }
+    if blocker in _RUNTIME_ACTIVITY_BLOCKERS:
+        return {
+            "blocker": blocker,
+            "action": "increase_runtime_activity_without_raising_single_fill_exposure",
+            "reason": "candidate_or_route_did_not_generate_enough_runtime_decisions_fills_or_notional",
+            "observed": _string(
+                best_candidate.get("avg_filled_notional_per_window_weekday")
+                or best_candidate.get("filled_notional")
+                or best_candidate.get("fill_count")
+            ),
+            "threshold": _string(policy.get("min_avg_filled_notional_per_day")),
+            "required_multiplier": _required_multiplier(
+                observed=best_candidate.get("avg_filled_notional_per_window_weekday")
+                or best_candidate.get("filled_notional"),
+                threshold=policy.get("min_avg_filled_notional_per_day"),
+            ),
+            "parameter_hints": [
+                "increase_tradeable_breadth",
+                "lower_entry_cooldown_within_bounds",
+                "keep_single_fill_exposure_cap_active",
+                "do_not_promote_without_runtime_fills",
+            ],
+        }
+    if blocker in _RUNTIME_CLOSURE_BLOCKERS:
+        return {
+            "blocker": blocker,
+            "action": "force_intraday_closure_for_followup_replay",
+            "reason": "candidate_did_not_produce_closed_round_trips_required_for_runtime_ledger_authority",
+            "observed": _string(
+                best_candidate.get("closed_trade_count")
+                or best_candidate.get("open_position_count")
+            ),
+            "threshold": "closed_trade_count>0 and open_position_count=0",
+            "parameter_hints": [
+                "add_numeric_exit_minute_before_close",
+                "cap_max_hold_seconds",
+                "require_closed_round_trips",
+                "do_not_promote_open_positions",
+            ],
         }
     return {
         "blocker": blocker,

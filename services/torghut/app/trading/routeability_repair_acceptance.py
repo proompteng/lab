@@ -9,6 +9,12 @@ from hashlib import sha256
 import json
 from typing import Any, cast
 
+from .market_context_domains import (
+    ACTIVE_MARKET_CONTEXT_DOMAINS,
+    active_market_context_reasons,
+    is_active_market_context_domain,
+)
+
 
 ROUTEABILITY_REPAIR_ACCEPTANCE_LEDGER_SCHEMA_VERSION = (
     "torghut.routeability-repair-acceptance-ledger.v1"
@@ -29,9 +35,7 @@ _FORECAST_READY = {
     "shadow_ready",
 }
 _MARKET_STALE_COUNT_FIELDS = {
-    "fundamentals": "stale_fundamentals_count",
     "technicals": "stale_technicals_count",
-    "news": "stale_news_count",
     "regime": "stale_regime_count",
 }
 _PROMOTION_FRAGMENTS = (
@@ -248,10 +252,12 @@ def _market_domain_states(
 def _market_context_blockers(market_context_status: Mapping[str, Any]) -> list[str]:
     if not market_context_status:
         return ["market_context_missing"]
-    blockers = [
-        *_strings(market_context_status.get("blocking_reasons")),
-        *_strings(market_context_status.get("reason_codes")),
-    ]
+    blockers = active_market_context_reasons(
+        [
+            *_strings(market_context_status.get("blocking_reasons")),
+            *_strings(market_context_status.get("reason_codes")),
+        ]
+    )
     health = _mapping(market_context_status.get("health"))
     status = _text(
         health.get("status")
@@ -262,11 +268,17 @@ def _market_context_blockers(market_context_status: Mapping[str, Any]) -> list[s
     if status and status not in _ACCEPTED_STATES and status != "fresh":
         blockers.append(f"market_context_{status}")
 
-    stale_domains = _strings(
-        market_context_status.get("stale_domains")
-        or market_context_status.get("market_context_stale_domains")
-    )
+    stale_domains = [
+        domain
+        for domain in _strings(
+            market_context_status.get("stale_domains")
+            or market_context_status.get("market_context_stale_domains")
+        )
+        if is_active_market_context_domain(domain)
+    ]
     for domain_name, raw_domain in _market_domain_states(market_context_status).items():
+        if not is_active_market_context_domain(domain_name):
+            continue
         domain = _mapping(raw_domain)
         domain_status = _text(domain.get("status") or domain.get("state")).lower()
         if domain.get("stale") is True or domain_status in {
@@ -585,7 +597,9 @@ def build_routeability_repair_acceptance_ledger(
             expected_gate_delta="retire_stale_market_context_domains",
             required_receipts=["market_context_domain_receipt"],
             blockers=market_blockers,
-            acceptance_condition="fundamentals, technicals, news, and regime domains are fresh or not required",
+            acceptance_condition=(
+                f"{', '.join(ACTIVE_MARKET_CONTEXT_DOMAINS)} domains are fresh or not required"
+            ),
             next_repair_action="refresh_stale_market_context_domains",
             rollback_trigger="market-context repair accepts a stale domain",
             symbols=_symbols(route_repair_rows),

@@ -69,6 +69,7 @@ from app.models import (
     Execution,
     ExecutionTCAMetric,
     LLMDecisionReview,
+    PositionSnapshot,
     RejectedSignalOutcomeEvent,
     Strategy,
     StrategyHypothesisMetricWindow,
@@ -485,6 +486,18 @@ class TestTradingApi(TestCase):
                 created_at=datetime.now(timezone.utc),
             )
             session.add(review)
+            session.commit()
+
+            session.add(
+                PositionSnapshot(
+                    alpaca_account_label="TORGHUT_SIM",
+                    as_of=datetime.now(timezone.utc),
+                    equity=Decimal("100000"),
+                    cash=Decimal("100000"),
+                    buying_power=Decimal("200000"),
+                    positions=[],
+                )
+            )
             session.commit()
 
     def test_forecast_service_status_uses_empirical_job_lineage_when_registry_empty(
@@ -7198,6 +7211,67 @@ class TestTradingApi(TestCase):
                 cost_model_hash_counts={"cost-a": 4},
                 lineage_hash_counts={"lineage-a": 4},
                 blockers_json=[],
+                payload_json={
+                    "source_window_start": window_start.isoformat(),
+                    "source_window_end": window_end.isoformat(),
+                    "source_refs": [
+                        "postgres:trade_decisions",
+                        "postgres:executions",
+                        "postgres:execution_order_events",
+                        "postgres:order_feed_source_windows",
+                    ],
+                    "source_row_counts": {
+                        "trade_decisions": 5,
+                        "executions": 4,
+                        "execution_order_events": 4,
+                        "order_feed_source_windows": 1,
+                    },
+                    "trade_decision_ids": [
+                        "paper-route-decision-1",
+                        "paper-route-decision-2",
+                        "paper-route-decision-3",
+                        "paper-route-decision-4",
+                        "paper-route-decision-5",
+                    ],
+                    "execution_ids": [
+                        "paper-route-execution-1",
+                        "paper-route-execution-2",
+                        "paper-route-execution-3",
+                        "paper-route-execution-4",
+                    ],
+                    "execution_order_event_ids": [
+                        "paper-route-order-event-1",
+                        "paper-route-order-event-2",
+                        "paper-route-order-event-3",
+                        "paper-route-order-event-4",
+                    ],
+                    "source_window_ids": ["paper-route-source-window"],
+                    "source_offsets": [
+                        {
+                            "topic": "alpaca.trade_updates",
+                            "partition": 0,
+                            "offset": 100,
+                        },
+                        {
+                            "topic": "alpaca.trade_updates",
+                            "partition": 0,
+                            "offset": 101,
+                        },
+                        {
+                            "topic": "alpaca.trade_updates",
+                            "partition": 0,
+                            "offset": 102,
+                        },
+                        {
+                            "topic": "alpaca.trade_updates",
+                            "partition": 0,
+                            "offset": 103,
+                        },
+                    ],
+                    "source_materialization": "execution_order_events",
+                    "authority_class": "runtime_order_feed_execution_source",
+                    "source_decision_mode_counts": {"strategy_signal_paper": 5},
+                },
             )
             metric_window = StrategyHypothesisMetricWindow(
                 run_id="paper-route-run-1",
@@ -7434,6 +7508,8 @@ class TestTradingApi(TestCase):
             self.assertEqual(
                 payload["next_paper_route_runtime_window_targets"]["target_count"], 1
             )
+            self.assertEqual(payload["target_count"], 1)
+            self.assertEqual(payload["skipped_target_count"], 0)
             self.assertEqual(
                 plan["runtime_window_import_handoff"]["target_plan_endpoint"],
                 "/trading/paper-route-target-plan",
@@ -7442,6 +7518,97 @@ class TestTradingApi(TestCase):
             self.assertEqual(plan["targets"][0]["paper_route_probe_symbols"], ["AAPL"])
             self.assertFalse(plan["targets"][0]["promotion_allowed"])
             self.assertFalse(plan["targets"][0]["final_promotion_allowed"])
+            next_plan = payload["next_paper_route_runtime_window_targets"]
+            next_target = next_plan["targets"][0]
+            self.assertEqual(payload["purpose"], next_plan["purpose"])
+            self.assertEqual(
+                payload["targets"][0]["candidate_id"], target["candidate_id"]
+            )
+            self.assertEqual(
+                payload["targets"][0]["paper_route_probe_symbols"], ["AAPL"]
+            )
+            self.assertEqual(
+                payload["targets"][0]["window_start"], next_target["window_start"]
+            )
+            self.assertFalse(payload["targets"][0]["promotion_allowed"])
+            self.assertFalse(payload["targets"][0]["final_promotion_allowed"])
+        finally:
+            if original_scheduler is None:
+                if hasattr(app.state, "trading_scheduler"):
+                    del app.state.trading_scheduler
+            else:
+                app.state.trading_scheduler = original_scheduler
+
+    def test_paper_route_target_plan_skips_full_proof_floor_when_target_plan_ready(
+        self,
+    ) -> None:
+        original_scheduler = getattr(app.state, "trading_scheduler", None)
+        target = {
+            "hypothesis_id": "H-PAIRS-01",
+            "candidate_id": "c88421d619759b2cfaa6f4d0",
+            "observed_stage": "paper",
+            "strategy_family": "microbar_cross_sectional_pairs",
+            "strategy_name": "microbar-cross-sectional-pairs-v1",
+            "account_label": "TORGHUT_SIM",
+            "source_kind": "runtime_ledger_paper_probation_candidates",
+            "source_manifest_ref": "config/trading/hypotheses/h-pairs.json",
+            "dataset_snapshot_ref": "portfolio-profit-autoresearch-500-v1",
+            "paper_route_probe_symbols": ["AAPL", "AMZN"],
+            "paper_route_probe_next_session_max_notional": "75000",
+            "paper_probation_authorized": True,
+            "source_collection_authorized": True,
+            "promotion_allowed": False,
+            "final_promotion_allowed": False,
+            "max_notional": "0",
+        }
+        live_gate = {
+            "allowed": True,
+            "reason": "paper_probe_ready",
+            "blocked_reasons": [],
+            "promotion_eligible_total": 0,
+            "runtime_ledger_paper_probation_import_plan": {
+                "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                "target_count": 1,
+                "skipped_target_count": 0,
+                "promotion_allowed": False,
+                "final_promotion_allowed": False,
+                "targets": [target],
+            },
+        }
+        try:
+            if hasattr(app.state, "trading_scheduler"):
+                del app.state.trading_scheduler
+            with (
+                patch(
+                    "app.main._build_live_submission_gate_payload",
+                    return_value=live_gate,
+                ),
+                patch(
+                    "app.main._build_simple_lane_status_payload",
+                    return_value={
+                        "paper_route_probe_enabled": True,
+                        "paper_route_probe_max_notional": "75000",
+                    },
+                ),
+                patch(
+                    "app.main._build_profitability_proof_floor_payload",
+                    side_effect=AssertionError("full proof floor should not run"),
+                ),
+            ):
+                response = self.client.get("/trading/paper-route-target-plan")
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(
+                payload["paper_route_probe"]["eligible_symbols"], ["AAPL", "AMZN"]
+            )
+            self.assertEqual(
+                payload["paper_route_probe"]["next_session_max_notional"], "75000"
+            )
+            self.assertEqual(payload["target_count"], 1)
+            self.assertEqual(
+                payload["targets"][0]["paper_route_probe_symbols"], ["AAPL", "AMZN"]
+            )
+            self.assertFalse(payload["summary"]["promotion_authority"]["allowed"])
         finally:
             if original_scheduler is None:
                 if hasattr(app.state, "trading_scheduler"):
@@ -7607,6 +7774,80 @@ class TestTradingApi(TestCase):
         )
 
         self.assertEqual(plan["targets"][0]["candidate_id"], "c88421d619759b2cfaa6f4d0")
+
+    def test_paper_route_target_plan_payload_prefers_next_window_over_closed_import(
+        self,
+    ) -> None:
+        plan = _paper_route_target_plan_from_payload(
+            {
+                "schema_version": "torghut.paper-route-target-plan.v1",
+                "runtime_window_import_plan": {
+                    "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                    "target_count": 1,
+                    "purpose": "latest_closed_session_paper_route_runtime_window_import",
+                    "targets": [
+                        {
+                            "hypothesis_id": "H-PAIRS-01",
+                            "candidate_id": "closed-window-target",
+                            "window_start": "2026-05-29T13:30:00+00:00",
+                            "window_end": "2026-05-29T20:00:00+00:00",
+                            "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                        }
+                    ],
+                },
+                "next_paper_route_runtime_window_targets": {
+                    "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                    "target_count": 1,
+                    "purpose": "next_paper_route_runtime_window_import",
+                    "targets": [
+                        {
+                            "hypothesis_id": "H-PAIRS-01",
+                            "candidate_id": "next-window-target",
+                            "window_start": "2026-06-01T13:30:00+00:00",
+                            "window_end": "2026-06-01T20:00:00+00:00",
+                            "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                        }
+                    ],
+                },
+            }
+        )
+
+        self.assertEqual(plan["targets"][0]["candidate_id"], "next-window-target")
+        self.assertEqual(
+            plan["targets"][0]["window_start"], "2026-06-01T13:30:00+00:00"
+        )
+
+    def test_paper_route_target_plan_from_payload_falls_back_to_source_plan(
+        self,
+    ) -> None:
+        plan = _paper_route_target_plan_from_payload(
+            {
+                "schema_version": "torghut.paper-route-target-plan.v1",
+                "runtime_window_import_plan": {
+                    "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                    "target_count": 0,
+                    "targets": [],
+                },
+                "source_runtime_window_import_plan": {
+                    "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                    "target_count": 1,
+                    "targets": [
+                        {
+                            "hypothesis_id": "H-PAIRS-01",
+                            "candidate_id": "candidate-source-scope",
+                            "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                        }
+                    ],
+                },
+                "next_paper_route_runtime_window_targets": {
+                    "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                    "target_count": 0,
+                    "targets": [],
+                },
+            }
+        )
+
+        self.assertEqual(plan["targets"][0]["candidate_id"], "candidate-source-scope")
 
     def test_paper_route_target_plan_from_payload_requires_targets(self) -> None:
         self.assertEqual(

@@ -8,6 +8,11 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from typing import Any, cast
 
+from .market_context_domains import (
+    ACTIVE_MARKET_CONTEXT_DOMAINS,
+    active_market_context_reasons,
+)
+
 
 SCHEMA_VERSION = "torghut.quality-adjusted-profit-frontier.v1"
 
@@ -205,13 +210,10 @@ def _market_receipts(market: Mapping[str, Any]) -> list[str]:
         _number(market.get(key))
         for key in (
             "stale_snapshot_count",
-            "stale_fundamentals_count",
-            "stale_news_count",
+            *(f"stale_{domain}_count" for domain in ACTIVE_MARKET_CONTEXT_DOMAINS),
         )
     )
-    risk_count = _number(market.get("risk_flag_count")) + len(
-        _strings(market.get("risk_flags"))
-    )
+    risk_count = len(active_market_context_reasons(_strings(market.get("risk_flags"))))
     if stale_count > 0:
         receipts.add("market_context_stale")
     if risk_count > 0:

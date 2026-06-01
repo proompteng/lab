@@ -27,6 +27,7 @@ from .research_sleeves import (
     evaluate_momentum_pullback_long,
     evaluate_washout_rebound_long,
 )
+from .session_context import regular_session_minutes_elapsed
 from .strategy_specs import (
     build_compiled_strategy_artifacts,
     strategy_type_supports_spec_v2,
@@ -108,18 +109,22 @@ def _microbar_minutes_elapsed(
     context: "StrategyContext",
     features: FeatureVectorV3,
 ) -> int | None:
+    event_minutes: int | None = None
+    try:
+        event_ts = datetime.fromisoformat(context.event_ts)
+        event_minutes = regular_session_minutes_elapsed(event_ts)
+    except ValueError:
+        event_minutes = None
     raw_minutes = features.values.get("session_minutes_elapsed")
     if raw_minutes is not None:
         try:
-            return max(0, int(raw_minutes))
+            parsed_minutes = max(0, int(raw_minutes))
         except (TypeError, ValueError):
             return None
-    try:
-        event_ts = datetime.fromisoformat(context.event_ts)
-    except ValueError:
-        return None
-    session_open = event_ts.replace(hour=13, minute=30, second=0, microsecond=0)
-    return max(0, int((event_ts - session_open).total_seconds() // 60))
+        if event_minutes is not None and event_minutes > parsed_minutes:
+            return event_minutes
+        return parsed_minutes
+    return event_minutes
 
 
 def _microbar_exit_minute_after_open(params: dict[str, Any]) -> int | None:

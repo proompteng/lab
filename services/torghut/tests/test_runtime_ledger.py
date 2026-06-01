@@ -9,6 +9,7 @@ from app.trading.runtime_ledger import (
     EXACT_REPLAY_LEDGER_SCHEMA_VERSION,
     RuntimeLedgerFill,
     _build_bucket,
+    _coerce_fill_quantity_basis,
     _NormalizedFill,
     build_runtime_ledger_buckets,
 )
@@ -303,6 +304,206 @@ def test_positions_carry_across_bucket_boundaries() -> None:
     )
 
 
+def test_grouped_positions_carry_across_bucket_boundaries() -> None:
+    buckets = build_runtime_ledger_buckets(
+        [
+            RuntimeLedgerFill(
+                executed_at=_ts(1),
+                account_label="paper",
+                strategy_id="strategy-1",
+                symbol="NVDA",
+                side="buy",
+                filled_qty=Decimal("10"),
+                avg_fill_price=Decimal("100"),
+                cost_amount=Decimal("1"),
+                cost_basis="broker_reported_commission_and_fees",
+            ),
+            RuntimeLedgerFill(
+                executed_at=_ts(35),
+                account_label="paper",
+                strategy_id="strategy-1",
+                symbol="NVDA",
+                side="sell",
+                filled_qty=Decimal("10"),
+                avg_fill_price=Decimal("110"),
+                cost_amount=Decimal("2"),
+                cost_basis="broker_reported_commission_and_fees",
+            ),
+        ],
+        bucket_ranges=[(_ts(), _ts(30)), (_ts(30), _ts(60))],
+        group_by=("strategy_id", "symbol"),
+    )
+
+    assert len(buckets) == 2
+    assert buckets[0].closed_trade_count == 0
+    assert "unclosed_position" in buckets[0].blockers
+    assert buckets[1].blockers == []
+    assert buckets[1].closed_trade_count == 1
+    assert buckets[1].open_position_count == 0
+    assert buckets[1].filled_notional == Decimal("2100")
+    assert buckets[1].net_strategy_pnl_after_costs == Decimal("97")
+    _assert_decimal_close(
+        buckets[1].post_cost_expectancy_bps,
+        (Decimal("97") / Decimal("2100")) * Decimal("10000"),
+    )
+
+
+def test_source_backed_carry_in_closes_position_opened_before_bucket() -> None:
+    common = {
+        "account_label": "paper",
+        "strategy_id": "strategy-1",
+        "symbol": "NVDA",
+        "cost_model_hash": "cost-sha",
+        "lineage_hash": "lineage-sha",
+    }
+    bucket = build_runtime_ledger_buckets(
+        [
+            {
+                **common,
+                "event_type": "decision",
+                "executed_at": _ts(35),
+                "decision_id": "decision-sell",
+            },
+            {
+                **common,
+                "event_type": "order_submitted",
+                "executed_at": _ts(36),
+                "decision_id": "decision-sell",
+                "order_id": "order-sell",
+                "execution_policy_hash": "policy-sell",
+            },
+            {
+                **common,
+                "event_type": "fill",
+                "executed_at": _ts(37),
+                "decision_id": "decision-sell",
+                "order_id": "order-sell",
+                "execution_policy_hash": "policy-sell",
+                "side": "sell",
+                "filled_qty": "10",
+                "avg_fill_price": "110",
+                "cost_amount": "2",
+                "cost_basis": "broker_reported_commission_and_fees",
+            },
+        ],
+        carry_in_rows=[
+            {
+                **common,
+                "event_type": "decision",
+                "executed_at": _ts(1),
+                "decision_id": "decision-buy",
+            },
+            {
+                **common,
+                "event_type": "order_submitted",
+                "executed_at": _ts(2),
+                "decision_id": "decision-buy",
+                "order_id": "order-buy",
+                "execution_policy_hash": "policy-buy",
+            },
+            {
+                **common,
+                "event_type": "fill",
+                "executed_at": _ts(3),
+                "decision_id": "decision-buy",
+                "order_id": "order-buy",
+                "execution_policy_hash": "policy-buy",
+                "side": "buy",
+                "filled_qty": "10",
+                "avg_fill_price": "100",
+                "cost_amount": "1",
+                "cost_basis": "broker_reported_commission_and_fees",
+            },
+        ],
+        bucket_ranges=[(_ts(30), _ts(60))],
+        group_by=("symbol",),
+        require_order_lifecycle=True,
+    )[0]
+
+    assert bucket.blockers == []
+    assert bucket.closed_trade_count == 1
+    assert bucket.open_position_count == 0
+    assert bucket.filled_notional == Decimal("2100")
+    assert bucket.cost_amount == Decimal("3")
+    assert bucket.net_strategy_pnl_after_costs == Decimal("97")
+    assert bucket.cost_basis_counts == {"broker_reported_commission_and_fees": 2}
+    assert bucket.cost_model_hash_counts == {"cost-sha": 2}
+    assert bucket.execution_policy_hash_counts == {
+        "policy-buy": 2,
+        "policy-sell": 2,
+    }
+    _assert_decimal_close(
+        bucket.post_cost_expectancy_bps,
+        (Decimal("97") / Decimal("2100")) * Decimal("10000"),
+    )
+
+
+def test_sell_without_carry_in_stays_fail_closed() -> None:
+    bucket = build_runtime_ledger_buckets(
+        [
+            {
+                "event_type": "fill",
+                "executed_at": _ts(37),
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "symbol": "NVDA",
+                "side": "sell",
+                "filled_qty": "10",
+                "avg_fill_price": "110",
+                "cost_amount": "2",
+                "cost_basis": "broker_reported_commission_and_fees",
+            },
+        ],
+        bucket_ranges=[(_ts(30), _ts(60))],
+    )[0]
+
+    assert bucket.closed_trade_count == 0
+    assert bucket.open_position_count == 1
+    assert "closed_round_trip_missing" in bucket.blockers
+    assert "unclosed_position" in bucket.blockers
+    assert bucket.post_cost_expectancy_bps is None
+
+
+def test_carry_in_non_promotion_cost_basis_blocks_bucket() -> None:
+    bucket = build_runtime_ledger_buckets(
+        [
+            {
+                "event_type": "fill",
+                "executed_at": _ts(37),
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "symbol": "NVDA",
+                "side": "sell",
+                "filled_qty": "10",
+                "avg_fill_price": "110",
+                "cost_amount": "2",
+                "cost_basis": "broker_reported_commission_and_fees",
+            },
+        ],
+        carry_in_rows=[
+            {
+                "event_type": "fill",
+                "executed_at": _ts(3),
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "symbol": "NVDA",
+                "side": "buy",
+                "filled_qty": "10",
+                "avg_fill_price": "100",
+                "cost_amount": "1",
+                "cost_basis": "paper_cost_model_estimate",
+            },
+        ],
+        bucket_ranges=[(_ts(30), _ts(60))],
+    )[0]
+
+    assert bucket.closed_trade_count == 0
+    assert bucket.open_position_count == 1
+    assert "runtime_ledger_cost_basis_non_promotion_grade" in bucket.blockers
+    assert "unclosed_position" in bucket.blockers
+    assert bucket.post_cost_expectancy_bps is None
+
+
 def test_tca_shortfall_rows_do_not_count_as_strategy_pnl() -> None:
     bucket = _bucket(
         [
@@ -511,6 +712,162 @@ def test_invalid_runtime_fill_fields_fail_closed() -> None:
     assert "runtime_fills_missing" in bucket.blockers
 
 
+def test_order_feed_source_fill_requires_delta_basis() -> None:
+    bucket = _bucket(
+        [
+            {
+                "event_type": "fill",
+                "executed_at": _ts(1),
+                "source": "execution_order_event",
+                "execution_order_event_id": "event-1",
+                "source_window_id": "window-1",
+                "source_offset": 7,
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "symbol": "NVDA",
+                "side": "buy",
+                "filled_qty": "1",
+                "avg_fill_price": "100",
+                "cost_amount": "0",
+                "cost_basis": "broker_reported_zero_cost",
+            }
+        ]
+    )
+
+    assert bucket.fill_count == 0
+    assert "fill_quantity_delta_basis_missing" in bucket.blockers
+    assert "runtime_fills_missing" in bucket.blockers
+
+
+def test_order_feed_source_fill_requires_positive_delta_quantity() -> None:
+    bucket = _bucket(
+        [
+            {
+                "event_type": "fill",
+                "executed_at": _ts(1),
+                "source": "execution_order_event",
+                "execution_order_event_id": "event-1",
+                "source_window_id": "window-1",
+                "source_offset": 7,
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "symbol": "NVDA",
+                "side": "buy",
+                "filled_qty": "1",
+                "fill_quantity_basis": "delta",
+                "avg_fill_price": "100",
+                "cost_amount": "0",
+                "cost_basis": "broker_reported_zero_cost",
+            }
+        ]
+    )
+
+    assert bucket.fill_count == 0
+    assert "fill_quantity_delta_missing" in bucket.blockers
+    assert "runtime_fills_missing" in bucket.blockers
+
+
+def test_order_feed_source_fill_uses_delta_not_cumulative_quantity() -> None:
+    bucket = _bucket(
+        [
+            {
+                "event_type": "fill",
+                "executed_at": _ts(1),
+                "source": "execution_order_event",
+                "execution_order_event_id": "event-buy",
+                "source_window_id": "window-buy",
+                "source_offset": 7,
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "symbol": "NVDA",
+                "side": "buy",
+                "filled_qty": "2",
+                "filled_qty_delta": "1",
+                "fill_quantity_basis": "cumulative_to_delta",
+                "avg_fill_price": "100",
+                "cost_amount": "0",
+                "cost_basis": "broker_reported_zero_cost",
+            },
+            {
+                "event_type": "fill",
+                "executed_at": _ts(2),
+                "source": "execution_order_event",
+                "execution_order_event_id": "event-sell",
+                "source_window_id": "window-sell",
+                "source_offset": 8,
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "symbol": "NVDA",
+                "side": "sell",
+                "filled_qty": "2",
+                "filled_qty_delta": "1",
+                "fill_quantity_basis": "cumulative_to_delta",
+                "avg_fill_price": "101",
+                "cost_amount": "0",
+                "cost_basis": "broker_reported_zero_cost",
+            },
+        ]
+    )
+
+    assert bucket.fill_count == 2
+    assert bucket.closed_trade_count == 1
+    assert bucket.open_position_count == 0
+    assert bucket.filled_notional == Decimal("201")
+    assert bucket.gross_strategy_pnl == Decimal("1")
+
+
+def test_order_feed_source_fill_accepts_authority_class_marker() -> None:
+    bucket = _bucket(
+        [
+            {
+                "event_type": "fill",
+                "executed_at": _ts(1),
+                "authority_class": "source_execution_lifecycle_materialized_runtime_ledger",
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "symbol": "NVDA",
+                "side": "buy",
+                "filled_qty": "2",
+                "filled_qty_delta": "1",
+                "fill_quantity_basis": "cumulative_to_delta",
+                "avg_fill_price": "100",
+                "cost_amount": "0",
+                "cost_basis": "broker_reported_zero_cost",
+            },
+            {
+                "event_type": "fill",
+                "executed_at": _ts(2),
+                "authority_class": "source_execution_lifecycle_materialized_runtime_ledger",
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "symbol": "NVDA",
+                "side": "sell",
+                "filled_qty": "2",
+                "filled_qty_delta": "1",
+                "fill_quantity_basis": "cumulative_to_delta",
+                "avg_fill_price": "101",
+                "cost_amount": "0",
+                "cost_basis": "broker_reported_zero_cost",
+            },
+        ]
+    )
+
+    assert bucket.fill_count == 2
+    assert bucket.closed_trade_count == 1
+    assert bucket.filled_notional == Decimal("201")
+
+
+def test_fill_quantity_basis_aliases_are_normalized() -> None:
+    assert _coerce_fill_quantity_basis("fill-delta") == "delta"
+    assert _coerce_fill_quantity_basis("cum") == "cumulative"
+    assert _coerce_fill_quantity_basis("unknown") == "unknown"
+    assert (
+        _coerce_fill_quantity_basis("cumulative-non-increasing")
+        == "cumulative_non_increasing"
+    )
+    assert _coerce_fill_quantity_basis("broker custom") == "broker_custom"
+
+
 def test_exact_replay_ledger_requires_order_lifecycle_and_hash_lineage() -> None:
     common = {
         "account_label": "paper",
@@ -582,7 +939,7 @@ def test_exact_replay_ledger_requires_order_lifecycle_and_hash_lineage() -> None
     assert bucket.fill_count == 2
     assert bucket.net_strategy_pnl_after_costs == Decimal("97")
     assert bucket.execution_policy_hash_counts == {"policy-sha": 6}
-    assert bucket.cost_model_hash_counts == {"cost-sha": 6}
+    assert bucket.cost_model_hash_counts == {"cost-sha": 2}
     assert bucket.lineage_hash_counts == {"lineage-sha": 6}
     assert bucket.post_cost_expectancy_bps is not None
 
@@ -659,8 +1016,85 @@ def test_exact_replay_ledger_does_not_use_idempotency_key_as_policy_hash() -> No
     assert bucket.execution_policy_hash_counts == {}
     assert "execution_policy_hash_missing" in bucket.blockers
     assert "execution_policy_hash_ambiguous" not in bucket.blockers
-    assert bucket.cost_model_hash_counts == {"cost-sha": 6}
+    assert bucket.cost_model_hash_counts == {"cost-sha": 2}
     assert bucket.lineage_hash_counts == {"lineage-sha": 6}
+
+
+def test_runtime_ledger_cost_hash_belongs_to_fill_economics_not_lifecycle() -> None:
+    lifecycle_common = {
+        "account_label": "paper",
+        "strategy_id": "strategy-1",
+        "symbol": "NVDA",
+        "lineage_hash": "lineage-sha",
+    }
+    bucket = build_runtime_ledger_buckets(
+        [
+            {
+                **lifecycle_common,
+                "event_type": "decision",
+                "executed_at": _ts(1),
+                "decision_id": "decision-buy",
+            },
+            {
+                **lifecycle_common,
+                "event_type": "order_submitted",
+                "executed_at": _ts(2),
+                "decision_id": "decision-buy",
+                "order_id": "order-buy",
+                "execution_policy_hash": "policy-buy",
+            },
+            {
+                **lifecycle_common,
+                "event_type": "fill",
+                "executed_at": _ts(3),
+                "decision_id": "decision-buy",
+                "order_id": "order-buy",
+                "side": "buy",
+                "filled_qty": "10",
+                "avg_fill_price": "100",
+                "cost_amount": "1",
+                "cost_basis": "broker_reported_commission_and_fees",
+                "execution_policy_hash": "policy-buy",
+                "cost_model_hash": "cost-sha",
+            },
+            {
+                **lifecycle_common,
+                "event_type": "decision",
+                "executed_at": _ts(10),
+                "decision_id": "decision-sell",
+            },
+            {
+                **lifecycle_common,
+                "event_type": "order_submitted",
+                "executed_at": _ts(11),
+                "decision_id": "decision-sell",
+                "order_id": "order-sell",
+                "execution_policy_hash": "policy-sell",
+            },
+            {
+                **lifecycle_common,
+                "event_type": "fill",
+                "executed_at": _ts(12),
+                "decision_id": "decision-sell",
+                "order_id": "order-sell",
+                "side": "sell",
+                "filled_qty": "10",
+                "avg_fill_price": "110",
+                "cost_amount": "2",
+                "cost_basis": "broker_reported_commission_and_fees",
+                "execution_policy_hash": "policy-sell",
+                "cost_model_hash": "cost-sha",
+            },
+        ],
+        bucket_ranges=[(_ts(), _ts(60))],
+        require_order_lifecycle=True,
+    )[0]
+
+    assert bucket.blockers == []
+    assert bucket.execution_policy_hash_counts == {"policy-buy": 2, "policy-sell": 2}
+    assert bucket.cost_model_hash_counts == {"cost-sha": 2}
+    assert bucket.lineage_hash_counts == {"lineage-sha": 6}
+    assert bucket.post_cost_expectancy_bps is not None
 
 
 def test_runtime_ledger_blocks_non_promotion_grade_cost_basis_at_builder() -> None:

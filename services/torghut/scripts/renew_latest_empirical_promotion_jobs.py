@@ -62,6 +62,15 @@ RUNTIME_WINDOW_TARGET_METADATA_KEYS = (
     "runtime_window_import_health_gate",
     "runtime_window_import_health_gate_blockers",
     "runtime_window_import_promotion_blockers",
+    "runtime_window_import_audit_state",
+    "runtime_window_import_audit_next_action",
+    "runtime_window_import_audit_blockers",
+    "runtime_window_import_audit_target_blockers",
+    "strategy_id",
+    "runtime_strategy_name",
+    "source_strategy_name",
+    "source_runtime_strategy_name",
+    "strategy_lookup_names",
     "window_start",
     "window_end",
     "max_notional",
@@ -74,6 +83,12 @@ RUNTIME_WINDOW_TARGET_METADATA_KEYS = (
     "paper_required_evidence_count",
     "paper_probation_authorized",
     "paper_probation_authorization_scope",
+    "source_collection_authorized",
+    "source_collection_authorization_scope",
+    "source_collection_reason_codes",
+    "bounded_evidence_collection_authorized",
+    "bounded_evidence_collection_scope",
+    "bounded_evidence_collection_max_notional",
     "evidence_collection_stage",
     "probation_allowed",
     "probation_reason",
@@ -89,6 +104,7 @@ RUNTIME_WINDOW_TARGET_METADATA_KEYS = (
     "paper_route_probe_symbols",
     "paper_route_probe_symbol_count",
     "paper_route_probe_next_session_max_notional",
+    "paper_route_probe_effective_max_notional",
     "paper_route_probe_window_start",
     "paper_route_probe_window_end",
     "paper_route_session_readiness_state",
@@ -96,6 +112,8 @@ RUNTIME_WINDOW_TARGET_METADATA_KEYS = (
     "paper_route_session_import_blockers",
     "paper_route_runtime_window_import_not_before",
     "paper_route_runtime_import_handoff",
+    "source_decision_mode",
+    "profit_proof_eligible",
     "handoff",
     "promotion_gate",
 )
@@ -103,6 +121,13 @@ RUNTIME_WINDOW_TARGET_PLAN_DEFERRED_REASONS = frozenset(
     (
         "runtime_window_target_plan_window_not_closed",
         "runtime_window_target_plan_window_settlement_pending",
+    )
+)
+RUNTIME_WINDOW_TARGET_PLAN_IMPORT_BLOCKED_STATES = frozenset(
+    (
+        "import_due_account_contamination_detected",
+        "import_due_account_state_not_clean",
+        "import_due_source_activity_missing",
     )
 )
 OFFLINE_REPLAY_TRIAGE_CANDIDATE_LIMIT = 5
@@ -492,26 +517,205 @@ def _runtime_window_target_plan_from_payload(
 ) -> dict[str, Any]:
     direct_plan = _as_dict(payload.get("runtime_window_import_plan"))
     if direct_plan:
-        return direct_plan
-    paper_route_plan = _as_dict(payload.get("next_paper_route_runtime_window_targets"))
-    if (
-        str(payload.get("schema_version") or "").strip()
-        == "torghut.paper-route-evidence.v1"
-        and paper_route_plan
-    ):
-        return paper_route_plan
-    gate = _as_dict(payload.get("live_submission_gate"))
-    gate_plan = _as_dict(gate.get("runtime_ledger_paper_probation_import_plan"))
-    if gate_plan:
-        return gate_plan
-    top_level_gate_plan = _as_dict(
-        payload.get("runtime_ledger_paper_probation_import_plan")
+        plan = direct_plan
+    else:
+        paper_route_plan = _as_dict(
+            payload.get("next_paper_route_runtime_window_targets")
+        )
+        if (
+            str(payload.get("schema_version") or "").strip()
+            == "torghut.paper-route-evidence.v1"
+            and paper_route_plan
+        ):
+            plan = paper_route_plan
+        else:
+            gate = _as_dict(payload.get("live_submission_gate"))
+            gate_plan = _as_dict(gate.get("runtime_ledger_paper_probation_import_plan"))
+            if gate_plan:
+                plan = gate_plan
+            else:
+                top_level_gate_plan = _as_dict(
+                    payload.get("runtime_ledger_paper_probation_import_plan")
+                )
+                if top_level_gate_plan:
+                    plan = top_level_gate_plan
+                elif paper_route_plan:
+                    plan = paper_route_plan
+                else:
+                    plan = _as_dict(payload)
+    plan = _runtime_window_target_plan_with_import_audit_blockers(
+        payload=payload,
+        plan=plan,
     )
-    if top_level_gate_plan:
-        return top_level_gate_plan
-    if paper_route_plan:
-        return paper_route_plan
-    return _as_dict(payload)
+    _raise_if_runtime_window_target_plan_import_blocked(payload, plan=plan)
+    return plan
+
+
+def _extend_unique_text_items(
+    existing: Any,
+    additions: Sequence[str],
+) -> list[str]:
+    values: list[str] = []
+    if isinstance(existing, str):
+        text = existing.strip()
+        if text:
+            values.append(text)
+    elif isinstance(existing, Sequence) and not isinstance(
+        existing, (bytes, bytearray)
+    ):
+        values.extend(str(item).strip() for item in existing if str(item).strip())
+    values.extend(item for item in additions if item)
+    return list(dict.fromkeys(values))
+
+
+def _runtime_window_import_audit_blockers(audit: Mapping[str, Any]) -> list[str]:
+    state = str(audit.get("state") or "").strip()
+    blockers = _extend_unique_text_items((), _as_text_list(audit.get("blockers")))
+    if not blockers and state in RUNTIME_WINDOW_TARGET_PLAN_IMPORT_BLOCKED_STATES:
+        blockers.append(state)
+    return blockers
+
+
+def _target_text(payload: Mapping[str, Any], key: str) -> str:
+    return str(payload.get(key) or "").strip()
+
+
+def _target_strategy_names(payload: Mapping[str, Any]) -> set[str]:
+    names = {
+        _target_text(payload, "strategy_name"),
+        _target_text(payload, "runtime_strategy_name"),
+        _target_text(payload, "source_strategy_name"),
+        _target_text(payload, "source_runtime_strategy_name"),
+    }
+    for item in _as_sequence(payload.get("strategy_lookup_names")):
+        text = str(item).strip()
+        if text:
+            names.add(text)
+    return {item for item in names if item}
+
+
+def _runtime_window_audit_target_blocker_matches(
+    *,
+    target_blocker: Mapping[str, Any],
+    target: Mapping[str, Any],
+) -> bool:
+    comparable_keys = (
+        "hypothesis_id",
+        "candidate_id",
+        "account_label",
+        "source_kind",
+        "window_start",
+        "window_end",
+    )
+    compared = False
+    for key in comparable_keys:
+        blocker_value = _target_text(target_blocker, key)
+        if not blocker_value:
+            continue
+        compared = True
+        if blocker_value != _target_text(target, key):
+            return False
+
+    blocker_strategy_names = _target_strategy_names(target_blocker)
+    if blocker_strategy_names:
+        compared = True
+        if not blocker_strategy_names.intersection(_target_strategy_names(target)):
+            return False
+    return compared
+
+
+def _runtime_window_target_plan_with_import_audit_blockers(
+    *,
+    payload: Mapping[str, Any],
+    plan: Mapping[str, Any],
+) -> dict[str, Any]:
+    audit = _as_dict(payload.get("runtime_window_import_audit"))
+    if not audit:
+        return dict(plan)
+    state = str(audit.get("state") or "").strip()
+    if state not in RUNTIME_WINDOW_TARGET_PLAN_IMPORT_BLOCKED_STATES:
+        return dict(plan)
+    raw_targets = plan.get("targets")
+    if not isinstance(raw_targets, Sequence) or isinstance(
+        raw_targets, (str, bytes, bytearray)
+    ):
+        return dict(plan)
+
+    audit_blockers = _runtime_window_import_audit_blockers(audit)
+    target_blockers = [
+        blocker
+        for item in _as_sequence(audit.get("target_blockers"))
+        if (blocker := _as_dict(item))
+    ]
+    next_action = _as_text(audit.get("next_action"))
+    annotated_targets: list[Any] = []
+    for raw_target in raw_targets:
+        target = _as_dict(raw_target)
+        if not target:
+            annotated_targets.append(raw_target)
+            continue
+        matched_blockers: list[str] = []
+        for target_blocker in target_blockers:
+            if _runtime_window_audit_target_blocker_matches(
+                target_blocker=target_blocker,
+                target=target,
+            ):
+                matched_blockers.extend(
+                    _runtime_window_import_audit_blockers(target_blocker)
+                )
+        combined_blockers = list(dict.fromkeys([*audit_blockers, *matched_blockers]))
+        if combined_blockers:
+            for key in (
+                "runtime_ledger_target_metadata_blockers",
+                "runtime_window_import_health_gate_blockers",
+                "candidate_blockers",
+            ):
+                target[key] = _extend_unique_text_items(
+                    target.get(key), combined_blockers
+                )
+            target["runtime_window_import_audit_blockers"] = _extend_unique_text_items(
+                target.get("runtime_window_import_audit_blockers"),
+                audit_blockers,
+            )
+            if matched_blockers:
+                target["runtime_window_import_audit_target_blockers"] = (
+                    _extend_unique_text_items(
+                        target.get("runtime_window_import_audit_target_blockers"),
+                        matched_blockers,
+                    )
+                )
+        target["runtime_window_import_audit_state"] = state
+        if next_action is not None:
+            target["runtime_window_import_audit_next_action"] = next_action
+        annotated_targets.append(target)
+
+    annotated_plan = dict(plan)
+    annotated_plan["targets"] = annotated_targets
+    return annotated_plan
+
+
+def _raise_if_runtime_window_target_plan_import_blocked(
+    payload: Mapping[str, Any],
+    *,
+    plan: Mapping[str, Any],
+) -> None:
+    audit = _as_dict(payload.get("runtime_window_import_audit"))
+    if not audit:
+        return
+    state = str(audit.get("state") or "").strip()
+    if state not in RUNTIME_WINDOW_TARGET_PLAN_IMPORT_BLOCKED_STATES:
+        return
+    if _runtime_window_target_plan_has_targets(plan):
+        return
+    blockers = [
+        str(item).strip()
+        for item in _as_sequence(audit.get("blockers"))
+        if str(item).strip()
+    ]
+    blocker_text = ",".join(blockers) if blockers else "unknown"
+    raise RuntimeError(
+        f"runtime_window_target_plan_import_blocked:{state}:{blocker_text}"
+    )
 
 
 def _runtime_window_target_plan_has_targets(plan: Mapping[str, Any]) -> bool:
@@ -657,6 +861,61 @@ def _runtime_family_harnesses(family_dir: str) -> dict[str, dict[str, str]]:
 def _strategy_name_from_strategy_id(strategy_id: str) -> str | None:
     base = strategy_id.split("@", 1)[0].strip()
     return base.replace("_", "-") if base else None
+
+
+def _looks_like_uuid_text(value: object) -> bool:
+    text = _as_text(value)
+    if text is None:
+        return False
+    parts = text.split("-")
+    if [len(part) for part in parts] != [8, 4, 4, 4, 12]:
+        return False
+    return all(
+        part and all(char in "0123456789abcdefABCDEF" for char in part)
+        for part in parts
+    )
+
+
+def _strategy_lookup_names(*values: object) -> list[str]:
+    names: list[str] = []
+    for value in values:
+        raw_items: Sequence[object]
+        if isinstance(value, Sequence) and not isinstance(
+            value, (str, bytes, bytearray)
+        ):
+            raw_items = value
+        else:
+            raw_items = (value,)
+        for raw_item in raw_items:
+            text = _as_text(raw_item)
+            if text is not None and text not in names:
+                names.append(text)
+    return names
+
+
+def _canonical_runtime_strategy_name(
+    *,
+    strategy_name: object,
+    runtime_strategy_name: object,
+    strategy_id: object,
+    strategy_lookup_names: object,
+) -> str | None:
+    strategy_id_text = _as_text(strategy_id)
+    derived_name = (
+        _strategy_name_from_strategy_id(strategy_id_text)
+        if strategy_id_text is not None
+        else None
+    )
+    preferred = _strategy_lookup_names(
+        runtime_strategy_name,
+        strategy_name,
+        derived_name,
+        strategy_lookup_names,
+    )
+    for name in preferred:
+        if not _looks_like_uuid_text(name):
+            return name
+    return preferred[0] if preferred else None
 
 
 def _registry_runtime_window_targets(
@@ -818,7 +1077,16 @@ def _runtime_window_targets_from_plan(
         hypothesis_id = value("hypothesis_id", "runtime_window_hypothesis_id")
         candidate_id = value("candidate_id", "runtime_window_candidate_id")
         strategy_family = value("strategy_family", "runtime_window_strategy_family")
-        strategy_name = value("strategy_name", "runtime_window_strategy_name")
+        raw_strategy_name = value("strategy_name", "runtime_window_strategy_name")
+        strategy_name = (
+            _canonical_runtime_strategy_name(
+                strategy_name=raw_strategy_name,
+                runtime_strategy_name=payload.get("runtime_strategy_name"),
+                strategy_id=payload.get("strategy_id"),
+                strategy_lookup_names=payload.get("strategy_lookup_names"),
+            )
+            or raw_strategy_name
+        )
         missing = [
             field
             for field, item in (
@@ -936,6 +1204,15 @@ def _runtime_window_target_metadata(payload: Mapping[str, Any]) -> dict[str, Any
     if bool(metadata.get("paper_probation_authorized")):
         metadata.setdefault(
             "paper_probation_authorization_scope", "evidence_collection_only"
+        )
+        metadata.setdefault("evidence_collection_stage", "paper")
+        metadata.setdefault("promotion_allowed", False)
+        metadata.setdefault("final_promotion_authorized", False)
+        metadata.setdefault("final_promotion_allowed", False)
+    if bool(metadata.get("source_collection_authorized")):
+        metadata.setdefault(
+            "source_collection_authorization_scope",
+            "source_window_evidence_collection_only",
         )
         metadata.setdefault("evidence_collection_stage", "paper")
         metadata.setdefault("promotion_allowed", False)

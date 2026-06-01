@@ -49,6 +49,12 @@
     "build:docs": "bun run --filter docs build",
     "start:docs": "bun run --filter docs start",
     "docs:deploy": "bun run packages/scripts/src/docs/deploy-service.ts",
+    "dev:olden": "bun run --filter olden dev",
+    "build:olden": "bun run --filter olden build",
+    "start:olden": "bun run --filter olden start",
+    "lint:olden": "bun run --filter olden lint",
+    "test:olden": "bun run --filter olden test",
+    "olden:deploy": "bun run packages/scripts/src/olden/deploy-service.ts",
     "build:golink": "bun run --filter @proompteng/golink build",
     "start:golink": "bun run --filter @proompteng/golink start",
     "lint:golink": "bun run --filter @proompteng/golink lint",
@@ -89,6 +95,7 @@
     "smoke:torghut-ws": "bun run packages/scripts/src/torghut/ws-smoke.ts",
     "atlas:search": "bun run packages/scripts/src/atlas/search.ts",
     "atlas:code-search": "bun run packages/scripts/src/atlas/code-search.ts",
+    "atlas:backfill-chunk-embeddings": "bun run packages/scripts/src/atlas/backfill-chunk-embeddings.ts",
     "format:check": "bunx oxfmt --check ."
   },
   "dependencies": {

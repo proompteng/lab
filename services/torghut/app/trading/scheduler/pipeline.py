@@ -24,6 +24,7 @@ from ...db import SessionLocal
 from ...models import (
     Execution,
     LLMDecisionReview,
+    PositionSnapshot,
     RejectedSignalOutcomeEvent,
     Strategy,
     TradeDecision,
@@ -61,8 +62,16 @@ from ..market_context import (
     MarketContextStatus,
     evaluate_market_context,
 )
+from ..market_context_domains import (
+    active_market_context_domain_states,
+    active_market_context_reasons,
+)
 from ..models import SignalEnvelope, StrategyDecision
 from ..order_feed import OrderFeedIngestor
+from ..paper_route_evidence import (
+    PAPER_ROUTE_ACCOUNT_PRE_SESSION_READINESS_SECONDS,
+    PAPER_ROUTE_ACCOUNT_START_SNAPSHOT_AFTER_START_GRACE_SECONDS,
+)
 from ..portfolio import (
     AllocationResult,
     PortfolioSizingResult,
@@ -88,7 +97,7 @@ from ..regime_hmm import (
     resolve_regime_context_authority_reason,
 )
 from ..risk import RiskEngine
-from ..session_context import REGULAR_OPEN_UTC
+from ..session_context import regular_session_open_utc_for
 from ..tca import derive_adaptive_execution_policy
 from ..time_source import trading_now
 from ..universe import UniverseResolver
@@ -155,10 +164,17 @@ _RUNTIME_UNCERTAINTY_DEGRADE_MAX_PARTICIPATION_RATE = Decimal("0.05")
 _RUNTIME_UNCERTAINTY_DEGRADE_MIN_EXECUTION_SECONDS = 120
 _RUNTIME_REGIME_CONFIDENCE_DEFAULT_THRESHOLDS = (Decimal("0.75"), Decimal("0.55"))
 _STRATEGY_POSITION_TAG_TOLERANCE = Decimal("0.0001")
+_STRATEGY_POSITION_TAG_LOOKBACK = timedelta(days=7)
 
 
 def _normalized_symbol(symbol: object) -> str:
     return str(symbol or "").strip().upper()
+
+
+def _aware_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 class TradingPipeline:
@@ -216,6 +232,7 @@ class TradingPipeline:
             )
         )
         self._session_context_warmup_day: date | None = None
+        self._runtime_window_account_snapshot_day: date | None = None
 
     def run_once(self) -> None:
         self._label_mature_rejected_signal_outcome_events()
@@ -224,6 +241,7 @@ class TradingPipeline:
             strategies = self._prepare_run_once(session)
             if not strategies:
                 return
+            self._capture_runtime_window_account_snapshot_if_due(session)
             self._warm_session_context_from_open(session, strategies=strategies)
 
             batch = self.ingestor.fetch_signals(session)
@@ -283,15 +301,11 @@ class TradingPipeline:
             return
 
         now = trading_now(account_label=self.account_label).astimezone(timezone.utc)
-        session_day = now.date()
+        session_open = regular_session_open_utc_for(now)
+        session_day = session_open.date()
         if self._session_context_warmup_day == session_day:
             return
 
-        session_open = datetime.combine(
-            session_day,
-            REGULAR_OPEN_UTC,
-            tzinfo=timezone.utc,
-        )
         if now < session_open:
             return
 
@@ -382,6 +396,61 @@ class TradingPipeline:
             warmed,
             max_warmup_seconds,
             max_warmup_signals,
+        )
+
+    def _capture_runtime_window_account_snapshot_if_due(self, session: Session) -> None:
+        if not (
+            settings.trading_simple_paper_route_probe_enabled
+            or str(settings.trading_paper_route_target_plan_url or "").strip()
+        ):
+            return
+
+        now = trading_now(account_label=self.account_label).astimezone(timezone.utc)
+        session_open = regular_session_open_utc_for(now)
+        session_day = session_open.date()
+        if self._runtime_window_account_snapshot_day == session_day:
+            return
+
+        capture_start = session_open - timedelta(
+            seconds=PAPER_ROUTE_ACCOUNT_PRE_SESSION_READINESS_SECONDS
+        )
+        capture_end = session_open + timedelta(
+            seconds=PAPER_ROUTE_ACCOUNT_START_SNAPSHOT_AFTER_START_GRACE_SECONDS
+        )
+        if now < capture_start or now > capture_end:
+            return
+
+        existing_snapshot = session.execute(
+            select(PositionSnapshot.id)
+            .where(PositionSnapshot.alpaca_account_label == self.account_label)
+            .where(PositionSnapshot.as_of >= capture_start)
+            .where(PositionSnapshot.as_of <= capture_end)
+            .limit(1)
+        ).first()
+        if existing_snapshot is not None:
+            self._runtime_window_account_snapshot_day = session_day
+            return
+
+        try:
+            snapshot = self._get_account_snapshot(session)
+        except Exception:
+            session.rollback()
+            logger.exception(
+                "Failed to capture runtime-window account snapshot account=%s window_start=%s window_end=%s",
+                self.account_label,
+                capture_start.isoformat(),
+                capture_end.isoformat(),
+            )
+            return
+
+        self._runtime_window_account_snapshot_day = session_day
+        logger.info(
+            "Captured runtime-window account snapshot account=%s snapshot_id=%s as_of=%s window_start=%s window_end=%s",
+            self.account_label,
+            getattr(snapshot, "id", None),
+            getattr(snapshot, "as_of", None),
+            capture_start.isoformat(),
+            capture_end.isoformat(),
         )
 
     def _record_ingest_window(self, batch: SignalBatch) -> None:
@@ -695,13 +764,10 @@ class TradingPipeline:
     ) -> list[dict[str, Any]]:
         if not positions:
             return positions
-        session_open = datetime.combine(
-            trading_now(account_label=self.account_label)
-            .astimezone(timezone.utc)
-            .date(),
-            REGULAR_OPEN_UTC,
-            tzinfo=timezone.utc,
+        session_open = regular_session_open_utc_for(
+            trading_now(account_label=self.account_label).astimezone(timezone.utc)
         )
+        lookback_start = session_open - _STRATEGY_POSITION_TAG_LOOKBACK
         try:
             rows = session.execute(
                 select(Execution, TradeDecision)
@@ -711,12 +777,12 @@ class TradingPipeline:
                     TradeDecision.alpaca_account_label == self.account_label,
                     Execution.status == "filled",
                     Execution.filled_qty > Decimal("0"),
-                    Execution.created_at >= session_open,
+                    Execution.created_at >= lookback_start,
                 )
             ).all()
         except Exception:
             logger.exception(
-                "Failed to resolve current-session strategy position tags account=%s",
+                "Failed to resolve strategy position tags account=%s",
                 self.account_label,
             )
             return positions
@@ -727,6 +793,7 @@ class TradingPipeline:
             strategy_id = str(decision_row.strategy_id)
             if not symbol or not strategy_id:
                 continue
+            execution_created_at = _aware_utc(execution.created_at)
             filled_qty = _optional_decimal(execution.filled_qty)
             if filled_qty is None or filled_qty <= 0:
                 continue
@@ -741,10 +808,16 @@ class TradingPipeline:
                     "qty": Decimal("0"),
                     "buy_qty": Decimal("0"),
                     "buy_notional": Decimal("0"),
+                    "session_qty": Decimal("0"),
                     "latest_execution_at": None,
+                    "earliest_execution_at": None,
                 },
             )
             exposure["qty"] = cast(Decimal, exposure["qty"]) + signed_qty
+            if execution_created_at >= session_open:
+                exposure["session_qty"] = (
+                    cast(Decimal, exposure["session_qty"]) + signed_qty
+                )
             avg_fill_price = _optional_decimal(execution.avg_fill_price)
             if side == "buy" and avg_fill_price is not None and avg_fill_price > 0:
                 exposure["buy_qty"] = cast(Decimal, exposure["buy_qty"]) + filled_qty
@@ -752,12 +825,18 @@ class TradingPipeline:
                     Decimal,
                     exposure["buy_notional"],
                 ) + (filled_qty * avg_fill_price)
+            earliest_execution_at = exposure.get("earliest_execution_at")
+            if (
+                earliest_execution_at is None
+                or execution_created_at < earliest_execution_at
+            ):
+                exposure["earliest_execution_at"] = execution_created_at
             latest_execution_at = exposure.get("latest_execution_at")
             if (
                 latest_execution_at is None
-                or execution.created_at > latest_execution_at
+                or execution_created_at > latest_execution_at
             ):
-                exposure["latest_execution_at"] = execution.created_at
+                exposure["latest_execution_at"] = execution_created_at
 
         if not exposures:
             return positions
@@ -821,11 +900,20 @@ class TradingPipeline:
             or position.get("qty_available")
             or "0"
         )
-        position_qty = _optional_decimal(raw_qty)
-        if position_qty is None or position_qty <= 0:
+        raw_position_qty = _optional_decimal(raw_qty)
+        if raw_position_qty is None or raw_position_qty == 0:
             return [position]
         side = str(position.get("side") or "").strip().lower()
-        signed_position_qty = -position_qty if side == "short" else position_qty
+        signed_position_qty = (
+            -abs(raw_position_qty)
+            if side == "short" or raw_position_qty < 0
+            else raw_position_qty
+        )
+        position_qty = abs(raw_position_qty)
+        if signed_position_qty < 0:
+            side = "short"
+        elif side not in {"long", "short"}:
+            side = "long"
         same_side_exposures = [
             (strategy_id, exposure)
             for strategy_id, exposure in symbol_exposures.items()
@@ -918,8 +1006,25 @@ class TradingPipeline:
         tagged["strategy_id"] = strategy_id
         tagged["qty"] = str(qty)
         tagged["side"] = side or "long"
-        tagged["strategy_position_source"] = "current_session_filled_executions"
+        earliest_execution_at = exposure.get("earliest_execution_at")
+        stale_position = (
+            isinstance(earliest_execution_at, datetime)
+            and earliest_execution_at < session_open
+        )
+        tagged["strategy_position_source"] = (
+            "open_exposure_filled_executions"
+            if stale_position
+            else "current_session_filled_executions"
+        )
         tagged["strategy_position_session_open"] = session_open.isoformat()
+        if stale_position and isinstance(earliest_execution_at, datetime):
+            tagged["strategy_position_stale_session_repair"] = True
+            tagged["strategy_position_lookback_start"] = (
+                session_open - _STRATEGY_POSITION_TAG_LOOKBACK
+            ).isoformat()
+            tagged["strategy_position_earliest_execution_at"] = (
+                earliest_execution_at.isoformat()
+            )
         if split_from_aggregate:
             tagged["strategy_position_split_from_aggregate"] = True
         latest_execution_at = exposure.get("latest_execution_at")
@@ -4436,13 +4541,12 @@ class TradingPipeline:
         self.state.last_market_context_quality_score = float(
             market_context.quality_score
         )
-        self.state.last_market_context_domain_states = {
-            "technicals": market_context.domains.technicals.state,
-            "fundamentals": market_context.domains.fundamentals.state,
-            "news": market_context.domains.news.state,
-            "regime": market_context.domains.regime.state,
-        }
-        self.state.last_market_context_risk_flags = list(market_context.risk_flags)
+        self.state.last_market_context_domain_states = (
+            active_market_context_domain_states(market_context)
+        )
+        self.state.last_market_context_risk_flags = active_market_context_reasons(
+            market_context.risk_flags
+        )
         self.state.last_market_context_allow_llm = market_context_status.allow_llm
         self.state.last_market_context_reason = (
             market_context_error or market_context_status.reason

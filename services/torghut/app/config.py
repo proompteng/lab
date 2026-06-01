@@ -59,9 +59,6 @@ FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD: dict[str, str] = {
     "trading_kill_switch_enabled": "torghut_trading_kill_switch_enabled",
     "trading_emergency_stop_enabled": "torghut_trading_emergency_stop_enabled",
     "trading_market_context_required": "torghut_trading_market_context_required",
-    "trading_market_context_allow_degraded_last_good": (
-        "torghut_trading_market_context_allow_degraded_last_good"
-    ),
     "llm_enabled": "torghut_llm_enabled",
     "llm_fail_open_live_approved": "torghut_llm_fail_open_live_approved",
     "llm_adjustment_allowed": "torghut_llm_adjustment_allowed",
@@ -273,6 +270,41 @@ class Settings(BaseSettings):
         alias="DB_DSN",
         validation_alias=AliasChoices("DB_DSN", "DB_URL", "DATABASE_URL"),
         description="PostgreSQL connection string.",
+    )
+    tigerbeetle_enabled: bool = Field(
+        default=False,
+        alias="TORGHUT_TIGERBEETLE_ENABLED",
+        description="Enable TigerBeetle ledger integration surfaces.",
+    )
+    tigerbeetle_required: bool = Field(
+        default=False,
+        alias="TORGHUT_TIGERBEETLE_REQUIRED",
+        description="Fail readiness when TigerBeetle protocol health fails.",
+    )
+    tigerbeetle_cluster_id: int = Field(
+        default=2001,
+        alias="TORGHUT_TIGERBEETLE_CLUSTER_ID",
+        description="TigerBeetle cluster ID used for Torghut ledger writes.",
+    )
+    tigerbeetle_replica_addresses: str = Field(
+        default="torghut-tigerbeetle.torghut.svc.cluster.local:3000",
+        alias="TORGHUT_TIGERBEETLE_REPLICA_ADDRESSES",
+        description="Comma-separated TigerBeetle replica addresses.",
+    )
+    tigerbeetle_health_timeout_seconds: float = Field(
+        default=2.0,
+        alias="TORGHUT_TIGERBEETLE_HEALTH_TIMEOUT_SECONDS",
+        description="TigerBeetle protocol health timeout in seconds.",
+    )
+    tigerbeetle_journal_enabled: bool = Field(
+        default=False,
+        alias="TORGHUT_TIGERBEETLE_JOURNAL_ENABLED",
+        description="Write Torghut order lifecycle events into TigerBeetle.",
+    )
+    tigerbeetle_reconcile_required: bool = Field(
+        default=False,
+        alias="TORGHUT_TIGERBEETLE_RECONCILE_REQUIRED",
+        description="Fail readiness when TigerBeetle reconciliation has blockers.",
     )
     apca_api_key_id: Optional[str] = Field(default=None, alias="APCA_API_KEY_ID")
     apca_api_secret_key: Optional[str] = Field(
@@ -1600,21 +1632,6 @@ class Settings(BaseSettings):
         alias="TRADING_MARKET_CONTEXT_MAX_STALENESS_SECONDS",
         description="Maximum accepted market-context staleness.",
     )
-    trading_market_context_allow_degraded_last_good: bool = Field(
-        default=True,
-        alias="TRADING_MARKET_CONTEXT_ALLOW_DEGRADED_LAST_GOOD",
-        description="Allow degraded last-good market context when generation failed but a bounded stale snapshot exists.",
-    )
-    trading_market_context_fundamentals_degraded_max_staleness_seconds: int = Field(
-        default=86400,
-        alias="TRADING_MARKET_CONTEXT_FUNDAMENTALS_DEGRADED_MAX_STALENESS_SECONDS",
-        description="Hard stale cap for degraded last-good fundamentals context.",
-    )
-    trading_market_context_news_degraded_max_staleness_seconds: int = Field(
-        default=1800,
-        alias="TRADING_MARKET_CONTEXT_NEWS_DEGRADED_MAX_STALENESS_SECONDS",
-        description="Hard stale cap for degraded last-good news context.",
-    )
     trading_clickhouse_url: Optional[str] = Field(
         default=None, alias="TA_CLICKHOUSE_URL"
     )
@@ -2624,6 +2641,21 @@ class Settings(BaseSettings):
         if not self.posthog_api_key:
             raise ValueError("POSTHOG_API_KEY is required when POSTHOG_ENABLED=true")
 
+    def _normalize_tigerbeetle_settings(self) -> None:
+        self.tigerbeetle_replica_addresses = self._normalize_csv_setting(
+            self.tigerbeetle_replica_addresses
+        )
+
+    def _validate_tigerbeetle_settings(self) -> None:
+        if self.tigerbeetle_cluster_id <= 0:
+            raise ValueError("TORGHUT_TIGERBEETLE_CLUSTER_ID must be > 0")
+        if self.tigerbeetle_health_timeout_seconds <= 0:
+            raise ValueError("TORGHUT_TIGERBEETLE_HEALTH_TIMEOUT_SECONDS must be > 0")
+        if self.tigerbeetle_enabled and not self.tigerbeetle_replica_addresses:
+            raise ValueError(
+                "TORGHUT_TIGERBEETLE_REPLICA_ADDRESSES is required when TigerBeetle is enabled"
+            )
+
     def model_post_init(self, __context: Any) -> None:
         del __context
         if not os.getenv("LOG_FORMAT"):
@@ -2636,6 +2668,7 @@ class Settings(BaseSettings):
         self._normalize_optional_url_settings()
         self._normalize_optional_nullable_settings()
         self._normalize_trading_csv_settings()
+        self._normalize_tigerbeetle_settings()
         self._validate_trading_source_settings()
         self._normalize_llm_settings()
         self._validate_allocator_scalar_settings()
@@ -2652,6 +2685,7 @@ class Settings(BaseSettings):
         self._validate_fragility_settings()
         self._validate_llm_settings()
         self._validate_posthog_settings()
+        self._validate_tigerbeetle_settings()
 
     @property
     def sqlalchemy_dsn(self) -> str:

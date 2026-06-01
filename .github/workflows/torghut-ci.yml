@@ -662,18 +662,25 @@ jobs:
         working-directory: services/torghut
         run: uv sync --frozen --extra dev
 
-      - name: Run coverage suite
+      - name: Download shard coverage data
+        uses: actions/download-artifact@v4
+        with:
+          pattern: torghut-coverage-*
+          path: services/torghut
+          merge-multiple: true
+
+      - name: Combine coverage data
         working-directory: services/torghut
         run: |
           set -euo pipefail
-          uv run --frozen pytest \
-            -n auto \
-            --dist=worksteal \
-            --cov \
-            --cov-branch \
-            --cov-report=term \
-            --cov-report=xml:coverage.xml \
-            --cov-fail-under=70
+          coverage_files=(.coverage.*)
+          if [ "${coverage_files[0]}" = ".coverage.*" ]; then
+            echo "No shard coverage files were downloaded"
+            exit 1
+          fi
+          uv run --frozen python -m coverage combine "${coverage_files[@]}"
+          uv run --frozen python -m coverage report --fail-under=70
+          uv run --frozen python -m coverage xml -o coverage.xml
 
       - name: Changed-file coverage
         working-directory: services/torghut

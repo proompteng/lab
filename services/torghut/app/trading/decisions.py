@@ -42,7 +42,10 @@ from .quantity_rules import (
 from .session_context import SessionContextTracker
 from .simulation import resolve_simulation_context
 from .strategy_runtime import (
+    AggregatedIntent,
     RuntimeErrorRecord,
+    RuntimeDecision,
+    RuntimeEvaluation,
     RuntimeObservation,
     StrategyRegistry,
     StrategyRuntime,
@@ -69,9 +72,6 @@ _SELL_EXIT_ONLY_STRATEGY_TYPES = {
 _BUY_EXIT_ONLY_STRATEGY_TYPES = {
     "mean_reversion_exhaustion_short_v1",
     "microbar_cross_sectional_short_v1",
-}
-_LEGACY_BUY_EXIT_ONLY_UNIVERSE_TYPES = {
-    "microbar_cross_sectional_pairs_v1",
 }
 _MICROBAR_PAIR_EXIT_RATIONALE = "microbar_cross_sectional_pair_exit"
 
@@ -122,6 +122,88 @@ class DecisionRuntimeTelemetry:
     errors: tuple[RuntimeErrorRecord, ...] = field(default_factory=tuple)
     observation: RuntimeObservation | None = None
     traces: tuple[StrategyTrace, ...] = field(default_factory=tuple)
+
+
+def _runtime_position_side(position_qty: Decimal | None) -> str | None:
+    if position_qty is None:
+        return None
+    if position_qty > 0:
+        return "long"
+    if position_qty < 0:
+        return "short"
+    return "flat"
+
+
+def _feature_vector_with_positions(
+    feature_vector: FeatureVectorV3,
+    *,
+    positions: Optional[list[dict[str, Any]]],
+    symbol: str,
+) -> FeatureVectorV3:
+    position_qty = _position_qty_for_symbol(positions, symbol)
+    if position_qty is None:
+        return feature_vector
+    return _feature_vector_with_runtime_position(
+        feature_vector,
+        position_qty=position_qty,
+        position_side=_runtime_position_side(position_qty),
+    )
+
+
+def _merge_runtime_counter(
+    target: dict[str, int],
+    source: Mapping[str, int],
+) -> None:
+    for key, value in source.items():
+        target[str(key)] = target.get(str(key), 0) + int(value)
+
+
+def _merge_runtime_evaluations(
+    evaluations: Iterable[RuntimeEvaluation],
+) -> RuntimeEvaluation:
+    intents: list[AggregatedIntent] = []
+    raw_intents: list[RuntimeDecision] = []
+    traces: list[StrategyTrace] = []
+    errors: list[RuntimeErrorRecord] = []
+    observation = RuntimeObservation()
+    for evaluation in evaluations:
+        intents.extend(evaluation.intents)
+        raw_intents.extend(evaluation.raw_intents)
+        traces.extend(evaluation.traces)
+        errors.extend(evaluation.errors)
+        _merge_runtime_counter(
+            observation.strategy_events_total,
+            evaluation.observation.strategy_events_total,
+        )
+        _merge_runtime_counter(
+            observation.strategy_intents_total,
+            evaluation.observation.strategy_intents_total,
+        )
+        _merge_runtime_counter(
+            observation.strategy_intent_suppression_total,
+            evaluation.observation.strategy_intent_suppression_total,
+        )
+        _merge_runtime_counter(
+            observation.strategy_errors_total,
+            evaluation.observation.strategy_errors_total,
+        )
+        _merge_runtime_counter(
+            observation.strategy_latency_ms,
+            evaluation.observation.strategy_latency_ms,
+        )
+        observation.intent_conflicts_total += (
+            evaluation.observation.intent_conflicts_total
+        )
+        observation.isolated_failures_total += (
+            evaluation.observation.isolated_failures_total
+        )
+    return RuntimeEvaluation(
+        intents=intents,
+        raw_intents=raw_intents,
+        traces=traces,
+        errors=errors,
+        observation=observation,
+    )
 
 
 @dataclass
@@ -260,12 +342,7 @@ class DecisionEngine:
         runtime_position_side: str | None = None
         if runtime_position_qty is not None:
             normalized_payload["runtime_position_qty"] = str(runtime_position_qty)
-            if runtime_position_qty > 0:
-                runtime_position_side = "long"
-            elif runtime_position_qty < 0:
-                runtime_position_side = "short"
-            else:
-                runtime_position_side = "flat"
+            runtime_position_side = _runtime_position_side(runtime_position_qty)
             normalized_payload["runtime_position_side"] = runtime_position_side
         normalized_signal = signal.model_copy(update={"payload": normalized_payload})
         try:
@@ -278,16 +355,60 @@ class DecisionEngine:
                 fallback_to_legacy=False,
             )
             return []
+        account_feature_vector = feature_vector
         if runtime_position_qty is not None:
-            feature_vector = _feature_vector_with_runtime_position(
+            account_feature_vector = _feature_vector_with_runtime_position(
                 feature_vector,
                 position_qty=runtime_position_qty,
                 position_side=runtime_position_side,
             )
 
-        runtime_eval = self.strategy_runtime.evaluate_all(
-            strategies, feature_vector, timeframe=timeframe
-        )
+        strategies_by_id = {str(strategy.id): strategy for strategy in strategies}
+        isolated_strategy_ids = {
+            str(strategy.id)
+            for strategy in strategies
+            if _strategy_uses_position_isolation(strategy)
+        }
+        non_isolated_strategy_ids = {
+            str(strategy.id)
+            for strategy in strategies
+            if str(strategy.id) not in isolated_strategy_ids
+        }
+        runtime_evaluations: list[RuntimeEvaluation] = []
+        non_isolated_strategies = [
+            strategy
+            for strategy in strategies
+            if str(strategy.id) in non_isolated_strategy_ids
+        ]
+        if non_isolated_strategies:
+            runtime_evaluations.append(
+                self.strategy_runtime.evaluate_all(
+                    non_isolated_strategies,
+                    account_feature_vector,
+                    timeframe=timeframe,
+                )
+            )
+        for isolated_strategy_id in sorted(isolated_strategy_ids):
+            strategy = strategies_by_id.get(isolated_strategy_id)
+            if strategy is None:
+                continue
+            isolated_positions = _positions_for_strategy_action(
+                actual_positions,
+                strategy_id=isolated_strategy_id,
+                action="sell",
+            )
+            runtime_evaluations.append(
+                self.strategy_runtime.evaluate_all(
+                    [strategy],
+                    _feature_vector_with_positions(
+                        feature_vector,
+                        positions=isolated_positions,
+                        symbol=signal.symbol,
+                    ),
+                    timeframe=timeframe,
+                )
+            )
+        runtime_eval = _merge_runtime_evaluations(runtime_evaluations)
         self._last_runtime_telemetry = DecisionRuntimeTelemetry(
             mode=settings.trading_strategy_runtime_mode,
             runtime_enabled=True,
@@ -300,20 +421,9 @@ class DecisionEngine:
         decisions: list[StrategyDecision] = []
         self._last_forecast_telemetry = []
 
-        strategies_by_id = {str(strategy.id): strategy for strategy in strategies}
         raw_runtime_by_strategy_id = {
             item.intent.strategy_id: item.metadata()
             for item in runtime_eval.raw_intents
-        }
-        isolated_strategy_ids = {
-            str(strategy.id)
-            for strategy in strategies
-            if _strategy_uses_position_isolation(strategy)
-        }
-        non_isolated_strategy_ids = {
-            str(strategy.id)
-            for strategy in strategies
-            if str(strategy.id) not in isolated_strategy_ids
         }
         aggregated_intents, _ = self.strategy_runtime.aggregator.aggregate(
             [
@@ -1766,10 +1876,9 @@ def _build_runtime_position_exit_overlay(
         for strategy in strategies
         if strategy.enabled
         and strategy.base_timeframe == timeframe
-        and (
-            _treats_sell_as_exit_only(strategy)
-            if position_side == "long"
-            else _treats_buy_as_exit_only(strategy)
+        and _supports_runtime_position_exit_overlay(
+            strategy=strategy,
+            position_side=position_side,
         )
     ]
     if not eligible_strategies:
@@ -2082,13 +2191,58 @@ def _strategy_uses_position_isolation(strategy: Strategy) -> bool:
     if isolation_mode == "per_strategy":
         return True
     normalized = str(strategy.universe_type or "").strip().lower()
+    runtime_type = _strategy_catalog_runtime_type(strategy)
+    if (
+        normalized == "microbar_cross_sectional_pairs_v1"
+        and runtime_type != "microbar_cross_sectional_pairs_v1"
+    ):
+        return False
     return normalized in {
         "momentum_pullback_long_v1",
         "breakout_continuation_long_v1",
+        "microbar_cross_sectional_pairs_v1",
         "mean_reversion_rebound_long_v1",
         "late_day_continuation_long_v1",
         "end_of_day_reversal_long_v1",
     }
+
+
+def _supports_runtime_position_exit_overlay(
+    *,
+    strategy: Strategy,
+    position_side: Literal["long", "short"],
+) -> bool:
+    if (
+        _treats_sell_as_exit_only(strategy)
+        if position_side == "long"
+        else _treats_buy_as_exit_only(strategy)
+    ):
+        return True
+    runtime_type = _strategy_catalog_runtime_type(strategy)
+    if runtime_type != "microbar_cross_sectional_pairs_v1":
+        return False
+    strategy_list = [strategy]
+    has_session_flatten = (
+        _resolve_max_nonnegative_strategy_param(
+            strategies=strategy_list,
+            key="session_flatten_start_minute_utc",
+        )
+        is not None
+    )
+    has_position_exit = any(
+        _resolve_max_nonnegative_strategy_param(strategies=strategy_list, key=key)
+        is not None
+        for key in (
+            "max_hold_seconds",
+            "long_stop_loss_bps",
+            "short_stop_loss_bps",
+            "long_trailing_stop_activation_profit_bps",
+            "long_trailing_stop_drawdown_bps",
+        )
+    )
+    return _strategy_uses_position_isolation(strategy) and (
+        has_session_flatten or has_position_exit
+    )
 
 
 def _position_state_scope_key(
@@ -2157,9 +2311,7 @@ def _treats_sell_as_exit_only(strategy: Strategy) -> bool:
 
 
 def _treats_buy_as_exit_only(strategy: Strategy) -> bool:
-    return _strategy_exit_semantics_type(strategy) in (
-        _BUY_EXIT_ONLY_STRATEGY_TYPES | _LEGACY_BUY_EXIT_ONLY_UNIVERSE_TYPES
-    )
+    return _strategy_exit_semantics_type(strategy) in _BUY_EXIT_ONLY_STRATEGY_TYPES
 
 
 def _strategy_exit_semantics_type(strategy: Strategy) -> str:
@@ -2171,7 +2323,6 @@ def _strategy_exit_semantics_type(strategy: Strategy) -> str:
     if universe_type in (
         _SELL_EXIT_ONLY_STRATEGY_TYPES
         | _BUY_EXIT_ONLY_STRATEGY_TYPES
-        | _LEGACY_BUY_EXIT_ONLY_UNIVERSE_TYPES
     ):
         return universe_type
     return runtime_type

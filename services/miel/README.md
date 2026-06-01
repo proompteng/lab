@@ -43,7 +43,7 @@ Set the following environment variables before running the service. Paper-tradin
 
 ### TigerBeetle ledger (optional)
 
-Enable ledger recording to [TigerBeetle](https://docs.tigerbeetle.com/) by setting `TIGERBEETLE_ENABLED=true` and supplying the additional parameters below. Orders and backtest net P&L are written as transfers.
+Enable ledger recording to [TigerBeetle](https://docs.tigerbeetle.com/) by setting `TIGERBEETLE_ENABLED=true` and supplying the additional parameters below. Lab does not provision a TigerBeetle cluster for Miel; deploy one from `proompteng/tigresse` first. Orders and backtest net P&L are written as transfers.
 
 | Variable                                 | Description                                                                      | Default                 |
 | ---------------------------------------- | -------------------------------------------------------------------------------- | ----------------------- |

@@ -23,12 +23,14 @@ workflow submissions in `torghut` do not rely on manual secret copies from `argo
 
 The `torghut-empirical-promotion-renewal` CronJob is also the scheduled runtime-ledger proof packet conductor for the
 paper-route proof lane. It first runs `renew_latest_empirical_promotion_jobs.py` with the sim
-`/trading/paper-route-target-plan` target plan, then runs `assemble_runtime_ledger_proof_packet.py` and uploads the packet
-under `runtime-ledger-proof-packets/{run_id}`. When the paper-route window is import-ready, the packet now requires the
-live `runtime_window_import_audit` from `/trading/paper-route-evidence` and carries source-activity blockers such as
-`paper_route_source_activity_missing`, `source_decisions_missing`, `source_executions_missing`, and `source_tca_missing`
-into the final verdict. Treat those as the next repair target before rerunning import; do not collapse them into a
-generic runtime-ledger-missing diagnosis.
+`/trading/paper-route-target-plan` target plan, then runs `assemble_runtime_ledger_proof_packet.py` in explicit
+`authority` mode and uploads the packet under `runtime-ledger-proof-packets/{run_id}`. The scheduled packet uses the
+final authority thresholds: 20 runtime-ledger trading days, $10,000 total post-cost net PnL, $500/day post-cost net PnL,
+3% max drawdown/equity, 25% best-day share, and 35% symbol concentration. When the paper-route window is import-ready,
+the packet now requires the live `runtime_window_import_audit` from `/trading/paper-route-evidence` and carries
+source-activity blockers such as `paper_route_source_activity_missing`, `source_decisions_missing`,
+`source_executions_missing`, and `source_tca_missing` into the final verdict. Treat those as the next repair target
+before rerunning import; do not collapse them into a generic runtime-ledger-missing diagnosis.
 
 Trigger a simulation run via Argo:
 

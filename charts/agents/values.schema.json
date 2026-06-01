@@ -835,6 +835,15 @@
         "logRetentionSeconds": { "type": "integer", "minimum": 0 },
         "jobTtlSeconds": { "type": "integer", "minimum": 0 },
         "jobTtlSecondsAfterFinished": { "type": "integer", "minimum": 0 },
+        "runtimeDebrisCleanup": {
+          "type": "object",
+          "properties": {
+            "mode": { "type": "string", "enum": ["disabled", "audit", "delete"] },
+            "orphanPodRetentionSeconds": { "type": "integer", "minimum": 0 },
+            "maxDeletesPerNamespace": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        },
         "authSecret": {
           "type": "object",
           "properties": {

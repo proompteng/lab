@@ -21,6 +21,7 @@ from ..models import (
     Execution,
     ExecutionOrderEvent,
     ExecutionTCAMetric,
+    PositionSnapshot,
     RejectedSignalOutcomeEvent,
     Strategy,
     StrategyHypothesisMetricWindow,
@@ -29,7 +30,22 @@ from ..models import (
     TradeDecision,
 )
 from .runtime_cost_authority import cost_basis_counts_have_non_promotion_grade_costs
+from .runtime_decision_authority import (
+    ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
+    normalize_source_decision_mode,
+    source_decision_mode_is_profit_proof_eligible,
+)
 from .runtime_ledger import POST_COST_PNL_BASIS
+from .runtime_ledger_proof_policy import runtime_ledger_proof_policy_from_env
+from .runtime_ledger_source_authority import (
+    runtime_ledger_promotion_source_authority_blockers,
+)
+from .runtime_strategy_resolution import (
+    derived_strategy_name_from_strategy_id,
+    explicit_runtime_strategy_name_or_family_harness,
+    runtime_strategy_name_from_strategy_id,
+    strategy_names_from_strategy_id,
+)
 
 
 PAPER_ROUTE_EVIDENCE_SCHEMA_VERSION = "torghut.paper-route-evidence.v1"
@@ -47,6 +63,10 @@ DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS = 72
 DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT = 20
 PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL = "TORGHUT_SIM"
 PAPER_ROUTE_RUNTIME_IMPORT_SETTLEMENT_SECONDS = 3600
+PAPER_ROUTE_ACCOUNT_START_SNAPSHOT_STALE_SECONDS = 900
+PAPER_ROUTE_ACCOUNT_START_SNAPSHOT_AFTER_START_GRACE_SECONDS = 300
+PAPER_ROUTE_ACCOUNT_PRE_SESSION_READINESS_SECONDS = 900
+PAPER_ROUTE_ACCOUNT_PRE_SESSION_SNAPSHOT_STALE_SECONDS = 900
 PAPER_ROUTE_TARGET_PLAN_ENDPOINT = "/trading/paper-route-target-plan"
 DEFAULT_TORGHUT_LIVE_SERVICE_BASE_URL = "http://torghut.torghut.svc.cluster.local"
 DEFAULT_TORGHUT_PAPER_ROUTE_SERVICE_BASE_URL = (
@@ -56,9 +76,6 @@ RUNTIME_LEDGER_PROOF_PACKET_OUTPUT_FILE = "artifacts/runtime-ledger-proof-packet
 RUNTIME_WINDOW_IMPORT_OUTPUT_FILE = "artifacts/runtime-window-import.json"
 RUNTIME_LEDGER_PROOF_PACKET_ARTIFACT_PREFIX = "runtime-ledger-proof-packets/{run_id}"
 RUNTIME_LEDGER_SUMMARY_ROW_LIMIT = 50
-MIN_RUNTIME_LEDGER_PROOF_NET_PNL = "500"
-MIN_RUNTIME_LEDGER_PROOF_DAILY_NET_PNL = "500"
-MIN_RUNTIME_LEDGER_PROOF_TRADING_DAYS = 1
 US_EQUITIES_TIMEZONE = "America/New_York"
 US_EQUITIES_OPEN = time(hour=9, minute=30)
 US_EQUITIES_CLOSE = time(hour=16, minute=0)
@@ -221,11 +238,20 @@ def _safe_text(value: object) -> str | None:
 
 
 def _strategy_name_from_strategy_id(strategy_id: object) -> str | None:
-    text = _safe_text(strategy_id)
+    return runtime_strategy_name_from_strategy_id(strategy_id)
+
+
+def _looks_like_uuid_text(value: object) -> bool:
+    text = _safe_text(value)
     if text is None:
-        return None
-    base = text.split("@", 1)[0].strip()
-    return base.replace("_", "-") if base else None
+        return False
+    parts = text.split("-")
+    if [len(part) for part in parts] != [8, 4, 4, 4, 12]:
+        return False
+    return all(
+        part and all(char in "0123456789abcdefABCDEF" for char in part)
+        for part in parts
+    )
 
 
 def _strategy_lookup_names(*values: object) -> list[str]:
@@ -243,6 +269,34 @@ def _strategy_lookup_names(*values: object) -> list[str]:
             if text is not None and text not in names:
                 names.append(text)
     return names
+
+
+def _canonical_runtime_strategy_name(
+    *,
+    strategy_name: object,
+    runtime_strategy_name: object,
+    strategy_id: object,
+    strategy_lookup_names: object,
+    matched_strategy: Mapping[str, object] | None = None,
+) -> str | None:
+    matched_name = _safe_text((matched_strategy or {}).get("strategy_name"))
+    explicit_or_family_name = explicit_runtime_strategy_name_or_family_harness(
+        runtime_strategy_name=runtime_strategy_name,
+        strategy_name=strategy_name,
+        strategy_id=strategy_id,
+    )
+    preferred = _strategy_lookup_names(
+        matched_name,
+        explicit_or_family_name,
+        strategy_names_from_strategy_id(strategy_id),
+        _strategy_lookup_names(strategy_lookup_names),
+        runtime_strategy_name,
+        strategy_name,
+    )
+    for name in preferred:
+        if not _looks_like_uuid_text(name):
+            return name
+    return preferred[0] if preferred else None
 
 
 def _health_gate_bool_text(value: object) -> str | None:
@@ -451,6 +505,23 @@ def _next_regular_equities_session_window(
     start = datetime.combine(candidate_date, US_EQUITIES_OPEN, tzinfo=zone)
     end = datetime.combine(candidate_date, US_EQUITIES_CLOSE, tzinfo=zone)
     return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
+
+
+def _latest_closed_regular_equities_session_window(
+    generated_at: datetime,
+) -> tuple[datetime, datetime]:
+    """Return the latest regular session that is closed at ``generated_at``."""
+
+    zone = ZoneInfo(US_EQUITIES_TIMEZONE)
+    local_generated_at = generated_at.astimezone(zone)
+    candidate_date = local_generated_at.date()
+    while True:
+        if _regular_equities_session_date(candidate_date):
+            end = datetime.combine(candidate_date, US_EQUITIES_CLOSE, tzinfo=zone)
+            if local_generated_at > end:
+                start = datetime.combine(candidate_date, US_EQUITIES_OPEN, tzinfo=zone)
+                return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
+        candidate_date -= timedelta(days=1)
 
 
 def _seconds_until(*, generated_at: datetime, target: datetime) -> int:
@@ -708,10 +779,15 @@ def _target_allows_strategy_universe_probe_fallback(
     target: Mapping[str, object],
 ) -> bool:
     source_kind = _safe_text(target.get("source_kind"))
-    return bool(target.get("paper_probation_authorized")) or source_kind in {
-        "durable_runtime_ledger_bucket",
-        "runtime_ledger_paper_probation_candidates",
-    }
+    return (
+        bool(target.get("paper_probation_authorized"))
+        or bool(target.get("source_collection_authorized"))
+        or source_kind
+        in {
+            "durable_runtime_ledger_bucket",
+            "runtime_ledger_paper_probation_candidates",
+        }
+    )
 
 
 def _strategy_universe_symbols(
@@ -829,13 +905,19 @@ def _target_identity(
     strategy_name = _safe_text(target.get("strategy_name"))
     strategy_id = _safe_text(target.get("strategy_id"))
     runtime_strategy_name = (
-        _safe_text(target.get("runtime_strategy_name")) or strategy_name
+        explicit_runtime_strategy_name_or_family_harness(
+            runtime_strategy_name=target.get("runtime_strategy_name"),
+            strategy_name=strategy_name,
+            strategy_id=strategy_id,
+        )
+        or strategy_name
     )
     strategy_lookup_names = _strategy_lookup_names(
         target.get("strategy_lookup_names"),
         runtime_strategy_name,
         strategy_name,
-        _strategy_name_from_strategy_id(strategy_id),
+        strategy_names_from_strategy_id(strategy_id),
+        derived_strategy_name_from_strategy_id(strategy_id),
     )
     return {
         "hypothesis_id": _safe_text(target.get("hypothesis_id")),
@@ -1100,8 +1182,13 @@ def _next_paper_route_runtime_window_targets(
     probe: Mapping[str, object],
     live_submission_gate: Mapping[str, Any],
     generated_at: datetime,
+    require_clean_pre_session: bool = True,
+    window_start: datetime | None = None,
+    window_end: datetime | None = None,
+    purpose: str = "next_session_paper_route_runtime_window_evidence_collection",
 ) -> dict[str, object]:
-    window_start, window_end = _next_regular_equities_session_window(generated_at)
+    if window_start is None or window_end is None:
+        window_start, window_end = _next_regular_equities_session_window(generated_at)
     probe_symbols = _paper_route_probe_symbols(probe)
     next_notional = _next_session_probe_notional(probe)
     probe_ready = (
@@ -1154,14 +1241,23 @@ def _next_paper_route_runtime_window_targets(
         strategy_family = _safe_text(target.get("strategy_family"))
         strategy_name = _safe_text(target.get("strategy_name"))
         strategy_id = _safe_text(target.get("strategy_id"))
-        runtime_strategy_name = (
+        source_runtime_strategy_name = (
             _safe_text(target.get("runtime_strategy_name")) or strategy_name
+        )
+        runtime_strategy_name = (
+            explicit_runtime_strategy_name_or_family_harness(
+                runtime_strategy_name=target.get("runtime_strategy_name"),
+                strategy_name=strategy_name,
+                strategy_id=strategy_id,
+            )
+            or strategy_name
         )
         strategy_lookup_names = _strategy_lookup_names(
             target.get("strategy_lookup_names"),
             runtime_strategy_name,
             strategy_name,
-            _strategy_name_from_strategy_id(strategy_id),
+            strategy_names_from_strategy_id(strategy_id),
+            derived_strategy_name_from_strategy_id(strategy_id),
         )
         raw_target_probe_symbols = _target_probe_symbols(target, probe)
         strategy_universe_symbols = _strategy_universe_symbols(
@@ -1195,6 +1291,24 @@ def _next_paper_route_runtime_window_targets(
             raw_probe_symbols=source_readiness_raw_probe_symbols,
             scoped_probe_symbols=target_probe_symbols,
         )
+        matched_strategy = _as_mapping(
+            source_decision_readiness.get("matched_strategy")
+        )
+        canonical_strategy_name = _canonical_runtime_strategy_name(
+            strategy_name=strategy_name,
+            runtime_strategy_name=runtime_strategy_name,
+            strategy_id=strategy_id,
+            strategy_lookup_names=strategy_lookup_names,
+            matched_strategy=matched_strategy,
+        )
+        strategy_lookup_names = _strategy_lookup_names(
+            canonical_strategy_name,
+            strategy_lookup_names,
+            runtime_strategy_name,
+            strategy_name,
+            strategy_names_from_strategy_id(strategy_id),
+            derived_strategy_name_from_strategy_id(strategy_id),
+        )
         target_probe_ready = (
             bool(probe.get("configured_enabled"))
             and _safe_decimal(next_notional) > 0
@@ -1207,7 +1321,7 @@ def _next_paper_route_runtime_window_targets(
                 ("hypothesis_id", hypothesis_id),
                 ("candidate_id", candidate_id),
                 ("strategy_family", strategy_family),
-                ("strategy_name", strategy_name),
+                ("strategy_name", canonical_strategy_name),
                 ("source_manifest_ref", source_manifest_ref),
             )
             if value is None
@@ -1230,11 +1344,38 @@ def _next_paper_route_runtime_window_targets(
                 }
             )
             continue
+        account_pre_session_state = _account_pre_session_snapshot_audit(
+            session,
+            account_label=PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
+            symbols=target_probe_symbols,
+            generated_at=generated_at,
+            window_start=window_start,
+            window_end=window_end,
+        )
+        account_pre_session_blockers = _unique_text_items(
+            account_pre_session_state.get("blockers")
+        )
+        if account_pre_session_blockers and require_clean_pre_session:
+            skipped_targets.append(
+                {
+                    "hypothesis_id": hypothesis_id,
+                    "candidate_id": candidate_id,
+                    "reason": "paper_route_account_pre_session_not_clean",
+                    "missing_or_blocking_fields": account_pre_session_blockers,
+                    "paper_route_account_pre_session_state": (
+                        account_pre_session_state
+                    ),
+                    "paper_route_account_pre_session_blockers": (
+                        account_pre_session_blockers
+                    ),
+                }
+            )
+            continue
         planned_key = (
             hypothesis_id,
             candidate_id,
             strategy_family,
-            strategy_name,
+            canonical_strategy_name,
             PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
             source_manifest_ref,
             _isoformat(window_start),
@@ -1257,8 +1398,8 @@ def _next_paper_route_runtime_window_targets(
             strategy_family=strategy_family,
             strategy_id=strategy_id,
             strategy_lookup_names=strategy_lookup_names,
-            strategy_name=strategy_name,
-            runtime_strategy_name=runtime_strategy_name,
+            strategy_name=canonical_strategy_name,
+            runtime_strategy_name=canonical_strategy_name,
             account_label=PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
             source_manifest_ref=source_manifest_ref,
             window_start=window_start,
@@ -1305,14 +1446,20 @@ def _next_paper_route_runtime_window_targets(
         )
         if strategy_universe_symbols:
             paper_route_probe_scope_authority = "strategy_universe"
+        source_collection_authorized = bool(target.get("source_collection_authorized"))
+        source_collection_reason_codes = _unique_text_items(
+            target.get("source_collection_reason_codes")
+        )
         planned_target: dict[str, object] = {
             "hypothesis_id": hypothesis_id,
             "candidate_id": candidate_id,
             "observed_stage": "paper",
             "strategy_family": strategy_family,
-            "strategy_name": strategy_name,
+            "strategy_name": canonical_strategy_name,
             "strategy_id": strategy_id or "",
-            "runtime_strategy_name": runtime_strategy_name or "",
+            "runtime_strategy_name": canonical_strategy_name or "",
+            "source_strategy_name": strategy_name or "",
+            "source_runtime_strategy_name": source_runtime_strategy_name or "",
             "strategy_lookup_names": strategy_lookup_names,
             "account_label": PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
             "source_account_label": source_account_label or "",
@@ -1349,11 +1496,14 @@ def _next_paper_route_runtime_window_targets(
                 missing_strategy_universe_symbols
             ),
             "paper_route_probe_next_session_max_notional": next_notional,
+            "paper_route_probe_effective_max_notional": next_notional,
             "paper_route_probe_window_start": _isoformat(window_start),
             "paper_route_probe_window_end": _isoformat(window_end),
             "paper_route_target_plan_source": paper_route_target_plan_source or "",
             "paper_route_probe_scope_authority": paper_route_probe_scope_authority
             or "",
+            "paper_route_account_pre_session_state": account_pre_session_state,
+            "paper_route_account_pre_session_blockers": (account_pre_session_blockers),
             "paper_route_execution_source_key": {
                 "strategy_family": strategy_family or "",
                 "strategy": execution_source_key[1],
@@ -1377,11 +1527,25 @@ def _next_paper_route_runtime_window_targets(
             "paper_route_runtime_import_handoff": import_handoff,
             "paper_probation_authorized": True,
             "paper_probation_authorization_scope": "evidence_collection_only",
+            "source_collection_authorized": source_collection_authorized,
+            "source_collection_authorization_scope": (
+                "source_window_evidence_collection_only"
+                if source_collection_authorized
+                else ""
+            ),
+            "source_collection_reason_codes": source_collection_reason_codes,
+            "bounded_evidence_collection_authorized": True,
+            "bounded_evidence_collection_scope": (
+                "paper_route_probe_next_session_only"
+            ),
+            "bounded_evidence_collection_max_notional": next_notional,
             "evidence_collection_stage": "paper",
             "probation_allowed": True,
             "probation_reason": "paper_route_probe_next_session_runtime_window",
             "selection_reason": "paper_route_probe_next_session_evidence_collection",
             "selected_by": "paper_route_evidence_audit",
+            "source_decision_mode": ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
+            "profit_proof_eligible": False,
             "promotion_allowed": False,
             "final_promotion_authorized": False,
             "final_promotion_allowed": False,
@@ -1428,10 +1592,72 @@ def _next_paper_route_runtime_window_targets(
             for blocker in _unique_text_items(item.get("blockers"))
         }
     )
+    account_pre_session_items = [
+        item
+        for target in planned_targets
+        if (item := _as_mapping(target.get("paper_route_account_pre_session_state")))
+    ]
+    account_pre_session_items.extend(
+        item
+        for skipped_target in skipped_targets
+        if (
+            item := _as_mapping(
+                skipped_target.get("paper_route_account_pre_session_state")
+            )
+        )
+    )
+    account_pre_session_required_count = sum(
+        1 for item in account_pre_session_items if bool(item.get("required"))
+    )
+    account_pre_session_blockers = sorted(
+        {
+            blocker
+            for item in account_pre_session_items
+            for blocker in _unique_text_items(item.get("blockers"))
+        }
+    )
+    account_pre_session_not_yet_required_count = sum(
+        1
+        for item in account_pre_session_items
+        if item.get("state") == "not_required_until_pre_session"
+    )
+    account_pre_session_clean_count = sum(
+        1
+        for item in account_pre_session_items
+        if item.get("state") == "clean"
+        and not _unique_text_items(item.get("blockers"))
+    )
+    account_pre_session_blocked_count = sum(
+        1
+        for item in account_pre_session_items
+        if item.get("state") == "blocked"
+        or bool(_unique_text_items(item.get("blockers")))
+    )
+    account_pre_session_pending_count = sum(
+        1
+        for item in account_pre_session_items
+        if item.get("state") == "not_required_until_pre_session"
+        and not _unique_text_items(item.get("blockers"))
+    )
+    account_pre_session_required_after_values = sorted(
+        str(item.get("required_after"))
+        for item in account_pre_session_items
+        if item.get("required_after") is not None
+    )
+    if not account_pre_session_items:
+        account_pre_session_summary_state = "no_targets"
+    elif account_pre_session_blocked_count:
+        account_pre_session_summary_state = "blocked"
+    elif account_pre_session_pending_count:
+        account_pre_session_summary_state = "pending_until_pre_session"
+    elif account_pre_session_clean_count == len(account_pre_session_items):
+        account_pre_session_summary_state = "clean"
+    else:
+        account_pre_session_summary_state = "unknown"
     return {
         "schema_version": NEXT_PAPER_ROUTE_RUNTIME_WINDOW_TARGETS_SCHEMA_VERSION,
         "source": "paper_route_evidence_audit",
-        "purpose": "next_session_paper_route_runtime_window_evidence_collection",
+        "purpose": purpose,
         "promotion_allowed": False,
         "final_promotion_authorized": False,
         "final_promotion_allowed": False,
@@ -1458,6 +1684,24 @@ def _next_paper_route_runtime_window_targets(
                 len(source_decision_readiness_items) - source_decision_ready_count
             ),
             "blockers": source_decision_blockers,
+        },
+        "account_pre_session_readiness": {
+            "schema_version": "torghut.paper-route-account-pre-session-readiness-summary.v1",
+            "state": account_pre_session_summary_state,
+            "target_count": len(account_pre_session_items),
+            "required_target_count": account_pre_session_required_count,
+            "not_yet_required_target_count": (
+                account_pre_session_not_yet_required_count
+            ),
+            "pending_target_count": account_pre_session_pending_count,
+            "clean_target_count": account_pre_session_clean_count,
+            "blocked_target_count": account_pre_session_blocked_count,
+            "next_required_after": (
+                account_pre_session_required_after_values[0]
+                if account_pre_session_required_after_values
+                else None
+            ),
+            "blockers": account_pre_session_blockers,
         },
         "paper_route_probe": {
             "configured_enabled": bool(probe.get("configured_enabled")),
@@ -1792,6 +2036,304 @@ def _account_contamination_audit(
     }
 
 
+def _position_quantity(position: Mapping[str, object]) -> Decimal:
+    qty = _safe_decimal(
+        position.get("qty")
+        or position.get("quantity")
+        or position.get("position_qty")
+        or position.get("shares")
+    )
+    if qty == 0:
+        return Decimal("0")
+    side = (_safe_text(position.get("side")) or "").lower()
+    if side == "short" and qty > 0:
+        return -qty
+    return qty
+
+
+def _position_market_value(position: Mapping[str, object]) -> Decimal:
+    for key in ("market_value", "marketValue", "notional", "position_value"):
+        if key in position:
+            return _safe_decimal(position.get(key)).copy_abs()
+    qty = _position_quantity(position).copy_abs()
+    price = _safe_decimal(
+        position.get("current_price")
+        or position.get("currentPrice")
+        or position.get("avg_entry_price")
+        or position.get("avgEntryPrice")
+    ).copy_abs()
+    return qty * price
+
+
+def _normalized_open_positions(
+    positions: object,
+    *,
+    target_symbols: set[str],
+) -> list[dict[str, object]]:
+    normalized: list[dict[str, object]] = []
+    for raw_position in _as_sequence(positions):
+        position = _as_mapping(raw_position)
+        symbol = (_safe_text(position.get("symbol")) or "").upper()
+        qty = _position_quantity(position)
+        if not symbol or qty == 0:
+            continue
+        normalized.append(
+            {
+                "symbol": symbol,
+                "qty": _decimal_text(qty),
+                "side": _safe_text(position.get("side")),
+                "market_value": _decimal_text(_position_market_value(position)),
+                "target_symbol": symbol in target_symbols,
+            }
+        )
+    return sorted(
+        normalized,
+        key=lambda item: (
+            not bool(item.get("target_symbol")),
+            str(item.get("symbol") or ""),
+        ),
+    )
+
+
+def _account_window_start_snapshot_audit(
+    session: Session,
+    *,
+    account_label: str | None,
+    symbols: Sequence[str],
+    window_start: datetime,
+    generated_at: datetime | None = None,
+) -> dict[str, object]:
+    symbol_filters = {
+        str(item).strip().upper() for item in symbols if str(item).strip()
+    }
+    required = generated_at is None or generated_at >= window_start
+    base_payload: dict[str, object] = {
+        "schema_version": "torghut.paper-route-account-window-start-snapshot-audit.v1",
+        "scope": "account_position_snapshot_at_runtime_window_start",
+        "account_label": account_label,
+        "symbols": sorted(symbol_filters),
+        "generated_at": _isoformat(generated_at) if generated_at is not None else None,
+        "window_start": _isoformat(window_start),
+        "required": required,
+        "state": "required" if required else "pending_until_window_start",
+        "snapshot_id": None,
+        "snapshot_as_of": None,
+        "snapshot_source": None,
+        "snapshot_offset_seconds": None,
+        "flat": False if required else None,
+        "position_count": 0,
+        "target_symbol_position_count": 0,
+        "non_target_symbol_position_count": 0,
+        "gross_position_market_value": "0",
+        "sample_positions": [],
+        "blockers": [],
+    }
+    if account_label is None:
+        return {
+            **base_payload,
+            "required": False,
+            "state": "not_applicable",
+            "flat": True,
+        }
+    if not required:
+        return base_payload
+
+    before_snapshot = session.execute(
+        select(PositionSnapshot)
+        .where(PositionSnapshot.alpaca_account_label == account_label)
+        .where(PositionSnapshot.as_of <= window_start)
+        .order_by(PositionSnapshot.as_of.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    after_snapshot = None
+    if before_snapshot is None:
+        after_snapshot = session.execute(
+            select(PositionSnapshot)
+            .where(PositionSnapshot.alpaca_account_label == account_label)
+            .where(PositionSnapshot.as_of > window_start)
+            .where(
+                PositionSnapshot.as_of
+                <= window_start
+                + timedelta(
+                    seconds=PAPER_ROUTE_ACCOUNT_START_SNAPSHOT_AFTER_START_GRACE_SECONDS
+                )
+            )
+            .order_by(PositionSnapshot.as_of.asc())
+            .limit(1)
+        ).scalar_one_or_none()
+
+    snapshot = before_snapshot or after_snapshot
+    if snapshot is None:
+        return {
+            **base_payload,
+            "blockers": ["paper_route_account_window_start_snapshot_missing"],
+        }
+
+    snapshot_as_of = snapshot.as_of
+    if snapshot_as_of.tzinfo is None:
+        snapshot_as_of = snapshot_as_of.replace(tzinfo=timezone.utc)
+    snapshot_as_of = snapshot_as_of.astimezone(timezone.utc)
+    offset_seconds = int((snapshot_as_of - window_start).total_seconds())
+    blockers: list[str] = []
+    if offset_seconds < -PAPER_ROUTE_ACCOUNT_START_SNAPSHOT_STALE_SECONDS:
+        blockers.append("paper_route_account_window_start_snapshot_stale")
+
+    positions = _normalized_open_positions(
+        snapshot.positions,
+        target_symbols=symbol_filters,
+    )
+    target_position_count = sum(
+        int(bool(position.get("target_symbol"))) for position in positions
+    )
+    non_target_position_count = len(positions) - target_position_count
+    if positions:
+        blockers.extend(
+            [
+                "paper_route_account_window_start_not_flat",
+                "paper_route_account_window_start_positions_present",
+            ]
+        )
+    if target_position_count:
+        blockers.append("paper_route_account_window_start_target_positions_present")
+    if non_target_position_count:
+        blockers.append("paper_route_account_window_start_non_target_positions_present")
+    gross_market_value = sum(
+        (_safe_decimal(position.get("market_value")) for position in positions),
+        Decimal("0"),
+    )
+    return {
+        **base_payload,
+        "snapshot_id": str(snapshot.id),
+        "snapshot_as_of": _isoformat(snapshot_as_of),
+        "snapshot_source": (
+            "latest_before_window_start"
+            if before_snapshot is not None
+            else "first_after_window_start"
+        ),
+        "snapshot_offset_seconds": offset_seconds,
+        "state": "blocked" if blockers else "clean",
+        "flat": not positions and not blockers,
+        "position_count": len(positions),
+        "target_symbol_position_count": target_position_count,
+        "non_target_symbol_position_count": non_target_position_count,
+        "gross_position_market_value": _decimal_text(gross_market_value),
+        "sample_positions": positions[:10],
+        "blockers": sorted(dict.fromkeys(blockers)),
+    }
+
+
+def _account_pre_session_snapshot_audit(
+    session: Session,
+    *,
+    account_label: str | None,
+    symbols: Sequence[str],
+    generated_at: datetime,
+    window_start: datetime,
+    window_end: datetime,
+) -> dict[str, object]:
+    symbol_filters = {
+        str(item).strip().upper() for item in symbols if str(item).strip()
+    }
+    required_after = window_start - timedelta(
+        seconds=PAPER_ROUTE_ACCOUNT_PRE_SESSION_READINESS_SECONDS
+    )
+    required = required_after <= generated_at < window_end
+    base_payload: dict[str, object] = {
+        "schema_version": "torghut.paper-route-account-pre-session-snapshot-audit.v1",
+        "scope": "account_position_snapshot_before_runtime_window_start",
+        "account_label": account_label,
+        "symbols": sorted(symbol_filters),
+        "generated_at": _isoformat(generated_at),
+        "window_start": _isoformat(window_start),
+        "required": required,
+        "required_after": _isoformat(required_after),
+        "snapshot_id": None,
+        "snapshot_as_of": None,
+        "snapshot_age_seconds": None,
+        "flat": None,
+        "position_count": 0,
+        "target_symbol_position_count": 0,
+        "non_target_symbol_position_count": 0,
+        "gross_position_market_value": "0",
+        "sample_positions": [],
+        "blockers": [],
+    }
+    if not required:
+        return {
+            **base_payload,
+            "state": "not_required_until_pre_session",
+        }
+    if account_label is None:
+        return {
+            **base_payload,
+            "state": "clean",
+            "flat": True,
+        }
+
+    snapshot = session.execute(
+        select(PositionSnapshot)
+        .where(PositionSnapshot.alpaca_account_label == account_label)
+        .where(PositionSnapshot.as_of <= generated_at)
+        .order_by(PositionSnapshot.as_of.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if snapshot is None:
+        return {
+            **base_payload,
+            "state": "blocked",
+            "flat": False,
+            "blockers": ["paper_route_account_pre_session_snapshot_missing"],
+        }
+
+    snapshot_as_of = snapshot.as_of
+    if snapshot_as_of.tzinfo is None:
+        snapshot_as_of = snapshot_as_of.replace(tzinfo=timezone.utc)
+    snapshot_as_of = snapshot_as_of.astimezone(timezone.utc)
+    snapshot_age_seconds = int((generated_at - snapshot_as_of).total_seconds())
+    blockers: list[str] = []
+    if snapshot_age_seconds > PAPER_ROUTE_ACCOUNT_PRE_SESSION_SNAPSHOT_STALE_SECONDS:
+        blockers.append("paper_route_account_pre_session_snapshot_stale")
+
+    positions = _normalized_open_positions(
+        snapshot.positions,
+        target_symbols=symbol_filters,
+    )
+    target_position_count = sum(
+        int(bool(position.get("target_symbol"))) for position in positions
+    )
+    non_target_position_count = len(positions) - target_position_count
+    if positions:
+        blockers.extend(
+            [
+                "paper_route_account_pre_session_not_flat",
+                "paper_route_account_pre_session_positions_present",
+            ]
+        )
+    if target_position_count:
+        blockers.append("paper_route_account_pre_session_target_positions_present")
+    if non_target_position_count:
+        blockers.append("paper_route_account_pre_session_non_target_positions_present")
+    gross_market_value = sum(
+        (_safe_decimal(position.get("market_value")) for position in positions),
+        Decimal("0"),
+    )
+    blockers = sorted(dict.fromkeys(blockers))
+    return {
+        **base_payload,
+        "state": "blocked" if blockers else "clean",
+        "snapshot_id": str(snapshot.id),
+        "snapshot_as_of": _isoformat(snapshot_as_of),
+        "snapshot_age_seconds": snapshot_age_seconds,
+        "flat": not positions and not blockers,
+        "position_count": len(positions),
+        "target_symbol_position_count": target_position_count,
+        "non_target_symbol_position_count": non_target_position_count,
+        "gross_position_market_value": _decimal_text(gross_market_value),
+        "sample_positions": positions[:10],
+        "blockers": blockers,
+    }
+
+
 def _rejected_signal_activity(
     session: Session,
     *,
@@ -1901,6 +2443,9 @@ def _runtime_ledger_bucket_evidence_grade(row: StrategyRuntimeLedgerBucket) -> b
         for item in _as_sequence(row.blockers_json)
         if str(item).strip()
     ]
+    source_authority_blockers = runtime_ledger_promotion_source_authority_blockers(
+        _as_mapping(row.payload_json)
+    )
     return (
         row.pnl_basis == POST_COST_PNL_BASIS
         and _safe_int(row.fill_count) > 0
@@ -1915,7 +2460,22 @@ def _runtime_ledger_bucket_evidence_grade(row: StrategyRuntimeLedgerBucket) -> b
             _as_mapping(row.payload_json).get("cost_basis_counts")
         )
         and not blockers
+        and not source_authority_blockers
     )
+
+
+def _runtime_ledger_bucket_diagnostic_blockers(
+    row: StrategyRuntimeLedgerBucket,
+) -> list[str]:
+    blockers = [
+        str(item).strip()
+        for item in _as_sequence(row.blockers_json)
+        if str(item).strip()
+    ]
+    blockers.extend(
+        runtime_ledger_promotion_source_authority_blockers(_as_mapping(row.payload_json))
+    )
+    return list(dict.fromkeys(blockers))
 
 
 def _runtime_ledger_row_diagnostic_expectancy_bps(
@@ -1936,6 +2496,71 @@ def _runtime_ledger_row_diagnostic_expectancy_bps(
     )
 
 
+def _runtime_ledger_row_source_decision_mode_counts(
+    row: StrategyRuntimeLedgerBucket,
+) -> Counter[str]:
+    payload = _as_mapping(row.payload_json)
+    counts: Counter[str] = Counter()
+    raw_counts = _as_mapping(payload.get("source_decision_mode_counts"))
+    for raw_mode, raw_count in raw_counts.items():
+        mode = normalize_source_decision_mode(raw_mode) or "missing"
+        count = _safe_int(raw_count)
+        if count > 0:
+            counts[mode] += count
+    if counts:
+        return counts
+
+    mode = normalize_source_decision_mode(payload.get("source_decision_mode"))
+    if mode is not None:
+        counts[mode] += max(
+            1,
+            _safe_int(row.decision_count),
+            _safe_int(row.fill_count),
+        )
+    else:
+        counts["missing"] += max(1, _safe_int(row.decision_count))
+    return counts
+
+
+def _runtime_ledger_row_source_decision_modes_are_profit_proof_eligible(
+    row: StrategyRuntimeLedgerBucket,
+) -> bool:
+    counts = _runtime_ledger_row_source_decision_mode_counts(row)
+    return bool(counts) and all(
+        source_decision_mode_is_profit_proof_eligible(mode) for mode in counts
+    )
+
+
+def _runtime_ledger_diagnostic_totals(
+    rows: Sequence[StrategyRuntimeLedgerBucket],
+) -> dict[str, object]:
+    filled_notional = sum(
+        (_safe_decimal(row.filled_notional) for row in rows), Decimal("0")
+    )
+    net_pnl = sum(
+        (_safe_decimal(row.net_strategy_pnl_after_costs) for row in rows),
+        Decimal("0"),
+    )
+    return {
+        "bucket_count": len(rows),
+        "fill_count": sum(max(0, _safe_int(row.fill_count)) for row in rows),
+        "decision_count": sum(max(0, _safe_int(row.decision_count)) for row in rows),
+        "closed_trade_count": sum(
+            max(0, _safe_int(row.closed_trade_count)) for row in rows
+        ),
+        "open_position_count": sum(
+            max(0, _safe_int(row.open_position_count)) for row in rows
+        ),
+        "filled_notional": _decimal_text(filled_notional),
+        "net_strategy_pnl_after_costs": _decimal_text(net_pnl),
+        "diagnostic_closed_trade_expectancy_bps": _decimal_text(
+            (net_pnl / filled_notional * Decimal("10000"))
+            if filled_notional > 0
+            else Decimal("0")
+        ),
+    }
+
+
 def _runtime_ledger_non_evidence_diagnostic_summary(
     rows: Sequence[StrategyRuntimeLedgerBucket],
 ) -> dict[str, object]:
@@ -1952,10 +2577,29 @@ def _runtime_ledger_non_evidence_diagnostic_summary(
         Decimal("0"),
     )
     blocker_counts: Counter[str] = Counter(
-        str(item).strip()
+        blocker
         for row in rows
-        for item in _as_sequence(row.blockers_json)
-        if str(item).strip()
+        for blocker in _runtime_ledger_bucket_diagnostic_blockers(row)
+    )
+    source_decision_mode_counts: Counter[str] = Counter()
+    source_decision_mode_bucket_counts: Counter[str] = Counter()
+    for row in rows:
+        row_mode_counts = _runtime_ledger_row_source_decision_mode_counts(row)
+        source_decision_mode_counts.update(row_mode_counts)
+        source_decision_mode_bucket_counts.update(row_mode_counts.keys())
+    profit_proof_diagnostic_rows = [
+        row
+        for row in diagnostic_rows
+        if _runtime_ledger_row_source_decision_modes_are_profit_proof_eligible(row)
+    ]
+    profit_proof_diagnostic_row_ids = {id(row) for row in profit_proof_diagnostic_rows}
+    non_profit_proof_diagnostic_rows = [
+        row for row in diagnostic_rows if id(row) not in profit_proof_diagnostic_row_ids
+    ]
+    non_profit_proof_source_decision_modes = sorted(
+        mode
+        for mode in source_decision_mode_counts
+        if not source_decision_mode_is_profit_proof_eligible(mode)
     )
     return {
         "scope": (
@@ -1982,6 +2626,18 @@ def _runtime_ledger_non_evidence_diagnostic_summary(
             else Decimal("0")
         ),
         "blocker_counts": dict(sorted(blocker_counts.items())),
+        "source_decision_mode_counts": dict(sorted(source_decision_mode_counts.items())),
+        "source_decision_mode_bucket_counts": dict(
+            sorted(source_decision_mode_bucket_counts.items())
+        ),
+        "profit_proof_eligible_diagnostic": _runtime_ledger_diagnostic_totals(
+            profit_proof_diagnostic_rows
+        ),
+        "non_profit_proof_diagnostic": {
+            **_runtime_ledger_diagnostic_totals(non_profit_proof_diagnostic_rows),
+            "source_decision_modes": non_profit_proof_source_decision_modes,
+            "reason": "source_decision_mode_not_profit_proof_eligible",
+        },
         "latest_bucket_ended_at": _isoformat(rows[0].bucket_ended_at if rows else None),
         "db_row_refs": [str(row.id) for row in rows],
     }
@@ -2087,10 +2743,9 @@ def _runtime_ledger_summary(
         "db_row_refs": [str(row.id) for row in rows],
         "blockers": sorted(
             {
-                str(item).strip()
+                blocker
                 for row in rows
-                for item in _as_sequence(row.blockers_json)
-                if str(item).strip()
+                for blocker in _runtime_ledger_bucket_diagnostic_blockers(row)
             }
         ),
         "non_evidence_grade_diagnostic": (
@@ -2227,6 +2882,7 @@ def _readiness_blockers(
     probe: Mapping[str, object],
     source_activity: Mapping[str, object],
     account_contamination: Mapping[str, object],
+    account_state: Mapping[str, object],
     rejected_signal_activity: Mapping[str, object],
     runtime_ledger: Mapping[str, object],
     hypothesis_windows: Mapping[str, object],
@@ -2266,6 +2922,11 @@ def _readiness_blockers(
     blockers.update(
         str(item).strip()
         for item in _as_sequence(account_contamination.get("blockers"))
+        if str(item).strip()
+    )
+    blockers.update(
+        str(item).strip()
+        for item in _as_sequence(account_state.get("blockers"))
         if str(item).strip()
     )
     if bool(source_activity.get("missing")):
@@ -2329,6 +2990,13 @@ def _target_audit(
         window_start=window_start,
         window_end=window_end,
     )
+    account_state = _account_window_start_snapshot_audit(
+        session,
+        account_label=cast(str | None, target.get("account_label")),
+        symbols=_target_probe_symbols(target, probe),
+        window_start=window_start,
+        generated_at=generated_at,
+    )
     rejected_signal_activity = _rejected_signal_activity(
         session,
         account_label=cast(str | None, target.get("account_label")),
@@ -2365,6 +3033,7 @@ def _target_audit(
         probe=probe,
         source_activity=source_activity,
         account_contamination=account_contamination,
+        account_state=account_state,
         rejected_signal_activity=rejected_signal_activity,
         runtime_ledger=runtime_ledger,
         hypothesis_windows=hypothesis_windows,
@@ -2383,6 +3052,7 @@ def _target_audit(
         },
         "source_activity": source_activity,
         "account_contamination": account_contamination,
+        "account_state": account_state,
         "rejected_signal_activity": rejected_signal_activity,
         "runtime_ledger": runtime_ledger,
         "hypothesis_windows": hypothesis_windows,
@@ -2465,6 +3135,16 @@ def _runtime_window_import_audit(
             if str(blocker).strip()
         }
     )
+    account_state_blockers = sorted(
+        {
+            str(blocker).strip()
+            for audit in next_target_audits
+            for blocker in _as_sequence(
+                _as_mapping(audit.get("account_state")).get("blockers")
+            )
+            if str(blocker).strip()
+        }
+    )
     source_runtime_ledger_blockers = _source_runtime_ledger_materialization_blockers(
         next_target_audits
     )
@@ -2505,6 +3185,10 @@ def _runtime_window_import_audit(
         state = "import_due_account_contamination_detected"
         next_action = "isolate_paper_account_or_discard_contaminated_window"
         blockers = account_contamination_blockers
+    elif account_state_blockers:
+        state = "import_due_account_state_not_clean"
+        next_action = "reset_paper_account_or_discard_contaminated_window"
+        blockers = account_state_blockers
     elif targets_with_source_activity < current_target_count:
         state = "import_due_source_activity_missing"
         next_action = "inspect_paper_route_source_activity_before_import"
@@ -2548,6 +3232,7 @@ def _runtime_window_import_audit(
                 source_runtime_ledger_blockers
             ),
             "account_contamination_blockers": account_contamination_blockers,
+            "account_state_blockers": account_state_blockers,
             "runtime_ledger_blockers": runtime_ledger_blockers,
             "target_blockers_effective_when": "runtime_window_import_ready",
         },
@@ -2605,6 +3290,7 @@ def _runtime_window_target_blockers(
         target = _as_mapping(audit.get("target"))
         source_activity = _as_mapping(audit.get("source_activity"))
         account_contamination = _as_mapping(audit.get("account_contamination"))
+        account_state = _as_mapping(audit.get("account_state"))
         rejected_signal_activity = _as_mapping(audit.get("rejected_signal_activity"))
         runtime_ledger = _as_mapping(audit.get("runtime_ledger"))
         promotion_decisions = _as_mapping(audit.get("promotion_decisions"))
@@ -2622,6 +3308,7 @@ def _runtime_window_target_blockers(
                     else []
                 ),
                 *_unique_text_items(account_contamination.get("blockers")),
+                *_unique_text_items(account_state.get("blockers")),
                 *(
                     ["runtime_ledger_bucket_missing"]
                     if _safe_int(runtime_ledger.get("bucket_count")) <= 0
@@ -2692,6 +3379,33 @@ def _runtime_window_target_blockers(
                     "last_event_at": _safe_text(
                         account_contamination.get("last_event_at")
                     ),
+                },
+                "account_state": {
+                    "state": _safe_text(account_state.get("state")),
+                    "required": bool(account_state.get("required")),
+                    "flat": (
+                        account_state.get("flat")
+                        if isinstance(account_state.get("flat"), bool)
+                        else None
+                    ),
+                    "generated_at": _safe_text(account_state.get("generated_at")),
+                    "snapshot_id": _safe_text(account_state.get("snapshot_id")),
+                    "snapshot_as_of": _safe_text(account_state.get("snapshot_as_of")),
+                    "snapshot_source": _safe_text(account_state.get("snapshot_source")),
+                    "position_count": _safe_int(account_state.get("position_count")),
+                    "target_symbol_position_count": _safe_int(
+                        account_state.get("target_symbol_position_count")
+                    ),
+                    "non_target_symbol_position_count": _safe_int(
+                        account_state.get("non_target_symbol_position_count")
+                    ),
+                    "gross_position_market_value": _safe_text(
+                        account_state.get("gross_position_market_value")
+                    ),
+                    "sample_positions": [
+                        _as_mapping(item)
+                        for item in _as_sequence(account_state.get("sample_positions"))
+                    ],
                 },
                 "runtime_ledger": {
                     "bucket_count": _safe_int(runtime_ledger.get("bucket_count")),
@@ -2791,6 +3505,18 @@ def _next_paper_route_target_summaries(
                     target.get("paper_route_probe_next_session_max_notional")
                 )
                 or "0",
+                "bounded_evidence_collection_authorized": bool(
+                    target.get("bounded_evidence_collection_authorized")
+                ),
+                "bounded_evidence_collection_max_notional": _safe_text(
+                    target.get("bounded_evidence_collection_max_notional")
+                )
+                or "0",
+                "source_collection_authorized": bool(
+                    target.get("source_collection_authorized")
+                ),
+                "source_decision_mode": _safe_text(target.get("source_decision_mode")),
+                "profit_proof_eligible": bool(target.get("profit_proof_eligible")),
                 "import_ready": bool(target.get("paper_route_session_import_ready")),
                 "import_blockers": _unique_text_items(
                     target.get("paper_route_session_import_blockers")
@@ -2813,6 +3539,7 @@ def _runtime_ledger_proof_packet_handoff(
     next_targets: Mapping[str, object],
     runtime_window_import_audit: Mapping[str, object],
 ) -> dict[str, object]:
+    proof_policy = runtime_ledger_proof_policy_from_env()
     runtime_import_handoff = _as_mapping(
         next_targets.get("runtime_window_import_handoff")
     )
@@ -2827,29 +3554,55 @@ def _runtime_ledger_proof_packet_handoff(
         for blocker in _unique_text_items(runtime_import_handoff.get("import_blockers"))
         if blocker not in _unique_text_items(session_readiness.get("import_blockers"))
     ]
-    base_args = [
-        "uv",
-        "run",
-        "--frozen",
-        "python",
-        "scripts/assemble_runtime_ledger_proof_packet.py",
+    smoke_targets = proof_policy.target_payload("smoke")
+    authority_targets = proof_policy.target_payload("authority")
+    smoke_threshold_args = [
+        "--proof-mode",
+        "smoke",
+        "--min-runtime-ledger-net-pnl",
+        str(smoke_targets["min_runtime_ledger_net_pnl_after_costs"]),
+        "--min-runtime-ledger-daily-net-pnl",
+        str(smoke_targets["min_runtime_ledger_daily_net_pnl_after_costs"]),
+        "--min-runtime-ledger-trading-days",
+        str(smoke_targets["min_runtime_ledger_trading_days"]),
+    ]
+    authority_threshold_args = [
+        "--proof-mode",
+        "authority",
+        "--min-runtime-ledger-net-pnl",
+        str(authority_targets["min_runtime_ledger_net_pnl_after_costs"]),
+        "--min-runtime-ledger-daily-net-pnl",
+        str(authority_targets["min_runtime_ledger_daily_net_pnl_after_costs"]),
+        "--min-runtime-ledger-trading-days",
+        str(authority_targets["min_runtime_ledger_trading_days"]),
+    ]
+    service_args = [
         "--status-service-base-url",
         "$TORGHUT_LIVE_SERVICE_BASE_URL",
         "--paper-route-service-base-url",
         "$TORGHUT_PAPER_ROUTE_SERVICE_BASE_URL",
         "--completion-service-base-url",
         "$TORGHUT_LIVE_SERVICE_BASE_URL",
-        "--min-runtime-ledger-net-pnl",
-        MIN_RUNTIME_LEDGER_PROOF_NET_PNL,
-        "--min-runtime-ledger-daily-net-pnl",
-        MIN_RUNTIME_LEDGER_PROOF_DAILY_NET_PNL,
-        "--min-runtime-ledger-trading-days",
-        str(MIN_RUNTIME_LEDGER_PROOF_TRADING_DAYS),
+    ]
+    base_args = [
+        "uv",
+        "run",
+        "--frozen",
+        "python",
+        "scripts/assemble_runtime_ledger_proof_packet.py",
+        *service_args,
+        *smoke_threshold_args,
         "--output-file",
         RUNTIME_LEDGER_PROOF_PACKET_OUTPUT_FILE,
     ]
     authority_args = [
-        *base_args[:-2],
+        "uv",
+        "run",
+        "--frozen",
+        "python",
+        "scripts/assemble_runtime_ledger_proof_packet.py",
+        *service_args,
+        *authority_threshold_args,
         "--runtime-window-import-file",
         RUNTIME_WINDOW_IMPORT_OUTPUT_FILE,
         "--output-file",
@@ -2883,13 +3636,7 @@ def _runtime_ledger_proof_packet_handoff(
             "completion_doc29": "/trading/completion/doc29",
         },
         "targets": {
-            "min_runtime_ledger_net_pnl_after_costs": (
-                MIN_RUNTIME_LEDGER_PROOF_NET_PNL
-            ),
-            "min_runtime_ledger_daily_net_pnl_after_costs": (
-                MIN_RUNTIME_LEDGER_PROOF_DAILY_NET_PNL
-            ),
-            "min_runtime_ledger_trading_days": MIN_RUNTIME_LEDGER_PROOF_TRADING_DAYS,
+            **authority_targets,
         },
         "runtime_window": {
             "import_ready": import_ready,
@@ -2984,10 +3731,96 @@ def build_paper_route_target_plan_payload(
         live_submission_gate=live_submission_gate,
         generated_at=resolved_generated_at,
     )
+    closed_window_start, closed_window_end = (
+        _latest_closed_regular_equities_session_window(resolved_generated_at)
+    )
+    latest_closed_targets = _next_paper_route_runtime_window_targets(
+        session=session,
+        targets=targets,
+        probe=probe,
+        live_submission_gate=live_submission_gate,
+        generated_at=resolved_generated_at,
+        require_clean_pre_session=False,
+        window_start=closed_window_start,
+        window_end=closed_window_end,
+        purpose="latest_closed_session_paper_route_runtime_window_import",
+    )
+    source_targets = _next_paper_route_runtime_window_targets(
+        session=session,
+        targets=targets,
+        probe=probe,
+        live_submission_gate=live_submission_gate,
+        generated_at=resolved_generated_at,
+        require_clean_pre_session=False,
+    )
+    latest_closed_readiness = _as_mapping(
+        latest_closed_targets.get("session_readiness")
+    )
+    runtime_window_import_plan = (
+        latest_closed_targets
+        if bool(latest_closed_readiness.get("import_ready"))
+        and _safe_int(latest_closed_targets.get("target_count")) > 0
+        else next_targets
+    )
+    source_target_audits = [
+        _target_audit(
+            session,
+            raw_target=target,
+            probe=probe,
+            generated_at=resolved_generated_at,
+            lookback_hours=DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
+        )
+        for target in targets
+    ]
+    runtime_window_import_target_audits = [
+        _target_audit(
+            session,
+            raw_target=target,
+            probe=probe,
+            generated_at=resolved_generated_at,
+            lookback_hours=DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
+        )
+        for target in _as_mapping_items(runtime_window_import_plan.get("targets"))
+    ]
+    runtime_window_import_audit = _runtime_window_import_audit(
+        next_targets=runtime_window_import_plan,
+        target_audits=source_target_audits,
+        next_target_audits=runtime_window_import_target_audits,
+    )
+    effective_target_plan: Mapping[str, Any] = {}
+    for candidate_plan in (
+        next_targets,
+        source_targets,
+        runtime_window_import_plan,
+        plan,
+    ):
+        if _as_mapping_items(candidate_plan.get("targets")):
+            effective_target_plan = candidate_plan
+            break
+    effective_targets = _as_mapping_items(effective_target_plan.get("targets"))
+    effective_skipped_targets = _as_mapping_items(
+        effective_target_plan.get("skipped_targets")
+    )
+    effective_target_count = max(
+        _safe_int(effective_target_plan.get("target_count")),
+        len(effective_targets),
+    )
+    effective_skipped_target_count = max(
+        _safe_int(effective_target_plan.get("skipped_target_count")),
+        len(effective_skipped_targets),
+    )
     return {
         "schema_version": PAPER_ROUTE_TARGET_PLAN_PAYLOAD_SCHEMA_VERSION,
         "generated_at": _isoformat(resolved_generated_at),
         "source": "paper_route_target_plan_endpoint",
+        "purpose": _safe_text(effective_target_plan.get("purpose"))
+        or "next_session_paper_route_runtime_window_evidence_collection",
+        "promotion_allowed": False,
+        "final_promotion_allowed": False,
+        "target_count": effective_target_count,
+        "skipped_target_count": effective_skipped_target_count,
+        "targets": effective_targets,
+        "skipped_targets": effective_skipped_targets,
         "live_submission_gate": {
             "allowed": bool(live_submission_gate.get("allowed")),
             "reason": _safe_text(live_submission_gate.get("reason")),
@@ -3019,12 +3852,33 @@ def build_paper_route_target_plan_payload(
             ),
         },
         "paper_route_probe": probe,
-        "runtime_window_import_plan": next_targets,
+        "runtime_window_import_plan": runtime_window_import_plan,
+        "runtime_window_import_audit": runtime_window_import_audit,
+        "source_runtime_window_import_plan": source_targets,
+        "latest_closed_paper_route_runtime_window_targets": latest_closed_targets,
         "next_paper_route_runtime_window_targets": next_targets,
         "summary": {
             "source_target_count": len(targets),
             "next_runtime_window_target_count": _safe_int(
                 next_targets.get("target_count")
+            ),
+            "runtime_window_import_target_count": _safe_int(
+                runtime_window_import_plan.get("target_count")
+            ),
+            "runtime_window_import_plan_purpose": _safe_text(
+                runtime_window_import_plan.get("purpose")
+            ),
+            "latest_closed_runtime_window_target_count": _safe_int(
+                latest_closed_targets.get("target_count")
+            ),
+            "source_runtime_window_target_count": _safe_int(
+                source_targets.get("target_count")
+            ),
+            "runtime_window_import_audit_state": _safe_text(
+                runtime_window_import_audit.get("state")
+            ),
+            "runtime_window_import_audit_blockers": _unique_text_items(
+                runtime_window_import_audit.get("blockers")
             ),
             "skipped_target_count": _safe_int(next_targets.get("skipped_target_count")),
             "promotion_authority": {

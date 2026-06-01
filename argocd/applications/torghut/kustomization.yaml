@@ -10,6 +10,9 @@ resources:
   - autonomy-configmap.yaml
   - autonomy-gate-policy-configmap.yaml
   - db-migrations-job.yaml
+  - tigerbeetle-cluster.yaml
+  - tigerbeetle-smoke-job.yaml
+  - tigerbeetle-journal-order-events-cronjob.yaml
   - knative-service.yaml
   - knative-service-sim.yaml
   - tailscale-service.yaml
@@ -34,8 +37,10 @@ resources:
   - empirical-artifacts-objectbucketclaim.yaml
   - empirical-jobs-backfill-job.yaml
   - empirical-promotion-renewal-cronjob.yaml
+  - order-feed-source-window-repair-cronjob.yaml
   - empirical-artifacts-retention-cronjob.yaml
   - execution-tca-refresh-cronjob.yaml
+  - paper-account-flatten-cronjob.yaml
   - whitepaper-autoresearch-workflowtemplate.yaml
   - empirical-promotion-workflowtemplate.yaml
   - historical-simulation-workflowtemplate.yaml

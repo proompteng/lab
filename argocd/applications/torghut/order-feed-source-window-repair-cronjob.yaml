@@ -1,0 +1,94 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: torghut-order-feed-source-window-repair
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut
+    app.kubernetes.io/component: order-feed-source-window-repair
+spec:
+  schedule: "13,43 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  startingDeadlineSeconds: 300
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 300
+      template:
+        spec:
+          restartPolicy: Never
+          serviceAccountName: torghut-runtime
+          nodeSelector:
+            kubernetes.io/arch: arm64
+          containers:
+            - name: repair-source-windows
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:97dfaea944bbdf5c2e0d7a6cde3c1e4e96b5a544305b88c51a9d6d42562c4608
+              imagePullPolicy: IfNotPresent
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                  ephemeral-storage: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 1Gi
+                  ephemeral-storage: 512Mi
+              command:
+                - /bin/bash
+                - -lc
+              args:
+                - |
+                  set -euo pipefail
+                  cd /app
+                  echo "stage=repair_order_feed_source_windows started_at=$(date -Iseconds)"
+                  /opt/venv/bin/python scripts/repair_order_feed_source_windows.py \
+                    --dsn-env DB_DSN \
+                    --account-label PA3SX7FYNUTF \
+                    --batch-size 1000 \
+                    --max-batches 5 \
+                    --backfill-execution-events \
+                    --apply \
+                    --json
+                  /opt/venv/bin/python scripts/repair_order_feed_source_windows.py \
+                    --dsn-env SIM_DB_DSN \
+                    --account-label TORGHUT_SIM \
+                    --batch-size 100 \
+                    --max-batches 4 \
+                    --apply \
+                    --json
+                  echo "stage=order_feed_source_window_repair completed_at=$(date -Iseconds)"
+              securityContext:
+                seccompProfile:
+                  type: Unconfined
+              env:
+                - name: TORGHUT_SIM_DB_HOST
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: host
+                - name: TORGHUT_SIM_DB_PORT
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: port
+                - name: TORGHUT_SIM_DB_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: username
+                - name: TORGHUT_SIM_DB_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: password
+                - name: SIM_DB_DSN
+                  value: postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default
+                - name: DB_DSN
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: uri
+                - name: PYTHONUNBUFFERED
+                  value: "1"

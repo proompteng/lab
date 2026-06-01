@@ -10,7 +10,6 @@ resources:
   - synthesis-deep-alpha-agent.yaml
   - synthesis-deep-alpha-implspec.yaml
   - synthesis-deep-alpha-agentrun-template.yaml
-  - synthesis-deep-alpha-schedule.yaml
   - autonomous-trader-serviceaccount.yaml
   - autonomous-trader-versioncontrolprovider.yaml
   - autonomous-trader-agentprovider.yaml

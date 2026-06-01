@@ -211,8 +211,12 @@ def test_stale_market_context_domains_keep_acceptance_unsettled() -> None:
     market_lot = _lot(ledger, "market_context_domain_repair")
 
     assert market_lot["current_state"] == "stale"
+    assert (
+        market_lot["acceptance_condition"]
+        == "technicals, regime domains are fresh or not required"
+    )
     assert "market_context_technicals_stale" in market_lot["blocking_reason_codes"]
-    assert "market_context_news_stale" in market_lot["blocking_reason_codes"]
+    assert "market_context_news_stale" not in market_lot["blocking_reason_codes"]
     assert "market_context_regime_stale" in market_lot["blocking_reason_codes"]
 
 
@@ -412,7 +416,9 @@ def test_blocked_autoresearch_portfolios_keep_promotion_repair_unsettled() -> No
 
     assert ledger["accepted_routeable_candidate_count"] == 0
     assert promotion_lot["current_state"] == "missing"
-    assert "autoresearch_portfolio_ready_empty" in promotion_lot["blocking_reason_codes"]
+    assert (
+        "autoresearch_portfolio_ready_empty" in promotion_lot["blocking_reason_codes"]
+    )
     assert (
         "autoresearch_portfolio_candidates_blocked"
         in promotion_lot["blocking_reason_codes"]
