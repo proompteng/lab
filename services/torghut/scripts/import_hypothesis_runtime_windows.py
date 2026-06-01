@@ -1232,9 +1232,7 @@ def _merge_count_mappings(
     existing: Mapping[object, object],
     incoming: Mapping[str, int],
 ) -> dict[str, int]:
-    merged = {
-        str(key): _nonnegative_int(value) for key, value in existing.items()
-    }
+    merged = {str(key): _nonnegative_int(value) for key, value in existing.items()}
     for key, value in incoming.items():
         merged[str(key)] = max(0, int(value)) + merged.get(str(key), 0)
     return dict(sorted((key, value) for key, value in merged.items() if value > 0))
@@ -4246,7 +4244,10 @@ def _runtime_ledger_tca_row_from_payload(
             ]
         )
     )
-    bucket_payload = dict(payload)
+    bucket_payload = {
+        **dict(payload),
+        "runtime_ledger_readback_source": "strategy_runtime_ledger_buckets",
+    }
     if proof_blockers:
         bucket_payload["runtime_ledger_profit_proof_blockers"] = proof_blockers
         bucket_payload["blockers"] = runtime_ledger_blockers
