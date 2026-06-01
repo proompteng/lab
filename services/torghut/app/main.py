@@ -4705,7 +4705,13 @@ def trading_paper_route_target_plan(
             proof_floor.get("route_reacquisition_book") or {},
         )
         if proof_floor_route_book:
-            route_reacquisition_book = proof_floor_route_book
+            if route_reacquisition_book is None:
+                route_reacquisition_book = proof_floor_route_book
+            else:
+                route_reacquisition_book = _merge_paper_route_probe_blocking_reasons(
+                    route_reacquisition_book,
+                    fallback_route_reacquisition_book=proof_floor_route_book,
+                )
     if route_reacquisition_book is None:
         route_reacquisition_book = cast(Mapping[str, Any], {})
     payload = build_paper_route_target_plan_payload(
@@ -4913,6 +4919,55 @@ def _paper_route_probe_book_from_target_plan(
             "live_submit_enabled": False,
         },
     }
+
+
+def _paper_route_probe_blocking_reasons_from_book(
+    route_reacquisition_book: Mapping[str, Any],
+) -> list[str]:
+    raw_probe = route_reacquisition_book.get("paper_route_probe")
+    if not isinstance(raw_probe, Mapping):
+        return []
+    probe = cast(Mapping[str, Any], raw_probe)
+    raw_reasons = probe.get("blocking_reasons")
+    if not isinstance(raw_reasons, Sequence) or isinstance(
+        raw_reasons,
+        (str, bytes, bytearray),
+    ):
+        return []
+    reason_values = cast(Sequence[object], raw_reasons)
+    reasons: list[str] = []
+    for raw_reason in reason_values:
+        reason = str(raw_reason).strip()
+        if reason and reason not in reasons:
+            reasons.append(reason)
+    return reasons
+
+
+def _merge_paper_route_probe_blocking_reasons(
+    route_reacquisition_book: Mapping[str, Any],
+    *,
+    fallback_route_reacquisition_book: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    fallback_reasons = _paper_route_probe_blocking_reasons_from_book(
+        fallback_route_reacquisition_book
+    )
+    if not fallback_reasons:
+        return route_reacquisition_book
+
+    merged = deepcopy(dict(route_reacquisition_book))
+    raw_probe = merged.get("paper_route_probe")
+    probe: dict[str, Any] = (
+        dict(cast(Mapping[str, Any], raw_probe))
+        if isinstance(raw_probe, Mapping)
+        else {}
+    )
+    reasons = _paper_route_probe_blocking_reasons_from_book(route_reacquisition_book)
+    for reason in fallback_reasons:
+        if reason not in reasons:
+            reasons.append(reason)
+    probe["blocking_reasons"] = reasons
+    merged["paper_route_probe"] = probe
+    return merged
 
 
 def _paper_route_target_plan_targets(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
