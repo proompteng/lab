@@ -502,6 +502,7 @@ def _close_decision_payload(
     order_type: str,
     limit_price: Decimal | None,
     lineage: FlattenSourceLineage,
+    generated_at: datetime,
 ) -> dict[str, Any]:
     lineage_status = (
         LINEAGE_LINKED_STATUS if lineage.has_source_lineage else LINEAGE_UNLINKED_STATUS
@@ -538,7 +539,10 @@ def _close_decision_payload(
         "source_trade_decision_id": source_trade_decision_id,
         "source_execution_id": source_execution_id,
         "client_order_id": client_order_id,
+        "strategy_id": str(lineage.strategy_id or FLATTEN_CLEANUP_STRATEGY_NAME),
         "symbol": position.symbol,
+        "event_ts": generated_at.isoformat(),
+        "timeframe": "event",
         "action": position.close_side,
         "qty": str(position.close_qty),
         "order_type": order_type,
@@ -557,6 +561,7 @@ def _persist_close_decision(
     client_order_id: str,
     order_type: str,
     limit_price: Decimal | None,
+    generated_at: datetime,
 ) -> tuple[TradeDecision, FlattenSourceLineage]:
     lineage = _source_lineage(
         session, account_label=account_label, symbol=position.symbol
@@ -567,6 +572,7 @@ def _persist_close_decision(
         order_type=order_type,
         limit_price=limit_price,
         lineage=lineage,
+        generated_at=generated_at,
     )
     stmt = select(TradeDecision).where(
         TradeDecision.decision_hash == client_order_id,
@@ -749,6 +755,7 @@ def flatten_paper_account_positions(
                         client_order_id=client_order_id,
                         order_type=order_type,
                         limit_price=limit_price,
+                        generated_at=generated_at,
                     )
                 except Exception as exc:
                     lineage_session.rollback()

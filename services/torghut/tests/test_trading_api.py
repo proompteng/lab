@@ -7799,6 +7799,118 @@ class TestTradingApi(TestCase):
             else:
                 app.state.trading_scheduler = original_scheduler
 
+    def test_live_paper_route_target_plan_uses_bounded_sim_cached_gate_fast_path(
+        self,
+    ) -> None:
+        original_scheduler = getattr(app.state, "trading_scheduler", None)
+        original_trading_mode = settings.trading_mode
+        original_target_plan_url = settings.trading_paper_route_target_plan_url
+        settings.trading_mode = "live"
+        settings.trading_paper_route_target_plan_url = None
+        self.addCleanup(setattr, settings, "trading_mode", original_trading_mode)
+        self.addCleanup(
+            setattr,
+            settings,
+            "trading_paper_route_target_plan_url",
+            original_target_plan_url,
+        )
+        target = {
+            "hypothesis_id": "H-PAIRS-01",
+            "candidate_id": "c88421d619759b2cfaa6f4d0",
+            "observed_stage": "paper",
+            "strategy_family": "microbar_cross_sectional_pairs",
+            "strategy_name": "microbar-cross-sectional-pairs-v1",
+            "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+            "account_label": "TORGHUT_SIM",
+            "source_kind": "runtime_ledger_paper_probation_candidates",
+            "source_manifest_ref": "config/trading/hypotheses/h-pairs.json",
+            "dataset_snapshot_ref": "portfolio-profit-autoresearch-500-v1",
+            "paper_route_probe_symbols": ["AAPL", "AMZN"],
+            "paper_probation_authorized": True,
+            "bounded_evidence_collection_authorized": True,
+            "promotion_allowed": False,
+            "final_promotion_allowed": False,
+            "final_promotion_authorized": False,
+            "max_notional": "0",
+        }
+        cached_gate = {
+            "allowed": False,
+            "reason": "simple_submit_disabled",
+            "blocked_reasons": [
+                "alpha_readiness_not_promotion_eligible",
+                "simple_submit_disabled",
+            ],
+            "promotion_eligible_total": 0,
+            "runtime_ledger_paper_probation_import_plan": {
+                "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                "target_count": 1,
+                "skipped_target_count": 0,
+                "promotion_allowed": False,
+                "final_promotion_allowed": False,
+                "final_promotion_authorized": False,
+                "targets": [target],
+            },
+        }
+        fake_scheduler = SimpleNamespace(
+            state=SimpleNamespace(market_session_open=True),
+            _last_live_submission_gate=cached_gate,
+        )
+        try:
+            app.state.trading_scheduler = fake_scheduler
+            with (
+                patch(
+                    "app.main._empirical_jobs_status",
+                    side_effect=AssertionError("empirical jobs should not load"),
+                ),
+                patch(
+                    "app.main.load_quant_evidence_status",
+                    side_effect=AssertionError("quant evidence should not load"),
+                ),
+                patch(
+                    "app.main._load_tca_summary",
+                    side_effect=AssertionError("TCA summary should not load"),
+                ),
+                patch(
+                    "app.main._build_hypothesis_runtime_payload",
+                    side_effect=AssertionError("hypothesis payload should not load"),
+                ),
+                patch(
+                    "app.main._build_live_submission_gate_payload",
+                    side_effect=AssertionError("live gate should use cache"),
+                ),
+                patch(
+                    "app.main._build_profitability_proof_floor_payload",
+                    side_effect=AssertionError("proof floor should not run"),
+                ),
+                patch(
+                    "app.main._build_simple_lane_status_payload",
+                    return_value={
+                        "paper_route_probe_enabled": True,
+                        "paper_route_probe_max_notional": "75000",
+                    },
+                ),
+            ):
+                response = self.client.get("/trading/paper-route-target-plan")
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["target_count"], 1)
+            self.assertEqual(
+                payload["live_submission_gate"]["paper_route_target_plan_source"],
+                "cached_live_submission_gate",
+            )
+            self.assertFalse(payload["summary"]["promotion_authority"]["allowed"])
+            self.assertFalse(payload["paper_route_probe"]["active"])
+            self.assertIn(
+                "not_paper_mode",
+                payload["paper_route_probe"]["blocking_reasons"],
+            )
+        finally:
+            if original_scheduler is None:
+                if hasattr(app.state, "trading_scheduler"):
+                    del app.state.trading_scheduler
+            else:
+                app.state.trading_scheduler = original_scheduler
+
     def test_live_paper_route_target_plan_bypasses_cached_gate_scope(
         self,
     ) -> None:
@@ -8265,6 +8377,9 @@ class TestTradingApi(TestCase):
         )
 
     def test_paper_route_cached_gate_requires_target_plan(self) -> None:
+        self.assertFalse(main_module._paper_route_target_plan_truthy(0))
+        self.assertTrue(main_module._paper_route_target_plan_truthy(1))
+        self.assertFalse(main_module._paper_route_target_plan_cache_safe_for_live({}))
         self.assertIsNone(
             main_module._paper_route_cached_live_submission_gate(
                 SimpleNamespace(_last_live_submission_gate=None)
@@ -8273,6 +8388,55 @@ class TestTradingApi(TestCase):
         self.assertIsNone(
             main_module._paper_route_cached_live_submission_gate(
                 SimpleNamespace(_last_live_submission_gate={"allowed": False})
+            )
+        )
+        unsafe_gate = {
+            "runtime_ledger_paper_probation_import_plan": {
+                "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                "target_count": 1,
+                "promotion_allowed": True,
+                "final_promotion_allowed": False,
+                "targets": [
+                    {
+                        "hypothesis_id": "H-PAIRS-01",
+                        "candidate_id": "c88421d619759b2cfaa6f4d0",
+                        "account_label": "TORGHUT_SIM",
+                        "paper_route_probe_symbols": ["AAPL"],
+                        "promotion_allowed": False,
+                        "final_promotion_allowed": False,
+                    }
+                ],
+            }
+        }
+        self.assertIsNone(
+            main_module._paper_route_cached_live_submission_gate(
+                SimpleNamespace(_last_live_submission_gate=unsafe_gate),
+                require_bounded_sim_targets=True,
+            )
+        )
+        unsafe_target_gate = {
+            "runtime_ledger_paper_probation_import_plan": {
+                "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                "target_count": 1,
+                "promotion_allowed": False,
+                "final_promotion_allowed": False,
+                "targets": [
+                    {
+                        "hypothesis_id": "H-PAIRS-01",
+                        "candidate_id": "c88421d619759b2cfaa6f4d0",
+                        "account_label": "TORGHUT_SIM",
+                        "paper_route_probe_symbols": ["AAPL"],
+                        "promotion_allowed": False,
+                        "final_promotion_allowed": False,
+                        "final_promotion_authorized": "yes",
+                    }
+                ],
+            }
+        }
+        self.assertIsNone(
+            main_module._paper_route_cached_live_submission_gate(
+                SimpleNamespace(_last_live_submission_gate=unsafe_target_gate),
+                require_bounded_sim_targets=True,
             )
         )
 

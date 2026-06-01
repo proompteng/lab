@@ -15,6 +15,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from app.models import Base, Execution, ExecutionOrderEvent, Strategy, TradeDecision
+from app.trading.models import StrategyDecision
 from scripts import flatten_paper_account_positions as flatten_script
 from scripts.flatten_paper_account_positions import (
     flatten_paper_account_positions,
@@ -327,6 +328,13 @@ class TestFlattenPaperAccountPositions(TestCase):
                 decision_json["schema_version"],
                 "torghut.paper-account-flatten-close-decision.v1",
             )
+            StrategyDecision.model_validate(decision_json)
+            self.assertEqual(decision_json["strategy_id"], str(strategy.id))
+            self.assertEqual(
+                decision_json["event_ts"],
+                "2026-06-01T13:35:00+00:00",
+            )
+            self.assertEqual(decision_json["timeframe"], "event")
             self.assertEqual(
                 decision_json["source_candidate_ids"],
                 ["c88421d619759b2cfaa6f4d0"],
@@ -388,6 +396,16 @@ class TestFlattenPaperAccountPositions(TestCase):
             self.assertEqual(
                 decision_json["flatten_lineage_status"], "unlinked_no_source_lineage"
             )
+            StrategyDecision.model_validate(decision_json)
+            self.assertEqual(
+                decision_json["strategy_id"],
+                str(close_decision.strategy_id),
+            )
+            self.assertEqual(
+                decision_json["event_ts"],
+                "2026-06-01T13:40:00+00:00",
+            )
+            self.assertEqual(decision_json["timeframe"], "event")
             self.assertEqual(decision_json["source_candidate_ids"], [])
             self.assertFalse(decision_json["profit_proof_eligible"])
             close_execution = session.execute(
@@ -464,6 +482,7 @@ class TestFlattenPaperAccountPositions(TestCase):
                 client_order_id=second_client_order_id,
                 order_type="market",
                 limit_price=None,
+                generated_at=generated_at,
             )
             reused_decision, _ = flatten_script._persist_close_decision(
                 session,
@@ -472,6 +491,7 @@ class TestFlattenPaperAccountPositions(TestCase):
                 client_order_id=second_client_order_id,
                 order_type="market",
                 limit_price=None,
+                generated_at=generated_at,
             )
 
             self.assertEqual(first_payload["lineage_result_count"], 1)
