@@ -23,6 +23,7 @@ jobs:
     runs-on: arc-arm64
     permissions:
       contents: write
+      issues: write
       pull-requests: write
     steps:
       - name: Checkout
@@ -399,32 +400,68 @@ jobs:
 
       - name: Close superseded Torghut rollback pull requests
         if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
-        shell: bash
+        uses: actions/github-script@v8
         env:
-          GH_TOKEN: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
           VERIFIED_SHA: ${{ github.sha }}
           VERIFIED_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          set -euo pipefail
+        with:
+          github-token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
+          script: |
+            const { owner, repo } = context.repo
+            const rollbackPrefix = 'codex/torghut-rollback-'
+            const rollbackTitlePrefix = 'revert(torghut): rollback failed promotion '
+            const verifiedSha = process.env.VERIFIED_SHA
+            const verifiedRunUrl = process.env.VERIFIED_RUN_URL
 
-          mapfile -t rollback_pr_numbers < <(
-            gh pr list -R "${GH_REPO}" --state open --base main --limit 200 \
-              --json number,title,headRefName \
-              --jq ".[] | select(.headRefName | startswith(\"codex/torghut-rollback-\")) | select(.title | startswith(\"revert(torghut): rollback failed promotion \")) | .number"
-          )
+            const openPulls = await github.paginate(github.rest.pulls.list, {
+              owner,
+              repo,
+              state: 'open',
+              base: 'main',
+              per_page: 100,
+            })
 
-          if [ "${#rollback_pr_numbers[@]}" -eq 0 ]; then
-            echo "No superseded Torghut rollback pull requests to close"
-            exit 0
-          fi
+            const rollbackPulls = openPulls.filter((pr) =>
+              pr.head?.repo?.full_name === `${owner}/${repo}` &&
+              pr.head?.ref?.startsWith(rollbackPrefix) &&
+              pr.title?.startsWith(rollbackTitlePrefix)
+            )
 
-          for pr_number in "${rollback_pr_numbers[@]}"; do
-            printf -v comment "Closing this superseded automatic Torghut rollback PR because a newer torghut-post-deploy-verify run succeeded on %s.\n\nSuccessful run: %s\n" \
-              "${VERIFIED_SHA}" \
-              "${VERIFIED_RUN_URL}"
-            gh pr close "${pr_number}" -R "${GH_REPO}" --delete-branch --comment "${comment}"
-          done
+            if (rollbackPulls.length === 0) {
+              core.info('No superseded Torghut rollback pull requests to close')
+              return
+            }
+
+            for (const pr of rollbackPulls) {
+              const body = [
+                `Closing this superseded automatic Torghut rollback PR because a newer torghut-post-deploy-verify run succeeded on ${verifiedSha}.`,
+                '',
+                `Successful run: ${verifiedRunUrl}`,
+              ].join('\n')
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: pr.number,
+                body,
+              })
+              await github.rest.pulls.update({
+                owner,
+                repo,
+                pull_number: pr.number,
+                state: 'closed',
+              })
+              await github.rest.git.deleteRef({
+                owner,
+                repo,
+                ref: `heads/${pr.head.ref}`,
+              }).catch((error) => {
+                if (![404, 422].includes(error.status)) {
+                  throw error
+                }
+                core.warning(`Could not delete ${pr.head.ref}: ${error.message}`)
+              })
+              core.info(`Closed superseded Torghut rollback PR #${pr.number}`)
+            }
 
       - name: Prepare rollback manifests
         if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -446,6 +483,14 @@ jobs:
             exit 0
           fi
 
+          git fetch --no-tags --depth=200 origin main
+          MAIN_HEAD="$(git rev-parse origin/main)"
+          if [ "${GITHUB_SHA}" != "${MAIN_HEAD}" ]; then
+            echo "Skipping rollback PR because main advanced from ${GITHUB_SHA} to ${MAIN_HEAD}"
+            echo "should_rollback=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           git checkout --quiet HEAD^ -- \
             argocd/applications/torghut \
             argocd/applications/torghut-options
@@ -462,33 +507,71 @@ jobs:
 
       - name: Close older failed-promotion rollback pull requests
         if: failure() && steps.rollback.outputs.should_rollback == 'true'
-        shell: bash
+        uses: actions/github-script@v8
         env:
-          GH_TOKEN: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
           FAILED_SHA: ${{ github.sha }}
           FAILED_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          set -euo pipefail
+          CURRENT_ROLLBACK_BRANCH: codex/torghut-rollback-${{ github.run_id }}-${{ github.run_attempt }}
+        with:
+          github-token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
+          script: |
+            const { owner, repo } = context.repo
+            const rollbackPrefix = 'codex/torghut-rollback-'
+            const rollbackTitlePrefix = 'revert(torghut): rollback failed promotion '
+            const currentBranch = process.env.CURRENT_ROLLBACK_BRANCH
+            const failedSha = process.env.FAILED_SHA
+            const failedRunUrl = process.env.FAILED_RUN_URL
 
-          current_branch="codex/torghut-rollback-${{ github.run_id }}-${{ github.run_attempt }}"
-          mapfile -t rollback_pr_numbers < <(
-            gh pr list -R "${GH_REPO}" --state open --base main --limit 200 \
-              --json number,title,headRefName \
-              --jq ".[] | select(.headRefName | startswith(\"codex/torghut-rollback-\")) | select(.headRefName != \"${current_branch}\") | select(.title | startswith(\"revert(torghut): rollback failed promotion \")) | .number"
-          )
+            const openPulls = await github.paginate(github.rest.pulls.list, {
+              owner,
+              repo,
+              state: 'open',
+              base: 'main',
+              per_page: 100,
+            })
 
-          if [ "${#rollback_pr_numbers[@]}" -eq 0 ]; then
-            echo "No older Torghut rollback pull requests to close"
-            exit 0
-          fi
+            const rollbackPulls = openPulls.filter((pr) =>
+              pr.head?.repo?.full_name === `${owner}/${repo}` &&
+              pr.head?.ref?.startsWith(rollbackPrefix) &&
+              pr.head.ref !== currentBranch &&
+              pr.title?.startsWith(rollbackTitlePrefix)
+            )
 
-          for pr_number in "${rollback_pr_numbers[@]}"; do
-            printf -v comment "Closing this older automatic Torghut rollback PR because a newer failed promotion rollback is being opened for %s.\n\nNew failed run: %s\n" \
-              "${FAILED_SHA}" \
-              "${FAILED_RUN_URL}"
-            gh pr close "${pr_number}" -R "${GH_REPO}" --delete-branch --comment "${comment}"
-          done
+            if (rollbackPulls.length === 0) {
+              core.info('No older Torghut rollback pull requests to close')
+              return
+            }
+
+            for (const pr of rollbackPulls) {
+              const body = [
+                `Closing this older automatic Torghut rollback PR because a newer failed promotion rollback is being opened for ${failedSha}.`,
+                '',
+                `New failed run: ${failedRunUrl}`,
+              ].join('\n')
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: pr.number,
+                body,
+              })
+              await github.rest.pulls.update({
+                owner,
+                repo,
+                pull_number: pr.number,
+                state: 'closed',
+              })
+              await github.rest.git.deleteRef({
+                owner,
+                repo,
+                ref: `heads/${pr.head.ref}`,
+              }).catch((error) => {
+                if (![404, 422].includes(error.status)) {
+                  throw error
+                }
+                core.warning(`Could not delete ${pr.head.ref}: ${error.message}`)
+              })
+              core.info(`Closed older Torghut rollback PR #${pr.number}`)
+            }
 
       - name: Open rollback pull request
         if: failure() && steps.rollback.outputs.should_rollback == 'true'
