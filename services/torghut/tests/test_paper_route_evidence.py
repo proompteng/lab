@@ -27,6 +27,7 @@ from app.trading.paper_route_evidence import (
     PAPER_ROUTE_SOURCE_ACTIVITY_REF_LIMIT,
     PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT,
     RUNTIME_LEDGER_PROOF_PACKET_HANDOFF_SCHEMA_VERSION,
+    _account_contamination_reason,
     _account_pre_session_snapshot_audit,
     _account_window_start_snapshot_audit,
     _balanced_pair_probe_symbol_actions,
@@ -69,6 +70,17 @@ class TestPaperRouteEvidenceAudit(TestCase):
 
         self.assertEqual(actions, {"AAPL": "buy", "AMZN": "sell"})
         self.assertEqual(_pair_probe_balance_state(actions), "balanced")
+
+    def test_account_contamination_reason_reports_mixed_foreign_and_unlinked(
+        self,
+    ) -> None:
+        self.assertEqual(
+            _account_contamination_reason(
+                unlinked_order_event_count=1,
+                foreign_linked_order_event_count=1,
+            ),
+            "unlinked_and_foreign_account_order_events_present",
+        )
 
     def test_balanced_pair_probe_accepts_explicit_true_and_short_alias(self) -> None:
         actions = _balanced_pair_probe_symbol_actions(
@@ -1464,6 +1476,79 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(clean_readiness["state"], "clean")
         self.assertEqual(clean_readiness["clean_target_count"], 1)
         self.assertEqual(clean_readiness["blockers"], [])
+
+    def test_older_contaminated_window_does_not_poison_later_clean_target_window(
+        self,
+    ) -> None:
+        generated_at = datetime(2026, 5, 26, 13, 35, tzinfo=timezone.utc)
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            session.add(
+                Strategy(
+                    name="paper-route-candidate-v1",
+                    description="clean isolated target window source strategy",
+                    enabled=True,
+                    base_timeframe="1Sec",
+                    universe_type="static",
+                    universe_symbols=["AAPL", "AMZN"],
+                )
+            )
+            session.add(
+                ExecutionOrderEvent(
+                    event_fingerprint="older-contaminated-window-aapl-fill",
+                    source_topic="alpaca.trade_updates",
+                    source_partition=0,
+                    source_offset=41,
+                    alpaca_account_label="TORGHUT_SIM",
+                    event_ts=window_start - timedelta(days=1),
+                    symbol="AAPL",
+                    alpaca_order_id="older-contaminated-order-1",
+                    client_order_id="intraday-tsmom-AAPL-older-contamination-1",
+                    event_type="fill",
+                    status="filled",
+                    qty=Decimal("1"),
+                    filled_qty=Decimal("1"),
+                    avg_fill_price=Decimal("101"),
+                    raw_event={"source": "older_intraday_tsmom_window"},
+                    execution_id=None,
+                    trade_decision_id=None,
+                )
+            )
+            self._add_account_position_snapshot(
+                session,
+                account_label="TORGHUT_SIM",
+                as_of=window_start - timedelta(minutes=5),
+                positions=[],
+            )
+            session.commit()
+
+            payload = self._build_basic_paper_route_target_plan(
+                session,
+                generated_at=generated_at,
+            )
+
+        plan = payload["next_paper_route_runtime_window_targets"]
+        self.assertEqual(plan["target_count"], 1)
+        target = plan["targets"][0]
+        contamination = target["paper_route_account_contamination_state"]
+        self.assertFalse(contamination["contaminated"])
+        self.assertEqual(contamination["order_event_count"], 0)
+        self.assertEqual(contamination["unlinked_order_event_count"], 0)
+        self.assertEqual(contamination["sample_client_order_ids"], [])
+        self.assertEqual(contamination["sample_order_event_refs"], [])
+        contamination_readiness = plan["account_contamination_readiness"]
+        self.assertEqual(contamination_readiness["state"], "clean")
+        self.assertEqual(contamination_readiness["clean_target_count"], 1)
+        self.assertEqual(contamination_readiness["contaminated_target_count"], 0)
+        self.assertEqual(contamination_readiness["unlinked_order_event_count"], 0)
+        self.assertEqual(contamination_readiness["blockers"], [])
+        self.assertEqual(
+            target["paper_route_clean_window_state"], "clean_window_collection_ready"
+        )
+        self.assertTrue(target["evidence_collection_ok"])
+        self.assertTrue(target["bounded_evidence_collection_authorized"])
+        self.assertFalse(target["promotion_allowed"])
+        self.assertFalse(target["final_promotion_allowed"])
 
     def test_target_account_audit_unavailable_blocks_collection_readiness(
         self,
@@ -6276,15 +6361,27 @@ class TestPaperRouteEvidenceAudit(TestCase):
             contamination["sample_client_order_ids"],
             ["autonomous-trader-AAPL-cover-external-1"],
         )
+        self.assertEqual(
+            contamination["reason"], "unlinked_account_order_events_present"
+        )
+        self.assertEqual(
+            contamination["sample_order_event_refs"][0]["event_fingerprint"],
+            "external-autonomous-trader-order-event",
+        )
         self.assertIn(
             "paper_route_account_contamination_detected",
             audit["readiness"]["blockers"],
         )
         contract = audit["evidence_window_contract"]
         self.assertEqual(contract["state"], "contaminated_window_discarded")
+        self.assertEqual(contract["reason"], "unlinked_account_order_events_present")
         self.assertFalse(contract["proof_allowed"])
         self.assertFalse(contract["promotion_allowed"])
         self.assertFalse(contract["final_promotion_allowed"])
+        self.assertEqual(
+            contract["sample_order_event_refs"][0]["client_order_id"],
+            "autonomous-trader-AAPL-cover-external-1",
+        )
         import_audit = payload["runtime_window_import_audit"]
         self.assertEqual(
             import_audit["state"], "import_due_account_contamination_detected"
@@ -6303,6 +6400,12 @@ class TestPaperRouteEvidenceAudit(TestCase):
                 "client_order_id_count"
             ],
             1,
+        )
+        self.assertEqual(
+            import_audit["target_blockers"][0]["account_contamination"][
+                "sample_order_event_refs"
+            ][0]["event_fingerprint"],
+            "external-autonomous-trader-order-event",
         )
         target_plan_import_audit = target_plan_payload["runtime_window_import_audit"]
         self.assertEqual(
@@ -6427,6 +6530,22 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertIn(
             "unlinked_order_events_present",
             target["bounded_evidence_collection_blockers"],
+        )
+        contamination_readiness = payload["next_paper_route_runtime_window_targets"][
+            "account_contamination_readiness"
+        ]
+        self.assertEqual(
+            contamination_readiness["state"], "contaminated_window_discarded"
+        )
+        self.assertEqual(contamination_readiness["contaminated_target_count"], 1)
+        self.assertEqual(contamination_readiness["unlinked_order_event_count"], 1)
+        self.assertEqual(
+            contamination_readiness["sample_client_order_ids"],
+            ["autonomous-trader-AAPL-cover-active-1"],
+        )
+        self.assertEqual(
+            contamination_readiness["sample_order_event_refs"][0]["event_fingerprint"],
+            "active-external-autonomous-trader-event",
         )
 
     def test_active_window_foreign_linked_order_events_block_target_plan_collection(
@@ -6564,10 +6683,29 @@ class TestPaperRouteEvidenceAudit(TestCase):
             contamination["foreign_strategy_counts"],
             {"intraday-tsmom-profit-v3": 1},
         )
+        self.assertEqual(
+            contamination["reason"], "foreign_account_order_events_present"
+        )
+        self.assertEqual(
+            contamination["sample_order_event_refs"][0]["strategy_name"],
+            "intraday-tsmom-profit-v3",
+        )
         self.assertFalse(target["evidence_collection_ok"])
         self.assertIn(
             "foreign_order_events_present",
             target["bounded_evidence_collection_blockers"],
+        )
+        contamination_readiness = payload["next_paper_route_runtime_window_targets"][
+            "account_contamination_readiness"
+        ]
+        self.assertEqual(
+            contamination_readiness["state"], "contaminated_window_discarded"
+        )
+        self.assertEqual(contamination_readiness["contaminated_target_count"], 1)
+        self.assertEqual(contamination_readiness["foreign_linked_order_event_count"], 1)
+        self.assertEqual(
+            contamination_readiness["sample_order_event_refs"][0]["client_order_id"],
+            "tsmom-AAPL-foreign-linked-1",
         )
 
     def test_account_window_start_positions_block_runtime_window_import(
