@@ -141,6 +141,10 @@ from .trading.paper_route_evidence import (
 from .trading.runtime_cost_authority import (
     cost_basis_counts_have_non_promotion_grade_costs,
 )
+from .trading.runtime_ledger_source_authority import (
+    build_runtime_ledger_profit_distance_readback,
+    runtime_ledger_promotion_source_authority_blockers,
+)
 from .trading.proof_floor import build_profitability_proof_floor_receipt
 from .trading.quality_adjusted_profit_frontier import (
     build_quality_adjusted_profit_frontier,
@@ -2661,6 +2665,12 @@ def trading_status() -> dict[str, object]:
         llm_evaluation = _load_llm_evaluation(session)
         tca_summary = _load_tca_summary(session, scheduler=scheduler)
         tigerbeetle_ledger = _build_tigerbeetle_ledger_status(session)
+        runtime_ledger_portfolio_summary = _daily_runtime_ledger_portfolio_summary(
+            session=session,
+            account_label=settings.trading_account_label,
+            stage_scope="live" if settings.trading_mode == "live" else "paper",
+            observed_at=datetime.now(timezone.utc),
+        )
     market_context_status = scheduler.market_context_status()
     hypothesis_payload, hypothesis_summary, hypothesis_dependency_quorum = (
         _build_hypothesis_runtime_payload(
@@ -2954,6 +2964,12 @@ def trading_status() -> dict[str, object]:
         "running": state.running,
         "live_submission_gate": live_submission_gate,
         "tigerbeetle_ledger": tigerbeetle_ledger,
+        "portfolio_runtime_ledger_summary": runtime_ledger_portfolio_summary,
+        "runtime_ledger_profit_distance_readback": (
+            runtime_ledger_portfolio_summary.get(
+                "runtime_ledger_profit_distance_readback"
+            )
+        ),
         "profit_lease_projection": live_submission_gate.get("profit_lease_projection"),
         "proof_floor": proof_floor,
         "renewal_bond_profit_escrow": renewal_bond_profit_escrow,
@@ -3926,6 +3942,7 @@ def _runtime_ledger_bucket_evidence_grade(row: StrategyRuntimeLedgerBucket) -> b
         and not cost_basis_counts_have_non_promotion_grade_costs(
             payload_json.get("cost_basis_counts")
         )
+        and not runtime_ledger_promotion_source_authority_blockers(payload_json)
         and not blockers
     )
 
@@ -4017,6 +4034,58 @@ def _daily_runtime_ledger_portfolio_summary(
         (row.filled_notional for row in evidence_rows),
         Decimal("0"),
     )
+    closed_trade_count = sum(
+        max(0, int(row.closed_trade_count or 0)) for row in evidence_rows
+    )
+    open_position_count = sum(
+        max(0, int(row.open_position_count or 0)) for row in evidence_rows
+    )
+    source_authority_blockers: list[str] = []
+    source_authority_bucket_count = 0
+    for row in rows:
+        raw_payload = cast(object, row.payload_json)
+        payload = (
+            {
+                str(key): item
+                for key, item in cast(Mapping[object, object], raw_payload).items()
+            }
+            if isinstance(raw_payload, Mapping)
+            else {}
+        )
+        row_source_blockers = runtime_ledger_promotion_source_authority_blockers(
+            payload
+        )
+        if row_source_blockers:
+            for blocker in row_source_blockers:
+                if blocker not in source_authority_blockers:
+                    source_authority_blockers.append(blocker)
+        else:
+            source_authority_bucket_count += 1
+    net_pnl_by_day = {
+        day_start.date().isoformat(): str(net_pnl),
+    }
+    filled_notional_by_day = {
+        day_start.date().isoformat(): str(filled_notional),
+    }
+    daily_summary = {
+        "runtime_ledger_observed_trading_day_count": 1 if rows else 0,
+        "runtime_ledger_net_pnl_by_trading_day": net_pnl_by_day if rows else {},
+        "runtime_ledger_mean_daily_net_pnl_after_costs": str(net_pnl),
+        "runtime_ledger_median_daily_net_pnl_after_costs": str(net_pnl),
+        "runtime_ledger_p10_daily_net_pnl_after_costs": str(net_pnl),
+        "runtime_ledger_worst_day_net_pnl_after_costs": str(net_pnl),
+        "runtime_ledger_max_intraday_drawdown": "0",
+        "runtime_ledger_avg_daily_filled_notional": str(filled_notional),
+        "runtime_ledger_filled_notional_by_trading_day": filled_notional_by_day
+        if rows
+        else {},
+        "runtime_ledger_closed_trade_count_by_day": {
+            day_start.date().isoformat(): closed_trade_count,
+        }
+        if rows
+        else {},
+        "runtime_ledger_filled_notional": str(filled_notional),
+    }
     candidate_ids = sorted(
         {
             str(row.candidate_id).strip()
@@ -4029,6 +4098,22 @@ def _daily_runtime_ledger_portfolio_summary(
         blockers.append("portfolio_runtime_ledger_summary_missing")
     elif not evidence_rows:
         blockers.append("portfolio_runtime_ledger_summary_not_evidence_grade")
+    for blocker in source_authority_blockers:
+        if blocker not in blockers:
+            blockers.append(blocker)
+    profit_distance_readback = build_runtime_ledger_profit_distance_readback(
+        summary=daily_summary,
+        candidate_id=",".join(candidate_ids) if candidate_ids else None,
+        observed_stage=stage if stage in {"paper", "live"} else None,
+        runtime_ledger_bucket_count=len(rows),
+        evidence_grade_runtime_ledger_bucket_count=len(evidence_rows),
+        source_authority_bucket_count=source_authority_bucket_count,
+        source_authority_blockers=source_authority_blockers,
+        blockers=blockers,
+        total_filled_notional=filled_notional,
+        total_closed_trade_count=closed_trade_count,
+        open_position_count=open_position_count,
+    )
     return {
         "summary_basis": "runtime_ledger_daily_stage_account_scope",
         "day_start": day_start.isoformat(),
@@ -4042,6 +4127,11 @@ def _daily_runtime_ledger_portfolio_summary(
         "evidence_grade_bucket_count": len(evidence_rows),
         "post_cost_net_pnl_per_day": str(net_pnl),
         "filled_notional": str(filled_notional),
+        "closed_trade_count": closed_trade_count,
+        "open_position_count": open_position_count,
+        "source_authority_bucket_count": source_authority_bucket_count,
+        "source_authority_blockers": source_authority_blockers,
+        "runtime_ledger_profit_distance_readback": profit_distance_readback,
         "candidate_ids": candidate_ids,
         "db_row_refs": [str(row.id) for row in evidence_rows],
         "blockers": blockers,

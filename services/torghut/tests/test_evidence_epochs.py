@@ -38,6 +38,40 @@ from app.trading.evidence_receipts import (
 from app.trading.scheduler import TradingScheduler
 
 
+def _runtime_ledger_source_authority_payload() -> dict[str, object]:
+    return {
+        "source_window_start": "2026-05-29T14:30:00+00:00",
+        "source_window_end": "2026-05-29T15:00:00+00:00",
+        "source_refs": [
+            "postgres:trade_decisions",
+            "postgres:executions",
+            "postgres:execution_order_events",
+            "postgres:order_feed_source_windows",
+        ],
+        "source_row_counts": {
+            "trade_decisions": 2,
+            "executions": 2,
+            "execution_order_events": 2,
+            "order_feed_source_windows": 2,
+        },
+        "trade_decision_ids": ["decision-buy", "decision-sell"],
+        "execution_ids": ["execution-buy", "execution-sell"],
+        "execution_order_event_ids": ["event-fill-buy", "event-fill-sell"],
+        "source_window_ids": ["source-window-buy", "source-window-sell"],
+        "source_offsets": [
+            {"topic": "alpaca.trade_updates", "partition": 0, "offset": 100},
+            {"topic": "alpaca.trade_updates", "partition": 0, "offset": 101},
+        ],
+        "source_materialization": "execution_order_events",
+        "authority_class": "runtime_order_feed_execution_source",
+        "authority_reason": "event_sourced_runtime_ledger_profit_proof",
+        "filled_notional": "1000",
+        "cost_amount": "1",
+        "cost_basis_counts": {"alpaca_2026_equity_fee_schedule": 2},
+        "cost_model_hash_counts": {"cost": 2},
+    }
+
+
 class TestEvidenceEpochs(TestCase):
     def test_env_json_string_list_accepts_json_and_fail_closed_values(self) -> None:
         with patch.dict(
@@ -329,6 +363,7 @@ class TestEvidenceEpochs(TestCase):
                         cost_model_hash_counts={"cost": 2},
                         lineage_hash_counts={"lineage": 2},
                         blockers_json=[],
+                        payload_json=_runtime_ledger_source_authority_payload(),
                     )
                 )
             session.commit()
@@ -412,6 +447,7 @@ class TestEvidenceEpochs(TestCase):
                     cost_model_hash_counts={"cost": 2},
                     lineage_hash_counts={"lineage": 2},
                     blockers_json=["runtime_ledger_stage_not_live"],
+                    payload_json=_runtime_ledger_source_authority_payload(),
                 )
             )
             session.commit()

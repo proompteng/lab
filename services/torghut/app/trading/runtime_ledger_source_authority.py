@@ -384,7 +384,9 @@ def _filled_notional_present(bucket: Mapping[str, object]) -> bool:
 def _explicit_cost_basis_present(bucket: Mapping[str, object]) -> bool:
     if is_non_promotion_grade_runtime_cost_basis(bucket.get("cost_basis")):
         return False
-    if cost_basis_counts_have_non_promotion_grade_costs(bucket.get("cost_basis_counts")):
+    if cost_basis_counts_have_non_promotion_grade_costs(
+        bucket.get("cost_basis_counts")
+    ):
         return False
     if cost_basis_counts_have_non_promotion_grade_costs(
         bucket.get("post_cost_basis_counts")
@@ -395,13 +397,16 @@ def _explicit_cost_basis_present(bucket: Mapping[str, object]) -> bool:
     )
     if _positive_mapping_value_count(cost_basis_counts) > 0:
         return True
-    return _text(
-        bucket.get("cost_basis")
-        or bucket.get("cost_source")
-        or bucket.get("fee_basis")
-        or bucket.get("commission_basis")
-        or bucket.get("broker_fee_basis")
-    ) is not None
+    return (
+        _text(
+            bucket.get("cost_basis")
+            or bucket.get("cost_source")
+            or bucket.get("fee_basis")
+            or bucket.get("commission_basis")
+            or bucket.get("broker_fee_basis")
+        )
+        is not None
+    )
 
 
 def _explicit_cost_amount_present(bucket: Mapping[str, object]) -> bool:
@@ -565,16 +570,20 @@ def runtime_ledger_promotion_source_authority_blockers(
     if _source_window_gap_count(bucket) > 0:
         blockers.append(ORDER_FEED_SOURCE_WINDOW_GAP_BLOCKER)
     lifecycle_complete = _truthy_flag(bucket.get("order_feed_lifecycle_complete"))
-    if lifecycle_complete is False or _source_window_classification_count(
-        bucket,
-        "unlinked_execution",
-        "unlinked_decision",
-        "missing_order_identity",
-        "missing_trade_update_payload",
-        "malformed_json",
-        "out_of_scope_account",
-        "failed_unhandled",
-    ) > 0:
+    if (
+        lifecycle_complete is False
+        or _source_window_classification_count(
+            bucket,
+            "unlinked_execution",
+            "unlinked_decision",
+            "missing_order_identity",
+            "missing_trade_update_payload",
+            "malformed_json",
+            "out_of_scope_account",
+            "failed_unhandled",
+        )
+        > 0
+    ):
         blockers.append(ORDER_FEED_LIFECYCLE_MISSING_BLOCKER)
     economics_complete = _truthy_flag(bucket.get("execution_economics_complete"))
     economics_required = _truthy_flag(
@@ -585,15 +594,13 @@ def runtime_ledger_promotion_source_authority_blockers(
         economics_required is True and not _execution_economics_present(bucket)
     ):
         blockers.append(EXECUTION_ECONOMICS_MISSING_BLOCKER)
-    if (
-        not _promotion_grade_source_materialization_present(bucket)
-        or _non_promotion_authority_marker_present(bucket.get("source_materialization"))
-    ):
+    if not _promotion_grade_source_materialization_present(
+        bucket
+    ) or _non_promotion_authority_marker_present(bucket.get("source_materialization")):
         blockers.append(RUNTIME_LEDGER_SOURCE_MATERIALIZATION_MISSING_BLOCKER)
-    if (
-        not _promotion_grade_authority_marker_present(bucket)
-        or _non_promotion_derivation_present(bucket)
-    ):
+    if not _promotion_grade_authority_marker_present(
+        bucket
+    ) or _non_promotion_derivation_present(bucket):
         blockers.append(RUNTIME_LEDGER_AUTHORITY_CLASS_MISSING_BLOCKER)
     return list(dict.fromkeys(blockers))
 
@@ -602,6 +609,214 @@ def runtime_ledger_promotion_source_authority_present(
     bucket: Mapping[str, object],
 ) -> bool:
     return not runtime_ledger_promotion_source_authority_blockers(bucket)
+
+
+def _decimal_or_zero(value: object) -> Decimal:
+    try:
+        parsed = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return Decimal("0")
+    return parsed if parsed.is_finite() else Decimal("0")
+
+
+def _decimal_text(value: Decimal) -> str:
+    text = format(value, "f")
+    return text.rstrip("0").rstrip(".") if "." in text else text
+
+
+def _mapping_text_decimal(value: object) -> dict[str, str]:
+    if not isinstance(value, Mapping):
+        return {}
+    return {
+        str(key): _decimal_text(_decimal_or_zero(item))
+        for key, item in cast(Mapping[object, object], value).items()
+    }
+
+
+def _mapping_text_int(value: object) -> dict[str, int]:
+    if not isinstance(value, Mapping):
+        return {}
+    return {
+        str(key): _nonnegative_int(item)
+        for key, item in cast(Mapping[object, object], value).items()
+    }
+
+
+def _unique_texts(value: Sequence[str] | object) -> list[str]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        return []
+    items: list[str] = []
+    for item in cast(Sequence[object], value):
+        text = _text(item)
+        if text is not None and text not in items:
+            items.append(text)
+    return items
+
+
+def _append_unique(items: list[str], additions: Sequence[str]) -> None:
+    for item in additions:
+        text = _text(item)
+        if text is not None and text not in items:
+            items.append(text)
+
+
+def build_runtime_ledger_profit_distance_readback(
+    *,
+    summary: Mapping[str, object],
+    candidate_id: str | None = None,
+    observed_stage: str | None = None,
+    required_daily_net_pnl: Decimal = Decimal("500"),
+    runtime_ledger_bucket_count: int = 0,
+    evidence_grade_runtime_ledger_bucket_count: int = 0,
+    source_authority_bucket_count: int = 0,
+    source_authority_blockers: Sequence[str] = (),
+    blockers: Sequence[str] = (),
+    total_filled_notional: Decimal | None = None,
+    total_closed_trade_count: int | None = None,
+    open_position_count: int | None = None,
+) -> dict[str, object]:
+    """Build a row-backed distance-to-authority readback for operators.
+
+    This helper intentionally reports distance and blockers only. It does not
+    grant authority; callers still need their strict source-backed gates.
+    """
+
+    mean_daily_net_pnl = _decimal_or_zero(
+        summary.get("runtime_ledger_mean_daily_net_pnl_after_costs")
+    )
+    median_daily_net_pnl = _decimal_or_zero(
+        summary.get("runtime_ledger_median_daily_net_pnl_after_costs")
+    )
+    p10_daily_net_pnl = _decimal_or_zero(
+        summary.get("runtime_ledger_p10_daily_net_pnl_after_costs")
+    )
+    worst_day_net_pnl = _decimal_or_zero(
+        summary.get("runtime_ledger_worst_day_net_pnl_after_costs")
+    )
+    max_drawdown = _decimal_or_zero(summary.get("runtime_ledger_max_intraday_drawdown"))
+    avg_daily_filled_notional = _decimal_or_zero(
+        summary.get("runtime_ledger_avg_daily_filled_notional")
+    )
+    resolved_total_filled_notional = (
+        total_filled_notional
+        if total_filled_notional is not None
+        else _decimal_or_zero(summary.get("runtime_ledger_filled_notional"))
+    )
+    resolved_closed_trade_count = (
+        total_closed_trade_count
+        if total_closed_trade_count is not None
+        else _nonnegative_int(summary.get("runtime_ledger_closed_trade_count"))
+    )
+    resolved_open_position_count = (
+        open_position_count
+        if open_position_count is not None
+        else _nonnegative_int(summary.get("runtime_ledger_open_position_count"))
+    )
+    missing_daily_net_pnl = max(
+        Decimal("0"),
+        required_daily_net_pnl - mean_daily_net_pnl,
+    )
+    missing_median_daily_net_pnl = max(
+        Decimal("0"),
+        required_daily_net_pnl - median_daily_net_pnl,
+    )
+    missing_p10_daily_net_pnl = max(
+        Decimal("0"),
+        required_daily_net_pnl - p10_daily_net_pnl,
+    )
+    missing_worst_day_net_pnl = max(
+        Decimal("0"),
+        required_daily_net_pnl - worst_day_net_pnl,
+    )
+    resolved_blockers = _unique_texts(blockers)
+    resolved_source_blockers = _unique_texts(source_authority_blockers)
+    _append_unique(resolved_blockers, resolved_source_blockers)
+    if runtime_ledger_bucket_count <= 0:
+        _append_unique(resolved_blockers, ["runtime_ledger_rows_missing"])
+    if source_authority_bucket_count < runtime_ledger_bucket_count:
+        _append_unique(resolved_blockers, ["runtime_ledger_source_authority_blocked"])
+    if resolved_open_position_count > 0:
+        _append_unique(resolved_blockers, ["runtime_ledger_open_positions_present"])
+    if mean_daily_net_pnl < required_daily_net_pnl:
+        _append_unique(
+            resolved_blockers,
+            ["runtime_ledger_mean_daily_net_pnl_after_costs_below_target"],
+        )
+    next_blocking_reason = resolved_blockers[0] if resolved_blockers else None
+    symbol_concentration = {
+        "share": summary.get("runtime_ledger_symbol_concentration_share"),
+        "basis": summary.get("runtime_ledger_symbol_concentration_basis"),
+        "net_pnl_by_symbol": _mapping_text_decimal(
+            summary.get("runtime_ledger_net_pnl_by_symbol")
+        ),
+    }
+    drawdown: dict[str, object] = {"absolute": _decimal_text(max_drawdown)}
+    drawdown_pct = summary.get("runtime_ledger_drawdown_pct_equity")
+    if drawdown_pct is not None:
+        drawdown["percent_equity"] = _decimal_text(_decimal_or_zero(drawdown_pct))
+        drawdown["percent_equity_source"] = summary.get(
+            "runtime_ledger_drawdown_pct_equity_source"
+        )
+    return {
+        "schema_version": "torghut.runtime-ledger-profit-distance-readback.v1",
+        "candidate_id": candidate_id,
+        "observed_stage": observed_stage,
+        "required_daily_net_pnl": _decimal_text(required_daily_net_pnl),
+        "observed_mean_daily_net_pnl": _decimal_text(mean_daily_net_pnl),
+        "observed_median_daily_net_pnl": _decimal_text(median_daily_net_pnl),
+        "observed_p10_daily_net_pnl": _decimal_text(p10_daily_net_pnl),
+        "observed_worst_day_net_pnl": _decimal_text(worst_day_net_pnl),
+        "daily_post_cost_distribution": _mapping_text_decimal(
+            summary.get("runtime_ledger_net_pnl_by_trading_day")
+        ),
+        "max_drawdown": drawdown,
+        "best_day_share": (
+            _decimal_text(
+                _decimal_or_zero(summary.get("runtime_ledger_best_day_share"))
+            )
+            if summary.get("runtime_ledger_best_day_share") is not None
+            else None
+        ),
+        "symbol_concentration": symbol_concentration,
+        "pair_concentration": symbol_concentration,
+        "filled_notional": {
+            "total": _decimal_text(resolved_total_filled_notional),
+            "average_daily": _decimal_text(avg_daily_filled_notional),
+            "by_trading_day": _mapping_text_decimal(
+                summary.get("runtime_ledger_filled_notional_by_trading_day")
+            ),
+        },
+        "closed_trade_count": resolved_closed_trade_count,
+        "closed_trade_count_by_day": _mapping_text_int(
+            summary.get("runtime_ledger_closed_trade_count_by_day")
+        ),
+        "open_position_count": resolved_open_position_count,
+        "source_authority": {
+            "bucket_count": runtime_ledger_bucket_count,
+            "evidence_grade_bucket_count": evidence_grade_runtime_ledger_bucket_count,
+            "source_backed_bucket_count": source_authority_bucket_count,
+            "blocked_bucket_count": max(
+                0,
+                runtime_ledger_bucket_count - source_authority_bucket_count,
+            ),
+            "blockers": resolved_source_blockers,
+        },
+        "blockers": resolved_blockers,
+        "missing_to_target": {
+            "daily_net_pnl": _decimal_text(missing_daily_net_pnl),
+            "median_daily_net_pnl": _decimal_text(missing_median_daily_net_pnl),
+            "p10_daily_net_pnl": _decimal_text(missing_p10_daily_net_pnl),
+            "worst_day_net_pnl": _decimal_text(missing_worst_day_net_pnl),
+            "source_authority_bucket_count": max(
+                0,
+                runtime_ledger_bucket_count - source_authority_bucket_count,
+            ),
+        },
+        "next_blocking_reason": next_blocking_reason,
+        "authority_readback_state": "blocked"
+        if resolved_blockers
+        else "distance_satisfied",
+    }
 
 
 __all__ = [
@@ -617,6 +832,7 @@ __all__ = [
     "RUNTIME_LEDGER_SOURCE_WINDOW_IDS_MISSING_BLOCKER",
     "RUNTIME_LEDGER_SOURCE_WINDOW_MISSING_BLOCKER",
     "RUNTIME_LEDGER_TRADE_DECISION_REFS_MISSING_BLOCKER",
+    "build_runtime_ledger_profit_distance_readback",
     "runtime_ledger_promotion_source_authority_blockers",
     "runtime_ledger_promotion_source_authority_present",
     "runtime_ledger_source_authority_blockers",

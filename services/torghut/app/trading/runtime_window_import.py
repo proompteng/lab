@@ -47,6 +47,7 @@ from .runtime_decision_authority import (
 )
 from .runtime_ledger_proof_policy import runtime_ledger_proof_policy_from_env
 from .runtime_ledger_source_authority import (
+    build_runtime_ledger_profit_distance_readback,
     runtime_ledger_promotion_source_authority_blockers,
 )
 from .tigerbeetle_journal import (
@@ -1462,6 +1463,8 @@ def _runtime_window_import_readback_from_rows(
     metric_rows: Sequence[StrategyHypothesisMetricWindow],
     promotion_rows: Sequence[StrategyPromotionDecision],
     ledger_rows: Sequence[StrategyRuntimeLedgerBucket],
+    runtime_ledger_daily_summary: Mapping[str, Any],
+    proof_blocker_codes: Sequence[str],
 ) -> dict[str, Any]:
     evidence_grade_ledger_rows = [
         row
@@ -1472,8 +1475,19 @@ def _runtime_window_import_readback_from_rows(
     authority_classes: list[str] = []
     source_materializations: list[str] = []
     blockers: list[str] = []
+    source_authority_blockers: list[str] = []
+    source_authority_bucket_count = 0
     for row in ledger_rows:
         payload_json = _mapping(row.payload_json)
+        row_source_blockers = runtime_ledger_promotion_source_authority_blockers(
+            payload_json
+        )
+        if row_source_blockers:
+            for blocker in row_source_blockers:
+                if blocker not in source_authority_blockers:
+                    source_authority_blockers.append(blocker)
+        else:
+            source_authority_bucket_count += 1
         for ref in _string_list(payload_json.get("source_refs")):
             if ref not in source_refs:
                 source_refs.append(ref)
@@ -1542,6 +1556,31 @@ def _runtime_window_import_readback_from_rows(
         "authority_classes": authority_classes,
         "source_materializations": source_materializations,
         "runtime_ledger_blockers": blockers,
+        "runtime_ledger_profit_distance_readback": build_runtime_ledger_profit_distance_readback(
+            summary={
+                **runtime_ledger_daily_summary,
+                "runtime_ledger_filled_notional": str(
+                    sum((row.filled_notional for row in ledger_rows), Decimal("0"))
+                ),
+            },
+            candidate_id=candidate_id,
+            observed_stage=observed_stage,
+            runtime_ledger_bucket_count=len(ledger_rows),
+            evidence_grade_runtime_ledger_bucket_count=len(evidence_grade_ledger_rows),
+            source_authority_bucket_count=source_authority_bucket_count,
+            source_authority_blockers=source_authority_blockers,
+            blockers=[*blockers, *proof_blocker_codes],
+            total_filled_notional=sum(
+                (row.filled_notional for row in ledger_rows),
+                Decimal("0"),
+            ),
+            total_closed_trade_count=sum(
+                max(0, int(row.closed_trade_count or 0)) for row in ledger_rows
+            ),
+            open_position_count=sum(
+                max(0, int(row.open_position_count or 0)) for row in ledger_rows
+            ),
+        ),
     }
 
 
@@ -2274,6 +2313,9 @@ def _runtime_ledger_daily_summary_from_observed_buckets(
         ),
         "runtime_ledger_max_intraday_drawdown": str(max_intraday_drawdown),
         "runtime_ledger_avg_daily_filled_notional": str(avg_daily_filled_notional),
+        "runtime_ledger_filled_notional_by_trading_day": {
+            day: str(filled_notional_by_day[day]) for day in trading_days
+        },
         "runtime_ledger_closed_trade_count_by_day": {
             day: closed_trade_count_by_day[day] for day in trading_days
         },
@@ -2912,7 +2954,23 @@ def persist_observed_runtime_windows(
         metric_rows=metric_window_rows,
         promotion_rows=[promotion_decision_row],
         ledger_rows=runtime_ledger_rows,
+        runtime_ledger_daily_summary=runtime_ledger_daily_summary,
+        proof_blocker_codes=[
+            str(item.get("blocker"))
+            for item in proof_blockers
+            if str(item.get("blocker") or "").strip()
+        ],
     )
+    runtime_ledger_profit_distance_readback = cast(
+        dict[str, Any],
+        runtime_import_readback.get("runtime_ledger_profit_distance_readback") or {},
+    )
+    promotion_decision_row.payload_json = {
+        **_mapping(promotion_decision_row.payload_json),
+        "runtime_ledger_profit_distance_readback": (
+            runtime_ledger_profit_distance_readback
+        ),
+    }
     runtime_materialization_target.update(
         {
             "proof_status": proof_status,
@@ -2920,6 +2978,9 @@ def persist_observed_runtime_windows(
             "materialized": not proof_blockers,
             "materialization_blockers": materialization_blockers,
             "readback": runtime_import_readback,
+            "runtime_ledger_profit_distance_readback": (
+                runtime_ledger_profit_distance_readback
+            ),
             **materialization_counts,
             "metric_window_ids": [str(row.id) for row in metric_window_rows],
             "promotion_decision_id": str(promotion_decision_row.id),
@@ -2961,6 +3022,9 @@ def persist_observed_runtime_windows(
         "runtime_ledger_filled_notional": str(runtime_ledger_filled_notional),
         "runtime_ledger_net_strategy_pnl_after_costs": str(
             runtime_ledger_net_strategy_pnl_after_costs
+        ),
+        "runtime_ledger_profit_distance_readback": (
+            runtime_ledger_profit_distance_readback
         ),
         **runtime_ledger_daily_summary,
         "latest_three_within_budget": latest_three_budget_ok,

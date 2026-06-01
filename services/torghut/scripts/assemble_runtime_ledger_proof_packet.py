@@ -1012,6 +1012,16 @@ def _runtime_import_target_materialization_ref(
             ),
             "source_refs": _text_list(readback.get("source_refs")),
         }
+        profit_distance_readback = _mapping(
+            readback.get("runtime_ledger_profit_distance_readback")
+        )
+        if profit_distance_readback:
+            ref["readback"]["runtime_ledger_profit_distance_readback"] = dict(
+                profit_distance_readback
+            )
+            ref["runtime_ledger_profit_distance_readback"] = dict(
+                profit_distance_readback
+            )
     if tigerbeetle_refs:
         ref["tigerbeetle"] = tigerbeetle_refs
     return {key: value for key, value in ref.items() if value not in ("", [], None)}
