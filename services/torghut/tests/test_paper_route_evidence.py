@@ -1012,6 +1012,8 @@ class TestPaperRouteEvidenceAudit(TestCase):
                                 "account_label": "TORGHUT_SIM",
                                 "source_kind": "paper_route_probe_runtime_observed",
                                 "source_manifest_ref": "config/trading/hypotheses/h-closed-window.json",
+                                "window_start": "2026-06-01T13:30:00+00:00",
+                                "window_end": "2026-06-01T20:00:00+00:00",
                                 "paper_probation_authorized": True,
                                 "promotion_allowed": False,
                                 "final_promotion_authorized": False,
