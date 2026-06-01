@@ -4077,11 +4077,19 @@ def _runtime_ledger_proof_packet_handoff(
         or runtime_import_handoff.get("import_ready")
         or runtime_window_import_audit.get("import_ready")
     )
-    import_blockers = _unique_text_items(session_readiness.get("import_blockers")) + [
+    session_import_blockers = _unique_text_items(
+        session_readiness.get("import_blockers")
+    )
+    import_blockers = session_import_blockers + [
         blocker
         for blocker in _unique_text_items(runtime_import_handoff.get("import_blockers"))
-        if blocker not in _unique_text_items(session_readiness.get("import_blockers"))
+        if blocker not in session_import_blockers
     ]
+    import_blockers.extend(
+        blocker
+        for blocker in _unique_text_items(runtime_window_import_audit.get("blockers"))
+        if blocker not in import_blockers
+    )
     smoke_targets = proof_policy.target_payload("smoke")
     authority_targets = proof_policy.target_payload("authority")
     smoke_threshold_args = [
@@ -4323,9 +4331,15 @@ def build_paper_route_target_plan_payload(
     latest_closed_readiness = _as_mapping(
         latest_closed_targets.get("session_readiness")
     )
+    targets_have_explicit_window_bounds = any(
+        _parse_datetime(target.get("window_start")) is not None
+        and _parse_datetime(target.get("window_end")) is not None
+        for target in targets
+    )
     runtime_window_import_plan = (
         latest_closed_targets
-        if bool(latest_closed_readiness.get("import_ready"))
+        if not targets_have_explicit_window_bounds
+        and bool(latest_closed_readiness.get("import_ready"))
         and _safe_int(latest_closed_targets.get("target_count")) > 0
         else next_targets
     )
@@ -4530,6 +4544,35 @@ def build_paper_route_evidence_audit(
         live_submission_gate=live_submission_gate,
         generated_at=resolved_generated_at,
     )
+    closed_window_start, closed_window_end = (
+        _latest_closed_regular_equities_session_window(resolved_generated_at)
+    )
+    latest_closed_targets = _next_paper_route_runtime_window_targets(
+        session=session,
+        targets=targets,
+        probe=probe,
+        live_submission_gate=live_submission_gate,
+        generated_at=resolved_generated_at,
+        require_clean_pre_session=False,
+        window_start=closed_window_start,
+        window_end=closed_window_end,
+        purpose="latest_closed_session_paper_route_runtime_window_import",
+    )
+    latest_closed_readiness = _as_mapping(
+        latest_closed_targets.get("session_readiness")
+    )
+    targets_have_explicit_window_bounds = any(
+        _parse_datetime(target.get("window_start")) is not None
+        and _parse_datetime(target.get("window_end")) is not None
+        for target in targets
+    )
+    runtime_window_import_plan = (
+        latest_closed_targets
+        if not targets_have_explicit_window_bounds
+        and bool(latest_closed_readiness.get("import_ready"))
+        and _safe_int(latest_closed_targets.get("target_count")) > 0
+        else next_targets
+    )
     next_target_audits = [
         _target_audit_fail_closed(
             session,
@@ -4541,14 +4584,28 @@ def build_paper_route_evidence_audit(
         )
         for target in _as_mapping_items(next_targets.get("targets"))
     ]
+    runtime_window_import_target_audits = [
+        _target_audit_fail_closed(
+            session,
+            raw_target=target,
+            probe=probe,
+            generated_at=resolved_generated_at,
+            lookback_hours=lookback_hours,
+            error_source="paper_route_runtime_window_import_target_audit",
+        )
+        for target in _as_mapping_items(runtime_window_import_plan.get("targets"))
+    ]
     runtime_window_import_audit = _runtime_window_import_audit(
-        next_targets=next_targets,
+        next_targets=runtime_window_import_plan,
         target_audits=target_audits,
-        next_target_audits=next_target_audits,
+        next_target_audits=runtime_window_import_target_audits,
     )
     next_target_counts = _runtime_window_target_counts(next_target_audits)
+    runtime_window_import_target_counts = _runtime_window_target_counts(
+        runtime_window_import_target_audits
+    )
     proof_packet_handoff = _runtime_ledger_proof_packet_handoff(
-        next_targets=next_targets,
+        next_targets=runtime_window_import_plan,
         runtime_window_import_audit=runtime_window_import_audit,
     )
     summary_blockers = sorted(
@@ -4601,7 +4658,10 @@ def build_paper_route_evidence_audit(
         },
         "paper_route_probe": probe,
         "next_paper_route_runtime_window_targets": next_targets,
+        "latest_closed_paper_route_runtime_window_targets": latest_closed_targets,
+        "runtime_window_import_plan": runtime_window_import_plan,
         "next_runtime_window_target_audits": next_target_audits,
+        "runtime_window_import_target_audits": runtime_window_import_target_audits,
         "runtime_window_import_audit": runtime_window_import_audit,
         "runtime_ledger_proof_packet_handoff": proof_packet_handoff,
         "summary": {
@@ -4710,6 +4770,27 @@ def build_paper_route_evidence_audit(
             ),
             "next_runtime_window_target_with_promotion_decision_count": (
                 next_target_counts["promotion_decision"]
+            ),
+            "runtime_window_import_target_count": _safe_int(
+                runtime_window_import_plan.get("target_count")
+            ),
+            "runtime_window_import_selected_target_count": len(
+                runtime_window_import_target_audits
+            ),
+            "runtime_window_import_target_with_source_activity_count": (
+                runtime_window_import_target_counts["source_activity"]
+            ),
+            "runtime_window_import_target_with_rejected_signal_activity_count": (
+                runtime_window_import_target_counts["rejected_signal_activity"]
+            ),
+            "runtime_window_import_target_with_runtime_ledger_count": (
+                runtime_window_import_target_counts["runtime_ledger"]
+            ),
+            "runtime_window_import_target_with_evidence_grade_runtime_ledger_count": (
+                runtime_window_import_target_counts["evidence_grade_runtime_ledger"]
+            ),
+            "runtime_window_import_target_with_promotion_decision_count": (
+                runtime_window_import_target_counts["promotion_decision"]
             ),
             "next_runtime_window_import_next_action": runtime_window_import_audit[
                 "next_action"

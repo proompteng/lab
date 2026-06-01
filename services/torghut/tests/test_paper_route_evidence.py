@@ -948,6 +948,142 @@ class TestPaperRouteEvidenceAudit(TestCase):
             "latest_closed_session_paper_route_runtime_window_import",
         )
 
+    def test_evidence_import_audit_uses_latest_closed_window_before_next_open(
+        self,
+    ) -> None:
+        generated_at = datetime(2026, 6, 1, 5, tzinfo=timezone.utc)
+        closed_start = datetime(2026, 5, 29, 13, 30, tzinfo=timezone.utc)
+        closed_end = datetime(2026, 5, 29, 20, tzinfo=timezone.utc)
+        strategy_name = "closed-window-paper-route"
+        with Session(self.engine) as session:
+            session.add(
+                StrategyRuntimeLedgerBucket(
+                    run_id="closed-window-paper-route-run",
+                    candidate_id="candidate-closed-window",
+                    hypothesis_id="H-CLOSED-WINDOW",
+                    observed_stage="paper",
+                    bucket_started_at=closed_start + timedelta(minutes=30),
+                    bucket_ended_at=closed_start + timedelta(minutes=60),
+                    account_label="TORGHUT_SIM",
+                    runtime_strategy_name=strategy_name,
+                    strategy_family="microbar_pairs",
+                    fill_count=2,
+                    decision_count=1,
+                    submitted_order_count=1,
+                    closed_trade_count=1,
+                    open_position_count=0,
+                    filled_notional=Decimal("200"),
+                    gross_strategy_pnl=Decimal("12"),
+                    cost_amount=Decimal("2"),
+                    net_strategy_pnl_after_costs=Decimal("10"),
+                    post_cost_expectancy_bps=Decimal("500"),
+                    ledger_schema_version="torghut.runtime-ledger-bucket.v1",
+                    pnl_basis="realized_strategy_pnl_after_explicit_costs",
+                    execution_policy_hash_counts={"policy-a": 1},
+                    cost_model_hash_counts={"cost-a": 1},
+                    lineage_hash_counts={"lineage-a": 1},
+                    blockers_json=[],
+                    payload_json=self._runtime_ledger_source_authority_payload(
+                        window_start=closed_start,
+                        window_end=closed_end,
+                        suffix="closed-window",
+                    ),
+                )
+            )
+            session.commit()
+
+            payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "paper_route_probe_only",
+                    "blocked_reasons": [],
+                    "promotion_eligible_total": 1,
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "target_count": 1,
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-CLOSED-WINDOW",
+                                "candidate_id": "candidate-closed-window",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_pairs",
+                                "strategy_name": strategy_name,
+                                "account_label": "TORGHUT_SIM",
+                                "source_kind": "paper_route_probe_runtime_observed",
+                                "source_manifest_ref": "config/trading/hypotheses/h-closed-window.json",
+                                "paper_probation_authorized": True,
+                                "promotion_allowed": False,
+                                "final_promotion_authorized": False,
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "summary": {
+                        "paper_route_probe_eligible_symbols": ["AAPL"],
+                        "paper_route_probe_active_symbols": ["AAPL"],
+                    },
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": True,
+                        "effective_max_notional": 25,
+                        "next_session_max_notional": 25,
+                    },
+                },
+                generated_at=generated_at,
+            )
+
+        next_plan = payload["next_paper_route_runtime_window_targets"]
+        self.assertEqual(
+            next_plan["session_window"],
+            {
+                "start": "2026-06-01T13:30:00+00:00",
+                "end": "2026-06-01T20:00:00+00:00",
+            },
+        )
+        import_plan = payload["runtime_window_import_plan"]
+        self.assertEqual(
+            import_plan["purpose"],
+            "latest_closed_session_paper_route_runtime_window_import",
+        )
+        self.assertEqual(
+            import_plan["session_window"],
+            {
+                "start": "2026-05-29T13:30:00+00:00",
+                "end": "2026-05-29T20:00:00+00:00",
+            },
+        )
+        import_audit = payload["runtime_window_import_audit"]
+        self.assertEqual(import_audit["session_window"], import_plan["session_window"])
+        self.assertTrue(import_audit["import_ready"])
+        self.assertEqual(import_audit["counts"]["targets_with_runtime_ledger"], 1)
+        self.assertEqual(
+            import_audit["counts"]["targets_with_evidence_grade_runtime_ledger"],
+            1,
+        )
+        self.assertEqual(
+            payload["summary"][
+                "runtime_window_import_target_with_runtime_ledger_count"
+            ],
+            1,
+        )
+        self.assertEqual(
+            payload["summary"][
+                "runtime_window_import_target_with_evidence_grade_runtime_ledger_count"
+            ],
+            1,
+        )
+        self.assertEqual(
+            payload["summary"]["next_runtime_window_target_with_runtime_ledger_count"],
+            0,
+        )
+        runtime_import_audit = payload["runtime_window_import_target_audits"][0]
+        self.assertEqual(runtime_import_audit["window"], import_plan["session_window"])
+        self.assertEqual(runtime_import_audit["runtime_ledger"]["bucket_count"], 1)
+
     def test_source_runtime_window_import_plan_keeps_next_session_window(
         self,
     ) -> None:
@@ -1524,12 +1660,19 @@ class TestPaperRouteEvidenceAudit(TestCase):
             import_audit["schema_version"],
             "torghut.paper-route-runtime-window-import-audit.v1",
         )
-        self.assertEqual(import_audit["state"], "waiting_for_session_open")
-        self.assertEqual(import_audit["next_action"], "wait_for_regular_session_open")
-        self.assertFalse(import_audit["import_ready"])
         self.assertEqual(
+            payload["runtime_window_import_plan"]["purpose"],
+            "latest_closed_session_paper_route_runtime_window_import",
+        )
+        self.assertEqual(import_audit["state"], "import_due_account_state_not_clean")
+        self.assertEqual(
+            import_audit["next_action"],
+            "reset_paper_account_or_discard_contaminated_window",
+        )
+        self.assertTrue(import_audit["import_ready"])
+        self.assertIn(
+            "paper_route_account_window_start_snapshot_missing",
             import_audit["blockers"],
-            ["paper_route_session_window_not_open"],
         )
         self.assertEqual(import_audit["counts"]["source_plan_target_count"], 2)
         self.assertEqual(import_audit["counts"]["selected_target_count"], 1)
@@ -1547,7 +1690,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
         )
         self.assertEqual(
             summary["next_runtime_window_import_next_action"],
-            "wait_for_regular_session_open",
+            "reset_paper_account_or_discard_contaminated_window",
         )
         self.assertEqual(len(summary["next_paper_route_targets"]), 1)
         summary_target = summary["next_paper_route_targets"][0]
@@ -1634,11 +1777,11 @@ class TestPaperRouteEvidenceAudit(TestCase):
         )
         self.assertEqual(
             proof_handoff["runtime_window"]["import_audit_state"],
-            "waiting_for_session_open",
+            "import_due_account_state_not_clean",
         )
-        self.assertEqual(
+        self.assertIn(
+            "paper_route_account_window_start_snapshot_missing",
             proof_handoff["runtime_window"]["import_blockers"],
-            ["paper_route_session_window_not_open"],
         )
         self.assertEqual(
             proof_handoff["runtime_window"]["health_gate"]["ready_target_count"],
