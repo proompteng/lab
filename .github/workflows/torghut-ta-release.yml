@@ -175,7 +175,7 @@ jobs:
 
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
 
-      - name: Update torghut-options ta manifest
+      - name: Update torghut ta manifests
         if: steps.meta.outputs.promote == 'true'
         shell: bash
         env:
@@ -188,7 +188,8 @@ jobs:
             --tag "${TORGHUT_TA_IMAGE_TAG}" \
             --digest "${TORGHUT_TA_IMAGE_DIGEST}" \
             --commit "${TORGHUT_TA_COMMIT}" \
-            --version "${TORGHUT_TA_IMAGE_TAG}"
+            --version "${TORGHUT_TA_IMAGE_TAG}" \
+            --bump-restart-nonce
 
       - name: Check for manifest changes
         if: steps.meta.outputs.promote == 'true'
@@ -196,7 +197,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if git diff --quiet -- argocd/applications/torghut-options/ta/flinkdeployment.yaml; then
+          if git diff --quiet -- \
+            argocd/applications/torghut/ta/flinkdeployment.yaml \
+            argocd/applications/torghut/ta-sim/flinkdeployment.yaml \
+            argocd/applications/torghut-options/ta/flinkdeployment.yaml; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -211,24 +215,27 @@ jobs:
         uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
-          branch: codex/torghut-options-ta-release-${{ steps.meta.outputs.tag }}
+          branch: codex/torghut-ta-release-${{ steps.meta.outputs.tag }}
           base: main
-          title: 'chore(torghut-options): promote ta image ${{ steps.meta.outputs.tag }}'
-          commit-message: 'chore(torghut-options): promote ta image ${{ steps.meta.outputs.tag }}'
+          title: 'chore(torghut): promote ta image ${{ steps.meta.outputs.tag }}'
+          commit-message: 'chore(torghut): promote ta image ${{ steps.meta.outputs.tag }}'
           delete-branch: true
           add-paths: |
+            argocd/applications/torghut/ta/flinkdeployment.yaml
+            argocd/applications/torghut/ta-sim/flinkdeployment.yaml
             argocd/applications/torghut-options/ta/flinkdeployment.yaml
           body: |
             ## Summary
-            Promote the Torghut options TA image into GitOps manifests.
+            Promote the Torghut TA image into GitOps manifests.
 
             - Source commit: `${{ steps.meta.outputs.source_sha }}`
             - Image tag: `${{ steps.meta.outputs.tag }}`
             - Image digest: `${{ steps.digest.outputs.digest }}`
+            - Manifests: live TA, sim TA, options TA
 
       - name: No manifest changes detected
         if: steps.meta.outputs.promote == 'true' && steps.changes.outputs.changed != 'true'
-        run: echo 'No torghut-options ta manifest changes detected.'
+        run: echo 'No torghut ta manifest changes detected.'
 
       - name: Promotion skipped (stale workflow_run)
         if: steps.meta.outputs.promote != 'true'
