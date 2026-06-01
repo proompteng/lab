@@ -554,10 +554,24 @@ class TestSubmissionCouncil(TestCase):
             self.assertFalse(payload["promotion_allowed"])
             self.assertFalse(payload["final_promotion_authorized"])
             self.assertFalse(payload["live_capital_routing_enabled"])
+            self.assertTrue(payload["route_submission_enabled"])
             route_submission = payload["paper_route_order_submission"]
-            self.assertFalse(route_submission["submission_enabled"])
+            self.assertTrue(route_submission["submission_enabled"])
             self.assertFalse(route_submission["live_capital_routing_enabled"])
             self.assertEqual(route_submission["account_label"], "TORGHUT_SIM")
+            self.assertEqual(
+                route_submission["submission_authority"],
+                "bounded_paper_collection_only",
+            )
+            self.assertEqual(route_submission["execution_adapter_scope"], "paper_or_sim")
+            self.assertEqual(
+                route_submission["idempotency_key_basis"],
+                "trade_decision_hash_client_order_id",
+            )
+            self.assertEqual(
+                route_submission["order_feed_linkage_keys"],
+                ["alpaca_account_label", "client_order_id"],
+            )
             self.assertEqual(
                 payload["target_plan_identity"]["hypothesis_id"],
                 "H-PAIRS-01",

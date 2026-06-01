@@ -469,8 +469,14 @@ def _paper_route_decision_payload(
             "order_type": "market",
             "time_in_force": "day",
             "live_capital_routing_enabled": False,
-            "submission_enabled": False,
+            "submission_enabled": True,
             "submission_authority": "bounded_paper_collection_only",
+            "execution_adapter_scope": "paper_or_sim",
+            "idempotency_key_basis": "trade_decision_hash_client_order_id",
+            "order_feed_linkage_keys": [
+                "alpaca_account_label",
+                "client_order_id",
+            ],
         },
         "capital_promotion_allowed": False,
         "promotion_allowed": False,
@@ -480,7 +486,7 @@ def _paper_route_decision_payload(
             PAPER_ROUTE_MATERIALIZATION_FINAL_PROMOTION_BLOCKERS
         ),
         "live_capital_routing_enabled": False,
-        "route_submission_enabled": False,
+        "route_submission_enabled": True,
         "params": {
             "paper_route_target_plan_materialized": True,
             "source_decision_mode": source_decision_mode,
@@ -492,6 +498,7 @@ def _paper_route_decision_payload(
             "target_quantity": _decimal_text(quantity),
             "bounded_collection_stage": PAPER_ROUTE_MATERIALIZATION_STAGE,
             "live_capital_routing_enabled": False,
+            "route_submission_enabled": True,
         },
     }
 

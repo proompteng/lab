@@ -308,6 +308,65 @@ class TestOrderFeed(TestCase):
             self.assertEqual(paper_a.status, "new")
             self.assertEqual(paper_b.status, "new")
 
+    def test_unrelated_account_order_feed_event_stays_unlinked_from_hpairs_decision(
+        self,
+    ) -> None:
+        payload = (
+            b'{"channel":"trade_updates","account_label":"UNRELATED_ACCOUNT",'
+            b'"payload":{"event":"fill","timestamp":"2026-02-01T10:00:00Z",'
+            b'"order":{"id":"hpairs-order-1","client_order_id":"hpairs-client-1",'
+            b'"symbol":"AAPL","status":"filled","qty":"1","filled_qty":"1",'
+            b'"filled_avg_price":"190.2","alpaca_account_label":"UNRELATED_ACCOUNT"}},'
+            b'"seq":11}'
+        )
+        record = FakeRecord(value=payload, offset=23)
+
+        with Session(self.engine) as session:
+            strategy = Strategy(
+                name="microbar-cross-sectional-pairs-v1",
+                description="H-PAIRS paper collection",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="symbols_list",
+                universe_symbols=["AAPL", "AMZN"],
+            )
+            session.add(strategy)
+            session.flush()
+            session.add(
+                TradeDecision(
+                    strategy_id=strategy.id,
+                    alpaca_account_label="TORGHUT_SIM",
+                    symbol="AAPL",
+                    timeframe="1Min",
+                    decision_json={
+                        "params": {
+                            "hypothesis_id": "H-PAIRS-01",
+                            "source_decision_mode": "route_acquisition",
+                        }
+                    },
+                    decision_hash="hpairs-client-1",
+                    status="submitted",
+                )
+            )
+            session.commit()
+
+            normalized = normalize_order_feed_record(
+                record,
+                default_topic="torghut.trade-updates.v1",
+                default_account_label="TORGHUT_SIM",
+            )
+            assert normalized.event is not None
+            persisted, is_duplicate = persist_order_event(session, normalized.event)
+            session.commit()
+            persisted_account_label = persisted.alpaca_account_label
+            persisted_execution_id = persisted.execution_id
+            persisted_trade_decision_id = persisted.trade_decision_id
+
+        self.assertFalse(is_duplicate)
+        self.assertEqual(persisted_account_label, "UNRELATED_ACCOUNT")
+        self.assertIsNone(persisted_execution_id)
+        self.assertIsNone(persisted_trade_decision_id)
+
     def test_cross_account_ingest_default_account_does_not_update_wrong_execution(
         self,
     ) -> None:
