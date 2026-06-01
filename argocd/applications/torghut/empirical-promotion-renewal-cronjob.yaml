@@ -66,10 +66,9 @@ spec:
                     --runtime-window-target-plan-url-timeout-seconds 45 \
                     --runtime-window-target-plan-url-attempts 3 \
                     --runtime-window-target-plan-url-retry-backoff-seconds 5 \
+                    --runtime-window-target-plan-exclusive \
                     --runtime-window-target-plan-required \
                     --runtime-window-target-plan-settlement-seconds 3600 \
-                    --runtime-window-targets-from-latest-autoresearch \
-                    --runtime-window-targets-from-registry \
                     --runtime-window-hypothesis-id H-PAIRS-01 \
                     --runtime-window-candidate-id c88421d619759b2cfaa6f4d0 \
                     --runtime-window-strategy-family microbar_cross_sectional_pairs \
