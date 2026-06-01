@@ -141,6 +141,15 @@ def _rollback_runtime_ledger_status_session(session: Session) -> None:
         logger.warning("Failed to roll back runtime-ledger status session")
 
 
+def _sqlalchemy_error_indicates_statement_timeout(exc: SQLAlchemyError) -> bool:
+    message = str(exc).lower()
+    return (
+        "statement timeout" in message
+        or "querycanceled" in message
+        or "query canceled" in message
+    )
+
+
 def _empty_profit_promotion_table_counts(
     *,
     count_errors: Sequence[str] | None = None,
@@ -2922,41 +2931,66 @@ def _attach_lineage_refs(
     )
 
     dataset_snapshots_by_candidate: dict[str, list[VNextDatasetSnapshot]] = {}
-    if candidate_ids:
-        dataset_rows = (
-            session.execute(
-                select(VNextDatasetSnapshot)
-                .where(VNextDatasetSnapshot.candidate_id.in_(candidate_ids))
-                .order_by(VNextDatasetSnapshot.created_at.desc())
-            )
-            .scalars()
-            .all()
-        )
-        for row in dataset_rows:
-            candidate_id = _safe_text(row.candidate_id)
-            if candidate_id is None:
-                continue
-            dataset_snapshots_by_candidate.setdefault(candidate_id, []).append(row)
-
     hypotheses_by_id: dict[str, list[StrategyHypothesis]] = {}
-    if hypothesis_ids:
-        hypothesis_rows = (
-            session.execute(
-                select(StrategyHypothesis)
-                .where(
-                    StrategyHypothesis.hypothesis_id.in_(hypothesis_ids),
-                    StrategyHypothesis.active.is_(True),
+    try:
+        if candidate_ids:
+            dataset_rows = (
+                session.execute(
+                    select(VNextDatasetSnapshot)
+                    .where(VNextDatasetSnapshot.candidate_id.in_(candidate_ids))
+                    .order_by(VNextDatasetSnapshot.created_at.desc())
                 )
-                .order_by(StrategyHypothesis.created_at.desc())
+                .scalars()
+                .all()
             )
-            .scalars()
-            .all()
+            for row in dataset_rows:
+                candidate_id = _safe_text(row.candidate_id)
+                if candidate_id is None:
+                    continue
+                dataset_snapshots_by_candidate.setdefault(candidate_id, []).append(row)
+
+        if hypothesis_ids:
+            hypothesis_rows = (
+                session.execute(
+                    select(StrategyHypothesis)
+                    .where(
+                        StrategyHypothesis.hypothesis_id.in_(hypothesis_ids),
+                        StrategyHypothesis.active.is_(True),
+                    )
+                    .order_by(StrategyHypothesis.created_at.desc())
+                )
+                .scalars()
+                .all()
+            )
+            for row in hypothesis_rows:
+                hypothesis_id = _safe_text(row.hypothesis_id)
+                if hypothesis_id is None:
+                    continue
+                hypotheses_by_id.setdefault(hypothesis_id, []).append(row)
+    except SQLAlchemyError as exc:
+        logger.warning("Lineage refs unavailable: %s", exc)
+        _rollback_runtime_ledger_status_session(session)
+        reason_code = (
+            "lineage_ref_query_timeout"
+            if _sqlalchemy_error_indicates_statement_timeout(exc)
+            else "lineage_ref_unavailable"
         )
-        for row in hypothesis_rows:
-            hypothesis_id = _safe_text(row.hypothesis_id)
-            if hypothesis_id is None:
-                continue
-            hypotheses_by_id.setdefault(hypothesis_id, []).append(row)
+        attached_rows: list[dict[str, object]] = []
+        for row in evaluated_rows:
+            evaluated_row = dict(row)
+            reason_codes = list(
+                cast(Sequence[str], evaluated_row.get("reason_codes") or [])
+            )
+            if reason_code not in reason_codes:
+                reason_codes.append(reason_code)
+            evaluated_row["reason_codes"] = _normalize_reason_codes(reason_codes)
+            evaluated_row["lineage_ref"] = _default_lineage_ref(
+                status="unavailable",
+                candidate_id=_safe_text(evaluated_row.get("candidate_id")),
+                hypothesis_id=_safe_text(evaluated_row.get("hypothesis_id")),
+            )
+            attached_rows.append(evaluated_row)
+        return attached_rows
 
     attached_rows: list[dict[str, object]] = []
     for row in evaluated_rows:
@@ -3254,11 +3288,32 @@ def _load_persisted_profit_rejection_summary(
     filters = [TradeDecision.created_at >= lookback_start]
     if account_label:
         filters.append(TradeDecision.alpaca_account_label == account_label)
-    rows = session.execute(
-        select(TradeDecision.status, func.count())
-        .where(*filters)
-        .group_by(TradeDecision.status)
-    ).all()
+    try:
+        _maybe_set_runtime_ledger_status_statement_timeout(session)
+        rows = session.execute(
+            select(TradeDecision.status, func.count())
+            .where(*filters)
+            .group_by(TradeDecision.status)
+        ).all()
+    except SQLAlchemyError as exc:
+        logger.warning("Profit rejection summary unavailable: %s", exc)
+        _rollback_runtime_ledger_status_session(session)
+        reason_code = (
+            "profit_rejection_summary_query_timeout"
+            if _sqlalchemy_error_indicates_statement_timeout(exc)
+            else "profit_rejection_summary_unavailable"
+        )
+        return {
+            "rejected": 0,
+            "blocked": 0,
+            "filled": 0,
+            "planned": 0,
+            "total": 0,
+            "rejection_drag_ratio": None,
+            "status_totals": {},
+            "source_ref": "postgres:trade_decisions:7d",
+            "reason_codes": [reason_code],
+        }
     status_totals: dict[str, int] = {}
     for status, count in rows:
         normalized = str(status or "unknown").strip().lower() or "unknown"
