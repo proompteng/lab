@@ -129,6 +129,10 @@ class TestPaperRouteEvidenceAudit(TestCase):
             missing_identity_blockers,
         )
         self.assertIn(
+            "paper_route_hpairs_paper_stage_required",
+            missing_identity_blockers,
+        )
+        self.assertIn(
             "paper_route_hpairs_runtime_strategy_name_missing",
             missing_identity_blockers,
         )
