@@ -1145,6 +1145,99 @@ def repair_order_feed_execution_links(
     return counters
 
 
+def repair_order_feed_fill_deltas(
+    session: Session,
+    *,
+    account_label: str | None = None,
+    limit: int = 1000,
+) -> dict[str, int]:
+    """Backfill fill-delta proof fields for already-persisted cumulative fills.
+
+    Alpaca order-feed fill events carry cumulative filled quantity. Runtime-ledger
+    source authority needs per-event deltas so a repeated lifecycle event cannot
+    be counted as a fresh fill. This repair is bounded and fail-closed: rows that
+    cannot prove a positive cumulative increase are marked non-increasing instead
+    of receiving a synthetic delta.
+    """
+
+    bounded_limit = max(1, min(int(limit), 5000))
+    stmt = (
+        select(ExecutionOrderEvent)
+        .where(
+            ExecutionOrderEvent.fill_quantity_basis.is_(None),
+            ExecutionOrderEvent.filled_qty.is_not(None),
+            or_(
+                ExecutionOrderEvent.event_type.in_(tuple(_FILL_EVENT_TYPES)),
+                ExecutionOrderEvent.status.in_(tuple(_FILL_EVENT_TYPES)),
+            ),
+        )
+        .order_by(
+            ExecutionOrderEvent.alpaca_account_label.asc(),
+            ExecutionOrderEvent.alpaca_order_id.asc().nullsfirst(),
+            ExecutionOrderEvent.client_order_id.asc().nullsfirst(),
+            ExecutionOrderEvent.event_ts.asc().nullsfirst(),
+            ExecutionOrderEvent.feed_seq.asc().nullsfirst(),
+            ExecutionOrderEvent.source_topic.asc(),
+            ExecutionOrderEvent.source_partition.asc().nullsfirst(),
+            ExecutionOrderEvent.source_offset.asc().nullsfirst(),
+            ExecutionOrderEvent.created_at.asc(),
+        )
+        .limit(bounded_limit)
+    )
+    if account_label:
+        stmt = stmt.where(ExecutionOrderEvent.alpaca_account_label == account_label)
+
+    events = session.execute(stmt).scalars().all()
+    counters = {
+        "selected": len(events),
+        "delta_events_repaired": 0,
+        "non_increasing_events_marked": 0,
+        "missing_identity_events_marked": 0,
+    }
+    for event in events:
+        if event.filled_qty is None:
+            continue
+        identity_clauses = _order_event_identity_clauses(event)
+        if not identity_clauses:
+            event.fill_quantity_basis = FILL_QUANTITY_BASIS_CUMULATIVE_NON_INCREASING
+            counters["missing_identity_events_marked"] += 1
+            session.add(event)
+            continue
+
+        previous_filled_qty = session.scalar(
+            select(func.max(ExecutionOrderEvent.filled_qty)).where(
+                ExecutionOrderEvent.id != event.id,
+                ExecutionOrderEvent.alpaca_account_label == event.alpaca_account_label,
+                or_(*identity_clauses),
+                ExecutionOrderEvent.filled_qty.is_not(None),
+                _event_precedes_order_event(event),
+            )
+        )
+        previous_qty = (
+            Decimal("0")
+            if previous_filled_qty is None
+            else Decimal(str(previous_filled_qty))
+        )
+        filled_qty = Decimal(str(event.filled_qty))
+        filled_qty_delta = filled_qty - previous_qty
+        if filled_qty_delta <= 0:
+            event.fill_quantity_basis = FILL_QUANTITY_BASIS_CUMULATIVE_NON_INCREASING
+            counters["non_increasing_events_marked"] += 1
+            session.add(event)
+            continue
+
+        event.filled_qty_delta = filled_qty_delta
+        event.filled_notional_delta = (
+            filled_qty_delta * Decimal(str(event.avg_fill_price))
+            if event.avg_fill_price is not None
+            else None
+        )
+        event.fill_quantity_basis = FILL_QUANTITY_BASIS_CUMULATIVE_TO_DELTA
+        counters["delta_events_repaired"] += 1
+        session.add(event)
+    return counters
+
+
 def backfill_order_feed_source_windows(
     session: Session,
     *,
@@ -1347,6 +1440,48 @@ def _execution_activity_at(row: Execution) -> datetime | None:
         or row.updated_at
         or row.created_at
     )
+
+
+def _order_event_identity_clauses(
+    event: ExecutionOrderEvent,
+) -> list[ColumnElement[bool]]:
+    clauses: list[ColumnElement[bool]] = []
+    if event.alpaca_order_id:
+        clauses.append(ExecutionOrderEvent.alpaca_order_id == event.alpaca_order_id)
+    if event.client_order_id:
+        clauses.append(ExecutionOrderEvent.client_order_id == event.client_order_id)
+    return clauses
+
+
+def _event_precedes_order_event(event: ExecutionOrderEvent) -> ColumnElement[bool]:
+    created_at = event.created_at
+    clauses: list[ColumnElement[bool]] = []
+    if event.event_ts is not None:
+        clauses.append(ExecutionOrderEvent.event_ts < event.event_ts)
+        same_event_ts = ExecutionOrderEvent.event_ts == event.event_ts
+        if event.feed_seq is not None:
+            clauses.append(
+                same_event_ts
+                & ExecutionOrderEvent.feed_seq.is_not(None)
+                & (ExecutionOrderEvent.feed_seq < event.feed_seq)
+            )
+        clauses.append(same_event_ts & (ExecutionOrderEvent.created_at < created_at))
+    if (
+        event.source_topic
+        and event.source_partition is not None
+        and event.source_offset is not None
+    ):
+        clauses.append(
+            (ExecutionOrderEvent.source_topic == event.source_topic)
+            & (ExecutionOrderEvent.source_partition == event.source_partition)
+            & ExecutionOrderEvent.source_offset.is_not(None)
+            & (ExecutionOrderEvent.source_offset < event.source_offset)
+        )
+    else:
+        clauses.append(ExecutionOrderEvent.created_at < created_at)
+    if not clauses:
+        return ExecutionOrderEvent.id != event.id
+    return or_(*clauses)
 
 
 def _ensure_source_window_for_event(
@@ -2023,5 +2158,6 @@ __all__ = [
     "backfill_order_feed_source_windows",
     "link_order_events_to_execution",
     "repair_order_feed_execution_links",
+    "repair_order_feed_fill_deltas",
     "latest_order_event_for_execution",
 ]

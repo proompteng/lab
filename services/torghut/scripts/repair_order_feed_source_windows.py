@@ -16,6 +16,7 @@ from app.trading.order_feed import (
     backfill_order_feed_events_from_executions,
     backfill_order_feed_source_windows,
     repair_order_feed_execution_links,
+    repair_order_feed_fill_deltas,
 )
 
 
@@ -100,6 +101,18 @@ def _payload(
             batch["execution_event_backfill_skipped_source_offset_collision"]
             for batch in batches
         ),
+        "fill_delta_candidates": sum(
+            batch["fill_delta_candidates"] for batch in batches
+        ),
+        "fill_delta_events_repaired": sum(
+            batch["fill_delta_events_repaired"] for batch in batches
+        ),
+        "fill_delta_non_increasing_events_marked": sum(
+            batch["fill_delta_non_increasing_events_marked"] for batch in batches
+        ),
+        "fill_delta_missing_identity_events_marked": sum(
+            batch["fill_delta_missing_identity_events_marked"] for batch in batches
+        ),
     }
     return {
         "status": "ok",
@@ -180,6 +193,11 @@ def main() -> int:
                     "skipped_source_offset_collision": 0,
                 }
             )
+            fill_delta_batch = repair_order_feed_fill_deltas(
+                session,
+                account_label=args.account_label,
+                limit=batch_size,
+            )
             batch = {
                 **source_window_batch,
                 "execution_link_candidates": execution_link_batch["selected"],
@@ -214,6 +232,14 @@ def main() -> int:
                 "execution_event_backfill_skipped_source_offset_collision": (
                     execution_event_backfill_batch["skipped_source_offset_collision"]
                 ),
+                "fill_delta_candidates": fill_delta_batch["selected"],
+                "fill_delta_events_repaired": fill_delta_batch["delta_events_repaired"],
+                "fill_delta_non_increasing_events_marked": fill_delta_batch[
+                    "non_increasing_events_marked"
+                ],
+                "fill_delta_missing_identity_events_marked": fill_delta_batch[
+                    "missing_identity_events_marked"
+                ],
             }
             batches.append(batch)
             if args.apply:
@@ -228,6 +254,7 @@ def main() -> int:
                 and int(execution_link_batch.get("selected") or 0) < batch_size
                 and int(execution_event_backfill_batch.get("selected") or 0)
                 < batch_size
+                and int(fill_delta_batch.get("selected") or 0) < batch_size
             ):
                 break
 

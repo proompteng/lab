@@ -51,6 +51,7 @@ from app.trading.order_feed import (
     normalize_order_feed_record,
     persist_order_event,
     repair_order_feed_execution_links,
+    repair_order_feed_fill_deltas,
 )
 
 
@@ -2121,6 +2122,216 @@ class TestOrderFeed(TestCase):
         self.assertIsNone(qty_delta)
         self.assertIsNone(notional_delta)
         self.assertEqual(basis, "cumulative_non_increasing")
+
+    def test_repair_order_feed_fill_deltas_converts_legacy_cumulative_fills(
+        self,
+    ) -> None:
+        base_ts = datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc)
+
+        with Session(self.engine) as session:
+            self._seed_execution(session)
+            session.add_all(
+                [
+                    ExecutionOrderEvent(
+                        event_fingerprint="legacy-fill-1",
+                        source_topic="torghut.trade-updates.v1",
+                        source_partition=0,
+                        source_offset=101,
+                        alpaca_account_label="paper",
+                        feed_seq=10,
+                        event_ts=base_ts,
+                        symbol="AAPL",
+                        alpaca_order_id="order-1",
+                        client_order_id="client-1",
+                        event_type="partial_fill",
+                        status="partially_filled",
+                        qty=Decimal("2"),
+                        filled_qty=Decimal("1"),
+                        avg_fill_price=Decimal("190.20"),
+                        raw_event={},
+                    ),
+                    ExecutionOrderEvent(
+                        event_fingerprint="legacy-fill-2",
+                        source_topic="torghut.trade-updates.v1",
+                        source_partition=0,
+                        source_offset=102,
+                        alpaca_account_label="paper",
+                        feed_seq=11,
+                        event_ts=base_ts + timedelta(seconds=1),
+                        symbol="AAPL",
+                        alpaca_order_id="order-1",
+                        client_order_id="client-1",
+                        event_type="fill",
+                        status="filled",
+                        qty=Decimal("2"),
+                        filled_qty=Decimal("2"),
+                        avg_fill_price=Decimal("190.40"),
+                        raw_event={},
+                    ),
+                    ExecutionOrderEvent(
+                        event_fingerprint="legacy-fill-repeat",
+                        source_topic="torghut.trade-updates.v1",
+                        source_partition=0,
+                        source_offset=103,
+                        alpaca_account_label="paper",
+                        feed_seq=12,
+                        event_ts=base_ts + timedelta(seconds=2),
+                        symbol="AAPL",
+                        alpaca_order_id="order-1",
+                        client_order_id="client-1",
+                        event_type="fill",
+                        status="filled",
+                        qty=Decimal("2"),
+                        filled_qty=Decimal("2"),
+                        avg_fill_price=Decimal("190.50"),
+                        raw_event={},
+                    ),
+                ]
+            )
+            session.commit()
+
+            counters = repair_order_feed_fill_deltas(
+                session,
+                account_label="paper",
+                limit=10,
+            )
+            session.commit()
+            events = (
+                session.execute(
+                    select(ExecutionOrderEvent).order_by(
+                        ExecutionOrderEvent.feed_seq.asc()
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+        self.assertEqual(counters["selected"], 3)
+        self.assertEqual(counters["delta_events_repaired"], 2)
+        self.assertEqual(counters["non_increasing_events_marked"], 1)
+        self.assertEqual(counters["missing_identity_events_marked"], 0)
+        self.assertEqual(
+            [event.filled_qty_delta for event in events],
+            [Decimal("1.00000000"), Decimal("1.00000000"), None],
+        )
+        self.assertEqual(
+            [event.filled_notional_delta for event in events],
+            [Decimal("190.20000000"), Decimal("190.40000000"), None],
+        )
+        self.assertEqual(
+            [event.fill_quantity_basis for event in events],
+            [
+                "cumulative_to_delta",
+                "cumulative_to_delta",
+                "cumulative_non_increasing",
+            ],
+        )
+
+    def test_repair_order_feed_fill_deltas_rejects_missing_order_identity(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            session.add(
+                ExecutionOrderEvent(
+                    event_fingerprint="legacy-fill-no-identity",
+                    source_topic="torghut.trade-updates.v1",
+                    source_partition=0,
+                    source_offset=201,
+                    alpaca_account_label="paper",
+                    feed_seq=20,
+                    event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+                    symbol="AAPL",
+                    event_type="fill",
+                    status="filled",
+                    qty=Decimal("1"),
+                    filled_qty=Decimal("1"),
+                    avg_fill_price=Decimal("190.20"),
+                    raw_event={},
+                )
+            )
+            session.commit()
+
+            counters = repair_order_feed_fill_deltas(
+                session,
+                account_label="paper",
+                limit=10,
+            )
+            session.commit()
+            event = session.execute(select(ExecutionOrderEvent)).scalar_one()
+
+        self.assertEqual(counters["selected"], 1)
+        self.assertEqual(counters["delta_events_repaired"], 0)
+        self.assertEqual(counters["missing_identity_events_marked"], 1)
+        self.assertIsNone(event.filled_qty_delta)
+        self.assertIsNone(event.filled_notional_delta)
+        self.assertEqual(event.fill_quantity_basis, "cumulative_non_increasing")
+
+    def test_repair_order_feed_fill_deltas_orders_by_source_offset_without_event_ts(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            session.add_all(
+                [
+                    ExecutionOrderEvent(
+                        event_fingerprint="legacy-fill-offset-1",
+                        source_topic="torghut.trade-updates.v1",
+                        source_partition=0,
+                        source_offset=301,
+                        alpaca_account_label="paper",
+                        symbol="AAPL",
+                        alpaca_order_id="order-offset",
+                        event_type="partial_fill",
+                        status="partially_filled",
+                        qty=Decimal("2"),
+                        filled_qty=Decimal("1"),
+                        avg_fill_price=Decimal("190"),
+                        raw_event={},
+                    ),
+                    ExecutionOrderEvent(
+                        event_fingerprint="legacy-fill-offset-2",
+                        source_topic="torghut.trade-updates.v1",
+                        source_partition=0,
+                        source_offset=302,
+                        alpaca_account_label="paper",
+                        symbol="AAPL",
+                        alpaca_order_id="order-offset",
+                        event_type="fill",
+                        status="filled",
+                        qty=Decimal("2"),
+                        filled_qty=Decimal("2"),
+                        avg_fill_price=Decimal("191"),
+                        raw_event={},
+                    ),
+                ]
+            )
+            session.commit()
+
+            counters = repair_order_feed_fill_deltas(
+                session,
+                account_label="paper",
+                limit=10,
+            )
+            session.commit()
+            events = (
+                session.execute(
+                    select(ExecutionOrderEvent).order_by(
+                        ExecutionOrderEvent.source_offset.asc()
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+        self.assertEqual(counters["selected"], 2)
+        self.assertEqual(counters["delta_events_repaired"], 2)
+        self.assertEqual(
+            [event.filled_qty_delta for event in events],
+            [Decimal("1.00000000"), Decimal("1.00000000")],
+        )
+        self.assertEqual(
+            [event.filled_notional_delta for event in events],
+            [Decimal("190.00000000"), Decimal("191.00000000")],
+        )
 
     def test_duplicate_event_source_window_attach_refreshes_linkage_counts(
         self,
