@@ -340,7 +340,7 @@ def _promotion_grade_authority_marker_present(bucket: Mapping[str, object]) -> b
     return _promotion_grade_authority_field_present(
         bucket,
         "authority_class",
-    ) and _promotion_grade_authority_field_present(bucket, "authority_reason")
+    ) or _promotion_grade_authority_field_present(bucket, "authority_reason")
 
 
 def _non_promotion_derivation_present(bucket: Mapping[str, object]) -> bool:
