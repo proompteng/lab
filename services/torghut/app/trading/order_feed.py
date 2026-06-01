@@ -6,7 +6,7 @@ import hashlib
 import json
 import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Callable, Mapping, cast
@@ -134,7 +134,15 @@ class OrderFeedIngestor:
             self._reconcile_tigerbeetle_if_enabled(session)
             session.commit()
         if durable_any and commit_allowed:
-            _commit_consumer(consumer)
+            if _consumer_commit_enabled():
+                if _commit_consumer(consumer):
+                    counters["consumer_commits_total"] += 1
+            else:
+                counters["consumer_commit_skipped_total"] += 1
+                logger.info(
+                    "Order-feed Kafka commit skipped: assignment_mode=%s db_cursor_authority=true",
+                    settings.trading_order_feed_assignment_mode,
+                )
         return counters
 
     def _reconcile_tigerbeetle_if_enabled(self, session: Session) -> None:
@@ -168,6 +176,8 @@ class OrderFeedIngestor:
             "failed_unhandled_total": 0,
             "apply_updates_total": 0,
             "consumer_errors_total": 0,
+            "consumer_commits_total": 0,
+            "consumer_commit_skipped_total": 0,
             "cursor_updates_total": 0,
         }
 
@@ -225,10 +235,34 @@ class OrderFeedIngestor:
             if normalized.event is not None
             else _coerce_int(getattr(record, "offset", None))
         )
-        out_of_scope_account = (
-            normalized.event is not None
+        event = normalized.event
+        account_alias_payload: dict[str, str] | None = None
+        if (
+            event is not None
             and normalized.account_label_explicit
-            and normalized.event.alpaca_account_label != self._default_account_label
+            and event.alpaca_account_label != self._default_account_label
+        ):
+            aliased_event = _event_with_default_account_label_if_in_scope(
+                session,
+                event,
+                default_account_label=self._default_account_label,
+            )
+            if aliased_event is not None:
+                account_alias_payload = {
+                    "source_account_label": event.alpaca_account_label,
+                    "canonical_account_label": self._default_account_label,
+                    "basis": "matched_order_identity",
+                }
+                event = aliased_event
+                normalized = NormalizationResult(
+                    event=event,
+                    drop_reason=None,
+                    account_label_explicit=normalized.account_label_explicit,
+                )
+        out_of_scope_account = (
+            event is not None
+            and normalized.account_label_explicit
+            and event.alpaca_account_label != self._default_account_label
         )
         source_window = _create_order_feed_source_window(
             session,
@@ -239,13 +273,17 @@ class OrderFeedIngestor:
             alpaca_account_label=(
                 self._default_account_label
                 if out_of_scope_account
-                else normalized.event.alpaca_account_label
-                if normalized.event is not None
+                else event.alpaca_account_label
+                if event is not None
                 else self._default_account_label
             ),
         )
         if source_window is not None:
             counters["source_windows_total"] += 1
+            if account_alias_payload is not None:
+                source_window.payload_json = {
+                    "account_label_alias": account_alias_payload,
+                }
 
         try:
             if out_of_scope_account:
@@ -307,6 +345,7 @@ class OrderFeedIngestor:
                     source_window,
                     persisted=persisted,
                     duplicate=duplicate,
+                    account_label_alias=account_alias_payload,
                 )
             if duplicate:
                 cursor_updated = _upsert_cursor_and_count(
@@ -513,14 +552,13 @@ class OrderFeedIngestor:
 
         manual_assignment = settings.trading_order_feed_assignment_mode == "manual"
         topics = [] if manual_assignment else settings.trading_order_feed_topics
+        group_id = None if manual_assignment else _kafka_consumer_group_id()
         return cast(
             Any,
             KafkaConsumer(
                 *topics,
                 bootstrap_servers=settings.trading_order_feed_bootstrap_server_list,
-                group_id=None
-                if manual_assignment
-                else settings.trading_order_feed_group_id,
+                group_id=group_id,
                 client_id=settings.trading_order_feed_client_id,
                 enable_auto_commit=False,
                 auto_offset_reset=settings.trading_order_feed_auto_offset_reset,
@@ -660,6 +698,7 @@ def _classify_source_window_event(
     *,
     persisted: ExecutionOrderEvent,
     duplicate: bool,
+    account_label_alias: dict[str, str] | None = None,
 ) -> None:
     source_window.first_event_ts = persisted.event_ts
     source_window.last_event_ts = persisted.event_ts
@@ -667,10 +706,13 @@ def _classify_source_window_event(
         source_window.status = "duplicate"
         source_window.status_reason = "duplicate_event_fingerprint"
         source_window.duplicate_count = 1
-        source_window.payload_json = {
+        payload: dict[str, Any] = {
             "classification": "duplicate",
             "classification_counts": {"duplicate": 1},
         }
+        if account_label_alias is not None:
+            payload["account_label_alias"] = account_label_alias
+        source_window.payload_json = payload
         return
     source_window.status = "inserted"
     source_window.inserted_count = 1
@@ -681,10 +723,13 @@ def _classify_source_window_event(
     if persisted.trade_decision_id is None:
         source_window.unlinked_decision_count = 1
         classification_counts["unlinked_decision"] = 1
-    source_window.payload_json = {
+    payload = {
         "classification": "inserted",
         "classification_counts": classification_counts,
     }
+    if account_label_alias is not None:
+        payload["account_label_alias"] = account_label_alias
+    source_window.payload_json = payload
 
 
 def normalize_order_feed_record(
@@ -797,6 +842,112 @@ def normalize_order_feed_record(
         event=event,
         drop_reason=None,
         account_label_explicit=explicit_account_label is not None,
+    )
+
+
+def _event_with_default_account_label_if_in_scope(
+    session: Session,
+    event: NormalizedOrderEvent,
+    *,
+    default_account_label: str,
+) -> NormalizedOrderEvent | None:
+    """Canonicalize broker-account labels only when local order identity proves scope.
+
+    Some paper broker streams identify the account by broker account id while
+    Torghut's runtime proof labels the same lane as ``TORGHUT_SIM``. Treat the
+    broker id as an alias only when a submitted local execution or decision with
+    the same order identity already exists under the default account label. This
+    keeps true cross-account events fail-closed as out-of-scope.
+    """
+
+    if not default_account_label or event.alpaca_account_label == default_account_label:
+        return event
+    if not _order_identity_matches_account_scope(
+        session,
+        event,
+        account_label=default_account_label,
+    ):
+        return None
+
+    raw_event = coerce_json_payload(event.raw_event)
+    if isinstance(raw_event, Mapping):
+        aliased_raw_event: dict[str, Any] = {
+            str(key): value
+            for key, value in cast(Mapping[object, Any], raw_event).items()
+        }
+    else:
+        aliased_raw_event = {"payload": raw_event}
+    aliased_raw_event["_torghut_account_label_alias"] = {
+        "source_account_label": event.alpaca_account_label,
+        "canonical_account_label": default_account_label,
+        "basis": "matched_order_identity",
+    }
+    return replace(
+        event,
+        event_fingerprint=_fingerprint_normalized_order_event(
+            event,
+            account_label=default_account_label,
+        ),
+        alpaca_account_label=default_account_label,
+        raw_event=coerce_json_payload(aliased_raw_event),
+    )
+
+
+def _fingerprint_normalized_order_event(
+    event: NormalizedOrderEvent,
+    *,
+    account_label: str | None = None,
+) -> str:
+    fingerprint_input = {
+        "alpaca_account_label": account_label or event.alpaca_account_label,
+        "alpaca_order_id": event.alpaca_order_id,
+        "client_order_id": event.client_order_id,
+        "event_type": event.event_type,
+        "status": event.status,
+        "event_ts": event.event_ts.isoformat() if event.event_ts else None,
+        "feed_seq": event.feed_seq,
+        "qty": str(event.qty) if event.qty is not None else None,
+        "filled_qty": str(event.filled_qty) if event.filled_qty is not None else None,
+        "avg_fill_price": (
+            str(event.avg_fill_price) if event.avg_fill_price is not None else None
+        ),
+    }
+    return hashlib.sha256(
+        json.dumps(fingerprint_input, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+
+
+def _order_identity_matches_account_scope(
+    session: Session,
+    event: NormalizedOrderEvent,
+    *,
+    account_label: str,
+) -> bool:
+    clauses: list[ColumnElement[bool]] = []
+    if event.alpaca_order_id:
+        clauses.append(
+            (Execution.alpaca_order_id == event.alpaca_order_id)
+            & (Execution.alpaca_account_label == account_label)
+        )
+    if event.client_order_id:
+        clauses.append(
+            (Execution.client_order_id == event.client_order_id)
+            & (Execution.alpaca_account_label == account_label)
+        )
+    if clauses and session.scalar(select(exists().where(or_(*clauses)))):
+        return True
+
+    if not event.client_order_id:
+        return False
+    return bool(
+        session.scalar(
+            select(
+                exists().where(
+                    TradeDecision.decision_hash == event.client_order_id,
+                    TradeDecision.alpaca_account_label == account_label,
+                )
+            )
+        )
     )
 
 
@@ -2035,6 +2186,14 @@ def _order_feed_cursor_consumer_group() -> str:
     return client_id or "torghut-order-feed"
 
 
+def _kafka_consumer_group_id() -> str:
+    return _order_feed_cursor_consumer_group()
+
+
+def _consumer_commit_enabled() -> bool:
+    return settings.trading_order_feed_assignment_mode == "group"
+
+
 def _latest_persisted_source_offsets(session: Session) -> dict[tuple[str, int], int]:
     consumer_group = _order_feed_cursor_consumer_group()
     cursor_rows = session.execute(
@@ -2253,14 +2412,16 @@ def _update_trade_decision_from_execution(
     session.add(decision)
 
 
-def _commit_consumer(consumer: Any) -> None:
+def _commit_consumer(consumer: Any) -> bool:
     run_commit = cast(Callable[[], Any] | None, getattr(consumer, "commit", None))
     if run_commit is None:
-        return
+        return False
     try:
         run_commit()
+        return True
     except Exception as exc:  # pragma: no cover - external Kafka failure
         logger.warning("Order-feed consumer commit failed: %s", exc)
+        return False
 
 
 __all__ = [

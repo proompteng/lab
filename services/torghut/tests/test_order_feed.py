@@ -908,6 +908,62 @@ class TestOrderFeed(TestCase):
         assert normalized.event is not None
         self.assertEqual(normalized.event.alpaca_account_label, "paper-c")
 
+    def test_sim_broker_account_label_alias_links_to_torghut_sim_scope(
+        self,
+    ) -> None:
+        record = FakeRecord(
+            value=(
+                b'{"channel":"trade_updates","account_label":"PA3SX7FYNUTF",'
+                b'"payload":{"event":"fill","timestamp":"2026-02-01T10:00:00Z",'
+                b'"account_label":"PA3SX7FYNUTF",'
+                b'"order":{"id":"sim-order-1","client_order_id":"sim-client-1",'
+                b'"symbol":"AAPL","status":"filled","qty":"1","filled_qty":"1",'
+                b'"filled_avg_price":"190.2","alpaca_account_label":"PA3SX7FYNUTF"}},'
+                b'"seq":10}'
+            ),
+            offset=26,
+        )
+        consumer = FakeConsumer([record])
+        ingestor = OrderFeedIngestor(
+            consumer_factory=lambda: consumer,
+            default_account_label="TORGHUT_SIM",
+        )
+
+        with Session(self.engine) as session:
+            execution = self._seed_execution(
+                session,
+                account_label="TORGHUT_SIM",
+                order_id="sim-order-1",
+                client_order_id="sim-client-1",
+            )
+            execution_id = execution.id
+            trade_decision_id = execution.trade_decision_id
+
+            counters = ingestor.ingest_once(session)
+            event = session.execute(select(ExecutionOrderEvent)).scalar_one()
+            source_window = session.execute(select(OrderFeedSourceWindow)).scalar_one()
+
+        self.assertEqual(counters["events_persisted_total"], 1)
+        self.assertEqual(counters["out_of_scope_account_total"], 0)
+        self.assertEqual(counters["apply_updates_total"], 1)
+        self.assertEqual(event.alpaca_account_label, "TORGHUT_SIM")
+        self.assertEqual(event.execution_id, execution_id)
+        self.assertEqual(event.trade_decision_id, trade_decision_id)
+        self.assertEqual(
+            event.raw_event["_torghut_account_label_alias"]["source_account_label"],
+            "PA3SX7FYNUTF",
+        )
+        self.assertEqual(source_window.alpaca_account_label, "TORGHUT_SIM")
+        self.assertEqual(source_window.status, "inserted")
+        self.assertEqual(
+            source_window.payload_json["account_label_alias"],
+            {
+                "source_account_label": "PA3SX7FYNUTF",
+                "canonical_account_label": "TORGHUT_SIM",
+                "basis": "matched_order_identity",
+            },
+        )
+
     def test_build_consumer_applies_kafka_security_kwargs(self) -> None:
         captured_kwargs: dict[str, object] = {}
         original_security_protocol = settings.trading_order_feed_security_protocol
@@ -940,6 +996,36 @@ class TestOrderFeed(TestCase):
         self.assertEqual(captured_kwargs.get("sasl_mechanism"), "SCRAM-SHA-512")
         self.assertEqual(captured_kwargs.get("sasl_plain_username"), "user")
         self.assertEqual(captured_kwargs.get("sasl_plain_password"), "secret")
+
+    def test_build_consumer_group_mode_falls_back_to_client_id_group(self) -> None:
+        captured_kwargs: dict[str, object] = {}
+        original_group_id = settings.trading_order_feed_group_id
+        original_client_id = settings.trading_order_feed_client_id
+        original_assignment_mode = settings.trading_order_feed_assignment_mode
+        try:
+            settings.trading_order_feed_assignment_mode = "group"
+            settings.trading_order_feed_group_id = " "
+            settings.trading_order_feed_client_id = "paper-route-client"
+
+            class _FakeKafkaConsumer:
+                def __init__(self, *topics: str, **kwargs: object) -> None:
+                    captured_kwargs["topics"] = list(topics)
+                    captured_kwargs.update(kwargs)
+
+            with patch.dict(
+                "sys.modules",
+                {"kafka": SimpleNamespace(KafkaConsumer=_FakeKafkaConsumer)},
+            ):
+                OrderFeedIngestor._build_consumer()
+        finally:
+            settings.trading_order_feed_group_id = original_group_id
+            settings.trading_order_feed_client_id = original_client_id
+            settings.trading_order_feed_assignment_mode = original_assignment_mode
+
+        self.assertEqual(
+            captured_kwargs.get("topics"), ["torghut.trade-updates.v1"]
+        )
+        self.assertEqual(captured_kwargs.get("group_id"), "paper-route-client")
 
     def test_build_consumer_disables_group_subscription_for_manual_assignment(
         self,
@@ -1995,6 +2081,40 @@ class TestOrderFeed(TestCase):
         self.assertEqual(source_window.start_offset, 31)
         self.assertEqual(source_window.end_offset, 31)
         self.assertEqual(source_window.broker_high_watermark, 37)
+        self.assertEqual(source_window.status, "inserted")
+
+    def test_manual_assignment_skips_kafka_commit_after_durable_cursor_update(
+        self,
+    ) -> None:
+        settings.trading_order_feed_assignment_mode = "manual"
+        settings.trading_order_feed_auto_offset_reset = "earliest"
+        record = FakeRecord(
+            value=(
+                b'{"channel":"trade_updates","payload":{"event":"fill","timestamp":"2026-02-01T10:00:00Z",'
+                b'"order":{"id":"order-1","client_order_id":"client-1","symbol":"AAPL","status":"filled",'
+                b'"qty":"1","filled_qty":"1","filled_avg_price":"190.2"}},"seq":10}'
+            ),
+            offset=32,
+        )
+        consumer = FakeManualConsumer(
+            [record],
+            partitions={"torghut.trade-updates.v1": {0}},
+        )
+        ingestor = OrderFeedIngestor(consumer_factory=lambda: consumer)
+
+        with Session(self.engine) as session:
+            self._seed_execution(session)
+            counters = ingestor.ingest_once(session)
+            cursor = session.execute(select(OrderFeedConsumerCursor)).scalar_one()
+            source_window = session.execute(select(OrderFeedSourceWindow)).scalar_one()
+
+        self.assertEqual(counters["events_persisted_total"], 1)
+        self.assertEqual(counters["cursor_updates_total"], 1)
+        self.assertEqual(counters["consumer_commits_total"], 0)
+        self.assertEqual(counters["consumer_commit_skipped_total"], 1)
+        self.assertEqual(consumer.commit_calls, 0)
+        self.assertEqual(cursor.high_watermark_offset, 32)
+        self.assertEqual(source_window.assignment_mode, "manual")
         self.assertEqual(source_window.status, "inserted")
 
     def test_invalid_json_is_durably_classified_before_cursor_advance(self) -> None:
