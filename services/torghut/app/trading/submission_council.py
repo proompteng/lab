@@ -1642,6 +1642,7 @@ def _runtime_ledger_paper_probation_candidates(
             "evidence_collection_ok": True,
             "canary_collection_authorized": True,
             "capital_promotion_allowed": False,
+            "final_authority_ok": False,
             "final_promotion_allowed": False,
             "paper_probation_reason_codes": [_RUNTIME_LEDGER_PAPER_PROBATION_REASON],
             "paper_probation_target_capital_stage": "shadow",
@@ -1685,6 +1686,7 @@ def _runtime_ledger_source_collection_candidates(
             "evidence_collection_ok": True,
             "canary_collection_authorized": False,
             "capital_promotion_allowed": False,
+            "final_authority_ok": False,
             "final_promotion_allowed": False,
             "source_collection_reason_codes": [
                 reason
@@ -1873,6 +1875,13 @@ def _runtime_ledger_paper_probation_import_plan(
             "strategy_lookup_names": strategy_lookup_names,
             "account_label": account_label,
             "source_account_label": account_label,
+            "account_stage_runtime_identity": {
+                "account_label": account_label,
+                "source_account_label": account_label,
+                "observed_stage": "paper",
+                "runtime_strategy_name": strategy_name,
+                "source_kind": source_kind,
+            },
             "source_dsn_env": source_dsn_env,
             "target_dsn_env": target_dsn_env,
             "dataset_snapshot_ref": dataset_snapshot_ref or "",
@@ -1902,6 +1911,7 @@ def _runtime_ledger_paper_probation_import_plan(
             "evidence_collection_ok": True,
             "canary_collection_authorized": not source_collection,
             "capital_promotion_allowed": False,
+            "final_authority_ok": False,
             "evidence_collection_stage": "paper",
             "probation_allowed": not source_collection,
             "probation_reason": (
@@ -1947,6 +1957,7 @@ def _runtime_ledger_paper_probation_import_plan(
             bool(target.get("canary_collection_authorized")) for target in targets
         ),
         "capital_promotion_allowed": False,
+        "final_authority_ok": False,
         "promotion_allowed": False,
         "final_promotion_authorized": False,
         "final_promotion_allowed": False,

@@ -1227,6 +1227,7 @@ class TestSubmissionCouncil(TestCase):
         self.assertTrue(paper_candidates[0]["evidence_collection_ok"])
         self.assertTrue(paper_candidates[0]["canary_collection_authorized"])
         self.assertFalse(paper_candidates[0]["capital_promotion_allowed"])
+        self.assertFalse(paper_candidates[0]["final_authority_ok"])
         self.assertFalse(paper_candidates[0]["final_promotion_allowed"])
         self.assertEqual(paper_candidates[0]["max_notional"], "0")
         import_plan = gate["runtime_ledger_paper_probation_import_plan"]
@@ -1241,6 +1242,7 @@ class TestSubmissionCouncil(TestCase):
         self.assertTrue(import_plan["evidence_collection_ok"])
         self.assertTrue(import_plan["canary_collection_authorized"])
         self.assertFalse(import_plan["capital_promotion_allowed"])
+        self.assertFalse(import_plan["final_authority_ok"])
         self.assertFalse(import_plan["final_promotion_allowed"])
         target = import_plan["targets"][0]
         self.assertEqual(target["hypothesis_id"], "H-PAIRS-01")
@@ -1279,6 +1281,7 @@ class TestSubmissionCouncil(TestCase):
         self.assertTrue(target["evidence_collection_ok"])
         self.assertTrue(target["canary_collection_authorized"])
         self.assertFalse(target["capital_promotion_allowed"])
+        self.assertFalse(target["final_authority_ok"])
         self.assertEqual(target["promotion_allowed"], False)
         self.assertEqual(target["final_promotion_authorized"], False)
         self.assertEqual(target["final_promotion_allowed"], False)
