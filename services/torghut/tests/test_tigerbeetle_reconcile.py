@@ -21,14 +21,19 @@ from app.models import (
 )
 from app.trading.tigerbeetle_client import FakeTigerBeetleClient
 from app.trading.tigerbeetle_journal import (
+    SOURCE_TYPE_EXECUTION_ORDER_EVENT,
     SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+    build_order_event_transfer_plan,
     build_runtime_ledger_bucket_transfer_plan,
+    submitted_pending_transfer_id,
 )
 from app.trading.tigerbeetle_ledger_model import (
     LEDGER_USD_MICRO,
     TRANSFER_CODE_EXECUTION_FILL,
     TRANSFER_CODE_FILL_POST,
     TRANSFER_CODE_RUNTIME_NET_PNL,
+    TRANSFER_CODE_SUBMITTED_PENDING,
+    TRANSFER_KIND_SUBMITTED_PENDING,
     TRANSFER_KIND_RUNTIME_NET_PNL,
     TigerBeetleTransferSpec,
 )
@@ -324,19 +329,18 @@ class TestTigerBeetleReconcile(TestCase):
     def test_reconciliation_blocks_source_row_missing(self) -> None:
         with Session(self.engine) as session:
             missing_id = "6f767a53-6b44-428a-bd85-2f662642f637"
-            session.add(
-                TigerBeetleTransferRef(
-                    cluster_id=2001,
-                    transfer_id="1003",
-                    transfer_kind="execution_fill",
-                    ledger=LEDGER_USD_MICRO,
-                    code=TRANSFER_CODE_EXECUTION_FILL,
-                    amount=Decimal("190250000"),
-                    status="created",
-                    source_type="execution",
-                    source_id=missing_id,
-                )
+            missing_ref = TigerBeetleTransferRef(
+                cluster_id=2001,
+                transfer_id="1003",
+                transfer_kind="execution_fill",
+                ledger=LEDGER_USD_MICRO,
+                code=TRANSFER_CODE_EXECUTION_FILL,
+                amount=Decimal("190250000"),
+                status="created",
+                source_type="execution",
+                source_id=missing_id,
             )
+            session.add(missing_ref)
             session.flush()
             client = FakeTigerBeetleClient()
             client.transfers[1003] = TigerBeetleTransferSpec(
@@ -356,7 +360,100 @@ class TestTigerBeetleReconcile(TestCase):
             self.assertFalse(payload["ok"])
             self.assertIn(BLOCKER_SOURCE_ROW_MISSING, payload["blockers"])
             self.assertEqual(payload["source_row_missing_count"], 1)
+            self.assertEqual(payload["missing_source_row_count"], 1)
             self.assertEqual(payload["source_missing_count"], 1)
+            missing_source_rows = payload["missing_source_rows"]
+            assert isinstance(missing_source_rows, list)
+            self.assertEqual(missing_source_rows[0]["row_id"], str(missing_ref.id))
+            self.assertEqual(missing_source_rows[0]["source_id"], missing_id)
+
+    def test_reconciliation_accepts_historical_standalone_fill_when_pending_ref_arrives_later(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            event = ExecutionOrderEvent(
+                event_fingerprint="standalone-fill-before-pending",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=2,
+                alpaca_account_label="paper",
+                event_ts=datetime.now(timezone.utc),
+                symbol="AAPL",
+                event_type="fill",
+                status="filled",
+                qty=Decimal("1"),
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("190.25"),
+                raw_event={"event": "fill"},
+            )
+            session.add(event)
+            session.flush()
+            plan = build_order_event_transfer_plan(session, event, settings_obj=_settings())
+            self.assertIsNotNone(plan)
+            assert plan is not None
+            transfer = plan.transfer_spec
+            pending_transfer_id = submitted_pending_transfer_id(event)
+            session.add_all(
+                [
+                    TigerBeetleTransferRef(
+                        cluster_id=2001,
+                        transfer_id=str(transfer.transfer_id),
+                        transfer_kind=transfer.transfer_kind,
+                        ledger=transfer.ledger,
+                        code=transfer.code,
+                        amount=Decimal(transfer.amount),
+                        status="created",
+                        execution_order_event_id=event.id,
+                        source_type=SOURCE_TYPE_EXECUTION_ORDER_EVENT,
+                        source_id=str(event.id),
+                        event_fingerprint=event.event_fingerprint,
+                        payload_json={
+                            "debit_account_id": f"{transfer.debit_account_id}.0",
+                            "credit_account_id": str(transfer.credit_account_id),
+                            "pending_mode": "standalone_fill",
+                            "source": SOURCE_TYPE_EXECUTION_ORDER_EVENT,
+                        },
+                    ),
+                    TigerBeetleTransferRef(
+                        cluster_id=2001,
+                        transfer_id=str(pending_transfer_id),
+                        transfer_kind=TRANSFER_KIND_SUBMITTED_PENDING,
+                        ledger=LEDGER_USD_MICRO,
+                        code=TRANSFER_CODE_SUBMITTED_PENDING,
+                        amount=Decimal(transfer.amount),
+                        status="created",
+                    ),
+                ]
+            )
+            session.flush()
+            client = FakeTigerBeetleClient()
+            client.transfers[transfer.transfer_id] = {
+                "transfer_id": Decimal(transfer.transfer_id),
+                "amount": str(transfer.amount),
+                "ledger": str(transfer.ledger),
+                "code": str(transfer.code),
+                "debit_account_id": Decimal(transfer.debit_account_id),
+                "credit_account_id": str(transfer.credit_account_id),
+            }
+            client.transfers[pending_transfer_id] = TigerBeetleTransferSpec(
+                transfer_id=pending_transfer_id,
+                transfer_kind=TRANSFER_KIND_SUBMITTED_PENDING,
+                debit_account_id=11,
+                credit_account_id=12,
+                amount=transfer.amount,
+                ledger=LEDGER_USD_MICRO,
+                code=TRANSFER_CODE_SUBMITTED_PENDING,
+            )
+
+            payload = reconcile_tigerbeetle_transfers(
+                session,
+                settings_obj=_settings(),
+                client=client,
+            )
+
+        self.assertTrue(payload["ok"], payload)
+        self.assertNotIn(BLOCKER_POSTGRES_REF_MISMATCH, payload["blockers"])
+        self.assertEqual(payload["mismatched_ref_count"], 0)
 
     def test_runtime_payload_account_ids_normalize_sequence_scalar_and_missing_values(
         self,
@@ -789,23 +886,22 @@ class TestTigerBeetleReconcile(TestCase):
             )
             session.add(event)
             session.flush()
-            session.add(
-                TigerBeetleTransferRef(
-                    cluster_id=2001,
-                    transfer_id="1001",
-                    transfer_kind="fill_post",
-                    ledger=LEDGER_USD_MICRO,
-                    code=TRANSFER_CODE_FILL_POST,
-                    amount=Decimal("190250000"),
-                    status="created",
-                    event_fingerprint=event.event_fingerprint,
-                    execution_order_event_id=event.id,
-                    payload_json={
-                        "debit_account_id": "11",
-                        "credit_account_id": "12",
-                    },
-                )
+            mismatched_ref = TigerBeetleTransferRef(
+                cluster_id=2001,
+                transfer_id="1001",
+                transfer_kind="fill_post",
+                ledger=LEDGER_USD_MICRO,
+                code=TRANSFER_CODE_FILL_POST,
+                amount=Decimal("190250000"),
+                status="created",
+                event_fingerprint=event.event_fingerprint,
+                execution_order_event_id=event.id,
+                payload_json={
+                    "debit_account_id": "11",
+                    "credit_account_id": "12",
+                },
             )
+            session.add(mismatched_ref)
             session.flush()
             client = FakeTigerBeetleClient()
             client.transfers[1001] = _transfer()
@@ -818,6 +914,13 @@ class TestTigerBeetleReconcile(TestCase):
 
             self.assertFalse(payload["ok"])
             self.assertIn(BLOCKER_POSTGRES_REF_MISMATCH, payload["blockers"])
+            mismatched_refs = payload["mismatched_refs"]
+            assert isinstance(mismatched_refs, list)
+            self.assertEqual(mismatched_refs[0]["row_id"], str(mismatched_ref.id))
+            self.assertEqual(
+                mismatched_refs[0]["blocker"],
+                BLOCKER_POSTGRES_REF_MISMATCH,
+            )
 
     def test_reconciliation_blocks_unlinked_order_event(self) -> None:
         with Session(self.engine) as session:
@@ -1068,7 +1171,29 @@ class TestTigerBeetleReconcile(TestCase):
                     source_missing_count=0,
                     payload_json={
                         "blockers": [BLOCKER_CODE_MISMATCH, 7],
-                        "ref_counts": {"transfer_ref_count": 2},
+                        "mismatched_ref_count": 1,
+                        "missing_source_row_count": 3,
+                        "unlinked_order_event_ref_count": 4,
+                        "mismatched_refs": [
+                            {
+                                "blocker": BLOCKER_CODE_MISMATCH,
+                                "row_id": "ref-1",
+                            }
+                        ],
+                        "blocker_details": {
+                            "mismatched_refs": [
+                                {
+                                    "blocker": BLOCKER_CODE_MISMATCH,
+                                    "row_id": "ref-1",
+                                }
+                            ]
+                        },
+                        "ref_counts": {
+                            "account_ref_count": 1,
+                            "transfer_ref_count": 2,
+                            "runtime_ledger_ref_count": 5,
+                            "runtime_ledger_signed_ref_count": 4,
+                        },
                     },
                 )
             )
@@ -1083,7 +1208,23 @@ class TestTigerBeetleReconcile(TestCase):
         assert payload is not None
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["blockers"], [BLOCKER_CODE_MISMATCH, "7"])
-        self.assertEqual(payload["ref_counts"], {"transfer_ref_count": 2})
+        self.assertEqual(payload["account_ref_count"], 1)
+        self.assertEqual(payload["transfer_ref_count"], 2)
+        self.assertEqual(payload["runtime_ledger_ref_count"], 5)
+        self.assertEqual(payload["runtime_ledger_signed_ref_count"], 4)
+        self.assertEqual(payload["mismatched_ref_count"], 1)
+        self.assertEqual(payload["missing_source_row_count"], 3)
+        self.assertEqual(payload["unlinked_order_event_ref_count"], 4)
+        self.assertEqual(payload["mismatched_refs"], [{"blocker": BLOCKER_CODE_MISMATCH, "row_id": "ref-1"}])
+        self.assertEqual(
+            payload["ref_counts"],
+            {
+                "account_ref_count": 1,
+                "transfer_ref_count": 2,
+                "runtime_ledger_ref_count": 5,
+                "runtime_ledger_signed_ref_count": 4,
+            },
+        )
 
     def test_attr_helper_supports_mapping_and_transfer_id_fallbacks(self) -> None:
         self.assertEqual(_attr({"transfer_id": 44}, "id"), 44)

@@ -59,6 +59,7 @@ BLOCKER_CANDIDATE_MISMATCH = "tigerbeetle_parity_candidate_mismatch"
 BLOCKER_TRANSFER_SHAPE_MISMATCH = "tigerbeetle_parity_transfer_shape_mismatch"
 BLOCKER_TRANSFER_MISSING = "tigerbeetle_parity_transfer_missing"
 BLOCKER_CLIENT_UNAVAILABLE = "tigerbeetle_parity_client_unavailable"
+BLOCKER_RECONCILIATION_NOT_OK = "tigerbeetle_reconciliation_not_ok"
 
 
 @dataclass(frozen=True)
@@ -542,10 +543,29 @@ def tigerbeetle_runtime_ledger_parity_blockers(
     required = bool(payload.get("required"))
     if not required:
         return []
+    blockers: list[str] = []
+    if payload.get("reconciliation_ok") is False:
+        blockers.append(BLOCKER_RECONCILIATION_NOT_OK)
+        latest_reconciliation = payload.get("latest_reconciliation")
+        if isinstance(latest_reconciliation, Mapping):
+            reconciliation_payload = cast(
+                Mapping[str, object],
+                latest_reconciliation,
+            )
+            raw_reconciliation_blockers = reconciliation_payload.get("blockers")
+            if isinstance(raw_reconciliation_blockers, Sequence) and not isinstance(
+                raw_reconciliation_blockers,
+                (str, bytes, bytearray),
+            ):
+                blockers.extend(
+                    str(item)
+                    for item in cast(Sequence[object], raw_reconciliation_blockers)
+                )
     raw_blockers = payload.get("blockers")
     if not isinstance(raw_blockers, Sequence) or isinstance(
         raw_blockers, (str, bytes, bytearray)
     ):
-        return []
+        return sorted(set(blockers))
     blocker_items = cast(Sequence[object], raw_blockers)
-    return [str(item) for item in blocker_items]
+    blockers.extend(str(item) for item in blocker_items)
+    return sorted(set(blockers))
