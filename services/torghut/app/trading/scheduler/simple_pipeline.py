@@ -132,7 +132,10 @@ _BOUNDED_SIM_COLLECTION_LINEAGE_BOOL_KEYS = (
     "canary_collection_authorized",
     "evidence_collection_ok",
 )
-_BOUNDED_SIM_COLLECTION_LINEAGE_MAPPING_KEYS = ("source_decision_readiness",)
+_BOUNDED_SIM_COLLECTION_LINEAGE_MAPPING_KEYS = (
+    "source_decision_readiness",
+    "paper_route_target_account_audit_state",
+)
 _FLATTEN_CLOSE_DECISION_SCHEMA_VERSION = (
     "torghut.paper-account-flatten-close-decision.v1"
 )

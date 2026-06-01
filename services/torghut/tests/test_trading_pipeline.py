@@ -900,6 +900,21 @@ class TestTradingPipeline(TestCase):
         for name, value in self._settings_snapshot.items():
             setattr(config.settings, name, value)
 
+    @staticmethod
+    def _paper_route_target_account_audit_state(
+        symbols: Sequence[str],
+    ) -> dict[str, object]:
+        return {
+            "schema_version": "torghut.paper-route-target-account-audit.v1",
+            "scope": "local_torghut_sim_paper_runtime_account_state",
+            "state": "available",
+            "account_label": "TORGHUT_SIM",
+            "required_account_label": "TORGHUT_SIM",
+            "symbols": list(symbols),
+            "audit_available": True,
+            "blockers": [],
+        }
+
     def _seed_filled_paper_route_probe_entry(
         self,
         *,
@@ -3367,6 +3382,10 @@ class TestTradingPipeline(TestCase):
             "source_kind": "paper_route_probe_runtime_observed",
             "source_manifest_ref": "config/trading/hypotheses/h-pairs.json",
             "paper_route_probe_symbols": ["AAPL"],
+            "paper_route_target_account_audit_state": (
+                self._paper_route_target_account_audit_state(["AAPL"])
+            ),
+            "paper_route_target_account_audit_blockers": [],
             "paper_route_probe_next_session_max_notional": "250",
             "paper_route_probe_window_start": window_start.isoformat(),
             "paper_route_probe_window_end": window_end.isoformat(),
@@ -3862,6 +3881,10 @@ class TestTradingPipeline(TestCase):
             "source_kind": "paper_route_probe_runtime_observed",
             "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
             "paper_route_probe_symbols": ["AAPL", "AMZN"],
+            "paper_route_target_account_audit_state": (
+                self._paper_route_target_account_audit_state(["AAPL", "AMZN"])
+            ),
+            "paper_route_target_account_audit_blockers": [],
             "paper_route_probe_pair_balance_state": "balanced",
             "paper_route_probe_window_start": window_start.isoformat(),
             "paper_route_probe_window_end": window_end.isoformat(),
@@ -4019,6 +4042,10 @@ class TestTradingPipeline(TestCase):
             "source_kind": "paper_route_probe_runtime_observed",
             "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
             "paper_route_probe_symbols": ["AAPL", "AMZN"],
+            "paper_route_target_account_audit_state": (
+                self._paper_route_target_account_audit_state(["AAPL", "AMZN"])
+            ),
+            "paper_route_target_account_audit_blockers": [],
             "paper_route_probe_pair_balance_state": "balanced",
             "paper_route_probe_window_start": window_start.isoformat(),
             "paper_route_probe_window_end": window_end.isoformat(),
@@ -8569,6 +8596,10 @@ class TestTradingPipeline(TestCase):
                             ),
                             "account_label": "TORGHUT_SIM",
                             "source_account_label": "TORGHUT_REPLAY",
+                            "paper_route_target_account_audit_state": (
+                                self._paper_route_target_account_audit_state(["AAPL"])
+                            ),
+                            "paper_route_target_account_audit_blockers": [],
                             "runtime_strategy_name": (
                                 "microbar-cross-sectional-pairs-v1"
                             ),
@@ -8741,6 +8772,12 @@ class TestTradingPipeline(TestCase):
                             ),
                             "account_label": "TORGHUT_SIM",
                             "source_account_label": "TORGHUT_REPLAY",
+                            "paper_route_target_account_audit_state": (
+                                self._paper_route_target_account_audit_state(
+                                    ["AAPL", "AMZN"]
+                                )
+                            ),
+                            "paper_route_target_account_audit_blockers": [],
                             "runtime_strategy_name": (
                                 "microbar-cross-sectional-pairs-v1"
                             ),
@@ -8865,6 +8902,10 @@ class TestTradingPipeline(TestCase):
                 "source_kind": "paper_route_probe_runtime_observed",
                 "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
                 "evidence_collection_ok": True,
+                "paper_route_target_account_audit_state": (
+                    self._paper_route_target_account_audit_state(["AAPL"])
+                ),
+                "paper_route_target_account_audit_blockers": [],
                 "canary_collection_authorized": True,
                 "bounded_evidence_collection_authorized": True,
                 "bounded_live_paper_collection_authorized": True,
@@ -9656,6 +9697,10 @@ class TestTradingPipeline(TestCase):
             "account_label": "TORGHUT_SIM",
             "source_account_label": "TORGHUT_REPLAY",
             "evidence_collection_ok": True,
+            "paper_route_target_account_audit_state": (
+                self._paper_route_target_account_audit_state(["AAPL", "AMZN"])
+            ),
+            "paper_route_target_account_audit_blockers": [],
             "canary_collection_authorized": True,
             "bounded_evidence_collection_authorized": True,
             "bounded_live_paper_collection_authorized": True,
@@ -9785,6 +9830,10 @@ class TestTradingPipeline(TestCase):
             "account_label": "TORGHUT_SIM",
             "source_account_label": "TORGHUT_REPLAY",
             "evidence_collection_ok": True,
+            "paper_route_target_account_audit_state": (
+                self._paper_route_target_account_audit_state(["AAPL", "AMZN"])
+            ),
+            "paper_route_target_account_audit_blockers": [],
             "canary_collection_authorized": True,
             "bounded_evidence_collection_authorized": True,
             "bounded_live_paper_collection_authorized": True,
@@ -9933,6 +9982,10 @@ class TestTradingPipeline(TestCase):
                 "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
                 "account_label": "TORGHUT_SIM",
                 "evidence_collection_ok": True,
+                "paper_route_target_account_audit_state": (
+                    self._paper_route_target_account_audit_state(["AAPL", "AMZN"])
+                ),
+                "paper_route_target_account_audit_blockers": [],
                 "canary_collection_authorized": True,
                 "bounded_evidence_collection_authorized": True,
                 "bounded_live_paper_collection_authorized": True,
