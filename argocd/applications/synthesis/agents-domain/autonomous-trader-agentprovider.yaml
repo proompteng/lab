@@ -27,6 +27,8 @@ spec:
               ALPACA_API_KEY: "{{ env.ALPACA_API_KEY }}"
               ALPACA_SECRET_KEY: "{{ env.ALPACA_SECRET_KEY }}"
               ALPACA_PAPER_TRADE: "{{ env.ALPACA_PAPER_TRADE }}"
+              AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED: "{{ env.AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED }}"
+              AUTONOMOUS_TRADER_MODE: "{{ env.AUTONOMOUS_TRADER_MODE }}"
               FASTMCP_SHOW_SERVER_BANNER: "false"
               FASTMCP_LOG_LEVEL: "ERROR"
             startup_timeout_sec: 60
@@ -81,6 +83,7 @@ spec:
     ANALYSIS_REPO_URL: https://github.com/gregkonush/analysis.git
     ANALYSIS_REQUIRED_COMMIT: 56be940b69bf1a56578040eda9bf2e3699c5220e
     AUTONOMOUS_TRADER_ARTIFACT_DIR: /workspace/.agentrun/autonomous-trader
+    AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED: "false"
     AUTONOMOUS_TRADER_MODE: "{{parameters.mode}}"
     AUTONOMOUS_TRADER_SYNTHESIS_SESSION_MODE: "{{parameters.synthesisSessionMode}}"
     AUTONOMOUS_TRADER_TARGET_EQUITY_USD: "{{parameters.targetEquityUsd}}"
@@ -136,7 +139,7 @@ spec:
         command = "/usr/bin/python3"
         args = ["-u", "/root/alpaca-mcp-stdio-bridge.py"]
         startup_timeout_sec = 60.0
-        env = { FASTMCP_SHOW_SERVER_BANNER = "false", FASTMCP_LOG_LEVEL = "ERROR" }
+        env = { FASTMCP_SHOW_SERVER_BANNER = "false", FASTMCP_LOG_LEVEL = "ERROR", AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED = "false" }
 
         [mcp_servers.synthesis]
         command = "node"
@@ -273,6 +276,7 @@ spec:
           > "${artifact_dir}/analysis-bootstrap.json"
     - path: /root/alpaca-mcp-stdio-bridge.py
       content: |-
+        import json
         import os
         import subprocess
         import sys
@@ -281,6 +285,36 @@ spec:
         child_env = dict(os.environ)
         child_env["FASTMCP_SHOW_SERVER_BANNER"] = "false"
         child_env["FASTMCP_LOG_LEVEL"] = "ERROR"
+
+        MUTATION_ENABLED_VALUES = {"1", "true", "yes", "enabled", "allow", "allowed"}
+        MUTATION_TOOL_PREFIXES = (
+            "cancel_",
+            "close_",
+            "create_",
+            "delete_",
+            "exercise_",
+            "liquidate_",
+            "patch_",
+            "place_",
+            "replace_",
+            "submit_",
+            "update_",
+        )
+        MUTATION_TOOL_NAMES = {
+            "cancel_all_orders",
+            "cancel_order",
+            "close_all_positions",
+            "close_position",
+            "create_order",
+            "exercise_option",
+            "liquidate_position",
+            "place_order",
+            "replace_order",
+            "submit_order",
+            "update_account_configuration",
+        }
+
+        output_lock = threading.Lock()
 
         child = subprocess.Popen(
             ["/usr/local/bin/alpaca-mcp-server", "--transport", "stdio"],
@@ -301,6 +335,75 @@ spec:
         def get_output_mode():
             with mode_lock:
                 return output_mode
+
+        def broker_mutations_enabled():
+            enabled = os.environ.get(
+                "AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED", ""
+            ).strip().lower()
+            return enabled in MUTATION_ENABLED_VALUES
+
+        def is_mutation_tool(tool_name):
+            normalized = str(tool_name or "").strip().lower().replace("-", "_")
+            if not normalized:
+                return False
+            return normalized in MUTATION_TOOL_NAMES or normalized.startswith(
+                MUTATION_TOOL_PREFIXES
+            )
+
+        def write_client_payload(payload):
+            with output_lock:
+                if get_output_mode() == "framed":
+                    sys.stdout.buffer.write(
+                        b"Content-Length: "
+                        + str(len(payload)).encode("ascii")
+                        + b"\r\n\r\n"
+                    )
+                    sys.stdout.buffer.write(payload)
+                else:
+                    sys.stdout.buffer.write(payload + b"\n")
+                sys.stdout.buffer.flush()
+
+        def reject_broker_mutation(message, tool_name):
+            response_id = message.get("id") if isinstance(message, dict) else None
+            payload = json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": response_id,
+                    "error": {
+                        "code": -32000,
+                        "message": (
+                            "Alpaca broker mutation blocked: "
+                            "AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED=false "
+                            "while the paper account is shared with Torghut proof collection"
+                        ),
+                        "data": {
+                            "toolName": tool_name,
+                            "reason": "blocked_shared_torghut_proof_account",
+                            "mode": os.environ.get("AUTONOMOUS_TRADER_MODE"),
+                        },
+                    },
+                },
+                separators=(",", ":"),
+            ).encode("utf-8")
+            write_client_payload(payload)
+
+        def should_block_client_message(raw_message):
+            if broker_mutations_enabled():
+                return False
+            try:
+                message = json.loads(raw_message.decode("utf-8"))
+            except Exception:
+                return False
+            if not isinstance(message, dict) or message.get("method") != "tools/call":
+                return False
+            params = message.get("params")
+            if not isinstance(params, dict):
+                return False
+            tool_name = params.get("name")
+            if not is_mutation_tool(tool_name):
+                return False
+            reject_broker_mutation(message, tool_name)
+            return True
 
         def read_client_message():
             line = sys.stdin.buffer.readline()
@@ -325,6 +428,8 @@ spec:
                     break
                 if not message:
                     continue
+                if should_block_client_message(message):
+                    continue
                 child.stdin.write(message + b"\n")
                 child.stdin.flush()
             child.stdin.close()
@@ -335,12 +440,7 @@ spec:
                 payload = line.rstrip(b"\r\n")
                 if not payload:
                     continue
-                if get_output_mode() == "framed":
-                    sys.stdout.buffer.write(b"Content-Length: " + str(len(payload)).encode("ascii") + b"\r\n\r\n")
-                    sys.stdout.buffer.write(payload)
-                else:
-                    sys.stdout.buffer.write(payload + b"\n")
-                sys.stdout.buffer.flush()
+                write_client_payload(payload)
 
         threads = [
             threading.Thread(target=client_to_child, daemon=True),
