@@ -90,6 +90,16 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
                 script,
                 "backfill_order_feed_events_from_executions",
             ) as backfill_execution_events,
+            patch.object(
+                script,
+                "repair_order_feed_fill_deltas",
+                return_value={
+                    "selected": 6,
+                    "delta_events_repaired": 5,
+                    "non_increasing_events_marked": 1,
+                    "missing_identity_events_marked": 0,
+                },
+            ) as repair_deltas,
             patch("sys.stdout", stdout),
         ):
             exit_code = script.main()
@@ -113,6 +123,10 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
         self.assertEqual(payload["execution_event_backfill_candidates"], 0)
         self.assertEqual(payload["execution_event_backfill_events_created"], 0)
         self.assertEqual(payload["execution_event_backfill_source_windows_created"], 0)
+        self.assertEqual(payload["fill_delta_candidates"], 6)
+        self.assertEqual(payload["fill_delta_events_repaired"], 5)
+        self.assertEqual(payload["fill_delta_non_increasing_events_marked"], 1)
+        self.assertEqual(payload["fill_delta_missing_identity_events_marked"], 0)
         self.assertEqual(fake_session.commits, 0)
         self.assertEqual(fake_session.rollbacks, 1)
         create_engine.assert_called_once_with(
@@ -131,6 +145,11 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
             limit=5000,
         )
         backfill_execution_events.assert_not_called()
+        repair_deltas.assert_called_once_with(
+            fake_session,
+            account_label=None,
+            limit=5000,
+        )
 
     def test_main_applies_until_selection_drops_below_batch_size(self) -> None:
         fake_session = _FakeSession()
@@ -202,6 +221,24 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
                 script,
                 "backfill_order_feed_events_from_executions",
             ) as backfill_execution_events,
+            patch.object(
+                script,
+                "repair_order_feed_fill_deltas",
+                side_effect=[
+                    {
+                        "selected": 2,
+                        "delta_events_repaired": 2,
+                        "non_increasing_events_marked": 0,
+                        "missing_identity_events_marked": 0,
+                    },
+                    {
+                        "selected": 1,
+                        "delta_events_repaired": 0,
+                        "non_increasing_events_marked": 1,
+                        "missing_identity_events_marked": 0,
+                    },
+                ],
+            ) as repair_deltas,
             patch("sys.stdout", stdout),
         ):
             exit_code = script.main()
@@ -220,6 +257,10 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
         self.assertEqual(payload["execution_link_executions_linked"], 1)
         self.assertEqual(payload["execution_link_events_linked"], 2)
         self.assertEqual(payload["execution_link_events_without_execution"], 0)
+        self.assertEqual(payload["fill_delta_candidates"], 3)
+        self.assertEqual(payload["fill_delta_events_repaired"], 2)
+        self.assertEqual(payload["fill_delta_non_increasing_events_marked"], 1)
+        self.assertEqual(payload["fill_delta_missing_identity_events_marked"], 0)
         self.assertEqual(fake_session.commits, 2)
         self.assertEqual(fake_session.rollbacks, 0)
         self.assertEqual(backfill.call_count, 2)
@@ -229,6 +270,9 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
         self.assertEqual(repair_links.call_args.kwargs["account_label"], "TORGHUT_SIM")
         self.assertEqual(repair_links.call_args.kwargs["limit"], 2)
         backfill_execution_events.assert_not_called()
+        self.assertEqual(repair_deltas.call_count, 2)
+        self.assertEqual(repair_deltas.call_args.kwargs["account_label"], "TORGHUT_SIM")
+        self.assertEqual(repair_deltas.call_args.kwargs["limit"], 2)
 
     def test_main_backfills_execution_events_when_enabled(self) -> None:
         fake_session = _FakeSession()
@@ -294,6 +338,16 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
                     "skipped_source_offset_collision": 0,
                 },
             ) as backfill_execution_events,
+            patch.object(
+                script,
+                "repair_order_feed_fill_deltas",
+                return_value={
+                    "selected": 0,
+                    "delta_events_repaired": 0,
+                    "non_increasing_events_marked": 0,
+                    "missing_identity_events_marked": 0,
+                },
+            ) as repair_deltas,
             patch("sys.stdout", stdout),
         ):
             exit_code = script.main()
@@ -307,8 +361,15 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
         self.assertEqual(payload["execution_event_backfill_events_created"], 6)
         self.assertEqual(payload["execution_event_backfill_source_windows_created"], 6)
         self.assertEqual(payload["execution_event_backfill_skipped_existing_event"], 1)
+        self.assertEqual(payload["fill_delta_candidates"], 0)
+        self.assertEqual(payload["fill_delta_events_repaired"], 0)
         self.assertEqual(fake_session.commits, 1)
         backfill_execution_events.assert_called_once_with(
+            fake_session,
+            account_label="PA3SX7FYNUTF",
+            limit=100,
+        )
+        repair_deltas.assert_called_once_with(
             fake_session,
             account_label="PA3SX7FYNUTF",
             limit=100,
