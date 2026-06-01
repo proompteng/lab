@@ -61,7 +61,9 @@ class TestTigerBeetleStatus(TestCase):
         self.assertEqual(payload["blockers"], [])
         self.assertEqual(payload["ref_counts"]["transfer_ref_count"], 0)
 
-    def test_tigerbeetle_status_int_normalizes_bool_strings_and_bad_values(self) -> None:
+    def test_tigerbeetle_status_int_normalizes_bool_strings_and_bad_values(
+        self,
+    ) -> None:
         self.assertEqual(_tigerbeetle_status_int(True), 1)
         self.assertEqual(_tigerbeetle_status_int(False), 0)
         self.assertEqual(_tigerbeetle_status_int("7"), 7)
@@ -98,7 +100,7 @@ class TestTigerBeetleStatus(TestCase):
         self.assertFalse(payload["reconciliation_ok"])
         self.assertIn("tigerbeetle_reconciliation_missing", payload["blockers"])
 
-    def test_enabled_missing_reconciliation_fails_closed(self) -> None:
+    def test_enabled_missing_reconciliation_is_nonblocking_until_required(self) -> None:
         settings.tigerbeetle_enabled = True
         settings.tigerbeetle_required = False
         health = TigerBeetleHealth(
@@ -114,11 +116,13 @@ class TestTigerBeetleStatus(TestCase):
             with patch("app.main.check_tigerbeetle_health", return_value=health):
                 payload = _build_tigerbeetle_ledger_status(session)
 
-        self.assertFalse(payload["ok"])
-        self.assertTrue(payload["reconciliation_required"])
-        self.assertIn("tigerbeetle_reconciliation_missing", payload["blockers"])
+        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["reconciliation_required"])
+        self.assertNotIn("tigerbeetle_reconciliation_missing", payload["blockers"])
 
-    def test_disabled_claimed_runtime_refs_fail_closed_when_unsigned(self) -> None:
+    def test_optional_claimed_runtime_refs_report_unsigned_blockers_without_failing(
+        self,
+    ) -> None:
         observed_at = datetime.now(timezone.utc)
         with Session(self.engine) as session:
             bucket = StrategyRuntimeLedgerBucket(
@@ -190,9 +194,9 @@ class TestTigerBeetleStatus(TestCase):
 
             payload = _build_tigerbeetle_ledger_status(session)
 
-        self.assertFalse(payload["ok"])
+        self.assertTrue(payload["ok"])
         self.assertTrue(payload["claimed_by_runtime_evidence"])
-        self.assertTrue(payload["reconciliation_required"])
+        self.assertFalse(payload["reconciliation_required"])
         self.assertEqual(payload["runtime_ledger_ref_count"], 1)
         self.assertEqual(payload["runtime_ledger_signed_ref_count"], 0)
         self.assertEqual(payload["runtime_ledger_missing_signed_ref_count"], 1)
