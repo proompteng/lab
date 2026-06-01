@@ -9,6 +9,7 @@ from app.trading.runtime_ledger import (
     EXACT_REPLAY_LEDGER_SCHEMA_VERSION,
     RuntimeLedgerFill,
     _build_bucket,
+    _coerce_fill_quantity_basis,
     _NormalizedFill,
     build_runtime_ledger_buckets,
 )
@@ -709,6 +710,162 @@ def test_invalid_runtime_fill_fields_fail_closed() -> None:
     assert "filled_notional_missing" in bucket.blockers
     assert "explicit_cost_missing" in bucket.blockers
     assert "runtime_fills_missing" in bucket.blockers
+
+
+def test_order_feed_source_fill_requires_delta_basis() -> None:
+    bucket = _bucket(
+        [
+            {
+                "event_type": "fill",
+                "executed_at": _ts(1),
+                "source": "execution_order_event",
+                "execution_order_event_id": "event-1",
+                "source_window_id": "window-1",
+                "source_offset": 7,
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "symbol": "NVDA",
+                "side": "buy",
+                "filled_qty": "1",
+                "avg_fill_price": "100",
+                "cost_amount": "0",
+                "cost_basis": "broker_reported_zero_cost",
+            }
+        ]
+    )
+
+    assert bucket.fill_count == 0
+    assert "fill_quantity_delta_basis_missing" in bucket.blockers
+    assert "runtime_fills_missing" in bucket.blockers
+
+
+def test_order_feed_source_fill_requires_positive_delta_quantity() -> None:
+    bucket = _bucket(
+        [
+            {
+                "event_type": "fill",
+                "executed_at": _ts(1),
+                "source": "execution_order_event",
+                "execution_order_event_id": "event-1",
+                "source_window_id": "window-1",
+                "source_offset": 7,
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "symbol": "NVDA",
+                "side": "buy",
+                "filled_qty": "1",
+                "fill_quantity_basis": "delta",
+                "avg_fill_price": "100",
+                "cost_amount": "0",
+                "cost_basis": "broker_reported_zero_cost",
+            }
+        ]
+    )
+
+    assert bucket.fill_count == 0
+    assert "fill_quantity_delta_missing" in bucket.blockers
+    assert "runtime_fills_missing" in bucket.blockers
+
+
+def test_order_feed_source_fill_uses_delta_not_cumulative_quantity() -> None:
+    bucket = _bucket(
+        [
+            {
+                "event_type": "fill",
+                "executed_at": _ts(1),
+                "source": "execution_order_event",
+                "execution_order_event_id": "event-buy",
+                "source_window_id": "window-buy",
+                "source_offset": 7,
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "symbol": "NVDA",
+                "side": "buy",
+                "filled_qty": "2",
+                "filled_qty_delta": "1",
+                "fill_quantity_basis": "cumulative_to_delta",
+                "avg_fill_price": "100",
+                "cost_amount": "0",
+                "cost_basis": "broker_reported_zero_cost",
+            },
+            {
+                "event_type": "fill",
+                "executed_at": _ts(2),
+                "source": "execution_order_event",
+                "execution_order_event_id": "event-sell",
+                "source_window_id": "window-sell",
+                "source_offset": 8,
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "symbol": "NVDA",
+                "side": "sell",
+                "filled_qty": "2",
+                "filled_qty_delta": "1",
+                "fill_quantity_basis": "cumulative_to_delta",
+                "avg_fill_price": "101",
+                "cost_amount": "0",
+                "cost_basis": "broker_reported_zero_cost",
+            },
+        ]
+    )
+
+    assert bucket.fill_count == 2
+    assert bucket.closed_trade_count == 1
+    assert bucket.open_position_count == 0
+    assert bucket.filled_notional == Decimal("201")
+    assert bucket.gross_strategy_pnl == Decimal("1")
+
+
+def test_order_feed_source_fill_accepts_authority_class_marker() -> None:
+    bucket = _bucket(
+        [
+            {
+                "event_type": "fill",
+                "executed_at": _ts(1),
+                "authority_class": "source_execution_lifecycle_materialized_runtime_ledger",
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "symbol": "NVDA",
+                "side": "buy",
+                "filled_qty": "2",
+                "filled_qty_delta": "1",
+                "fill_quantity_basis": "cumulative_to_delta",
+                "avg_fill_price": "100",
+                "cost_amount": "0",
+                "cost_basis": "broker_reported_zero_cost",
+            },
+            {
+                "event_type": "fill",
+                "executed_at": _ts(2),
+                "authority_class": "source_execution_lifecycle_materialized_runtime_ledger",
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "symbol": "NVDA",
+                "side": "sell",
+                "filled_qty": "2",
+                "filled_qty_delta": "1",
+                "fill_quantity_basis": "cumulative_to_delta",
+                "avg_fill_price": "101",
+                "cost_amount": "0",
+                "cost_basis": "broker_reported_zero_cost",
+            },
+        ]
+    )
+
+    assert bucket.fill_count == 2
+    assert bucket.closed_trade_count == 1
+    assert bucket.filled_notional == Decimal("201")
+
+
+def test_fill_quantity_basis_aliases_are_normalized() -> None:
+    assert _coerce_fill_quantity_basis("fill-delta") == "delta"
+    assert _coerce_fill_quantity_basis("cum") == "cumulative"
+    assert _coerce_fill_quantity_basis("unknown") == "unknown"
+    assert (
+        _coerce_fill_quantity_basis("cumulative-non-increasing")
+        == "cumulative_non_increasing"
+    )
+    assert _coerce_fill_quantity_basis("broker custom") == "broker_custom"
 
 
 def test_exact_replay_ledger_requires_order_lifecycle_and_hash_lineage() -> None:
