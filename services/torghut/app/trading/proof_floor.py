@@ -401,6 +401,43 @@ def _tca_symbol_routes(
     return payload
 
 
+def _route_universe_adverse_slippage_clear(
+    symbol_routes: Mapping[str, Any],
+    *,
+    route_filter_enabled: bool,
+    aggregate_tca_reason: str,
+) -> bool:
+    if not route_filter_enabled:
+        return False
+    if aggregate_tca_reason != "execution_tca_slippage_guardrail_exceeded":
+        return False
+    scope_symbol_count = _int(symbol_routes.get("scope_symbol_count"))
+    routeable_symbol_count = _int(symbol_routes.get("routeable_symbol_count"))
+    if (
+        scope_symbol_count <= 0
+        or routeable_symbol_count <= 0
+        or routeable_symbol_count != scope_symbol_count
+        or _int(symbol_routes.get("blocked_symbol_count")) > 0
+        or _int(symbol_routes.get("missing_symbol_count")) > 0
+    ):
+        return False
+    route_guardrail = _decimal(
+        symbol_routes.get("route_slippage_guardrail_bps")
+    ) or _decimal(symbol_routes.get("slippage_guardrail_bps"))
+    if route_guardrail is None:
+        return False
+    for item in _sequence(symbol_routes.get("routeable_symbols")):
+        if not isinstance(item, Mapping):
+            return False
+        row = cast(Mapping[str, Any], item)
+        if row.get("route_slippage_basis") != "signed_realized_shortfall_bps":
+            return False
+        route_adverse_slippage = _decimal(row.get("route_adverse_slippage_bps"))
+        if route_adverse_slippage is None or route_adverse_slippage > route_guardrail:
+            return False
+    return True
+
+
 def _route_symbol_filter_enabled(
     simple_lane_status: Mapping[str, Any] | None,
 ) -> bool:
@@ -904,9 +941,31 @@ def build_profitability_proof_floor_receipt(
                 if route_filter_enabled
                 else "execution_tca_route_universe_incomplete"
             )
+        elif _route_universe_adverse_slippage_clear(
+            symbol_routes,
+            route_filter_enabled=route_filter_enabled,
+            aggregate_tca_reason=aggregate_tca_reason,
+        ):
+            tca_source_ref["route_universe_adverse_slippage"] = {
+                "state": "clear",
+                "enforcement": "route_symbol_filter",
+                "candidate_symbol_count": routeable_symbol_count,
+                "blocked_symbol_count": blocked_symbol_count,
+                "missing_symbol_count": missing_symbol_count,
+                "max_notional_for_adverse_symbols": "0",
+            }
+            route_universe_reason = (
+                "execution_tca_route_universe_adverse_slippage_clear"
+            )
         if route_universe_reason is not None:
             if route_universe_reason == "execution_tca_route_universe_empty":
                 tca_state = "fail"
+                tca_reason = route_universe_reason
+            elif (
+                route_universe_reason
+                == "execution_tca_route_universe_adverse_slippage_clear"
+            ):
+                tca_state = "pass"
                 tca_reason = route_universe_reason
             elif route_filter_enabled and aggregate_tca_reason in {
                 "fresh",
@@ -919,18 +978,22 @@ def build_profitability_proof_floor_receipt(
                 tca_reason = route_universe_reason
             if aggregate_tca_reason != "fresh":
                 tca_source_ref["aggregate_reason"] = aggregate_tca_reason
-            _add_repair(
-                repairs,
-                code="repair_route_universe",
-                dimension="route_universe",
-                action="exclude_missing_or_high_slippage_symbols_before_promotion",
-                reason=route_universe_reason,
-                priority=78,
-                expected_unblock_value=max(
-                    1,
-                    excluded_symbol_count,
-                ),
-            )
+            if (
+                route_universe_reason
+                != "execution_tca_route_universe_adverse_slippage_clear"
+            ):
+                _add_repair(
+                    repairs,
+                    code="repair_route_universe",
+                    dimension="route_universe",
+                    action="exclude_missing_or_high_slippage_symbols_before_promotion",
+                    reason=route_universe_reason,
+                    priority=78,
+                    expected_unblock_value=max(
+                        1,
+                        excluded_symbol_count,
+                    ),
+                )
     if tca_state != "pass":
         _add_repair(
             repairs,

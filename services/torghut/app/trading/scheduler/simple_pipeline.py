@@ -1201,6 +1201,12 @@ class SimpleTradingPipeline(TradingPipeline):
                     self.state.metrics.drift_incident_reason_total.get(reason_code, 0)
                     + 1
                 )
+        else:
+            self.state.drift_active_incident_id = None
+            self.state.drift_active_reason_codes = []
+            self.state.drift_status = "stable"
+            self.state.drift_live_promotion_eligible = True
+            self.state.drift_live_promotion_reasons = []
 
     def _process_batch_signals(
         self,

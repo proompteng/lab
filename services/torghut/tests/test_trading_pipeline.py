@@ -2464,8 +2464,8 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(pipeline.state.metrics.feature_quality_rejections_total, 0)
         self.assertEqual(pipeline.state.metrics.drift_detection_checks_total, 1)
         self.assertIsNotNone(pipeline.state.drift_last_detection_at)
-        self.assertFalse(pipeline.state.drift_live_promotion_eligible)
-        self.assertEqual(pipeline.state.drift_status, "unknown")
+        self.assertTrue(pipeline.state.drift_live_promotion_eligible)
+        self.assertEqual(pipeline.state.drift_status, "stable")
         with self.session_local() as session:
             decision = session.execute(select(TradeDecision)).scalar_one()
             execution = session.execute(select(Execution)).scalar_one()
@@ -2563,8 +2563,8 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(pipeline.state.metrics.feature_quality_rejections_total, 0)
         self.assertEqual(pipeline.state.metrics.drift_detection_checks_total, 1)
         self.assertIsNotNone(pipeline.state.drift_last_detection_at)
-        self.assertFalse(pipeline.state.drift_live_promotion_eligible)
-        self.assertEqual(pipeline.state.drift_status, "unknown")
+        self.assertTrue(pipeline.state.drift_live_promotion_eligible)
+        self.assertEqual(pipeline.state.drift_status, "stable")
         with self.session_local() as session:
             decision = session.execute(select(TradeDecision)).scalar_one()
             execution = session.execute(select(Execution)).scalar_one()
@@ -8830,12 +8830,16 @@ class TestTradingPipeline(TestCase):
                     allowed_symbols={"AAPL", "AMZN"},
                 )
 
-            decisions = session.execute(
-                select(TradeDecision).order_by(TradeDecision.symbol)
-            ).scalars().all()
-            executions = session.execute(
-                select(Execution).order_by(Execution.symbol)
-            ).scalars().all()
+            decisions = (
+                session.execute(select(TradeDecision).order_by(TradeDecision.symbol))
+                .scalars()
+                .all()
+            )
+            executions = (
+                session.execute(select(Execution).order_by(Execution.symbol))
+                .scalars()
+                .all()
+            )
 
         self.assertEqual([decision.symbol for decision in decisions], ["AAPL", "AMZN"])
         self.assertEqual(
@@ -8848,9 +8852,7 @@ class TestTradingPipeline(TestCase):
         for decision in decisions:
             payload = cast(dict[str, Any], decision.decision_json)
             params = cast(dict[str, Any], payload.get("params") or {})
-            metadata = cast(
-                dict[str, Any], params.get("paper_route_target_plan") or {}
-            )
+            metadata = cast(dict[str, Any], params.get("paper_route_target_plan") or {})
             self.assertEqual(
                 metadata.get("paper_route_probe_next_session_max_notional"), "500"
             )
@@ -9121,14 +9123,18 @@ class TestTradingPipeline(TestCase):
                 "_external_paper_route_target_probe_symbols_cached",
                 return_value=({"AAPL", "AMZN"}, None, [target]),
             ),
-            patch("app.trading.scheduler.simple_pipeline.trading_now", return_value=now),
+            patch(
+                "app.trading.scheduler.simple_pipeline.trading_now", return_value=now
+            ),
             patch("app.trading.scheduler.pipeline.trading_now", return_value=now),
         ):
             pipeline.run_once()
 
         self.assertEqual(ingestor.fetch_scopes, [({"AAPL", "AMZN"}, {"1Sec"})])
         self.assertEqual(alpaca_client.submitted, [])
-        self.assertEqual(pipeline.state.last_ingest_reason, "clickhouse_signal_query_timeout")
+        self.assertEqual(
+            pipeline.state.last_ingest_reason, "clickhouse_signal_query_timeout"
+        )
         self.assertEqual(
             pipeline.state.last_signal_continuity_reason,
             "clickhouse_signal_query_timeout",
@@ -9219,7 +9225,9 @@ class TestTradingPipeline(TestCase):
             "source_decision_readiness": {"ready": True, "blockers": []},
             "paper_probation_authorized": True,
         }
-        ingestor = FakeIngestor(signals, cursor_at=now, cursor_seq=2, cursor_symbol="AMZN")
+        ingestor = FakeIngestor(
+            signals, cursor_at=now, cursor_seq=2, cursor_symbol="AMZN"
+        )
         alpaca_client = FakeAlpacaClient()
         pipeline = SimpleTradingPipeline(
             alpaca_client=alpaca_client,
@@ -9255,7 +9263,9 @@ class TestTradingPipeline(TestCase):
                     "blocking_reasons": ["alpha_readiness_not_promotion_eligible"],
                 },
             ),
-            patch("app.trading.scheduler.simple_pipeline.trading_now", return_value=now),
+            patch(
+                "app.trading.scheduler.simple_pipeline.trading_now", return_value=now
+            ),
             patch("app.trading.scheduler.pipeline.trading_now", return_value=now),
             patch("app.trading.simulation.trading_now", return_value=now),
         ):
@@ -9280,7 +9290,9 @@ class TestTradingPipeline(TestCase):
                     dict[str, Any],
                     params.get("paper_route_target_plan"),
                 )
-                self.assertEqual(target_plan.get("candidate_id"), "candidate-pairs-monday")
+                self.assertEqual(
+                    target_plan.get("candidate_id"), "candidate-pairs-monday"
+                )
 
     def test_fetch_signal_batch_falls_back_for_legacy_ingestor_signature(self) -> None:
         class LegacyIngestor:
@@ -9376,12 +9388,16 @@ class TestTradingPipeline(TestCase):
         pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
         targets = [
             target(paper_route_account_pre_session_blockers=["not_flat"]),
-            target(paper_route_probe_window_start=None, paper_route_probe_window_end=None),
+            target(
+                paper_route_probe_window_start=None, paper_route_probe_window_end=None
+            ),
             target(
                 paper_route_probe_window_start=(
                     window_start - timedelta(days=1)
                 ).isoformat(),
-                paper_route_probe_window_end=(window_end - timedelta(days=1)).isoformat(),
+                paper_route_probe_window_end=(
+                    window_end - timedelta(days=1)
+                ).isoformat(),
             ),
             target(strategy_name="missing-strategy", runtime_strategy_name="missing"),
             target(),
@@ -9393,7 +9409,9 @@ class TestTradingPipeline(TestCase):
                 "_external_paper_route_target_probe_symbols_cached",
                 return_value=({"AAPL", "AMZN"}, None, targets),
             ),
-            patch("app.trading.scheduler.simple_pipeline.trading_now", return_value=now),
+            patch(
+                "app.trading.scheduler.simple_pipeline.trading_now", return_value=now
+            ),
         ):
             scope = pipeline._bounded_paper_route_signal_scope([strategy])
 
