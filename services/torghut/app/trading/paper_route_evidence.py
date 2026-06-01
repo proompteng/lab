@@ -4058,6 +4058,22 @@ def _runtime_window_target_counts(
     }
 
 
+def _target_audits_have_material_runtime_window_evidence(
+    target_audits: Sequence[Mapping[str, object]],
+) -> bool:
+    counts = _runtime_window_target_counts(target_audits)
+    return any(
+        counts[key] > 0
+        for key in (
+            "source_activity",
+            "rejected_signal_activity",
+            "runtime_ledger",
+            "evidence_grade_runtime_ledger",
+            "promotion_decision",
+        )
+    )
+
+
 def _next_paper_route_target_summaries(
     targets: Sequence[Mapping[str, object]],
 ) -> list[dict[str, object]]:
@@ -4340,6 +4356,32 @@ def _deferred_runtime_window_target_audits(
     return audits
 
 
+def _runtime_window_import_plan_for_audit(
+    *,
+    latest_closed_targets: Mapping[str, Any],
+    next_targets: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    latest_closed_readiness = _as_mapping(
+        latest_closed_targets.get("session_readiness")
+    )
+    if (
+        bool(latest_closed_readiness.get("import_ready"))
+        and _safe_int(latest_closed_targets.get("target_count")) > 0
+    ):
+        return latest_closed_targets
+    return next_targets
+
+
+def _targets_have_explicit_window_bounds(
+    targets: Sequence[Mapping[str, object]],
+) -> bool:
+    return any(
+        _parse_datetime(target.get("window_start")) is not None
+        and _parse_datetime(target.get("window_end")) is not None
+        for target in targets
+    )
+
+
 def build_paper_route_target_plan_payload(
     session: Session,
     *,
@@ -4396,20 +4438,9 @@ def build_paper_route_target_plan_payload(
         generated_at=resolved_generated_at,
         require_clean_pre_session=False,
     )
-    latest_closed_readiness = _as_mapping(
-        latest_closed_targets.get("session_readiness")
-    )
-    targets_have_explicit_window_bounds = any(
-        _parse_datetime(target.get("window_start")) is not None
-        and _parse_datetime(target.get("window_end")) is not None
-        for target in targets
-    )
-    runtime_window_import_plan = (
-        latest_closed_targets
-        if not targets_have_explicit_window_bounds
-        and bool(latest_closed_readiness.get("import_ready"))
-        and _safe_int(latest_closed_targets.get("target_count")) > 0
-        else next_targets
+    runtime_window_import_plan = _runtime_window_import_plan_for_audit(
+        latest_closed_targets=latest_closed_targets,
+        next_targets=next_targets,
     )
     runtime_import_readiness = _as_mapping(
         runtime_window_import_plan.get("session_readiness")
@@ -4626,21 +4657,6 @@ def build_paper_route_evidence_audit(
         window_end=closed_window_end,
         purpose="latest_closed_session_paper_route_runtime_window_import",
     )
-    latest_closed_readiness = _as_mapping(
-        latest_closed_targets.get("session_readiness")
-    )
-    targets_have_explicit_window_bounds = any(
-        _parse_datetime(target.get("window_start")) is not None
-        and _parse_datetime(target.get("window_end")) is not None
-        for target in targets
-    )
-    runtime_window_import_plan = (
-        latest_closed_targets
-        if not targets_have_explicit_window_bounds
-        and bool(latest_closed_readiness.get("import_ready"))
-        and _safe_int(latest_closed_targets.get("target_count")) > 0
-        else next_targets
-    )
     next_target_audits = [
         _target_audit_fail_closed(
             session,
@@ -4652,17 +4668,35 @@ def build_paper_route_evidence_audit(
         )
         for target in _as_mapping_items(next_targets.get("targets"))
     ]
-    runtime_window_import_target_audits = [
-        _target_audit_fail_closed(
-            session,
-            raw_target=target,
-            probe=probe,
-            generated_at=resolved_generated_at,
-            lookback_hours=lookback_hours,
-            error_source="paper_route_runtime_window_import_target_audit",
+    runtime_window_import_plan = next_targets
+    runtime_window_import_target_audits = next_target_audits
+    latest_closed_runtime_window_import_plan = _runtime_window_import_plan_for_audit(
+        latest_closed_targets=latest_closed_targets,
+        next_targets=next_targets,
+    )
+    if latest_closed_runtime_window_import_plan is latest_closed_targets:
+        targets_have_explicit_window_bounds = _targets_have_explicit_window_bounds(
+            targets
         )
-        for target in _as_mapping_items(runtime_window_import_plan.get("targets"))
-    ]
+        latest_closed_target_audits = [
+            _target_audit_fail_closed(
+                session,
+                raw_target=target,
+                probe=probe,
+                generated_at=resolved_generated_at,
+                lookback_hours=lookback_hours,
+                error_source="paper_route_runtime_window_import_target_audit",
+            )
+            for target in _as_mapping_items(latest_closed_targets.get("targets"))
+        ]
+        if (
+            not targets_have_explicit_window_bounds
+            or _target_audits_have_material_runtime_window_evidence(
+                latest_closed_target_audits
+            )
+        ):
+            runtime_window_import_plan = latest_closed_targets
+            runtime_window_import_target_audits = latest_closed_target_audits
     runtime_window_import_audit = _runtime_window_import_audit(
         next_targets=runtime_window_import_plan,
         target_audits=target_audits,

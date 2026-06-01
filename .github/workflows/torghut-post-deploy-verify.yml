@@ -265,6 +265,53 @@ jobs:
             done
           }
 
+          fetch_readyz_json() {
+            local url="$1"
+            local output_path="$2"
+            local label="$3"
+            local status
+
+            for attempt in $(seq 1 18); do
+              status="$(
+                curl -sS --connect-timeout 10 --max-time 90 \
+                  -o "${output_path}" -w '%{http_code}' "${url}" || true
+              )"
+              if [[ "${status}" =~ ^2[0-9][0-9]$ ]] &&
+                python3 -m json.tool "${output_path}" >/dev/null 2>&1; then
+                printf '%s' "${status}"
+                return 0
+              fi
+              if [ "${status}" = '503' ] &&
+                python3 -m json.tool "${output_path}" >/dev/null 2>&1 &&
+                python3 -c 'import json, sys; payload = json.load(open(sys.argv[1], encoding="utf-8")); sys.exit(0 if payload.get("status") == "degraded" else 1)' "${output_path}"; then
+                printf '%s' "${status}"
+                return 0
+              fi
+
+              if [ "${attempt}" -eq 18 ]; then
+                if [[ "${status}" =~ ^[0-9]{3}$ ]] &&
+                  [ "${status}" != '000' ] &&
+                  python3 -m json.tool "${output_path}" >/dev/null 2>&1; then
+                  echo "${label} returned HTTP ${status} without an acceptable readyz contract" >&2
+                else
+                  echo "${label} did not return a parseable JSON HTTP response; status=${status:-empty}" >&2
+                fi
+                head -c 1000 "${output_path}" >&2 || true
+                echo >&2
+                return 1
+              fi
+
+              if [[ "${status}" =~ ^[0-9]{3}$ ]] &&
+                [ "${status}" != '000' ] &&
+                python3 -m json.tool "${output_path}" >/dev/null 2>&1; then
+                echo "Attempt ${attempt}: ${label} returned HTTP ${status} without an acceptable readyz contract; retrying" >&2
+              else
+                echo "Attempt ${attempt}: ${label} status=${status:-empty} not usable JSON yet; retrying" >&2
+              fi
+              sleep 5
+            done
+          }
+
           fetch_json_2xx() {
             local url="$1"
             local output_path="$2"
@@ -306,7 +353,7 @@ jobs:
           }
 
           TORGHUT_READYZ_HTTP_STATUS="$(
-            fetch_json \
+            fetch_readyz_json \
               http://torghut.torghut.svc.cluster.local/readyz \
               "${EVIDENCE_DIR}/torghut-readyz.json" \
               "Torghut /readyz"
