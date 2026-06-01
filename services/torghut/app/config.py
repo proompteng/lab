@@ -513,7 +513,7 @@ class Settings(BaseSettings):
         ),
     )
     trading_options_catalog_freshness_cache_seconds: int = Field(
-        default=0,
+        default=30,
         alias="TRADING_OPTIONS_CATALOG_FRESHNESS_CACHE_SECONDS",
         description=(
             "Short in-process cache TTL for options catalog freshness summaries. "

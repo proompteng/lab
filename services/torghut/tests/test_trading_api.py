@@ -733,7 +733,7 @@ class TestTradingApi(TestCase):
         self.assertEqual(second["status"], "unavailable")
         self.assertEqual(first["route_symbols"], ["AAPL"])
         self.assertEqual(second["route_symbols"], ["AAPL"])
-        self.assertEqual(len(fake_session.calls), 1)
+        self.assertEqual(len(fake_session.calls), 2)
         self.assertIn(
             "options_catalog_freshness_query_timeout",
             first["reason_codes"],
@@ -747,7 +747,7 @@ class TestTradingApi(TestCase):
         self.assertEqual(first_cache["hit"], False)
         self.assertEqual(second_cache["hit"], True)
 
-    def test_options_catalog_freshness_summary_skips_bounded_fallback_on_timeout(
+    def test_options_catalog_freshness_summary_falls_back_to_bounded_on_timeout(
         self,
     ) -> None:
         fake_session = _TimedOutAggregateOptionsFreshnessSession()
@@ -757,11 +757,15 @@ class TestTradingApi(TestCase):
             route_symbols=["AAPL", "MSFT"],
         )
 
-        self.assertEqual(payload["status"], "unavailable")
+        self.assertEqual(payload["status"], "current")
         self.assertEqual(payload["scope"], "route_symbols")
         self.assertEqual(payload["route_symbols"], ["AAPL", "MSFT"])
+        self.assertTrue(payload["bounded"])
+        self.assertFalse(payload["coverage_exact"])
+        self.assertFalse(payload["active_contracts_exact"])
+        self.assertEqual(payload["active_contracts"], 2)
         self.assertIn(
-            "options_catalog_freshness_summary_unavailable",
+            "options_catalog_freshness_bounded_route_scope",
             payload["reason_codes"],
         )
         self.assertIn(
@@ -770,7 +774,7 @@ class TestTradingApi(TestCase):
         )
         self.assertEqual(
             sum("LIMIT 1" in sql for sql, _params in fake_session.calls),
-            0,
+            2,
         )
 
     def test_options_catalog_freshness_summary_expires_cached_route_scope(
