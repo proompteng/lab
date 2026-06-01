@@ -1641,6 +1641,7 @@ def _runtime_ledger_paper_probation_candidates(
             "proof_mode": "probation",
             "evidence_collection_ok": True,
             "canary_collection_authorized": True,
+            "bounded_live_paper_collection_authorized": True,
             "capital_promotion_allowed": False,
             "final_authority_ok": False,
             "final_promotion_allowed": False,
@@ -1685,6 +1686,7 @@ def _runtime_ledger_source_collection_candidates(
             "proof_mode": "probation",
             "evidence_collection_ok": True,
             "canary_collection_authorized": False,
+            "bounded_live_paper_collection_authorized": False,
             "capital_promotion_allowed": False,
             "final_authority_ok": False,
             "final_promotion_allowed": False,
@@ -1910,6 +1912,7 @@ def _runtime_ledger_paper_probation_import_plan(
             "proof_mode": "probation",
             "evidence_collection_ok": True,
             "canary_collection_authorized": not source_collection,
+            "bounded_live_paper_collection_authorized": not source_collection,
             "capital_promotion_allowed": False,
             "final_authority_ok": False,
             "evidence_collection_stage": "paper",
@@ -1955,6 +1958,10 @@ def _runtime_ledger_paper_probation_import_plan(
         "evidence_collection_ok": bool(targets),
         "canary_collection_authorized": any(
             bool(target.get("canary_collection_authorized")) for target in targets
+        ),
+        "bounded_live_paper_collection_authorized": any(
+            bool(target.get("bounded_live_paper_collection_authorized"))
+            for target in targets
         ),
         "capital_promotion_allowed": False,
         "final_authority_ok": False,

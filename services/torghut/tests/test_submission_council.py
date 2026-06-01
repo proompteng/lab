@@ -1226,6 +1226,9 @@ class TestSubmissionCouncil(TestCase):
         self.assertEqual(paper_candidates[0]["proof_mode"], "probation")
         self.assertTrue(paper_candidates[0]["evidence_collection_ok"])
         self.assertTrue(paper_candidates[0]["canary_collection_authorized"])
+        self.assertTrue(
+            paper_candidates[0]["bounded_live_paper_collection_authorized"]
+        )
         self.assertFalse(paper_candidates[0]["capital_promotion_allowed"])
         self.assertFalse(paper_candidates[0]["final_authority_ok"])
         self.assertFalse(paper_candidates[0]["final_promotion_allowed"])
@@ -1241,6 +1244,7 @@ class TestSubmissionCouncil(TestCase):
         self.assertEqual(import_plan["proof_mode"], "probation")
         self.assertTrue(import_plan["evidence_collection_ok"])
         self.assertTrue(import_plan["canary_collection_authorized"])
+        self.assertTrue(import_plan["bounded_live_paper_collection_authorized"])
         self.assertFalse(import_plan["capital_promotion_allowed"])
         self.assertFalse(import_plan["final_authority_ok"])
         self.assertFalse(import_plan["final_promotion_allowed"])
@@ -1280,6 +1284,7 @@ class TestSubmissionCouncil(TestCase):
         self.assertEqual(target["proof_mode"], "probation")
         self.assertTrue(target["evidence_collection_ok"])
         self.assertTrue(target["canary_collection_authorized"])
+        self.assertTrue(target["bounded_live_paper_collection_authorized"])
         self.assertFalse(target["capital_promotion_allowed"])
         self.assertFalse(target["final_authority_ok"])
         self.assertEqual(target["promotion_allowed"], False)
