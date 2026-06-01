@@ -14,8 +14,14 @@ SCHEMA_VERSION = "torghut.route-reacquisition-book.v1"
 ROUTE_REPAIR_AUDIT_RECEIPT_SCHEMA_VERSION = "torghut.route-repair-audit-receipt.v1"
 _PAPER_ROUTE_PROBE_REASONS = {
     "execution_tca_route_universe_empty",
+    "execution_tca_route_universe_exclusions_applied",
+    "execution_tca_route_universe_incomplete",
+    "execution_tca_slippage_guardrail_exceeded",
     "execution_tca_symbol_missing",
     "route_tca_passed_but_dependency_receipts_block_capital",
+    "route_tca_avg_abs_slippage_above_guardrail",
+    "route_tca_non_authority_source",
+    "route_tca_non_authority_source_decision_mode",
     "tca_evidence_stale",
     "stale_quote",
     "missing_bid_ask",
@@ -26,7 +32,7 @@ _PAPER_ROUTE_PROBE_REASONS = {
     "missing_close_flatten_handoff",
     "runtime_import_pending",
 }
-_PAPER_ROUTE_PROBE_STATES = {"missing", "probing"}
+_PAPER_ROUTE_PROBE_STATES = {"blocked", "missing", "probing"}
 
 
 def _text(value: object, default: str = "") -> str:

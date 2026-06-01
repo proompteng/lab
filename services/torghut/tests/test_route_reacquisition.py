@@ -343,13 +343,18 @@ def test_route_book_surfaces_paper_route_probe_readiness_without_capital_authori
     assert probe["active"] is False
     assert probe["effective_max_notional"] == "0"
     assert probe["next_session_max_notional"] == "25.0"
-    assert probe["eligible_symbols"] == ["AMZN", "AAPL", "INTC"]
+    assert probe["eligible_symbols"] == ["AMZN", "NVDA", "AAPL", "INTC"]
     assert probe["active_symbols"] == []
     assert probe["blocking_reasons"] == ["session_closed"]
     assert probe["capital_authority"] == "none"
 
     summary = cast(Mapping[str, Any], book["summary"])
-    assert summary["paper_route_probe_eligible_symbols"] == ["AMZN", "AAPL", "INTC"]
+    assert summary["paper_route_probe_eligible_symbols"] == [
+        "AMZN",
+        "NVDA",
+        "AAPL",
+        "INTC",
+    ]
     assert summary["paper_route_probe_active_symbols"] == []
     assert summary["repair_candidate_symbols"] == ["NVDA", "AAPL", "INTC"]
 
@@ -762,8 +767,12 @@ def test_hpairs_route_repair_receipts_keep_pair_legs_separate_and_audit_only() -
     )
     records = cast(list[Mapping[str, Any]], book["records"])
     by_symbol = {record["symbol"]: record for record in records}
+    probe = cast(Mapping[str, Any], book["paper_route_probe"])
 
     assert list(by_symbol) == ["AAPL", "AMZN", "MSFT"]
+    assert probe["eligible_symbols"] == ["AAPL", "AMZN", "MSFT"]
+    assert probe["active"] is False
+    assert probe["blocking_reasons"] == ["session_closed"]
     assert by_symbol["AAPL"]["reason"] == "missing_bid_ask"
     assert by_symbol["AMZN"]["reason"] == "stale_quote"
     assert by_symbol["AAPL"]["repair_recommendation"] == (
