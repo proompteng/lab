@@ -1603,6 +1603,15 @@ _RUNTIME_LEDGER_SOURCE_COLLECTION_PROMOTION_BLOCKERS = (
     "runtime_ledger_source_window_evidence_pending",
     "live_runtime_ledger_required",
 )
+_HPAIRS_BOUNDED_COLLECTION_HYPOTHESIS_ID = "H-PAIRS-01"
+_HPAIRS_BOUNDED_COLLECTION_CANDIDATE_ID = "c88421d619759b2cfaa6f4d0"
+_BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_KIND = "paper_route_probe_runtime_observed"
+_BOUNDED_PAPER_ROUTE_COLLECTION_SCOPE = "paper_route_probe_next_session_only"
+_BOUNDED_PAPER_ROUTE_COLLECTION_PROMOTION_BLOCKERS = (
+    "bounded_paper_route_evidence_collection_only",
+    "paper_route_runtime_ledger_import_pending",
+    "live_runtime_ledger_required",
+)
 
 
 def _runtime_ledger_paper_probation_eligible(
@@ -1979,6 +1988,191 @@ def _runtime_ledger_paper_probation_import_plan(
         "targets": targets,
         "skipped_targets": skipped_targets,
     }
+
+
+def _runtime_ledger_import_plan_has_target(
+    plan: Mapping[str, object],
+    *,
+    hypothesis_id: str,
+    candidate_id: str,
+) -> bool:
+    for target in cast(Sequence[object], plan.get("targets") or []):
+        if not isinstance(target, Mapping):
+            continue
+        typed_target = cast(Mapping[str, object], target)
+        if (
+            _safe_text(typed_target.get("hypothesis_id")) == hypothesis_id
+            and _safe_text(typed_target.get("candidate_id")) == candidate_id
+        ):
+            return True
+    return False
+
+
+def _bounded_paper_route_manifest_collection_targets(
+    registry_items: Sequence[Mapping[str, object]],
+    *,
+    existing_plan: Mapping[str, object],
+) -> list[dict[str, object]]:
+    """Return bounded manifest-seeded source collection targets.
+
+    Runtime-ledger repair candidates are intentionally strict and require
+    existing filled paper activity. H-PAIRS can get stuck before that first
+    source-backed row exists, so seed only the known H-PAIRS paper-route
+    collection handoff from source-controlled registry metadata. The returned
+    targets are collection-only: they do not grant promotion authority or live
+    capital routing, and the downstream paper-route target-plan audit still
+    applies source-strategy, account-cleanliness, dependency, and runtime-window
+    readiness gates before the scheduler can submit paper orders.
+    """
+
+    targets: list[dict[str, object]] = []
+    for item in registry_items:
+        hypothesis_id = _safe_text(item.get("hypothesis_id"))
+        candidate_id = _safe_text(item.get("candidate_id"))
+        if (
+            hypothesis_id != _HPAIRS_BOUNDED_COLLECTION_HYPOTHESIS_ID
+            or candidate_id != _HPAIRS_BOUNDED_COLLECTION_CANDIDATE_ID
+        ):
+            continue
+        if _runtime_ledger_import_plan_has_target(
+            existing_plan,
+            hypothesis_id=hypothesis_id,
+            candidate_id=candidate_id,
+        ):
+            continue
+
+        strategy_id = _safe_text(item.get("strategy_id"))
+        manifest_strategy_name = _runtime_ledger_paper_probation_strategy_name(item)
+        strategy_family = _safe_text(item.get("strategy_family"))
+        source_manifest_ref = _hypothesis_manifest_ref(hypothesis_id)
+        missing = [
+            field
+            for field, value in (
+                ("strategy_family", strategy_family),
+                ("strategy_name", manifest_strategy_name),
+                ("source_manifest_ref", source_manifest_ref),
+            )
+            if value is None
+        ]
+        if missing:
+            continue
+
+        strategy_lookup_names = _strategy_lookup_names(
+            item.get("strategy_lookup_names"),
+            manifest_strategy_name,
+            strategy_names_from_strategy_id(strategy_id),
+            derived_strategy_name_from_strategy_id(strategy_id),
+        )
+        targets.append(
+            {
+                "hypothesis_id": hypothesis_id,
+                "candidate_id": candidate_id,
+                "observed_stage": "paper",
+                "strategy_family": strategy_family,
+                "strategy_name": manifest_strategy_name,
+                "strategy_id": strategy_id or "",
+                "runtime_strategy_name": manifest_strategy_name,
+                "strategy_lookup_names": strategy_lookup_names,
+                "account_label": "TORGHUT_SIM",
+                "source_account_label": "TORGHUT_SIM",
+                "account_stage_runtime_identity": {
+                    "account_label": "TORGHUT_SIM",
+                    "source_account_label": "TORGHUT_SIM",
+                    "observed_stage": "paper",
+                    "runtime_strategy_name": manifest_strategy_name,
+                    "source_kind": _BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_KIND,
+                },
+                "source_dsn_env": "SIM_DB_DSN",
+                "target_dsn_env": "SIM_DB_DSN",
+                "dataset_snapshot_ref": _safe_text(item.get("dataset_snapshot_ref"))
+                or "",
+                "source_manifest_ref": source_manifest_ref,
+                "source_kind": _BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_KIND,
+                "paper_probation_authorized": True,
+                "paper_probation_authorization_scope": "evidence_collection_only",
+                "source_collection_authorized": True,
+                "source_collection_authorization_scope": (
+                    "bounded_paper_route_source_decision_collection_only"
+                ),
+                "source_collection_reason_codes": [
+                    "runtime_ledger_source_decisions_missing",
+                    "bounded_paper_route_manifest_seed",
+                ],
+                "proof_mode": "probation",
+                "evidence_collection_ok": True,
+                "canary_collection_authorized": True,
+                "bounded_live_paper_collection_authorized": True,
+                "bounded_evidence_collection_authorized": True,
+                "bounded_evidence_collection_scope": (
+                    _BOUNDED_PAPER_ROUTE_COLLECTION_SCOPE
+                ),
+                "capital_promotion_allowed": False,
+                "final_authority_ok": False,
+                "evidence_collection_stage": "paper",
+                "probation_allowed": True,
+                "probation_reason": "bounded_paper_route_source_activity_needed",
+                "promotion_allowed": False,
+                "final_promotion_authorized": False,
+                "final_promotion_allowed": False,
+                "final_promotion_blockers": list(
+                    _BOUNDED_PAPER_ROUTE_COLLECTION_PROMOTION_BLOCKERS
+                ),
+                "candidate_blockers": [
+                    "runtime_ledger_source_decisions_missing",
+                    "paper_route_runtime_ledger_import_pending",
+                ],
+                "runtime_ledger_target_metadata_blockers": list(
+                    _BOUNDED_PAPER_ROUTE_COLLECTION_PROMOTION_BLOCKERS
+                ),
+                "handoff": "next_paper_route_runtime_window_import",
+                "promotion_gate": "runtime_ledger_live_or_live_paper_required",
+                "selected_by": "hypothesis_manifest_bounded_paper_route_collection",
+                "selection_reason": "source_decisions_missing_for_bounded_paper_route",
+                "max_notional": "0",
+            }
+        )
+    return targets
+
+
+def _with_bounded_paper_route_manifest_collection_targets(
+    plan: Mapping[str, object],
+    *,
+    registry_items: Sequence[Mapping[str, object]],
+) -> dict[str, object]:
+    merged_plan = dict(plan)
+    manifest_targets = _bounded_paper_route_manifest_collection_targets(
+        registry_items,
+        existing_plan=merged_plan,
+    )
+    if not manifest_targets:
+        return merged_plan
+
+    targets = [
+        dict(cast(Mapping[str, object], target))
+        for target in cast(Sequence[object], merged_plan.get("targets") or [])
+        if isinstance(target, Mapping)
+    ]
+    targets.extend(manifest_targets)
+    merged_plan["targets"] = targets
+    merged_plan["target_count"] = len(targets)
+    merged_plan["manifest_bounded_collection_target_count"] = len(manifest_targets)
+    merged_plan["source_collection_target_count"] = _safe_int(
+        merged_plan.get("source_collection_target_count")
+    ) + len(manifest_targets)
+    merged_plan["evidence_collection_ok"] = bool(targets)
+    merged_plan["canary_collection_authorized"] = any(
+        bool(target.get("canary_collection_authorized")) for target in targets
+    )
+    merged_plan["bounded_live_paper_collection_authorized"] = any(
+        bool(target.get("bounded_live_paper_collection_authorized"))
+        for target in targets
+    )
+    merged_plan["capital_promotion_allowed"] = False
+    merged_plan["final_authority_ok"] = False
+    merged_plan["promotion_allowed"] = False
+    merged_plan["final_promotion_authorized"] = False
+    merged_plan["final_promotion_allowed"] = False
+    return merged_plan
 
 
 def _paper_probation_eligible_total_with_runtime_ledger(
@@ -3729,6 +3923,12 @@ def build_live_submission_gate_payload(
             ]
         )
     )
+    runtime_ledger_paper_probation_import_plan = (
+        _with_bounded_paper_route_manifest_collection_targets(
+            runtime_ledger_paper_probation_import_plan,
+            registry_items=registry_item_payloads,
+        )
+    )
     evidence_rows = (
         [dict(item) for item in promotion_certificate_evidence]
         if promotion_certificate_evidence is not None
@@ -3899,7 +4099,11 @@ def build_live_submission_gate_payload(
         blocked_reasons.append("alpha_readiness_not_promotion_eligible")
         if runtime_ledger_paper_probation_candidates:
             blocked_reasons.append("paper_probation_evidence_collection_only")
-        if runtime_ledger_source_collection_candidates:
+        if runtime_ledger_source_collection_candidates or _safe_int(
+            runtime_ledger_paper_probation_import_plan.get(
+                "manifest_bounded_collection_target_count"
+            )
+        ):
             blocked_reasons.append("runtime_ledger_source_collection_pending")
     if empirical_ready is False:
         blocked_reasons.append("empirical_jobs_not_ready")
