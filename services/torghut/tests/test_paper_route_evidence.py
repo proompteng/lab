@@ -25,6 +25,7 @@ from app.models import (
 )
 from app.trading.paper_route_evidence import (
     RUNTIME_LEDGER_PROOF_PACKET_HANDOFF_SCHEMA_VERSION,
+    _account_pre_session_snapshot_audit,
     _account_window_start_snapshot_audit,
     _balanced_pair_probe_symbol_actions,
     _hpairs_round_trip_identity_blockers,
@@ -1108,6 +1109,94 @@ class TestPaperRouteEvidenceAudit(TestCase):
             source_plan["account_pre_session_readiness"]["blockers"],
             ["paper_route_account_pre_session_snapshot_missing"],
         )
+
+    def test_pre_session_snapshot_within_readiness_window_remains_clean_after_open(
+        self,
+    ) -> None:
+        generated_at = datetime(2026, 5, 26, 13, 41, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            self._add_account_position_snapshot(
+                session,
+                account_label="TORGHUT_SIM",
+                as_of=datetime(2026, 5, 26, 13, 25, tzinfo=timezone.utc),
+                positions=[],
+            )
+            session.commit()
+
+            payload = self._build_basic_paper_route_target_plan(
+                session,
+                generated_at=generated_at,
+            )
+
+        plan = payload["next_paper_route_runtime_window_targets"]
+        self.assertEqual(plan["target_count"], 1)
+        self.assertEqual(plan["skipped_target_count"], 0)
+        readiness = plan["account_pre_session_readiness"]
+        self.assertEqual(readiness["state"], "clean")
+        self.assertEqual(readiness["clean_target_count"], 1)
+        target_state = plan["targets"][0]["paper_route_account_pre_session_state"]
+        self.assertEqual(target_state["state"], "clean")
+        self.assertEqual(target_state["snapshot_age_seconds"], 960)
+        self.assertEqual(target_state["snapshot_window_start_offset_seconds"], -300)
+        self.assertNotIn(
+            "paper_route_account_pre_session_snapshot_stale",
+            target_state["blockers"],
+        )
+
+    def test_pre_session_after_open_snapshot_does_not_satisfy_readiness(
+        self,
+    ) -> None:
+        generated_at = datetime(2026, 5, 26, 13, 41, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            self._add_account_position_snapshot(
+                session,
+                account_label="TORGHUT_SIM",
+                as_of=datetime(2026, 5, 26, 13, 35, tzinfo=timezone.utc),
+                positions=[],
+            )
+            session.commit()
+
+            payload = self._build_basic_paper_route_target_plan(
+                session,
+                generated_at=generated_at,
+            )
+
+        plan = payload["next_paper_route_runtime_window_targets"]
+        self.assertEqual(plan["target_count"], 0)
+        self.assertEqual(plan["skipped_target_count"], 1)
+        self.assertEqual(
+            plan["account_pre_session_readiness"]["blockers"],
+            ["paper_route_account_pre_session_snapshot_missing"],
+        )
+
+    def test_pre_session_snapshot_before_readiness_window_blocks_stale(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        generated_at = datetime(2026, 5, 26, 13, 41, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            self._add_account_position_snapshot(
+                session,
+                account_label="TORGHUT_SIM",
+                as_of=datetime(2026, 5, 26, 13, 14, 59, tzinfo=timezone.utc),
+                positions=[],
+            )
+            session.commit()
+
+            audit = _account_pre_session_snapshot_audit(
+                session,
+                account_label="TORGHUT_SIM",
+                symbols=["AAPL", "AMZN"],
+                generated_at=generated_at,
+                window_start=window_start,
+                window_end=datetime(2026, 5, 26, 20, tzinfo=timezone.utc),
+            )
+
+        self.assertFalse(audit["flat"])
+        self.assertEqual(
+            audit["blockers"], ["paper_route_account_pre_session_snapshot_stale"]
+        )
+        self.assertEqual(audit["snapshot_window_start_offset_seconds"], -901)
 
     def test_target_plan_import_plan_skips_closed_window_without_source_evidence(
         self,

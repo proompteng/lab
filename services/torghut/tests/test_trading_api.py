@@ -49,6 +49,7 @@ from app.trading.paper_route_target_plan import (
     fetch_paper_route_target_plan_url as shared_fetch_paper_route_target_plan_url,
     paper_route_target_plan_probe_symbols,
 )
+from app.trading.paper_route_evidence import _next_regular_equities_session_window
 from app.trading.forecast_runtime import forecast_registry
 from app.trading.scheduler import TradingScheduler
 from app.trading.feature_quality import FeatureQualityReport
@@ -108,6 +109,11 @@ def _install_pipeline_universe_resolver(
     resolver: object,
 ) -> None:
     setattr(scheduler, "_pipeline", SimpleNamespace(universe_resolver=resolver))
+
+
+def _paper_route_pre_session_snapshot_as_of(generated_at: datetime) -> datetime:
+    window_start, _ = _next_regular_equities_session_window(generated_at)
+    return window_start - timedelta(minutes=15)
 
 
 def _freshness_carry_ledger_for_test(dimension_id: str) -> dict[str, object]:
@@ -521,10 +527,11 @@ class TestTradingApi(TestCase):
             session.add(review)
             session.commit()
 
+            now = datetime.now(timezone.utc)
             session.add(
                 PositionSnapshot(
                     alpaca_account_label="TORGHUT_SIM",
-                    as_of=datetime.now(timezone.utc),
+                    as_of=_paper_route_pre_session_snapshot_as_of(now),
                     equity=Decimal("100000"),
                     cash=Decimal("100000"),
                     buying_power=Decimal("200000"),
