@@ -86,7 +86,14 @@ _BOUNDED_SIM_COLLECTION_BLOCKER_FIELDS = (
     "bounded_evidence_collection_blockers",
     "runtime_window_import_health_gate_blockers",
     "paper_route_account_pre_session_blockers",
+    "paper_route_account_contamination_blockers",
     "paper_route_hpairs_symbol_blockers",
+)
+_BOUNDED_SIM_COLLECTION_RESERVATION_BLOCKERS = frozenset(
+    {
+        "paper_route_account_contamination_detected",
+        "unlinked_order_events_present",
+    }
 )
 _BOUNDED_SIM_COLLECTION_ALLOWED_HEALTH_GATE_BLOCKERS = frozenset(
     {"evidence_continuity_not_ok"}
@@ -298,6 +305,17 @@ def _bounded_sim_collection_authorized(
     account_label: str | None,
 ) -> bool:
     return not _bounded_sim_collection_blockers(target, account_label=account_label)
+
+
+def _bounded_sim_collection_reserves_account(
+    target: Mapping[str, Any],
+    *,
+    account_label: str | None,
+) -> bool:
+    blockers = _bounded_sim_collection_blockers(target, account_label=account_label)
+    if not blockers:
+        return True
+    return bool(_BOUNDED_SIM_COLLECTION_RESERVATION_BLOCKERS.intersection(blockers))
 
 
 def _target_requires_bounded_sim_collection_gate(target: Mapping[str, Any]) -> bool:
@@ -3161,7 +3179,7 @@ class SimpleTradingPipeline(TradingPipeline):
         for target in target_plan_targets:
             if not _target_requires_bounded_sim_collection_gate(target):
                 continue
-            if not _bounded_sim_collection_authorized(
+            if not _bounded_sim_collection_reserves_account(
                 target,
                 account_label=self.account_label,
             ):

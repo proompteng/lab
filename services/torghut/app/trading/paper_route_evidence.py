@@ -1651,6 +1651,16 @@ def _next_paper_route_runtime_window_targets(
         clean_window_baseline_blockers = _unique_text_items(
             clean_window_baseline_state.get("blockers")
         )
+        account_contamination_state = _account_contamination_audit(
+            session,
+            account_label=PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
+            symbols=target_probe_symbols,
+            window_start=window_start,
+            window_end=window_end,
+        )
+        account_contamination_blockers = _unique_text_items(
+            account_contamination_state.get("blockers")
+        )
         if account_pre_session_blockers and require_clean_pre_session:
             skipped_targets.append(
                 {
@@ -1751,6 +1761,7 @@ def _next_paper_route_runtime_window_targets(
                 *_unique_text_items(source_decision_readiness.get("blockers")),
                 *account_pre_session_blockers,
                 *clean_window_baseline_blockers,
+                *account_contamination_blockers,
                 *(
                     ["paper_route_probe_pair_imbalanced"]
                     if pair_balance_state == "imbalanced"
@@ -1833,8 +1844,14 @@ def _next_paper_route_runtime_window_targets(
             "paper_route_clean_window_baseline_blockers": (
                 clean_window_baseline_blockers
             ),
+            "paper_route_account_contamination_state": account_contamination_state,
+            "paper_route_account_contamination_blockers": (
+                account_contamination_blockers
+            ),
             "paper_route_clean_window_state": (
-                "clean_window_collection_ready"
+                "contaminated_window_discarded"
+                if account_contamination_blockers
+                else "clean_window_collection_ready"
                 if not clean_window_baseline_blockers
                 else "clean_window_required"
             ),

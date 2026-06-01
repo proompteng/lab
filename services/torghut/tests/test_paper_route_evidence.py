@@ -5973,6 +5973,117 @@ class TestPaperRouteEvidenceAudit(TestCase):
             "contaminated_window_discarded",
         )
 
+    def test_active_window_contamination_blocks_target_plan_collection(self) -> None:
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, tzinfo=timezone.utc)
+        now = datetime(2026, 5, 26, 18, 5, tzinfo=timezone.utc)
+
+        with Session(self.engine) as session:
+            strategy = Strategy(
+                name="active-contamination-proof-strategy",
+                description="active paper account contamination fixture",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+                created_at=window_start,
+                updated_at=window_start,
+            )
+            session.add(strategy)
+            session.flush()
+            session.add(
+                ExecutionOrderEvent(
+                    event_fingerprint="active-external-autonomous-trader-event",
+                    source_topic="alpaca.trade_updates",
+                    source_partition=0,
+                    source_offset=42,
+                    alpaca_account_label="TORGHUT_SIM",
+                    event_ts=window_start + timedelta(minutes=20),
+                    symbol="AAPL",
+                    alpaca_order_id="active-external-order-1",
+                    client_order_id="autonomous-trader-AAPL-cover-active-1",
+                    event_type="fill",
+                    status="filled",
+                    qty=Decimal("1"),
+                    filled_qty=Decimal("1"),
+                    avg_fill_price=Decimal("101"),
+                    raw_event={"source": "external_autonomous_trader"},
+                    execution_id=None,
+                    trade_decision_id=None,
+                )
+            )
+            self._add_flat_account_start_snapshot(
+                session,
+                account_label="TORGHUT_SIM",
+                window_start=window_start,
+            )
+            session.commit()
+
+            payload = build_paper_route_target_plan_payload(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "paper_route_probe_only",
+                    "blocked_reasons": [],
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": (
+                            "torghut.runtime-ledger-paper-probation-import-plan.v1"
+                        ),
+                        "target_count": "1",
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-CONTAMINATION",
+                                "candidate_id": "candidate-contamination",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_pairs",
+                                "strategy_name": strategy.name,
+                                "strategy_id": "active_contamination_strategy@research",
+                                "account_label": "TORGHUT_SIM",
+                                "source_kind": "paper_route_probe_runtime_observed",
+                                "source_manifest_ref": (
+                                    "config/trading/hypotheses/h-contamination.json"
+                                ),
+                                "window_start": window_start.isoformat(),
+                                "window_end": window_end.isoformat(),
+                                "paper_probation_authorized": True,
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "summary": {
+                        "paper_route_probe_eligible_symbols": ["AAPL"],
+                        "paper_route_probe_active_symbols": ["AAPL"],
+                    },
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": True,
+                        "effective_max_notional": 25,
+                        "next_session_max_notional": 25,
+                    },
+                },
+                generated_at=now,
+            )
+
+        target = payload["next_paper_route_runtime_window_targets"]["targets"][0]
+        self.assertFalse(target["evidence_collection_ok"])
+        self.assertFalse(target["canary_collection_authorized"])
+        self.assertFalse(target["bounded_live_paper_collection_authorized"])
+        self.assertEqual(
+            target["paper_route_clean_window_state"],
+            "contaminated_window_discarded",
+        )
+        self.assertIn(
+            "paper_route_account_contamination_detected",
+            target["paper_route_account_contamination_blockers"],
+        )
+        self.assertIn(
+            "unlinked_order_events_present",
+            target["bounded_evidence_collection_blockers"],
+        )
+
     def test_account_window_start_positions_block_runtime_window_import(
         self,
     ) -> None:
