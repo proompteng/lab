@@ -9733,6 +9733,53 @@ class TestTradingApi(TestCase):
         finally:
             settings.trading_paper_route_target_plan_url = original_target_plan_url
 
+        safe_local_gate = {
+            "runtime_ledger_paper_probation_import_plan": {
+                "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                "target_count": 1,
+                "promotion_allowed": False,
+                "final_promotion_allowed": False,
+                "final_promotion_authorized": False,
+                "targets": [
+                    {
+                        "candidate_id": "safe-local",
+                        "account_label": "TORGHUT_SIM",
+                        "paper_route_probe_symbols": ["AAPL"],
+                        "promotion_allowed": False,
+                        "final_promotion_allowed": False,
+                        "final_promotion_authorized": False,
+                    }
+                ],
+            }
+        }
+        original_target_plan_url = settings.trading_paper_route_target_plan_url
+        try:
+            settings.trading_paper_route_target_plan_url = (
+                "http://torghut.example/paper-route-plan"
+            )
+            with patch(
+                "app.main._load_external_paper_route_target_plan",
+                return_value={"load_error": "paper_route_target_plan_timeout"},
+            ):
+                gate = _merge_external_paper_route_target_plan(safe_local_gate)
+            plan = gate["runtime_ledger_paper_probation_import_plan"]
+            self.assertEqual(
+                gate["paper_route_target_plan_error"],
+                "paper_route_target_plan_timeout",
+            )
+            self.assertEqual(
+                gate["paper_route_target_plan_source"],
+                "local_runtime_ledger_paper_probation_import_plan",
+            )
+            self.assertEqual(
+                gate["paper_route_target_plan_external_source"],
+                "external_target_plan_url",
+            )
+            self.assertEqual(plan["target_count"], 1)
+            self.assertEqual(plan["targets"][0]["candidate_id"], "safe-local")
+        finally:
+            settings.trading_paper_route_target_plan_url = original_target_plan_url
+
         original_target_plan_url = settings.trading_paper_route_target_plan_url
         try:
             settings.trading_paper_route_target_plan_url = (
