@@ -1358,6 +1358,8 @@ class TestSubmissionCouncil(TestCase):
         self.assertEqual(target["strategy_id"], "intraday_tsmom_v2@research")
         self.assertEqual(target["strategy_name"], "intraday-tsmom-profit-v3")
         self.assertEqual(target["runtime_strategy_name"], "intraday-tsmom-profit-v3")
+        self.assertEqual(target["target_dsn_env"], "SIM_DB_DSN")
+        self.assertEqual(target["source_account_label"], "TORGHUT_SIM")
         self.assertEqual(
             target["strategy_lookup_names"],
             ["intraday-tsmom-profit-v3", "intraday-tsmom-v2"],
@@ -1448,6 +1450,8 @@ class TestSubmissionCouncil(TestCase):
         self.assertEqual(plan["source_collection_target_count"], 1)
         target = plan["targets"][0]
         self.assertEqual(target["source_dsn_env"], "SIM_DB_DSN")
+        self.assertEqual(target["target_dsn_env"], "SIM_DB_DSN")
+        self.assertEqual(target["source_account_label"], "TORGHUT_SIM")
         self.assertEqual(
             target["source_kind"], "runtime_ledger_source_collection_candidate"
         )
@@ -1518,6 +1522,8 @@ class TestSubmissionCouncil(TestCase):
 
         self.assertEqual(plan["target_count"], 1)
         target = plan["targets"][0]
+        self.assertEqual(target["target_dsn_env"], "SIM_DB_DSN")
+        self.assertEqual(target["source_account_label"], "TORGHUT_SIM")
         self.assertFalse(target["paper_probation_authorized"])
         self.assertTrue(target["source_collection_authorized"])
         self.assertEqual(target["proof_mode"], "probation")
