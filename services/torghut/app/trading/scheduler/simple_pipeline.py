@@ -79,6 +79,12 @@ _PAPER_ROUTE_TARGET_PLAN_CACHE_SECONDS = 60
 _PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS = 600
 _PAPER_ROUTE_TARGET_PROFIT_PROOF_EXPOSURE_LOOKBACK = timedelta(days=7)
 _PAPER_ROUTE_TARGET_OPEN_EXPOSURE_EPSILON = Decimal("0.00000001")
+_SIGNAL_INGEST_UNAVAILABLE_REASONS = frozenset(
+    {
+        "clickhouse_signal_query_timeout",
+        "clickhouse_url_missing",
+    }
+)
 _BOUNDED_SIM_COLLECTION_ACCOUNT_LABEL = "TORGHUT_SIM"
 _BOUNDED_SIM_COLLECTION_SOURCE_KIND = "paper_route_probe_runtime_observed"
 _BOUNDED_SIM_COLLECTION_SCOPE = "paper_route_probe_next_session_only"
@@ -806,8 +812,20 @@ class SimpleTradingPipeline(TradingPipeline):
             self._capture_runtime_window_account_snapshot_if_due(session)
             self._warm_session_context_from_open(session, strategies=strategies)
 
-            batch = self.ingestor.fetch_signals(session)
+            signal_scope = self._bounded_paper_route_signal_scope(strategies)
+            batch = self._fetch_signal_batch(session, signal_scope=signal_scope)
             self._record_ingest_window(batch)
+            if self._signal_ingest_unavailable(batch):
+                self._prepare_batch_for_decisions(
+                    session,
+                    batch,
+                    quality_signals=[],
+                )
+                self._record_bounded_signal_ingest_blocker(
+                    batch=batch,
+                    signal_scope=signal_scope,
+                )
+                return
             if not batch.signals:
                 self._prepare_batch_for_decisions(
                     session,
@@ -897,6 +915,128 @@ class SimpleTradingPipeline(TradingPipeline):
                 allowed_symbols=allowed_symbols,
             )
             self.ingestor.commit_cursor(session, batch)
+
+    def _fetch_signal_batch(
+        self,
+        session: Session,
+        *,
+        signal_scope: tuple[set[str], set[str]] | None,
+    ) -> SignalBatch:
+        if signal_scope is None:
+            return self.ingestor.fetch_signals(session)
+        symbols, timeframes = signal_scope
+        try:
+            return self.ingestor.fetch_signals(
+                session,
+                symbols=symbols,
+                timeframes=timeframes,
+            )
+        except TypeError as exc:
+            if "unexpected keyword" not in str(exc):
+                raise
+            logger.warning(
+                "Signal ingestor does not support scoped polling; falling back to unscoped fetch account_label=%s symbols=%s timeframes=%s",
+                self.account_label,
+                ",".join(sorted(symbols)) or "*",
+                ",".join(sorted(timeframes)) or "*",
+            )
+            return self.ingestor.fetch_signals(session)
+
+    @staticmethod
+    def _signal_ingest_unavailable(batch: SignalBatch) -> bool:
+        return (
+            batch.no_signal_reason in _SIGNAL_INGEST_UNAVAILABLE_REASONS
+            or not batch.signals_authoritative
+        )
+
+    def _record_bounded_signal_ingest_blocker(
+        self,
+        *,
+        batch: SignalBatch,
+        signal_scope: tuple[set[str], set[str]] | None,
+    ) -> None:
+        reason = batch.no_signal_reason or "signal_ingest_unavailable"
+        symbols: set[str] = set()
+        timeframes: set[str] = set()
+        if signal_scope is not None:
+            symbols, timeframes = signal_scope
+        blocker = {
+            "blockers": [reason],
+            "reason": reason,
+            "account_label": self.account_label,
+            "symbols": sorted(symbols),
+            "timeframes": sorted(timeframes),
+            "signals_authoritative": batch.signals_authoritative,
+            "fallback_signal_count": len(batch.fallback_signals),
+            "degraded_signal_source": batch.degraded_signal_source,
+            "query_start": batch.query_start.isoformat()
+            if batch.query_start is not None
+            else None,
+            "query_end": batch.query_end.isoformat()
+            if batch.query_end is not None
+            else None,
+        }
+        setattr(self.state, "last_bounded_evidence_collection_blocker", blocker)
+        logger.warning(
+            "Blocking bounded paper-route evidence decisions because signal ingest is unavailable account_label=%s reason=%s symbols=%s timeframes=%s fallback_signal_count=%s",
+            self.account_label,
+            reason,
+            ",".join(sorted(symbols)) or "*",
+            ",".join(sorted(timeframes)) or "*",
+            len(batch.fallback_signals),
+        )
+
+    def _bounded_paper_route_signal_scope(
+        self,
+        strategies: Sequence[Strategy],
+    ) -> tuple[set[str], set[str]] | None:
+        if settings.trading_mode != "paper":
+            return None
+        if not settings.trading_simple_paper_route_probe_enabled:
+            return None
+        now = trading_now(account_label=self.account_label).astimezone(timezone.utc)
+        if not self._is_market_session_open(now):
+            return None
+        target_symbols, target_plan_error, targets = (
+            self._external_paper_route_target_probe_symbols_cached()
+        )
+        if target_plan_error or not target_symbols:
+            return None
+
+        symbols: set[str] = set()
+        timeframes: set[str] = set()
+        for target in targets:
+            if not _target_requires_bounded_sim_collection_gate(target):
+                continue
+            if not _bounded_sim_collection_authorized(
+                target,
+                account_label=self.account_label,
+            ):
+                continue
+            window = _target_probe_window(target)
+            if window is None:
+                continue
+            window_start, window_end = window
+            if now < window_start or now >= window_end:
+                continue
+            strategy = self._paper_route_target_strategy(target, strategies)
+            if strategy is None:
+                continue
+            scoped_symbols = _target_symbols(target) & target_symbols
+            strategy_symbols = self._paper_route_target_strategy_symbols(strategy)
+            if strategy_symbols:
+                scoped_symbols = scoped_symbols & strategy_symbols
+            symbols.update(scoped_symbols)
+            timeframe = (
+                _safe_text(target.get("timeframe"))
+                or _safe_text(target.get("base_timeframe"))
+                or _safe_text(strategy.base_timeframe)
+            )
+            if timeframe:
+                timeframes.add(timeframe)
+        if not symbols:
+            return None
+        return symbols, timeframes
 
     def _live_submission_gate(
         self,

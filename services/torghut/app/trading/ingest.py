@@ -6,7 +6,7 @@ import json
 import logging
 import re
 from datetime import datetime, timedelta, timezone
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from http.client import HTTPConnection, HTTPSConnection
 from typing import Any, Mapping, Optional, cast
 from urllib.parse import urlencode, urlsplit
@@ -106,6 +106,11 @@ class SignalBatch:
     query_end: Optional[datetime] = None
     signal_lag_seconds: float | None = None
     no_signal_reason: Optional[str] = None
+    signals_authoritative: bool = True
+    fallback_signals: list[SignalEnvelope] = field(
+        default_factory=lambda: cast(list[SignalEnvelope], [])
+    )
+    degraded_signal_source: Optional[str] = None
 
 
 class ClickHouseSignalIngestor:
@@ -146,8 +151,24 @@ class ClickHouseSignalIngestor:
         self._latest_signal_ts_cache: Optional[datetime] = None
         self._latest_signal_ts_checked_at: Optional[datetime] = None
         self._latest_signal_ts_last_error_at: Optional[datetime] = None
+        self._latest_signal_ts_scoped_cache: dict[
+            tuple[tuple[str, ...], tuple[str, ...]], Optional[datetime]
+        ] = {}
+        self._latest_signal_ts_scoped_checked_at: dict[
+            tuple[tuple[str, ...], tuple[str, ...]], datetime
+        ] = {}
+        self._last_good_signal_batches: dict[
+            tuple[tuple[str, ...], tuple[str, ...]],
+            tuple[datetime, list[SignalEnvelope], Optional[datetime], Optional[datetime]],
+        ] = {}
 
-    def fetch_signals(self, session: Session) -> "SignalBatch":
+    def fetch_signals(
+        self,
+        session: Session,
+        *,
+        symbols: Optional[set[str]] = None,
+        timeframes: Optional[set[str]] = None,
+    ) -> "SignalBatch":
         if not self.url:
             logger.warning("ClickHouse URL missing; skipping signal ingestion")
             return SignalBatch(
@@ -162,9 +183,16 @@ class ClickHouseSignalIngestor:
 
         poll_started_at = trading_now(account_label=self.account_label)
         query_window_start: datetime | None = None
+        scoped_symbols = _normalized_signal_symbols(symbols)
+        scoped_timeframes = _normalized_signal_timeframes(timeframes)
+        scope_key = _signal_scope_key(scoped_symbols, scoped_timeframes)
         try:
             time_column = self._resolve_time_column()
-            latest_signal_at = self._latest_signal_timestamp(time_column)
+            latest_signal_at = self._latest_signal_timestamp(
+                time_column,
+                symbols=scoped_symbols,
+                timeframes=scoped_timeframes,
+            )
             cursor_at, cursor_seq, cursor_symbol, fast_forwarded = (
                 self._prepare_fetch_cursor(
                     session=session,
@@ -181,24 +209,32 @@ class ClickHouseSignalIngestor:
                     latest_signal_at=latest_signal_at,
                     poll_started_at=poll_started_at,
                     fast_forwarded=fast_forwarded,
+                    symbols=scoped_symbols,
+                    timeframes=scoped_timeframes,
+                    scope_key=scope_key,
                 )
             overlap_cutoff = self._overlap_cutoff(time_column, cursor_at)
-            query = self._build_query(cursor_at, cursor_seq, cursor_symbol)
+            query = self._build_query(
+                cursor_at,
+                cursor_seq,
+                cursor_symbol,
+                symbols=scoped_symbols,
+                timeframes=scoped_timeframes,
+            )
             rows = self._query_clickhouse(query)
         except TimeoutError as exc:
             logger.warning(
-                "ClickHouse signal ingestion timed out; returning empty batch account_label=%s error=%s",
+                "ClickHouse signal ingestion timed out; blocking authoritative decisions account_label=%s symbols=%s timeframes=%s error=%s",
                 self.account_label,
+                ",".join(scoped_symbols) or "*",
+                ",".join(scoped_timeframes) or "*",
                 exc,
             )
-            return SignalBatch(
-                signals=[],
-                cursor_at=None,
-                cursor_seq=None,
-                cursor_symbol=None,
+            return self._timeout_degraded_batch(
+                reason="clickhouse_signal_query_timeout",
                 query_start=query_window_start,
                 query_end=poll_started_at,
-                no_signal_reason="clickhouse_signal_query_timeout",
+                scope_key=scope_key,
             )
         signals, max_event_ts, max_seq, max_symbol = self._collect_batch_signals(
             rows,
@@ -219,6 +255,14 @@ class ClickHouseSignalIngestor:
                 poll_started_at=poll_started_at,
             )
 
+        if signals:
+            self._remember_last_good_signals(
+                scope_key=scope_key,
+                signals=signals,
+                query_start=query_window_start,
+                query_end=query_window_end,
+                observed_at=poll_started_at,
+            )
         return SignalBatch(
             signals=signals,
             cursor_at=max_event_ts,
@@ -238,6 +282,9 @@ class ClickHouseSignalIngestor:
         latest_signal_at: Optional[datetime],
         poll_started_at: datetime,
         fast_forwarded: bool,
+        symbols: tuple[str, ...] = (),
+        timeframes: tuple[str, ...] = (),
+        scope_key: tuple[tuple[str, ...], tuple[str, ...]] = ((), ()),
     ) -> "SignalBatch":
         query_window_start = cursor_at
         _window_start, simulation_window_end = simulation_window_bounds()
@@ -288,6 +335,8 @@ class ClickHouseSignalIngestor:
             cursor_seq=cursor_seq,
             cursor_symbol=cursor_symbol,
             time_column=time_column,
+            symbols=symbols,
+            timeframes=timeframes,
         )
         rows = self._query_clickhouse(query)
         signals = self._signals_from_rows(rows)
@@ -312,6 +361,13 @@ class ClickHouseSignalIngestor:
             )
 
         if signals:
+            self._remember_last_good_signals(
+                scope_key=scope_key,
+                signals=signals,
+                query_start=query_window_start,
+                query_end=query_window_end,
+                observed_at=poll_started_at,
+            )
             return SignalBatch(
                 signals=signals,
                 cursor_at=max_event_ts,
@@ -627,6 +683,8 @@ class ClickHouseSignalIngestor:
         normalized_symbol: Optional[str],
         limit: Optional[int],
         time_column: str,
+        symbols: tuple[str, ...] = (),
+        timeframes: tuple[str, ...] = (),
         ordered: bool = True,
     ) -> str:
         where_parts = [
@@ -638,6 +696,12 @@ class ClickHouseSignalIngestor:
             where_parts.append(source_clause)
         if normalized_symbol:
             where_parts.append(f"symbol = {_quote_literal(normalized_symbol)}")
+        where_parts.extend(
+            self._scope_where_clauses(
+                symbols=symbols,
+                timeframes=timeframes,
+            )
+        )
 
         selected_columns, select_expr = self._select_columns_and_expression(time_column)
         query_parts = [
@@ -671,6 +735,8 @@ class ClickHouseSignalIngestor:
         cursor_seq: Optional[int],
         cursor_symbol: Optional[str],
         time_column: str,
+        symbols: tuple[str, ...] = (),
+        timeframes: tuple[str, ...] = (),
     ) -> str:
         cursor_expr = to_datetime64(cursor_at)
         where_parts = [
@@ -680,6 +746,12 @@ class ClickHouseSignalIngestor:
         source_clause = self._source_where_clause()
         if source_clause is not None:
             where_parts.append(source_clause)
+        where_parts.extend(
+            self._scope_where_clauses(
+                symbols=symbols,
+                timeframes=timeframes,
+            )
+        )
         supports_seq = self._supports_seq_for_time_column(time_column)
         if supports_seq:
             if cursor_seq is not None or cursor_symbol is not None:
@@ -772,17 +844,38 @@ class ClickHouseSignalIngestor:
             )
         return no_signal_reason, signal_lag_seconds
 
-    def _latest_signal_timestamp(self, time_column: str) -> Optional[datetime]:
+    def _latest_signal_timestamp(
+        self,
+        time_column: str,
+        *,
+        symbols: tuple[str, ...] = (),
+        timeframes: tuple[str, ...] = (),
+    ) -> Optional[datetime]:
         now = datetime.now(timezone.utc)
-        if (
-            self._latest_signal_ts_checked_at is not None
-            and now - self._latest_signal_ts_checked_at < LATEST_SIGNAL_TS_CACHE_TTL
-        ):
-            return self._latest_signal_ts_cache
+        scope_key = _signal_scope_key(symbols, timeframes)
+        if scope_key != ((), ()):
+            checked_at = self._latest_signal_ts_scoped_checked_at.get(scope_key)
+            if (
+                checked_at is not None
+                and now - checked_at < LATEST_SIGNAL_TS_CACHE_TTL
+            ):
+                return self._latest_signal_ts_scoped_cache.get(scope_key)
+        else:
+            checked_at = self._latest_signal_ts_checked_at
+            cache_value = self._latest_signal_ts_cache
+            if (
+                checked_at is not None
+                and now - checked_at < LATEST_SIGNAL_TS_CACHE_TTL
+            ):
+                return cache_value
 
         rows: list[dict[str, Any]] = []
         last_error: Exception | None = None
-        for query in self._latest_signal_timestamp_queries(time_column):
+        for query in self._latest_signal_timestamp_queries(
+            time_column,
+            symbols=symbols,
+            timeframes=timeframes,
+        ):
             try:
                 rows = self._query_clickhouse(query)
                 break
@@ -801,17 +894,30 @@ class ClickHouseSignalIngestor:
                     last_error,
                 )
                 self._latest_signal_ts_last_error_at = now
-            self._latest_signal_ts_checked_at = now
-            return self._latest_signal_ts_cache
+            if scope_key == ((), ()):
+                self._latest_signal_ts_checked_at = now
+                return self._latest_signal_ts_cache
+            self._latest_signal_ts_scoped_checked_at[scope_key] = now
+            return self._latest_signal_ts_scoped_cache.get(scope_key)
 
         self._latest_signal_ts_last_error_at = None
-        self._latest_signal_ts_checked_at = now
+        if scope_key == ((), ()):
+            self._latest_signal_ts_checked_at = now
+        else:
+            self._latest_signal_ts_scoped_checked_at[scope_key] = now
         if not rows:
-            self._latest_signal_ts_cache = None
+            if scope_key == ((), ()):
+                self._latest_signal_ts_cache = None
+            else:
+                self._latest_signal_ts_scoped_cache[scope_key] = None
             return None
         raw = rows[0].get("latest_signal_ts")
-        self._latest_signal_ts_cache = _parse_ts(raw) if raw is not None else None
-        return self._latest_signal_ts_cache
+        latest = _parse_ts(raw) if raw is not None else None
+        if scope_key == ((), ()):
+            self._latest_signal_ts_cache = latest
+        else:
+            self._latest_signal_ts_scoped_cache[scope_key] = latest
+        return latest
 
     def latest_signal_status(self) -> dict[str, Any]:
         if not self.url:
@@ -893,7 +999,13 @@ class ClickHouseSignalIngestor:
             "readiness_window_end": latest_signal_at,
         }
 
-    def _latest_signal_timestamp_queries(self, time_column: str) -> list[str]:
+    def _latest_signal_timestamp_queries(
+        self,
+        time_column: str,
+        *,
+        symbols: tuple[str, ...] = (),
+        timeframes: tuple[str, ...] = (),
+    ) -> list[str]:
         queries: list[str] = []
         safe_time_column = _safe_identifier(time_column, kind="column")
         order_clause = f"{safe_time_column} DESC"
@@ -911,6 +1023,12 @@ class ClickHouseSignalIngestor:
         source_clause = self._source_where_clause()
         if source_clause is not None:
             where_parts.append(source_clause)
+        where_parts.extend(
+            self._scope_where_clauses(
+                symbols=symbols,
+                timeframes=timeframes,
+            )
+        )
         if self.simulation_mode:
             window_start, window_end = simulation_window_bounds()
             if window_start is not None:
@@ -976,6 +1094,9 @@ class ClickHouseSignalIngestor:
         cursor_at: datetime,
         cursor_seq: Optional[int],
         cursor_symbol: Optional[str],
+        *,
+        symbols: tuple[str, ...] = (),
+        timeframes: tuple[str, ...] = (),
     ) -> str:
         cursor_expr = to_datetime64(cursor_at)
         limit = self.batch_size
@@ -1010,6 +1131,12 @@ class ClickHouseSignalIngestor:
         source_clause = self._source_where_clause()
         if source_clause is not None:
             where_clause = f"({where_clause}) AND {source_clause}"
+        scope_clauses = self._scope_where_clauses(
+            symbols=symbols,
+            timeframes=timeframes,
+        )
+        if scope_clauses:
+            where_clause = " AND ".join([f"({where_clause})", *scope_clauses])
         query = " ".join(
             [
                 "SELECT",
@@ -1275,6 +1402,107 @@ class ClickHouseSignalIngestor:
             _quote_literal(source) for source in sorted(allowed_sources)
         )
         return f"lower(source) IN ({rendered})"
+
+    def _scope_where_clauses(
+        self,
+        *,
+        symbols: tuple[str, ...] = (),
+        timeframes: tuple[str, ...] = (),
+    ) -> list[str]:
+        clauses: list[str] = []
+        if symbols:
+            rendered_symbols = ", ".join(_quote_literal(symbol) for symbol in symbols)
+            clauses.append(f"symbol IN ({rendered_symbols})")
+        timeframe_clause = self._timeframe_where_clause(timeframes)
+        if timeframe_clause is not None:
+            clauses.append(timeframe_clause)
+        return clauses
+
+    def _timeframe_where_clause(self, timeframes: tuple[str, ...]) -> str | None:
+        if not timeframes:
+            return None
+        columns = self._resolve_columns()
+        if columns is not None:
+            if "timeframe" in columns:
+                rendered = ", ".join(_quote_literal(item) for item in timeframes)
+                return f"timeframe IN ({rendered})"
+            if "window_size" in columns:
+                rendered = ", ".join(
+                    _quote_literal(item)
+                    for item in _timeframes_to_iso_durations(timeframes)
+                )
+                return f"window_size IN ({rendered})"
+            if "window_step" in columns:
+                rendered = ", ".join(
+                    _quote_literal(item)
+                    for item in _timeframes_to_iso_durations(timeframes)
+                )
+                return f"window_step IN ({rendered})"
+            return None
+        if self.schema == "flat":
+            rendered = ", ".join(_quote_literal(item) for item in timeframes)
+            return f"timeframe IN ({rendered})"
+        if self.schema == "envelope":
+            rendered = ", ".join(
+                _quote_literal(item) for item in _timeframes_to_iso_durations(timeframes)
+            )
+            return f"window_size IN ({rendered})"
+        return None
+
+    def _remember_last_good_signals(
+        self,
+        *,
+        scope_key: tuple[tuple[str, ...], tuple[str, ...]],
+        signals: list[SignalEnvelope],
+        query_start: Optional[datetime],
+        query_end: Optional[datetime],
+        observed_at: datetime,
+    ) -> None:
+        self._last_good_signal_batches[scope_key] = (
+            observed_at,
+            list(signals),
+            query_start,
+            query_end,
+        )
+
+    def _timeout_degraded_batch(
+        self,
+        *,
+        reason: str,
+        query_start: Optional[datetime],
+        query_end: Optional[datetime],
+        scope_key: tuple[tuple[str, ...], tuple[str, ...]],
+    ) -> SignalBatch:
+        cached = self._last_good_signal_batches.get(scope_key)
+        fallback_signals: list[SignalEnvelope] = []
+        degraded_source: str | None = None
+        if cached is not None:
+            cached_at, cached_signals, _cached_start, _cached_end = cached
+            max_age = timedelta(
+                seconds=max(1, int(settings.trading_signal_stale_lag_alert_seconds))
+            )
+            if query_end is not None and query_end - cached_at <= max_age:
+                fallback_signals = [
+                    _mark_non_authority_stale_fallback_signal(
+                        signal,
+                        reason=reason,
+                        cached_at=cached_at,
+                    )
+                    for signal in cached_signals
+                ]
+                degraded_source = "last_good_non_authority_stale_bounded"
+        return SignalBatch(
+            signals=[],
+            cursor_at=None,
+            cursor_seq=None,
+            cursor_symbol=None,
+            query_start=query_start,
+            query_end=query_end,
+            no_signal_reason=reason,
+            signals_authoritative=False,
+            fallback_signals=fallback_signals,
+            degraded_signal_source=degraded_source,
+        )
 
     def _select_columns_for_schema(self, time_column: str) -> list[str]:
         if self.schema == "flat":
@@ -1825,6 +2053,76 @@ def _coerce_seq(value: Any) -> Optional[int]:
         except ValueError:
             return None
     return None
+
+
+def _normalized_signal_symbols(symbols: set[str] | None) -> tuple[str, ...]:
+    if not symbols:
+        return ()
+    normalized: list[str] = []
+    for raw_symbol in symbols:
+        symbol = normalize_symbol(raw_symbol)
+        if symbol is None:
+            continue
+        normalized_symbol = symbol.upper()
+        if normalized_symbol not in normalized:
+            normalized.append(normalized_symbol)
+    return tuple(sorted(normalized))
+
+
+def _normalized_signal_timeframes(timeframes: set[str] | None) -> tuple[str, ...]:
+    if not timeframes:
+        return ()
+    normalized: list[str] = []
+    for raw_timeframe in timeframes:
+        timeframe = str(raw_timeframe or "").strip()
+        if not timeframe or not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", timeframe):
+            continue
+        if timeframe not in normalized:
+            normalized.append(timeframe)
+    return tuple(sorted(normalized))
+
+
+def _signal_scope_key(
+    symbols: tuple[str, ...],
+    timeframes: tuple[str, ...],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    return symbols, timeframes
+
+
+def _timeframes_to_iso_durations(timeframes: tuple[str, ...]) -> tuple[str, ...]:
+    rendered: list[str] = []
+    for timeframe in timeframes:
+        match = re.fullmatch(r"(?i)(\d+)(sec|secs|s|min|mins|m|hour|hours|h)", timeframe)
+        if match is None:
+            rendered.append(timeframe)
+            continue
+        amount = int(match.group(1))
+        unit = match.group(2).lower()
+        if unit in {"sec", "secs", "s"}:
+            rendered.append(f"PT{amount}S")
+        elif unit in {"min", "mins", "m"}:
+            rendered.append(f"PT{amount}M")
+        elif unit in {"hour", "hours", "h"}:
+            rendered.append(f"PT{amount}H")
+        else:  # pragma: no cover - regex constrains units above.
+            rendered.append(timeframe)
+    return tuple(dict.fromkeys(rendered))
+
+
+def _mark_non_authority_stale_fallback_signal(
+    signal: SignalEnvelope,
+    *,
+    reason: str,
+    cached_at: datetime,
+) -> SignalEnvelope:
+    payload = dict(signal.payload)
+    payload["signal_authority"] = "non_authority_stale_bounded_fallback"
+    payload["signal_ingest_fallback"] = {
+        "authority": "non_authority_stale_bounded",
+        "reason": reason,
+        "cached_at": cached_at.isoformat(),
+    }
+    return signal.model_copy(update={"payload": payload})
 
 
 def _normalized_signal_sources(raw: str | None) -> set[str]:
