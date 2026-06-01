@@ -21,6 +21,7 @@ from app.trading.session_context import (
 
 REPLAY_TAPE_SCHEMA_VERSION = "torghut.replay-tape.v1"
 REPLAY_TAPE_MANIFEST_SCHEMA_VERSION = "torghut.replay-tape-manifest.v1"
+REPLAY_TAPE_CACHE_IDENTITY_SCHEMA_VERSION = "torghut.replay-tape-cache-identity.v1"
 _DECIMAL_TAG = "__torghut_decimal__"
 _DATETIME_TAG = "__torghut_datetime__"
 
@@ -98,6 +99,7 @@ class ReplayTapeManifest:
             "cost_model_hash": self.cost_model_hash,
             "strategy_family": self.strategy_family,
             "replay_cache_key": self.replay_cache_key,
+            "cache_identity": self.cache_identity_diagnostics(),
             "artifact_refs": dict(self.artifact_refs),
             "source_table_versions": dict(self.source_table_versions),
             "created_at": self.created_at.isoformat(),
@@ -121,6 +123,19 @@ class ReplayTapeManifest:
                 missing_symbol_trading_days=self.missing_symbol_trading_days,
             ),
         }
+
+    def cache_identity_diagnostics(self) -> dict[str, Any]:
+        return build_replay_tape_cache_identity_diagnostics(
+            dataset_snapshot_ref=self.dataset_snapshot_ref,
+            symbols=self.symbols,
+            start_date=self.start_date,
+            end_date=self.end_date,
+            source_query_digest=self.source_query_digest,
+            feature_schema_hash=self.feature_schema_hash,
+            cost_model_hash=self.cost_model_hash,
+            strategy_family=self.strategy_family,
+            source_table_versions=self.source_table_versions,
+        )
 
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "ReplayTapeManifest":
@@ -219,6 +234,68 @@ def build_replay_tape_cache_key(
             "source_table_versions": dict(source_table_versions or {}),
         }
     )
+
+
+def build_replay_tape_cache_identity_diagnostics(
+    *,
+    dataset_snapshot_ref: str,
+    symbols: Sequence[str],
+    start_date: date,
+    end_date: date,
+    source_query_digest: str,
+    feature_schema_hash: str = "",
+    cost_model_hash: str = "",
+    strategy_family: str = "",
+    source_table_versions: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    """Report whether the replay/cache identity has all local reproducibility keys.
+
+    This does not synthesize missing values. Empty optional hashes/family values are
+    preserved in the cache key for deterministic compatibility, while the returned
+    blockers make missing local identity components explicit to downstream preview
+    and SIM queue artifacts.
+    """
+
+    normalized_symbols = _normalize_symbols(symbols)
+    missing_components: list[str] = []
+    if not str(dataset_snapshot_ref or "").strip():
+        missing_components.append("dataset_snapshot_ref")
+    if not normalized_symbols:
+        missing_components.append("symbol_universe")
+    if not str(source_query_digest or "").strip():
+        missing_components.append("source_query_digest")
+    if not str(feature_schema_hash or "").strip():
+        missing_components.append("feature_schema_hash")
+    if not str(cost_model_hash or "").strip():
+        missing_components.append("cost_model_hash")
+    if not str(strategy_family or "").strip():
+        missing_components.append("strategy_family")
+
+    blockers = [
+        f"replay_tape_cache_identity_missing_{component}"
+        for component in missing_components
+    ]
+    return {
+        "schema_version": REPLAY_TAPE_CACHE_IDENTITY_SCHEMA_VERSION,
+        "status": "complete" if not missing_components else "incomplete",
+        "diagnostic_only": True,
+        "cache_reuse_identity_complete": not missing_components,
+        "missing_components": missing_components,
+        "blockers": blockers,
+        "components": {
+            "dataset_snapshot_ref": str(dataset_snapshot_ref or ""),
+            "symbol_universe": list(normalized_symbols),
+            "date_range": {
+                "start_date": start_date.isoformat(),
+                "end_date": end_date.isoformat(),
+            },
+            "source_query_digest": str(source_query_digest or ""),
+            "feature_schema_hash": str(feature_schema_hash or ""),
+            "cost_model_hash": str(cost_model_hash or ""),
+            "strategy_family": str(strategy_family or ""),
+            "source_table_versions": dict(source_table_versions or {}),
+        },
+    }
 
 
 def materialize_signal_tape(
@@ -785,12 +862,14 @@ def _json_ready(value: Any) -> Any:
 
 
 __all__ = [
+    "REPLAY_TAPE_CACHE_IDENTITY_SCHEMA_VERSION",
     "REPLAY_TAPE_MANIFEST_SCHEMA_VERSION",
     "REPLAY_TAPE_SCHEMA_VERSION",
     "ReplayTape",
     "ReplayTapeCoverageError",
     "ReplayTapeManifest",
     "build_replay_tape_cache_key",
+    "build_replay_tape_cache_identity_diagnostics",
     "build_source_query_digest",
     "default_manifest_path",
     "load_replay_tape",

@@ -168,10 +168,19 @@ class TestFastReplayPreview(TestCase):
         self.assertFalse(row_payload["proof_authority"])
         self.assertIn("risk_flags", row_payload)
         self.assertIn("source_backed_adv_missing", row_payload["risk_flags"])
-        self.assertEqual(payload["replay_tape"]["dataset_snapshot_ref"], "snapshot-fast")
+        self.assertEqual(
+            payload["replay_tape"]["dataset_snapshot_ref"], "snapshot-fast"
+        )
         self.assertIn("feature_schema_hash", payload["replay_tape"])
         self.assertIn("cost_model_hash", payload["replay_tape"])
         self.assertIn("strategy_family", payload["replay_tape"])
+        self.assertEqual(
+            payload["replay_tape"]["cache_identity"]["status"], "incomplete"
+        )
+        self.assertIn(
+            "replay_tape_cache_identity_missing_feature_schema_hash",
+            payload["replay_tape"]["cache_identity"]["blockers"],
+        )
         self.assertFalse(payload["proof_authority"])
 
     def test_target_implied_notional_blocks_non_positive_expectancy(self) -> None:
