@@ -1218,7 +1218,11 @@ def _with_runtime_ledger_source_authority_context(
         str(key): _nonnegative_int(value) for key, value in existing_counts.items()
     }
     for key, value in source_row_counts.items():
-        merged_counts.setdefault(str(key), max(0, int(value)))
+        table_name = str(key)
+        merged_counts[table_name] = max(
+            merged_counts.get(table_name, 0),
+            max(0, int(value)),
+        )
     if merged_counts:
         payload["source_row_counts"] = dict(sorted(merged_counts.items()))
     return payload
@@ -2843,9 +2847,7 @@ def _source_backed_fill_lifecycle_rows(
             continue
         if _runtime_order_id(normalized) is None:
             continue
-        if not _source_identifier_values(
-            [normalized], "execution_order_event_id", "event_fingerprint"
-        ):
+        if not _source_identifier_values([normalized], "execution_order_event_id"):
             continue
         if not _source_identifier_values([normalized], "source_window_id"):
             continue
@@ -2868,9 +2870,7 @@ def _source_backed_order_lifecycle_rows(
             continue
         if _runtime_order_id(normalized) is None:
             continue
-        if not _source_identifier_values(
-            [normalized], "execution_order_event_id", "event_fingerprint"
-        ):
+        if not _source_identifier_values([normalized], "execution_order_event_id"):
             continue
         if not _source_identifier_values([normalized], "source_window_id"):
             continue
@@ -3128,7 +3128,6 @@ def _runtime_source_context_for_bucket(
     execution_order_event_ids = _source_identifier_values(
         source_authority_lifecycle_rows,
         "execution_order_event_id",
-        "event_fingerprint",
     )
     if source_offsets and execution_order_event_ids:
         if order_feed_fill_economics_complete:

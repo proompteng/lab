@@ -816,7 +816,14 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self,
     ) -> None:
         bucket = _with_runtime_ledger_source_authority_context(
-            _complete_runtime_ledger_bucket(),
+            _complete_runtime_ledger_bucket(
+                source_row_counts={
+                    "trade_decisions": 1,
+                    "executions": 1,
+                    "execution_order_events": 1,
+                    "order_feed_source_windows": 1,
+                }
+            ),
             source_window_start=datetime(2026, 5, 29, 14, 30, tzinfo=timezone.utc),
             source_window_end=datetime(2026, 5, 29, 15, 0, tzinfo=timezone.utc),
             source_refs=[
@@ -852,6 +859,78 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         )
         self.assertTrue(bucket["order_feed_lifecycle_complete"])
         self.assertTrue(bucket["execution_economics_complete"])
+        self.assertEqual(
+            bucket["source_row_counts"],
+            {
+                "execution_order_events": 1,
+                "executions": 1,
+                "order_feed_source_windows": 1,
+                "trade_decisions": 1,
+            },
+        )
+        self.assertEqual(_runtime_ledger_bucket_profit_proof_blockers(bucket), [])
+
+    def test_runtime_ledger_source_context_raises_stale_aggregate_counts(
+        self,
+    ) -> None:
+        bucket = _with_runtime_ledger_source_authority_context(
+            _complete_runtime_ledger_bucket(
+                source_row_counts={
+                    "trade_decisions": 1,
+                    "executions": 1,
+                    "execution_order_events": 1,
+                    "order_feed_source_windows": 1,
+                }
+            ),
+            source_window_start=datetime(2026, 5, 29, 14, 30, tzinfo=timezone.utc),
+            source_window_end=datetime(2026, 5, 29, 15, 0, tzinfo=timezone.utc),
+            source_refs=[
+                "postgres:trade_decisions",
+                "postgres:executions",
+                "postgres:execution_order_events",
+                "postgres:order_feed_source_windows",
+            ],
+            source_row_counts={
+                "trade_decisions": 2,
+                "executions": 2,
+                "execution_order_events": 4,
+                "order_feed_source_windows": 4,
+            },
+            trade_decision_ids=["decision-buy", "decision-sell"],
+            execution_ids=["execution-buy", "execution-sell"],
+            execution_order_event_ids=[
+                "event-new-buy",
+                "event-fill-buy",
+                "event-new-sell",
+                "event-fill-sell",
+            ],
+            source_window_ids=[
+                "window-new-buy",
+                "window-fill-buy",
+                "window-new-sell",
+                "window-fill-sell",
+            ],
+            source_offsets=[
+                {"topic": "alpaca.trade_updates", "partition": 0, "offset": 1},
+                {"topic": "alpaca.trade_updates", "partition": 0, "offset": 2},
+                {"topic": "alpaca.trade_updates", "partition": 0, "offset": 3},
+                {"topic": "alpaca.trade_updates", "partition": 0, "offset": 4},
+            ],
+            order_feed_lifecycle_complete=True,
+            execution_economics_complete=True,
+            source_materialization="execution_order_events",
+            authority_class="runtime_order_feed_execution_source",
+        )
+
+        self.assertEqual(
+            bucket["source_row_counts"],
+            {
+                "execution_order_events": 4,
+                "executions": 2,
+                "order_feed_source_windows": 4,
+                "trade_decisions": 2,
+            },
+        )
         self.assertEqual(_runtime_ledger_bucket_profit_proof_blockers(bucket), [])
 
     def test_runtime_ledger_source_context_merges_gap_metadata(self) -> None:
@@ -3740,6 +3819,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "event_type": "filled",
                     "symbol": "AAPL",
                     "alpaca_order_id": "order-missing-event-ref",
+                    "event_fingerprint": "fingerprint-is-not-row-id",
                     "source_topic": "alpaca.trade_updates",
                     "source_partition": 0,
                     "source_offset": 111,
@@ -3797,6 +3877,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 {
                     "event_type": "new",
                     "alpaca_order_id": "order-missing-event-ref",
+                    "event_fingerprint": "fingerprint-is-not-row-id",
                     "source_topic": "alpaca.trade_updates",
                     "source_partition": 0,
                     "source_offset": 122,

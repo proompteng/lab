@@ -438,6 +438,86 @@ class TestRuntimeWindowImport(TestCase):
             "2",
         )
 
+    def test_build_observed_runtime_buckets_counts_only_source_backed_rows(
+        self,
+    ) -> None:
+        source_backed_bucket = _runtime_ledger_bucket(
+            filled_notional="100",
+            net_strategy_pnl_after_costs="1",
+            cost_amount="0.01",
+            post_cost_expectancy_bps="100",
+        )
+        replay_only_bucket = _runtime_ledger_bucket(
+            filled_notional="10000",
+            net_strategy_pnl_after_costs="1000",
+            cost_amount="0.01",
+            post_cost_expectancy_bps="1000",
+            source_window_ids=[],
+            trade_decision_ids=[],
+            execution_ids=[],
+            execution_order_event_ids=[],
+            source_offsets=[],
+            source_materialization=None,
+            authority_class="exact_replay_artifact_only_not_live",
+            authority_reason="exact_replay_artifact_not_runtime_proof",
+            pnl_derivation="exact_replay_artifact_only_not_live",
+            blockers=["exact_replay_artifact_not_runtime_proof"],
+        )
+
+        buckets = build_observed_runtime_buckets(
+            bucket_ranges=[
+                (
+                    datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                    6,
+                )
+            ],
+            decision_times=[
+                datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
+            ],
+            execution_times=[
+                datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                datetime(2026, 3, 6, 14, 41, tzinfo=timezone.utc),
+            ],
+            tca_rows=[
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "abs_slippage_bps": Decimal("1"),
+                    "post_cost_expectancy_bps": Decimal("100"),
+                    "runtime_ledger_bucket": source_backed_bucket,
+                    **_runtime_pnl_basis(),
+                },
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 41, tzinfo=timezone.utc),
+                    "abs_slippage_bps": Decimal("1"),
+                    "post_cost_expectancy_bps": Decimal("1000"),
+                    "runtime_ledger_bucket": replay_only_bucket,
+                    **_runtime_pnl_basis(),
+                },
+            ],
+            continuity_ok=True,
+            drift_ok=True,
+            dependency_quorum_decision="allow",
+        )
+
+        self.assertEqual(buckets[0].post_cost_promotion_sample_count, 1)
+        self.assertEqual(buckets[0].post_cost_expectancy_bps, Decimal("100"))
+        self.assertEqual(
+            buckets[0].payload_json["runtime_ledger_notional_weighted_sample_count"],
+            1,
+        )
+        self.assertEqual(
+            buckets[0].payload_json["runtime_ledger_filled_notional"], "100"
+        )
+        self.assertEqual(
+            buckets[0].payload_json["runtime_ledger_net_strategy_pnl_after_costs"],
+            "1",
+        )
+        runtime_ledger_buckets = buckets[0].payload_json["runtime_ledger_buckets"]
+        self.assertIsInstance(runtime_ledger_buckets, list)
+        self.assertEqual(len(runtime_ledger_buckets), 2)
+
     def test_runtime_ledger_bucket_blockers_require_complete_lifecycle_proof(
         self,
     ) -> None:
