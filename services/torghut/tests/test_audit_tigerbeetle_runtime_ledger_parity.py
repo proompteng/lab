@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import argparse
 import io
+import os
 import sys
 from contextlib import redirect_stdout
 from datetime import datetime, timezone
 from decimal import Decimal
+from types import TracebackType
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -35,11 +38,16 @@ from app.trading.tigerbeetle_runtime_ledger_parity import (
     BLOCKER_AMOUNT_MISMATCH,
     BLOCKER_CANDIDATE_MISMATCH,
     BLOCKER_ENTRY_MISSING,
+    BLOCKER_TRANSFER_MISSING,
+    BLOCKER_TRANSFER_SHAPE_MISMATCH,
     PARITY_STATUS_BLOCKED,
+    PARITY_STATUS_NO_SOURCE_DATA,
     PARITY_STATUS_OPTIONAL_DEGRADED,
     PARITY_STATUS_PASS,
     audit_tigerbeetle_runtime_ledger_parity,
+    tigerbeetle_runtime_ledger_parity_blockers,
 )
+from scripts import audit_tigerbeetle_runtime_ledger_parity as audit_script
 from scripts.audit_tigerbeetle_runtime_ledger_parity import main as audit_main
 
 
@@ -147,6 +155,57 @@ def _journal_all(
     journal.journal_execution_tca_metric(session, metric)
     journal.journal_runtime_ledger_bucket(session, bucket)
     session.flush()
+
+
+class _MappingTransferClient:
+    def __init__(self, transfers: list[dict[str, object]]) -> None:
+        self.transfers = transfers
+
+    def nop(self) -> None:
+        return None
+
+    def create_accounts(self, accounts: object) -> list[object]:
+        return []
+
+    def lookup_accounts(self, ids: object) -> list[object]:
+        return []
+
+    def create_transfers(self, transfers: object) -> list[object]:
+        return []
+
+    def lookup_transfers(self, ids: object) -> list[object]:
+        return list(self.transfers)
+
+
+class _FailingLookupClient(_MappingTransferClient):
+    def __init__(self) -> None:
+        super().__init__([])
+
+    def lookup_transfers(self, ids: object) -> list[object]:
+        raise RuntimeError("lookup unavailable")
+
+
+class _SessionContext:
+    session = object()
+
+    def __enter__(self) -> object:
+        return self.session
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> bool:
+        return False
+
+
+class _ClosingClient:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class TestAuditTigerBeetleRuntimeLedgerParity(TestCase):
@@ -283,6 +342,217 @@ class TestAuditTigerBeetleRuntimeLedgerParity(TestCase):
         self.assertEqual(totals["account_mismatch_count"], 1)
         self.assertEqual(totals["candidate_mismatch_count"], 1)
 
+    def test_no_source_data_is_explicit_and_requirement_can_be_overridden(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            payload = audit_tigerbeetle_runtime_ledger_parity(
+                session,
+                settings_obj=_settings(required=False),
+                limit=-10,
+                require_tigerbeetle=True,
+            )
+
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["required"])
+        self.assertEqual(payload["limit"], 1)
+        self.assertEqual(payload["parity_status"], PARITY_STATUS_NO_SOURCE_DATA)
+        self.assertEqual(payload["blockers"], [])
+
+    def test_account_label_filter_limits_source_selection(self) -> None:
+        with Session(self.engine) as session:
+            _seed_sources(session)
+
+            payload = audit_tigerbeetle_runtime_ledger_parity(
+                session,
+                settings_obj=_settings(required=False),
+                account_label="live",
+            )
+
+        totals = payload["totals"]
+        assert isinstance(totals, dict)
+        self.assertEqual(payload["account_label"], "live")
+        self.assertEqual(totals["checked_source_count"], 0)
+        self.assertEqual(payload["parity_status"], PARITY_STATUS_NO_SOURCE_DATA)
+
+    def test_actual_transfer_missing_is_reported_from_live_lookup(self) -> None:
+        with Session(self.engine) as session:
+            _seed_sources(session)
+            fake = FakeTigerBeetleClient()
+            _journal_all(session, fake)
+
+            payload = audit_tigerbeetle_runtime_ledger_parity(
+                session,
+                settings_obj=_settings(required=True),
+                client=_MappingTransferClient([]),
+            )
+
+        self.assertFalse(payload["ok"])
+        self.assertIn(BLOCKER_TRANSFER_MISSING, payload["blockers"])
+        totals = payload["totals"]
+        assert isinstance(totals, dict)
+        self.assertEqual(totals["actual_missing_count"], 3)
+        samples = payload["samples"]
+        assert isinstance(samples, list)
+        self.assertTrue(
+            any(sample.get("status") == "missing_actual_transfer" for sample in samples)
+        )
+
+    def test_actual_mapping_lookup_mismatches_are_reported(self) -> None:
+        with Session(self.engine) as session:
+            _seed_sources(session)
+            fake = FakeTigerBeetleClient()
+            _journal_all(session, fake)
+            ref = session.execute(select(TigerBeetleTransferRef)).scalars().first()
+            assert ref is not None
+
+            payload = audit_tigerbeetle_runtime_ledger_parity(
+                session,
+                settings_obj=_settings(required=True),
+                client=_MappingTransferClient(
+                    [
+                        {
+                            "transfer_id": int(ref.transfer_id),
+                            "amount": "1",
+                            "debit_account_id": "999",
+                            "credit_account_id": "888",
+                            "ledger": ref.ledger + 1,
+                            "code": ref.code + 1,
+                        }
+                    ]
+                ),
+            )
+
+        self.assertFalse(payload["ok"])
+        self.assertIn(BLOCKER_AMOUNT_MISMATCH, payload["blockers"])
+        self.assertIn(BLOCKER_ACCOUNT_MISMATCH, payload["blockers"])
+        self.assertIn(BLOCKER_TRANSFER_SHAPE_MISMATCH, payload["blockers"])
+        self.assertIn(BLOCKER_TRANSFER_MISSING, payload["blockers"])
+        totals = payload["totals"]
+        assert isinstance(totals, dict)
+        self.assertGreaterEqual(totals["amount_mismatch_count"], 1)
+        self.assertGreaterEqual(totals["account_mismatch_count"], 1)
+        self.assertGreaterEqual(totals["transfer_shape_mismatch_count"], 1)
+        self.assertGreaterEqual(totals["actual_missing_count"], 1)
+
+    def test_lookup_client_error_is_optional_degraded_until_required(self) -> None:
+        with Session(self.engine) as session:
+            _seed_sources(session)
+            fake = FakeTigerBeetleClient()
+            _journal_all(session, fake)
+
+            payload = audit_tigerbeetle_runtime_ledger_parity(
+                session,
+                settings_obj=_settings(required=False),
+                client=_FailingLookupClient(),
+            )
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["parity_status"], PARITY_STATUS_OPTIONAL_DEGRADED)
+        self.assertIn("RuntimeError: lookup unavailable", str(payload["client_error"]))
+
+    def test_required_parity_blocker_extractor_fails_closed_only_when_required(
+        self,
+    ) -> None:
+        self.assertEqual(
+            tigerbeetle_runtime_ledger_parity_blockers(
+                {"required": False, "blockers": [BLOCKER_ENTRY_MISSING]}
+            ),
+            [],
+        )
+        self.assertEqual(
+            tigerbeetle_runtime_ledger_parity_blockers(
+                {"required": True, "blockers": [BLOCKER_ENTRY_MISSING]}
+            ),
+            [BLOCKER_ENTRY_MISSING],
+        )
+        self.assertEqual(
+            tigerbeetle_runtime_ledger_parity_blockers(
+                {"required": True, "blockers": "not-a-list"}
+            ),
+            [],
+        )
+
+    def test_script_parsers_normalize_dsn_and_requirement_values(self) -> None:
+        self.assertEqual(
+            audit_script._sqlalchemy_dsn("postgres://user:pass@host/db"),
+            "postgresql+psycopg://user:pass@host/db",
+        )
+        self.assertEqual(
+            audit_script._sqlalchemy_dsn("postgresql://user:pass@host/db"),
+            "postgresql+psycopg://user:pass@host/db",
+        )
+        self.assertEqual(
+            audit_script._sqlalchemy_dsn("postgresql+psycopg://user:pass@host/db"),
+            "postgresql+psycopg://user:pass@host/db",
+        )
+        self.assertEqual(audit_script._parse_require("auto"), None)
+        self.assertTrue(audit_script._parse_require("required"))
+        self.assertFalse(audit_script._parse_require("optional"))
+        with self.assertRaises(argparse.ArgumentTypeError):
+            audit_script._parse_require("sometimes")
+
+    def test_run_audit_uses_configured_dsn_and_closes_owned_client(self) -> None:
+        args = argparse.Namespace(
+            dsn_env="TEST_TORGHUT_DSN",
+            lookup_tigerbeetle=True,
+            account_label="paper",
+            limit=7,
+            require_tigerbeetle=True,
+        )
+        payload = {"ok": True, "required": True, "blockers": []}
+        closing_client = _ClosingClient()
+
+        with patch.dict(
+            os.environ,
+            {"TEST_TORGHUT_DSN": "postgres://user:pass@host/db"},
+        ):
+            with patch.object(audit_script, "create_engine") as create_engine:
+                with patch.object(audit_script, "sessionmaker") as sessionmaker:
+                    with patch.object(
+                        audit_script,
+                        "create_tigerbeetle_client",
+                        return_value=closing_client,
+                    ) as create_client:
+                        with patch.object(
+                            audit_script,
+                            "audit_tigerbeetle_runtime_ledger_parity",
+                            return_value=payload,
+                        ) as audit:
+                            sessionmaker.return_value = _SessionContext
+
+                            result = audit_script.run_audit(args)
+
+        self.assertEqual(result, payload)
+        create_engine.assert_called_once_with(
+            "postgresql+psycopg://user:pass@host/db",
+            pool_pre_ping=True,
+            future=True,
+        )
+        create_client.assert_called_once()
+        audit.assert_called_once_with(
+            _SessionContext.session,
+            settings_obj=create_client.call_args.args[0],
+            client=closing_client,
+            account_label="paper",
+            limit=7,
+            require_tigerbeetle=True,
+        )
+        self.assertTrue(closing_client.closed)
+
+    def test_run_audit_requires_dsn_env_var(self) -> None:
+        args = argparse.Namespace(
+            dsn_env="MISSING_TORGHUT_DSN",
+            lookup_tigerbeetle=False,
+            account_label=None,
+            limit=1,
+            require_tigerbeetle=None,
+        )
+
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(SystemExit, "missing DSN env var"):
+                audit_script.run_audit(args)
+
     def test_script_main_emits_stable_json_and_does_not_fail_optional_blockers(
         self,
     ) -> None:
@@ -312,3 +582,33 @@ class TestAuditTigerBeetleRuntimeLedgerParity(TestCase):
             '"schema_version":"torghut.tigerbeetle-runtime-ledger-parity.v1"',
             out.getvalue(),
         )
+
+    def test_script_main_fails_only_for_required_blockers_when_requested(
+        self,
+    ) -> None:
+        out = io.StringIO()
+        payload = {
+            "schema_version": "torghut.tigerbeetle-runtime-ledger-parity.v1",
+            "required": True,
+            "ok": False,
+            "parity_status": PARITY_STATUS_BLOCKED,
+            "blockers": [BLOCKER_ENTRY_MISSING],
+        }
+
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "audit_tigerbeetle_runtime_ledger_parity.py",
+                "--fail-on-required-blockers",
+            ],
+        ):
+            with patch(
+                "scripts.audit_tigerbeetle_runtime_ledger_parity.run_audit",
+                return_value=payload,
+            ):
+                with redirect_stdout(out):
+                    result = audit_main()
+
+        self.assertEqual(result, 1)
+        self.assertIn('"required":true', out.getvalue())
