@@ -4636,7 +4636,17 @@ def trading_paper_route_target_plan(
         scheduler = TradingScheduler()
         app.state.trading_scheduler = scheduler
 
-    live_submission_gate = _paper_route_cached_live_submission_gate(scheduler)
+    empirical_jobs: dict[str, object] | None = None
+    quant_evidence: Mapping[str, Any] | None = None
+    tca_summary: Mapping[str, Any] | None = None
+    market_context_status: Mapping[str, Any] | None = None
+    hypothesis_payload: Mapping[str, Any] | None = None
+
+    live_submission_gate = (
+        None
+        if settings.trading_mode == "live"
+        else _paper_route_cached_live_submission_gate(scheduler)
+    )
     if live_submission_gate is None:
         empirical_jobs = _empirical_jobs_status()
         quant_evidence = load_quant_evidence_status(
@@ -4672,6 +4682,29 @@ def trading_paper_route_target_plan(
         state=scheduler.state,
         session=session,
     )
+    if settings.trading_mode == "live":
+        assert empirical_jobs is not None
+        assert quant_evidence is not None
+        assert tca_summary is not None
+        assert market_context_status is not None
+        assert hypothesis_payload is not None
+        proof_floor = _build_profitability_proof_floor_payload(
+            state=scheduler.state,
+            torghut_revision=BUILD_VERSION,
+            live_submission_gate=live_submission_gate,
+            hypothesis_payload=hypothesis_payload,
+            empirical_jobs_status=empirical_jobs,
+            quant_evidence=quant_evidence,
+            market_context_status=market_context_status,
+            tca_summary=tca_summary,
+            simple_lane_status=simple_lane_status,
+        )
+        proof_floor_route_book = cast(
+            Mapping[str, Any],
+            proof_floor.get("route_reacquisition_book") or {},
+        )
+        if proof_floor_route_book:
+            route_reacquisition_book = proof_floor_route_book
     if route_reacquisition_book is None:
         route_reacquisition_book = cast(Mapping[str, Any], {})
     payload = build_paper_route_target_plan_payload(
