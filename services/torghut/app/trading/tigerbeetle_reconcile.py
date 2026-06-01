@@ -32,6 +32,7 @@ from app.trading.tigerbeetle_journal import (
     SOURCE_TYPE_EXECUTION_ORDER_EVENT,
     SOURCE_TYPE_EXECUTION_TCA_METRIC,
     SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+    execution_tca_metric_source_id,
     build_order_event_transfer_plan,
     build_runtime_ledger_bucket_transfer_plan,
     runtime_ledger_amount_source,
@@ -293,8 +294,9 @@ def _payload_string_list(payload: Mapping[str, object], key: str) -> list[str]:
 def _uuid_or_none(value: str | None) -> UUID | None:
     if not value:
         return None
+    uuid_text = value.split(":", 1)[0]
     try:
-        return UUID(value)
+        return UUID(uuid_text)
     except ValueError:
         return None
 
@@ -350,10 +352,30 @@ def _archived_runtime_ledger_amount_micros(
         return None
 
 
+def _archived_source_amount_micros(ref: TigerBeetleTransferRef) -> Decimal | None:
+    if ref.source_type not in {SOURCE_TYPE_EXECUTION, SOURCE_TYPE_EXECUTION_TCA_METRIC}:
+        return None
+    payload = _payload_mapping(ref)
+    if ":" not in str(ref.source_id or "") and not payload.get(
+        "source_economic_fingerprint"
+    ):
+        return None
+    raw_amount = payload.get("amount_source")
+    if raw_amount is None:
+        return None
+    try:
+        return _usd_to_micros(Decimal(str(raw_amount)))
+    except (InvalidOperation, ValueError):
+        return None
+
+
 def _expected_source_amount_micros(
     session: Session,
     ref: TigerBeetleTransferRef,
 ) -> Decimal | None:
+    archived_amount = _archived_source_amount_micros(ref)
+    if archived_amount is not None:
+        return archived_amount
     source_uuid = _uuid_or_none(ref.source_id)
     if source_uuid is None:
         return None
@@ -1055,7 +1077,7 @@ def reconcile_tigerbeetle_transfers(
             session,
             settings_obj=settings_obj,
             source_type=SOURCE_TYPE_EXECUTION_TCA_METRIC,
-            source_id=str(metric.id),
+            source_id=execution_tca_metric_source_id(metric),
             transfer_kind=TRANSFER_KIND_EXECUTION_COST,
         ):
             continue
@@ -1065,7 +1087,7 @@ def reconcile_tigerbeetle_transfers(
             {
                 "blocker": BLOCKER_UNLINKED_COST,
                 "source_type": SOURCE_TYPE_EXECUTION_TCA_METRIC,
-                "source_id": str(metric.id),
+                "source_id": execution_tca_metric_source_id(metric),
                 "execution_id": str(metric.execution_id),
             },
         )

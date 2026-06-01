@@ -1238,6 +1238,14 @@ class TestTigerBeetleReconcile(TestCase):
         self.assertEqual(_payload_int({}, "value"), 0)
         self.assertIsNone(_uuid_or_none(None))
         self.assertIsNone(_uuid_or_none("not-a-uuid"))
+        self.assertEqual(
+            str(
+                _uuid_or_none(
+                    "6f767a53-6b44-428a-bd85-2f662642f637:revision"
+                )
+            ),
+            "6f767a53-6b44-428a-bd85-2f662642f637",
+        )
         self.assertIsNone(_usd_to_micros(None))
         self.assertIsNone(_usd_to_micros(Decimal("0")))
         self.assertIsNone(_usd_to_micros(Decimal("0.0000001")))
@@ -1334,8 +1342,21 @@ class TestTigerBeetleReconcile(TestCase):
                 amount=Decimal("250000"),
                 status="created",
                 source_type="execution_tca_metric",
-                source_id=str(metric.id),
+                source_id=f"{metric.id}:revision",
             )
+            archived_cost_ref = TigerBeetleTransferRef(
+                cluster_id=2001,
+                transfer_id="2005",
+                transfer_kind="execution_cost",
+                ledger=LEDGER_USD_MICRO,
+                code=TRANSFER_CODE_EXECUTION_FILL,
+                amount=Decimal("250000"),
+                status="created",
+                source_type="execution_tca_metric",
+                source_id=f"{metric.id}:archived",
+                payload_json={"amount_source": "0.25"},
+            )
+            metric.shortfall_notional = Decimal("0.75")
             runtime_ref = TigerBeetleTransferRef(
                 cluster_id=2001,
                 transfer_id="2002",
@@ -1371,7 +1392,11 @@ class TestTigerBeetleReconcile(TestCase):
             )
 
             self.assertEqual(
-                _expected_source_amount_micros(session, cost_ref), Decimal("250000")
+                _expected_source_amount_micros(session, cost_ref), Decimal("750000")
+            )
+            self.assertEqual(
+                _expected_source_amount_micros(session, archived_cost_ref),
+                Decimal("250000"),
             )
             self.assertEqual(
                 _expected_source_amount_micros(session, runtime_ref), Decimal("500000")

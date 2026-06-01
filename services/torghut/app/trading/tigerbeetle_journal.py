@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
+import hashlib
 from types import TracebackType
 from typing import Any, Self, cast
 
@@ -469,6 +470,86 @@ def _submitted_pending_key(event: ExecutionOrderEvent) -> str:
     return f"{event.alpaca_account_label}:{source_id}"
 
 
+def _economic_decimal_text(value: object) -> str:
+    if value is None:
+        return "null"
+    return format(Decimal(str(value)).normalize(), "f")
+
+
+def _economic_text(value: object) -> str:
+    if isinstance(value, Decimal):
+        return _economic_decimal_text(value)
+    if value is None:
+        return "null"
+    return str(value).strip()
+
+
+def _source_revision_id(source_id: object, economic_event_key: str) -> str:
+    normalized_source_id = str(source_id).strip()
+    digest = hashlib.sha256(economic_event_key.encode("utf-8")).hexdigest()[:32]
+    return f"{normalized_source_id}:{digest}"
+
+
+def execution_economic_event_key(execution: Execution) -> str:
+    """Return the immutable economics key represented by an execution ref."""
+
+    return "|".join(
+        (
+            "execution_fill",
+            str(execution.id),
+            _economic_text(execution.alpaca_account_label),
+            _economic_text(execution.symbol),
+            _economic_text(execution.side),
+            _economic_text(execution.trade_decision_id),
+            _economic_text(execution.alpaca_order_id),
+            _economic_text(execution.client_order_id),
+            _economic_decimal_text(execution.filled_qty),
+            _economic_decimal_text(execution.avg_fill_price),
+        )
+    )
+
+
+def execution_source_id(execution: Execution) -> str:
+    return _source_revision_id(execution.id, execution_economic_event_key(execution))
+
+
+def execution_tca_metric_economic_event_key(metric: ExecutionTCAMetric) -> str:
+    """Return the immutable economics key represented by an execution TCA ref."""
+
+    return "|".join(
+        (
+            "execution_tca_metric",
+            str(metric.id),
+            _economic_text(metric.execution_id),
+            _economic_text(metric.trade_decision_id),
+            _economic_text(metric.strategy_id),
+            _economic_text(metric.alpaca_account_label),
+            _economic_text(metric.symbol),
+            _economic_text(metric.side),
+            _economic_decimal_text(metric.arrival_price),
+            _economic_decimal_text(metric.avg_fill_price),
+            _economic_decimal_text(metric.filled_qty),
+            _economic_decimal_text(metric.signed_qty),
+            _economic_decimal_text(metric.shortfall_notional),
+            _economic_decimal_text(metric.slippage_bps),
+            _economic_decimal_text(metric.realized_shortfall_bps),
+            _economic_decimal_text(metric.expected_shortfall_bps_p50),
+            _economic_decimal_text(metric.expected_shortfall_bps_p95),
+            _economic_decimal_text(metric.divergence_bps),
+            _economic_decimal_text(metric.churn_qty),
+            _economic_decimal_text(metric.churn_ratio),
+            _economic_text(metric.simulator_version),
+        )
+    )
+
+
+def execution_tca_metric_source_id(metric: ExecutionTCAMetric) -> str:
+    return _source_revision_id(
+        metric.id,
+        execution_tca_metric_economic_event_key(metric),
+    )
+
+
 def submitted_pending_transfer_id(event: ExecutionOrderEvent) -> int:
     return stable_u128(
         "torghut.tigerbeetle.submitted_pending",
@@ -486,11 +567,17 @@ def event_transfer_id(event: ExecutionOrderEvent, transfer_kind: str) -> int:
 
 
 def execution_transfer_id(execution: Execution) -> int:
-    return stable_u128("torghut.tigerbeetle.execution_fill", str(execution.id))
+    return stable_u128(
+        "torghut.tigerbeetle.execution_fill",
+        execution_economic_event_key(execution),
+    )
 
 
 def execution_cost_transfer_id(metric: ExecutionTCAMetric) -> int:
-    return stable_u128("torghut.tigerbeetle.execution_cost", str(metric.id))
+    return stable_u128(
+        "torghut.tigerbeetle.execution_cost",
+        execution_tca_metric_economic_event_key(metric),
+    )
 
 
 def runtime_ledger_transfer_id(bucket: StrategyRuntimeLedgerBucket) -> int:
@@ -1294,7 +1381,11 @@ class TigerBeetleLedgerJournal:
                 "source_refs": [
                     f"postgres:executions:{execution.id}",
                 ],
-                "economic_event_key": f"execution:{execution.id}:fill_notional",
+                "source_row_id": str(execution.id),
+                "source_economic_fingerprint": execution_source_id(execution).split(
+                    ":", 1
+                )[1],
+                "economic_event_key": execution_economic_event_key(execution),
                 "alpaca_order_id": execution.alpaca_order_id,
                 "client_order_id": execution.client_order_id,
                 "filled_qty": str(execution.filled_qty),
@@ -1329,17 +1420,18 @@ class TigerBeetleLedgerJournal:
             execution_id=metric.execution_id,
             execution_tca_metric_id=metric.id,
             source_type=SOURCE_TYPE_EXECUTION_TCA_METRIC,
-            source_id=str(metric.id),
+            source_id=execution_tca_metric_source_id(metric),
             payload_json={
                 "source": SOURCE_TYPE_EXECUTION_TCA_METRIC,
                 "source_refs": [
                     f"postgres:execution_tca_metrics:{metric.id}",
                     f"postgres:executions:{metric.execution_id}",
                 ],
-                "economic_event_key": (
-                    f"execution:{metric.execution_id}:tca_metric:{metric.id}:"
-                    "execution_cost"
-                ),
+                "source_row_id": str(metric.id),
+                "source_economic_fingerprint": execution_tca_metric_source_id(
+                    metric
+                ).split(":", 1)[1],
+                "economic_event_key": execution_tca_metric_economic_event_key(metric),
                 "shortfall_notional": str(metric.shortfall_notional),
                 "realized_shortfall_bps": str(metric.realized_shortfall_bps),
                 "simulator_version": metric.simulator_version,
