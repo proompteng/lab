@@ -12,7 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping, Sequence, Set
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
@@ -31,6 +31,8 @@ from app.models import (
     TradeDecision,
 )
 from app.trading.runtime_authority_verifier import (
+    AUTHORITY_BEST_DAY_CONCENTRATION_BLOCKER,
+    AUTHORITY_BUCKET_BLOCKERS_PRESENT,
     AUTHORITY_CLOSED_ROUND_TRIP_MISSING_BLOCKER,
     AUTHORITY_CLOSED_ROUND_TRIPS_BLOCKER,
     AUTHORITY_EVIDENCE_MISSING_BLOCKER,
@@ -41,6 +43,7 @@ from app.trading.runtime_authority_verifier import (
     AUTHORITY_MEDIAN_PNL_BLOCKER,
     AUTHORITY_OPEN_POSITIONS_BLOCKER,
     AUTHORITY_P10_PNL_BLOCKER,
+    AUTHORITY_READ_ERROR_BLOCKER,
     AUTHORITY_RUNTIME_DECISIONS_MISSING_BLOCKER,
     AUTHORITY_RUNTIME_FILLS_MISSING_BLOCKER,
     AUTHORITY_TRADING_DAYS_BLOCKER,
@@ -75,6 +78,9 @@ ECONOMICS_MISSING = 'economics_missing'
 SOURCE_REFS_MISSING = 'source_refs_missing'
 OPEN_POSITIONS = 'open_positions'
 AUTHORITY_DISTRIBUTION_MISSING = 'authority_distribution_missing'
+LADDER_PASS = 'pass'
+LADDER_MISSING = 'missing'
+LADDER_BLOCKED = 'blocked'
 
 _SOURCE_REF_BLOCKERS = frozenset(
     {
@@ -98,6 +104,7 @@ _DISTRIBUTION_BLOCKERS = frozenset(
         AUTHORITY_MEDIAN_PNL_BLOCKER,
         AUTHORITY_P10_PNL_BLOCKER,
         AUTHORITY_WORST_DAY_BLOCKER,
+        AUTHORITY_BEST_DAY_CONCENTRATION_BLOCKER,
         AUTHORITY_FILLED_NOTIONAL_BLOCKER,
         AUTHORITY_CLOSED_ROUND_TRIPS_BLOCKER,
     }
@@ -185,6 +192,14 @@ def build_source_proof_census(
     blockers = _census_blockers(rows, totals, ledger_report, read_error=read_error)
     missing_source_ref_categories = _missing_source_ref_categories(blockers)
     missing_requirement_categories = _missing_requirement_categories(blockers)
+    blocker_ladder = _blocker_ladder(
+        totals,
+        daily,
+        ledger_report,
+        blockers,
+        observed_stage=identity.observed_stage,
+        source_kind=source_kind,
+    )
     classification = _classify_verdict(totals, blockers)
     return {
         'schema_version': SCHEMA_VERSION,
@@ -204,6 +219,9 @@ def build_source_proof_census(
             'read_only': True,
             'writes_proof': False,
             'modifies_rows': False,
+            'runtime_stage': identity.observed_stage,
+            'replay_outputs_count_as_runtime_proof': False,
+            'synthetic_proof_created': False,
         },
         'totals': totals,
         'daily': daily,
@@ -214,10 +232,12 @@ def build_source_proof_census(
         },
         'missing_source_ref_categories': missing_source_ref_categories,
         'missing_requirement_categories': missing_requirement_categories,
+        'blocker_ladder': blocker_ladder,
         'blockers': blockers,
         'verdict': {
             'classification': classification,
             'authority_candidate_ready': classification == AUTHORITY_CANDIDATE_READY,
+            'next_blocker': _next_ladder_blocker(blocker_ladder),
             'next_action': _next_action(classification),
         },
     }
@@ -618,6 +638,223 @@ def _missing_requirement_categories(blockers: Sequence[str]) -> dict[str, bool]:
         'source_offsets': RUNTIME_LEDGER_SOURCE_OFFSETS_MISSING_BLOCKER in blocker_set,
         'tca_cost_rows': AUTHORITY_EXPLICIT_COSTS_BLOCKER in blocker_set,
     }
+
+
+def _blocker_ladder(
+    totals: Mapping[str, object],
+    daily: Sequence[Mapping[str, object]],
+    ledger_report: Mapping[str, object],
+    blockers: Sequence[str],
+    *,
+    observed_stage: str | None,
+    source_kind: str,
+) -> list[dict[str, object]]:
+    """Return a compact, ordered read-only ladder that points at the next missing proof input."""
+
+    aggregate = _mapping(ledger_report.get('aggregate'))
+    daily_ledger = [_mapping(item) for item in _sequence(ledger_report.get('trading_days'))]
+    daily_pnl_blockers = {
+        AUTHORITY_TRADING_DAYS_BLOCKER,
+        AUTHORITY_MEAN_PNL_BLOCKER,
+        AUTHORITY_MEDIAN_PNL_BLOCKER,
+        AUTHORITY_P10_PNL_BLOCKER,
+        AUTHORITY_WORST_DAY_BLOCKER,
+        AUTHORITY_BEST_DAY_CONCENTRATION_BLOCKER,
+    }
+    return [
+        _ladder_step(
+            'decisions',
+            blockers=blockers,
+            step_blockers={
+                AUTHORITY_RUNTIME_DECISIONS_MISSING_BLOCKER,
+                RUNTIME_LEDGER_TRADE_DECISION_REFS_MISSING_BLOCKER,
+            },
+            present=_int(totals.get('trade_decision_count')) > 0,
+            observed={
+                'source_trade_decision_count': _int(totals.get('trade_decision_count')),
+                'runtime_ledger_decision_count': _sum_daily_int(daily_ledger, 'decision_count'),
+                'observed_stage': observed_stage,
+            },
+            next_action='run the strategy through paper/live routing until durable TradeDecision rows exist',
+        ),
+        _ladder_step(
+            'executions',
+            blockers=blockers,
+            step_blockers={AUTHORITY_RUNTIME_FILLS_MISSING_BLOCKER, RUNTIME_LEDGER_EXECUTION_REFS_MISSING_BLOCKER},
+            present=_int(totals.get('filled_execution_count')) > 0,
+            observed={
+                'source_execution_count': _int(totals.get('execution_count')),
+                'source_filled_execution_count': _int(totals.get('filled_execution_count')),
+                'runtime_ledger_fill_count': _sum_daily_int(daily_ledger, 'fill_count'),
+            },
+            next_action='connect decisions to broker fills before relying on any replay-only result',
+        ),
+        _ladder_step(
+            'order_feed_lifecycle',
+            blockers=blockers,
+            step_blockers={
+                ORDER_FEED_LIFECYCLE_MISSING_BLOCKER,
+                RUNTIME_LEDGER_EXECUTION_ORDER_EVENT_REFS_MISSING_BLOCKER,
+            },
+            present=_int(totals.get('linked_order_event_fill_count')) > 0,
+            observed={
+                'execution_order_event_count': _int(totals.get('execution_order_event_count')),
+                'fill_lifecycle_event_count': _int(totals.get('fill_lifecycle_event_count')),
+                'linked_order_event_fill_count': _int(totals.get('linked_order_event_fill_count')),
+                'runtime_submitted_order_count': _sum_daily_int(daily_ledger, 'submitted_order_count'),
+            },
+            next_action='materialize order-feed fill lifecycle events linked to executions and decisions',
+        ),
+        _ladder_step(
+            'source_windows_and_refs',
+            blockers=blockers,
+            step_blockers=_SOURCE_REF_BLOCKERS,
+            present=_int(totals.get('source_window_count')) > 0
+            and _int(totals.get('execution_order_events_with_source_window_count'))
+            >= _int(totals.get('execution_order_event_count'))
+            and _int(totals.get('execution_order_events_with_source_offset_count'))
+            >= _int(totals.get('execution_order_event_count')),
+            observed={
+                'source_window_count': _int(totals.get('source_window_count')),
+                'events_with_source_window_count': _int(
+                    totals.get('execution_order_events_with_source_window_count')
+                ),
+                'events_with_source_offset_count': _int(totals.get('execution_order_events_with_source_offset_count')),
+                'runtime_source_authority_bucket_count': _int(totals.get('blocker_free_runtime_ledger_bucket_count')),
+            },
+            next_action='backfill runtime-ledger source windows, offsets, refs, materialization, and authority class',
+        ),
+        _ladder_step(
+            'runtime_ledger_buckets',
+            blockers=blockers,
+            step_blockers={
+                AUTHORITY_EVIDENCE_MISSING_BLOCKER,
+                AUTHORITY_READ_ERROR_BLOCKER,
+                AUTHORITY_BUCKET_BLOCKERS_PRESENT,
+            },
+            present=_int(totals.get('runtime_ledger_bucket_count')) > 0,
+            observed={
+                'runtime_ledger_bucket_count': _int(totals.get('runtime_ledger_bucket_count')),
+                'blocker_free_runtime_ledger_bucket_count': _int(
+                    totals.get('blocker_free_runtime_ledger_bucket_count')
+                ),
+                'source_kind': source_kind,
+                'read_only': True,
+                'writes_proof': False,
+            },
+            next_action='emit durable runtime-ledger buckets from paper/live runtime rows without synthetic proof',
+        ),
+        _ladder_step(
+            'closed_round_trips',
+            blockers=blockers,
+            step_blockers={AUTHORITY_CLOSED_ROUND_TRIP_MISSING_BLOCKER, AUTHORITY_CLOSED_ROUND_TRIPS_BLOCKER},
+            present=_int(totals.get('closed_trade_count')) > 0,
+            observed={
+                'closed_round_trip_count': _int(totals.get('closed_trade_count')),
+                'authority_min_closed_round_trips': _int(aggregate.get('authority_min_closed_round_trips')),
+            },
+            next_action='wait for source-backed entry and exit fills that close round trips',
+        ),
+        _ladder_step(
+            'open_positions',
+            blockers=blockers,
+            step_blockers={AUTHORITY_OPEN_POSITIONS_BLOCKER},
+            present=_int(totals.get('open_position_count')) == 0,
+            observed={'open_position_count': _int(totals.get('open_position_count'))},
+            next_action='flatten or let paper/live positions close before promotion',
+        ),
+        _ladder_step(
+            'explicit_costs',
+            blockers=blockers,
+            step_blockers={AUTHORITY_EXPLICIT_COSTS_BLOCKER, EXECUTION_ECONOMICS_MISSING_BLOCKER},
+            present=_int(totals.get('tca_cost_row_count')) > 0
+            and _int(totals.get('explicit_cost_runtime_ledger_bucket_count')) > 0,
+            observed={
+                'tca_cost_row_count': _int(totals.get('tca_cost_row_count')),
+                'explicit_cost_runtime_ledger_bucket_count': _int(
+                    totals.get('explicit_cost_runtime_ledger_bucket_count')
+                ),
+                'total_explicit_costs': _text(aggregate.get('total_explicit_costs'), default='0'),
+            },
+            next_action='record broker/TCA costs and promotion-grade runtime cost bases for every bucket',
+        ),
+        _ladder_step(
+            'filled_notional',
+            blockers=blockers,
+            step_blockers={AUTHORITY_FILLED_NOTIONAL_MISSING_BLOCKER, AUTHORITY_FILLED_NOTIONAL_BLOCKER},
+            present=_decimal(totals.get('filled_notional')) > 0,
+            observed={
+                'filled_notional': _text(totals.get('filled_notional'), default='0'),
+                'buckets_with_filled_notional_count': _int(
+                    totals.get('runtime_ledger_buckets_with_filled_notional_count')
+                ),
+                'authority_min_filled_notional': _text(aggregate.get('authority_min_filled_notional'), default='0'),
+            },
+            next_action='accumulate source-backed filled notional, not replay-only simulated volume',
+        ),
+        _ladder_step(
+            'daily_post_cost_pnl',
+            blockers=blockers,
+            step_blockers=daily_pnl_blockers,
+            present=len(daily) > 0,
+            observed={
+                'trading_day_count': _int(totals.get('trading_day_count')),
+                'post_cost_pnl': _text(totals.get('post_cost_pnl'), default='0'),
+                'mean_daily_net_pnl_after_costs': _text(
+                    aggregate.get('mean_daily_net_pnl_after_costs'), default='0'
+                ),
+                'median_daily_net_pnl_after_costs': _text(
+                    aggregate.get('median_daily_net_pnl_after_costs'), default='0'
+                ),
+                'p10_daily_net_pnl_after_costs': _text(aggregate.get('p10_daily_net_pnl_after_costs'), default='0'),
+                'worst_day_net_pnl_after_costs': _text(
+                    aggregate.get('worst_day_net_pnl_after_costs'), default='0'
+                ),
+            },
+            next_action='continue source-backed paper/live runtime until post-cost daily PnL clears gates',
+        ),
+    ]
+
+
+def _ladder_step(
+    step: str,
+    *,
+    blockers: Sequence[str],
+    step_blockers: Set[str],
+    present: bool,
+    observed: Mapping[str, object],
+    next_action: str,
+) -> dict[str, object]:
+    blocker_codes = sorted(code for code in blockers if code in step_blockers)
+    if blocker_codes:
+        status = LADDER_BLOCKED
+    elif present:
+        status = LADDER_PASS
+    else:
+        status = LADDER_MISSING
+    return {
+        'step': step,
+        'status': status,
+        'observed': dict(observed),
+        'blocker_codes': blocker_codes,
+        'next_action': next_action if status != LADDER_PASS else None,
+    }
+
+
+def _next_ladder_blocker(ladder: Sequence[Mapping[str, object]]) -> dict[str, object] | None:
+    for step in ladder:
+        if step.get('status') != LADDER_PASS:
+            return {
+                'step': step.get('step'),
+                'status': step.get('status'),
+                'blocker_codes': list(_sequence(step.get('blocker_codes'))),
+                'next_action': step.get('next_action'),
+            }
+    return None
+
+
+def _sum_daily_int(daily: Sequence[Mapping[str, object]], key: str) -> int:
+    return sum(_int(item.get(key)) for item in daily)
 
 
 def _classify_verdict(totals: Mapping[str, object], blockers: Sequence[str]) -> str:

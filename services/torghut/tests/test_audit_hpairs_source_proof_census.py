@@ -186,6 +186,16 @@ def _report(payload: dict[str, object]) -> dict[str, object]:
     )
 
 
+def _ladder_step(report: dict[str, object], step: str) -> dict[str, object]:
+    ladder = report['blocker_ladder']
+    assert isinstance(ladder, list)
+    for item in ladder:
+        assert isinstance(item, dict)
+        if item['step'] == step:
+            return item
+    raise AssertionError(f'missing ladder step {step}')
+
+
 def test_full_source_backed_census_is_authority_candidate_ready() -> None:
     report = _report(_fixture())
 
@@ -206,6 +216,13 @@ def test_full_source_backed_census_is_authority_candidate_ready() -> None:
     assert report['totals']['closed_trade_count'] == 400
     assert report['totals']['filled_notional'] == '12000000'
     assert report['totals']['post_cost_pnl'] == '12000'
+    assert report['source']['runtime_stage'] == 'paper'
+    assert report['source']['replay_outputs_count_as_runtime_proof'] is False
+    assert report['source']['synthetic_proof_created'] is False
+    assert report['verdict']['next_blocker'] is None
+    assert _ladder_step(report, 'source_windows_and_refs')['status'] == census.LADDER_PASS
+    assert _ladder_step(report, 'runtime_ledger_buckets')['status'] == census.LADDER_PASS
+    assert _ladder_step(report, 'daily_post_cost_pnl')['status'] == census.LADDER_PASS
 
 
 def test_missing_decisions_reports_exact_trade_decision_ref_gap() -> None:
@@ -327,6 +344,36 @@ def test_empty_fixture_has_no_source_activity_verdict() -> None:
 
     assert report['verdict']['classification'] == census.NO_SOURCE_ACTIVITY
     assert report['totals']['runtime_ledger_bucket_count'] == 0
+    assert _ladder_step(report, 'decisions')['status'] == census.LADDER_BLOCKED
+    assert report['verdict']['next_blocker'] == {
+        'step': 'decisions',
+        'status': census.LADDER_BLOCKED,
+        'blocker_codes': [
+            AUTHORITY_RUNTIME_DECISIONS_MISSING_BLOCKER,
+            RUNTIME_LEDGER_TRADE_DECISION_REFS_MISSING_BLOCKER,
+        ],
+        'next_action': 'run the strategy through paper/live routing until durable TradeDecision rows exist',
+    }
+
+
+def test_partial_evidence_ladder_points_at_order_feed_lifecycle() -> None:
+    full = _fixture()
+    payload = {
+        'trade_decisions': full['trade_decisions'],
+        'executions': full['executions'],
+        'execution_order_events': [],
+        'execution_tca_metrics': [],
+        'order_feed_source_windows': [],
+        'runtime_ledger_buckets': [],
+    }
+
+    report = _report(payload)
+
+    assert _ladder_step(report, 'decisions')['status'] == census.LADDER_PASS
+    assert _ladder_step(report, 'executions')['status'] == census.LADDER_PASS
+    assert _ladder_step(report, 'order_feed_lifecycle')['status'] == census.LADDER_BLOCKED
+    assert report['verdict']['next_blocker']['step'] == 'order_feed_lifecycle'
+    assert census.ORDER_FEED_LIFECYCLE_MISSING_BLOCKER in report['verdict']['next_blocker']['blocker_codes']
 
 
 def test_too_few_source_backed_days_are_distribution_missing() -> None:
