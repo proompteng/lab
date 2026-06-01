@@ -6408,43 +6408,84 @@ class TestPaperRouteEvidenceAudit(TestCase):
             contract["sample_order_event_refs"][0]["client_order_id"],
             "autonomous-trader-AAPL-cover-external-1",
         )
-        import_audit = payload["runtime_window_import_audit"]
+        latest_closed_selection = payload[
+            "latest_closed_runtime_window_import_selection"
+        ]
+        self.assertFalse(latest_closed_selection["selected"])
         self.assertEqual(
-            import_audit["state"], "import_due_account_contamination_detected"
+            latest_closed_selection["state"],
+            "rejected_contaminated_or_unclean",
         )
         self.assertEqual(
-            import_audit["evidence_window_state"], "contaminated_window_discarded"
+            latest_closed_selection["reason"],
+            "latest_closed_window_must_be_discarded",
+        )
+        self.assertTrue(latest_closed_selection["source_backed_evidence_present"])
+        self.assertFalse(latest_closed_selection["clean_window_importable"])
+        self.assertIn(
+            "unlinked_order_events_present",
+            latest_closed_selection["discard_blockers"],
+        )
+        self.assertEqual(
+            latest_closed_selection["sample_client_order_ids"],
+            ["autonomous-trader-AAPL-cover-external-1"],
+        )
+        followup_plan = payload[
+            "next_clean_paper_route_runtime_window_targets_after_discard"
+        ]
+        self.assertEqual(
+            followup_plan["purpose"],
+            "next_clean_session_paper_route_runtime_window_collection_after_discard",
+        )
+        self.assertEqual(
+            followup_plan["session_window"]["start"],
+            "2026-05-27T13:30:00+00:00",
+        )
+        self.assertEqual(
+            followup_plan["session_window"]["end"],
+            "2026-05-27T20:00:00+00:00",
+        )
+        import_audit = payload["runtime_window_import_audit"]
+        self.assertEqual(
+            import_audit["state"],
+            "waiting_for_session_open",
+        )
+        self.assertEqual(
+            import_audit["evidence_window_state"], "clean_window_collection_pending"
         )
         self.assertFalse(import_audit["proof_allowed"])
         self.assertEqual(
             import_audit["next_action"],
-            "isolate_paper_account_or_discard_contaminated_window",
+            "wait_for_regular_session_open",
         )
-        self.assertIn("unlinked_order_events_present", import_audit["blockers"])
+        self.assertIn("paper_route_session_window_not_open", import_audit["blockers"])
         self.assertEqual(
-            import_audit["target_blockers"][0]["account_contamination"][
-                "client_order_id_count"
-            ],
-            1,
-        )
-        self.assertEqual(
-            import_audit["target_blockers"][0]["account_contamination"][
-                "sample_order_event_refs"
-            ][0]["event_fingerprint"],
-            "external-autonomous-trader-order-event",
+            import_audit["session_window"]["start"], "2026-05-27T13:30:00+00:00"
         )
         target_plan_import_audit = target_plan_payload["runtime_window_import_audit"]
         self.assertEqual(
             target_plan_import_audit["state"],
-            "import_due_account_contamination_detected",
+            "waiting_for_session_open",
+        )
+        target_plan_selection = target_plan_payload[
+            "latest_closed_runtime_window_import_selection"
+        ]
+        self.assertFalse(target_plan_selection["selected"])
+        self.assertEqual(
+            target_plan_selection["state"],
+            "rejected_contaminated_or_unclean",
         )
         self.assertIn(
-            "unlinked_order_events_present",
+            "paper_route_session_window_not_open",
             target_plan_payload["summary"]["runtime_window_import_audit_blockers"],
         )
         self.assertEqual(
             target_plan_import_audit["evidence_window_state"],
-            "contaminated_window_discarded",
+            "clean_window_collection_pending",
+        )
+        self.assertEqual(
+            target_plan_payload["runtime_window_import_plan"]["purpose"],
+            "next_clean_session_paper_route_runtime_window_collection_after_discard",
         )
 
     def test_active_window_contamination_blocks_target_plan_collection(self) -> None:
@@ -7172,21 +7213,42 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertFalse(contract["proof_allowed"])
         self.assertFalse(contract["promotion_allowed"])
         self.assertFalse(contract["final_promotion_allowed"])
-        import_audit = payload["runtime_window_import_audit"]
-        self.assertEqual(import_audit["state"], "import_due_account_state_not_clean")
-        self.assertEqual(import_audit["evidence_window_state"], "clean_window_required")
-        self.assertFalse(import_audit["proof_allowed"])
+        latest_closed_selection = payload[
+            "latest_closed_runtime_window_import_selection"
+        ]
+        self.assertFalse(latest_closed_selection["selected"])
         self.assertEqual(
-            import_audit["next_action"],
-            "reset_paper_account_or_discard_contaminated_window",
+            latest_closed_selection["state"],
+            "rejected_contaminated_or_unclean",
         )
         self.assertIn(
             "paper_route_account_window_start_positions_present",
+            latest_closed_selection["discard_blockers"],
+        )
+        self.assertIn(
+            "paper_route_account_window_start_non_target_positions_present",
+            latest_closed_selection["discard_blockers"],
+        )
+        self.assertEqual(
+            payload["runtime_window_import_plan"]["purpose"],
+            "next_clean_session_paper_route_runtime_window_collection_after_discard",
+        )
+        import_audit = payload["runtime_window_import_audit"]
+        self.assertEqual(import_audit["state"], "waiting_for_session_open")
+        self.assertEqual(
+            import_audit["evidence_window_state"], "clean_window_collection_pending"
+        )
+        self.assertFalse(import_audit["proof_allowed"])
+        self.assertEqual(
+            import_audit["next_action"],
+            "wait_for_regular_session_open",
+        )
+        self.assertIn(
+            "paper_route_session_window_not_open",
             import_audit["blockers"],
         )
         self.assertEqual(
-            import_audit["target_blockers"][0]["account_state"]["position_count"],
-            2,
+            import_audit["session_window"]["start"], "2026-05-27T13:30:00+00:00"
         )
 
     def test_paper_route_source_activity_requires_candidate_lineage(self) -> None:
