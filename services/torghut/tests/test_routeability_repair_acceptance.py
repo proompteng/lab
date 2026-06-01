@@ -162,6 +162,8 @@ def test_routeability_acceptance_ledger_projects_all_doc185_lots_at_zero_notiona
     lots = cast(list[Mapping[str, Any]], ledger["lots"])
     assert {lot["paper_notional_limit"] for lot in lots} == {"0"}
     assert {lot["live_notional_limit"] for lot in lots} == {"0"}
+    assert {lot["promotion_authority"] for lot in lots} == {False}
+    assert ledger["promotion_authority"] is False
     assert {lot["lot_type"] for lot in lots} == {
         "quant_scoped_stage_repair",
         "market_context_domain_repair",

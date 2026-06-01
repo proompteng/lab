@@ -166,6 +166,11 @@ def _required_receipts(
         _text(item) for item in _sequence(record.get("hypothesis_ids")) if _text(item)
     ]
     return {
+        "route_repair_audit_receipt": {
+            "receipt_id": record.get("audit_receipt_ref"),
+            "state": "present" if record.get("audit_receipt_ref") else "missing",
+            "promotion_authority": False,
+        },
         "tca_route_receipt": {
             "last_computed_at": record.get("last_computed_at"),
             "state": _text(tca_dimension.get("state"), "missing"),
@@ -224,6 +229,12 @@ def _board_row(
         "state": state,
         "current_blocker": reason,
         "repair_action": _text(record.get("next_repair_action")),
+        "repair_recommendation": _text(record.get("repair_recommendation")),
+        "source_metadata": dict(_mapping(record.get("source_metadata"))),
+        "audit_receipt": dict(_mapping(record.get("audit_receipt"))),
+        "audit_receipt_ref": record.get("audit_receipt_ref"),
+        "promotion_authority": False,
+        "capital_authority": "none",
         "expected_unblock_value": _row_expected_unblock_value(record),
         "expected_cost_class": _expected_cost_class(record),
         "expected_profit_effect": _expected_profit_effect(record),
@@ -238,6 +249,7 @@ def _board_row(
         "rollback_target": {
             "state": "blocked" if zero_notional_hold else state,
             "live_submit_enabled": False,
+            "promotion_authority": False,
         },
     }
 
@@ -319,6 +331,8 @@ def build_route_reacquisition_board(
         "capital_state": proof_floor_receipt.get("capital_state"),
         "market_session_open": route_book.get("market_session_open"),
         "state": "repair_only" if repair_only else "candidate",
+        "promotion_authority": False,
+        "authority_semantics": "audit_only_until_source_backed_runtime_ledger_fill_proof",
         "capital_rule": "zero_notional_until_receipts_close"
         if repair_only
         else "zero_notional_until_jangar_continuity"
@@ -349,6 +363,7 @@ def build_route_reacquisition_board(
         "rollback_target": {
             "capital_state": "zero_notional",
             "live_submit_enabled": False,
+            "promotion_authority": False,
         },
     }
 

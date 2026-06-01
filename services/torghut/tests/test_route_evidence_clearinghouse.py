@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -288,3 +289,61 @@ def test_blocking_evidence_yields_zero_notional_repair_bid(
     assert packet["max_notional"] == route_claim["max_notional"] == "0"
     assert reason in route_claim["reason_codes"]
     assert _has_bid(packet, value_gate)
+
+
+def test_route_repair_bids_emit_audit_receipts_and_blocker_recommendations() -> None:
+    blockers = [
+        "stale_quote",
+        "missing_bid_ask",
+        "session_closed",
+        "pair_imbalance",
+        "missing_target",
+        "blocked_submit",
+        "missing_close_flatten_handoff",
+        "runtime_import_pending",
+    ]
+    packet = _build(
+        profit_signal_quorum={
+            **BASE_PROFIT_QUORUM,
+            "aggregate_reason_codes": blockers,
+        },
+        live_submission_gate={"allowed": False, "reason": "blocked_submit"},
+    )
+
+    repair_bids = cast(list[Mapping[str, Any]], packet["selected_repair_bids"])
+    by_reason = {bid["reason_codes"][0]: bid for bid in repair_bids}
+    assert set(blockers).issubset(by_reason)
+    assert by_reason["stale_quote"]["repair_recommendation"] == (
+        "refresh_quote_snapshot_and_recompute_route_fillability"
+    )
+    assert by_reason["missing_bid_ask"]["repair_recommendation"] == (
+        "collect_bid_ask_quote_before_routeability_claim"
+    )
+    assert by_reason["session_closed"]["repair_recommendation"] == (
+        "wait_for_regular_session_open_then_refresh_route_probe"
+    )
+    assert by_reason["pair_imbalance"]["repair_recommendation"] == (
+        "repair_pair_leg_balance_before_routeability_claim"
+    )
+    assert by_reason["missing_target"]["repair_recommendation"] == (
+        "collect_target_notional_and_side_plan_before_probe"
+    )
+    assert by_reason["blocked_submit"]["repair_recommendation"] == (
+        "keep_submit_disabled_and_collect_submit_gate_receipt"
+    )
+    assert by_reason["missing_close_flatten_handoff"]["repair_recommendation"] == (
+        "collect_close_flatten_handoff_receipt_before_reentry"
+    )
+    assert by_reason["runtime_import_pending"]["repair_recommendation"] == (
+        "complete_runtime_import_reconciliation_before_authority"
+    )
+    for bid in by_reason.values():
+        receipt = cast(Mapping[str, Any], bid["audit_receipt"])
+        assert bid["max_notional"] == "0"
+        assert bid["promotion_authority"] is False
+        assert receipt["state"] == "audit_only"
+        assert receipt["promotion_authority"] is False
+        assert receipt["requires_runtime_ledger_source_proof"] is True
+    route_claim = cast(Mapping[str, Any], packet["route_claims"][0])
+    assert route_claim["promotion_authority"] is False
+    assert packet["promotion_authority"] is False

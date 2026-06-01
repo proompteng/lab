@@ -272,17 +272,16 @@ def test_route_book_ranks_zero_notional_repair_candidates_from_live_shape() -> N
         "ORCL",
     ]
     candidates = cast(list[Mapping[str, Any]], summary["repair_candidates"])
-    assert candidates[0] == {
-        "rank": 1,
-        "symbol": "AAPL",
-        "state": "blocked",
-        "reason": "execution_tca_route_universe_empty",
-        "avg_abs_slippage_bps": "9.2512103573044345",
-        "slippage_guardrail_bps": "8",
-        "filled_execution_count": 2033,
-        "paper_probe_notional_limit": "0",
-        "next_repair_action": "repair_route_evidence_before_paper_probe",
-    }
+    assert candidates[0]["rank"] == 1
+    assert candidates[0]["symbol"] == "AAPL"
+    assert candidates[0]["state"] == "blocked"
+    assert candidates[0]["reason"] == "execution_tca_route_universe_empty"
+    assert candidates[0]["avg_abs_slippage_bps"] == "9.2512103573044345"
+    assert candidates[0]["slippage_guardrail_bps"] == "8"
+    assert candidates[0]["filled_execution_count"] == 2033
+    assert candidates[0]["paper_probe_notional_limit"] == "0"
+    assert candidates[0]["next_repair_action"] == "repair_route_evidence_before_paper_probe"
+    assert candidates[0]["promotion_authority"] is False
     assert candidates[-1]["symbol"] == "ORCL"
     assert (
         candidates[-1]["next_repair_action"] == "create_simulation_probe_before_capital"
@@ -346,7 +345,7 @@ def test_route_book_surfaces_paper_route_probe_readiness_without_capital_authori
     assert probe["next_session_max_notional"] == "25.0"
     assert probe["eligible_symbols"] == ["AMZN", "AAPL", "INTC"]
     assert probe["active_symbols"] == []
-    assert probe["blocking_reasons"] == ["market_session_closed"]
+    assert probe["blocking_reasons"] == ["session_closed"]
     assert probe["capital_authority"] == "none"
 
     summary = cast(Mapping[str, Any], book["summary"])
@@ -425,7 +424,7 @@ def test_live_route_book_can_advertise_next_session_paper_probe_without_capital_
     assert probe["next_session_max_notional"] == "25"
     assert probe["eligible_symbols"] == ["AAPL"]
     assert probe["active_symbols"] == []
-    assert probe["blocking_reasons"] == ["not_paper_mode", "market_session_closed"]
+    assert probe["blocking_reasons"] == ["not_paper_mode", "session_closed"]
     assert probe["capital_authority"] == "none"
     assert book["capital_rule"] == "live_zero_notional_unchanged"
 
@@ -688,3 +687,113 @@ def test_route_reacquisition_board_holds_candidate_without_jangar_continuity() -
     summary = cast(Mapping[str, Any], board["summary"])
     assert summary["capital_eligible_symbol_count"] == 0
     assert summary["zero_notional_row_count"] == 1
+
+
+def test_hpairs_route_repair_receipts_keep_pair_legs_separate_and_audit_only() -> None:
+    proof_floor = {
+        "generated_at": "2026-06-01T14:30:00+00:00",
+        "account_label": "TORGHUT_SIM",
+        "runtime_strategy_id": "microbar-cross-sectional-pairs-v1",
+        "runtime_strategy_name": "H-PAIRS microbar cross-sectional pairs",
+        "source_manifest_ref": "runtime-manifest:H-PAIRS-01",
+        "route_state": "repair_only",
+        "capital_state": "zero_notional",
+        "proof_dimensions": [
+            {
+                "dimension": "execution_tca",
+                "state": "fail",
+                "reason": "pair_imbalance",
+                "source_ref": {
+                    "source_manifest_ref": "runtime-manifest:H-PAIRS-01",
+                    "symbol_routes": {
+                        "scope_symbols": ["AAPL", "AMZN"],
+                        "scope_symbol_count": 2,
+                        "routeable_symbols": [],
+                        "blocked_symbols": [
+                            {
+                                "symbol": "AAPL",
+                                "reason": "missing_bid_ask",
+                                "pair_id": "H-PAIRS:AAPL-AMZN",
+                                "pair_side": "long",
+                                "hypothesis_id": "H-PAIRS-01",
+                                "candidate_id": "candidate-hpairs",
+                                "runtime_strategy_id": "microbar-cross-sectional-pairs-v1",
+                                "runtime_strategy_name": "H-PAIRS microbar cross-sectional pairs",
+                            },
+                            {
+                                "symbol": "AMZN",
+                                "reason": "stale_quote",
+                                "pair_id": "H-PAIRS:AAPL-AMZN",
+                                "pair_side": "short",
+                                "hypothesis_id": "H-PAIRS-01",
+                                "candidate_id": "candidate-hpairs",
+                            },
+                        ],
+                        "missing_symbols": [
+                            {
+                                "symbol": "MSFT",
+                                "reason": "runtime_import_pending",
+                                "hypothesis_id": "H-PAIRS-01",
+                                "candidate_id": "candidate-hpairs",
+                            }
+                        ],
+                    },
+                },
+            },
+            {"dimension": "market_context", "state": "pass"},
+            {"dimension": "quant_ingestion", "state": "pass"},
+            {
+                "dimension": "alpha_readiness",
+                "state": "pass",
+                "source_ref": {
+                    "hypothesis_ids": ["H-PAIRS-01"],
+                    "candidate_ids": ["candidate-hpairs"],
+                },
+            },
+        ],
+    }
+
+    book = build_route_reacquisition_book(
+        proof_floor_receipt=proof_floor,
+        trading_mode="paper",
+        market_session_open=False,
+        paper_route_probe_enabled=True,
+        paper_route_probe_max_notional="25",
+    )
+    records = cast(list[Mapping[str, Any]], book["records"])
+    by_symbol = {record["symbol"]: record for record in records}
+
+    assert list(by_symbol) == ["AAPL", "AMZN", "MSFT"]
+    assert by_symbol["AAPL"]["reason"] == "missing_bid_ask"
+    assert by_symbol["AMZN"]["reason"] == "stale_quote"
+    assert by_symbol["AAPL"]["repair_recommendation"] == (
+        "collect_bid_ask_quote_before_routeability_claim"
+    )
+    assert by_symbol["AMZN"]["repair_recommendation"] == (
+        "refresh_quote_snapshot_and_recompute_route_fillability"
+    )
+    assert by_symbol["MSFT"]["repair_recommendation"] == (
+        "complete_runtime_import_reconciliation_before_authority"
+    )
+    for symbol in ("AAPL", "AMZN"):
+        metadata = cast(Mapping[str, Any], by_symbol[symbol]["source_metadata"])
+        receipt = cast(Mapping[str, Any], by_symbol[symbol]["audit_receipt"])
+        assert metadata["hypothesis_id"] == "H-PAIRS-01"
+        assert metadata["candidate_id"] == "candidate-hpairs"
+        assert metadata["runtime_strategy_id"] == "microbar-cross-sectional-pairs-v1"
+        assert metadata["account_label"] == "TORGHUT_SIM"
+        assert metadata["symbol"] == symbol
+        assert metadata["source_manifest_ref"] == "runtime-manifest:H-PAIRS-01"
+        assert metadata["pair_side"] in {"long", "short"}
+        assert receipt["state"] == "audit_only"
+        assert receipt["promotion_authority"] is False
+        assert receipt["capital_authority"] == "none"
+
+    board = build_route_reacquisition_board(
+        proof_floor_receipt={**proof_floor, "route_reacquisition_book": book},
+        active_revision="torghut-hpairs",
+    )
+    rows = cast(list[Mapping[str, Any]], board["rows"])
+    assert [row["symbol"] for row in rows] == ["AAPL", "AMZN", "MSFT"]
+    assert {row["promotion_authority"] for row in rows} == {False}
+    assert board["promotion_authority"] is False

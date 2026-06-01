@@ -309,3 +309,66 @@ def test_empty_frontier_promotes_only_to_paper_candidate_until_live_requirements
         and requirement["state"] == "block"
         for requirement in live_requirements
     )
+    runtime_requirement = next(
+        requirement
+        for requirement in live_requirements
+        if requirement["requirement"] == "runtime_ledger_source_proof_current"
+    )
+    assert runtime_requirement["state"] == "block"
+    assert runtime_requirement["reason_codes"] == [
+        "runtime_ledger_source_proof_missing"
+    ]
+    assert frontier["promotion_authority"] is False
+
+
+def test_live_candidate_requires_source_backed_runtime_ledger_proof() -> None:
+    base_kwargs = {
+        "source_ledger": _source_ledger(state="converged", reasons=[]),
+        "repair_bid_ledger": _repair_bid_ledger(compacted_lots=[]),
+        "profit_frontier": {
+            "schema_version": "torghut.profit-freshness-frontier.v1",
+            "frontier_id": "profit-freshness-frontier:ready",
+            "freshness_dimensions": [
+                {"dimension": "feature_coverage", "state": "current"},
+                {"dimension": "tca_fill_quality", "state": "current"},
+            ],
+            "aggregate_blocking_reason_codes": [],
+            "selected_zero_notional_repairs": [],
+            "summary": {"selected_expected_daily_net_pnl_unlock": None},
+        },
+        "route_warrant": _route_warrant(routeable_count=2),
+        "live_submission_gate": {
+            "allowed": True,
+            "reason": "ready",
+            "human_approved_capital_limits": True,
+        },
+    }
+
+    missing_runtime_proof = _build(
+        **base_kwargs,
+        proof_floor={
+            "route_state": "paper_candidate",
+            "capital_state": "paper_allowed",
+            "human_approved_capital_limits": True,
+        },
+    )
+    assert missing_runtime_proof["frontier_state"] == "paper_candidate"
+
+    source_backed_runtime_proof = _build(
+        **base_kwargs,
+        proof_floor={
+            "route_state": "paper_candidate",
+            "capital_state": "paper_allowed",
+            "human_approved_capital_limits": True,
+            "runtime_ledger_source_proof": {
+                "receipt_id": "runtime-ledger-source-proof:H-PAIRS-01",
+                "state": "current",
+                "source_backed": True,
+                "closed_round_trips": True,
+                "explicit_costs": True,
+                "flat_after_close_grace": True,
+            },
+        },
+    )
+    assert source_backed_runtime_proof["frontier_state"] == "live_candidate"
+    assert source_backed_runtime_proof["promotion_authority"] is False

@@ -8,6 +8,8 @@ from hashlib import sha256
 import json
 from typing import Any, cast
 
+from .route_metadata import route_repair_recommendation
+
 
 ROUTE_WARRANT_EXCHANGE_SCHEMA_VERSION = "torghut.route-warrant-exchange.v1"
 
@@ -401,10 +403,12 @@ def _witness(
 def _repair_packet(witness: Mapping[str, Any]) -> dict[str, object]:
     dependency_name = _text(witness.get("published_clock"))
     dependency = _WARRANT_DEPENDENCIES[dependency_name]
+    reason_codes = _strings(witness.get("reason_codes"))
+    primary_reason = reason_codes[0] if reason_codes else _text(witness.get("state"), "missing")
     payload = {
         "dependency": dependency["target_dependency"],
         "state": _text(witness.get("state")),
-        "reason_codes": _strings(witness.get("reason_codes")),
+        "reason_codes": reason_codes,
         "source_ref": _text(witness.get("source_ref")),
     }
     return {
@@ -413,20 +417,26 @@ def _repair_packet(witness: Mapping[str, Any]) -> dict[str, object]:
         "target_dependency": dependency["target_dependency"],
         "repair_class": dependency["repair_class"],
         "current_state": _text(witness.get("state"), "missing"),
-        "reason_codes": _strings(witness.get("reason_codes")),
+        "reason_codes": reason_codes,
         "source_ref": witness.get("source_ref"),
         "expected_output_receipt": dependency["output_receipt"],
         "expected_unblock_value": f"{dependency['target_dependency']}_current",
+        "repair_recommendation": route_repair_recommendation(primary_reason),
+        "promotion_authority": False,
+        "capital_authority": "none",
+        "authority_semantics": "audit_only",
         "max_notional": "0",
         "stop_conditions": [
             "paper_or_live_notional_requested",
             "required_output_receipt_missing",
             "warrant_dependency_still_not_current",
+            "runtime_ledger_source_proof_missing",
         ],
         "rollback_target": {
             "capital_state": "zero_notional",
             "live_submit_enabled": False,
             "route_warrant_consumption_enabled": False,
+            "promotion_authority": False,
         },
     }
 
@@ -654,6 +664,8 @@ def build_route_warrant_exchange(
             accepted_routeable_candidate_count=accepted_routeable_candidate_count,
         ),
         "warrant_state": warrant_state,
+        "promotion_authority": False,
+        "authority_semantics": "audit_only_until_source_backed_runtime_ledger_fill_proof",
         "max_notional": "0",
         "blocking_reason_codes": blocking_reason_codes,
         "summary": {
