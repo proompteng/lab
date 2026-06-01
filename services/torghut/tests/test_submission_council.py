@@ -34,6 +34,8 @@ from app.trading.submission_council import (
     _coerce_aware_datetime,
     _load_latest_certificate_evidence,
     _load_latest_runtime_ledger_summary,
+    _attach_lineage_refs,
+    _load_persisted_profit_rejection_summary,
     _load_profit_promotion_table_counts,
     _load_runtime_ledger_repair_candidates,
     _merge_runtime_certificate_evidence,
@@ -596,6 +598,47 @@ class TestSubmissionCouncil(TestCase):
 
         self.assertEqual(summary, {"by_hypothesis": {}, "runtime_ledger_buckets": []})
         self.assertEqual(fake_session.rollback_count, 1)
+
+    def test_attach_lineage_refs_fails_closed_on_query_timeout(self) -> None:
+        fake_session = _FailingRuntimeLedgerStatusSession()
+
+        rows = _attach_lineage_refs(
+            fake_session,  # type: ignore[arg-type]
+            evaluated_rows=[
+                {
+                    "candidate_id": "candidate-timeout",
+                    "hypothesis_id": "H-TIMEOUT",
+                    "reason_codes": [],
+                }
+            ],
+        )
+
+        self.assertEqual(fake_session.rollback_count, 1)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["reason_codes"], ["lineage_ref_query_timeout"])
+        self.assertEqual(rows[0]["lineage_ref"]["status"], "unavailable")
+        self.assertEqual(rows[0]["lineage_ref"]["candidate_id"], "candidate-timeout")
+        self.assertEqual(rows[0]["lineage_ref"]["hypothesis_id"], "H-TIMEOUT")
+
+    def test_load_persisted_profit_rejection_summary_fails_closed_on_timeout(
+        self,
+    ) -> None:
+        fake_session = _FailingRuntimeLedgerStatusSession()
+
+        summary = _load_persisted_profit_rejection_summary(
+            fake_session,  # type: ignore[arg-type]
+            account_label="PA3SX7FYNUTF",
+            now=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(fake_session.rollback_count, 1)
+        self.assertEqual(summary["total"], 0)
+        self.assertIsNone(summary["rejection_drag_ratio"])
+        self.assertEqual(summary["status_totals"], {})
+        self.assertEqual(
+            summary["reason_codes"],
+            ["profit_rejection_summary_query_timeout"],
+        )
 
     def test_runtime_ledger_status_timeout_helper_applies_timeout_when_bind_lookup_fails(
         self,
