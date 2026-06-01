@@ -4636,30 +4636,32 @@ def trading_paper_route_target_plan(
         scheduler = TradingScheduler()
         app.state.trading_scheduler = scheduler
 
-    empirical_jobs = _empirical_jobs_status()
-    quant_evidence = load_quant_evidence_status(
-        account_label=settings.trading_account_label,
-    )
-    tca_summary = _load_tca_summary(session, scheduler=scheduler)
-    market_context_status = scheduler.market_context_status()
-    hypothesis_payload, _hypothesis_summary, _dependency_quorum = (
-        _build_hypothesis_runtime_payload(
-            scheduler,
-            tca_summary=tca_summary,
-            market_context_status=market_context_status,
+    live_submission_gate = _paper_route_cached_live_submission_gate(scheduler)
+    if live_submission_gate is None:
+        empirical_jobs = _empirical_jobs_status()
+        quant_evidence = load_quant_evidence_status(
+            account_label=settings.trading_account_label,
         )
-    )
-    live_submission_gate = _build_live_submission_gate_payload(
-        scheduler.state,
-        session=session,
-        hypothesis_summary=hypothesis_payload,
-        empirical_jobs_status=empirical_jobs,
-        dspy_runtime_status=cast(
-            dict[str, object],
-            scheduler.llm_status().get("dspy_runtime", {}),
-        ),
-        quant_health_status=quant_evidence,
-    )
+        tca_summary = _load_tca_summary(session, scheduler=scheduler)
+        market_context_status = scheduler.market_context_status()
+        hypothesis_payload, _hypothesis_summary, _dependency_quorum = (
+            _build_hypothesis_runtime_payload(
+                scheduler,
+                tca_summary=tca_summary,
+                market_context_status=market_context_status,
+            )
+        )
+        live_submission_gate = _build_live_submission_gate_payload(
+            scheduler.state,
+            session=session,
+            hypothesis_summary=hypothesis_payload,
+            empirical_jobs_status=empirical_jobs,
+            dspy_runtime_status=cast(
+                dict[str, object],
+                scheduler.llm_status().get("dspy_runtime", {}),
+            ),
+            quant_health_status=quant_evidence,
+        )
     live_submission_gate = _merge_external_paper_route_target_plan(
         cast(Mapping[str, Any], live_submission_gate)
     )
@@ -4668,23 +4670,10 @@ def trading_paper_route_target_plan(
         live_submission_gate,
         simple_lane_status=simple_lane_status,
         state=scheduler.state,
+        session=session,
     )
     if route_reacquisition_book is None:
-        proof_floor = _build_profitability_proof_floor_payload(
-            state=scheduler.state,
-            torghut_revision=BUILD_VERSION,
-            live_submission_gate=live_submission_gate,
-            hypothesis_payload=hypothesis_payload,
-            empirical_jobs_status=empirical_jobs,
-            quant_evidence=quant_evidence,
-            market_context_status=market_context_status,
-            tca_summary=tca_summary,
-            simple_lane_status=simple_lane_status,
-        )
-        route_reacquisition_book = cast(
-            Mapping[str, Any],
-            proof_floor.get("route_reacquisition_book") or {},
-        )
+        route_reacquisition_book = cast(Mapping[str, Any], {})
     payload = build_paper_route_target_plan_payload(
         session,
         live_submission_gate=cast(Mapping[str, Any], live_submission_gate),
@@ -4743,17 +4732,101 @@ def _paper_route_target_plan_probe_notional(
     return _decimal_to_string(max(positive_values))
 
 
+def _paper_route_cached_live_submission_gate(
+    scheduler: object,
+) -> dict[str, object] | None:
+    cached_gate = getattr(scheduler, "_last_live_submission_gate", None)
+    if not isinstance(cached_gate, Mapping):
+        return None
+    gate = dict(cast(Mapping[str, object], cached_gate))
+    if not _paper_route_target_plan_targets(
+        _paper_route_target_plan_from_payload(gate)
+    ):
+        return None
+    gate.setdefault("paper_route_target_plan_source", "cached_live_submission_gate")
+    return gate
+
+
+def _paper_route_target_strategy_lookup_names(
+    target: Mapping[str, Any],
+) -> list[str]:
+    names: list[str] = []
+    for raw_value in (
+        target.get("strategy_lookup_names"),
+        target.get("runtime_strategy_name"),
+        target.get("strategy_name"),
+    ):
+        values: Sequence[object]
+        if isinstance(raw_value, Sequence) and not isinstance(
+            raw_value,
+            (str, bytes, bytearray),
+        ):
+            values = cast(Sequence[object], raw_value)
+        else:
+            values = (raw_value,)
+        for value in values:
+            if value is None:
+                continue
+            name = str(value).strip()
+            if name and name not in names:
+                names.append(name)
+    return names
+
+
+def _paper_route_probe_symbols_from_target_plan_strategies(
+    session: Session,
+    targets: Sequence[Mapping[str, Any]],
+) -> list[str]:
+    lookup_names: list[str] = []
+    for target in targets:
+        for name in _paper_route_target_strategy_lookup_names(target):
+            if name not in lookup_names:
+                lookup_names.append(name)
+    if not lookup_names:
+        return []
+
+    rows = session.execute(
+        select(Strategy.name, Strategy.universe_symbols).where(
+            Strategy.name.in_(lookup_names)
+        )
+    ).all()
+    universe_by_name = {
+        str(name): universe_symbols for name, universe_symbols in rows if name
+    }
+    symbols: list[str] = []
+    for name in lookup_names:
+        raw_symbols = universe_by_name.get(name)
+        if isinstance(raw_symbols, Sequence) and not isinstance(
+            raw_symbols,
+            (str, bytes, bytearray),
+        ):
+            values = cast(Sequence[object], raw_symbols)
+        else:
+            values = ()
+        for raw_symbol in values:
+            symbol = str(raw_symbol).strip().upper()
+            if symbol and symbol not in symbols:
+                symbols.append(symbol)
+    return symbols
+
+
 def _paper_route_probe_book_from_target_plan(
     live_submission_gate: Mapping[str, Any],
     *,
     simple_lane_status: Mapping[str, Any],
     state: object,
+    session: Session | None = None,
 ) -> Mapping[str, Any] | None:
     plan = _paper_route_target_plan_from_payload(live_submission_gate)
     targets = _paper_route_target_plan_targets(plan)
     if not targets:
         return None
     eligible_symbols = _paper_route_target_plan_probe_symbols(plan)
+    if not eligible_symbols and session is not None:
+        eligible_symbols = _paper_route_probe_symbols_from_target_plan_strategies(
+            session,
+            targets,
+        )
     if not eligible_symbols:
         return None
     next_session_max_notional = _paper_route_target_plan_probe_notional(

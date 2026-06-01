@@ -7525,22 +7525,6 @@ class TestTradingApi(TestCase):
                 "targets": [target],
             },
         }
-        proof_floor = {
-            "route_reacquisition_book": {
-                "schema_version": "torghut.route-reacquisition-book.v1",
-                "state": "repair_only",
-                "paper_route_probe": {
-                    "configured_enabled": True,
-                    "active": False,
-                    "effective_max_notional": "0",
-                    "next_session_max_notional": "63180",
-                    "eligible_symbol_count": 1,
-                    "eligible_symbols": ["AAPL"],
-                    "active_symbols": [],
-                    "blocking_reasons": ["market_session_closed"],
-                },
-            }
-        }
         try:
             if hasattr(app.state, "trading_scheduler"):
                 del app.state.trading_scheduler
@@ -7551,7 +7535,14 @@ class TestTradingApi(TestCase):
                 ),
                 patch(
                     "app.main._build_profitability_proof_floor_payload",
-                    return_value=proof_floor,
+                    side_effect=AssertionError("proof floor should not run"),
+                ),
+                patch(
+                    "app.main._build_simple_lane_status_payload",
+                    return_value={
+                        "paper_route_probe_enabled": True,
+                        "paper_route_probe_max_notional": "63180",
+                    },
                 ),
                 patch(
                     "app.main.build_paper_route_evidence_audit",
@@ -7604,6 +7595,308 @@ class TestTradingApi(TestCase):
             )
             self.assertFalse(payload["targets"][0]["promotion_allowed"])
             self.assertFalse(payload["targets"][0]["final_promotion_allowed"])
+        finally:
+            if original_scheduler is None:
+                if hasattr(app.state, "trading_scheduler"):
+                    del app.state.trading_scheduler
+            else:
+                app.state.trading_scheduler = original_scheduler
+
+    def test_trading_paper_route_target_plan_uses_cached_gate_fast_path(
+        self,
+    ) -> None:
+        original_scheduler = getattr(app.state, "trading_scheduler", None)
+        target = {
+            "hypothesis_id": "H-PAIRS-01",
+            "candidate_id": "c88421d619759b2cfaa6f4d0",
+            "observed_stage": "paper",
+            "strategy_family": "microbar_cross_sectional_pairs",
+            "strategy_name": "microbar-cross-sectional-pairs-v1",
+            "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+            "account_label": "TORGHUT_SIM",
+            "source_kind": "runtime_ledger_paper_probation_candidates",
+            "source_manifest_ref": "config/trading/hypotheses/h-pairs.json",
+            "dataset_snapshot_ref": "portfolio-profit-autoresearch-500-v1",
+            "window_start": "2026-05-22T13:30:00+00:00",
+            "window_end": "2026-05-22T20:00:00+00:00",
+            "paper_route_probe_symbols": ["AAPL"],
+            "paper_probation_authorized": True,
+            "promotion_allowed": False,
+            "final_promotion_allowed": False,
+            "max_notional": "0",
+        }
+        cached_gate = {
+            "allowed": False,
+            "reason": "simple_submit_disabled",
+            "blocked_reasons": [
+                "alpha_readiness_not_promotion_eligible",
+                "simple_submit_disabled",
+            ],
+            "promotion_eligible_total": 0,
+            "runtime_ledger_paper_probation_import_plan": {
+                "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                "target_count": 1,
+                "skipped_target_count": 0,
+                "promotion_allowed": False,
+                "final_promotion_allowed": False,
+                "targets": [target],
+            },
+        }
+        fake_scheduler = SimpleNamespace(
+            state=SimpleNamespace(market_session_open=False),
+            _last_live_submission_gate=cached_gate,
+        )
+        try:
+            app.state.trading_scheduler = fake_scheduler
+            with (
+                patch(
+                    "app.main._empirical_jobs_status",
+                    side_effect=AssertionError("empirical jobs should not load"),
+                ),
+                patch(
+                    "app.main.load_quant_evidence_status",
+                    side_effect=AssertionError("quant evidence should not load"),
+                ),
+                patch(
+                    "app.main._load_tca_summary",
+                    side_effect=AssertionError("TCA summary should not load"),
+                ),
+                patch(
+                    "app.main._build_hypothesis_runtime_payload",
+                    side_effect=AssertionError("hypothesis payload should not load"),
+                ),
+                patch(
+                    "app.main._build_live_submission_gate_payload",
+                    side_effect=AssertionError("live gate should use cache"),
+                ),
+                patch(
+                    "app.main._build_profitability_proof_floor_payload",
+                    side_effect=AssertionError("proof floor should not run"),
+                ),
+                patch(
+                    "app.main._build_simple_lane_status_payload",
+                    return_value={
+                        "paper_route_probe_enabled": True,
+                        "paper_route_probe_max_notional": "75000",
+                    },
+                ),
+            ):
+                response = self.client.get("/trading/paper-route-target-plan")
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["target_count"], 1)
+            self.assertEqual(
+                payload["targets"][0]["candidate_id"], "c88421d619759b2cfaa6f4d0"
+            )
+            self.assertEqual(
+                payload["live_submission_gate"]["paper_route_target_plan_source"],
+                "cached_live_submission_gate",
+            )
+            self.assertFalse(payload["summary"]["promotion_authority"]["allowed"])
+        finally:
+            if original_scheduler is None:
+                if hasattr(app.state, "trading_scheduler"):
+                    del app.state.trading_scheduler
+            else:
+                app.state.trading_scheduler = original_scheduler
+
+    def test_paper_route_cached_gate_requires_target_plan(self) -> None:
+        self.assertIsNone(
+            main_module._paper_route_cached_live_submission_gate(
+                SimpleNamespace(_last_live_submission_gate=None)
+            )
+        )
+        self.assertIsNone(
+            main_module._paper_route_cached_live_submission_gate(
+                SimpleNamespace(_last_live_submission_gate={"allowed": False})
+            )
+        )
+
+    def test_paper_route_target_strategy_lookup_names_skip_missing_values(
+        self,
+    ) -> None:
+        names = main_module._paper_route_target_strategy_lookup_names(
+            {
+                "strategy_lookup_names": [
+                    " source-strategy ",
+                    "source-strategy",
+                    12,
+                ],
+                "runtime_strategy_name": "runtime-strategy",
+                "strategy_name": "source-strategy",
+            }
+        )
+
+        self.assertEqual(
+            names,
+            ["source-strategy", "12", "runtime-strategy"],
+        )
+        self.assertEqual(
+            main_module._paper_route_target_strategy_lookup_names({}),
+            [],
+        )
+
+    def test_paper_route_probe_symbols_resolve_target_strategy_universe(
+        self,
+    ) -> None:
+        with self.session_local() as session:
+            session.add_all(
+                [
+                    Strategy(
+                        name="route-target-source",
+                        description="route target source",
+                        enabled=True,
+                        base_timeframe="1Min",
+                        universe_type="static",
+                        universe_symbols=[" msft ", "", "AAPL", "MSFT"],
+                    ),
+                    Strategy(
+                        name="route-target-string-universe",
+                        description="route target string universe",
+                        enabled=True,
+                        base_timeframe="1Min",
+                        universe_type="static",
+                        universe_symbols="TSLA",
+                    ),
+                ]
+            )
+            session.commit()
+
+            self.assertEqual(
+                main_module._paper_route_probe_symbols_from_target_plan_strategies(
+                    session,
+                    [{}],
+                ),
+                [],
+            )
+            symbols = (
+                main_module._paper_route_probe_symbols_from_target_plan_strategies(
+                    session,
+                    [
+                        {
+                            "strategy_lookup_names": [
+                                "route-target-source",
+                                "route-target-string-universe",
+                                "route-target-source",
+                            ],
+                            "runtime_strategy_name": "route-target-source",
+                            "strategy_name": "route-target-string-universe",
+                        }
+                    ],
+                )
+            )
+
+        self.assertEqual(symbols, ["MSFT", "AAPL"])
+
+    def test_paper_route_probe_book_uses_strategy_universe_when_symbols_missing(
+        self,
+    ) -> None:
+        with self.session_local() as session:
+            session.add(
+                Strategy(
+                    name="route-book-source",
+                    description="route book source",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["aapl", "MSFT"],
+                )
+            )
+            session.commit()
+
+            book = main_module._paper_route_probe_book_from_target_plan(
+                {
+                    "paper_route_target_plan_source": "cached_live_submission_gate",
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": (
+                            "torghut.runtime-ledger-paper-probation-import-plan.v1"
+                        ),
+                        "target_count": 1,
+                        "targets": [
+                            {
+                                "candidate_id": "candidate-strategy-universe",
+                                "strategy_lookup_names": ["route-book-source"],
+                                "paper_route_probe_next_session_max_notional": "25000",
+                                "paper_probation_authorized": True,
+                                "promotion_allowed": False,
+                                "final_promotion_allowed": False,
+                            }
+                        ],
+                    },
+                },
+                simple_lane_status={"paper_route_probe_enabled": True},
+                state=SimpleNamespace(market_session_open=True),
+                session=session,
+            )
+
+        self.assertIsNotNone(book)
+        assert book is not None
+        self.assertEqual(
+            book["summary"]["paper_route_probe_eligible_symbols"], ["AAPL", "MSFT"]
+        )
+        self.assertEqual(book["paper_route_probe"]["active_symbols"], ["AAPL", "MSFT"])
+        self.assertEqual(book["paper_route_probe"]["effective_max_notional"], "25000")
+        self.assertEqual(book["source_refs"]["target_plan_target_count"], 1)
+        self.assertEqual(
+            book["source_refs"]["target_plan_source"], "cached_live_submission_gate"
+        )
+
+    def test_trading_paper_route_target_plan_uses_empty_route_book_when_unavailable(
+        self,
+    ) -> None:
+        original_scheduler = getattr(app.state, "trading_scheduler", None)
+        cached_gate = {
+            "allowed": False,
+            "reason": "simple_submit_disabled",
+            "runtime_ledger_paper_probation_import_plan": {
+                "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                "target_count": 1,
+                "targets": [
+                    {
+                        "candidate_id": "candidate-empty-book",
+                        "strategy_name": "route-book-missing",
+                        "paper_probation_authorized": True,
+                        "promotion_allowed": False,
+                        "final_promotion_allowed": False,
+                    }
+                ],
+            },
+        }
+
+        def _assert_empty_route_book(
+            *args: object, **kwargs: object
+        ) -> dict[str, object]:
+            self.assertEqual(kwargs["route_reacquisition_book"], {})
+            self.assertFalse(kwargs["include_runtime_window_import_audit"])
+            return {
+                "schema_version": "torghut.paper-route-target-plan.v1",
+                "target_count": 1,
+                "targets": [{"candidate_id": "candidate-empty-book"}],
+            }
+
+        try:
+            app.state.trading_scheduler = SimpleNamespace(
+                state=SimpleNamespace(market_session_open=False),
+                _last_live_submission_gate=cached_gate,
+            )
+            with (
+                patch(
+                    "app.main._paper_route_probe_book_from_target_plan",
+                    return_value=None,
+                ),
+                patch(
+                    "app.main.build_paper_route_target_plan_payload",
+                    side_effect=_assert_empty_route_book,
+                ),
+                patch(
+                    "app.main._build_simple_lane_status_payload",
+                    return_value={"paper_route_probe_enabled": True},
+                ),
+            ):
+                response = self.client.get("/trading/paper-route-target-plan")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["target_count"], 1)
         finally:
             if original_scheduler is None:
                 if hasattr(app.state, "trading_scheduler"):
