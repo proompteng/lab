@@ -148,6 +148,16 @@ _DEFAULT_FAST_REPLAY_PREVIEW_TOP_K = 48
 _DEFAULT_FAST_REPLAY_EXACT_CANDIDATE_CAP = 6
 _DEFAULT_FAST_REPLAY_EXPLOITATION_SLOTS = 4
 _DEFAULT_FAST_REPLAY_EXPLORATION_SLOTS = 2
+_UNSAFE_NEXT_EPOCH_REMEDIATION_FLAG_MARKERS = (
+    "agentrun",
+    "agent-run",
+    "broker",
+    "fanout",
+    "kubectl",
+    "kubernetes",
+    "live-trading",
+    "promotion",
+)
 _DEFAULT_CLICKHOUSE_HTTP_URL = (
     "http://torghut-clickhouse.torghut.svc.cluster.local:8123"
 )
@@ -3621,6 +3631,14 @@ def _flag_int(value: Any) -> int | None:
         return None
 
 
+def _unsafe_next_epoch_remediation_flag(key: str) -> bool:
+    normalized = key.strip().lower()
+    return any(
+        marker in normalized
+        for marker in _UNSAFE_NEXT_EPOCH_REMEDIATION_FLAG_MARKERS
+    )
+
+
 def _decimal_arg_or_default(
     args: argparse.Namespace,
     name: str,
@@ -3684,9 +3702,26 @@ def _profitability_next_epoch_plan(
         flags["--real-replay-shard-timeout-seconds"] = str(
             real_replay_shard_timeout_seconds
         )
-    real_replay_shard_workers = _int_arg(
+    capped_runtime_flags: list[dict[str, str]] = []
+    requested_real_replay_shard_workers = _int_arg(
         args, "real_replay_shard_workers", _DEFAULT_REAL_REPLAY_SHARD_WORKERS
     )
+    real_replay_shard_workers = max(
+        1,
+        min(
+            requested_real_replay_shard_workers,
+            _DEFAULT_REAL_REPLAY_SHARD_WORKERS,
+        ),
+    )
+    if real_replay_shard_workers != requested_real_replay_shard_workers:
+        capped_runtime_flags.append(
+            {
+                "flag": "--real-replay-shard-workers",
+                "requested_value": str(requested_real_replay_shard_workers),
+                "capped_value": str(real_replay_shard_workers),
+                "reason": "capped_to_local_worker_limit_no_kubernetes_fanout",
+            }
+        )
     if real_replay_shard_workers > 1:
         flags["--real-replay-shard-workers"] = str(real_replay_shard_workers)
     real_replay_failed_spec_retries = _int_arg(
@@ -3731,9 +3766,37 @@ def _profitability_next_epoch_plan(
             action_name = _string(action.get("action"))
             for key, value in _mapping(action.get("recommended_flags")).items():
                 if key.startswith("--") and _string(value):
+                    if _unsafe_next_epoch_remediation_flag(key):
+                        rejected_recommended_flags.append(
+                            {
+                                "action": action_name,
+                                "flag": key,
+                                "current_value": str(flags.get(key, "")),
+                                "recommended_value": _string(value),
+                                "reason": "rejected_unsafe_cluster_fanout_or_promotion_flag",
+                            }
+                        )
+                        continue
                     current_value = flags.get(key)
                     current_int = _flag_int(current_value)
                     recommended_int = _flag_int(value)
+                    if (
+                        key == "--real-replay-shard-workers"
+                        and (
+                            recommended_int is None
+                            or recommended_int > _DEFAULT_REAL_REPLAY_SHARD_WORKERS
+                        )
+                    ):
+                        rejected_recommended_flags.append(
+                            {
+                                "action": action_name,
+                                "flag": key,
+                                "current_value": str(current_value or ""),
+                                "recommended_value": _string(value),
+                                "reason": "rejected_broad_replay_worker_fanout",
+                            }
+                        )
+                        continue
                     if key in monotonic_int_flags and recommended_int is None:
                         rejected_recommended_flags.append(
                             {
@@ -3788,10 +3851,18 @@ def _profitability_next_epoch_plan(
         "direct_candidate_specs_artifacts": direct_candidate_specs_artifacts,
         "applied_recommended_flags": applied_recommended_flags,
         "rejected_recommended_flags": rejected_recommended_flags,
+        "capped_runtime_flags": capped_runtime_flags,
         "no_fast_path_policy": {
             "target_net_pnl_per_day_is_fixed": str(target),
             "replay_mode": "real",
+            "no_kubernetes_fanout": True,
+            "max_generated_real_replay_shard_workers": (
+                _DEFAULT_REAL_REPLAY_SHARD_WORKERS
+            ),
             "monotonic_search_flags": sorted(monotonic_int_flags),
+            "unsafe_remediation_flag_markers": sorted(
+                _UNSAFE_NEXT_EPOCH_REMEDIATION_FLAG_MARKERS
+            ),
             "allowed_decreases": [
                 (
                     "timeout remediation may reduce "
