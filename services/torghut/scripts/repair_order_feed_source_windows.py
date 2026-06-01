@@ -69,11 +69,20 @@ def _payload(
         "execution_link_executions_linked": sum(
             batch["execution_link_executions_linked"] for batch in batches
         ),
+        "execution_link_decisions_matched": sum(
+            batch["execution_link_decisions_matched"] for batch in batches
+        ),
         "execution_link_events_linked": sum(
             batch["execution_link_events_linked"] for batch in batches
         ),
+        "execution_link_decision_events_linked": sum(
+            batch["execution_link_decision_events_linked"] for batch in batches
+        ),
         "execution_link_events_without_execution": sum(
             batch["execution_link_events_without_execution"] for batch in batches
+        ),
+        "execution_link_events_without_decision": sum(
+            batch["execution_link_events_without_decision"] for batch in batches
         ),
         "execution_event_backfill_candidates": sum(
             batch["execution_event_backfill_candidates"] for batch in batches
@@ -207,10 +216,19 @@ def main() -> int:
                 "execution_link_executions_linked": execution_link_batch[
                     "executions_linked"
                 ],
+                "execution_link_decisions_matched": execution_link_batch.get(
+                    "decisions_matched", 0
+                ),
                 "execution_link_events_linked": execution_link_batch["events_linked"],
+                "execution_link_decision_events_linked": execution_link_batch.get(
+                    "decision_events_linked", 0
+                ),
                 "execution_link_events_without_execution": execution_link_batch[
                     "events_without_execution"
                 ],
+                "execution_link_events_without_decision": execution_link_batch.get(
+                    "events_without_decision", 0
+                ),
                 "execution_event_backfill_candidates": execution_event_backfill_batch[
                     "selected"
                 ],
