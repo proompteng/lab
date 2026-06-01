@@ -301,6 +301,38 @@ class TestClickHousePriceFetcher(TestCase):
         self.assertEqual(snapshot.spread, Decimal("0.04"))
         self.assertEqual(snapshot.as_of, quote_ts)
         self.assertEqual(snapshot.source, "alpaca_latest_quote")
+        self.assertEqual(snapshot.quote_as_of, quote_ts)
+        self.assertEqual(snapshot.quote_source, "alpaca_latest_quote")
+
+    def test_fetch_market_snapshot_uses_alpaca_latest_quote_without_clickhouse_url(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 1, 1, 12, 0, 30, tzinfo=timezone.utc),
+            symbol="AAPL",
+            payload={},
+        )
+        quote_ts = datetime.now(timezone.utc)
+        fetcher = RoutingClickHousePriceFetcher(
+            price_rows=[],
+            quote_rows=[],
+            alpaca_quote={
+                "t": quote_ts.isoformat(),
+                "bp": "190.10",
+                "ap": "190.14",
+            },
+        )
+        fetcher.url = ""
+
+        snapshot = fetcher.fetch_market_snapshot(signal)
+
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        self.assertEqual(snapshot.price, Decimal("190.12"))
+        self.assertEqual(snapshot.bid, Decimal("190.10"))
+        self.assertEqual(snapshot.ask, Decimal("190.14"))
+        self.assertEqual(snapshot.source, "alpaca_latest_quote")
+        self.assertEqual(fetcher.queries, [])
 
     def test_fetch_market_snapshot_rejects_wide_alpaca_latest_quote(
         self,

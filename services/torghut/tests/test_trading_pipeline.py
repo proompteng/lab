@@ -66,6 +66,7 @@ from app.trading.risk import RiskEngine
 from app.trading.scheduler.pipeline import TradingPipeline
 from app.trading.scheduler.simple_pipeline import (
     SimpleTradingPipeline,
+    _bounded_sim_collection_blockers,
     _bounded_sim_collection_target_with_runtime_account_audit,
     _bounded_sim_collection_metadata_from_decision,
     _paper_route_probe_entry_metadata,
@@ -3500,6 +3501,317 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(scoped_row.status, "planned")
         self.assertNotIn("submission_block_reason", scoped_json)
 
+    def test_paper_route_target_quote_routeability_blocks_missing_quote(
+        self,
+    ) -> None:
+        from app import config
+
+        now = datetime(2026, 6, 1, 14, 0, tzinfo=timezone.utc)
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_simple_submit_enabled = True
+        strategy = Strategy(
+            id=uuid4(),
+            name="microbar-cross-sectional-pairs-v1",
+            description="bounded target strategy",
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="static",
+            universe_symbols=["AAPL"],
+            max_notional_per_trade=Decimal("1000"),
+        )
+        decision = StrategyDecision(
+            strategy_id=str(strategy.id),
+            symbol="AAPL",
+            event_ts=now,
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            rationale="paper-route-target-source",
+            params={
+                "paper_route_target_plan": {"candidate_id": "c88421d619759b2cfaa6f4d0"},
+                "source_decision_mode": ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
+            },
+        )
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="TORGHUT_SIM",
+            session_factory=self.session_local,
+            price_fetcher=FakePriceFetcher(Decimal("190.12")),
+        )
+        with self.session_local() as session:
+            session.add(strategy)
+            session.commit()
+            row = pipeline.executor.ensure_decision(
+                session,
+                decision,
+                strategy,
+                "TORGHUT_SIM",
+            )
+
+            prepared = pipeline._prepare_decision_for_submission(
+                session=session,
+                decision=decision,
+                decision_row=row,
+                strategy=strategy,
+                account={"equity": "100000", "cash": "100000", "buying_power": "100000"},
+                positions=[],
+            )
+            session.refresh(row)
+            row_json = cast(dict[str, Any], row.decision_json)
+            params = cast(dict[str, Any], row_json.get("params"))
+            routeability = cast(dict[str, Any], params.get("quote_routeability"))
+
+        self.assertIsNone(prepared)
+        self.assertEqual(row.status, "rejected")
+        self.assertEqual(routeability.get("status"), "blocked")
+        self.assertEqual(routeability.get("reason"), "missing_executable_quote")
+        self.assertEqual(row_json.get("reject_reason_atomic"), ["missing_executable_quote"])
+
+    def test_paper_route_target_quote_routeability_blocks_stale_and_wide_quotes(
+        self,
+    ) -> None:
+        from app import config
+
+        now = datetime(2026, 6, 1, 14, 0, tzinfo=timezone.utc)
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_simple_submit_enabled = True
+        strategy = Strategy(
+            id=uuid4(),
+            name="microbar-cross-sectional-pairs-v1",
+            description="bounded target strategy",
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="static",
+            universe_symbols=["AAPL"],
+            max_notional_per_trade=Decimal("1000"),
+        )
+        base_decision = StrategyDecision(
+            strategy_id=str(strategy.id),
+            symbol="AAPL",
+            event_ts=now,
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            rationale="paper-route-target-source",
+            params={
+                "paper_route_target_plan": {"candidate_id": "c88421d619759b2cfaa6f4d0"},
+                "source_decision_mode": ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
+            },
+        )
+        cases = [
+            (
+                "wide",
+                FakePriceFetcher(
+                    Decimal("101"),
+                    spread=Decimal("2"),
+                    bid=Decimal("100"),
+                    ask=Decimal("102"),
+                ),
+                "spread_bps_exceeded",
+            ),
+            (
+                "stale",
+                TimelinePriceFetcher(
+                    {
+                        now: MarketSnapshot(
+                            symbol="AAPL",
+                            as_of=now - timedelta(seconds=120),
+                            price=Decimal("190.12"),
+                            spread=Decimal("0.04"),
+                            source="ta_microbars+ta_signals_quote",
+                            bid=Decimal("190.10"),
+                            ask=Decimal("190.14"),
+                            quote_as_of=now - timedelta(seconds=120),
+                            quote_source="ta_signals_quote",
+                        )
+                    }
+                ),
+                "stale_quote",
+            ),
+        ]
+
+        with self.session_local() as session:
+            session.add(strategy)
+            session.commit()
+            for label, price_fetcher, expected_reason in cases:
+                pipeline = SimpleTradingPipeline(
+                    alpaca_client=FakeAlpacaClient(),
+                    order_firewall=OrderFirewall(FakeAlpacaClient()),
+                    ingestor=FakeIngestor([]),
+                    decision_engine=DecisionEngine(),
+                    risk_engine=RiskEngine(),
+                    executor=OrderExecutor(),
+                    execution_adapter=FakeAlpacaClient(),
+                    reconciler=Reconciler(),
+                    universe_resolver=UniverseResolver(),
+                    state=TradingState(),
+                    account_label="TORGHUT_SIM",
+                    session_factory=self.session_local,
+                    price_fetcher=price_fetcher,
+                )
+                decision = base_decision.model_copy(
+                    update={"rationale": f"paper-route-target-source-{label}"}
+                )
+                row = pipeline.executor.ensure_decision(
+                    session,
+                    decision,
+                    strategy,
+                    "TORGHUT_SIM",
+                )
+
+                prepared = pipeline._prepare_decision_for_submission(
+                    session=session,
+                    decision=decision,
+                    decision_row=row,
+                    strategy=strategy,
+                    account={
+                        "equity": "100000",
+                        "cash": "100000",
+                        "buying_power": "100000",
+                    },
+                    positions=[],
+                )
+                session.refresh(row)
+                row_json = cast(dict[str, Any], row.decision_json)
+                params = cast(dict[str, Any], row_json.get("params"))
+                routeability = cast(dict[str, Any], params.get("quote_routeability"))
+
+                self.assertIsNone(prepared)
+                self.assertEqual(row.status, "rejected")
+                self.assertEqual(routeability.get("reason"), expected_reason)
+
+    def test_paper_route_target_executable_quote_reaches_submit_eligibility(
+        self,
+    ) -> None:
+        from app import config
+
+        now = datetime(2026, 6, 1, 14, 0, tzinfo=timezone.utc)
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_simple_submit_enabled = True
+        config.settings.trading_fractional_equities_enabled = True
+        strategy = Strategy(
+            id=uuid4(),
+            name="microbar-cross-sectional-pairs-v1",
+            description="bounded target strategy",
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="static",
+            universe_symbols=["AAPL"],
+            max_notional_per_trade=Decimal("1000"),
+        )
+        decision = StrategyDecision(
+            strategy_id=str(strategy.id),
+            symbol="AAPL",
+            event_ts=now,
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            rationale="paper-route-target-source",
+            params={
+                "paper_route_target_plan": {"candidate_id": "c88421d619759b2cfaa6f4d0"},
+                "source_decision_mode": ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
+            },
+        )
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="TORGHUT_SIM",
+            session_factory=self.session_local,
+            price_fetcher=FakePriceFetcher(
+                Decimal("190.12"),
+                spread=Decimal("0.04"),
+                bid=Decimal("190.10"),
+                ask=Decimal("190.14"),
+            ),
+        )
+        with self.session_local() as session:
+            session.add(strategy)
+            session.commit()
+            row = pipeline.executor.ensure_decision(
+                session,
+                decision,
+                strategy,
+                "TORGHUT_SIM",
+            )
+
+            prepared = pipeline._prepare_decision_for_submission(
+                session=session,
+                decision=decision,
+                decision_row=row,
+                strategy=strategy,
+                account={"equity": "100000", "cash": "100000", "buying_power": "100000"},
+                positions=[],
+            )
+            session.refresh(row)
+            row_json = cast(dict[str, Any], row.decision_json)
+            params = cast(dict[str, Any], row_json.get("params"))
+            routeability = cast(dict[str, Any], params.get("quote_routeability"))
+
+        self.assertIsNotNone(prepared)
+        assert prepared is not None
+        prepared_decision, snapshot = prepared
+        self.assertIsNotNone(snapshot)
+        self.assertEqual(prepared_decision.params.get("price"), Decimal("190.12"))
+        self.assertEqual(routeability.get("status"), "accepted")
+        self.assertEqual(routeability.get("reason"), "executable_quote_ready")
+        self.assertEqual(params.get("price_snapshot", {}).get("bid"), "190.10")
+        self.assertEqual(row.status, "planned")
+
+    def test_bounded_collection_contamination_blocker_is_not_hidden_by_quote_readiness(
+        self,
+    ) -> None:
+        target = {
+            "candidate_id": "c88421d619759b2cfaa6f4d0",
+            "hypothesis_id": "H-PAIRS-01",
+            "observed_stage": "paper",
+            "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+            "account_label": "TORGHUT_SIM",
+            "source_account_label": "TORGHUT_SIM",
+            "source_kind": "paper_route_probe_runtime_observed",
+            "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
+            "paper_route_probe_symbols": ["AAPL", "AMZN"],
+            "evidence_collection_ok": True,
+            "bounded_evidence_collection_authorized": True,
+            "bounded_live_paper_collection_authorized": True,
+            "bounded_evidence_collection_scope": "paper_route_probe_next_session_only",
+            "promotion_allowed": False,
+            "final_promotion_allowed": False,
+            "final_promotion_authorized": False,
+            "source_decision_readiness": {"ready": True, "blockers": []},
+            "paper_route_account_contamination_blockers": [
+                "paper_route_account_contamination_detected",
+                "unlinked_order_events_present",
+            ],
+        }
+
+        blockers = _bounded_sim_collection_blockers(
+            target,
+            account_label="TORGHUT_SIM",
+        )
+
+        self.assertIn("paper_route_account_contamination_detected", blockers)
+        self.assertIn("unlinked_order_events_present", blockers)
+
     def test_strategy_signal_paper_collection_bypasses_repair_only_floor(
         self,
     ) -> None:
@@ -6123,7 +6435,12 @@ class TestTradingPipeline(TestCase):
             state=TradingState(),
             account_label="paper",
             session_factory=self.session_local,
-            price_fetcher=FakePriceFetcher(Decimal("100")),
+            price_fetcher=FakePriceFetcher(
+                Decimal("100"),
+                spread=Decimal("0.02"),
+                bid=Decimal("99.99"),
+                ask=Decimal("100.01"),
+            ),
         )
         pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
 
@@ -6339,7 +6656,12 @@ class TestTradingPipeline(TestCase):
             state=TradingState(),
             account_label="paper",
             session_factory=self.session_local,
-            price_fetcher=FakePriceFetcher(Decimal("100")),
+            price_fetcher=FakePriceFetcher(
+                Decimal("100"),
+                spread=Decimal("0.02"),
+                bid=Decimal("99.99"),
+                ask=Decimal("100.01"),
+            ),
         )
         pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
 
@@ -8951,6 +9273,19 @@ class TestTradingPipeline(TestCase):
                 del signal_price
                 params = dict(decision.params)
                 params["price"] = Decimal("100")
+                params["imbalance_bid_px"] = Decimal("99.99")
+                params["imbalance_ask_px"] = Decimal("100.01")
+                params["imbalance_spread"] = Decimal("0.02")
+                params["price_snapshot"] = {
+                    "as_of": now.isoformat(),
+                    "quote_as_of": now.isoformat(),
+                    "source": "test_executable_quote",
+                    "quote_source": "test_executable_quote",
+                    "price": "100",
+                    "bid": "99.99",
+                    "ask": "100.01",
+                    "spread": "0.02",
+                }
                 return decision.model_copy(update={"params": params}), None
 
             with (

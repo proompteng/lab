@@ -28,6 +28,7 @@ from ..paper_route_target_plan import (
     paper_route_target_plan_targets,
 )
 from ..prices import MarketSnapshot
+from ..quote_quality import QuoteQualityPolicy, QuoteQualityStatus, assess_signal_quote_quality
 from ..proof_floor import build_profitability_proof_floor_receipt
 from ..runtime_decision_authority import (
     ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
@@ -50,6 +51,7 @@ from ..time_source import trading_now
 from .pipeline import TradingPipeline
 from .pipeline_helpers import (
     _extract_json_error_payload,
+    _price_snapshot_payload,
 )
 
 logger = logging.getLogger(__name__)
@@ -2406,6 +2408,201 @@ class SimpleTradingPipeline(TradingPipeline):
         snapshot["submit_path"] = "direct_alpaca"
         return snapshot
 
+    def _ensure_decision_price(
+        self, decision: StrategyDecision, signal_price: Any
+    ) -> tuple[StrategyDecision, Optional[MarketSnapshot]]:
+        if signal_price is not None and "price_snapshot" in decision.params:
+            return decision, None
+        snapshot = self.price_fetcher.fetch_market_snapshot(
+            SignalEnvelope(
+                event_ts=decision.event_ts,
+                symbol=decision.symbol,
+                payload={},
+                timeframe=decision.timeframe,
+            )
+        )
+        if snapshot is None or snapshot.price is None:
+            return decision, None
+        updated_params = dict(decision.params)
+        if signal_price is None:
+            updated_params["price"] = snapshot.price
+        updated_params["price_snapshot"] = self._paper_route_price_snapshot_payload(
+            snapshot
+        )
+        if snapshot.spread is not None and "spread" not in updated_params:
+            updated_params["spread"] = snapshot.spread
+        if snapshot.bid is not None:
+            updated_params.setdefault("imbalance_bid_px", snapshot.bid)
+        if snapshot.ask is not None:
+            updated_params.setdefault("imbalance_ask_px", snapshot.ask)
+        if snapshot.spread is not None:
+            updated_params.setdefault("imbalance_spread", snapshot.spread)
+        return decision.model_copy(update={"params": updated_params}), snapshot
+
+    @staticmethod
+    def _paper_route_price_snapshot_payload(
+        snapshot: MarketSnapshot,
+    ) -> dict[str, Any]:
+        payload = _price_snapshot_payload(snapshot)
+        if snapshot.bid is not None:
+            payload["bid"] = str(snapshot.bid)
+        if snapshot.ask is not None:
+            payload["ask"] = str(snapshot.ask)
+        if snapshot.quote_as_of is not None:
+            payload["quote_as_of"] = snapshot.quote_as_of.isoformat()
+        if snapshot.quote_source is not None:
+            payload["quote_source"] = snapshot.quote_source
+        return payload
+
+    @staticmethod
+    def _paper_route_decision_requires_executable_quote(
+        decision: StrategyDecision,
+    ) -> bool:
+        if isinstance(decision.params.get("paper_route_probe_exit"), Mapping):
+            return False
+        if isinstance(decision.params.get("paper_route_target_plan"), Mapping):
+            return True
+        if isinstance(
+            decision.params.get("paper_route_target_plan_source_decision"), Mapping
+        ):
+            return True
+        if isinstance(decision.params.get("paper_route_probe"), Mapping):
+            return True
+        if isinstance(decision.params.get("strategy_signal_paper"), Mapping):
+            return True
+        mode = normalize_source_decision_mode(decision.params.get("source_decision_mode"))
+        return mode in {
+            ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
+            STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE,
+        }
+
+    def _paper_route_quote_routeability(
+        self,
+        decision: StrategyDecision,
+        snapshot: MarketSnapshot | None,
+    ) -> tuple[QuoteQualityStatus, dict[str, object]]:
+        params = decision.params
+        price_snapshot_raw = params.get("price_snapshot")
+        price_snapshot: Mapping[str, Any]
+        if isinstance(price_snapshot_raw, Mapping):
+            price_snapshot = cast(Mapping[str, Any], price_snapshot_raw)
+        else:
+            price_snapshot = {}
+
+        params_price = _optional_decimal(params.get("price"))
+        snapshot_price = snapshot.price if snapshot is not None else None
+        payload_price = _optional_decimal(price_snapshot.get("price"))
+        price = _first_decimal(params_price, snapshot_price, payload_price)
+
+        snapshot_bid = snapshot.bid if snapshot is not None else None
+        payload_bid = _optional_decimal(price_snapshot.get("bid"))
+        params_bid = _optional_decimal(params.get("imbalance_bid_px"))
+        bid = _first_decimal(snapshot_bid, payload_bid, params_bid)
+
+        snapshot_ask = snapshot.ask if snapshot is not None else None
+        payload_ask = _optional_decimal(price_snapshot.get("ask"))
+        params_ask = _optional_decimal(params.get("imbalance_ask_px"))
+        ask = _first_decimal(snapshot_ask, payload_ask, params_ask)
+
+        snapshot_spread = snapshot.spread if snapshot is not None else None
+        payload_spread = _optional_decimal(price_snapshot.get("spread"))
+        params_spread = _optional_decimal(params.get("spread"))
+        computed_spread = ask - bid if bid is not None and ask is not None else None
+        spread = _first_decimal(
+            snapshot_spread,
+            payload_spread,
+            params_spread,
+            computed_spread,
+        )
+        quote_as_of = (
+            snapshot.quote_as_of
+            if snapshot is not None and snapshot.quote_as_of is not None
+            else _parse_target_datetime(price_snapshot.get("quote_as_of"))
+            or _parse_target_datetime(price_snapshot.get("as_of"))
+        )
+        source = (
+            str(
+                (
+                    snapshot.quote_source
+                    if snapshot is not None and snapshot.quote_source is not None
+                    else price_snapshot.get("quote_source")
+                    or price_snapshot.get("source")
+                    or (snapshot.source if snapshot is not None else "")
+                )
+                or ""
+            ).strip()
+            or None
+        )
+        quality_payload: dict[str, object] = {
+            "price": price,
+            "imbalance_bid_px": bid,
+            "imbalance_ask_px": ask,
+            "spread": spread,
+            "price_snapshot": {
+                "source": source,
+                "quote_source": source,
+                "as_of": quote_as_of.isoformat() if quote_as_of is not None else None,
+                "quote_as_of": quote_as_of.isoformat()
+                if quote_as_of is not None
+                else None,
+                "price": str(price) if price is not None else None,
+                "bid": str(bid) if bid is not None else None,
+                "ask": str(ask) if ask is not None else None,
+                "spread": str(spread) if spread is not None else None,
+            },
+        }
+        status = assess_signal_quote_quality(
+            signal=SignalEnvelope(
+                event_ts=decision.event_ts,
+                symbol=decision.symbol,
+                payload=quality_payload,
+                timeframe=decision.timeframe,
+            ),
+            previous_price=None,
+            policy=QuoteQualityPolicy(
+                max_executable_spread_bps=settings.trading_signal_max_executable_spread_bps,
+                max_quote_mid_jump_bps=settings.trading_signal_max_quote_mid_jump_bps,
+                max_jump_with_wide_spread_bps=settings.trading_signal_max_jump_with_wide_spread_bps,
+                max_executable_quote_age_seconds=settings.trading_executable_quote_lookback_seconds,
+            ),
+        )
+        routeability = self._paper_route_quote_routeability_payload(
+            decision=decision,
+            status=status,
+            source=source,
+            quote_as_of=quote_as_of,
+        )
+        return status, routeability
+
+    @staticmethod
+    def _paper_route_quote_routeability_payload(
+        *,
+        decision: StrategyDecision,
+        status: QuoteQualityStatus,
+        source: str | None,
+        quote_as_of: datetime | None,
+    ) -> dict[str, object]:
+        return {
+            "schema_version": "torghut.paper-route-quote-routeability.v1",
+            "status": "accepted" if status.valid else "blocked",
+            "reason": status.reason if not status.valid else "executable_quote_ready",
+            "symbol": decision.symbol.strip().upper(),
+            "source": source,
+            "quote_as_of": quote_as_of.isoformat() if quote_as_of is not None else None,
+            "quote_age_seconds": str(status.quote_age_seconds)
+            if status.quote_age_seconds is not None
+            else None,
+            "spread_bps": str(status.spread_bps)
+            if status.spread_bps is not None
+            else None,
+            "max_spread_bps": str(settings.trading_signal_max_executable_spread_bps),
+            "max_quote_age_seconds": settings.trading_executable_quote_lookback_seconds,
+            "bid": str(status.bid) if status.bid is not None else None,
+            "ask": str(status.ask) if status.ask is not None else None,
+            "price": str(status.price) if status.price is not None else None,
+            "capability": "executable_bid_ask",
+        }
+
     def _prepare_decision_for_submission(
         self,
         *,
@@ -2419,6 +2616,25 @@ class SimpleTradingPipeline(TradingPipeline):
         decision, snapshot = self._ensure_decision_price(
             decision, signal_price=decision.params.get("price")
         )
+        if self._paper_route_decision_requires_executable_quote(decision):
+            quote_status, routeability = self._paper_route_quote_routeability(
+                decision,
+                snapshot,
+            )
+            params_update = dict(decision.params)
+            params_update["quote_routeability"] = routeability
+            decision = decision.model_copy(update={"params": params_update})
+            self.executor.update_decision_params(session, decision_row, params_update)
+            if not quote_status.valid:
+                reason = quote_status.reason or "missing_executable_quote"
+                self._record_decision_rejection(
+                    session=session,
+                    decision=decision,
+                    decision_row=decision_row,
+                    reasons=[reason],
+                    log_template="Simple-lane decision rejected strategy_id=%s symbol=%s reason=%s",
+                )
+                return None
         proof_floor = self._profitability_proof_floor(session=session)
         proof_floor_block_reason = self._proof_floor_submission_block_reason(
             proof_floor
@@ -4769,6 +4985,13 @@ def _optional_decimal(value: Any) -> Decimal | None:
         return Decimal(str(value))
     except (ArithmeticError, ValueError):
         return None
+
+
+def _first_decimal(*values: Decimal | None) -> Decimal | None:
+    for value in values:
+        if value is not None:
+            return value
+    return None
 
 
 def _min_optional_decimal(*values: Decimal | None) -> Decimal | None:

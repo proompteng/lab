@@ -189,3 +189,35 @@ class TestQuoteQuality(TestCase):
 
         self.assertFalse(status.valid)
         self.assertEqual(status.reason, 'missing_ask')
+
+    def test_assess_signal_quote_quality_rejects_stale_quote_with_metadata(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 17, 30, 24, tzinfo=timezone.utc),
+            symbol='AAPL',
+            timeframe='1Sec',
+            seq=18,
+            payload={
+                'price': Decimal('190.01'),
+                'imbalance_bid_px': Decimal('190.00'),
+                'imbalance_ask_px': Decimal('190.02'),
+                'price_snapshot': {
+                    'quote_as_of': '2026-03-27T17:29:00+00:00',
+                    'quote_source': 'ta_signals_quote',
+                },
+            },
+        )
+
+        status = assess_signal_quote_quality(
+            signal=signal,
+            previous_price=None,
+            policy=QuoteQualityPolicy(max_executable_quote_age_seconds=30),
+        )
+
+        self.assertFalse(status.valid)
+        self.assertEqual(status.reason, 'stale_quote')
+        self.assertEqual(status.source, 'ta_signals_quote')
+        self.assertEqual(status.quote_age_seconds, Decimal('84.0'))
+        self.assertEqual(status.bid, Decimal('190.00'))
+        self.assertEqual(status.ask, Decimal('190.02'))

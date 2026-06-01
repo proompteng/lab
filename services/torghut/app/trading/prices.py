@@ -31,6 +31,8 @@ class MarketSnapshot:
     source: str
     bid: Optional[Decimal] = None
     ask: Optional[Decimal] = None
+    quote_as_of: Optional[datetime] = None
+    quote_source: Optional[str] = None
 
 
 class PriceFetcher:
@@ -218,39 +220,43 @@ class ClickHousePriceFetcher(PriceFetcher):
         return _select_price(row)
 
     def fetch_market_snapshot(self, signal: SignalEnvelope) -> Optional[MarketSnapshot]:
-        if not self.url:
-            return None
         symbol = normalize_symbol(signal.symbol)
         if symbol is None:
             logger.warning("Invalid symbol for price snapshot: %s", signal.symbol)
             return None
         target_ts = signal.event_ts
-        lookback = target_ts - timedelta(minutes=self.lookback_minutes)
-        order_clause = "event_ts DESC"
-        if self._supports_seq():
-            order_clause = "event_ts DESC, seq DESC"
-        query = " ".join(
-            [
-                "SELECT event_ts, c, vwap",
-                "FROM",
-                self.table,
-                "WHERE",
-                f"symbol = {_quote_literal(symbol)}",
-                "AND",
-                f"event_ts >= {to_datetime64(lookback)}",
-                "AND",
-                f"event_ts <= {to_datetime64(target_ts)}",
-                "ORDER BY",
-                order_clause,
-                "LIMIT 1",
-                "FORMAT JSONEachRow",
-            ]
-        )
-        rows = self._query_clickhouse(query)
+        rows: list[dict[str, Any]] = []
+        if self.url:
+            lookback = target_ts - timedelta(minutes=self.lookback_minutes)
+            order_clause = "event_ts DESC"
+            if self._supports_seq():
+                order_clause = "event_ts DESC, seq DESC"
+            query = " ".join(
+                [
+                    "SELECT event_ts, c, vwap",
+                    "FROM",
+                    self.table,
+                    "WHERE",
+                    f"symbol = {_quote_literal(symbol)}",
+                    "AND",
+                    f"event_ts >= {to_datetime64(lookback)}",
+                    "AND",
+                    f"event_ts <= {to_datetime64(target_ts)}",
+                    "ORDER BY",
+                    order_clause,
+                    "LIMIT 1",
+                    "FORMAT JSONEachRow",
+                ]
+            )
+            rows = self._query_clickhouse(query)
         row = rows[0] if rows else {}
-        quote_row = self._fetch_recent_executable_quote_row(
-            symbol=symbol,
-            target_ts=target_ts,
+        quote_row = (
+            self._fetch_recent_executable_quote_row(
+                symbol=symbol,
+                target_ts=target_ts,
+            )
+            if self.url
+            else None
         )
         quote_source = "ta_signals_quote"
         if quote_row is None:
@@ -262,6 +268,8 @@ class ClickHousePriceFetcher(PriceFetcher):
         source = "ta_microbars"
         bid: Decimal | None = None
         ask: Decimal | None = None
+        quote_as_of: datetime | None = None
+        resolved_quote_source: str | None = None
         if quote_row is not None:
             quote_as_of = _snapshot_as_of(quote_row, signal.event_ts)
             bid = _optional_decimal(quote_row.get("imbalance_bid_px"))
@@ -271,6 +279,7 @@ class ClickHousePriceFetcher(PriceFetcher):
             spread = spread or quote_spread
             as_of = quote_as_of if not row else as_of
             source = f"ta_microbars+{quote_source}" if row else quote_source
+            resolved_quote_source = quote_source
         if price is None and bid is None and ask is None:
             return None
         return MarketSnapshot(
@@ -281,6 +290,8 @@ class ClickHousePriceFetcher(PriceFetcher):
             source=source,
             bid=bid,
             ask=ask,
+            quote_as_of=quote_as_of,
+            quote_source=resolved_quote_source,
         )
 
     def _fetch_recent_executable_quote_row(
