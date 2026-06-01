@@ -25,6 +25,15 @@ spec:
             - name: refresh-execution-tca
               image: registry.ide-newton.ts.net/lab/torghut@sha256:904c43b5c4a659e8f3d3c86f965afed95b65ed6387b670a509d08f3b7c4225d2
               imagePullPolicy: IfNotPresent
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                  ephemeral-storage: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 1Gi
+                  ephemeral-storage: 512Mi
               env:
                 - name: DB_DSN
                   valueFrom:
@@ -40,7 +49,7 @@ spec:
                   cd /app
                   /opt/venv/bin/python scripts/refresh_execution_tca_metrics.py \
                     --older-than-seconds 900 \
-                    --batch-size 250 \
-                    --max-batches 1 \
+                    --batch-size 100 \
+                    --max-batches 3 \
                     --apply \
                     --json

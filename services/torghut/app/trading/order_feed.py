@@ -924,7 +924,12 @@ def latest_order_event_for_execution(
     return session.execute(stmt).scalar_one_or_none()
 
 
-def link_order_events_to_execution(session: Session, execution: Execution) -> int:
+def link_order_events_to_execution(
+    session: Session,
+    execution: Execution,
+    *,
+    limit: int | None = None,
+) -> int:
     """Attach previously ingested order-feed events once their Execution exists."""
 
     clauses: list[ColumnElement[bool]] = []
@@ -947,25 +952,24 @@ def link_order_events_to_execution(session: Session, execution: Execution) -> in
     if not clauses:
         return 0
 
-    events = (
-        session.execute(
-            select(ExecutionOrderEvent)
-            .where(
-                or_(*clauses),
-                (
-                    (ExecutionOrderEvent.execution_id.is_(None))
-                    | (ExecutionOrderEvent.trade_decision_id.is_(None))
-                ),
-            )
-            .order_by(
-                ExecutionOrderEvent.event_ts.asc().nullsfirst(),
-                ExecutionOrderEvent.feed_seq.asc().nullsfirst(),
-                ExecutionOrderEvent.created_at.asc(),
-            )
+    stmt = (
+        select(ExecutionOrderEvent)
+        .where(
+            or_(*clauses),
+            (
+                (ExecutionOrderEvent.execution_id.is_(None))
+                | (ExecutionOrderEvent.trade_decision_id.is_(None))
+            ),
         )
-        .scalars()
-        .all()
+        .order_by(
+            ExecutionOrderEvent.event_ts.asc().nullsfirst(),
+            ExecutionOrderEvent.feed_seq.asc().nullsfirst(),
+            ExecutionOrderEvent.created_at.asc(),
+        )
     )
+    if limit is not None:
+        stmt = stmt.limit(max(1, min(int(limit), 5000)))
+    events = session.execute(stmt).scalars().all()
     if not events:
         return 0
 
@@ -1044,6 +1048,8 @@ def repair_order_feed_execution_links(
         "events_without_execution": 0,
     }
     for event in events:
+        if counters["events_linked"] >= bounded_limit:
+            break
         execution = _execution_for_order_event(session, event)
         if execution is None:
             counters["events_without_execution"] += 1
@@ -1052,7 +1058,12 @@ def repair_order_feed_execution_links(
             continue
         processed_execution_ids.add(execution.id)
         counters["executions_matched"] += 1
-        linked = link_order_events_to_execution(session, execution)
+        remaining_event_budget = max(1, bounded_limit - counters["events_linked"])
+        linked = link_order_events_to_execution(
+            session,
+            execution,
+            limit=remaining_event_budget,
+        )
         if linked <= 0:
             continue
         counters["executions_linked"] += 1

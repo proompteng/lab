@@ -288,6 +288,12 @@ def _error_summary(exc: Exception) -> str:
     return f"{type(exc).__name__}:{message}"
 
 
+def _reset_session_identity_map(session: Any) -> None:
+    expunge_all = getattr(session, "expunge_all", None)
+    if callable(expunge_all):
+        expunge_all()
+
+
 def _payload(
     *,
     args: argparse.Namespace,
@@ -434,8 +440,10 @@ def main() -> int:
             )
             if args.dry_run:
                 session.rollback()
+                _reset_session_identity_map(session)
                 break
             session.commit()
+            _reset_session_identity_map(session)
             if all(
                 len(rows) < batch_size
                 for rows in (events.rows, executions, tca_metrics, runtime_buckets)

@@ -15,7 +15,7 @@ spec:
   jobTemplate:
     spec:
       backoffLimit: 0
-      activeDeadlineSeconds: 600
+      activeDeadlineSeconds: 900
       template:
         spec:
           restartPolicy: Never
@@ -41,12 +41,12 @@ spec:
                     - ALL
               resources:
                 requests:
-                  cpu: 100m
-                  memory: 256Mi
+                  cpu: 250m
+                  memory: 512Mi
                   ephemeral-storage: 128Mi
                 limits:
-                  cpu: 500m
-                  memory: 1Gi
+                  cpu: "1"
+                  memory: 2Gi
                   ephemeral-storage: 512Mi
               command:
                 - /bin/bash
@@ -58,9 +58,9 @@ spec:
                   /opt/venv/bin/python scripts/journal_tigerbeetle_order_events.py \
                     --dsn-env SIM_DB_DSN \
                     --account-label TORGHUT_SIM \
-                    --batch-size 100 \
-                    --max-batches 1 \
-                    --event-scan-limit 250 \
+                    --batch-size 75 \
+                    --max-batches 4 \
+                    --event-scan-limit 300 \
                     --reconcile-limit 250 \
                     --json
               env:

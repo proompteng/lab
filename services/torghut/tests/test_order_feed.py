@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 from unittest import TestCase
 from unittest.mock import patch
@@ -1397,6 +1397,55 @@ class TestOrderFeed(TestCase):
         self.assertEqual(tca_metric.execution_id, execution_id)
         self.assertEqual(source_window.unlinked_execution_count, 0)
         self.assertEqual(source_window.unlinked_decision_count, 0)
+
+    def test_repair_order_feed_execution_links_limits_matching_execution_fanout(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            execution = self._seed_execution(session)
+            events = [
+                ExecutionOrderEvent(
+                    event_fingerprint=f"repair-fanout-fill-{index}",
+                    source_topic="torghut.trade-updates.v1",
+                    source_partition=0,
+                    source_offset=400 + index,
+                    alpaca_account_label="paper",
+                    event_ts=datetime(2026, 2, 1, 10, index, tzinfo=timezone.utc),
+                    symbol="AAPL",
+                    alpaca_order_id=execution.alpaca_order_id,
+                    client_order_id=execution.client_order_id,
+                    event_type="fill",
+                    status="filled",
+                    filled_qty=Decimal("1"),
+                    avg_fill_price=Decimal("191.25"),
+                    raw_event={"event": "fill"},
+                )
+                for index in range(5)
+            ]
+            session.add_all(events)
+            session.commit()
+
+            first_result = repair_order_feed_execution_links(
+                session,
+                account_label="paper",
+                limit=2,
+            )
+            session.commit()
+            second_result = repair_order_feed_execution_links(
+                session,
+                account_label="paper",
+                limit=2,
+            )
+            session.commit()
+            linked_count = session.scalar(
+                select(func.count(ExecutionOrderEvent.id)).where(
+                    ExecutionOrderEvent.execution_id == execution.id
+                )
+            )
+
+        self.assertEqual(first_result["events_linked"], 2)
+        self.assertEqual(second_result["events_linked"], 2)
+        self.assertEqual(linked_count, 4)
 
     def test_historical_source_window_helpers_handle_missing_and_aware_offsets(
         self,

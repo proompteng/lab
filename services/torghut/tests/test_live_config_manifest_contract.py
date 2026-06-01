@@ -1101,6 +1101,22 @@ class TestLiveConfigManifestContract(TestCase):
             "registry.ide-newton.ts.net/lab/torghut@sha256:",
             str(container.get("image")),
         )
+        resources = cast(Mapping[str, object], container.get("resources", {}))
+        self.assertEqual(
+            resources,
+            {
+                "requests": {
+                    "cpu": "100m",
+                    "memory": "256Mi",
+                    "ephemeral-storage": "128Mi",
+                },
+                "limits": {
+                    "cpu": "500m",
+                    "memory": "1Gi",
+                    "ephemeral-storage": "512Mi",
+                },
+            },
+        )
         env = {
             item.get("name"): item
             for item in cast(list[Mapping[str, object]], container.get("env", []))
@@ -1115,8 +1131,8 @@ class TestLiveConfigManifestContract(TestCase):
         args = "\n".join(str(item) for item in container.get("args", []))
         self.assertIn("scripts/refresh_execution_tca_metrics.py", args)
         self.assertIn("--older-than-seconds 900", args)
-        self.assertIn("--batch-size 250", args)
-        self.assertIn("--max-batches 1", args)
+        self.assertIn("--batch-size 100", args)
+        self.assertIn("--max-batches 3", args)
         self.assertIn("--apply", args)
 
     def test_paper_account_flatten_cronjob_can_clean_dirty_paper_proof_account(
@@ -1211,7 +1227,7 @@ class TestLiveConfigManifestContract(TestCase):
             cast(Mapping[str, object], job_spec.get("template", {})),
         )
         pod_spec = cast(Mapping[str, object], template.get("spec", {}))
-        self.assertEqual(job_spec.get("activeDeadlineSeconds"), 180)
+        self.assertEqual(job_spec.get("activeDeadlineSeconds"), 300)
         self.assertEqual(pod_spec.get("serviceAccountName"), "torghut-runtime")
         self.assertEqual(
             pod_spec.get("nodeSelector"),
@@ -1222,13 +1238,13 @@ class TestLiveConfigManifestContract(TestCase):
             resources,
             {
                 "requests": {
-                    "cpu": "50m",
-                    "memory": "128Mi",
+                    "cpu": "100m",
+                    "memory": "256Mi",
                     "ephemeral-storage": "128Mi",
                 },
                 "limits": {
-                    "cpu": "250m",
-                    "memory": "512Mi",
+                    "cpu": "500m",
+                    "memory": "1Gi",
                     "ephemeral-storage": "512Mi",
                 },
             },
@@ -1264,8 +1280,8 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("scripts/repair_order_feed_source_windows.py", args)
         self.assertIn("--dsn-env SIM_DB_DSN", args)
         self.assertIn("--account-label TORGHUT_SIM", args)
-        self.assertIn("--batch-size 250", args)
-        self.assertIn("--max-batches 1", args)
+        self.assertIn("--batch-size 100", args)
+        self.assertIn("--max-batches 4", args)
         self.assertIn("--apply", args)
         self.assertNotIn("scripts/journal_tigerbeetle_order_events.py", args)
         self.assertNotIn("--reconcile-limit 1000", args)
@@ -1309,7 +1325,7 @@ class TestLiveConfigManifestContract(TestCase):
             cast(Mapping[str, object], job_spec.get("template", {})),
         )
         pod_spec = cast(Mapping[str, object], template.get("spec", {}))
-        self.assertEqual(job_spec.get("activeDeadlineSeconds"), 600)
+        self.assertEqual(job_spec.get("activeDeadlineSeconds"), 900)
         self.assertEqual(job_spec.get("backoffLimit"), 0)
         self.assertEqual(pod_spec.get("restartPolicy"), "Never")
         self.assertEqual(pod_spec.get("serviceAccountName"), "torghut-runtime")
@@ -1324,6 +1340,22 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn(
             "registry.ide-newton.ts.net/lab/torghut@sha256:",
             str(container.get("image")),
+        )
+        resources = cast(Mapping[str, object], container.get("resources", {}))
+        self.assertEqual(
+            resources,
+            {
+                "requests": {
+                    "cpu": "250m",
+                    "memory": "512Mi",
+                    "ephemeral-storage": "128Mi",
+                },
+                "limits": {
+                    "cpu": "1",
+                    "memory": "2Gi",
+                    "ephemeral-storage": "512Mi",
+                },
+            },
         )
 
         env = {
@@ -1368,9 +1400,9 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertNotIn("scripts/repair_order_feed_source_windows.py", args)
         self.assertIn("--dsn-env SIM_DB_DSN", args)
         self.assertIn("--account-label TORGHUT_SIM", args)
-        self.assertIn("--batch-size 100", args)
-        self.assertIn("--max-batches 1", args)
-        self.assertIn("--event-scan-limit 250", args)
+        self.assertIn("--batch-size 75", args)
+        self.assertIn("--max-batches 4", args)
+        self.assertIn("--event-scan-limit 300", args)
         self.assertIn("--reconcile-limit 250", args)
         self.assertNotIn("--fail-on-degraded", args)
         self.assertIn("--json", args)

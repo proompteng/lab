@@ -407,6 +407,53 @@ class TestTigerBeetleReconcile(TestCase):
             self.assertIn(BLOCKER_UNLINKED_EVENT, payload["blockers"])
             self.assertEqual(payload["source_missing_count"], 1)
 
+    def test_reconciliation_treats_source_id_order_event_ref_as_linked(self) -> None:
+        with Session(self.engine) as session:
+            event = ExecutionOrderEvent(
+                event_fingerprint="source-id-linked-fill",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=1,
+                alpaca_account_label="paper",
+                event_ts=datetime.now(timezone.utc),
+                symbol="AAPL",
+                event_type="fill",
+                status="filled",
+                qty=Decimal("1"),
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("190.25"),
+                raw_event={"event": "fill"},
+            )
+            session.add(event)
+            session.flush()
+            session.add(
+                TigerBeetleTransferRef(
+                    cluster_id=2001,
+                    transfer_id="1001",
+                    transfer_kind="fill_post",
+                    ledger=LEDGER_USD_MICRO,
+                    code=TRANSFER_CODE_FILL_POST,
+                    amount=Decimal("190250000"),
+                    status="created",
+                    source_type="execution_order_event",
+                    source_id=str(event.id),
+                    event_fingerprint=event.event_fingerprint,
+                )
+            )
+            session.flush()
+            client = FakeTigerBeetleClient()
+            client.transfers[1001] = _transfer()
+
+            payload = reconcile_tigerbeetle_transfers(
+                session,
+                settings_obj=_settings(),
+                client=client,
+            )
+
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["unlinked_event_count"], 0)
+            self.assertNotIn(BLOCKER_UNLINKED_EVENT, payload["blockers"])
+
     def test_reconciliation_blocks_unlinked_execution_ref(self) -> None:
         with Session(self.engine) as session:
             session.add(
