@@ -2133,27 +2133,55 @@ def _load_latest_certificate_evidence(
         return []
 
     windows_by_hypothesis: dict[str, list[StrategyHypothesisMetricWindow]] = {}
-    window_rows = session.execute(
-        select(StrategyHypothesisMetricWindow)
-        .where(StrategyHypothesisMetricWindow.hypothesis_id.in_(normalized_ids))
-        .order_by(
-            StrategyHypothesisMetricWindow.window_ended_at.desc().nullslast(),
-            StrategyHypothesisMetricWindow.created_at.desc(),
-        )
-    ).scalars()
-    for row in window_rows:
-        windows_by_hypothesis.setdefault(row.hypothesis_id, []).append(row)
+    try:
+        _maybe_set_runtime_ledger_status_statement_timeout(session)
+        window_rows = session.execute(
+            select(StrategyHypothesisMetricWindow)
+            .where(StrategyHypothesisMetricWindow.hypothesis_id.in_(normalized_ids))
+            .order_by(
+                StrategyHypothesisMetricWindow.window_ended_at.desc().nullslast(),
+                StrategyHypothesisMetricWindow.created_at.desc(),
+            )
+        ).scalars()
+        for row in window_rows:
+            windows_by_hypothesis.setdefault(row.hypothesis_id, []).append(row)
+    except SQLAlchemyError as exc:
+        logger.warning("Metric-window certificate evidence unavailable: %s", exc)
+        _rollback_runtime_ledger_status_session(session)
+        return [
+            {
+                "hypothesis_id": hypothesis_id,
+                "metric_window": None,
+                "promotion_decision": None,
+                "runtime_ledger_bucket": None,
+            }
+            for hypothesis_id in normalized_ids
+        ]
 
     latest_promotions: dict[str, list[StrategyPromotionDecision]] = {}
-    promotion_rows = session.execute(
-        select(StrategyPromotionDecision)
-        .where(
-            StrategyPromotionDecision.hypothesis_id.in_(normalized_ids),
-        )
-        .order_by(StrategyPromotionDecision.created_at.desc())
-    ).scalars()
-    for row in promotion_rows:
-        latest_promotions.setdefault(row.hypothesis_id, []).append(row)
+    try:
+        _maybe_set_runtime_ledger_status_statement_timeout(session)
+        promotion_rows = session.execute(
+            select(StrategyPromotionDecision)
+            .where(
+                StrategyPromotionDecision.hypothesis_id.in_(normalized_ids),
+            )
+            .order_by(StrategyPromotionDecision.created_at.desc())
+        ).scalars()
+        for row in promotion_rows:
+            latest_promotions.setdefault(row.hypothesis_id, []).append(row)
+    except SQLAlchemyError as exc:
+        logger.warning("Promotion-decision certificate evidence unavailable: %s", exc)
+        _rollback_runtime_ledger_status_session(session)
+        return [
+            {
+                "hypothesis_id": hypothesis_id,
+                "metric_window": None,
+                "promotion_decision": None,
+                "runtime_ledger_bucket": None,
+            }
+            for hypothesis_id in normalized_ids
+        ]
 
     latest_runtime_ledgers: dict[str, list[StrategyRuntimeLedgerBucket]] = {}
     try:

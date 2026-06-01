@@ -599,6 +599,101 @@ class TestSubmissionCouncil(TestCase):
         self.assertEqual(summary, {"by_hypothesis": {}, "runtime_ledger_buckets": []})
         self.assertEqual(fake_session.rollback_count, 1)
 
+    def test_load_latest_certificate_evidence_fails_closed_on_window_timeout(
+        self,
+    ) -> None:
+        fake_session = _FailingRuntimeLedgerStatusSession()
+
+        evidence = _load_latest_certificate_evidence(
+            fake_session,  # type: ignore[arg-type]
+            hypothesis_ids=["H-PAIRS-01"],
+        )
+
+        self.assertEqual(fake_session.rollback_count, 1)
+        self.assertEqual(
+            evidence,
+            [
+                {
+                    "hypothesis_id": "H-PAIRS-01",
+                    "metric_window": None,
+                    "promotion_decision": None,
+                    "runtime_ledger_bucket": None,
+                }
+            ],
+        )
+
+    def test_load_latest_certificate_evidence_fails_closed_on_promotion_timeout(
+        self,
+    ) -> None:
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        now = datetime(2026, 6, 1, tzinfo=timezone.utc)
+
+        with session_local() as session:
+            session.add(
+                StrategyHypothesisMetricWindow(
+                    run_id="runtime-proof-1",
+                    candidate_id="cand-runtime",
+                    hypothesis_id="H-PAIRS-01",
+                    observed_stage="live",
+                    window_started_at=now - timedelta(minutes=15),
+                    window_ended_at=now,
+                    market_session_count=1,
+                    decision_count=1,
+                    trade_count=1,
+                    order_count=1,
+                    post_cost_expectancy_bps="1.0",
+                    continuity_ok=True,
+                    drift_ok=True,
+                    dependency_quorum_decision="allow",
+                    capital_stage="shadow",
+                    payload_json={},
+                )
+            )
+            session.commit()
+
+            execute = session.execute
+
+            def fail_promotion_decision_query(
+                statement: object, *args: object, **kwargs: object
+            ) -> object:
+                if "strategy_promotion_decisions" in str(statement):
+                    raise SQLAlchemyError("statement timeout")
+                return execute(statement, *args, **kwargs)
+
+            with (
+                patch.object(
+                    session,
+                    "execute",
+                    side_effect=fail_promotion_decision_query,
+                ),
+                patch.object(session, "rollback", wraps=session.rollback) as rollback,
+            ):
+                evidence = _load_latest_certificate_evidence(
+                    session,
+                    hypothesis_ids=["H-PAIRS-01"],
+                    now=now,
+                )
+
+        self.assertEqual(rollback.call_count, 1)
+        self.assertEqual(
+            evidence,
+            [
+                {
+                    "hypothesis_id": "H-PAIRS-01",
+                    "metric_window": None,
+                    "promotion_decision": None,
+                    "runtime_ledger_bucket": None,
+                }
+            ],
+        )
+
     def test_attach_lineage_refs_fails_closed_on_query_timeout(self) -> None:
         fake_session = _FailingRuntimeLedgerStatusSession()
 
