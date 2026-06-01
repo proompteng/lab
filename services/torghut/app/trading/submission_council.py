@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -12,7 +13,8 @@ from typing import Any, cast
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from ..config import settings
@@ -64,6 +66,9 @@ from .runtime_strategy_resolution import (
 )
 from .tca import build_tca_gate_inputs
 
+
+logger = logging.getLogger(__name__)
+
 _CAPITAL_STAGE_ORDER = (
     "shadow",
     "0.10x canary",
@@ -102,12 +107,38 @@ _AUTORESEARCH_PORTFOLIO_READY_STATUSES = (
 )
 _RUNTIME_LEDGER_REPAIR_SCAN_LIMIT = 256
 _RUNTIME_LEDGER_REPAIR_CANDIDATE_LIMIT = 8
+_RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_MS = 750
 _RUNTIME_WINDOW_IMPORT_CONTINUITY_READY_STATES = frozenset(
     {
         "signals_present",
         "expected_market_closed_staleness",
     }
 )
+
+
+def _maybe_set_runtime_ledger_status_statement_timeout(session: Session) -> None:
+    get_bind = getattr(session, "get_bind", None)
+    if callable(get_bind):
+        try:
+            bind = get_bind()
+            dialect = getattr(getattr(bind, "dialect", None), "name", "")
+            if dialect != "postgresql":
+                return
+        except Exception:
+            pass
+    session.execute(
+        text(f"SET LOCAL statement_timeout = {_RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_MS}")
+    )
+
+
+def _rollback_runtime_ledger_status_session(session: Session) -> None:
+    rollback = getattr(session, "rollback", None)
+    if not callable(rollback):
+        return
+    try:
+        rollback()
+    except SQLAlchemyError:
+        logger.warning("Failed to roll back runtime-ledger status session")
 
 
 def _runtime_window_import_continuity_signal(state: object) -> tuple[str, str, str]:
@@ -1064,29 +1095,36 @@ def _load_latest_runtime_ledger_summary(
 
     rows_by_hypothesis: dict[str, int] = {}
     retained_rows: list[dict[str, object]] = []
-    rows = session.execute(
-        select(StrategyRuntimeLedgerBucket)
-        .where(StrategyRuntimeLedgerBucket.hypothesis_id.in_(normalized_ids))
-        .order_by(
-            StrategyRuntimeLedgerBucket.bucket_ended_at.desc(),
-            StrategyRuntimeLedgerBucket.created_at.desc(),
-        )
-    ).scalars()
-    for row in rows:
-        payload = _runtime_ledger_bucket_payload(row)
-        retained_count = rows_by_hypothesis.get(row.hypothesis_id, 0)
-        if retained_count < 8:
-            retained_rows.append(payload)
-            rows_by_hypothesis[row.hypothesis_id] = retained_count + 1
+    try:
+        _maybe_set_runtime_ledger_status_statement_timeout(session)
+        rows = session.execute(
+            select(StrategyRuntimeLedgerBucket)
+            .where(StrategyRuntimeLedgerBucket.hypothesis_id.in_(normalized_ids))
+            .order_by(
+                StrategyRuntimeLedgerBucket.bucket_ended_at.desc(),
+                StrategyRuntimeLedgerBucket.created_at.desc(),
+            )
+            .limit(_RUNTIME_LEDGER_REPAIR_SCAN_LIMIT)
+        ).scalars()
+        for row in rows:
+            payload = _runtime_ledger_bucket_payload(row)
+            retained_count = rows_by_hypothesis.get(row.hypothesis_id, 0)
+            if retained_count < 8:
+                retained_rows.append(payload)
+                rows_by_hypothesis[row.hypothesis_id] = retained_count + 1
 
-        current = by_hypothesis.get(row.hypothesis_id)
-        if current is None:
-            by_hypothesis[row.hypothesis_id] = payload
-            continue
-        current_is_live = str(current.get("observed_stage") or "").strip() == "live"
-        row_is_live = str(payload.get("observed_stage") or "").strip() == "live"
-        if row_is_live and not current_is_live:
-            by_hypothesis[row.hypothesis_id] = payload
+            current = by_hypothesis.get(row.hypothesis_id)
+            if current is None:
+                by_hypothesis[row.hypothesis_id] = payload
+                continue
+            current_is_live = str(current.get("observed_stage") or "").strip() == "live"
+            row_is_live = str(payload.get("observed_stage") or "").strip() == "live"
+            if row_is_live and not current_is_live:
+                by_hypothesis[row.hypothesis_id] = payload
+    except SQLAlchemyError as exc:
+        logger.warning("Runtime ledger latest summary unavailable: %s", exc)
+        _rollback_runtime_ledger_status_session(session)
+        return {"by_hypothesis": by_hypothesis, "runtime_ledger_buckets": []}
     return {"by_hypothesis": by_hypothesis, "runtime_ledger_buckets": retained_rows}
 
 
@@ -1721,19 +1759,25 @@ def _load_runtime_ledger_repair_candidates(
     if not hypothesis_ids or limit <= 0:
         return []
 
-    rows = (
-        session.execute(
-            select(StrategyRuntimeLedgerBucket)
-            .where(StrategyRuntimeLedgerBucket.hypothesis_id.in_(hypothesis_ids))
-            .order_by(
-                StrategyRuntimeLedgerBucket.bucket_ended_at.desc(),
-                StrategyRuntimeLedgerBucket.created_at.desc(),
+    try:
+        _maybe_set_runtime_ledger_status_statement_timeout(session)
+        rows = (
+            session.execute(
+                select(StrategyRuntimeLedgerBucket)
+                .where(StrategyRuntimeLedgerBucket.hypothesis_id.in_(hypothesis_ids))
+                .order_by(
+                    StrategyRuntimeLedgerBucket.bucket_ended_at.desc(),
+                    StrategyRuntimeLedgerBucket.created_at.desc(),
+                )
+                .limit(_RUNTIME_LEDGER_REPAIR_SCAN_LIMIT)
             )
-            .limit(_RUNTIME_LEDGER_REPAIR_SCAN_LIMIT)
+            .scalars()
+            .all()
         )
-        .scalars()
-        .all()
-    )
+    except SQLAlchemyError as exc:
+        logger.warning("Runtime ledger repair candidates unavailable: %s", exc)
+        _rollback_runtime_ledger_status_session(session)
+        return []
 
     candidates: list[dict[str, object]] = []
     seen: set[tuple[str, str, str, str, str]] = set()
@@ -2042,16 +2086,23 @@ def _load_latest_certificate_evidence(
         latest_promotions.setdefault(row.hypothesis_id, []).append(row)
 
     latest_runtime_ledgers: dict[str, list[StrategyRuntimeLedgerBucket]] = {}
-    runtime_ledger_rows = session.execute(
-        select(StrategyRuntimeLedgerBucket)
-        .where(StrategyRuntimeLedgerBucket.hypothesis_id.in_(normalized_ids))
-        .order_by(
-            StrategyRuntimeLedgerBucket.bucket_ended_at.desc(),
-            StrategyRuntimeLedgerBucket.created_at.desc(),
-        )
-    ).scalars()
-    for row in runtime_ledger_rows:
-        latest_runtime_ledgers.setdefault(row.hypothesis_id, []).append(row)
+    try:
+        _maybe_set_runtime_ledger_status_statement_timeout(session)
+        runtime_ledger_rows = session.execute(
+            select(StrategyRuntimeLedgerBucket)
+            .where(StrategyRuntimeLedgerBucket.hypothesis_id.in_(normalized_ids))
+            .order_by(
+                StrategyRuntimeLedgerBucket.bucket_ended_at.desc(),
+                StrategyRuntimeLedgerBucket.created_at.desc(),
+            )
+            .limit(_RUNTIME_LEDGER_REPAIR_SCAN_LIMIT)
+        ).scalars()
+        for row in runtime_ledger_rows:
+            latest_runtime_ledgers.setdefault(row.hypothesis_id, []).append(row)
+    except SQLAlchemyError as exc:
+        logger.warning("Runtime ledger certificate evidence unavailable: %s", exc)
+        _rollback_runtime_ledger_status_session(session)
+        latest_runtime_ledgers = {}
 
     evidence: list[dict[str, object]] = []
     for hypothesis_id in normalized_ids:

@@ -501,9 +501,7 @@ class TestPortfolioSizing(TestCase):
 
         self.assertEqual(len(results), 1)
         self.assertFalse(results[0].approved)
-        self.assertIn(
-            ALLOCATOR_STRATEGY_FACTORY_OBSERVE_ONLY, results[0].reason_codes
-        )
+        self.assertIn(ALLOCATOR_STRATEGY_FACTORY_OBSERVE_ONLY, results[0].reason_codes)
 
     def test_allocator_blocks_strategy_factory_baseline_fail_candidates(self) -> None:
         allocator = PortfolioAllocator(
@@ -557,9 +555,7 @@ class TestPortfolioSizing(TestCase):
 
         self.assertEqual(len(results), 1)
         self.assertFalse(results[0].approved)
-        self.assertIn(
-            ALLOCATOR_STRATEGY_FACTORY_BASELINE_FAIL, results[0].reason_codes
-        )
+        self.assertIn(ALLOCATOR_STRATEGY_FACTORY_BASELINE_FAIL, results[0].reason_codes)
 
     def test_allocator_clips_by_strategy_budget(self) -> None:
         allocator = PortfolioAllocator(
@@ -1028,6 +1024,7 @@ class TestPortfolioSizing(TestCase):
     def test_sell_inventory_clip_below_one_share_reports_inventory_reason(self) -> None:
         original_allow_shorts = config.settings.trading_allow_shorts
         config.settings.trading_allow_shorts = False
+        config.settings.trading_fractional_equities_enabled = False
         try:
             sizer = PortfolioSizer(
                 PortfolioSizingConfig(

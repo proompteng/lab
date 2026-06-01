@@ -8,6 +8,7 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from sqlalchemy import create_engine
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -34,8 +35,11 @@ from app.trading.submission_council import (
     _load_latest_certificate_evidence,
     _load_latest_runtime_ledger_summary,
     _load_profit_promotion_table_counts,
+    _load_runtime_ledger_repair_candidates,
     _merge_runtime_certificate_evidence,
+    _maybe_set_runtime_ledger_status_statement_timeout,
     _metric_window_activity_reason_codes,
+    _rollback_runtime_ledger_status_session,
     _runtime_ledger_repair_reason_codes,
     _refresh_runtime_summary_totals,
     _runtime_ledger_paper_probation_import_plan,
@@ -60,6 +64,42 @@ class _FakeQuantHealthResponse:
 
     def read(self) -> bytes:
         return json.dumps(self._payload).encode("utf-8")
+
+
+class _FailingRuntimeLedgerStatusSession:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+        self.rollback_count = 0
+
+    def execute(self, statement: object) -> object:
+        self.calls.append(str(statement))
+        raise SQLAlchemyError("statement timeout")
+
+    def rollback(self) -> None:
+        self.rollback_count += 1
+
+
+class _RaisingBindRuntimeLedgerStatusSession:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def get_bind(self) -> object:
+        raise RuntimeError("fake bind unavailable")
+
+    def execute(self, statement: object) -> object:
+        self.calls.append(str(statement))
+        return object()
+
+
+class _NoRollbackRuntimeLedgerStatusSession:
+    def execute(self, statement: object) -> object:
+        raise SQLAlchemyError(f"statement timeout: {statement}")
+
+
+class _RollbackFailingRuntimeLedgerStatusSession(_FailingRuntimeLedgerStatusSession):
+    def rollback(self) -> None:
+        self.rollback_count += 1
+        raise SQLAlchemyError("rollback failed")
 
 
 class TestSubmissionCouncil(TestCase):
@@ -543,6 +583,72 @@ class TestSubmissionCouncil(TestCase):
         self.assertEqual(cont["execution_policy_hash_counts"], {"new-policy": 1})
         self.assertIsNone(rev["post_cost_expectancy_bps"])
         self.assertGreaterEqual(len(summary["runtime_ledger_buckets"]), 4)
+
+    def test_load_latest_runtime_ledger_summary_fails_closed_on_query_timeout(
+        self,
+    ) -> None:
+        fake_session = _FailingRuntimeLedgerStatusSession()
+
+        summary = _load_latest_runtime_ledger_summary(
+            fake_session,  # type: ignore[arg-type]
+            hypothesis_ids=["H-PAIRS-01"],
+        )
+
+        self.assertEqual(summary, {"by_hypothesis": {}, "runtime_ledger_buckets": []})
+        self.assertEqual(fake_session.rollback_count, 1)
+
+    def test_runtime_ledger_status_timeout_helper_applies_timeout_when_bind_lookup_fails(
+        self,
+    ) -> None:
+        fake_session = _RaisingBindRuntimeLedgerStatusSession()
+
+        _maybe_set_runtime_ledger_status_statement_timeout(
+            fake_session,  # type: ignore[arg-type]
+        )
+
+        self.assertEqual(
+            fake_session.calls,
+            ["SET LOCAL statement_timeout = 750"],
+        )
+
+    def test_runtime_ledger_status_rollback_helper_ignores_missing_rollback(
+        self,
+    ) -> None:
+        _rollback_runtime_ledger_status_session(
+            _NoRollbackRuntimeLedgerStatusSession(),  # type: ignore[arg-type]
+        )
+
+    def test_load_latest_runtime_ledger_summary_fails_closed_when_rollback_fails(
+        self,
+    ) -> None:
+        fake_session = _RollbackFailingRuntimeLedgerStatusSession()
+
+        summary = _load_latest_runtime_ledger_summary(
+            fake_session,  # type: ignore[arg-type]
+            hypothesis_ids=["H-PAIRS-01"],
+        )
+
+        self.assertEqual(summary, {"by_hypothesis": {}, "runtime_ledger_buckets": []})
+        self.assertEqual(fake_session.rollback_count, 1)
+
+    def test_load_runtime_ledger_repair_candidates_fails_closed_on_query_timeout(
+        self,
+    ) -> None:
+        fake_session = _FailingRuntimeLedgerStatusSession()
+
+        candidates = _load_runtime_ledger_repair_candidates(
+            fake_session,  # type: ignore[arg-type]
+            registry_items=[
+                {
+                    "hypothesis_id": "H-PAIRS-01",
+                    "candidate_id": "candidate",
+                    "strategy_family": "microbar_cross_sectional_pairs",
+                }
+            ],
+        )
+
+        self.assertEqual(candidates, [])
+        self.assertEqual(fake_session.rollback_count, 1)
 
     def test_build_live_submission_gate_payload_surfaces_runtime_ledger_repair_candidates(
         self,
@@ -2710,6 +2816,82 @@ class TestSubmissionCouncil(TestCase):
         self.assertEqual(
             runtime_ledger_bucket["strategy_family"], "intraday_continuation"
         )
+
+    def test_load_latest_certificate_evidence_fails_closed_when_runtime_ledger_scan_times_out(
+        self,
+    ) -> None:
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        now = datetime.now(timezone.utc)
+
+        with session_local() as session:
+            session.add(
+                StrategyHypothesisMetricWindow(
+                    run_id="runtime-proof-1",
+                    candidate_id="cand-runtime",
+                    hypothesis_id="H-CONT-01",
+                    observed_stage="live",
+                    window_started_at=now,
+                    window_ended_at=now,
+                    market_session_count=3,
+                    decision_count=42,
+                    trade_count=42,
+                    order_count=42,
+                    avg_abs_slippage_bps="4.2",
+                    slippage_budget_bps="12",
+                    post_cost_expectancy_bps="8.5",
+                    continuity_ok=True,
+                    drift_ok=True,
+                    dependency_quorum_decision="allow",
+                    capital_stage="0.10x canary",
+                    payload_json={
+                        "post_cost_promotion_sample_count": 42,
+                        "post_cost_basis_counts": {
+                            "realized_strategy_pnl_after_explicit_costs": 42
+                        },
+                        "post_cost_expectancy_aggregation": "runtime_ledger_notional_weighted",
+                        "runtime_ledger_notional_weighted_sample_count": 42,
+                    },
+                )
+            )
+            session.add(
+                StrategyPromotionDecision(
+                    run_id="runtime-proof-1",
+                    candidate_id="cand-runtime",
+                    hypothesis_id="H-CONT-01",
+                    promotion_target="live",
+                    state="0.10x canary",
+                    allowed=True,
+                    reason_summary="runtime_evidence_thresholds_satisfied",
+                )
+            )
+            session.add(
+                self._runtime_ledger_bucket_row(
+                    run_id="runtime-proof-1",
+                    candidate_id="cand-runtime",
+                    hypothesis_id="H-CONT-01",
+                    bucket_at=now,
+                )
+            )
+            session.commit()
+
+            with patch(
+                "app.trading.submission_council._maybe_set_runtime_ledger_status_statement_timeout",
+                side_effect=SQLAlchemyError("statement timeout"),
+            ):
+                evidence = _load_latest_certificate_evidence(
+                    session,
+                    hypothesis_ids=["H-CONT-01"],
+                )
+
+        self.assertEqual(len(evidence), 1)
+        self.assertIsNone(evidence[0]["runtime_ledger_bucket"])
 
     def test_hypothesis_runtime_summary_counts_allowed_paper_runtime_readiness_without_capital_promotion(
         self,
