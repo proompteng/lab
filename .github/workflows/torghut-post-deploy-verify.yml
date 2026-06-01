@@ -271,11 +271,38 @@ jobs:
             local label="$3"
             local status
 
-            status="$(fetch_json "${url}" "${output_path}" "${label}")"
-            if ! [[ "${status}" =~ ^2[0-9][0-9]$ ]]; then
-              echo "${label} returned HTTP ${status}; expected 2xx" >&2
-              return 1
-            fi
+            for attempt in $(seq 1 18); do
+              status="$(
+                curl -sS --connect-timeout 10 --max-time 90 \
+                  -o "${output_path}" -w '%{http_code}' "${url}" || true
+              )"
+              if [[ "${status}" =~ ^2[0-9][0-9]$ ]] &&
+                python3 -m json.tool "${output_path}" >/dev/null 2>&1; then
+                return 0
+              fi
+
+              if [ "${attempt}" -eq 18 ]; then
+                if [[ "${status}" =~ ^[0-9]{3}$ ]] &&
+                  [ "${status}" != '000' ] &&
+                  python3 -m json.tool "${output_path}" >/dev/null 2>&1; then
+                  echo "${label} returned HTTP ${status}; expected 2xx" >&2
+                else
+                  echo "${label} did not return a parseable JSON HTTP 2xx response; status=${status:-empty}" >&2
+                fi
+                head -c 1000 "${output_path}" >&2 || true
+                echo >&2
+                return 1
+              fi
+
+              if [[ "${status}" =~ ^[0-9]{3}$ ]] &&
+                [ "${status}" != '000' ] &&
+                python3 -m json.tool "${output_path}" >/dev/null 2>&1; then
+                echo "Attempt ${attempt}: ${label} returned HTTP ${status}; expected 2xx; retrying" >&2
+              else
+                echo "Attempt ${attempt}: ${label} status=${status:-empty} not usable JSON 2xx yet; retrying" >&2
+              fi
+              sleep 5
+            done
           }
 
           TORGHUT_READYZ_HTTP_STATUS="$(

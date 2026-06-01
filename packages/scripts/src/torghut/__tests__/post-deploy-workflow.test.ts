@@ -62,6 +62,12 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).not.toContain('curl -fsS http://torghut.torghut.svc.cluster.local/trading/status')
   })
 
+  it('retries parseable non-2xx deploy evidence before failing', () => {
+    expect(workflow).toContain('Attempt ${attempt}: ${label} returned HTTP ${status}; expected 2xx; retrying')
+    expect(workflow).toContain('did not return a parseable JSON HTTP 2xx response')
+    expect(workflow).not.toContain('status="$(fetch_json "${url}" "${output_path}" "${label}")"')
+  })
+
   it('verifies torghut-sim paper-route target mirroring after deploy', () => {
     expect(workflow).toContain('Knative Service torghut-sim is not Ready')
     expect(workflow).toContain('http://torghut.torghut.svc.cluster.local/trading/paper-route-evidence')
