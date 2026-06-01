@@ -1871,6 +1871,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
                 "evidence_collection_only": False,
                 "evidence_collection_ok": False,
                 "canary_collection_authorized": False,
+                "promotion_allowed": False,
                 "capital_promotion_allowed": False,
                 "final_promotion_allowed": False,
                 "min_runtime_ledger_net_pnl_after_costs": "10000",
