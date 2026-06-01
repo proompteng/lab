@@ -1921,6 +1921,28 @@ class TestOrderFeed(TestCase):
         self.assertEqual(source_window.malformed_count, 1)
         self.assertEqual(source_window.dropped_count, 1)
 
+    def test_missing_trade_update_payload_is_durably_classified(self) -> None:
+        record = FakeRecord(value=b'{"channel":"orders","payload":{"event":"fill"}}', offset=18)
+        consumer = FakeConsumer([record])
+        ingestor = OrderFeedIngestor(consumer_factory=lambda: consumer)
+
+        with Session(self.engine) as session:
+            counters = ingestor.ingest_once(session)
+            cursor = session.execute(select(OrderFeedConsumerCursor)).scalar_one()
+            source_window = session.execute(select(OrderFeedSourceWindow)).scalar_one()
+            event_count = len(session.execute(select(ExecutionOrderEvent)).all())
+
+        self.assertEqual(counters["classified_drops_total"], 1)
+        self.assertEqual(counters["missing_payload_total"], 1)
+        self.assertEqual(counters["cursor_updates_total"], 1)
+        self.assertEqual(consumer.commit_calls, 1)
+        self.assertEqual(event_count, 0)
+        self.assertEqual(cursor.high_watermark_offset, 18)
+        self.assertEqual(source_window.status, "dropped")
+        self.assertEqual(source_window.status_reason, "missing_trade_update_payload")
+        self.assertEqual(source_window.missing_payload_count, 1)
+        self.assertEqual(source_window.dropped_count, 1)
+
     def test_out_of_scope_account_is_durably_classified(self) -> None:
         record = FakeRecord(
             value=(
@@ -2224,6 +2246,15 @@ class TestOrderFeed(TestCase):
                 .scalars()
                 .all()
             )
+            source_windows = (
+                session.execute(
+                    select(OrderFeedSourceWindow).order_by(
+                        OrderFeedSourceWindow.start_offset.asc()
+                    )
+                )
+                .scalars()
+                .all()
+            )
 
         self.assertEqual(counters["events_persisted_total"], 2)
         self.assertEqual(counters["cursor_updates_total"], 2)
@@ -2248,6 +2279,12 @@ class TestOrderFeed(TestCase):
         self.assertEqual(
             [event.filled_notional_delta for event in events],
             [Decimal("190.20000000"), Decimal("190.40000000")],
+        )
+        self.assertEqual([window.start_offset for window in source_windows], [7, 10])
+        self.assertEqual(source_windows[1].gap_count, 1)
+        self.assertEqual(
+            source_windows[1].gap_ranges,
+            [{"start_offset": 8, "end_offset": 9}],
         )
 
     def test_fill_delta_fields_rejects_fill_without_order_identity(self) -> None:
@@ -2623,6 +2660,11 @@ class TestOrderFeed(TestCase):
             )
             counters = duplicate_ingestor.ingest_once(session)
             cursor = session.execute(select(OrderFeedConsumerCursor)).scalar_one()
+            duplicate_source_window = session.execute(
+                select(OrderFeedSourceWindow).where(
+                    OrderFeedSourceWindow.status == "duplicate"
+                )
+            ).scalar_one()
 
         self.assertEqual(counters["duplicates_total"], 1)
         self.assertEqual(counters["cursor_updates_total"], 1)
@@ -2630,6 +2672,12 @@ class TestOrderFeed(TestCase):
         self.assertEqual(cursor.high_watermark_offset, 11)
         self.assertEqual(cursor.processed_event_count, 2)
         self.assertEqual(cursor.duplicate_event_count, 1)
+        self.assertEqual(duplicate_source_window.duplicate_count, 1)
+        self.assertEqual(duplicate_source_window.consumed_count, 1)
+        self.assertEqual(
+            duplicate_source_window.payload_json["classification_counts"],
+            {"duplicate": 1},
+        )
 
     def test_manual_assignment_skips_missing_topic_metadata_then_fails_closed(
         self,
