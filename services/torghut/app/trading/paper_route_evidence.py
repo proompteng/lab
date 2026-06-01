@@ -73,6 +73,8 @@ PAPER_ROUTE_ACCOUNT_START_SNAPSHOT_STALE_SECONDS = 900
 PAPER_ROUTE_ACCOUNT_START_SNAPSHOT_AFTER_START_GRACE_SECONDS = 300
 PAPER_ROUTE_ACCOUNT_PRE_SESSION_READINESS_SECONDS = 900
 PAPER_ROUTE_ACCOUNT_PRE_SESSION_SNAPSHOT_STALE_SECONDS = 900
+PAPER_ROUTE_ACCOUNT_CLOSE_SNAPSHOT_STALE_SECONDS = 3600
+HPAIRS_REQUIRED_PAPER_ROUTE_SYMBOLS = ("AAPL", "AMZN")
 PAPER_ROUTE_TARGET_PLAN_ENDPOINT = "/trading/paper-route-target-plan"
 DEFAULT_TORGHUT_LIVE_SERVICE_BASE_URL = "http://torghut.torghut.svc.cluster.local"
 DEFAULT_TORGHUT_PAPER_ROUTE_SERVICE_BASE_URL = (
@@ -753,10 +755,20 @@ def _target_probe_symbols(
     return _paper_route_probe_symbols(probe)
 
 
+def _target_is_hpairs(target: Mapping[str, object]) -> bool:
+    for key in ("hypothesis_id", "source_manifest_ref"):
+        value = (_safe_text(target.get(key)) or "").lower()
+        if "h-pairs" in value or "h_pairs" in value:
+            return True
+    return False
+
+
 def _target_requires_balanced_pair_probe(target: Mapping[str, object]) -> bool:
     explicit = _safe_text(target.get("paper_route_probe_pair_balance_required"))
     if explicit is not None:
         return explicit.lower() in {"1", "true", "yes", "on"}
+    if _target_is_hpairs(target):
+        return True
     for key in (
         "strategy_family",
         "strategy_name",
@@ -819,6 +831,21 @@ def _pair_probe_balance_state(actions: Mapping[str, str]) -> str:
     if buy_count > 0 and buy_count == sell_count:
         return "balanced"
     return "imbalanced"
+
+
+def _hpairs_probe_symbol_blockers(
+    target: Mapping[str, object],
+    symbols: Sequence[str],
+) -> list[str]:
+    if not _target_is_hpairs(target):
+        return []
+    symbol_set = {str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()}
+    missing = [symbol for symbol in HPAIRS_REQUIRED_PAPER_ROUTE_SYMBOLS if symbol not in symbol_set]
+    blockers: list[str] = []
+    if missing:
+        blockers.append("paper_route_hpairs_aapl_amzn_legs_missing")
+        blockers.extend(f"paper_route_hpairs_{symbol.lower()}_leg_missing" for symbol in missing)
+    return blockers
 
 
 def _target_allows_strategy_universe_probe_fallback(
@@ -1363,6 +1390,14 @@ def _next_paper_route_runtime_window_targets(
         "promotion_allowed": False,
         "final_promotion_authorized": False,
         "promotion_gate": "runtime_ledger_live_or_live_paper_required",
+        "flatten_handoff": {
+            "runner": "scripts/flatten_paper_account_positions.py",
+            "required_after": "paper_route_session_window_closed",
+            "required_for": "zero_open_position_evidence",
+            "persist_snapshot_flag": "--persist-snapshot",
+            "apply_flag_required_for_mutation": "--apply",
+        },
+        "zero_open_position_evidence_required": True,
     }
     strategy_rows_by_name = _strategy_rows_by_name_for_targets(session, targets)
     planned_targets: list[dict[str, object]] = []
@@ -1465,11 +1500,16 @@ def _next_paper_route_runtime_window_targets(
             if pair_balance_required
             else "not_required"
         )
+        hpairs_symbol_blockers = _hpairs_probe_symbol_blockers(
+            pair_balance_target,
+            target_probe_symbols,
+        )
         target_probe_ready = (
             bool(probe.get("configured_enabled"))
             and _safe_decimal(next_notional) > 0
             and bool(target_probe_symbols)
             and pair_balance_state != "imbalanced"
+            and not hpairs_symbol_blockers
         )
         source_manifest_ref = _safe_text(target.get("source_manifest_ref"))
         missing = [
@@ -1494,6 +1534,7 @@ def _next_paper_route_runtime_window_targets(
                     reasons.append("paper_route_probe_symbol_missing")
                 if pair_balance_state == "imbalanced":
                     reasons.append("paper_route_probe_pair_imbalanced")
+                reasons.extend(hpairs_symbol_blockers)
             skipped_targets.append(
                 {
                     "hypothesis_id": hypothesis_id,
@@ -1619,6 +1660,7 @@ def _next_paper_route_runtime_window_targets(
                     if pair_balance_state == "imbalanced"
                     else []
                 ),
+                *hpairs_symbol_blockers,
             ]
         )
         evidence_collection_ok = not evidence_collection_blockers
@@ -1665,6 +1707,12 @@ def _next_paper_route_runtime_window_targets(
             "paper_route_probe_symbol_actions": pair_symbol_actions,
             "paper_route_probe_pair_balance_required": pair_balance_required,
             "paper_route_probe_pair_balance_state": pair_balance_state,
+            "paper_route_hpairs_required_symbols": (
+                list(HPAIRS_REQUIRED_PAPER_ROUTE_SYMBOLS)
+                if _target_is_hpairs(pair_balance_target)
+                else []
+            ),
+            "paper_route_hpairs_symbol_blockers": hpairs_symbol_blockers,
             "paper_route_probe_strategy_scope_applied": bool(strategy_universe_symbols),
             "paper_route_probe_strategy_universe_fallback": (
                 strategy_universe_probe_fallback
@@ -2002,6 +2050,125 @@ def _unavailable_source_activity(
     }
 
 
+def _order_event_signed_filled_qty(row: ExecutionOrderEvent) -> Decimal:
+    qty = _safe_decimal(row.filled_qty_delta)
+    if qty == 0:
+        qty = _safe_decimal(row.filled_qty)
+    if qty == 0:
+        qty = _safe_decimal(row.qty)
+    side = ""
+    raw_event = _as_mapping(row.raw_event)
+    for key in ("side", "order_side"):
+        if text := _safe_text(raw_event.get(key)):
+            side = text.lower()
+            break
+    if not side:
+        client_order_id = (_safe_text(row.client_order_id) or "").lower()
+        if "sell" in client_order_id or "short" in client_order_id:
+            side = "sell"
+        elif "buy" in client_order_id or "cover" in client_order_id:
+            side = "buy"
+    if side in {"sell", "short"}:
+        return -qty.copy_abs()
+    return qty.copy_abs()
+
+
+def _source_activity_lifecycle_summary(
+    *,
+    execution_rows: Sequence[Execution],
+    order_event_rows: Sequence[ExecutionOrderEvent],
+    tca_rows: Sequence[ExecutionTCAMetric],
+) -> dict[str, object]:
+    submitted_order_count = len(execution_rows)
+    execution_status_counts: Counter[str] = Counter(
+        (_safe_text(row.status) or "missing") for row in execution_rows
+    )
+    order_event_status_counts: Counter[str] = Counter(
+        (_safe_text(row.status) or "missing") for row in order_event_rows
+    )
+    order_event_type_counts: Counter[str] = Counter(
+        (_safe_text(row.event_type) or "missing") for row in order_event_rows
+    )
+    filled_notional = sum(
+        (
+            _safe_decimal(row.filled_notional_delta)
+            for row in order_event_rows
+            if _order_event_is_fill(row)
+        ),
+        Decimal("0"),
+    )
+    if filled_notional <= 0:
+        filled_notional = sum(
+            (
+                _safe_decimal(row.filled_qty) * _safe_decimal(row.avg_fill_price)
+                for row in execution_rows
+                if _safe_decimal(row.filled_qty) > 0
+                and _safe_decimal(row.avg_fill_price) > 0
+            ),
+            Decimal("0"),
+        )
+    net_filled_qty_by_symbol: dict[str, Decimal] = {}
+    fill_event_rows = [row for row in order_event_rows if _order_event_is_fill(row)]
+    if fill_event_rows:
+        for row in fill_event_rows:
+            symbol = (_safe_text(row.symbol) or "missing").upper()
+            signed_qty = _order_event_signed_filled_qty(row)
+            if signed_qty != 0:
+                net_filled_qty_by_symbol[symbol] = (
+                    net_filled_qty_by_symbol.get(symbol, Decimal("0")) + signed_qty
+                )
+    else:
+        for row in execution_rows:
+            qty = _safe_decimal(row.filled_qty)
+            if qty <= 0:
+                continue
+            symbol = (_safe_text(row.symbol) or "missing").upper()
+            side = (_safe_text(row.side) or "").lower()
+            signed_qty = -qty if side in {"sell", "short"} else qty
+            net_filled_qty_by_symbol[symbol] = (
+                net_filled_qty_by_symbol.get(symbol, Decimal("0")) + signed_qty
+            )
+    open_symbols = sorted(
+        symbol for symbol, qty in net_filled_qty_by_symbol.items() if _safe_decimal(qty) != 0
+    )
+    lifecycle_blockers: list[str] = []
+    fill_count = sum(int(_safe_decimal(row.filled_qty) > 0) for row in execution_rows)
+    fill_event_count = len(fill_event_rows)
+    complete_fill_event_count = sum(
+        int(_order_event_has_complete_fill_lifecycle(row)) for row in order_event_rows
+    )
+    if submitted_order_count <= 0:
+        lifecycle_blockers.append("source_submitted_orders_missing")
+    if fill_count <= 0 and fill_event_count <= 0:
+        lifecycle_blockers.append("source_fills_missing")
+    if fill_event_count > 0 and complete_fill_event_count <= 0:
+        lifecycle_blockers.append("source_fill_lifecycle_incomplete")
+    if (fill_count > 0 or fill_event_count > 0) and open_symbols:
+        lifecycle_blockers.extend(["source_close_missing", "source_closed_round_trip_missing"])
+    if len(tca_rows) <= 0 and complete_fill_event_count <= 0:
+        lifecycle_blockers.append("source_execution_economics_missing")
+    return {
+        "schema_version": "torghut.paper-route-source-lifecycle-summary.v1",
+        "submitted_order_count": submitted_order_count,
+        "execution_status_counts": dict(sorted(execution_status_counts.items())),
+        "order_event_status_counts": dict(sorted(order_event_status_counts.items())),
+        "order_event_type_counts": dict(sorted(order_event_type_counts.items())),
+        "fill_count": fill_count,
+        "fill_order_event_count": fill_event_count,
+        "complete_fill_order_event_count": complete_fill_event_count,
+        "filled_notional": _decimal_text(filled_notional),
+        "tca_sample_count": len(tca_rows),
+        "net_filled_qty_by_symbol": {
+            symbol: _decimal_text(qty)
+            for symbol, qty in sorted(net_filled_qty_by_symbol.items())
+        },
+        "open_symbols_after_source_fills": open_symbols,
+        "closed_round_trip_evidence": bool(fill_count > 0 or fill_event_count > 0) and not open_symbols,
+        "execution_economics_present": len(tca_rows) > 0 or complete_fill_event_count > 0,
+        "blockers": sorted(dict.fromkeys(lifecycle_blockers)),
+    }
+
+
 def _strategy_source_activity(
     session: Session,
     *,
@@ -2255,6 +2422,11 @@ def _strategy_source_activity(
     if tca_sample_count <= 0 and complete_fill_order_event_count <= 0:
         missing_reasons.append("source_tca_missing")
     missing_reasons.extend(lineage_blockers)
+    lifecycle_summary = _source_activity_lifecycle_summary(
+        execution_rows=execution_rows,
+        order_event_rows=order_event_rows,
+        tca_rows=tca_rows,
+    )
     return {
         "strategy_name": strategy_name,
         "strategy_lookup_names": strategy_filters,
@@ -2273,6 +2445,9 @@ def _strategy_source_activity(
         "fill_order_event_count": fill_order_event_count,
         "complete_fill_order_event_count": complete_fill_order_event_count,
         "tca_sample_count": tca_sample_count,
+        "submitted_order_count": execution_count,
+        "source_lifecycle": lifecycle_summary,
+        "source_lifecycle_blockers": _unique_text_items(lifecycle_summary.get("blockers")),
         "last_decision_at": _isoformat(
             decision_rows[0].created_at if decision_rows else None
         ),
@@ -2719,6 +2894,141 @@ def _account_pre_session_snapshot_audit(
     }
 
 
+def _account_window_close_snapshot_audit(
+    session: Session,
+    *,
+    account_label: str | None,
+    symbols: Sequence[str],
+    window_end: datetime,
+    generated_at: datetime,
+) -> dict[str, object]:
+    symbol_filters = {
+        str(item).strip().upper() for item in symbols if str(item).strip()
+    }
+    required = generated_at >= window_end
+    base_payload: dict[str, object] = {
+        "schema_version": "torghut.paper-route-account-window-close-snapshot-audit.v1",
+        "scope": "account_position_snapshot_after_runtime_window_close",
+        "account_label": account_label,
+        "symbols": sorted(symbol_filters),
+        "generated_at": _isoformat(generated_at),
+        "window_end": _isoformat(window_end),
+        "required": required,
+        "snapshot_id": None,
+        "snapshot_as_of": None,
+        "snapshot_age_seconds": None,
+        "flat": None,
+        "zero_open_position_evidence": False,
+        "position_count": 0,
+        "target_symbol_position_count": 0,
+        "non_target_symbol_position_count": 0,
+        "gross_position_market_value": "0",
+        "sample_positions": [],
+        "flatten_handoff": {
+            "runner": "scripts/flatten_paper_account_positions.py",
+            "argv": [
+                "uv",
+                "run",
+                "--frozen",
+                "python",
+                "scripts/flatten_paper_account_positions.py",
+                "--account-label",
+                PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
+                "--expected-account-label",
+                PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
+                "--trading-mode",
+                "paper",
+                "--persist-snapshot",
+                "--json",
+            ],
+            "apply_flag_required_for_mutation": "--apply",
+            "snapshot_required": True,
+        },
+        "blockers": [],
+    }
+    if not required:
+        return {
+            **base_payload,
+            "state": "pending_until_window_close",
+        }
+    if account_label is None:
+        return {
+            **base_payload,
+            "state": "clean",
+            "flat": True,
+            "zero_open_position_evidence": True,
+        }
+
+    snapshot = session.execute(
+        select(PositionSnapshot)
+        .where(PositionSnapshot.alpaca_account_label == account_label)
+        .where(PositionSnapshot.as_of >= window_end)
+        .where(PositionSnapshot.as_of <= generated_at)
+        .order_by(PositionSnapshot.as_of.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if snapshot is None:
+        return {
+            **base_payload,
+            "state": "blocked",
+            "flat": False,
+            "blockers": [
+                "paper_route_account_window_close_snapshot_missing",
+                "paper_route_flatten_handoff_missing",
+            ],
+        }
+
+    snapshot_as_of = snapshot.as_of
+    if snapshot_as_of.tzinfo is None:
+        snapshot_as_of = snapshot_as_of.replace(tzinfo=timezone.utc)
+    snapshot_as_of = snapshot_as_of.astimezone(timezone.utc)
+    snapshot_age_seconds = int((generated_at - snapshot_as_of).total_seconds())
+    blockers: list[str] = []
+    if snapshot_age_seconds > PAPER_ROUTE_ACCOUNT_CLOSE_SNAPSHOT_STALE_SECONDS:
+        blockers.append("paper_route_account_window_close_snapshot_stale")
+
+    positions = _normalized_open_positions(
+        snapshot.positions,
+        target_symbols=symbol_filters,
+    )
+    target_position_count = sum(
+        int(bool(position.get("target_symbol"))) for position in positions
+    )
+    non_target_position_count = len(positions) - target_position_count
+    if positions:
+        blockers.extend(
+            [
+                "paper_route_account_window_close_not_flat",
+                "paper_route_account_window_close_positions_present",
+                "paper_route_missing_close",
+            ]
+        )
+    if target_position_count:
+        blockers.append("paper_route_account_window_close_target_positions_present")
+    if non_target_position_count:
+        blockers.append("paper_route_account_window_close_non_target_positions_present")
+    gross_market_value = sum(
+        (_safe_decimal(position.get("market_value")) for position in positions),
+        Decimal("0"),
+    )
+    blockers = sorted(dict.fromkeys(blockers))
+    return {
+        **base_payload,
+        "state": "blocked" if blockers else "clean",
+        "snapshot_id": str(snapshot.id),
+        "snapshot_as_of": _isoformat(snapshot_as_of),
+        "snapshot_age_seconds": snapshot_age_seconds,
+        "flat": not positions and not blockers,
+        "zero_open_position_evidence": not positions and not blockers,
+        "position_count": len(positions),
+        "target_symbol_position_count": target_position_count,
+        "non_target_symbol_position_count": non_target_position_count,
+        "gross_position_market_value": _decimal_text(gross_market_value),
+        "sample_positions": positions[:10],
+        "blockers": blockers,
+    }
+
+
 def _rejected_signal_activity(
     session: Session,
     *,
@@ -2765,6 +3075,9 @@ def _rejected_signal_activity(
     blocking_reasons: list[str] = []
     if rows:
         blocking_reasons.append("source_signal_rejected_by_quote_quality")
+        blocking_reasons.append("paper_route_submit_blocked")
+        if any("stale" in reason.lower() for reason in reason_counts):
+            blocking_reasons.append("paper_route_stale_quote")
         blocking_reasons.extend(
             f"source_reject_{reason}" for reason in sorted(reason_counts) if reason
         )
@@ -3273,6 +3586,7 @@ def _readiness_blockers(
     account_contamination: Mapping[str, object],
     account_state: Mapping[str, object],
     rejected_signal_activity: Mapping[str, object],
+    account_close_state: Mapping[str, object],
     runtime_ledger: Mapping[str, object],
     hypothesis_windows: Mapping[str, object],
     promotion_decisions: Mapping[str, object],
@@ -3318,6 +3632,17 @@ def _readiness_blockers(
         for item in _as_sequence(account_state.get("blockers"))
         if str(item).strip()
     )
+    if _target_is_hpairs(target) and not bool(source_activity.get("missing")):
+        blockers.update(
+            str(item).strip()
+            for item in _as_sequence(source_activity.get("source_lifecycle_blockers"))
+            if str(item).strip()
+        )
+        blockers.update(
+            str(item).strip()
+            for item in _as_sequence(account_close_state.get("blockers"))
+            if str(item).strip()
+        )
     if bool(source_activity.get("missing")):
         blockers.update(
             str(item).strip()
@@ -3337,6 +3662,69 @@ def _readiness_blockers(
         if not bool(latest.get("allowed")):
             blockers.add("promotion_decision_not_allowed")
     return sorted(blockers)
+
+
+def _source_backed_import_ready_metadata(
+    *,
+    target: Mapping[str, object],
+    source_activity: Mapping[str, object],
+    account_close_state: Mapping[str, object],
+    runtime_ledger: Mapping[str, object],
+) -> dict[str, object]:
+    source_lifecycle = _as_mapping(source_activity.get("source_lifecycle"))
+    ready = (
+        not bool(source_activity.get("missing"))
+        and not _unique_text_items(source_activity.get("source_lifecycle_blockers"))
+        and bool(account_close_state.get("zero_open_position_evidence"))
+        and _safe_int(runtime_ledger.get("evidence_grade_bucket_count")) > 0
+    )
+    return {
+        "schema_version": "torghut.paper-route-source-backed-import-ready.v1",
+        "ready": ready,
+        "hypothesis_id": _safe_text(target.get("hypothesis_id")),
+        "candidate_id": _safe_text(target.get("candidate_id")),
+        "account_label": _safe_text(target.get("account_label")),
+        "window_start": _safe_text(target.get("window_start")),
+        "window_end": _safe_text(target.get("window_end")),
+        "source_backed": True,
+        "synthetic_pnl_used": False,
+        "decision_count": _safe_int(source_activity.get("decision_count")),
+        "submitted_order_count": _safe_int(
+            source_lifecycle.get("submitted_order_count")
+            or source_activity.get("submitted_order_count")
+        ),
+        "fill_count": _safe_int(source_lifecycle.get("fill_count")),
+        "fill_order_event_count": _safe_int(
+            source_lifecycle.get("fill_order_event_count")
+        ),
+        "filled_notional": _safe_text(source_lifecycle.get("filled_notional")) or "0",
+        "closed_round_trip_evidence": bool(
+            source_lifecycle.get("closed_round_trip_evidence")
+        ),
+        "zero_open_position_evidence": bool(
+            account_close_state.get("zero_open_position_evidence")
+        ),
+        "runtime_ledger_evidence_grade_bucket_count": _safe_int(
+            runtime_ledger.get("evidence_grade_bucket_count")
+        ),
+        "runtime_ledger_db_row_refs": _unique_text_items(runtime_ledger.get("db_row_refs")),
+        "blockers": _unique_text_items(
+            [
+                *(
+                    _unique_text_items(source_activity.get("missing_reasons"))
+                    if bool(source_activity.get("missing"))
+                    else []
+                ),
+                *_unique_text_items(source_activity.get("source_lifecycle_blockers")),
+                *_unique_text_items(account_close_state.get("blockers")),
+                *(
+                    ["runtime_ledger_evidence_grade_bucket_missing"]
+                    if _safe_int(runtime_ledger.get("evidence_grade_bucket_count")) <= 0
+                    else []
+                ),
+            ]
+        ),
+    }
 
 
 def _target_audit(
@@ -3401,6 +3789,13 @@ def _target_audit(
         window_start=window_start,
         generated_at=generated_at,
     )
+    account_close_state = _account_window_close_snapshot_audit(
+        session,
+        account_label=cast(str | None, target.get("account_label")),
+        symbols=_target_probe_symbols(target, probe),
+        window_end=window_end,
+        generated_at=generated_at,
+    )
     rejected_signal_activity = _rejected_signal_activity(
         session,
         account_label=cast(str | None, target.get("account_label")),
@@ -3438,6 +3833,7 @@ def _target_audit(
         source_activity=source_activity,
         account_contamination=account_contamination,
         account_state=account_state,
+        account_close_state=account_close_state,
         rejected_signal_activity=rejected_signal_activity,
         runtime_ledger=runtime_ledger,
         hypothesis_windows=hypothesis_windows,
@@ -3457,6 +3853,13 @@ def _target_audit(
         "source_activity": source_activity,
         "account_contamination": account_contamination,
         "account_state": account_state,
+        "account_close_state": account_close_state,
+        "source_backed_import_ready_metadata": _source_backed_import_ready_metadata(
+            target=target,
+            source_activity=source_activity,
+            account_close_state=account_close_state,
+            runtime_ledger=runtime_ledger,
+        ),
         "rejected_signal_activity": rejected_signal_activity,
         "runtime_ledger": runtime_ledger,
         "hypothesis_windows": hypothesis_windows,
@@ -3610,6 +4013,26 @@ def _database_unavailable_target_audit(
         "source_activity": source_activity,
         "account_contamination": account_contamination,
         "account_state": account_state,
+        "account_close_state": {
+            "schema_version": "torghut.paper-route-account-window-close-snapshot-audit.v1",
+            "scope": "account_position_snapshot_after_runtime_window_close",
+            "account_label": _safe_text(target.get("account_label")),
+            "symbols": _target_probe_symbols(target, probe),
+            "generated_at": _isoformat(generated_at),
+            "window_end": _isoformat(window_end),
+            "required": generated_at >= window_end,
+            "state": "database_unavailable",
+            "flat": None,
+            "zero_open_position_evidence": False,
+            "blockers": [PAPER_ROUTE_EVIDENCE_DB_UNAVAILABLE_BLOCKER, source_blocker],
+            "db_load_error": error_payload,
+        },
+        "source_backed_import_ready_metadata": {
+            "schema_version": "torghut.paper-route-source-backed-import-ready.v1",
+            "ready": False,
+            "synthetic_pnl_used": False,
+            "blockers": [PAPER_ROUTE_EVIDENCE_DB_UNAVAILABLE_BLOCKER, source_blocker],
+        },
         "rejected_signal_activity": {
             "event_count": 0,
             "blocking_reasons": [PAPER_ROUTE_EVIDENCE_DB_UNAVAILABLE_BLOCKER],
@@ -3768,6 +4191,30 @@ def _runtime_window_import_audit(
             if str(blocker).strip()
         }
     )
+    account_close_blockers = sorted(
+        {
+            str(blocker).strip()
+            for audit in next_target_audits
+            if _target_is_hpairs(_as_mapping(audit.get("target")))
+            and not bool(_as_mapping(audit.get("source_activity")).get("missing"))
+            for blocker in _as_sequence(
+                _as_mapping(audit.get("account_close_state")).get("blockers")
+            )
+            if str(blocker).strip()
+        }
+    )
+    source_lifecycle_blockers = sorted(
+        {
+            str(blocker).strip()
+            for audit in next_target_audits
+            if _target_is_hpairs(_as_mapping(audit.get("target")))
+            and not bool(_as_mapping(audit.get("source_activity")).get("missing"))
+            for blocker in _as_sequence(
+                _as_mapping(audit.get("source_activity")).get("source_lifecycle_blockers")
+            )
+            if str(blocker).strip()
+        }
+    )
     source_runtime_ledger_blockers = _source_runtime_ledger_materialization_blockers(
         next_target_audits
     )
@@ -3784,13 +4231,21 @@ def _runtime_window_import_audit(
         "evidence_grade_runtime_ledger"
     ]
     targets_with_promotion_decision = selected_target_counts["promotion_decision"]
+    targets_with_zero_open_position_evidence = sum(
+        int(bool(_as_mapping(audit.get("account_close_state")).get("zero_open_position_evidence")))
+        for audit in next_target_audits
+    )
+    targets_with_source_backed_import_ready = sum(
+        int(bool(_as_mapping(audit.get("source_backed_import_ready_metadata")).get("ready")))
+        for audit in next_target_audits
+    )
     import_ready = bool(session_readiness.get("import_ready"))
     session_state = _safe_text(session_readiness.get("state")) or "unknown"
     blockers: list[str]
     if source_plan_target_count <= 0:
         state = "paper_probation_import_plan_missing"
         next_action = "repair_runtime_ledger_paper_probation_import_plan"
-        blockers = ["paper_probation_import_plan_missing"]
+        blockers = ["paper_probation_import_plan_missing", "paper_route_target_missing"]
     elif not import_ready:
         state = session_state
         next_action = {
@@ -3820,6 +4275,14 @@ def _runtime_window_import_audit(
             *source_missing_reasons,
             *rejected_signal_reasons,
         ]
+    elif source_lifecycle_blockers:
+        state = "import_due_source_lifecycle_incomplete"
+        next_action = "repair_paper_route_order_fill_close_lifecycle"
+        blockers = source_lifecycle_blockers
+    elif account_close_blockers:
+        state = "import_due_flatten_handoff_missing"
+        next_action = "run_paper_account_flatten_and_persist_position_snapshot"
+        blockers = account_close_blockers
     elif targets_with_runtime_ledger < current_target_count:
         state = "import_due_runtime_ledger_missing"
         next_action = "run_runtime_window_import_or_repair_source_materialization"
@@ -3856,6 +4319,8 @@ def _runtime_window_import_audit(
             ),
             "account_contamination_blockers": account_contamination_blockers,
             "account_state_blockers": account_state_blockers,
+            "account_close_blockers": account_close_blockers,
+            "source_lifecycle_blockers": source_lifecycle_blockers,
             "runtime_ledger_blockers": runtime_ledger_blockers,
             "target_blockers_effective_when": "runtime_window_import_ready",
         },
@@ -3875,6 +4340,8 @@ def _runtime_window_import_audit(
                 targets_with_evidence_grade_runtime_ledger
             ),
             "targets_with_promotion_decision": targets_with_promotion_decision,
+            "targets_with_zero_open_position_evidence": targets_with_zero_open_position_evidence,
+            "targets_with_source_backed_import_ready": targets_with_source_backed_import_ready,
             "raw_source_plan_targets_with_source_activity": raw_source_counts[
                 "source_activity"
             ],
@@ -3915,6 +4382,7 @@ def _runtime_window_target_blockers(
         account_contamination = _as_mapping(audit.get("account_contamination"))
         account_state = _as_mapping(audit.get("account_state"))
         rejected_signal_activity = _as_mapping(audit.get("rejected_signal_activity"))
+        account_close_state = _as_mapping(audit.get("account_close_state"))
         runtime_ledger = _as_mapping(audit.get("runtime_ledger"))
         promotion_decisions = _as_mapping(audit.get("promotion_decisions"))
 
@@ -3932,6 +4400,16 @@ def _runtime_window_target_blockers(
                 ),
                 *_unique_text_items(account_contamination.get("blockers")),
                 *_unique_text_items(account_state.get("blockers")),
+                *(
+                    _unique_text_items(source_activity.get("source_lifecycle_blockers"))
+                    if _target_is_hpairs(target) and not bool(source_activity.get("missing"))
+                    else []
+                ),
+                *(
+                    _unique_text_items(account_close_state.get("blockers"))
+                    if _target_is_hpairs(target) and not bool(source_activity.get("missing"))
+                    else []
+                ),
                 *(
                     ["runtime_ledger_bucket_missing"]
                     if _safe_int(runtime_ledger.get("bucket_count")) <= 0
@@ -4028,6 +4506,28 @@ def _runtime_window_target_blockers(
                     "sample_positions": [
                         _as_mapping(item)
                         for item in _as_sequence(account_state.get("sample_positions"))
+                    ],
+                },
+                "account_close_state": {
+                    "state": _safe_text(account_close_state.get("state")),
+                    "required": bool(account_close_state.get("required")),
+                    "flat": (
+                        account_close_state.get("flat")
+                        if isinstance(account_close_state.get("flat"), bool)
+                        else None
+                    ),
+                    "zero_open_position_evidence": bool(
+                        account_close_state.get("zero_open_position_evidence")
+                    ),
+                    "snapshot_id": _safe_text(account_close_state.get("snapshot_id")),
+                    "snapshot_as_of": _safe_text(account_close_state.get("snapshot_as_of")),
+                    "position_count": _safe_int(account_close_state.get("position_count")),
+                    "target_symbol_position_count": _safe_int(
+                        account_close_state.get("target_symbol_position_count")
+                    ),
+                    "sample_positions": [
+                        _as_mapping(item)
+                        for item in _as_sequence(account_close_state.get("sample_positions"))
                     ],
                 },
                 "runtime_ledger": {
@@ -4397,6 +4897,15 @@ def _deferred_runtime_window_target_audits(
                 },
                 "account_state": {
                     "blockers": [],
+                },
+                "account_close_state": {
+                    "blockers": [],
+                    "zero_open_position_evidence": False,
+                },
+                "source_backed_import_ready_metadata": {
+                    "ready": False,
+                    "synthetic_pnl_used": False,
+                    "blockers": ["runtime_window_import_audit_deferred_until_import_ready"],
                 },
                 "runtime_ledger": {
                     "bucket_count": 0,
