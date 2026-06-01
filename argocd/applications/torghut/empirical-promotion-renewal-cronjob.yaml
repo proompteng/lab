@@ -66,7 +66,6 @@ spec:
                     --runtime-window-target-plan-url-timeout-seconds 45 \
                     --runtime-window-target-plan-url-attempts 3 \
                     --runtime-window-target-plan-url-retry-backoff-seconds 5 \
-                    --runtime-window-target-plan-exclusive \
                     --runtime-window-target-plan-required \
                     --runtime-window-target-plan-settlement-seconds 3600 \
                     --runtime-window-targets-from-latest-autoresearch \

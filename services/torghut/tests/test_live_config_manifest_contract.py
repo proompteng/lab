@@ -897,6 +897,50 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("tigerbeetle-cluster.yaml", resources)
         self.assertIn("tigerbeetle-smoke-job.yaml", resources)
         self.assertIn("tigerbeetle-journal-order-events-cronjob.yaml", resources)
+        self.assertIn(
+            "whitepaper-autoresearch-replay-materialization-cronworkflow.yaml",
+            resources,
+        )
+
+    def test_whitepaper_autoresearch_replay_materialization_cronworkflow_feeds_renewal(
+        self,
+    ) -> None:
+        manifest = _load_yaml_mapping(
+            "argocd/applications/torghut/"
+            "whitepaper-autoresearch-replay-materialization-cronworkflow.yaml"
+        )
+
+        self.assertEqual(manifest.get("kind"), "CronWorkflow")
+        metadata = cast(Mapping[str, object], manifest.get("metadata", {}))
+        self.assertEqual(metadata.get("name"), "torghut-replay-source-materialization")
+        self.assertLessEqual(len(str(metadata.get("name"))), 52)
+        spec = cast(Mapping[str, object], manifest.get("spec", {}))
+        self.assertEqual(spec.get("schedules"), ["5 5 * * 2-6"])
+        self.assertEqual(spec.get("concurrencyPolicy"), "Forbid")
+        self.assertEqual(spec.get("startingDeadlineSeconds"), 900)
+
+        workflow_spec = cast(Mapping[str, object], spec.get("workflowSpec", {}))
+        self.assertEqual(
+            workflow_spec.get("workflowTemplateRef"),
+            {"name": "torghut-whitepaper-autoresearch-profit-target"},
+        )
+        arguments = cast(Mapping[str, object], workflow_spec.get("arguments", {}))
+        parameters = {
+            str(item.get("name")): str(item.get("value"))
+            for item in cast(
+                list[Mapping[str, object]], arguments.get("parameters", [])
+            )
+        }
+        self.assertEqual(parameters["replayTapePreviewTopK"], "8")
+        self.assertEqual(parameters["replayTapePreviewMinRows"], "2")
+        self.assertEqual(parameters["maxCandidates"], "16")
+        self.assertEqual(parameters["topK"], "8")
+        self.assertEqual(parameters["explorationSlots"], "2")
+        self.assertEqual(parameters["feedbackBlockReauditSlots"], "2")
+        self.assertEqual(parameters["maxTotalFrontierCandidates"], "6")
+        self.assertEqual(parameters["realReplayTimeoutSeconds"], "1800")
+        self.assertEqual(parameters["realReplayShardWorkers"], "2")
+        self.assertEqual(parameters["persistResults"], "true")
 
     def test_torghut_knative_manifests_enable_tigerbeetle_journal(self) -> None:
         expected = {
@@ -1530,7 +1574,7 @@ class TestLiveConfigManifestContract(TestCase):
             "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-evidence",
             args,
         )
-        self.assertIn("--runtime-window-target-plan-exclusive", args)
+        self.assertNotIn("--runtime-window-target-plan-exclusive", args)
         self.assertIn("--runtime-window-target-plan-required", args)
         self.assertIn("--runtime-window-target-plan-settlement-seconds 3600", args)
         self.assertIn("--runtime-window-targets-from-latest-autoresearch", args)

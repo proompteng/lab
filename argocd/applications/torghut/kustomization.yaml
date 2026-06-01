@@ -42,6 +42,7 @@ resources:
   - execution-tca-refresh-cronjob.yaml
   - paper-account-flatten-cronjob.yaml
   - whitepaper-autoresearch-workflowtemplate.yaml
+  - whitepaper-autoresearch-replay-materialization-cronworkflow.yaml
   - empirical-promotion-workflowtemplate.yaml
   - historical-simulation-workflowtemplate.yaml
   - analysis-template-runtime-ready.yaml
