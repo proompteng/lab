@@ -114,6 +114,9 @@ SOURCE_LINEAGE_HYPOTHESIS_KEYS = (
     "source_hypothesis_ids",
 )
 PAPER_ROUTE_EVIDENCE_DB_UNAVAILABLE_BLOCKER = "paper_route_evidence_db_unavailable"
+PAPER_ROUTE_TARGET_ACCOUNT_AUDIT_UNAVAILABLE_BLOCKER = (
+    "paper_route_target_account_audit_unavailable"
+)
 
 
 def _maybe_set_paper_route_audit_statement_timeout(session: Session) -> None:
@@ -129,6 +132,139 @@ def _maybe_set_paper_route_audit_statement_timeout(session: Session) -> None:
     session.execute(
         text(f"SET LOCAL statement_timeout = {PAPER_ROUTE_EVIDENCE_QUERY_TIMEOUT_MS}")
     )
+
+
+def _target_account_audit_state(
+    *,
+    account_label: str | None,
+    symbols: Sequence[str],
+    window_start: datetime,
+    window_end: datetime,
+    audit_available: bool,
+) -> dict[str, object]:
+    blockers = (
+        []
+        if audit_available
+        else [PAPER_ROUTE_TARGET_ACCOUNT_AUDIT_UNAVAILABLE_BLOCKER]
+    )
+    return {
+        "schema_version": "torghut.paper-route-target-account-audit.v1",
+        "scope": "local_torghut_sim_paper_runtime_account_state",
+        "state": "available" if audit_available else "unavailable",
+        "account_label": account_label,
+        "required_account_label": PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
+        "symbols": [str(item).strip().upper() for item in symbols if str(item).strip()],
+        "window_start": _isoformat(window_start),
+        "window_end": _isoformat(window_end),
+        "audit_available": audit_available,
+        "blockers": blockers,
+    }
+
+
+def _account_pre_session_snapshot_audit_unavailable(
+    *,
+    account_label: str | None,
+    symbols: Sequence[str],
+    generated_at: datetime,
+    window_start: datetime,
+    window_end: datetime,
+) -> dict[str, object]:
+    symbol_filters = {
+        str(item).strip().upper() for item in symbols if str(item).strip()
+    }
+    required_after = window_start - timedelta(
+        seconds=PAPER_ROUTE_ACCOUNT_PRE_SESSION_READINESS_SECONDS
+    )
+    required = required_after <= generated_at < window_end
+    return {
+        "schema_version": "torghut.paper-route-account-pre-session-snapshot-audit.v1",
+        "scope": "account_position_snapshot_before_runtime_window_start",
+        "state": "target_account_audit_unavailable",
+        "account_label": account_label,
+        "symbols": sorted(symbol_filters),
+        "generated_at": _isoformat(generated_at),
+        "window_start": _isoformat(window_start),
+        "required": required,
+        "required_after": _isoformat(required_after),
+        "snapshot_id": None,
+        "snapshot_as_of": None,
+        "snapshot_age_seconds": None,
+        "snapshot_window_start_offset_seconds": None,
+        "flat": None,
+        "position_count": 0,
+        "target_symbol_position_count": 0,
+        "non_target_symbol_position_count": 0,
+        "gross_position_market_value": "0",
+        "sample_positions": [],
+        "blockers": [],
+        "source_audit_blockers": [PAPER_ROUTE_TARGET_ACCOUNT_AUDIT_UNAVAILABLE_BLOCKER],
+    }
+
+
+def _account_clean_window_baseline_audit_unavailable(
+    *,
+    account_label: str | None,
+    symbols: Sequence[str],
+    generated_at: datetime,
+    window_start: datetime,
+    window_end: datetime,
+) -> dict[str, object]:
+    required_after = window_start - timedelta(
+        seconds=PAPER_ROUTE_ACCOUNT_PRE_SESSION_READINESS_SECONDS
+    )
+    return {
+        "schema_version": CLEAN_WINDOW_BASELINE_SCHEMA_VERSION,
+        "scope": "flat_account_baseline_for_bounded_paper_route_collection",
+        "state": "target_account_audit_unavailable",
+        "account_label": account_label,
+        "symbols": [str(item).strip().upper() for item in symbols if str(item).strip()],
+        "generated_at": _isoformat(generated_at),
+        "window_start": _isoformat(window_start),
+        "window_end": _isoformat(window_end),
+        "required_after": _isoformat(required_after),
+        "source": "local_torghut_sim_paper_runtime_account_state",
+        "snapshot_id": None,
+        "snapshot_as_of": None,
+        "snapshot_source": None,
+        "snapshot_offset_seconds": None,
+        "flat": None,
+        "source_auditable": False,
+        "position_count": 0,
+        "target_symbol_position_count": 0,
+        "non_target_symbol_position_count": 0,
+        "gross_position_market_value": "0",
+        "sample_positions": [],
+        "blockers": [PAPER_ROUTE_TARGET_ACCOUNT_AUDIT_UNAVAILABLE_BLOCKER],
+        "source_audit": {},
+    }
+
+
+def _account_contamination_audit_unavailable(
+    *,
+    account_label: str | None,
+    symbols: Sequence[str],
+    window_start: datetime,
+    window_end: datetime,
+) -> dict[str, object]:
+    return {
+        "schema_version": "torghut.paper-route-account-contamination-audit.v1",
+        "scope": "target_window_account_symbol_order_events",
+        "state": "target_account_audit_unavailable",
+        "account_label": account_label,
+        "symbols": [str(item).strip().upper() for item in symbols if str(item).strip()],
+        "window_start": _isoformat(window_start),
+        "window_end": _isoformat(window_end),
+        "contaminated": None,
+        "unlinked_order_event_count": 0,
+        "client_order_id_count": 0,
+        "sample_client_order_ids": [],
+        "symbol_counts": {},
+        "event_type_counts": {},
+        "status_counts": {},
+        "last_event_at": None,
+        "blockers": [],
+        "source_audit_blockers": [PAPER_ROUTE_TARGET_ACCOUNT_AUDIT_UNAVAILABLE_BLOCKER],
+    }
 
 
 def _as_mapping(value: object) -> dict[str, Any]:
@@ -1427,6 +1563,7 @@ def _next_paper_route_runtime_window_targets(
     window_start: datetime | None = None,
     window_end: datetime | None = None,
     purpose: str = "next_session_paper_route_runtime_window_evidence_collection",
+    target_account_audit_available: bool = True,
 ) -> dict[str, object]:
     if window_start is None or window_end is None:
         window_start, window_end = _next_regular_equities_session_window(generated_at)
@@ -1629,34 +1766,73 @@ def _next_paper_route_runtime_window_targets(
                 }
             )
             continue
-        account_pre_session_state = _account_pre_session_snapshot_audit(
-            session,
+        target_account_audit_state = _target_account_audit_state(
             account_label=PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
             symbols=target_probe_symbols,
-            generated_at=generated_at,
             window_start=window_start,
             window_end=window_end,
+            audit_available=target_account_audit_available,
+        )
+        target_account_audit_blockers = _unique_text_items(
+            target_account_audit_state.get("blockers")
+        )
+        account_pre_session_state = (
+            _account_pre_session_snapshot_audit(
+                session,
+                account_label=PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
+                symbols=target_probe_symbols,
+                generated_at=generated_at,
+                window_start=window_start,
+                window_end=window_end,
+            )
+            if target_account_audit_available
+            else _account_pre_session_snapshot_audit_unavailable(
+                account_label=PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
+                symbols=target_probe_symbols,
+                generated_at=generated_at,
+                window_start=window_start,
+                window_end=window_end,
+            )
         )
         account_pre_session_blockers = _unique_text_items(
             account_pre_session_state.get("blockers")
         )
-        clean_window_baseline_state = _account_clean_window_baseline_snapshot_audit(
-            session,
-            account_label=PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
-            symbols=target_probe_symbols,
-            generated_at=generated_at,
-            window_start=window_start,
-            window_end=window_end,
+        clean_window_baseline_state = (
+            _account_clean_window_baseline_snapshot_audit(
+                session,
+                account_label=PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
+                symbols=target_probe_symbols,
+                generated_at=generated_at,
+                window_start=window_start,
+                window_end=window_end,
+            )
+            if target_account_audit_available
+            else _account_clean_window_baseline_audit_unavailable(
+                account_label=PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
+                symbols=target_probe_symbols,
+                generated_at=generated_at,
+                window_start=window_start,
+                window_end=window_end,
+            )
         )
         clean_window_baseline_blockers = _unique_text_items(
             clean_window_baseline_state.get("blockers")
         )
-        account_contamination_state = _account_contamination_audit(
-            session,
-            account_label=PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
-            symbols=target_probe_symbols,
-            window_start=window_start,
-            window_end=window_end,
+        account_contamination_state = (
+            _account_contamination_audit(
+                session,
+                account_label=PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
+                symbols=target_probe_symbols,
+                window_start=window_start,
+                window_end=window_end,
+            )
+            if target_account_audit_available
+            else _account_contamination_audit_unavailable(
+                account_label=PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
+                symbols=target_probe_symbols,
+                window_start=window_start,
+                window_end=window_end,
+            )
         )
         account_contamination_blockers = _unique_text_items(
             account_contamination_state.get("blockers")
@@ -1759,6 +1935,7 @@ def _next_paper_route_runtime_window_targets(
         evidence_collection_blockers = _unique_text_items(
             [
                 *_unique_text_items(source_decision_readiness.get("blockers")),
+                *target_account_audit_blockers,
                 *account_pre_session_blockers,
                 *clean_window_baseline_blockers,
                 *account_contamination_blockers,
@@ -1838,6 +2015,10 @@ def _next_paper_route_runtime_window_targets(
             "paper_route_target_plan_source": paper_route_target_plan_source or "",
             "paper_route_probe_scope_authority": paper_route_probe_scope_authority
             or "",
+            "paper_route_target_account_audit_state": target_account_audit_state,
+            "paper_route_target_account_audit_blockers": (
+                target_account_audit_blockers
+            ),
             "paper_route_account_pre_session_state": account_pre_session_state,
             "paper_route_account_pre_session_blockers": (account_pre_session_blockers),
             "paper_route_clean_window_baseline_state": clean_window_baseline_state,
@@ -1849,7 +2030,9 @@ def _next_paper_route_runtime_window_targets(
                 account_contamination_blockers
             ),
             "paper_route_clean_window_state": (
-                "contaminated_window_discarded"
+                "target_account_audit_unavailable"
+                if target_account_audit_blockers
+                else "contaminated_window_discarded"
                 if account_contamination_blockers
                 else "clean_window_collection_ready"
                 if not clean_window_baseline_blockers
@@ -1957,6 +2140,21 @@ def _next_paper_route_runtime_window_targets(
             for item in source_decision_readiness_items
             for blocker in _unique_text_items(item.get("blockers"))
         }
+    )
+    target_account_audit_items = [
+        item
+        for target in planned_targets
+        if (item := _as_mapping(target.get("paper_route_target_account_audit_state")))
+    ]
+    target_account_audit_blockers = sorted(
+        {
+            blocker
+            for item in target_account_audit_items
+            for blocker in _unique_text_items(item.get("blockers"))
+        }
+    )
+    target_account_audit_available_count = sum(
+        1 for item in target_account_audit_items if bool(item.get("audit_available"))
     )
     account_pre_session_items = [
         item
@@ -2088,6 +2286,24 @@ def _next_paper_route_runtime_window_targets(
                 len(source_decision_readiness_items) - source_decision_ready_count
             ),
             "blockers": source_decision_blockers,
+        },
+        "target_account_audit_readiness": {
+            "schema_version": "torghut.paper-route-target-account-audit-readiness-summary.v1",
+            "state": (
+                "available"
+                if target_account_audit_items
+                and target_account_audit_available_count
+                == len(target_account_audit_items)
+                else "unavailable"
+                if target_account_audit_blockers
+                else "no_targets"
+            ),
+            "target_count": len(target_account_audit_items),
+            "available_target_count": target_account_audit_available_count,
+            "blocked_target_count": (
+                len(target_account_audit_items) - target_account_audit_available_count
+            ),
+            "blockers": target_account_audit_blockers,
         },
         "account_pre_session_readiness": {
             "schema_version": "torghut.paper-route-account-pre-session-readiness-summary.v1",
@@ -5501,6 +5717,7 @@ def build_paper_route_target_plan_payload(
     generated_at: datetime | None = None,
     target_limit: int = DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
     include_runtime_window_import_audit: bool | None = True,
+    target_account_audit_available: bool = True,
 ) -> dict[str, object]:
     """Build the lightweight runtime-window target-plan payload."""
 
@@ -5526,6 +5743,7 @@ def build_paper_route_target_plan_payload(
         probe=probe,
         live_submission_gate=live_submission_gate,
         generated_at=resolved_generated_at,
+        target_account_audit_available=target_account_audit_available,
     )
     closed_window_start, closed_window_end = (
         _latest_closed_regular_equities_session_window(resolved_generated_at)
@@ -5540,6 +5758,7 @@ def build_paper_route_target_plan_payload(
         window_start=closed_window_start,
         window_end=closed_window_end,
         purpose="latest_closed_session_paper_route_runtime_window_import",
+        target_account_audit_available=target_account_audit_available,
     )
     source_targets = _next_paper_route_runtime_window_targets(
         session=session,
@@ -5548,6 +5767,7 @@ def build_paper_route_target_plan_payload(
         live_submission_gate=live_submission_gate,
         generated_at=resolved_generated_at,
         require_clean_pre_session=False,
+        target_account_audit_available=target_account_audit_available,
     )
     runtime_window_import_plan = next_targets
     latest_closed_runtime_window_import_target_audits: (
@@ -5750,6 +5970,7 @@ def build_paper_route_evidence_audit(
     generated_at: datetime | None = None,
     lookback_hours: int = DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
     target_limit: int = DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
+    target_account_audit_available: bool = True,
 ) -> dict[str, object]:
     """Build a target-by-target audit for paper-route evidence collection."""
 
@@ -5786,6 +6007,7 @@ def build_paper_route_evidence_audit(
         probe=probe,
         live_submission_gate=live_submission_gate,
         generated_at=resolved_generated_at,
+        target_account_audit_available=target_account_audit_available,
     )
     closed_window_start, closed_window_end = (
         _latest_closed_regular_equities_session_window(resolved_generated_at)
@@ -5800,6 +6022,7 @@ def build_paper_route_evidence_audit(
         window_start=closed_window_start,
         window_end=closed_window_end,
         purpose="latest_closed_session_paper_route_runtime_window_import",
+        target_account_audit_available=target_account_audit_available,
     )
     next_target_audits = [
         _target_audit_fail_closed(

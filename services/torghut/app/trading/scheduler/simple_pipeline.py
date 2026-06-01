@@ -91,12 +91,14 @@ _BOUNDED_SIM_COLLECTION_SCOPE = "paper_route_probe_next_session_only"
 _BOUNDED_SIM_COLLECTION_BLOCKER_FIELDS = (
     "bounded_evidence_collection_blockers",
     "runtime_window_import_health_gate_blockers",
+    "paper_route_target_account_audit_blockers",
     "paper_route_account_pre_session_blockers",
     "paper_route_account_contamination_blockers",
     "paper_route_hpairs_symbol_blockers",
 )
 _BOUNDED_SIM_COLLECTION_RESERVATION_BLOCKERS = frozenset(
     {
+        "paper_route_target_account_audit_unavailable",
         "paper_route_account_contamination_detected",
         "unlinked_order_events_present",
     }
