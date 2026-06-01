@@ -37,6 +37,8 @@ class RuntimeLedgerProofPolicy:
     authority_max_drawdown_pct_equity: Decimal = Decimal("0.03")
     authority_max_best_day_share: Decimal = Decimal("0.25")
     authority_max_symbol_concentration_share: Decimal = Decimal("0.35")
+    authority_min_closed_round_trips: int = 300
+    authority_min_filled_notional: Decimal = Decimal("10000000")
 
     def target_payload(
         self,
@@ -67,6 +69,12 @@ class RuntimeLedgerProofPolicy:
             "max_runtime_ledger_symbol_concentration_share": _decimal_text(
                 _target_decimal(targets, "max_symbol_concentration_share")
             ),
+            "min_runtime_ledger_closed_round_trips": targets[
+                "min_closed_round_trips"
+            ],
+            "min_runtime_ledger_filled_notional": _decimal_text(
+                _target_decimal(targets, "min_filled_notional")
+            ),
         }
 
     def targets_for_mode(self, proof_mode: str) -> dict[str, object]:
@@ -77,6 +85,8 @@ class RuntimeLedgerProofPolicy:
         max_drawdown_pct_equity = self.max_drawdown_pct_equity
         max_best_day_share = self.max_best_day_share
         max_symbol_concentration_share = self.max_symbol_concentration_share
+        min_closed_round_trips = 1
+        min_filled_notional = Decimal("0")
         if mode == "probation":
             min_days = max(min_days, self.probation_min_trading_days)
             min_net = max(min_net, min_daily * Decimal(min_days))
@@ -99,6 +109,8 @@ class RuntimeLedgerProofPolicy:
                 max_symbol_concentration_share,
                 self.authority_max_symbol_concentration_share,
             )
+            min_closed_round_trips = self.authority_min_closed_round_trips
+            min_filled_notional = self.authority_min_filled_notional
         return {
             "proof_mode": mode,
             "final_authority": mode == "authority",
@@ -111,6 +123,8 @@ class RuntimeLedgerProofPolicy:
             "max_drawdown_pct_equity": max_drawdown_pct_equity,
             "max_best_day_share": max_best_day_share,
             "max_symbol_concentration_share": max_symbol_concentration_share,
+            "min_closed_round_trips": min_closed_round_trips,
+            "min_filled_notional": min_filled_notional,
         }
 
 
@@ -150,6 +164,9 @@ _DECIMAL_ENV_FIELDS = {
     "TORGHUT_RUNTIME_LEDGER_AUTHORITY_MAX_SYMBOL_CONCENTRATION_SHARE": (
         "authority_max_symbol_concentration_share"
     ),
+    "TORGHUT_RUNTIME_LEDGER_AUTHORITY_MIN_FILLED_NOTIONAL": (
+        "authority_min_filled_notional"
+    ),
 }
 _INT_ENV_FIELDS = {
     "TORGHUT_RUNTIME_LEDGER_PROOF_MIN_TRADING_DAYS": "min_trading_days",
@@ -157,6 +174,9 @@ _INT_ENV_FIELDS = {
         "probation_min_trading_days"
     ),
     "TORGHUT_RUNTIME_LEDGER_AUTHORITY_MIN_TRADING_DAYS": ("authority_min_trading_days"),
+    "TORGHUT_RUNTIME_LEDGER_AUTHORITY_MIN_CLOSED_ROUND_TRIPS": (
+        "authority_min_closed_round_trips"
+    ),
 }
 
 

@@ -695,9 +695,15 @@ def _add_runtime_ledger_proof_packet_check(
 ) -> None:
     packet = _mapping(runtime_ledger_proof_packet)
     authority = _mapping(packet.get("promotion_authority"))
+    capital_authority = _mapping(packet.get("capital_promotion_authority"))
     schema_version = _text(packet.get("schema_version"))
     allowed = authority.get("allowed") is True
-    packet_ok = packet.get("ok") is True and allowed
+    packet_ok = (
+        packet.get("ok") is True
+        and packet.get("final_authority_ok") is True
+        and packet.get("capital_promotion_allowed") is True
+        and allowed
+    )
     expected_schema = schema_version == RUNTIME_LEDGER_PROOF_PACKET_SCHEMA_VERSION
     _add_check(
         checks,
@@ -708,9 +714,13 @@ def _add_runtime_ledger_proof_packet_check(
             "schema_version": schema_version,
             "proof_mode": _text(packet.get("proof_mode")),
             "final_authority_ok": packet.get("final_authority_ok"),
+            "capital_promotion_allowed": packet.get("capital_promotion_allowed"),
+            "evidence_collection_ok": packet.get("evidence_collection_ok"),
             "ok": packet.get("ok"),
             "verdict": _text(packet.get("verdict")),
+            "next_action": _text(packet.get("next_action")),
             "authority_allowed": authority.get("allowed"),
+            "capital_authority_allowed": capital_authority.get("allowed"),
             "authority_reason": _text(authority.get("reason")),
             "blocking_reasons": [
                 _text(reason)
@@ -726,9 +736,69 @@ def _add_runtime_ledger_proof_packet_check(
         expected={
             "schema_version": RUNTIME_LEDGER_PROOF_PACKET_SCHEMA_VERSION,
             "ok": True,
+            "proof_mode": "authority",
+            "final_authority_ok": True,
+            "capital_promotion_allowed": True,
             "promotion_authority.allowed": True,
         },
     )
+
+
+def _readiness_next_action(
+    *,
+    failed_checks: Sequence[str],
+    checks: Mapping[str, Mapping[str, Any]],
+    runtime_ledger_proof_packet: Mapping[str, Any] | None,
+) -> str:
+    packet = _mapping(runtime_ledger_proof_packet)
+    packet_next_action = _text(packet.get("next_action"))
+    if "runtime_ledger_proof_packet_authority" in failed_checks and packet_next_action:
+        return packet_next_action
+    blockers: list[str] = []
+    for check_name in failed_checks:
+        check = _mapping(checks.get(check_name))
+        observed = _mapping(check.get("observed"))
+        for key in ("blocking_reasons", "import_blockers", "failed_checks"):
+            for reason in _sequence(observed.get(key)):
+                text = _text(reason)
+                if text and text not in blockers:
+                    blockers.append(text)
+    for blocker in blockers:
+        if blocker in {
+            "runtime_window_import_missing",
+            "runtime_window_import_runtime_ledger_materialization_missing",
+            "paper_route_runtime_ledger_import_pending",
+            "paper_route_import_not_ready",
+        }:
+            return "run_runtime_window_import_from_paper_route_target_plan"
+        if blocker in {
+            "paper_route_source_activity_missing",
+            "runtime_ledger_source_authority_missing",
+        } or blocker.startswith("runtime_ledger_source_"):
+            return "inspect_runtime_ledger_source_activity"
+        if blocker in {
+            "runtime_ledger_trading_days_below_target",
+            "runtime_ledger_observed_trading_day_count_below_target",
+        }:
+            return "collect_more_runtime_ledger_trading_days"
+        if blocker in {
+            "runtime_ledger_closed_round_trips_below_authority_floor",
+            "runtime_ledger_closed_trade_count_zero",
+        }:
+            return "collect_more_closed_runtime_round_trips"
+        if blocker in {
+            "runtime_ledger_filled_notional_below_authority_floor",
+            "runtime_ledger_avg_daily_filled_notional_below_target_implied_floor",
+        }:
+            return "collect_more_runtime_ledger_filled_notional"
+        if blocker.startswith("runtime_ledger_"):
+            return "repair_runtime_ledger_lifecycle_cost_or_lineage_evidence"
+    for failed_check in failed_checks:
+        if failed_check.startswith("paper_route_target_plan"):
+            return "repair_candidate_frontier_or_paper_route_target_plan"
+        if failed_check.startswith("runtime_ledger"):
+            return "inspect_runtime_live_paper_ledger_evidence"
+    return "none" if not failed_checks else "inspect_failed_readiness_checks"
 
 
 def _add_runtime_ledger_profit_proof_checks(
@@ -1366,11 +1436,18 @@ def evaluate_trading_readiness(
     )
 
     failed_checks = [key for key, value in checks.items() if not value["passed"]]
+    readiness_next_action = _readiness_next_action(
+        failed_checks=failed_checks,
+        checks=checks,
+        runtime_ledger_proof_packet=runtime_ledger_proof_packet,
+    )
+    packet_summary = _mapping(runtime_ledger_proof_packet)
     return {
         "schema_version": SCHEMA_VERSION,
         "ok": not failed_checks,
         "profile": profile,
         "failed_checks": failed_checks,
+        "next_action": readiness_next_action,
         "checks": checks,
         "paper_route_probe": paper_route_probe,
         "paper_route_target_plan": paper_route_target_plan,
@@ -1387,8 +1464,15 @@ def evaluate_trading_readiness(
         "runtime_ledger_proof_packet": {
             "required": require_runtime_ledger_proof_packet,
             "schema_version": _text(
-                _mapping(runtime_ledger_proof_packet).get("schema_version")
+                packet_summary.get("schema_version")
             ),
+            "proof_mode": _text(packet_summary.get("proof_mode")),
+            "final_authority_ok": packet_summary.get("final_authority_ok"),
+            "capital_promotion_allowed": packet_summary.get(
+                "capital_promotion_allowed"
+            ),
+            "evidence_collection_ok": packet_summary.get("evidence_collection_ok"),
+            "next_action": _text(packet_summary.get("next_action")),
         },
     }
 

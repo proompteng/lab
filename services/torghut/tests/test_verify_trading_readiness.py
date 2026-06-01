@@ -273,6 +273,21 @@ def _runtime_ledger_proof_packet(
         "proof_mode": "authority",
         "ok": allowed,
         "final_authority_ok": allowed,
+        "capital_promotion_allowed": allowed,
+        "evidence_collection_ok": False,
+        "next_action": "none"
+        if allowed
+        else "collect_or_improve_post_cost_runtime_profit_evidence",
+        "capital_promotion_authority": {
+            "allowed": allowed,
+            "reason": "live_capital_promotion_gate_clear"
+            if allowed
+            else "post_cost_proof_not_satisfied",
+            "blocking_reasons": blocking_reasons,
+            "failed_checks": []
+            if allowed
+            else ["runtime_ledger_post_cost_profit_target"],
+        },
         "verdict": "promotion_authority_allowed" if allowed else "blocked",
         "promotion_authority": {
             "allowed": allowed,
@@ -440,6 +455,9 @@ class TestVerifyTradingReadiness(TestCase):
         packet = _runtime_ledger_proof_packet()
         packet["proof_mode"] = "smoke"
         packet["final_authority_ok"] = False
+        packet["capital_promotion_allowed"] = False
+        packet["evidence_collection_ok"] = True
+        packet["next_action"] = "rerun_proof_packet_in_authority_mode"
         packet["promotion_authority"] = {
             "allowed": False,
             "reason": "runtime_ledger_proof_mode_not_authority",
@@ -457,6 +475,48 @@ class TestVerifyTradingReadiness(TestCase):
         observed = result["checks"]["runtime_ledger_proof_packet_authority"]["observed"]
         self.assertEqual(observed["proof_mode"], "smoke")
         self.assertFalse(observed["authority_allowed"])
+        self.assertEqual(result["next_action"], "rerun_proof_packet_in_authority_mode")
+
+    def test_runtime_ledger_blockers_map_to_concrete_next_actions(self) -> None:
+        cases = [
+            (
+                "runtime_window_import_missing",
+                "run_runtime_window_import_from_paper_route_target_plan",
+            ),
+            (
+                "runtime_ledger_source_authority_missing",
+                "inspect_runtime_ledger_source_activity",
+            ),
+            (
+                "runtime_ledger_trading_days_below_target",
+                "collect_more_runtime_ledger_trading_days",
+            ),
+            (
+                "runtime_ledger_closed_round_trips_below_authority_floor",
+                "collect_more_closed_runtime_round_trips",
+            ),
+            (
+                "runtime_ledger_filled_notional_below_authority_floor",
+                "collect_more_runtime_ledger_filled_notional",
+            ),
+            (
+                "runtime_ledger_explicit_costs_missing",
+                "repair_runtime_ledger_lifecycle_cost_or_lineage_evidence",
+            ),
+        ]
+        for blocker, expected_action in cases:
+            with self.subTest(blocker=blocker):
+                action = verifier._readiness_next_action(
+                    failed_checks=["runtime_ledger_proof_packet_authority"],
+                    checks={
+                        "runtime_ledger_proof_packet_authority": {
+                            "observed": {"blocking_reasons": [blocker]}
+                        }
+                    },
+                    runtime_ledger_proof_packet={},
+                )
+
+                self.assertEqual(action, expected_action)
 
     def test_runtime_ledger_profit_proof_requires_observed_days_and_daily_pnl(
         self,
