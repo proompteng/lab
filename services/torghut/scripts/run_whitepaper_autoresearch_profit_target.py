@@ -6752,11 +6752,21 @@ def _bounded_sim_target_queue_metadata(
     ]
     entries: list[dict[str, Any]] = []
     for index, row in enumerate(selected_rows, start=1):
+        candidate_spec_id = _string(row.get("candidate_spec_id"))
+        frontier_bucket = _string(row.get("frontier_bucket"))
+        handoff_lineage = _fast_replay_exact_handoff_lineage(
+            row=row,
+            replay_tape_manifest=replay_tape_manifest,
+            queue_priority=index,
+            candidate_spec_id=candidate_spec_id,
+            frontier_bucket=frontier_bucket,
+        )
+        handoff_lineage_hash = _string(handoff_lineage.get("lineage_hash"))
         entries.append(
             {
                 "queue_priority": index,
-                "candidate_spec_id": _string(row.get("candidate_spec_id")),
-                "frontier_bucket": _string(row.get("frontier_bucket")),
+                "candidate_spec_id": candidate_spec_id,
+                "frontier_bucket": frontier_bucket,
                 "preview_rank": row.get("rank"),
                 "preview_score": row.get("preview_score"),
                 "observed_post_cost_expectancy_bps": row.get(
@@ -6770,6 +6780,10 @@ def _bounded_sim_target_queue_metadata(
                     "dataset_snapshot_ref": replay_tape_manifest.dataset_snapshot_ref,
                     "replay_tape_content_sha256": replay_tape_manifest.content_sha256,
                     "replay_cache_key": replay_tape_manifest.replay_cache_key,
+                    "source_query_digest": replay_tape_manifest.source_query_digest,
+                    "source_table_versions": dict(
+                        replay_tape_manifest.source_table_versions
+                    ),
                     "feature_schema_hash": replay_tape_manifest.feature_schema_hash,
                     "cost_model_hash": replay_tape_manifest.cost_model_hash,
                     "strategy_family": replay_tape_manifest.strategy_family,
@@ -6778,7 +6792,10 @@ def _bounded_sim_target_queue_metadata(
                     ),
                     "preview_score": row.get("preview_score"),
                     "frontier_bucket": row.get("frontier_bucket"),
+                    "handoff_lineage_hash": handoff_lineage_hash,
                 },
+                "exact_replay_handoff_lineage": handoff_lineage,
+                "handoff_lineage_hash": handoff_lineage_hash,
                 "cost_impact_lineage": row.get("cost_impact_lineage"),
                 "adv_capacity_context": row.get("adv_capacity_context"),
                 "lineage_blockers": list(
@@ -6798,7 +6815,7 @@ def _bounded_sim_target_queue_metadata(
             }
         )
     return {
-        "schema_version": "torghut.fast-replay-bounded-sim-target-queue.v1",
+        "schema_version": "torghut.fast-replay-bounded-sim-target-queue.v2",
         "status": "metadata_only_preview_to_exact_replay_queue",
         "authority": "not_promotion_proof",
         "prefilter_only": True,
@@ -6833,6 +6850,8 @@ def _bounded_sim_target_queue_metadata(
             "dataset_snapshot_ref": replay_tape_manifest.dataset_snapshot_ref,
             "content_sha256": replay_tape_manifest.content_sha256,
             "replay_cache_key": replay_tape_manifest.replay_cache_key,
+            "source_query_digest": replay_tape_manifest.source_query_digest,
+            "source_table_versions": dict(replay_tape_manifest.source_table_versions),
             "feature_schema_hash": replay_tape_manifest.feature_schema_hash,
             "cost_model_hash": replay_tape_manifest.cost_model_hash,
             "strategy_family": replay_tape_manifest.strategy_family,
@@ -6843,8 +6862,54 @@ def _bounded_sim_target_queue_metadata(
         "exploration_slots": exploration_slots,
         "exact_replay_candidate_count": len(entries),
         "candidate_spec_ids": [entry["candidate_spec_id"] for entry in entries],
+        "handoff_lineage_hashes": [
+            entry["handoff_lineage_hash"] for entry in entries
+        ],
         "entries": entries,
     }
+
+
+def _fast_replay_exact_handoff_lineage(
+    *,
+    row: Mapping[str, Any],
+    replay_tape_manifest: ReplayTapeManifest,
+    queue_priority: int,
+    candidate_spec_id: str,
+    frontier_bucket: str,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "schema_version": "torghut.fast-replay-exact-handoff-lineage.v1",
+        "status": "preview_only_exact_replay_handoff",
+        "authority": "not_promotion_proof",
+        "prefilter_only": True,
+        "promotion_proof": False,
+        "proof_authority": False,
+        "promotion_authority": False,
+        "promotion_allowed": False,
+        "final_promotion_allowed": False,
+        "candidate_spec_id": candidate_spec_id,
+        "queue_priority": queue_priority,
+        "frontier_bucket": frontier_bucket,
+        "preview_rank": row.get("rank"),
+        "preview_score": row.get("preview_score"),
+        "proof_semantics_label": row.get("proof_semantics_label"),
+        "replay_tape": {
+            "dataset_snapshot_ref": replay_tape_manifest.dataset_snapshot_ref,
+            "content_sha256": replay_tape_manifest.content_sha256,
+            "replay_cache_key": replay_tape_manifest.replay_cache_key,
+            "source_query_digest": replay_tape_manifest.source_query_digest,
+            "source_table_versions": dict(replay_tape_manifest.source_table_versions),
+            "feature_schema_hash": replay_tape_manifest.feature_schema_hash,
+            "cost_model_hash": replay_tape_manifest.cost_model_hash,
+            "strategy_family": replay_tape_manifest.strategy_family,
+            "cache_identity": replay_tape_manifest.cache_identity_diagnostics(),
+        },
+        "cost_impact_lineage": row.get("cost_impact_lineage"),
+        "hpairs_microstructure_prefilter": row.get("hpairs_microstructure_prefilter")
+        or row.get("microstructure_prefilter"),
+    }
+    payload["lineage_hash"] = build_source_query_digest(payload)
+    return payload
 
 
 def _maybe_materialize_epoch_replay_tape(

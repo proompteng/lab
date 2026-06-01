@@ -236,6 +236,10 @@ class FastReplayPreviewResult:
                 "dataset_snapshot_ref": self.replay_tape_manifest.dataset_snapshot_ref,
                 "content_sha256": self.replay_tape_manifest.content_sha256,
                 "replay_cache_key": self.replay_tape_manifest.replay_cache_key,
+                "source_query_digest": self.replay_tape_manifest.source_query_digest,
+                "source_table_versions": dict(
+                    self.replay_tape_manifest.source_table_versions
+                ),
                 "feature_schema_hash": self.replay_tape_manifest.feature_schema_hash,
                 "cost_model_hash": self.replay_tape_manifest.cost_model_hash,
                 "strategy_family": self.replay_tape_manifest.strategy_family,

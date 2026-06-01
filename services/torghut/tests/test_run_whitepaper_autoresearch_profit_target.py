@@ -4670,6 +4670,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 )
                 for index, symbol in enumerate(["NVDA", "AAPL", "INTC"] * 3)
             ]
+            source_query_digest = build_source_query_digest({"window": "frontier"})
             materialize_signal_tape(
                 rows=rows,
                 tape_path=tape_path,
@@ -4677,10 +4678,11 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 symbols=("NVDA", "AAPL", "INTC"),
                 start_date=date(2026, 2, 23),
                 end_date=date(2026, 2, 23),
-                source_query_digest=build_source_query_digest({"window": "frontier"}),
+                source_query_digest=source_query_digest,
                 feature_schema_hash="feature-schema-frontier",
                 cost_model_hash="cost-model-frontier",
                 strategy_family="hpairs-frontier-family",
+                source_table_versions={"signals": "v1"},
             )
             specs = [
                 self._candidate_spec(f"spec-frontier-{index}") for index in range(8)
@@ -4760,6 +4762,12 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             queue_payload["replay_tape"]["strategy_family"], "hpairs-frontier-family"
         )
         self.assertEqual(
+            queue_payload["replay_tape"]["source_query_digest"], source_query_digest
+        )
+        self.assertEqual(
+            queue_payload["replay_tape"]["source_table_versions"], {"signals": "v1"}
+        )
+        self.assertEqual(
             queue_payload["replay_tape"]["cache_identity"]["status"], "complete"
         )
         self.assertFalse(
@@ -4790,6 +4798,14 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             "feature-schema-frontier",
         )
         self.assertEqual(
+            first_entry["reproducibility_metadata"]["source_query_digest"],
+            source_query_digest,
+        )
+        self.assertEqual(
+            first_entry["reproducibility_metadata"]["source_table_versions"],
+            {"signals": "v1"},
+        )
+        self.assertEqual(
             first_entry["reproducibility_metadata"]["cache_identity"]["status"],
             "complete",
         )
@@ -4799,6 +4815,33 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertIn("target_implied_notional_context", first_entry)
         self.assertIn("cost_impact_lineage", first_entry)
+        self.assertIn("exact_replay_handoff_lineage", first_entry)
+        self.assertIn(
+            first_entry["handoff_lineage_hash"],
+            queue_payload["handoff_lineage_hashes"],
+        )
+        self.assertEqual(
+            first_entry["exact_replay_handoff_lineage"]["lineage_hash"],
+            first_entry["handoff_lineage_hash"],
+        )
+        self.assertEqual(
+            first_entry["exact_replay_handoff_lineage"]["replay_tape"][
+                "source_query_digest"
+            ],
+            source_query_digest,
+        )
+        self.assertEqual(
+            first_entry["exact_replay_handoff_lineage"]["replay_tape"][
+                "cost_model_hash"
+            ],
+            "cost-model-frontier",
+        )
+        self.assertFalse(
+            first_entry["exact_replay_handoff_lineage"]["promotion_allowed"]
+        )
+        self.assertFalse(
+            first_entry["exact_replay_handoff_lineage"]["final_promotion_allowed"]
+        )
         self.assertEqual(
             first_entry["adv_capacity_context"]["status"], "missing_source_backed_adv"
         )

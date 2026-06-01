@@ -108,6 +108,7 @@ class TestFastReplayPreview(TestCase):
                     symbol="BBB", offset=3, price="98", ofi="-0.20", stress=True
                 ),
             ]
+            source_query_digest = build_source_query_digest({"window": "fast"})
             manifest = materialize_signal_tape(
                 rows=rows,
                 tape_path=Path(tmpdir) / "tape.jsonl",
@@ -115,7 +116,8 @@ class TestFastReplayPreview(TestCase):
                 symbols=("AAA", "BBB"),
                 start_date=date(2026, 2, 23),
                 end_date=date(2026, 2, 23),
-                source_query_digest=build_source_query_digest({"window": "fast"}),
+                source_query_digest=source_query_digest,
+                source_table_versions={"signals": "v1"},
             )
 
         preview = build_fast_replay_preview(
@@ -170,6 +172,12 @@ class TestFastReplayPreview(TestCase):
         self.assertIn("source_backed_adv_missing", row_payload["risk_flags"])
         self.assertEqual(
             payload["replay_tape"]["dataset_snapshot_ref"], "snapshot-fast"
+        )
+        self.assertEqual(
+            payload["replay_tape"]["source_query_digest"], source_query_digest
+        )
+        self.assertEqual(
+            payload["replay_tape"]["source_table_versions"], {"signals": "v1"}
         )
         self.assertIn("feature_schema_hash", payload["replay_tape"])
         self.assertIn("cost_model_hash", payload["replay_tape"])
