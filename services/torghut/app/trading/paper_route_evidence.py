@@ -96,8 +96,17 @@ PROMOTION_ONLY_READINESS_BLOCKERS = frozenset(
     {
         "paper_probation_evidence_collection_only",
         "paper_route_evidence_audit_stripped_promotion_authority",
+        "paper_route_runtime_ledger_import_pending",
+        "bounded_paper_route_evidence_collection_only",
+        "runtime_ledger_source_collection_only",
+        "runtime_ledger_source_window_evidence_pending",
         "runtime_ledger_stage_not_live",
         "live_runtime_ledger_required",
+        "runtime_ledger_bucket_missing",
+        "runtime_ledger_evidence_grade_bucket_missing",
+        "hypothesis_window_missing",
+        "promotion_decision_missing",
+        "promotion_decision_not_allowed",
     }
 )
 CLEAN_WINDOW_BASELINE_SCHEMA_VERSION = "torghut.paper-route-clean-window-baseline.v1"
@@ -726,6 +735,37 @@ def _paper_route_session_readiness(
         ),
         "import_blockers": import_blockers,
     }
+
+
+def _paper_route_collection_session_blockers(
+    session_readiness: Mapping[str, object],
+) -> list[str]:
+    """Return blockers for submitting bounded paper collection in this window.
+
+    Import readiness and collection readiness are intentionally not identical:
+    an open window blocks import because it is not closed yet, but it is the
+    only time a bounded live-paper collection target may submit. Before the
+    open and after the close, report a machine-readable collection blocker
+    instead of allowing ambiguous "ready" target state.
+    """
+
+    state = _safe_text(session_readiness.get("state")) or "unknown"
+    if state == "collecting_session_evidence":
+        return []
+    if state == "waiting_for_session_open":
+        return ["paper_route_session_window_not_open"]
+    if state == "window_closed_settlement_pending":
+        return ["paper_route_session_settlement_pending"]
+    if state == "window_closed_import_ready":
+        return ["paper_route_session_window_closed"]
+    if state == "window_closed_import_blocked":
+        blockers = [
+            blocker
+            for blocker in _unique_text_items(session_readiness.get("import_blockers"))
+            if blocker != "paper_route_session_window_not_closed"
+        ]
+        return blockers or ["paper_route_session_window_closed"]
+    return ["paper_route_session_state_unknown"]
 
 
 def _paper_route_probe_summary(
@@ -1598,6 +1638,9 @@ def _next_paper_route_runtime_window_targets(
         for item in _as_sequence(session_readiness.get("import_blockers"))
         if str(item).strip()
     ]
+    collection_session_blockers = _paper_route_collection_session_blockers(
+        session_readiness
+    )
     import_handoff = {
         "runner": "scripts/renew_latest_empirical_promotion_jobs.py",
         "target_plan_endpoint": PAPER_ROUTE_TARGET_PLAN_ENDPOINT,
@@ -1836,6 +1879,10 @@ def _next_paper_route_runtime_window_targets(
                 symbols=target_probe_symbols,
                 window_start=window_start,
                 window_end=window_end,
+                strategy_lookup_names=strategy_lookup_names,
+                candidate_id=candidate_id,
+                hypothesis_id=hypothesis_id,
+                require_source_lineage=_target_requires_source_lineage(target),
             )
             if target_account_audit_available
             else _account_contamination_audit_unavailable(
@@ -1945,6 +1992,7 @@ def _next_paper_route_runtime_window_targets(
         )
         evidence_collection_blockers = _unique_text_items(
             [
+                *collection_session_blockers,
                 *_unique_text_items(source_decision_readiness.get("blockers")),
                 *target_account_audit_blockers,
                 *account_pre_session_blockers,
@@ -2070,6 +2118,7 @@ def _next_paper_route_runtime_window_targets(
                 session_readiness.get("state")
             )
             or "unknown",
+            "paper_route_session_collection_blockers": collection_session_blockers,
             "paper_route_session_import_ready": import_ready,
             "paper_route_session_import_blockers": import_blockers,
             "paper_route_runtime_window_import_not_before": _safe_text(
@@ -2280,6 +2329,15 @@ def _next_paper_route_runtime_window_targets(
             "end": _isoformat(window_end),
         },
         "session_readiness": session_readiness,
+        "collection_session_readiness": {
+            "schema_version": "torghut.paper-route-collection-session-readiness.v1",
+            "state": (
+                "ready"
+                if not collection_session_blockers
+                else "blocked"
+            ),
+            "blockers": collection_session_blockers,
+        },
         "runtime_window_import_handoff": {
             **import_handoff,
             "target_count": len(planned_targets),
@@ -3164,6 +3222,10 @@ def _account_contamination_audit(
     symbols: Sequence[str],
     window_start: datetime,
     window_end: datetime,
+    strategy_lookup_names: Sequence[str] = (),
+    candidate_id: str | None = None,
+    hypothesis_id: str | None = None,
+    require_source_lineage: bool = False,
 ) -> dict[str, object]:
     symbol_filters = [
         str(item).strip().upper() for item in symbols if str(item).strip()
@@ -3178,22 +3240,26 @@ def _account_contamination_audit(
             "window_start": _isoformat(window_start),
             "window_end": _isoformat(window_end),
             "contaminated": False,
+            "order_event_count": 0,
             "unlinked_order_event_count": 0,
+            "foreign_linked_order_event_count": 0,
+            "target_linked_order_event_count": 0,
             "client_order_id_count": 0,
             "sample_client_order_ids": [],
             "symbol_counts": {},
             "event_type_counts": {},
             "status_counts": {},
+            "foreign_strategy_counts": {},
             "last_event_at": None,
             "blockers": [],
         }
     order_event_activity_ts = _order_event_activity_timestamp()
+    strategy_filters = [name for name in strategy_lookup_names if name]
     stmt = (
         select(ExecutionOrderEvent)
         .where(ExecutionOrderEvent.alpaca_account_label == account_label)
         .where(order_event_activity_ts >= window_start)
         .where(order_event_activity_ts < window_end)
-        .where(ExecutionOrderEvent.trade_decision_id.is_(None))
     )
     if symbol_filters:
         stmt = stmt.where(ExecutionOrderEvent.symbol.in_(symbol_filters))
@@ -3203,24 +3269,56 @@ def _account_contamination_audit(
             stmt.order_by(order_event_activity_ts.desc()).limit(500)
         ).scalars()
     )
-    if rows:
+    target_linked_rows: list[ExecutionOrderEvent] = []
+    foreign_linked_rows: list[ExecutionOrderEvent] = []
+    unlinked_rows: list[ExecutionOrderEvent] = []
+    foreign_strategy_counts: Counter[str] = Counter()
+    for row in rows:
+        decision = row.trade_decision
+        if decision is None:
+            unlinked_rows.append(row)
+            continue
+        strategy_name = _safe_text(
+            getattr(getattr(decision, "strategy", None), "name", None)
+        )
+        strategy_matches = not strategy_filters or strategy_name in strategy_filters
+        lineage_matches = (
+            _source_decision_lineage_matches(
+                decision,
+                candidate_id=candidate_id,
+                hypothesis_id=hypothesis_id,
+            )
+            if require_source_lineage
+            else True
+        )
+        if strategy_matches and lineage_matches:
+            target_linked_rows.append(row)
+            continue
+        foreign_linked_rows.append(row)
+        foreign_strategy_counts[strategy_name or "missing"] += 1
+    if unlinked_rows or foreign_linked_rows:
         blockers.extend(
             [
                 "paper_route_account_contamination_detected",
-                "unlinked_order_events_present",
             ]
         )
+    if unlinked_rows:
+        blockers.append("unlinked_order_events_present")
+    if foreign_linked_rows:
+        blockers.append("foreign_order_events_present")
     client_order_ids: list[str] = []
     symbol_counts: Counter[str] = Counter()
     event_type_counts: Counter[str] = Counter()
     status_counts: Counter[str] = Counter()
-    for row in rows:
+    for row in [*unlinked_rows, *foreign_linked_rows]:
         if client_order_id := _safe_text(row.client_order_id):
             if client_order_id not in client_order_ids:
                 client_order_ids.append(client_order_id)
         symbol_counts[_safe_text(row.symbol) or "missing"] += 1
         event_type_counts[_safe_text(row.event_type) or "missing"] += 1
         status_counts[_safe_text(row.status) or "missing"] += 1
+    contaminating_rows = [*unlinked_rows, *foreign_linked_rows]
+    last_event_row = contaminating_rows[0] if contaminating_rows else rows[0] if rows else None
     return {
         "schema_version": "torghut.paper-route-account-contamination-audit.v1",
         "scope": "target_window_account_symbol_order_events",
@@ -3228,15 +3326,19 @@ def _account_contamination_audit(
         "symbols": symbol_filters,
         "window_start": _isoformat(window_start),
         "window_end": _isoformat(window_end),
-        "contaminated": bool(rows),
-        "unlinked_order_event_count": len(rows),
+        "contaminated": bool(unlinked_rows or foreign_linked_rows),
+        "order_event_count": len(rows),
+        "unlinked_order_event_count": len(unlinked_rows),
+        "foreign_linked_order_event_count": len(foreign_linked_rows),
+        "target_linked_order_event_count": len(target_linked_rows),
         "client_order_id_count": len(client_order_ids),
         "sample_client_order_ids": client_order_ids[:10],
         "symbol_counts": dict(sorted(symbol_counts.items())),
         "event_type_counts": dict(sorted(event_type_counts.items())),
         "status_counts": dict(sorted(status_counts.items())),
+        "foreign_strategy_counts": dict(sorted(foreign_strategy_counts.items())),
         "last_event_at": _isoformat(
-            _order_event_activity_at(rows[0]) if rows else None
+            _order_event_activity_at(last_event_row) if last_event_row is not None else None
         ),
         "blockers": blockers,
     }
@@ -4741,6 +4843,10 @@ def _target_audit(
         symbols=_target_probe_symbols(target, probe),
         window_start=window_start,
         window_end=window_end,
+        strategy_lookup_names=strategy_lookup_names,
+        candidate_id=candidate_id,
+        hypothesis_id=hypothesis_id,
+        require_source_lineage=_target_requires_source_lineage(target),
     )
     account_state = _account_window_start_snapshot_audit(
         session,

@@ -1419,7 +1419,8 @@ class TestPaperRouteEvidenceAudit(TestCase):
         )
 
     def test_flat_clean_baseline_allows_bounded_collection_readiness(self) -> None:
-        generated_at = datetime(2026, 5, 26, 13, 20, tzinfo=timezone.utc)
+        generated_at = datetime(2026, 5, 26, 13, 35, tzinfo=timezone.utc)
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
         with Session(self.engine) as session:
             session.add(
                 Strategy(
@@ -1434,7 +1435,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
             self._add_account_position_snapshot(
                 session,
                 account_label="TORGHUT_SIM",
-                as_of=generated_at - timedelta(seconds=30),
+                as_of=window_start - timedelta(minutes=5),
                 positions=[],
             )
             session.commit()
@@ -1467,7 +1468,8 @@ class TestPaperRouteEvidenceAudit(TestCase):
     def test_target_account_audit_unavailable_blocks_collection_readiness(
         self,
     ) -> None:
-        generated_at = datetime(2026, 5, 26, 13, 20, tzinfo=timezone.utc)
+        generated_at = datetime(2026, 5, 26, 13, 35, tzinfo=timezone.utc)
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
         with Session(self.engine) as session:
             session.add(
                 Strategy(
@@ -1482,7 +1484,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
             self._add_account_position_snapshot(
                 session,
                 account_label="TORGHUT_SIM",
-                as_of=generated_at - timedelta(seconds=30),
+                as_of=window_start - timedelta(minutes=5),
                 positions=[],
             )
             session.commit()
@@ -1521,7 +1523,8 @@ class TestPaperRouteEvidenceAudit(TestCase):
     def test_clean_baseline_allows_collection_when_health_gate_blocks_promotion(
         self,
     ) -> None:
-        generated_at = datetime(2026, 5, 26, 13, 20, tzinfo=timezone.utc)
+        generated_at = datetime(2026, 5, 26, 13, 35, tzinfo=timezone.utc)
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
         with Session(self.engine) as session:
             session.add(
                 Strategy(
@@ -1536,7 +1539,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
             self._add_account_position_snapshot(
                 session,
                 account_label="TORGHUT_SIM",
-                as_of=generated_at - timedelta(seconds=30),
+                as_of=window_start - timedelta(minutes=5),
                 positions=[],
             )
             session.commit()
@@ -2577,6 +2580,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(
             summary_target["bounded_evidence_collection_blockers"],
             [
+                "paper_route_session_window_not_open",
                 "source_strategy_missing",
                 "paper_route_clean_window_baseline_snapshot_pending",
             ],
@@ -2723,6 +2727,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
             [
                 "paper_route_runtime_ledger_import_pending",
                 "custom_runtime_blocker",
+                "paper_route_session_window_not_open",
                 "source_strategy_missing",
                 "paper_route_clean_window_baseline_snapshot_pending",
             ],
@@ -2735,7 +2740,8 @@ class TestPaperRouteEvidenceAudit(TestCase):
     def test_next_paper_route_targets_surface_source_decision_readiness(
         self,
     ) -> None:
-        generated_at = datetime(2026, 5, 26, 13, 20, tzinfo=timezone.utc)
+        generated_at = datetime(2026, 5, 26, 13, 35, tzinfo=timezone.utc)
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
         with Session(self.engine) as session:
             session.add(
                 Strategy(
@@ -2751,7 +2757,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
             self._add_account_position_snapshot(
                 session,
                 account_label="TORGHUT_SIM",
-                as_of=generated_at - timedelta(seconds=30),
+                as_of=window_start - timedelta(minutes=5),
                 positions=[],
             )
             session.commit()
@@ -4121,6 +4127,16 @@ class TestPaperRouteEvidenceAudit(TestCase):
             settlement_target["paper_route_runtime_window_import_not_before"],
             "2026-05-26T21:00:00+00:00",
         )
+        self.assertFalse(settlement_target["evidence_collection_ok"])
+        self.assertFalse(settlement_target["bounded_evidence_collection_authorized"])
+        self.assertEqual(
+            settlement_target["paper_route_session_collection_blockers"],
+            ["paper_route_session_settlement_pending"],
+        )
+        self.assertIn(
+            "paper_route_session_settlement_pending",
+            settlement_target["bounded_evidence_collection_blockers"],
+        )
 
         import_payload = build(datetime(2026, 5, 26, 21, tzinfo=timezone.utc))
         import_readiness = import_payload["next_paper_route_runtime_window_targets"][
@@ -5163,12 +5179,12 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertFalse(readiness["evidence_collection_ok"])
         self.assertFalse(readiness["capital_promotion_allowed"])
         self.assertFalse(readiness["final_authority_ok"])
-        for blocker in (
-            "source_tca_missing",
-            "runtime_ledger_bucket_missing",
+        self.assertIn("source_tca_missing", readiness["evidence_collection_blockers"])
+        self.assertIn("runtime_ledger_bucket_missing", readiness["blockers"])
+        self.assertIn(
             "runtime_ledger_evidence_grade_bucket_missing",
-        ):
-            self.assertIn(blocker, readiness["evidence_collection_blockers"])
+            readiness["blockers"],
+        )
         self.assertFalse(readiness["promotion_authority"]["allowed"])
         self.assertFalse(readiness["promotion_authority"]["final_authority_ok"])
 
@@ -6413,6 +6429,147 @@ class TestPaperRouteEvidenceAudit(TestCase):
             target["bounded_evidence_collection_blockers"],
         )
 
+    def test_active_window_foreign_linked_order_events_block_target_plan_collection(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, tzinfo=timezone.utc)
+        now = datetime(2026, 5, 26, 18, 5, tzinfo=timezone.utc)
+
+        with Session(self.engine) as session:
+            target_strategy = Strategy(
+                name="hpairs-target-contamination-strategy",
+                description="target bounded paper route strategy",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL", "AMZN"],
+                created_at=window_start,
+                updated_at=window_start,
+            )
+            foreign_strategy = Strategy(
+                name="intraday-tsmom-profit-v3",
+                description="foreign paper account strategy",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+                created_at=window_start,
+                updated_at=window_start,
+            )
+            session.add_all([target_strategy, foreign_strategy])
+            session.flush()
+            foreign_decision = TradeDecision(
+                strategy_id=foreign_strategy.id,
+                alpaca_account_label="TORGHUT_SIM",
+                symbol="AAPL",
+                timeframe="1Min",
+                decision_json={
+                    "action": "buy",
+                    "qty": "1",
+                    "candidate_id": "candidate-tsmom",
+                    "hypothesis_id": "H-TSMOM-LIQ",
+                },
+                rationale="foreign linked paper route contamination fixture",
+                status="executed",
+                created_at=window_start + timedelta(minutes=5),
+                executed_at=window_start + timedelta(minutes=6),
+            )
+            session.add(foreign_decision)
+            session.flush()
+            session.add(
+                ExecutionOrderEvent(
+                    event_fingerprint="foreign-linked-tsmom-paper-event",
+                    source_topic="alpaca.trade_updates",
+                    source_partition=0,
+                    source_offset=43,
+                    alpaca_account_label="TORGHUT_SIM",
+                    event_ts=window_start + timedelta(minutes=20),
+                    symbol="AAPL",
+                    alpaca_order_id="foreign-linked-order-1",
+                    client_order_id="tsmom-AAPL-foreign-linked-1",
+                    event_type="fill",
+                    status="filled",
+                    qty=Decimal("1"),
+                    filled_qty=Decimal("1"),
+                    avg_fill_price=Decimal("101"),
+                    raw_event={"source": "foreign_tsmom_strategy"},
+                    execution_id=None,
+                    trade_decision_id=foreign_decision.id,
+                )
+            )
+            self._add_flat_account_start_snapshot(
+                session,
+                account_label="TORGHUT_SIM",
+                window_start=window_start,
+            )
+            session.commit()
+
+            payload = build_paper_route_target_plan_payload(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "paper_route_probe_only",
+                    "blocked_reasons": [],
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": (
+                            "torghut.runtime-ledger-paper-probation-import-plan.v1"
+                        ),
+                        "target_count": "1",
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-PAIRS-01",
+                                "candidate_id": "candidate-hpairs",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_pairs",
+                                "strategy_name": target_strategy.name,
+                                "strategy_id": "hpairs_target_strategy@research",
+                                "account_label": "TORGHUT_SIM",
+                                "source_kind": "paper_route_probe_runtime_observed",
+                                "source_manifest_ref": (
+                                    "config/trading/hypotheses/h-pairs-01.json"
+                                ),
+                                "window_start": window_start.isoformat(),
+                                "window_end": window_end.isoformat(),
+                                "paper_probation_authorized": True,
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "summary": {
+                        "paper_route_probe_eligible_symbols": ["AAPL", "AMZN"],
+                        "paper_route_probe_active_symbols": ["AAPL", "AMZN"],
+                    },
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": True,
+                        "effective_max_notional": 25,
+                        "next_session_max_notional": 25,
+                        "eligible_symbols": ["AAPL", "AMZN"],
+                    },
+                },
+                generated_at=now,
+            )
+
+        target = payload["next_paper_route_runtime_window_targets"]["targets"][0]
+        contamination = target["paper_route_account_contamination_state"]
+        self.assertTrue(contamination["contaminated"])
+        self.assertEqual(contamination["unlinked_order_event_count"], 0)
+        self.assertEqual(contamination["foreign_linked_order_event_count"], 1)
+        self.assertEqual(contamination["target_linked_order_event_count"], 0)
+        self.assertEqual(
+            contamination["foreign_strategy_counts"],
+            {"intraday-tsmom-profit-v3": 1},
+        )
+        self.assertFalse(target["evidence_collection_ok"])
+        self.assertIn(
+            "foreign_order_events_present",
+            target["bounded_evidence_collection_blockers"],
+        )
+
     def test_account_window_start_positions_block_runtime_window_import(
         self,
     ) -> None:
@@ -7362,9 +7519,9 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(runtime_ledger["evidence_grade_bucket_count"], 0)
         self.assertIn(
             "runtime_ledger_bucket_missing",
-            payload["targets"][0]["readiness"]["evidence_collection_blockers"],
+            payload["targets"][0]["readiness"]["blockers"],
         )
         self.assertIn(
             "runtime_ledger_evidence_grade_bucket_missing",
-            payload["targets"][0]["readiness"]["evidence_collection_blockers"],
+            payload["targets"][0]["readiness"]["blockers"],
         )
