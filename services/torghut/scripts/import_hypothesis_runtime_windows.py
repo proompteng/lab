@@ -2183,12 +2183,23 @@ def _runtime_lifecycle_ledger_row(
             "filled_price",
             "price",
         )
+        source_order_feed_delta_fill = (
+            _source_order_feed_payload_delta_fill(row, event_type=event_type)
+            if source_authority_order_event and fill_quantity_basis is None
+            else None
+        )
         if (
             source_authority_order_event
             and fill_quantity_basis in {"delta", "cumulative_to_delta"}
             and filled_qty_delta is not None
         ):
             filled_qty = filled_qty_delta
+        filled_notional_delta = _first_positive_decimal(
+            row,
+            "filled_notional_delta",
+            "fill_notional_delta",
+            "delta_filled_notional",
+        )
         filled_notional = _first_positive_decimal(
             row,
             "filled_notional_delta",
@@ -2198,7 +2209,16 @@ def _runtime_lifecycle_ledger_row(
             "notional",
             "fill_notional",
         )
-        if source_authority_order_event and fill_quantity_basis not in {
+        if source_order_feed_delta_fill is not None:
+            delta_qty, delta_price, delta_side = source_order_feed_delta_fill
+            side = side or delta_side
+            fill_quantity_basis = "delta"
+            filled_qty_delta = delta_qty
+            filled_qty = delta_qty
+            avg_fill_price = delta_price
+            filled_notional_delta = delta_qty * delta_price
+            filled_notional = filled_notional_delta
+        elif source_authority_order_event and fill_quantity_basis not in {
             "delta",
             "cumulative_to_delta",
         }:
@@ -2257,12 +2277,6 @@ def _runtime_lifecycle_ledger_row(
             ledger_row["filled_notional"] = filled_notional
         if filled_qty_delta is not None:
             ledger_row["filled_qty_delta"] = filled_qty_delta
-        filled_notional_delta = _first_positive_decimal(
-            row,
-            "filled_notional_delta",
-            "fill_notional_delta",
-            "delta_filled_notional",
-        )
         if filled_notional_delta is not None:
             ledger_row["filled_notional_delta"] = filled_notional_delta
         if fill_quantity_basis is not None:
@@ -2436,8 +2450,54 @@ def _fill_quantity_basis(row: Mapping[str, object]) -> str | None:
     return normalized or None
 
 
+def _source_order_feed_payload_delta_fill(
+    row: Mapping[str, object], *, event_type: str
+) -> tuple[Decimal, Decimal, str | None] | None:
+    if (
+        _runtime_ledger_event_type({"event_type": event_type})
+        not in _RUNTIME_LEDGER_FILL_EVENTS
+    ):
+        return None
+    raw_event = _as_mapping(row.get("raw_event"))
+    if not raw_event:
+        return None
+
+    payload_candidates: list[Mapping[str, object]] = []
+    for key in ("payload", "data"):
+        payload = _as_mapping(raw_event.get(key))
+        if payload:
+            payload_candidates.append(payload)
+    if _as_mapping(raw_event.get("order")):
+        payload_candidates.append(raw_event)
+
+    for payload in payload_candidates:
+        payload_event = _runtime_ledger_event_type(
+            {
+                "event_type": _direct_text(payload, "event", "event_type")
+                or event_type,
+                "status": _direct_text(payload, "status"),
+            }
+        )
+        if payload_event not in _RUNTIME_LEDGER_FILL_EVENTS:
+            continue
+        qty = _decimal_or_none(payload.get("qty"))
+        price = _decimal_or_none(payload.get("price"))
+        if qty is None or qty <= 0 or price is None or price <= 0:
+            continue
+        order = _as_mapping(payload.get("order"))
+        side = _direct_text(payload, "side", "order_side") or _direct_text(
+            order, "side"
+        )
+        return qty, price, side
+    return None
+
+
 def _order_feed_fill_delta_blockers(row: Mapping[str, object]) -> list[str]:
     if not _source_authority_order_event_row(row):
+        return []
+    if _source_order_feed_payload_delta_fill(
+        row, event_type=_runtime_ledger_event_type(row)
+    ):
         return []
     basis = _fill_quantity_basis(row)
     if basis not in {"delta", "cumulative_to_delta"}:
