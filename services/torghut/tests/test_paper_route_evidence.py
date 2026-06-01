@@ -517,6 +517,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
         *,
         generated_at: datetime,
         include_runtime_window_import_audit: bool | None = True,
+        target_account_audit_available: bool = True,
     ) -> dict[str, object]:
         return build_paper_route_target_plan_payload(
             session,
@@ -570,6 +571,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
             },
             generated_at=generated_at,
             include_runtime_window_import_audit=include_runtime_window_import_audit,
+            target_account_audit_available=target_account_audit_available,
         )
 
     def test_target_plan_can_defer_full_runtime_window_audit(self) -> None:
@@ -1188,6 +1190,60 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(clean_readiness["state"], "clean")
         self.assertEqual(clean_readiness["clean_target_count"], 1)
         self.assertEqual(clean_readiness["blockers"], [])
+
+    def test_target_account_audit_unavailable_blocks_collection_readiness(
+        self,
+    ) -> None:
+        generated_at = datetime(2026, 5, 26, 13, 20, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            session.add(
+                Strategy(
+                    name="paper-route-candidate-v1",
+                    description="clean baseline source strategy",
+                    enabled=True,
+                    base_timeframe="1Sec",
+                    universe_type="static",
+                    universe_symbols=["AAPL", "AMZN"],
+                )
+            )
+            self._add_account_position_snapshot(
+                session,
+                account_label="TORGHUT_SIM",
+                as_of=generated_at - timedelta(seconds=30),
+                positions=[],
+            )
+            session.commit()
+
+            payload = self._build_basic_paper_route_target_plan(
+                session,
+                generated_at=generated_at,
+                target_account_audit_available=False,
+            )
+
+        plan = payload["next_paper_route_runtime_window_targets"]
+        self.assertEqual(plan["target_count"], 1)
+        target = plan["targets"][0]
+        self.assertEqual(
+            target["paper_route_clean_window_state"],
+            "target_account_audit_unavailable",
+        )
+        self.assertEqual(
+            target["paper_route_target_account_audit_state"]["state"],
+            "unavailable",
+        )
+        self.assertIn(
+            "paper_route_target_account_audit_unavailable",
+            target["paper_route_target_account_audit_blockers"],
+        )
+        self.assertIn(
+            "paper_route_target_account_audit_unavailable",
+            target["bounded_evidence_collection_blockers"],
+        )
+        self.assertFalse(target["evidence_collection_ok"])
+        self.assertFalse(target["canary_collection_authorized"])
+        self.assertFalse(target["bounded_evidence_collection_authorized"])
+        self.assertFalse(target["bounded_live_paper_collection_authorized"])
+        self.assertEqual(plan["target_account_audit_readiness"]["state"], "unavailable")
 
     def test_clean_baseline_allows_collection_when_health_gate_blocks_promotion(
         self,
