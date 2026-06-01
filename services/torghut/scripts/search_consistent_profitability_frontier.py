@@ -80,6 +80,11 @@ from scripts.search_profitability_frontier import (
 
 _LOCAL_ONLY_OVERRIDE_KEYS = frozenset({"normalization_regime"})
 _SECOND_OOS_WINDOW_ID = "second_oos"
+_SAFE_EXACT_REPLAY_CANDIDATE_CAP = 6
+_SAFE_EXACT_REPLAY_EXPLOITATION_SLOTS = 4
+_SAFE_EXACT_REPLAY_EXPLORATION_SLOTS = 2
+_SAFE_LOCAL_EXACT_REPLAY_WORKERS = 2
+_DEFAULT_STAGED_TRAIN_SCREEN_MULTIPLIER = 3
 _LOSS_REPAIR_TRIGGER_REASONS = frozenset(
     {
         "train_worst_day_loss_above_screen",
@@ -210,6 +215,8 @@ class _WorklistItem:
     deferred_train_payload: Mapping[str, Any] | None = None
     deferred_full_replay_selected: bool = False
     deferred_train_rank: int | None = None
+    deferred_train_economic_rank: int | None = None
+    deferred_full_replay_selection_reason: str | None = None
 
     @property
     def search_iteration(self) -> int:
@@ -358,6 +365,16 @@ def _write_json_output(path: Path, payload: Mapping[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
 
+def _safe_exact_replay_candidate_budget(raw_value: Any) -> int:
+    try:
+        requested = int(raw_value)
+    except (TypeError, ValueError):
+        requested = _SAFE_EXACT_REPLAY_CANDIDATE_CAP
+    if requested <= 0:
+        return _SAFE_EXACT_REPLAY_CANDIDATE_CAP
+    return min(requested, _SAFE_EXACT_REPLAY_CANDIDATE_CAP)
+
+
 def _staged_search_budget_payload(
     *,
     args: argparse.Namespace,
@@ -371,9 +388,24 @@ def _staged_search_budget_payload(
     train_screening_enabled = bool(getattr(args, "train_screening", True))
     train_screen_multiplier = max(
         1,
-        int(getattr(args, "staged_train_screen_multiplier", 1) or 1),
+        int(
+            getattr(
+                args,
+                "staged_train_screen_multiplier",
+                _DEFAULT_STAGED_TRAIN_SCREEN_MULTIPLIER,
+            )
+            or 1
+        ),
     )
     full_replay_budget = max(0, int(candidate_budget))
+    exploitation_slots = min(
+        _SAFE_EXACT_REPLAY_EXPLOITATION_SLOTS,
+        full_replay_budget,
+    )
+    exploration_slots = min(
+        _SAFE_EXACT_REPLAY_EXPLORATION_SLOTS,
+        max(0, full_replay_budget - exploitation_slots),
+    )
     train_screen_budget = (
         full_replay_budget * train_screen_multiplier
         if train_screening_enabled and full_replay_budget > 0
@@ -390,6 +422,21 @@ def _staged_search_budget_payload(
         "train_screen_multiplier": train_screen_multiplier,
         "train_screen_candidate_budget": train_screen_budget,
         "full_replay_candidate_budget": full_replay_budget,
+        "safe_exact_replay_candidate_cap": _SAFE_EXACT_REPLAY_CANDIDATE_CAP,
+        "safe_local_exact_replay_worker_cap": _SAFE_LOCAL_EXACT_REPLAY_WORKERS,
+        "cluster_fanout_allowed": False,
+        "promotion_writes_allowed": False,
+        "selection_policy": {
+            "schema_version": "torghut.frontier-exact-replay-shortlist-policy.v1",
+            "mode": "bounded_preview_to_exact_replay",
+            "candidate_cap": full_replay_budget,
+            "exploitation_slots": exploitation_slots,
+            "exploration_slots": exploration_slots,
+            "ranking_basis": (
+                "top economic train-screen survivors first, then deterministic "
+                "diversity/exploration picks within the same capped shortlist"
+            ),
+        },
         "train_screen_candidates_started": max(0, int(train_screen_candidates_started)),
         "full_replay_candidates_started": max(0, int(full_replay_candidates_started)),
         "train_screen_only_candidates": max(0, int(train_screen_only_candidates)),
@@ -705,13 +752,17 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-candidates-to-evaluate",
         type=int,
-        default=0,
-        help="Optional cap on evaluated candidates inside one frontier run. 0 means unbounded.",
+        default=_SAFE_EXACT_REPLAY_CANDIDATE_CAP,
+        help=(
+            "Safe exact full-window replay candidate cap. Values <= 0 or above "
+            f"{_SAFE_EXACT_REPLAY_CANDIDATE_CAP} resolve to the bounded default/cap; "
+            "fast train preview may evaluate more candidates before this top shortlist."
+        ),
     )
     parser.add_argument(
         "--staged-train-screen-multiplier",
         type=int,
-        default=1,
+        default=_DEFAULT_STAGED_TRAIN_SCREEN_MULTIPLIER,
         help=(
             "When train screening is enabled, allow this multiple of the expensive "
             "full-replay budget to be evaluated through the cheap train screen."
@@ -3329,6 +3380,76 @@ def _rank_train_screen_survivors(
     return ranked
 
 
+def _exploration_payload_signature(item: _WorklistItem) -> str:
+    payload = {
+        "params": item.params_candidate,
+        "strategy_overrides": item.strategy_overrides,
+    }
+    return json.dumps(payload, sort_keys=True, default=str)
+
+
+def _exploration_distance(
+    candidate: _WorklistItem,
+    selected: Sequence[_WorklistItem],
+) -> int:
+    if not selected:
+        return 0
+    candidate_params = candidate.params_candidate
+    candidate_overrides = candidate.strategy_overrides
+    distances: list[int] = []
+    for existing in selected:
+        distance = 0
+        for key in set(candidate_params) | set(existing.params_candidate):
+            if candidate_params.get(key) != existing.params_candidate.get(key):
+                distance += 1
+        for key in set(candidate_overrides) | set(existing.strategy_overrides):
+            if candidate_overrides.get(key) != existing.strategy_overrides.get(key):
+                distance += 1
+        distances.append(distance)
+    return min(distances, default=0)
+
+
+def _select_exact_replay_train_survivors(
+    ranked_survivors: Sequence[_WorklistItem],
+    *,
+    full_replay_candidate_budget: int,
+) -> dict[str, str]:
+    selected: list[_WorklistItem] = []
+    reasons: dict[str, str] = {}
+    budget = _safe_exact_replay_candidate_budget(full_replay_candidate_budget)
+    exploitation_slots = min(_SAFE_EXACT_REPLAY_EXPLOITATION_SLOTS, budget)
+    for survivor in ranked_survivors[:exploitation_slots]:
+        selected.append(survivor)
+        reasons[_exploration_payload_signature(survivor)] = (
+            "exploitation_top_economic_rank"
+        )
+    exploration_slots = min(
+        _SAFE_EXACT_REPLAY_EXPLORATION_SLOTS,
+        max(0, budget - len(selected)),
+    )
+    remaining = [
+        survivor
+        for survivor in ranked_survivors[exploitation_slots:]
+        if _exploration_payload_signature(survivor) not in reasons
+    ]
+    for _ in range(exploration_slots):
+        if not remaining:
+            break
+        best_index, best_survivor = max(
+            enumerate(remaining),
+            key=lambda indexed: (
+                _exploration_distance(indexed[1], selected),
+                -indexed[0],
+            ),
+        )
+        selected.append(best_survivor)
+        reasons[_exploration_payload_signature(best_survivor)] = (
+            "exploration_diversity_pick"
+        )
+        del remaining[best_index]
+    return reasons
+
+
 def _enqueue_ranked_train_screen_survivors(
     *,
     worklist: deque[_WorklistItem],
@@ -3336,11 +3457,15 @@ def _enqueue_ranked_train_screen_survivors(
     full_replay_candidate_budget: int,
 ) -> None:
     ranked_survivors = _rank_train_screen_survivors(survivors)
-    selected_count = min(
-        max(0, int(full_replay_candidate_budget)), len(ranked_survivors)
+    selected_reasons = _select_exact_replay_train_survivors(
+        ranked_survivors,
+        full_replay_candidate_budget=full_replay_candidate_budget,
     )
     queued: list[_WorklistItem] = []
     for rank, survivor in enumerate(ranked_survivors, start=1):
+        selection_reason = selected_reasons.get(
+            _exploration_payload_signature(survivor)
+        )
         queued.append(
             _WorklistItem(
                 params_candidate=dict(survivor.params_candidate),
@@ -3355,8 +3480,10 @@ def _enqueue_ranked_train_screen_survivors(
                 deferred_candidate_index=survivor.deferred_candidate_index,
                 deferred_candidate_key=survivor.deferred_candidate_key,
                 deferred_train_payload=survivor.deferred_train_payload,
-                deferred_full_replay_selected=rank <= selected_count,
+                deferred_full_replay_selected=selection_reason is not None,
                 deferred_train_rank=rank,
+                deferred_train_economic_rank=rank,
+                deferred_full_replay_selection_reason=selection_reason,
             )
         )
     worklist.extendleft(reversed(queued))
@@ -4468,6 +4595,239 @@ def _paper_probation_notional_scale(
     return _decimal_payload(scale)
 
 
+def _candidate_metric_decimal(
+    item: Mapping[str, Any],
+    *,
+    scorecard_key: str,
+    full_window_key: str,
+) -> Decimal:
+    return _safe_decimal(
+        _candidate_metric_value(
+            item,
+            scorecard_key=scorecard_key,
+            full_window_key=full_window_key,
+        )
+    )
+
+
+def _candidate_source_lineage_ok(item: Mapping[str, Any]) -> bool:
+    replay_lineage = _mapping(item.get("replay_lineage"))
+    candidate_key = _mapping(item.get("candidate_evaluation_key_payload"))
+    return bool(
+        str(item.get("dataset_snapshot_id") or "").strip()
+        and str(replay_lineage.get("lineage_hash") or "").strip()
+        and str(
+            item.get("candidate_evaluation_key")
+            or candidate_key.get("candidate_evaluation_key")
+            or ""
+        ).strip()
+    )
+
+
+def _candidate_exact_replay_parity_ok(
+    item: Mapping[str, Any],
+    *,
+    artifact_refs: Sequence[str],
+    runtime_ledger_row_count: int,
+    runtime_ledger_fill_count: int,
+) -> bool:
+    scorecard = _mapping(item.get("objective_scorecard"))
+    has_exact_ref = any(
+        "exact" in ref.lower() and "ledger" in ref.lower() for ref in artifact_refs
+    )
+    has_exact_ref = has_exact_ref or bool(
+        str(
+            item.get("exact_replay_ledger_artifact_ref")
+            or scorecard.get("exact_replay_ledger_artifact_ref")
+            or ""
+        ).strip()
+    )
+    return bool(
+        has_exact_ref and runtime_ledger_row_count > 0 and runtime_ledger_fill_count > 0
+    )
+
+
+def _candidate_handoff_diagnostics(
+    item: Mapping[str, Any],
+    *,
+    hard_vetoes: Sequence[str],
+    artifact_refs: Sequence[str],
+    runtime_ledger_row_count: int,
+    runtime_ledger_fill_count: int,
+    source_lineage_ok: bool,
+    exact_replay_parity_ok: bool,
+) -> list[dict[str, Any]]:
+    reasons = {str(reason) for reason in hard_vetoes}
+    diagnostics: list[dict[str, Any]] = []
+
+    if reasons & {
+        "active_day_ratio_below_min",
+        "min_active_days_below_min",
+        "positive_day_ratio_below_min",
+        "second_oos_net_per_day_below_target",
+    } or _candidate_metric_decimal(
+        item,
+        scorecard_key="active_day_ratio",
+        full_window_key="active_ratio",
+    ) <= Decimal("0"):
+        diagnostics.append(
+            {
+                "category": "insufficient_days",
+                "reasons": sorted(
+                    reasons
+                    & {
+                        "active_day_ratio_below_min",
+                        "min_active_days_below_min",
+                        "positive_day_ratio_below_min",
+                        "second_oos_net_per_day_below_target",
+                    }
+                ),
+            }
+        )
+
+    cost_capacity_reasons = reasons & {
+        "avg_daily_notional_below_min",
+        "avg_filled_notional_per_active_day_below_min",
+        "gross_exposure_pct_equity_above_max",
+        "min_cash_below_min",
+        "negative_cash_observation_count_above_max",
+        "adv_capacity_below_min",
+        "capacity_below_target",
+        "fill_survival_rate_below_min",
+        "fill_survival_sample_count_below_min",
+        "profit_factor_below_min",
+    }
+    if cost_capacity_reasons:
+        diagnostics.append(
+            {
+                "category": "cost_adv_capacity_blockers",
+                "reasons": sorted(cost_capacity_reasons),
+            }
+        )
+
+    open_position_count = _candidate_runtime_ledger_count(
+        item,
+        "runtime_ledger_open_position_count",
+        "exact_replay_ledger_open_position_count",
+    )
+    if open_position_count > 0:
+        diagnostics.append(
+            {
+                "category": "open_replay_positions",
+                "open_position_count": open_position_count,
+            }
+        )
+
+    if "best_day_share_above_max" in reasons:
+        diagnostics.append(
+            {
+                "category": "best_day_concentration",
+                "reasons": ["best_day_share_above_max"],
+                "best_day_share_of_total_pnl": str(
+                    _candidate_metric_value(
+                        item,
+                        scorecard_key="best_day_share_of_total_pnl",
+                        full_window_key="best_day_share_of_total_pnl",
+                    )
+                ),
+            }
+        )
+
+    if not source_lineage_ok:
+        diagnostics.append(
+            {
+                "category": "missing_source_lineage",
+                "missing": [
+                    name
+                    for name, present in (
+                        (
+                            "dataset_snapshot_id",
+                            bool(str(item.get("dataset_snapshot_id") or "").strip()),
+                        ),
+                        (
+                            "replay_lineage.lineage_hash",
+                            bool(
+                                str(
+                                    _mapping(item.get("replay_lineage")).get(
+                                        "lineage_hash"
+                                    )
+                                    or ""
+                                ).strip()
+                            ),
+                        ),
+                        (
+                            "candidate_evaluation_key",
+                            bool(
+                                str(
+                                    item.get("candidate_evaluation_key")
+                                    or _mapping(
+                                        item.get("candidate_evaluation_key_payload")
+                                    ).get("candidate_evaluation_key")
+                                    or ""
+                                ).strip()
+                            ),
+                        ),
+                    )
+                    if not present
+                ],
+            }
+        )
+
+    if not exact_replay_parity_ok:
+        diagnostics.append(
+            {
+                "category": "failed_exact_replay_parity",
+                "artifact_refs": list(artifact_refs),
+                "runtime_ledger_artifact_row_count": runtime_ledger_row_count,
+                "runtime_ledger_artifact_fill_count": runtime_ledger_fill_count,
+            }
+        )
+
+    return diagnostics
+
+
+def _bounded_sim_handoff_metadata(
+    *,
+    item: Mapping[str, Any],
+    paper_probation_allowed: bool,
+    source_lineage_ok: bool,
+    exact_replay_parity_ok: bool,
+    diagnostics: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    evidence_collection_ok = bool(
+        paper_probation_allowed and source_lineage_ok and exact_replay_parity_ok
+    )
+    blockers = [
+        str(diagnostic.get("category") or "")
+        for diagnostic in diagnostics
+        if str(diagnostic.get("category") or "")
+    ]
+    if not blockers and not evidence_collection_ok:
+        blockers.append("source_or_replay_preconditions_not_met")
+    return {
+        "schema_version": "torghut.frontier-bounded-sim-handoff.v1",
+        "status": (
+            "evidence_collection_ready_promotion_blocked"
+            if evidence_collection_ok
+            else "handoff_blocked_until_preconditions_pass"
+        ),
+        "authority": "bounded_sim_evidence_collection_only",
+        "candidate_id": str(item.get("candidate_id") or ""),
+        "evidence_collection_ok": evidence_collection_ok,
+        "promotion_allowed": False,
+        "final_promotion_allowed": False,
+        "promotion_blockers": [
+            "source_backed_runtime_ledger_authority_required",
+            "live_paper_probation_runtime_evidence_required",
+            "unchanged_final_promotion_gates_required",
+        ],
+        "handoff_blockers": blockers,
+        "source_lineage_ok": source_lineage_ok,
+        "exact_replay_parity_ok": exact_replay_parity_ok,
+        "diagnostics": [dict(diagnostic) for diagnostic in diagnostics],
+    }
+
+
 def _build_paper_probation_shortlist(
     ranked_items: Sequence[Mapping[str, Any]],
     *,
@@ -4538,7 +4898,42 @@ def _build_paper_probation_shortlist(
             or str(staged_search.get("stage") or "").endswith("_full_window_proof")
         ):
             blockers.append("proof_only_full_window_replay_not_probation_authority")
+        source_lineage_ok = _candidate_source_lineage_ok(item)
+        exact_replay_parity_ok = _candidate_exact_replay_parity_ok(
+            item,
+            artifact_refs=artifact_refs,
+            runtime_ledger_row_count=runtime_ledger_row_count,
+            runtime_ledger_fill_count=runtime_ledger_fill_count,
+        )
+        if not source_lineage_ok:
+            blockers.append("missing_source_lineage")
+        if not exact_replay_parity_ok:
+            blockers.append("failed_exact_replay_parity")
+        open_position_count = _candidate_runtime_ledger_count(
+            item,
+            "runtime_ledger_open_position_count",
+            "exact_replay_ledger_open_position_count",
+        )
+        if open_position_count > 0:
+            blockers.append("open_replay_positions")
+        blockers = list(dict.fromkeys(blockers))
+        handoff_diagnostics = _candidate_handoff_diagnostics(
+            item,
+            hard_vetoes=hard_vetoes,
+            artifact_refs=artifact_refs,
+            runtime_ledger_row_count=runtime_ledger_row_count,
+            runtime_ledger_fill_count=runtime_ledger_fill_count,
+            source_lineage_ok=source_lineage_ok,
+            exact_replay_parity_ok=exact_replay_parity_ok,
+        )
         paper_probation_allowed = not blockers
+        bounded_sim_handoff = _bounded_sim_handoff_metadata(
+            item=item,
+            paper_probation_allowed=paper_probation_allowed,
+            source_lineage_ok=source_lineage_ok,
+            exact_replay_parity_ok=exact_replay_parity_ok,
+            diagnostics=handoff_diagnostics,
+        )
         shortlist.append(
             {
                 "candidate_id": str(item.get("candidate_id") or ""),
@@ -4546,9 +4941,13 @@ def _build_paper_probation_shortlist(
                 "family": str(item.get("family") or ""),
                 "stage": "paper_evidence_collection_only",
                 "paper_probation_allowed": paper_probation_allowed,
+                "evidence_collection_ok": bounded_sim_handoff["evidence_collection_ok"],
                 "promotion_allowed": False,
+                "final_promotion_allowed": False,
                 "final_promotion_authorized": False,
                 "probation_blockers": blockers,
+                "handoff_diagnostics": handoff_diagnostics,
+                "bounded_sim_handoff": bounded_sim_handoff,
                 "required_actions_before_or_during_probation": (
                     _paper_probation_required_actions(hard_vetoes)
                 ),
@@ -4626,6 +5025,99 @@ def _build_paper_probation_shortlist(
     return shortlist
 
 
+def _frontier_state_item(item: Mapping[str, Any]) -> dict[str, Any]:
+    screening = _mapping(item.get("screening"))
+    staged_search = _mapping(item.get("staged_search"))
+    ranking = _mapping(item.get("ranking"))
+    return {
+        "candidate_id": str(item.get("candidate_id") or ""),
+        "strategy_name": str(item.get("strategy_name") or ""),
+        "family": str(item.get("family") or ""),
+        "stage": str(staged_search.get("stage") or ""),
+        "screening_status": str(screening.get("status") or ""),
+        "train_screen_survivor_rank": staged_search.get("train_screen_survivor_rank"),
+        "exact_replay_selection_reason": staged_search.get(
+            "full_replay_selection_reason"
+        ),
+        "net_pnl_per_day": str(
+            _candidate_metric_value(
+                item,
+                scorecard_key="net_pnl_per_day",
+                full_window_key="net_per_day",
+            )
+        ),
+        "hard_vetoes": [
+            str(reason) for reason in cast(Sequence[Any], item.get("hard_vetoes") or ())
+        ],
+        "vetoed": bool(ranking.get("vetoed") or item.get("hard_vetoes")),
+    }
+
+
+def _build_frontier_workflow_states(
+    ranked_items: Sequence[Mapping[str, Any]],
+    *,
+    paper_probation_shortlist: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    preview_qualified = [
+        _frontier_state_item(item)
+        for item in ranked_items
+        if str(_mapping(item.get("screening")).get("status") or "") == "passed"
+    ]
+    exact_replay_shortlist = [
+        _frontier_state_item(item)
+        for item in ranked_items
+        if bool(
+            _mapping(item.get("staged_search")).get(
+                "full_replay_selected_after_train_rank"
+            )
+        )
+        or str(_mapping(item.get("staged_search")).get("stage") or "") == "full_replay"
+    ]
+    exact_replay_qualified = [
+        {
+            **_frontier_state_item(item),
+            "runtime_ledger_artifact_refs": _candidate_runtime_ledger_artifact_refs(
+                item
+            ),
+        }
+        for item in ranked_items
+        if str(_mapping(item.get("staged_search")).get("stage") or "") == "full_replay"
+        and _candidate_runtime_ledger_count(
+            item,
+            "runtime_ledger_artifact_row_count",
+            "exact_replay_ledger_artifact_row_count",
+        )
+        > 0
+    ]
+    return {
+        "schema_version": "torghut.frontier-workflow-states.v1",
+        "purpose": (
+            "separate preview narrowing, capped exact replay, bounded SIM handoff, "
+            "and absent promotion authority"
+        ),
+        "preview_qualified": preview_qualified,
+        "exact_replay_shortlist": exact_replay_shortlist[
+            :_SAFE_EXACT_REPLAY_CANDIDATE_CAP
+        ],
+        "exact_replay_qualified": exact_replay_qualified,
+        "paper_probation_shortlisted": [
+            dict(item) for item in paper_probation_shortlist
+        ],
+        "authority_proof": {
+            "status": "absent",
+            "promotion_allowed": False,
+            "final_promotion_allowed": False,
+            "proof_authority": False,
+            "authority_blockers": [
+                "source_backed_runtime_ledger_authority_required",
+                "live_paper_probation_runtime_evidence_required",
+                "runtime_ledger_to_broker_lineage_required",
+                "unchanged_final_promotion_gates_required",
+            ],
+        },
+    }
+
+
 def _build_frontier_payload(
     *,
     scored: list[dict[str, Any]],
@@ -4646,6 +5138,15 @@ def _build_frontier_payload(
     staged_search: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     ranked_items = _rank_scored_candidates(scored)
+    economic_shortlist_items = _build_economic_shortlist(
+        ranked_items,
+        top_n=max(1, int(top_n)),
+    )
+    paper_probation_shortlist_items = _build_paper_probation_shortlist(
+        ranked_items,
+        top_n=max(3, int(top_n)),
+        objective_veto_policy=objective_veto_policy,
+    )
     return {
         "schema_version": _SWEEP_SCHEMA_VERSION,
         "status": status,
@@ -4696,10 +5197,7 @@ def _build_frontier_payload(
         "economic_shortlist": {
             "schema_version": "torghut.frontier-economic-shortlist.v1",
             "ranking_basis": "full_window_net_pnl_per_day_desc",
-            "items": _build_economic_shortlist(
-                ranked_items,
-                top_n=max(1, int(top_n)),
-            ),
+            "items": economic_shortlist_items,
         },
         "paper_probation_shortlist": {
             "schema_version": "torghut.frontier-paper-probation-shortlist.v1",
@@ -4708,12 +5206,12 @@ def _build_frontier_payload(
                 "collection without authorizing final promotion"
             ),
             "ranking_basis": "positive_full_window_net_pnl_per_day_desc",
-            "items": _build_paper_probation_shortlist(
-                ranked_items,
-                top_n=max(3, int(top_n)),
-                objective_veto_policy=objective_veto_policy,
-            ),
+            "items": paper_probation_shortlist_items,
         },
+        "workflow_states": _build_frontier_workflow_states(
+            ranked_items,
+            paper_probation_shortlist=paper_probation_shortlist_items,
+        ),
         "top": ranked_items[: max(1, int(top_n))],
     }
 
@@ -5029,7 +5527,11 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                 progress_log_interval_seconds=max(1, int(args.progress_log_seconds)),
             )
         candidate_index = 0
-        candidate_budget = int(args.max_candidates_to_evaluate)
+        candidate_budget = _safe_exact_replay_candidate_budget(
+            getattr(
+                args, "max_candidates_to_evaluate", _SAFE_EXACT_REPLAY_CANDIDATE_CAP
+            )
+        )
         staged_search = _staged_search_budget_payload(
             args=args,
             candidate_budget=candidate_budget,
@@ -5667,6 +6169,20 @@ def run_consistent_profitability_frontier(args: argparse.Namespace) -> dict[str,
                     "full_replay_selected_after_train_rank": bool(
                         worklist_item.deferred_full_replay_selected
                     ),
+                    "train_screen_economic_rank": (
+                        worklist_item.deferred_train_economic_rank
+                    ),
+                    "full_replay_selection_reason": (
+                        worklist_item.deferred_full_replay_selection_reason
+                    ),
+                    "safe_exact_replay_candidate_cap": (
+                        _SAFE_EXACT_REPLAY_CANDIDATE_CAP
+                    ),
+                    "safe_local_exact_replay_worker_cap": (
+                        _SAFE_LOCAL_EXACT_REPLAY_WORKERS
+                    ),
+                    "cluster_fanout_allowed": False,
+                    "promotion_writes_allowed": False,
                 }
                 if worklist_item.pruned_symbol is not None:
                     candidate_payload["pruned_symbol"] = worklist_item.pruned_symbol

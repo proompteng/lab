@@ -4,6 +4,7 @@ import io
 import json
 import sys
 from argparse import Namespace
+from collections import deque
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
@@ -1672,9 +1673,7 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                 "source_backed_runtime_ledger_required",
                 exact_ledger_artifact["authority_blockers"],
             )
-            self.assertFalse(
-                scorecard["exact_replay_ledger_artifact_proof_authority"]
-            )
+            self.assertFalse(scorecard["exact_replay_ledger_artifact_proof_authority"])
             self.assertFalse(scorecard["runtime_ledger_artifact_proof_authority"])
             self.assertFalse(scorecard["final_promotion_authority"])
             self.assertEqual(scorecard["runtime_ledger_artifact_row_count"], 6)
@@ -1853,6 +1852,7 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             prefetch_full_window_rows=False,
             top_n=10,
             max_candidates_to_evaluate=0,
+            staged_train_screen_multiplier=1,
             json_output=json_output,
             symbol_prune_iterations=0,
             symbol_prune_candidates=1,
@@ -2628,10 +2628,19 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                     "min_cash": "-161171.80",
                 },
                 "full_window": {"net_per_day": "406.58", "net_pnl": "813.16"},
-                "runtime_ledger_artifact_ref": "/tmp/microbar-runtime-ledger.json",
+                "runtime_ledger_artifact_ref": (
+                    "/tmp/microbar-exact-replay-ledger.json"
+                ),
+                "exact_replay_ledger_artifact_ref": (
+                    "/tmp/microbar-exact-replay-ledger.json"
+                ),
                 "runtime_ledger_artifact_row_count": 12,
                 "runtime_ledger_artifact_fill_count": 4,
-                "replay_artifact_refs": ["/tmp/microbar-runtime-ledger.json"],
+                "runtime_ledger_open_position_count": 0,
+                "replay_artifact_refs": ["/tmp/microbar-exact-replay-ledger.json"],
+                "dataset_snapshot_id": "snapshot-microbar",
+                "replay_lineage": {"lineage_hash": "lineage-microbar"},
+                "candidate_evaluation_key": "eval-microbar",
                 "hard_vetoes": [
                     "gross_exposure_pct_equity_above_max",
                     "min_cash_below_min",
@@ -2653,8 +2662,12 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         item = shortlist[0]
         self.assertEqual(item["candidate_id"], "microbar-close")
         self.assertTrue(item["paper_probation_allowed"])
+        self.assertTrue(item["evidence_collection_ok"])
         self.assertFalse(item["promotion_allowed"])
+        self.assertFalse(item["final_promotion_allowed"])
         self.assertFalse(item["final_promotion_authorized"])
+        self.assertFalse(item["bounded_sim_handoff"]["promotion_allowed"])
+        self.assertFalse(item["bounded_sim_handoff"]["final_promotion_allowed"])
         self.assertEqual(item["stage"], "paper_evidence_collection_only")
         self.assertEqual(item["recommended_notional_scale"], "0.158333")
         self.assertIn(
@@ -2699,9 +2712,19 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                 "missing_exact_or_runtime_ledger_artifact",
                 "missing_runtime_ledger_row_count",
                 "missing_runtime_ledger_fill_count",
+                "missing_source_lineage",
+                "failed_exact_replay_parity",
             ],
         )
         self.assertFalse(shortlist[0]["promotion_allowed"])
+        self.assertFalse(shortlist[0]["evidence_collection_ok"])
+        self.assertIn(
+            "insufficient_days",
+            {
+                diagnostic["category"]
+                for diagnostic in shortlist[0]["handoff_diagnostics"]
+            },
+        )
 
     def test_paper_probation_shortlist_blocks_generic_replay_artifact(self) -> None:
         shortlist = frontier._build_paper_probation_shortlist(
@@ -2769,6 +2792,121 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             "proof_only_full_window_replay_not_probation_authority",
             shortlist[0]["probation_blockers"],
         )
+
+    def test_exact_replay_shortlist_caps_to_top_four_plus_two_exploration(
+        self,
+    ) -> None:
+        survivors: list[frontier._WorklistItem] = []
+        for index, net_per_day in enumerate(
+            ["120", "110", "100", "90", "80", "70", "60", "50"],
+            start=1,
+        ):
+            survivors.append(
+                frontier._WorklistItem(
+                    params_candidate={"long_stop_loss_bps": str(10 + index)},
+                    strategy_overrides={"universe_symbols": [f"SYM{index}"]},
+                    deferred_candidate_index=index,
+                    deferred_candidate_key=f"candidate-{index}",
+                    deferred_train_payload=self._payload(
+                        start_date="2026-03-18",
+                        end_date="2026-03-20",
+                        daily_net={
+                            "2026-03-18": net_per_day,
+                            "2026-03-19": net_per_day,
+                            "2026-03-20": net_per_day,
+                        },
+                        decision_count=3,
+                        filled_count=3,
+                        wins=3,
+                        losses=0,
+                    ),
+                )
+            )
+
+        worklist: deque[frontier._WorklistItem] = deque()
+        frontier._enqueue_ranked_train_screen_survivors(
+            worklist=worklist,
+            survivors=survivors,
+            full_replay_candidate_budget=12,
+        )
+
+        queued = list(worklist)
+        selected = [item for item in queued if item.deferred_full_replay_selected]
+        self.assertEqual(len(selected), 6)
+        self.assertEqual(
+            [item.deferred_full_replay_selection_reason for item in selected[:4]],
+            ["exploitation_top_economic_rank"] * 4,
+        )
+        self.assertEqual(
+            [item.deferred_full_replay_selection_reason for item in selected[4:]],
+            ["exploration_diversity_pick"] * 2,
+        )
+        self.assertEqual(
+            frontier._safe_exact_replay_candidate_budget(12),
+            6,
+        )
+
+    def test_frontier_workflow_states_separate_preview_exact_handoff_and_authority(
+        self,
+    ) -> None:
+        paper_handoff = {
+            "candidate_id": "candidate-exact",
+            "evidence_collection_ok": True,
+            "promotion_allowed": False,
+            "final_promotion_allowed": False,
+        }
+        states = frontier._build_frontier_workflow_states(
+            [
+                {
+                    "candidate_id": "candidate-exact",
+                    "strategy_name": "strategy",
+                    "family": "family",
+                    "objective_scorecard": {"net_pnl_per_day": "25"},
+                    "full_window": {"net_per_day": "25"},
+                    "screening": {"status": "passed"},
+                    "staged_search": {
+                        "stage": "full_replay",
+                        "full_replay_selected_after_train_rank": True,
+                        "full_replay_selection_reason": (
+                            "exploitation_top_economic_rank"
+                        ),
+                    },
+                    "exact_replay_ledger_artifact_ref": (
+                        "/tmp/candidate-exact-replay-ledger.json"
+                    ),
+                    "runtime_ledger_artifact_row_count": 6,
+                    "runtime_ledger_artifact_fill_count": 2,
+                    "hard_vetoes": [],
+                    "ranking": {"vetoed": False},
+                },
+                {
+                    "candidate_id": "candidate-preview-only",
+                    "objective_scorecard": {"net_pnl_per_day": "15"},
+                    "full_window": {"net_per_day": "15"},
+                    "screening": {"status": "passed"},
+                    "staged_search": {"stage": "train_screen_only"},
+                    "hard_vetoes": ["full_replay_candidate_budget_exhausted"],
+                },
+            ],
+            paper_probation_shortlist=[paper_handoff],
+        )
+
+        self.assertEqual(
+            [item["candidate_id"] for item in states["preview_qualified"]],
+            ["candidate-exact", "candidate-preview-only"],
+        )
+        self.assertEqual(
+            [item["candidate_id"] for item in states["exact_replay_shortlist"]],
+            ["candidate-exact"],
+        )
+        self.assertEqual(
+            [item["candidate_id"] for item in states["exact_replay_qualified"]],
+            ["candidate-exact"],
+        )
+        self.assertEqual(states["paper_probation_shortlisted"], [paper_handoff])
+        self.assertEqual(states["authority_proof"]["status"], "absent")
+        self.assertFalse(states["authority_proof"]["promotion_allowed"])
+        self.assertFalse(states["authority_proof"]["final_promotion_allowed"])
 
     def test_generate_symbol_prune_children_removes_worst_symbols_from_universe(
         self,
