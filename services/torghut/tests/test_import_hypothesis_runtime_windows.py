@@ -806,6 +806,37 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertIn("runtime_ledger_authority_class_missing", blockers)
         self.assertFalse(_runtime_ledger_bucket_profit_proof_present(aggregate_only))
 
+    def test_runtime_ledger_materialization_metadata_counts_only_source_backed_authority(
+        self,
+    ) -> None:
+        aggregate_only = _complete_runtime_ledger_bucket(
+            source_window_ids=[],
+            trade_decision_ids=[],
+            execution_ids=[],
+            execution_order_event_ids=[],
+            source_offsets=[],
+            source_materialization="execution_order_events",
+            authority_class="runtime_order_feed_execution_source",
+        )
+        source_backed = _complete_runtime_ledger_bucket()
+
+        metadata = _runtime_ledger_tca_materialization_metadata(
+            [
+                {"runtime_ledger_bucket": aggregate_only},
+                {"runtime_ledger_bucket": source_backed},
+            ]
+        )
+
+        self.assertEqual(
+            metadata["runtime_ledger_source_execution_materialized_bucket_count"],
+            1,
+        )
+        self.assertEqual(metadata["runtime_ledger_tca_profit_proof_count"], 1)
+        self.assertIn(
+            "runtime_ledger_execution_order_event_refs_missing",
+            metadata["runtime_ledger_profit_proof_blockers"],
+        )
+
     def test_runtime_ledger_profit_proof_rejects_modeled_cost_basis(
         self,
     ) -> None:
@@ -1305,6 +1336,56 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 "TORGHUT_SIM",
                 ["intraday-tsmom-profit-v3"],
             ),
+        )
+
+    def test_runtime_ledger_tca_rows_from_source_dsn_block_aggregate_only_proof(
+        self,
+    ) -> None:
+        cursor = _SourceLedgerCursor()
+        row = list(cursor._results[0][0])
+        payload = dict(cast(Mapping[str, object], row[-1]))
+        payload.update(
+            {
+                "source_window_ids": [],
+                "trade_decision_ids": [],
+                "execution_ids": [],
+                "execution_order_event_ids": [],
+                "source_offsets": [],
+                "source_materialization": "execution_order_events",
+                "authority_class": "runtime_order_feed_execution_source",
+            }
+        )
+        row[-1] = payload
+        cursor._results[0] = [tuple(row)]
+        connection = _SourceLedgerConnection(cursor)
+        window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc)
+
+        with patch(
+            "scripts.import_hypothesis_runtime_windows.psycopg.connect",
+            return_value=connection,
+        ):
+            rows, metadata = _runtime_ledger_tca_rows_from_source_dsn(
+                dsn="postgresql://source",
+                candidate_id="H-TSMOM-LIQ-01",
+                hypothesis_id="H-TSMOM-LIQ-01",
+                observed_stage="paper",
+                strategy_names=["intraday-tsmom-profit-v3"],
+                account_label="TORGHUT_SIM",
+                window_start=window_start,
+                window_end=window_end,
+            )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(metadata["runtime_ledger_source_bucket_profit_proof_count"], 0)
+        self.assertIn(
+            "runtime_ledger_trade_decision_refs_missing",
+            metadata["runtime_ledger_source_bucket_profit_proof_blockers"],
+        )
+        self.assertEqual(rows[0]["post_cost_promotion_eligible"], False)
+        self.assertIn(
+            "runtime_ledger_execution_order_event_refs_missing",
+            rows[0]["runtime_ledger_blockers"],
         )
 
     def test_parse_target_metadata_requires_json_mapping(self) -> None:

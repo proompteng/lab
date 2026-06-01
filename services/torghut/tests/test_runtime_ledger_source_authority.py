@@ -5,6 +5,7 @@ from unittest import TestCase
 
 from app.trading.runtime_ledger_source_authority import (
     runtime_ledger_promotion_source_authority_blockers,
+    runtime_ledger_promotion_source_authority_present,
     runtime_ledger_source_authority_blockers,
     runtime_ledger_source_refs_present,
     runtime_ledger_source_window_present,
@@ -331,7 +332,7 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
 
         self.assertIn("runtime_ledger_authority_class_missing", blockers)
 
-    def test_promotion_source_authority_rejects_authority_reason_only(
+    def test_promotion_source_authority_accepts_runtime_authority_reason_only(
         self,
     ) -> None:
         blockers = runtime_ledger_promotion_source_authority_blockers(
@@ -362,7 +363,7 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
             }
         )
 
-        self.assertIn("runtime_ledger_authority_class_missing", blockers)
+        self.assertEqual(blockers, [])
 
     def test_promotion_source_authority_requires_named_source_ref_tables(
         self,
@@ -395,3 +396,49 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
         )
 
         self.assertIn("runtime_ledger_source_refs_missing", blockers)
+
+    def test_promotion_source_authority_rejects_exact_replay_artifact_derivation(
+        self,
+    ) -> None:
+        source_backed = {
+            "source_window_start": "2026-05-29T14:30:00+00:00",
+            "source_window_end": "2026-05-29T15:00:00+00:00",
+            "source_refs": [
+                "postgres:trade_decisions",
+                "postgres:executions",
+                "postgres:execution_order_events",
+                "postgres:order_feed_source_windows",
+            ],
+            "source_row_counts": {
+                "trade_decisions": 1,
+                "executions": 1,
+                "execution_order_events": 1,
+                "order_feed_source_windows": 1,
+            },
+            "trade_decision_id": "decision-1",
+            "execution_id": "execution-1",
+            "execution_order_event_id": "event-1",
+            "source_window_id": "source-window-1",
+            "source_offsets": [
+                {"topic": "alpaca.trade_updates", "partition": 0, "offset": 42}
+            ],
+            "source_materialization": "execution_order_events",
+            "authority_class": "runtime_order_feed_execution_source",
+        }
+
+        blockers = runtime_ledger_promotion_source_authority_blockers(
+            {
+                **source_backed,
+                "pnl_derivation": "exact_replay_artifact_only_not_live",
+            }
+        )
+
+        self.assertIn("runtime_ledger_authority_class_missing", blockers)
+        self.assertFalse(
+            runtime_ledger_promotion_source_authority_present(
+                {
+                    **source_backed,
+                    "source_materialization": "exact_replay_artifact",
+                }
+            )
+        )
