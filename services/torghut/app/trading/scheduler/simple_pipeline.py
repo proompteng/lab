@@ -2879,14 +2879,40 @@ class SimpleTradingPipeline(TradingPipeline):
                     symbols,
                 )
                 continue
+            blocked_open_exposure_symbols: list[str] = []
             for symbol in symbols:
-                action = symbol_actions.get(symbol, _target_probe_action(target))
-                if action == "sell" and not settings.trading_allow_shorts:
-                    continue
                 if self._paper_route_target_symbol_has_open_position(
                     positions,
                     symbol,
                 ):
+                    blocked_open_exposure_symbols.append(symbol)
+                    continue
+                if (
+                    session is not None
+                    and self._paper_route_target_symbol_has_open_strategy_exposure(
+                        session=session,
+                        strategy=strategy,
+                        symbol=symbol,
+                        account_label=self.account_label,
+                        window_start=window_start,
+                    )
+                ):
+                    blocked_open_exposure_symbols.append(symbol)
+            if blocked_open_exposure_symbols and pair_balance_state == "balanced":
+                logger.warning(
+                    "Skipping balanced paper-route pair target because existing "
+                    "strategy exposure is still open strategy=%s symbols=%s "
+                    "blocked_symbols=%s",
+                    strategy.name,
+                    symbols,
+                    blocked_open_exposure_symbols,
+                )
+                continue
+            for symbol in symbols:
+                action = symbol_actions.get(symbol, _target_probe_action(target))
+                if action == "sell" and not settings.trading_allow_shorts:
+                    continue
+                if symbol in blocked_open_exposure_symbols:
                     continue
                 if (
                     session is not None
@@ -2964,6 +2990,57 @@ class SimpleTradingPipeline(TradingPipeline):
                     )
                 )
         return decisions
+
+    @staticmethod
+    def _paper_route_target_symbol_has_open_strategy_exposure(
+        *,
+        session: Session,
+        strategy: Strategy,
+        symbol: str,
+        account_label: str,
+        window_start: datetime,
+    ) -> bool:
+        strategy_id = getattr(strategy, "id", None)
+        normalized_symbol = symbol.strip().upper()
+        if strategy_id is None or not normalized_symbol:
+            return False
+
+        guard_start = window_start - _PAPER_ROUTE_TARGET_PROFIT_PROOF_EXPOSURE_LOOKBACK
+        try:
+            rows = session.execute(
+                select(Execution.side, Execution.filled_qty)
+                .join(TradeDecision, Execution.trade_decision_id == TradeDecision.id)
+                .where(
+                    Execution.alpaca_account_label == account_label,
+                    TradeDecision.alpaca_account_label == account_label,
+                    TradeDecision.strategy_id == strategy_id,
+                    Execution.symbol == normalized_symbol,
+                    TradeDecision.symbol == normalized_symbol,
+                    Execution.filled_qty > 0,
+                    Execution.status.in_(("filled", "partially_filled")),
+                    Execution.created_at >= guard_start,
+                )
+            ).all()
+        except Exception:
+            logger.exception(
+                "Failed to inspect paper-route target strategy exposure "
+                "strategy_id=%s symbol=%s account_label=%s",
+                strategy_id,
+                normalized_symbol,
+                account_label,
+            )
+            return True
+
+        signed_qty = Decimal("0")
+        for side, filled_qty in rows:
+            qty = _optional_decimal(filled_qty)
+            if qty is None or qty <= 0:
+                continue
+            if str(side or "").strip().lower() == "sell":
+                signed_qty -= qty
+            else:
+                signed_qty += qty
+        return abs(signed_qty) > _PAPER_ROUTE_TARGET_OPEN_EXPOSURE_EPSILON
 
     @staticmethod
     def _paper_route_target_symbol_has_open_profit_proof_exposure(
