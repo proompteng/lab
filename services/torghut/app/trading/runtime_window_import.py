@@ -122,6 +122,7 @@ class ObservedRuntimeBucket:
 @dataclass(frozen=True)
 class _NormalizedTcaRow:
     computed_at: datetime
+    bucketed_at: datetime
     abs_slippage_bps: Decimal | None
     post_cost_expectancy_bps: Decimal | None
     post_cost_expectancy_basis: str
@@ -1074,9 +1075,14 @@ def build_observed_runtime_buckets(
             source_decision_mode is None
             or source_decision_mode_is_profit_proof_eligible(source_decision_mode)
         )
+        computed_at = _utc(computed_at_raw)
         normalized_tca_rows.append(
             _NormalizedTcaRow(
-                computed_at=_utc(computed_at_raw),
+                computed_at=computed_at,
+                bucketed_at=_runtime_ledger_payload_bucketed_at(
+                    computed_at=computed_at,
+                    payload=runtime_ledger_bucket,
+                ),
                 abs_slippage_bps=_optional_decimal(row.get("abs_slippage_bps")),
                 post_cost_expectancy_bps=_optional_decimal(
                     row.get("post_cost_expectancy_bps")
@@ -1092,6 +1098,12 @@ def build_observed_runtime_buckets(
             )
         )
 
+    def row_computed_at_is_in_import_window(row: _NormalizedTcaRow) -> bool:
+        return any(
+            bucket_start <= row.computed_at < bucket_end
+            for bucket_start, bucket_end, _ in bucket_ranges
+        )
+
     buckets: list[ObservedRuntimeBucket] = []
     for bucket_start, bucket_end, market_session_count in bucket_ranges:
         decisions = [
@@ -1103,7 +1115,11 @@ def build_observed_runtime_buckets(
         bucket_tca = [
             row
             for row in normalized_tca_rows
-            if bucket_start <= row.computed_at < bucket_end
+            if (
+                bucket_start <= row.computed_at < bucket_end
+                if row_computed_at_is_in_import_window(row)
+                else bucket_start <= row.bucketed_at < bucket_end
+            )
         ]
         runtime_ledger_decision_count = sum(
             _observation_int(row.runtime_ledger_bucket.get("decision_count"))
@@ -1205,6 +1221,207 @@ def build_observed_runtime_buckets(
     return buckets
 
 
+def _runtime_ledger_payload_interval(
+    payload: Mapping[str, Any],
+) -> tuple[datetime, datetime] | None:
+    source_started_at = _parse_observation_datetime(payload.get("source_window_start"))
+    source_ended_at = _parse_observation_datetime(payload.get("source_window_end"))
+    if (
+        source_started_at is not None
+        and source_ended_at is not None
+        and source_ended_at > source_started_at
+    ):
+        return source_started_at, source_ended_at
+    bucket_started_at = _parse_observation_datetime(payload.get("bucket_started_at"))
+    bucket_ended_at = _parse_observation_datetime(payload.get("bucket_ended_at"))
+    if (
+        bucket_started_at is not None
+        and bucket_ended_at is not None
+        and bucket_ended_at > bucket_started_at
+    ):
+        return bucket_started_at, bucket_ended_at
+    return None
+
+
+def _runtime_ledger_payload_bucketed_at(
+    *,
+    computed_at: datetime,
+    payload: Mapping[str, Any],
+) -> datetime:
+    interval = _runtime_ledger_payload_interval(payload)
+    if interval is None:
+        return computed_at
+    started_at, ended_at = interval
+    bucketed_at = ended_at - timedelta(microseconds=1)
+    if bucketed_at < started_at:
+        return started_at
+    return bucketed_at
+
+
+def _runtime_ledger_payload_is_readback(payload: Mapping[str, Any]) -> bool:
+    return _text(payload.get("runtime_ledger_readback_source")) is not None
+
+
+def _runtime_ledger_payload_identity_values(
+    payload: Mapping[str, Any],
+    *keys: str,
+) -> tuple[str, ...]:
+    values: list[str] = []
+    for key in keys:
+        raw_value = payload.get(key)
+        if isinstance(raw_value, Sequence) and not isinstance(
+            raw_value, (str, bytes, bytearray)
+        ):
+            values.extend(_string_list(raw_value))
+            continue
+        text = _text(raw_value)
+        if text is not None:
+            values.append(text)
+    return tuple(sorted(dict.fromkeys(values)))
+
+
+def _runtime_ledger_payload_dedupe_key(
+    payload: Mapping[str, Any],
+) -> tuple[object, ...]:
+    interval = _runtime_ledger_payload_interval(payload)
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
+    if interval is not None:
+        started_at, ended_at = interval
+    return (
+        _text(payload.get("account_label")),
+        _text(payload.get("strategy_id"))
+        or _text(payload.get("runtime_strategy_name")),
+        _text(payload.get("symbol")),
+        started_at,
+        ended_at,
+        _runtime_ledger_payload_identity_values(
+            payload,
+            "source_window_ids",
+            "source_window_id",
+        ),
+        _runtime_ledger_payload_identity_values(
+            payload,
+            "execution_order_event_ids",
+            "execution_order_event_id",
+        ),
+        _runtime_ledger_payload_identity_values(
+            payload,
+            "execution_ids",
+            "execution_id",
+        ),
+        _runtime_ledger_payload_identity_values(
+            payload,
+            "trade_decision_ids",
+            "trade_decision_id",
+            "decision_ids",
+            "decision_id",
+        ),
+        _text(payload.get("source_decision_mode_partition"))
+        or _text(payload.get("source_decision_mode")),
+    )
+
+
+def _runtime_ledger_payloads_overlap(
+    left: Mapping[str, Any],
+    right: Mapping[str, Any],
+) -> bool:
+    for left_key, right_key in (
+        ("account_label", "account_label"),
+        ("strategy_id", "strategy_id"),
+        ("symbol", "symbol"),
+    ):
+        left_value = _text(left.get(left_key))
+        right_value = _text(right.get(right_key))
+        if left_key == "strategy_id":
+            left_value = left_value or _text(left.get("runtime_strategy_name"))
+            right_value = right_value or _text(right.get("runtime_strategy_name"))
+        if (
+            left_value is not None
+            and right_value is not None
+            and left_value != right_value
+        ):
+            return False
+    left_interval = _runtime_ledger_payload_interval(left)
+    right_interval = _runtime_ledger_payload_interval(right)
+    if left_interval is None or right_interval is None:
+        return False
+    left_start, left_end = left_interval
+    right_start, right_end = right_interval
+    return left_start < right_end and left_end > right_start
+
+
+def _runtime_ledger_payload_preference_key(
+    payload: Mapping[str, Any],
+) -> tuple[int, int, int, int, Decimal, datetime]:
+    interval = _runtime_ledger_payload_interval(payload)
+    ended_at = (
+        interval[1]
+        if interval is not None
+        else datetime.min.replace(tzinfo=timezone.utc)
+    )
+    return (
+        0 if _runtime_ledger_payload_is_readback(payload) else 1,
+        _observation_int(payload.get("closed_trade_count")),
+        -_observation_int(payload.get("open_position_count")),
+        _observation_int(payload.get("fill_count"))
+        + len(
+            _runtime_ledger_payload_identity_values(
+                payload, "execution_order_event_ids", "execution_order_event_id"
+            )
+        )
+        + len(
+            _runtime_ledger_payload_identity_values(
+                payload, "execution_ids", "execution_id"
+            )
+        )
+        + len(
+            _runtime_ledger_payload_identity_values(
+                payload,
+                "trade_decision_ids",
+                "trade_decision_id",
+                "decision_ids",
+                "decision_id",
+            )
+        ),
+        _observation_decimal(payload.get("filled_notional")),
+        ended_at,
+    )
+
+
+def _dedupe_runtime_ledger_bucket_payloads(
+    payloads: Sequence[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    fresh_payloads = [
+        payload
+        for payload in payloads
+        if not _runtime_ledger_payload_is_readback(payload)
+    ]
+    candidates = [
+        payload
+        for payload in payloads
+        if not (
+            _runtime_ledger_payload_is_readback(payload)
+            and any(
+                _runtime_ledger_payloads_overlap(payload, fresh_payload)
+                for fresh_payload in fresh_payloads
+            )
+        )
+    ]
+    indexed_by_key: dict[tuple[object, ...], tuple[int, dict[str, Any]]] = {}
+    for index, payload in enumerate(candidates):
+        key = _runtime_ledger_payload_dedupe_key(payload)
+        existing = indexed_by_key.get(key)
+        if existing is None or _runtime_ledger_payload_preference_key(
+            payload
+        ) > _runtime_ledger_payload_preference_key(existing[1]):
+            indexed_by_key[key] = (index, payload)
+    return [
+        payload
+        for _, payload in sorted(indexed_by_key.values(), key=lambda item: item[0])
+    ]
+
+
 def _runtime_ledger_bucket_payloads(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
     raw_payloads = payload.get("runtime_ledger_buckets")
     if isinstance(raw_payloads, Sequence) and not isinstance(
@@ -1215,7 +1432,7 @@ def _runtime_ledger_bucket_payloads(payload: Mapping[str, Any]) -> list[dict[str
             payload = _runtime_ledger_bucket_payload(item)
             if payload:
                 payloads.append(payload)
-        return payloads
+        return _dedupe_runtime_ledger_bucket_payloads(payloads)
     single_payload = _runtime_ledger_bucket_payload(
         payload.get("runtime_ledger_bucket")
     )

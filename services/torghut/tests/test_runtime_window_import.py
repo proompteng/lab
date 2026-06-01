@@ -270,6 +270,58 @@ class TestRuntimeWindowImport(TestCase):
         self.assertEqual(buckets[0].avg_abs_slippage_bps, Decimal("0"))
         self.assertEqual(buckets[0].post_cost_promotion_sample_count, 0)
 
+    def test_build_observed_runtime_buckets_assigns_late_settled_source_bucket_to_source_window(
+        self,
+    ) -> None:
+        buckets = build_observed_runtime_buckets(
+            bucket_ranges=[
+                (
+                    datetime(2026, 6, 1, 13, 30, tzinfo=timezone.utc),
+                    datetime(2026, 6, 1, 14, 0, tzinfo=timezone.utc),
+                    6,
+                )
+            ],
+            decision_times=[],
+            execution_times=[],
+            tca_rows=[
+                {
+                    "computed_at": datetime(2026, 6, 1, 14, 5, tzinfo=timezone.utc),
+                    "abs_slippage_bps": Decimal("1"),
+                    "post_cost_expectancy_bps": Decimal("25"),
+                    "runtime_ledger_bucket": _runtime_ledger_bucket(
+                        bucket_started_at="2026-06-01T13:41:00+00:00",
+                        bucket_ended_at="2026-06-01T13:41:00.000001+00:00",
+                        source_window_start="2026-06-01T13:41:00+00:00",
+                        source_window_end="2026-06-01T13:41:00.000001+00:00",
+                        source_window_ids=["source-window-late-close"],
+                        execution_ids=["execution-late-close"],
+                        trade_decision_ids=["decision-late-close"],
+                        execution_order_event_ids=["event-late-close"],
+                        source_offsets=[
+                            {
+                                "topic": "alpaca.trade_updates",
+                                "partition": 0,
+                                "offset": 41,
+                            }
+                        ],
+                    ),
+                    **_runtime_pnl_basis(),
+                }
+            ],
+            continuity_ok=True,
+            drift_ok=True,
+            dependency_quorum_decision="allow",
+        )
+
+        self.assertEqual(len(buckets), 1)
+        self.assertEqual(buckets[0].payload_json["tca_row_count"], 1)
+        self.assertEqual(buckets[0].trade_count, 2)
+        runtime_payloads = buckets[0].payload_json["runtime_ledger_buckets"]
+        self.assertEqual(len(runtime_payloads), 1)
+        self.assertEqual(
+            runtime_payloads[0]["source_window_ids"], ["source-window-late-close"]
+        )
+
     def test_build_observed_runtime_buckets_quarantines_simulation_report_pnl(
         self,
     ) -> None:
@@ -1279,6 +1331,135 @@ class TestRuntimeWindowImport(TestCase):
         self.assertEqual(ledger_rows[0].run_id, "import-source-window-new-close")
         self.assertEqual(ledger_rows[0].open_position_count, 0)
         self.assertEqual(ledger_rows[0].closed_trade_count, 1)
+
+    def test_persist_observed_runtime_windows_dedupes_readback_when_fresh_late_source_bucket_arrives(
+        self,
+    ) -> None:
+        def source_buckets():
+            return build_observed_runtime_buckets(
+                bucket_ranges=[
+                    (
+                        datetime(2026, 6, 1, 13, 30, tzinfo=timezone.utc),
+                        datetime(2026, 6, 1, 14, 0, tzinfo=timezone.utc),
+                        6,
+                    )
+                ],
+                decision_times=[],
+                execution_times=[],
+                tca_rows=[
+                    {
+                        "computed_at": datetime(2026, 6, 1, 14, 4, tzinfo=timezone.utc),
+                        "abs_slippage_bps": Decimal("1"),
+                        "post_cost_expectancy_bps": None,
+                        "runtime_ledger_bucket": _runtime_ledger_bucket(
+                            bucket_started_at="2026-06-01T13:41:00+00:00",
+                            bucket_ended_at="2026-06-01T13:41:00.000001+00:00",
+                            source_window_start="2026-06-01T13:41:00+00:00",
+                            source_window_end="2026-06-01T13:41:00.000001+00:00",
+                            runtime_ledger_readback_source=(
+                                "strategy_runtime_ledger_buckets"
+                            ),
+                            source_window_ids=["source-window-late-close"],
+                            execution_ids=["execution-late-close"],
+                            trade_decision_ids=["decision-late-close"],
+                            execution_order_event_ids=["event-late-close"],
+                            fill_count=1,
+                            closed_trade_count=0,
+                            open_position_count=1,
+                            filled_notional="100",
+                            net_strategy_pnl_after_costs="0",
+                        ),
+                        **_runtime_pnl_basis(),
+                    },
+                    {
+                        "computed_at": datetime(2026, 6, 1, 14, 5, tzinfo=timezone.utc),
+                        "abs_slippage_bps": Decimal("1"),
+                        "post_cost_expectancy_bps": Decimal("25"),
+                        "runtime_ledger_bucket": _runtime_ledger_bucket(
+                            bucket_started_at="2026-06-01T13:41:00+00:00",
+                            bucket_ended_at="2026-06-01T13:41:00.000001+00:00",
+                            source_window_start="2026-06-01T13:41:00+00:00",
+                            source_window_end="2026-06-01T13:41:00.000001+00:00",
+                            source_window_ids=["source-window-late-close"],
+                            execution_ids=["execution-late-close"],
+                            trade_decision_ids=["decision-late-close"],
+                            execution_order_event_ids=["event-late-close"],
+                            source_decision_mode_counts={"route_acquisition_probe": 2},
+                            source_decision_mode="route_acquisition_probe",
+                            profit_proof_eligible=False,
+                            closed_trade_count=1,
+                            open_position_count=0,
+                            filled_notional="200",
+                            net_strategy_pnl_after_costs="0.50",
+                        ),
+                        **_runtime_pnl_basis(),
+                    },
+                ],
+                continuity_ok=True,
+                drift_ok=True,
+                dependency_quorum_decision="allow",
+            )
+
+        with self.session_local() as session:
+            first_summary = persist_observed_runtime_windows(
+                session=session,
+                run_id="import-late-linked-fill-idempotent",
+                candidate_id="cand-late-linked-fill",
+                hypothesis_id="H-PAIRS-01",
+                observed_stage="paper",
+                strategy_family="microbar_cross_sectional_pairs",
+                source_manifest_ref="config/trading/hypotheses/h-pairs-01.json",
+                buckets=source_buckets(),
+                runtime_observation_payload={
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_name": "microbar-cross-sectional-pairs-v1",
+                    "runtime_ledger_profit_proof_present": False,
+                },
+            )
+            second_summary = persist_observed_runtime_windows(
+                session=session,
+                run_id="import-late-linked-fill-idempotent",
+                candidate_id="cand-late-linked-fill",
+                hypothesis_id="H-PAIRS-01",
+                observed_stage="paper",
+                strategy_family="microbar_cross_sectional_pairs",
+                source_manifest_ref="config/trading/hypotheses/h-pairs-01.json",
+                buckets=source_buckets(),
+                runtime_observation_payload={
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_name": "microbar-cross-sectional-pairs-v1",
+                    "runtime_ledger_profit_proof_present": False,
+                },
+            )
+            session.commit()
+            ledger_rows = (
+                session.execute(select(StrategyRuntimeLedgerBucket)).scalars().all()
+            )
+
+        self.assertEqual(
+            first_summary["runtime_materialization_target"][
+                "runtime_ledger_bucket_count"
+            ],
+            1,
+        )
+        self.assertEqual(
+            second_summary["runtime_materialization_target"][
+                "runtime_ledger_bucket_count"
+            ],
+            1,
+        )
+        self.assertEqual(
+            second_summary["current_runtime_ledger_bucket_replacement_count"], 1
+        )
+        self.assertEqual(len(ledger_rows), 1)
+        self.assertEqual(ledger_rows[0].closed_trade_count, 1)
+        self.assertEqual(ledger_rows[0].open_position_count, 0)
+        self.assertEqual(ledger_rows[0].filled_notional, Decimal("200"))
+        self.assertIn(
+            "source_decision_mode_not_profit_proof_eligible",
+            ledger_rows[0].blockers_json,
+        )
+        self.assertNotIn("runtime_ledger_readback_source", ledger_rows[0].payload_json)
 
     def test_persist_observed_runtime_windows_uses_notional_weighted_ledger_summary(
         self,
