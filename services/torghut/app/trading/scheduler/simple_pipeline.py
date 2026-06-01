@@ -291,6 +291,7 @@ def _bounded_sim_collection_metadata_from_decision(
     for key in (
         "paper_route_target_plan_source_decision",
         "paper_route_target_plan",
+        "strategy_signal_paper",
         "paper_route_probe",
         "paper_route_probe_exit",
     ):
@@ -3274,6 +3275,20 @@ class SimpleTradingPipeline(TradingPipeline):
                 != "paper_route_probe_runtime_observed"
             ):
                 continue
+            if _target_requires_bounded_sim_collection_gate(target):
+                blockers = _bounded_sim_collection_blockers(
+                    target,
+                    account_label=self.account_label,
+                )
+                if blockers:
+                    logger.warning(
+                        "Skipping strategy-signal paper authority because bounded SIM "
+                        "collection is not authorized strategy=%s symbol=%s blockers=%s",
+                        strategy.name if strategy is not None else decision.strategy_id,
+                        symbol,
+                        ",".join(blockers),
+                    )
+                    continue
             if not _target_truthy(target.get("paper_probation_authorized")):
                 continue
             return target
@@ -3317,6 +3332,32 @@ class SimpleTradingPipeline(TradingPipeline):
             "dataset_snapshot_ref",
         ):
             value = _safe_text(target.get(key))
+            if value is not None:
+                metadata[key] = value
+        for key in _BOUNDED_SIM_COLLECTION_LINEAGE_KEYS:
+            value = _safe_text(target.get(key))
+            if value is not None:
+                metadata[key] = value
+        for key in _BOUNDED_SIM_COLLECTION_LINEAGE_BOOL_KEYS:
+            value = _target_bool(target.get(key))
+            if value is not None:
+                metadata[key] = value
+        for key in _BOUNDED_SIM_COLLECTION_LINEAGE_MAPPING_KEYS:
+            value = target.get(key)
+            if isinstance(value, Mapping):
+                metadata[key] = dict(cast(Mapping[str, Any], value))
+        for key in _BOUNDED_SIM_COLLECTION_BLOCKER_FIELDS:
+            values = _lineage_text_values(target.get(key))
+            if values:
+                metadata[key] = values
+        symbols = _lineage_text_values(target.get("paper_route_probe_symbols"))
+        if symbols:
+            metadata["paper_route_probe_symbols"] = symbols
+        for key in (
+            "paper_route_probe_pair_balance_required",
+            "paper_route_probe_pair_balance_state",
+        ):
+            value = target.get(key)
             if value is not None:
                 metadata[key] = value
         if window is not None:
@@ -3756,12 +3797,12 @@ class SimpleTradingPipeline(TradingPipeline):
         )
         paper_route_probe_applied = False
         if proof_floor_block_reason is not None:
+            collection_metadata = _bounded_sim_collection_metadata_from_decision(
+                decision,
+                account_label=self.account_label,
+                trading_mode=settings.trading_mode,
+            )
             if not settings.trading_simple_submit_enabled:
-                collection_metadata = _bounded_sim_collection_metadata_from_decision(
-                    decision,
-                    account_label=self.account_label,
-                    trading_mode=settings.trading_mode,
-                )
                 if collection_metadata is None:
                     self._block_decision_submission(
                         session=session,
@@ -3783,6 +3824,7 @@ class SimpleTradingPipeline(TradingPipeline):
             if settings.trading_mode == "paper" and (
                 self._paper_route_probe_exit_metadata(decision) is not None
                 or _paper_route_probe_entry_metadata(decision.params) is not None
+                or collection_metadata is not None
             ):
                 paper_route_probe_applied = True
             if not paper_route_probe_applied:
