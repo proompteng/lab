@@ -1054,9 +1054,14 @@ def link_order_events_to_execution(
         if event.execution_id is None:
             event.execution_id = execution.id
             changed = True
-        if event.trade_decision_id is None and execution.trade_decision_id is not None:
-            event.trade_decision_id = execution.trade_decision_id
-            changed = True
+        if event.trade_decision_id is None:
+            trade_decision_id = execution.trade_decision_id
+            if trade_decision_id is None:
+                decision = _trade_decision_for_order_event(session, event)
+                trade_decision_id = decision.id if decision is not None else None
+            if trade_decision_id is not None:
+                event.trade_decision_id = trade_decision_id
+                changed = True
         if not changed:
             continue
         _ensure_source_window_for_event(session, event)
@@ -1118,14 +1123,31 @@ def repair_order_feed_execution_links(
         "selected": len(events),
         "executions_matched": 0,
         "executions_linked": 0,
+        "decisions_matched": 0,
         "events_linked": 0,
+        "decision_events_linked": 0,
         "events_without_execution": 0,
+        "events_without_decision": 0,
     }
+    processed_decision_ids: set[object] = set()
     for event in events:
         if counters["events_linked"] >= bounded_limit:
             break
         execution = _execution_for_order_event(session, event)
         if execution is None:
+            if event.trade_decision_id is None:
+                decision = _trade_decision_for_order_event(session, event)
+                if decision is None:
+                    counters["events_without_decision"] += 1
+                else:
+                    event.trade_decision_id = decision.id
+                    if decision.id not in processed_decision_ids:
+                        processed_decision_ids.add(decision.id)
+                        counters["decisions_matched"] += 1
+                    _ensure_source_window_for_event(session, event)
+                    session.add(event)
+                    _refresh_source_window_linkage_counts(session, event)
+                    counters["decision_events_linked"] += 1
             counters["events_without_execution"] += 1
             continue
         if execution.id in processed_execution_ids:
@@ -1404,6 +1426,23 @@ def _execution_for_order_event(
         .scalars()
         .first()
     )
+
+
+def _trade_decision_for_order_event(
+    session: Session,
+    event: ExecutionOrderEvent,
+) -> TradeDecision | None:
+    if not event.client_order_id:
+        return None
+    return session.execute(
+        select(TradeDecision)
+        .where(
+            TradeDecision.decision_hash == event.client_order_id,
+            TradeDecision.alpaca_account_label == event.alpaca_account_label,
+        )
+        .order_by(TradeDecision.created_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
 
 
 def _execution_order_event_exists_for_execution_clause() -> ColumnElement[bool]:

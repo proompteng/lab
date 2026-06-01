@@ -82,8 +82,11 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
                     "selected": 4,
                     "executions_matched": 3,
                     "executions_linked": 2,
+                    "decisions_matched": 1,
                     "events_linked": 3,
+                    "decision_events_linked": 1,
                     "events_without_execution": 1,
+                    "events_without_decision": 0,
                 },
             ) as repair_links,
             patch.object(
@@ -118,8 +121,11 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
         self.assertEqual(payload["execution_link_candidates"], 4)
         self.assertEqual(payload["execution_link_executions_matched"], 3)
         self.assertEqual(payload["execution_link_executions_linked"], 2)
+        self.assertEqual(payload["execution_link_decisions_matched"], 1)
         self.assertEqual(payload["execution_link_events_linked"], 3)
+        self.assertEqual(payload["execution_link_decision_events_linked"], 1)
         self.assertEqual(payload["execution_link_events_without_execution"], 1)
+        self.assertEqual(payload["execution_link_events_without_decision"], 0)
         self.assertEqual(payload["execution_event_backfill_candidates"], 0)
         self.assertEqual(payload["execution_event_backfill_events_created"], 0)
         self.assertEqual(payload["execution_event_backfill_source_windows_created"], 0)
@@ -205,15 +211,21 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
                         "selected": 2,
                         "executions_matched": 2,
                         "executions_linked": 1,
+                        "decisions_matched": 0,
                         "events_linked": 2,
+                        "decision_events_linked": 0,
                         "events_without_execution": 0,
+                        "events_without_decision": 0,
                     },
                     {
                         "selected": 0,
                         "executions_matched": 0,
                         "executions_linked": 0,
+                        "decisions_matched": 0,
                         "events_linked": 0,
+                        "decision_events_linked": 0,
                         "events_without_execution": 0,
+                        "events_without_decision": 0,
                     },
                 ],
             ) as repair_links,
@@ -255,8 +267,11 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
         self.assertEqual(payload["execution_link_candidates"], 2)
         self.assertEqual(payload["execution_link_executions_matched"], 2)
         self.assertEqual(payload["execution_link_executions_linked"], 1)
+        self.assertEqual(payload["execution_link_decisions_matched"], 0)
         self.assertEqual(payload["execution_link_events_linked"], 2)
+        self.assertEqual(payload["execution_link_decision_events_linked"], 0)
         self.assertEqual(payload["execution_link_events_without_execution"], 0)
+        self.assertEqual(payload["execution_link_events_without_decision"], 0)
         self.assertEqual(payload["fill_delta_candidates"], 3)
         self.assertEqual(payload["fill_delta_events_repaired"], 2)
         self.assertEqual(payload["fill_delta_non_increasing_events_marked"], 1)
