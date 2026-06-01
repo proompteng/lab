@@ -1,0 +1,47 @@
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: torghut-replay-source-materialization
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut
+    app.kubernetes.io/component: replay-materialization
+    app.kubernetes.io/part-of: lab
+spec:
+  schedules:
+    - "5 5 * * 2-6"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 900
+  workflowSpec:
+    workflowTemplateRef:
+      name: torghut-whitepaper-autoresearch-profit-target
+    arguments:
+      parameters:
+        - name: replayTapePreviewTopK
+          value: "16"
+        - name: replayTapePreviewMinRows
+          value: "2"
+        - name: maxCandidates
+          value: "64"
+        - name: topK
+          value: "24"
+        - name: explorationSlots
+          value: "16"
+        - name: feedbackBlockReauditSlots
+          value: "16"
+        - name: maxFrontierCandidatesPerSpec
+          value: "1"
+        - name: maxTotalFrontierCandidates
+          value: "32"
+        - name: realReplayTimeoutSeconds
+          value: "5400"
+        - name: realReplayShardSize
+          value: "1"
+        - name: realReplayShardTimeoutSeconds
+          value: "900"
+        - name: realReplayShardWorkers
+          value: "4"
+        - name: persistResults
+          value: "true"
