@@ -219,6 +219,27 @@ def _runtime_import(
         "proof_blockers": blocker_payloads,
         "materialized": authoritative and proof_status == "ok" and not blocker_payloads,
     }
+    if authoritative:
+        target_payload["tigerbeetle"] = {
+            "schema_version": "torghut.tigerbeetle-runtime-ledger-proof-refs.v1",
+            "cluster_ids": [2001],
+            "account_count": 2,
+            "transfer_count": 1,
+            "account_ids": ["100100100100100100100100100100100101"],
+            "account_keys": ["TORGHUT_SIM:cash", "TORGHUT_SIM:AAPL:position"],
+            "transfer_ids": ["340282366920938463463374607431768211"],
+            "missing_account_ids": [],
+            "source_refs": [
+                "postgres:tigerbeetle_account_refs",
+                "postgres:tigerbeetle_transfer_refs",
+            ],
+            "runtime_ledger_buckets": [
+                {
+                    "runtime_ledger_bucket_id": "runtime-ledger-bucket-1",
+                    "transfer_ids": ["340282366920938463463374607431768211"],
+                }
+            ],
+        }
     summary: dict[str, object] = {
         "promotion_allowed": authoritative,
         "runtime_observation": {
@@ -504,6 +525,21 @@ class TestRuntimeLedgerProofPacket(TestCase):
         self.assertEqual(result["proof_mode"], "authority")
         self.assertTrue(result["final_authority_ok"])
         self.assertFalse(result["evidence_collection_only"])
+        tigerbeetle_refs = result["evidence"]["runtime_window_import"][
+            "materialization"
+        ]["materialized_targets"][0]["tigerbeetle"]
+        self.assertEqual(
+            tigerbeetle_refs["schema_version"],
+            "torghut.tigerbeetle-runtime-ledger-proof-refs.v1",
+        )
+        self.assertEqual(tigerbeetle_refs["transfer_count"], 1)
+        self.assertEqual(
+            tigerbeetle_refs["source_refs"],
+            [
+                "postgres:tigerbeetle_account_refs",
+                "postgres:tigerbeetle_transfer_refs",
+            ],
+        )
 
     def test_packet_prefers_importable_paper_route_plan_over_next_session_plan(
         self,

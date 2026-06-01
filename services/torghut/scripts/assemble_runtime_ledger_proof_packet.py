@@ -793,6 +793,12 @@ def _runtime_import_target_materialization_ref(
                     return value
         return ""
 
+    tigerbeetle_refs = _runtime_import_tigerbeetle_refs(
+        item,
+        summary,
+        materialization_target,
+        observation,
+    )
     ref: dict[str, Any] = {
         "materialized": materialized,
         "candidate_id": first_text("candidate_id"),
@@ -837,7 +843,60 @@ def _runtime_import_target_materialization_ref(
         ),
         "blockers": list(blockers),
     }
+    if tigerbeetle_refs:
+        ref["tigerbeetle"] = tigerbeetle_refs
     return {key: value for key, value in ref.items() if value not in ("", [], None)}
+
+
+def _runtime_import_tigerbeetle_refs(
+    *sources: Mapping[str, Any],
+) -> dict[str, Any]:
+    account_ids: list[str] = []
+    account_keys: list[str] = []
+    transfer_ids: list[str] = []
+    source_refs: list[str] = []
+    missing_account_ids: list[str] = []
+    cluster_ids: list[str] = []
+    bucket_refs: list[Mapping[str, Any]] = []
+
+    def extend_unique(target: list[str], values: Sequence[str]) -> None:
+        for value in values:
+            if value and value not in target:
+                target.append(value)
+
+    for source in sources:
+        refs = _mapping(source.get("tigerbeetle"))
+        extend_unique(account_ids, _text_list(source.get("tigerbeetle_account_ids")))
+        extend_unique(account_keys, _text_list(source.get("tigerbeetle_account_keys")))
+        extend_unique(transfer_ids, _text_list(source.get("tigerbeetle_transfer_ids")))
+        if refs:
+            extend_unique(cluster_ids, _text_list(refs.get("cluster_ids")))
+            extend_unique(account_ids, _text_list(refs.get("account_ids")))
+            extend_unique(account_keys, _text_list(refs.get("account_keys")))
+            extend_unique(transfer_ids, _text_list(refs.get("transfer_ids")))
+            extend_unique(source_refs, _text_list(refs.get("source_refs")))
+            extend_unique(
+                missing_account_ids, _text_list(refs.get("missing_account_ids"))
+            )
+            for bucket_ref in _sequence(refs.get("runtime_ledger_buckets")):
+                bucket_mapping = _mapping(bucket_ref)
+                if bucket_mapping:
+                    bucket_refs.append(bucket_mapping)
+
+    if not account_ids and not account_keys and not transfer_ids:
+        return {}
+    return {
+        "schema_version": "torghut.tigerbeetle-runtime-ledger-proof-refs.v1",
+        "cluster_ids": cluster_ids,
+        "account_count": len(account_ids),
+        "transfer_count": len(transfer_ids),
+        "account_ids": account_ids,
+        "account_keys": account_keys,
+        "transfer_ids": transfer_ids,
+        "missing_account_ids": missing_account_ids,
+        "source_refs": source_refs,
+        "runtime_ledger_buckets": bucket_refs,
+    }
 
 
 def _runtime_import_target_blocker_codes(value: object) -> list[str]:
