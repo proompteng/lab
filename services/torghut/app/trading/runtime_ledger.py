@@ -96,6 +96,15 @@ _DIAGNOSTIC_EXPECTANCY_SUPPRESSING_BLOCKERS = frozenset(
         "runtime_ledger_cost_basis_non_promotion_grade",
     }
 )
+_SOURCE_REF_BLOCKER_SOURCE_WINDOW_MISSING = "runtime_ledger_source_window_ids_missing"
+_SOURCE_REF_BLOCKER_TRADE_DECISION_MISSING = (
+    "runtime_ledger_trade_decision_refs_missing"
+)
+_SOURCE_REF_BLOCKER_EXECUTION_MISSING = "runtime_ledger_execution_refs_missing"
+_SOURCE_REF_BLOCKER_EXECUTION_ORDER_EVENT_MISSING = (
+    "runtime_ledger_execution_order_event_refs_missing"
+)
+_SOURCE_REF_BLOCKER_SOURCE_OFFSETS_MISSING = "runtime_ledger_source_offsets_missing"
 
 
 @dataclass(frozen=True)
@@ -183,6 +192,11 @@ class _NormalizedFill:
     fill_quantity_basis: str | None = None
     lifecycle_only: bool = False
     order_feed_lifecycle_source: bool = False
+    execution_id: str | None = None
+    execution_order_event_id: str | None = None
+    source_window_id: str | None = None
+    source_offset_present: bool = False
+    source_materialization: str | None = None
 
     @property
     def is_usable_fill(self) -> bool:
@@ -442,6 +456,7 @@ def _build_bucket(
                 lineage_hash_counter=lineage_hash_counter,
             )
         )
+        blockers.extend(_source_materialization_blockers(lifecycle_rows))
 
     unique_blockers = _dedupe(blockers)
     post_cost_expectancy_bps: Decimal | None = None
@@ -578,6 +593,30 @@ def _order_lifecycle_blockers(
     if len(lineage_hash_counter) > 1:
         blockers.append("proof_lineage_hash_ambiguous")
     return blockers
+
+
+def _source_materialization_blockers(
+    lifecycle_rows: Sequence[_NormalizedFill],
+) -> list[str]:
+    """Fail closed on order-feed source rows missing row-level runtime refs."""
+
+    blockers: list[str] = []
+    for row in lifecycle_rows:
+        if row.source_materialization not in _PROMOTION_GRADE_SOURCE_MATERIALIZATIONS:
+            continue
+        if row.event_type not in _SUBMITTED_ORDER_EVENTS | _FILL_EVENTS:
+            continue
+        if row.execution_order_event_id is None:
+            blockers.append(_SOURCE_REF_BLOCKER_EXECUTION_ORDER_EVENT_MISSING)
+        if row.decision_id is None:
+            blockers.append(_SOURCE_REF_BLOCKER_TRADE_DECISION_MISSING)
+        if row.event_type in _FILL_EVENTS and row.execution_id is None:
+            blockers.append(_SOURCE_REF_BLOCKER_EXECUTION_MISSING)
+        if row.source_window_id is None:
+            blockers.append(_SOURCE_REF_BLOCKER_SOURCE_WINDOW_MISSING)
+        if not row.source_offset_present:
+            blockers.append(_SOURCE_REF_BLOCKER_SOURCE_OFFSETS_MISSING)
+    return _dedupe(blockers)
 
 
 def _apply_fill_to_position(
@@ -767,6 +806,19 @@ def _normalize_fill_row(
     decision_id = _coerce_text(
         _row_value(row, "decision_id", "trade_decision_id", "decision_hash")
     )
+    execution_id = _coerce_text(
+        _row_value(row, "execution_id", "execution_correlation_id")
+    )
+    execution_order_event_id = _coerce_text(
+        _row_value(row, "execution_order_event_id", "event_fingerprint")
+    )
+    source_window_id = _coerce_text(
+        _row_value(row, "source_window_id", "runtime_ledger_source_window_id")
+    )
+    source_offset_present = _source_offset_present(row)
+    source_materialization = _coerce_text(
+        _row_value(row, "source_materialization", "source")
+    )
     order_id = _coerce_text(
         _row_value(
             row,
@@ -857,6 +909,11 @@ def _normalize_fill_row(
         event_type=event_type,
         decision_id=decision_id,
         order_id=order_id,
+        execution_id=execution_id,
+        execution_order_event_id=execution_order_event_id,
+        source_window_id=source_window_id,
+        source_offset_present=source_offset_present,
+        source_materialization=source_materialization,
         execution_policy_hash=execution_policy_hash,
         cost_model_hash=cost_model_hash,
         lineage_hash=lineage_hash,

@@ -2309,6 +2309,19 @@ def _runtime_lifecycle_ledger_row(
             "source_offset",
         ),
     }
+    if _source_authority_order_event_row(row):
+        ledger_row["source"] = "execution_order_event"
+        ledger_row["source_materialization"] = "execution_order_events"
+        for key in (
+            "execution_order_event_id",
+            "execution_id",
+            "source_topic",
+            "source_partition",
+            "source_offset",
+            "source_window_id",
+        ):
+            if row.get(key) is not None:
+                ledger_row[key] = row[key]
     if event_type in _RUNTIME_LEDGER_FILL_EVENTS:
         side = _first_text(row, "side", "action", "order_side")
         source_authority_order_event = _source_authority_order_event_row(row)
@@ -2440,7 +2453,6 @@ def _runtime_lifecycle_ledger_row(
             ledger_row["cost_basis"] = cost_basis
         if _cost_basis_is_alpaca_fee_schedule(cost_basis):
             ledger_row["cost_model_hash"] = _alpaca_2026_equity_fee_schedule_hash()
-        ledger_row["source"] = "execution_order_event"
     return ledger_row
 
 
@@ -2452,6 +2464,39 @@ def _runtime_order_id(row: Mapping[str, object]) -> str | None:
         "client_order_id",
         "execution_correlation_id",
     )
+
+
+def _execution_id_by_order_id(
+    rows: Sequence[Mapping[str, object]],
+) -> dict[str, str]:
+    ids_by_order_id: dict[str, set[str]] = {}
+    for row in rows:
+        order_id = _runtime_order_id(row)
+        execution_id = _first_text(row, "execution_id")
+        if order_id is None or execution_id is None:
+            continue
+        ids_by_order_id.setdefault(order_id, set()).add(execution_id)
+    return {
+        order_id: next(iter(execution_ids))
+        for order_id, execution_ids in ids_by_order_id.items()
+        if len(execution_ids) == 1
+    }
+
+
+def _with_linked_execution_id(
+    row: Mapping[str, object],
+    *,
+    execution_id_by_order_id: Mapping[str, str],
+) -> dict[str, object]:
+    payload = dict(row)
+    if _first_text(payload, "execution_id") is not None:
+        return payload
+    order_id = _runtime_order_id(payload)
+    if order_id is not None and (
+        execution_id := execution_id_by_order_id.get(order_id)
+    ):
+        payload["execution_id"] = execution_id
+    return payload
 
 
 def _execution_row_has_fill(row: Mapping[str, object]) -> bool:
@@ -3511,6 +3556,24 @@ def _build_realized_strategy_pnl_rows(
         for row in carry_in_execution_rows or []
         if (execution_id := _first_text(row, "execution_id"))
     }
+    execution_id_by_order_id = _execution_id_by_order_id(execution_rows)
+    carry_in_execution_id_by_order_id = _execution_id_by_order_id(
+        carry_in_execution_rows or []
+    )
+    order_lifecycle_rows = [
+        _with_linked_execution_id(
+            row,
+            execution_id_by_order_id=execution_id_by_order_id,
+        )
+        for row in order_lifecycle_rows or []
+    ]
+    carry_in_order_lifecycle_rows = [
+        _with_linked_execution_id(
+            row,
+            execution_id_by_order_id=carry_in_execution_id_by_order_id,
+        )
+        for row in carry_in_order_lifecycle_rows or []
+    ]
     for row in decision_lifecycle_rows or []:
         lifecycle_row = _runtime_lifecycle_ledger_row(row, event_type="decision")
         if lifecycle_row is None:
@@ -3519,7 +3582,7 @@ def _build_realized_strategy_pnl_rows(
         event_time = lifecycle_row.get("executed_at")
         if isinstance(event_time, datetime):
             event_times.append(event_time)
-    for row in order_lifecycle_rows or []:
+    for row in order_lifecycle_rows:
         event_type = _runtime_ledger_event_type(
             {str(key): value for key, value in row.items()}
         )
@@ -3576,7 +3639,7 @@ def _build_realized_strategy_pnl_rows(
         lifecycle_row = _runtime_lifecycle_ledger_row(row, event_type="decision")
         if lifecycle_row is not None:
             carry_in_ledger_rows.append(lifecycle_row)
-    for row in carry_in_order_lifecycle_rows or []:
+    for row in carry_in_order_lifecycle_rows:
         event_type = _runtime_ledger_event_type(
             {str(key): value for key, value in row.items()}
         )

@@ -1079,6 +1079,11 @@ def test_linked_order_feed_fill_materializes_fill_economics_lineage() -> None:
                 "executed_at": _ts(1),
                 "decision_id": "decision-buy",
                 "order_id": "execution-buy",
+                "execution_order_event_id": "event-new-buy",
+                "source_window_id": "window-buy",
+                "source_topic": "alpaca.trade_updates",
+                "source_partition": 0,
+                "source_offset": 6,
             },
             {
                 **common,
@@ -1093,6 +1098,11 @@ def test_linked_order_feed_fill_materializes_fill_economics_lineage() -> None:
                 "executed_at": _ts(3),
                 "decision_id": "decision-sell",
                 "order_id": "execution-sell",
+                "execution_order_event_id": "event-new-sell",
+                "source_window_id": "window-sell",
+                "source_topic": "alpaca.trade_updates",
+                "source_partition": 0,
+                "source_offset": 7,
             },
             {
                 **common,
@@ -1104,7 +1114,7 @@ def test_linked_order_feed_fill_materializes_fill_economics_lineage() -> None:
                 "source_window_id": "window-buy",
                 "source_topic": "alpaca.trade_updates",
                 "source_partition": 0,
-                "source_offset": 7,
+                "source_offset": 8,
                 "side": "buy",
                 "quantity": "1",
                 "avg_fill_price": "100",
@@ -1122,7 +1132,7 @@ def test_linked_order_feed_fill_materializes_fill_economics_lineage() -> None:
                 "source_window_id": "window-sell",
                 "source_topic": "alpaca.trade_updates",
                 "source_partition": 0,
-                "source_offset": 8,
+                "source_offset": 9,
                 "side": "sell",
                 "quantity": "1",
                 "avg_fill_price": "101",
@@ -1145,6 +1155,105 @@ def test_linked_order_feed_fill_materializes_fill_economics_lineage() -> None:
     assert bucket.cost_basis_counts == {"broker_reported_commission_and_fees": 2}
     assert bucket.cost_model_hash_counts == {"broker-cost-v1": 2}
     assert bucket.post_cost_expectancy_bps is not None
+
+
+def test_source_materialized_fill_requires_execution_refs_for_authority() -> None:
+    common = {
+        "account_label": "paper",
+        "strategy_id": "strategy-1",
+        "symbol": "NVDA",
+        "source_materialization": "execution_order_events",
+        "authority_class": "runtime_order_feed_execution_source",
+        "execution_policy_hash": "policy",
+        "cost_model_hash": "broker-cost-v1",
+        "lineage_hash": "lineage",
+    }
+
+    bucket = build_runtime_ledger_buckets(
+        [
+            {
+                **common,
+                "event_type": "decision",
+                "executed_at": _ts(0),
+                "decision_id": "decision-buy",
+                "order_id": "order-buy",
+            },
+            {
+                **common,
+                "event_type": "order_submitted",
+                "executed_at": _ts(1),
+                "decision_id": "decision-buy",
+                "order_id": "order-buy",
+                "execution_order_event_id": "event-new-buy",
+                "source_window_id": "window-buy",
+                "source_topic": "alpaca.trade_updates",
+                "source_partition": 0,
+                "source_offset": 6,
+            },
+            {
+                **common,
+                "event_type": "decision",
+                "executed_at": _ts(2),
+                "decision_id": "decision-sell",
+                "order_id": "order-sell",
+            },
+            {
+                **common,
+                "event_type": "order_submitted",
+                "executed_at": _ts(3),
+                "decision_id": "decision-sell",
+                "order_id": "order-sell",
+                "execution_order_event_id": "event-new-sell",
+                "source_window_id": "window-sell",
+                "source_topic": "alpaca.trade_updates",
+                "source_partition": 0,
+                "source_offset": 7,
+            },
+            {
+                **common,
+                "event_type": "fill",
+                "executed_at": _ts(4),
+                "execution_order_event_id": "event-buy",
+                "trade_decision_id": "decision-buy",
+                "source_window_id": "window-buy",
+                "source_topic": "alpaca.trade_updates",
+                "source_partition": 0,
+                "source_offset": 8,
+                "order_id": "order-buy",
+                "side": "buy",
+                "filled_qty_delta": "1",
+                "fill_quantity_basis": "cumulative_to_delta",
+                "avg_fill_price": "100",
+                "explicit_cost_amount": "0.25",
+                "broker_fee_basis": "broker_reported_commission_and_fees",
+            },
+            {
+                **common,
+                "event_type": "fill",
+                "executed_at": _ts(5),
+                "execution_order_event_id": "event-sell",
+                "trade_decision_id": "decision-sell",
+                "source_window_id": "window-sell",
+                "source_topic": "alpaca.trade_updates",
+                "source_partition": 0,
+                "source_offset": 9,
+                "order_id": "order-sell",
+                "side": "sell",
+                "filled_qty_delta": "1",
+                "fill_quantity_basis": "cumulative_to_delta",
+                "avg_fill_price": "101",
+                "broker_fee": "0.25",
+                "broker_fee_basis": "broker_reported_commission_and_fees",
+            },
+        ],
+        bucket_ranges=[(_ts(), _ts(60))],
+        require_order_lifecycle=True,
+    )[0]
+
+    assert bucket.closed_trade_count == 1
+    assert bucket.diagnostic_closed_trade_expectancy_bps is not None
+    assert bucket.post_cost_expectancy_bps is None
+    assert "runtime_ledger_execution_refs_missing" in bucket.blockers
 
 
 def test_linked_order_feed_fill_accepts_structured_source_offsets_mapping() -> None:
