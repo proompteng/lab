@@ -6,7 +6,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
-from typing import Literal
+from typing import Literal, cast
 
 
 RuntimeLedgerProofMode = Literal["smoke", "probation", "authority"]
@@ -45,7 +45,7 @@ class RuntimeLedgerProofPolicy:
         proof_mode: str | None = None,
     ) -> dict[str, object]:
         targets = self.targets_for_mode(proof_mode or self.proof_mode)
-        return {
+        payload = {
             "proof_mode": targets["proof_mode"],
             "final_authority": targets["final_authority"],
             "evidence_collection_only": targets["evidence_collection_only"],
@@ -70,13 +70,29 @@ class RuntimeLedgerProofPolicy:
             "max_runtime_ledger_symbol_concentration_share": _decimal_text(
                 _target_decimal(targets, "max_symbol_concentration_share")
             ),
-            "min_runtime_ledger_closed_round_trips": targets[
-                "min_closed_round_trips"
-            ],
+            "min_runtime_ledger_closed_round_trips": targets["min_closed_round_trips"],
             "min_runtime_ledger_filled_notional": _decimal_text(
                 _target_decimal(targets, "min_filled_notional")
             ),
         }
+        if targets["final_authority"]:
+            payload.update(
+                {
+                    "min_runtime_ledger_median_daily_net_pnl_after_costs": _decimal_text(
+                        _target_decimal(targets, "min_median_daily_net_pnl_after_costs")
+                    ),
+                    "min_runtime_ledger_p10_daily_net_pnl_after_costs": _decimal_text(
+                        _target_decimal(targets, "min_p10_daily_net_pnl_after_costs")
+                    ),
+                    "min_runtime_ledger_worst_day_net_pnl_after_costs": _decimal_text(
+                        _target_decimal(targets, "min_worst_day_net_pnl_after_costs")
+                    ),
+                    "max_runtime_ledger_intraday_drawdown": _decimal_text(
+                        _target_decimal(targets, "max_intraday_drawdown")
+                    ),
+                }
+            )
+        return payload
 
     def targets_for_mode(self, proof_mode: str) -> dict[str, object]:
         mode = normalize_runtime_ledger_proof_mode(proof_mode)
@@ -88,6 +104,10 @@ class RuntimeLedgerProofPolicy:
         max_symbol_concentration_share = self.max_symbol_concentration_share
         min_closed_round_trips = 1
         min_filled_notional = Decimal("0")
+        min_median_daily_net_pnl_after_costs = Decimal("0")
+        min_p10_daily_net_pnl_after_costs = Decimal("0")
+        min_worst_day_net_pnl_after_costs = Decimal("0")
+        max_intraday_drawdown = Decimal("0")
         if mode == "probation":
             min_days = max(min_days, self.probation_min_trading_days)
             min_net = max(min_net, min_daily * Decimal(min_days))
@@ -112,6 +132,16 @@ class RuntimeLedgerProofPolicy:
             )
             min_closed_round_trips = self.authority_min_closed_round_trips
             min_filled_notional = self.authority_min_filled_notional
+            min_median_daily_net_pnl_after_costs = (
+                self.authority_min_median_daily_net_pnl_after_costs
+            )
+            min_p10_daily_net_pnl_after_costs = (
+                self.authority_min_p10_daily_net_pnl_after_costs
+            )
+            min_worst_day_net_pnl_after_costs = (
+                self.authority_min_worst_day_net_pnl_after_costs
+            )
+            max_intraday_drawdown = self.authority_max_intraday_drawdown
         return {
             "proof_mode": mode,
             "final_authority": mode == "authority",
@@ -126,6 +156,10 @@ class RuntimeLedgerProofPolicy:
             "max_symbol_concentration_share": max_symbol_concentration_share,
             "min_closed_round_trips": min_closed_round_trips,
             "min_filled_notional": min_filled_notional,
+            "min_median_daily_net_pnl_after_costs": min_median_daily_net_pnl_after_costs,
+            "min_p10_daily_net_pnl_after_costs": min_p10_daily_net_pnl_after_costs,
+            "min_worst_day_net_pnl_after_costs": min_worst_day_net_pnl_after_costs,
+            "max_intraday_drawdown": max_intraday_drawdown,
         }
 
 
@@ -199,6 +233,7 @@ def runtime_ledger_proof_policy_from_env(
         if raw_value is None or not raw_value.strip():
             continue
         values[field_name] = _parse_int_env(env_name, raw_value)
+    _validate_authority_overrides(values)
     return RuntimeLedgerProofPolicy(**values)
 
 
@@ -236,6 +271,47 @@ def _parse_int_env(name: str, value: str) -> int:
     if parsed < 0:
         raise ValueError(f"{name} must be non-negative: {value!r}")
     return parsed
+
+
+def _validate_authority_overrides(values: Mapping[str, object]) -> None:
+    defaults = DEFAULT_RUNTIME_LEDGER_PROOF_POLICY
+    minimum_fields = {
+        "authority_min_trading_days": defaults.authority_min_trading_days,
+        "authority_min_mean_daily_net_pnl_after_costs": (
+            defaults.authority_min_mean_daily_net_pnl_after_costs
+        ),
+        "authority_min_median_daily_net_pnl_after_costs": (
+            defaults.authority_min_median_daily_net_pnl_after_costs
+        ),
+        "authority_min_p10_daily_net_pnl_after_costs": (
+            defaults.authority_min_p10_daily_net_pnl_after_costs
+        ),
+        "authority_min_worst_day_net_pnl_after_costs": (
+            defaults.authority_min_worst_day_net_pnl_after_costs
+        ),
+        "authority_min_closed_round_trips": defaults.authority_min_closed_round_trips,
+        "authority_min_filled_notional": defaults.authority_min_filled_notional,
+    }
+    maximum_fields = {
+        "authority_max_intraday_drawdown": defaults.authority_max_intraday_drawdown,
+        "authority_max_drawdown_pct_equity": defaults.authority_max_drawdown_pct_equity,
+        "authority_max_best_day_share": defaults.authority_max_best_day_share,
+        "authority_max_symbol_concentration_share": (
+            defaults.authority_max_symbol_concentration_share
+        ),
+    }
+    for field_name, default_value in minimum_fields.items():
+        value = cast(Decimal | int, values[field_name])
+        if value < default_value:
+            raise ValueError(
+                f"{field_name} cannot weaken authority floor below {default_value}: {value}"
+            )
+    for field_name, default_value in maximum_fields.items():
+        value = cast(Decimal | int, values[field_name])
+        if value > default_value:
+            raise ValueError(
+                f"{field_name} cannot weaken authority cap above {default_value}: {value}"
+            )
 
 
 def _decimal_text(value: Decimal) -> str:
