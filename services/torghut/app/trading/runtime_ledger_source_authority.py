@@ -33,7 +33,7 @@ _PROMOTION_GRADE_SOURCE_MATERIALIZATIONS = frozenset(
         "source_execution_lifecycle",
     }
 )
-_PROMOTION_GRADE_AUTHORITY_CLASSES = frozenset(
+_PROMOTION_GRADE_AUTHORITY_MARKERS = frozenset(
     {
         "runtime_order_feed_execution_source",
         "event_sourced_runtime_ledger_profit_proof",
@@ -48,6 +48,14 @@ _PROMOTION_GRADE_SOURCE_REF_TABLES = frozenset(
         "executions",
         "execution_order_events",
         "order_feed_source_windows",
+    }
+)
+_NON_PROMOTION_AUTHORITY_MARKERS = frozenset(
+    {
+        "exact_replay",
+        "artifact_only",
+        "replay_artifact",
+        "simulation_source_replay_only",
     }
 )
 
@@ -228,8 +236,34 @@ def _promotion_grade_source_materialization_present(
     )
 
 
-def _promotion_grade_authority_class_present(bucket: Mapping[str, object]) -> bool:
-    return _text(bucket.get("authority_class")) in _PROMOTION_GRADE_AUTHORITY_CLASSES
+def _non_promotion_authority_marker_present(value: object) -> bool:
+    text = _text(value)
+    if text is None:
+        return False
+    normalized = text.lower().replace("-", "_")
+    return any(marker in normalized for marker in _NON_PROMOTION_AUTHORITY_MARKERS)
+
+
+def _promotion_grade_authority_marker_present(bucket: Mapping[str, object]) -> bool:
+    for key in ("authority_class", "authority_reason"):
+        marker = _text(bucket.get(key))
+        if marker in _PROMOTION_GRADE_AUTHORITY_MARKERS:
+            return True
+    return False
+
+
+def _non_promotion_derivation_present(bucket: Mapping[str, object]) -> bool:
+    return any(
+        _non_promotion_authority_marker_present(bucket.get(key))
+        for key in (
+            "authority_class",
+            "authority_reason",
+            "pnl_derivation",
+            "source",
+            "source_kind",
+            "promotion_authority",
+        )
+    )
 
 
 def runtime_ledger_source_window_present(bucket: Mapping[str, object]) -> bool:
@@ -342,11 +376,23 @@ def runtime_ledger_promotion_source_authority_blockers(
         bucket
     ) < _source_row_count(bucket, "execution_order_events"):
         blockers.append(RUNTIME_LEDGER_SOURCE_OFFSETS_MISSING_BLOCKER)
-    if not _promotion_grade_source_materialization_present(bucket):
+    if (
+        not _promotion_grade_source_materialization_present(bucket)
+        or _non_promotion_authority_marker_present(bucket.get("source_materialization"))
+    ):
         blockers.append(RUNTIME_LEDGER_SOURCE_MATERIALIZATION_MISSING_BLOCKER)
-    if not _promotion_grade_authority_class_present(bucket):
+    if (
+        not _promotion_grade_authority_marker_present(bucket)
+        or _non_promotion_derivation_present(bucket)
+    ):
         blockers.append(RUNTIME_LEDGER_AUTHORITY_CLASS_MISSING_BLOCKER)
     return list(dict.fromkeys(blockers))
+
+
+def runtime_ledger_promotion_source_authority_present(
+    bucket: Mapping[str, object],
+) -> bool:
+    return not runtime_ledger_promotion_source_authority_blockers(bucket)
 
 
 __all__ = [
@@ -360,6 +406,7 @@ __all__ = [
     "RUNTIME_LEDGER_SOURCE_WINDOW_MISSING_BLOCKER",
     "RUNTIME_LEDGER_TRADE_DECISION_REFS_MISSING_BLOCKER",
     "runtime_ledger_promotion_source_authority_blockers",
+    "runtime_ledger_promotion_source_authority_present",
     "runtime_ledger_source_authority_blockers",
     "runtime_ledger_source_refs_present",
     "runtime_ledger_source_window_present",

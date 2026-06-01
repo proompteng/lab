@@ -28,6 +28,7 @@ from app.trading.runtime_ledger import (
 )
 from app.trading.runtime_ledger_source_authority import (
     runtime_ledger_promotion_source_authority_blockers,
+    runtime_ledger_promotion_source_authority_present,
 )
 from app.trading.runtime_cost_authority import (
     cost_basis_counts_have_non_promotion_grade_costs,
@@ -1816,15 +1817,7 @@ def _runtime_ledger_tca_materialization_metadata(
         )
         if source_materialization is not None:
             source_materializations.append(source_materialization)
-        if (
-            authority_reason == "source_execution_runtime_ledger_materialized"
-            or authority_reason == "event_sourced_runtime_ledger_profit_proof"
-            or pnl_derivation
-            == "source_execution_lifecycle_materialized_runtime_ledger"
-            or pnl_derivation == "execution_order_events_runtime_ledger"
-            or source_materialization == "source_execution_lifecycle"
-            or source_materialization == "execution_order_events"
-        ):
+        if runtime_ledger_promotion_source_authority_present(bucket_payload):
             source_execution_materialized_count += 1
         if authority_reason == "execution_reconstruction_not_runtime_ledger_proof":
             execution_reconstruction_count += 1
