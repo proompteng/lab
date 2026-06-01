@@ -1151,7 +1151,7 @@ class SimpleTradingPipeline(TradingPipeline):
         for target in targets:
             if not _target_requires_bounded_sim_collection_gate(target):
                 continue
-            if not _bounded_sim_collection_authorized(
+            if not _bounded_sim_collection_reserves_account(
                 target,
                 account_label=self.account_label,
             ):
