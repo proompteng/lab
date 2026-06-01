@@ -651,9 +651,9 @@ def _parse_args() -> argparse.Namespace:
         "--allow-unsafe-replay-tape-exact-cap-override",
         action="store_true",
         help=(
-            "Allow --replay-tape-exact-candidate-cap above the production-safe "
-            f"default cap of {_DEFAULT_FAST_REPLAY_EXACT_CANDIDATE_CAP}. "
-            "Keep disabled for CI and normal research runs."
+            "Deprecated no-op retained for CLI compatibility. Replay-tape preview "
+            f"handoff is always capped at {_DEFAULT_FAST_REPLAY_EXACT_CANDIDATE_CAP} "
+            "exact-replay candidates."
         ),
     )
     parser.add_argument(
@@ -6634,8 +6634,7 @@ def _resolved_fast_replay_exact_candidate_cap(
             or _DEFAULT_FAST_REPLAY_EXACT_CANDIDATE_CAP
         ),
     )
-    if not bool(getattr(args, "allow_unsafe_replay_tape_exact_cap_override", False)):
-        requested_cap = min(requested_cap, _DEFAULT_FAST_REPLAY_EXACT_CANDIDATE_CAP)
+    requested_cap = min(requested_cap, _DEFAULT_FAST_REPLAY_EXACT_CANDIDATE_CAP)
     return max(1, min(max(1, preview_top_k), requested_cap))
 
 
@@ -6646,6 +6645,8 @@ def _fast_replay_preview_proof_semantics() -> dict[str, Any]:
         "promotion_proof": False,
         "proof_authority": False,
         "promotion_authority": False,
+        "promotion_allowed": False,
+        "final_promotion_allowed": False,
         "authority": "preview_prefilter_only",
         "prefilter_only": True,
         "no_kubernetes_fanout": True,

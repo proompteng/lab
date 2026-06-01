@@ -4693,6 +4693,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             args.replay_tape_path = tape_path
             args.replay_tape_preview_top_k = 8
             args.replay_tape_exact_candidate_cap = 99
+            args.allow_unsafe_replay_tape_exact_cap_override = True
             candidate_selection = {
                 "schema_version": "torghut.whitepaper-autoresearch-selection.v1",
                 "budget": {"selected_count": len(specs)},
@@ -4733,6 +4734,8 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertFalse(queue_payload["proof_authority"])
         self.assertFalse(queue_payload["promotion_allowed"])
         self.assertFalse(queue_payload["final_promotion_allowed"])
+        self.assertFalse(queue_payload["proof_semantics"]["promotion_allowed"])
+        self.assertFalse(queue_payload["proof_semantics"]["final_promotion_allowed"])
         self.assertEqual(
             queue_payload["runner_policy"]["default_shard_timeout_seconds"], 900
         )

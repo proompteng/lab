@@ -261,6 +261,14 @@ class TestReplayTape(TestCase):
             source_query_digest=first_digest,
             source_table_versions={"signals": "v1"},
         )
+        changed_source_digest_key = build_replay_tape_cache_key(
+            dataset_snapshot_ref="snapshot-a",
+            symbols=("AAPL", "NVDA"),
+            start_date=date(2026, 3, 27),
+            end_date=date(2026, 3, 27),
+            source_query_digest=build_source_query_digest({"window": "b"}),
+            source_table_versions={"signals": "v1"},
+        )
         changed_dataset_key = build_replay_tape_cache_key(
             dataset_snapshot_ref="snapshot-b",
             symbols=("AAPL", "NVDA"),
@@ -299,6 +307,7 @@ class TestReplayTape(TestCase):
 
         self.assertEqual(first_key, reordered_key)
         self.assertNotEqual(first_key, changed_key)
+        self.assertNotEqual(first_key, changed_source_digest_key)
         self.assertNotEqual(first_key, changed_dataset_key)
         self.assertNotEqual(first_key, changed_feature_schema_key)
         self.assertNotEqual(first_key, changed_cost_model_key)
