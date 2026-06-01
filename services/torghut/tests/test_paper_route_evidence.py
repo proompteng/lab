@@ -319,6 +319,25 @@ class TestPaperRouteEvidenceAudit(TestCase):
             )
         )
 
+    def _add_flat_account_close_snapshot(
+        self,
+        session: Session,
+        *,
+        account_label: str,
+        window_end: datetime,
+        positions: list[dict[str, object]] | None = None,
+    ) -> None:
+        session.add(
+            PositionSnapshot(
+                alpaca_account_label=account_label,
+                as_of=window_end + timedelta(minutes=5),
+                equity=Decimal("100000"),
+                cash=Decimal("100000"),
+                buying_power=Decimal("200000"),
+                positions=positions or [],
+            )
+        )
+
     def _add_account_position_snapshot(
         self,
         session: Session,
@@ -2085,6 +2104,573 @@ class TestPaperRouteEvidenceAudit(TestCase):
         )
         self.assertFalse(summary_target["profit_proof_eligible"])
 
+    def test_hpairs_next_window_requires_aapl_amzn_pair_legs(self) -> None:
+        generated_at = datetime(2026, 5, 24, 12, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            session.add(
+                Strategy(
+                    name="microbar-cross-sectional-pairs-v1",
+                    description="H-PAIRS missing leg fixture",
+                    enabled=True,
+                    base_timeframe="1Sec",
+                    universe_type="static",
+                    universe_symbols=["AAPL", "AMZN"],
+                    max_notional_per_trade=Decimal("31590"),
+                )
+            )
+            session.commit()
+
+            payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "paper_route_probe_only",
+                    "blocked_reasons": [],
+                    "promotion_eligible_total": 0,
+                    "dependency_quorum_decision": "allow",
+                    "continuity_ok": True,
+                    "continuity_reason": "signal_continuity_nominal",
+                    "drift_ok": True,
+                    "drift_reason": "drift_live_promotion_eligible",
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "target_count": 1,
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-PAIRS-01",
+                                "candidate_id": "candidate-hpairs-missing-leg",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_cross_sectional_pairs",
+                                "strategy_name": "microbar-cross-sectional-pairs-v1",
+                                "account_label": "TORGHUT_SIM",
+                                "source_kind": "durable_runtime_ledger_bucket",
+                                "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
+                                "paper_route_probe_symbols": ["AAPL"],
+                                "paper_probation_authorized": True,
+                                "promotion_allowed": False,
+                                "final_promotion_authorized": False,
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "summary": {
+                        "paper_route_probe_eligible_symbols": ["AAPL"],
+                        "paper_route_probe_active_symbols": ["AAPL"],
+                    },
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": False,
+                        "next_session_max_notional": "63180",
+                        "eligible_symbol_count": 1,
+                        "eligible_symbols": ["AAPL"],
+                    },
+                },
+                generated_at=generated_at,
+            )
+
+        plan = payload["next_paper_route_runtime_window_targets"]
+        self.assertEqual(plan["target_count"], 0)
+        self.assertEqual(plan["skipped_target_count"], 1)
+        blockers = plan["skipped_targets"][0]["missing_or_blocking_fields"]
+        self.assertIn("paper_route_hpairs_aapl_amzn_legs_missing", blockers)
+        self.assertIn("paper_route_hpairs_amzn_leg_missing", blockers)
+        self.assertFalse(plan["promotion_allowed"])
+        self.assertFalse(plan["final_promotion_allowed"])
+
+    def test_runtime_window_import_surfaces_stale_quote_submit_blocker(self) -> None:
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            session.add(
+                Strategy(
+                    name="microbar-cross-sectional-pairs-v1",
+                    description="stale quote route fixture",
+                    enabled=True,
+                    base_timeframe="1Sec",
+                    universe_type="static",
+                    universe_symbols=["AAPL", "AMZN"],
+                )
+            )
+            session.add(
+                RejectedSignalOutcomeEvent(
+                    event_id="paper-route-stale-quote",
+                    source="quote_quality_gate",
+                    paper_source="paper-arxiv-2605.12151",
+                    paper_claim_id="stale-quote",
+                    account_label="TORGHUT_SIM",
+                    symbol="AAPL",
+                    event_ts=window_start + timedelta(minutes=20),
+                    timeframe="1Sec",
+                    seq="1",
+                    reject_reason="stale_quote",
+                    outcome_label_status="pending",
+                    counterfactual_required=True,
+                    required_outcome_fields_json=["executable_quote"],
+                    event_payload_json={"event_id": "paper-route-stale-quote"},
+                )
+            )
+            self._add_flat_account_start_snapshot(
+                session,
+                account_label="TORGHUT_SIM",
+                window_start=window_start,
+            )
+            session.commit()
+
+            payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "paper_route_probe_only",
+                    "blocked_reasons": [],
+                    "promotion_eligible_total": 0,
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "target_count": 1,
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-STALE-QUOTE",
+                                "candidate_id": "candidate-stale-quote",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_pairs",
+                                "strategy_name": "microbar-cross-sectional-pairs-v1",
+                                "account_label": "TORGHUT_SIM",
+                                "source_manifest_ref": "config/trading/hypotheses/h-stale-quote.json",
+                                "window_start": window_start.isoformat(),
+                                "window_end": window_end.isoformat(),
+                                "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                                "paper_probation_authorized": True,
+                                "promotion_allowed": False,
+                                "final_promotion_authorized": False,
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "summary": {
+                        "paper_route_probe_eligible_symbols": ["AAPL", "AMZN"],
+                        "paper_route_probe_active_symbols": ["AAPL", "AMZN"],
+                    },
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": True,
+                        "next_session_max_notional": "25",
+                        "eligible_symbol_count": 1,
+                    },
+                },
+                generated_at=window_end + timedelta(hours=1),
+            )
+
+        import_audit = payload["runtime_window_import_audit"]
+        self.assertEqual(import_audit["state"], "import_due_source_activity_missing")
+        self.assertIn("paper_route_submit_blocked", import_audit["blockers"])
+        self.assertIn("paper_route_stale_quote", import_audit["blockers"])
+        rejected = payload["next_runtime_window_target_audits"][0][
+            "rejected_signal_activity"
+        ]
+        self.assertIn("source_reject_stale_quote", rejected["blocking_reasons"])
+
+    def test_runtime_window_import_requires_flatten_handoff_after_closed_fills(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, tzinfo=timezone.utc)
+        strategy_name = "hpairs-flatten-handoff"
+        with Session(self.engine) as session:
+            strategy = Strategy(
+                name=strategy_name,
+                description="H-PAIRS flatten handoff fixture",
+                enabled=True,
+                base_timeframe="1Sec",
+                universe_type="static",
+                universe_symbols=["AAPL", "AMZN"],
+            )
+            session.add(strategy)
+            session.flush()
+            for index, (symbol, side) in enumerate(
+                [("AAPL", "buy"), ("AAPL", "sell"), ("AMZN", "sell"), ("AMZN", "buy")]
+            ):
+                event_at = window_start + timedelta(minutes=10 + index)
+                decision = TradeDecision(
+                    strategy_id=strategy.id,
+                    alpaca_account_label="TORGHUT_SIM",
+                    symbol=symbol,
+                    timeframe="1Sec",
+                    decision_json={
+                        "action": side,
+                        "qty": "1",
+                        "candidate_id": "candidate-flatten-handoff",
+                        "hypothesis_id": "H-PAIRS-01",
+                    },
+                    rationale="H-PAIRS closed route fixture",
+                    status="executed",
+                    created_at=event_at,
+                    executed_at=event_at,
+                )
+                session.add(decision)
+                session.flush()
+                execution = Execution(
+                    trade_decision_id=decision.id,
+                    alpaca_account_label="TORGHUT_SIM",
+                    alpaca_order_id=f"flatten-handoff-order-{index}",
+                    client_order_id=f"flatten-handoff-{side}-{symbol.lower()}-{index}",
+                    symbol=symbol,
+                    side=side,
+                    order_type="limit",
+                    time_in_force="day",
+                    submitted_qty=Decimal("1"),
+                    filled_qty=Decimal("1"),
+                    avg_fill_price=Decimal("100"),
+                    status="filled",
+                    raw_order={},
+                    created_at=event_at,
+                    updated_at=event_at,
+                    last_update_at=event_at,
+                )
+                session.add(execution)
+                session.flush()
+                session.add(
+                    ExecutionTCAMetric(
+                        execution_id=execution.id,
+                        trade_decision_id=decision.id,
+                        strategy_id=strategy.id,
+                        alpaca_account_label="TORGHUT_SIM",
+                        symbol=symbol,
+                        side=side,
+                        arrival_price=Decimal("100"),
+                        avg_fill_price=Decimal("100"),
+                        filled_qty=Decimal("1"),
+                        signed_qty=Decimal("-1") if side == "sell" else Decimal("1"),
+                        slippage_bps=Decimal("0"),
+                        shortfall_notional=Decimal("0"),
+                        realized_shortfall_bps=Decimal("0"),
+                        churn_qty=Decimal("0"),
+                        churn_ratio=Decimal("0"),
+                        computed_at=event_at,
+                        created_at=event_at,
+                        updated_at=event_at,
+                    )
+                )
+            self._add_flat_account_start_snapshot(
+                session,
+                account_label="TORGHUT_SIM",
+                window_start=window_start,
+            )
+            session.commit()
+
+            payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "paper_route_probe_only",
+                    "blocked_reasons": [],
+                    "promotion_eligible_total": 0,
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "target_count": 1,
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-PAIRS-01",
+                                "candidate_id": "candidate-flatten-handoff",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_cross_sectional_pairs",
+                                "strategy_name": strategy_name,
+                                "account_label": "TORGHUT_SIM",
+                                "source_kind": "paper_route_probe_runtime_observed",
+                                "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
+                                "window_start": window_start.isoformat(),
+                                "window_end": window_end.isoformat(),
+                                "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                                "paper_probation_authorized": True,
+                                "promotion_allowed": False,
+                                "final_promotion_authorized": False,
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "summary": {
+                        "paper_route_probe_eligible_symbols": ["AAPL", "AMZN"],
+                        "paper_route_probe_active_symbols": ["AAPL", "AMZN"],
+                    },
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": True,
+                        "next_session_max_notional": "63180",
+                        "eligible_symbol_count": 2,
+                    },
+                },
+                generated_at=window_end + timedelta(hours=1),
+            )
+
+        import_audit = payload["runtime_window_import_audit"]
+        self.assertEqual(import_audit["state"], "import_due_flatten_handoff_missing")
+        self.assertEqual(
+            import_audit["next_action"],
+            "run_paper_account_flatten_and_persist_position_snapshot",
+        )
+        self.assertIn("paper_route_flatten_handoff_missing", import_audit["blockers"])
+        self.assertIn(
+            "paper_route_account_window_close_snapshot_missing",
+            import_audit["blockers"],
+        )
+        close_state = payload["next_runtime_window_target_audits"][0][
+            "account_close_state"
+        ]
+        self.assertFalse(close_state["zero_open_position_evidence"])
+        self.assertEqual(
+            close_state["flatten_handoff"]["runner"],
+            "scripts/flatten_paper_account_positions.py",
+        )
+
+    def test_successful_bounded_collection_emits_source_backed_import_ready_metadata(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, tzinfo=timezone.utc)
+        strategy_name = "hpairs-source-backed-ready"
+        candidate_id = "candidate-source-backed-ready"
+        with Session(self.engine) as session:
+            strategy = Strategy(
+                name=strategy_name,
+                description="H-PAIRS source-backed import-ready fixture",
+                enabled=True,
+                base_timeframe="1Sec",
+                universe_type="static",
+                universe_symbols=["AAPL", "AMZN"],
+            )
+            session.add(strategy)
+            session.flush()
+            for index, (symbol, side) in enumerate(
+                [("AAPL", "buy"), ("AAPL", "sell"), ("AMZN", "sell"), ("AMZN", "buy")]
+            ):
+                event_at = window_start + timedelta(minutes=10 + index)
+                decision = TradeDecision(
+                    strategy_id=strategy.id,
+                    alpaca_account_label="TORGHUT_SIM",
+                    symbol=symbol,
+                    timeframe="1Sec",
+                    decision_json={
+                        "action": side,
+                        "qty": "1",
+                        "candidate_id": candidate_id,
+                        "hypothesis_id": "H-PAIRS-01",
+                    },
+                    rationale="H-PAIRS import ready fixture",
+                    status="executed",
+                    created_at=event_at,
+                    executed_at=event_at,
+                )
+                session.add(decision)
+                session.flush()
+                execution = Execution(
+                    trade_decision_id=decision.id,
+                    alpaca_account_label="TORGHUT_SIM",
+                    alpaca_order_id=f"source-backed-order-{index}",
+                    client_order_id=f"source-backed-{side}-{symbol.lower()}-{index}",
+                    symbol=symbol,
+                    side=side,
+                    order_type="limit",
+                    time_in_force="day",
+                    submitted_qty=Decimal("1"),
+                    filled_qty=Decimal("1"),
+                    avg_fill_price=Decimal("100"),
+                    status="filled",
+                    raw_order={},
+                    created_at=event_at,
+                    updated_at=event_at,
+                    last_update_at=event_at,
+                )
+                session.add(execution)
+                session.flush()
+                session.add(
+                    ExecutionOrderEvent(
+                        event_fingerprint=f"source-backed-fill-{index}",
+                        source_topic="trade_updates",
+                        source_partition=0,
+                        source_offset=index,
+                        alpaca_account_label="TORGHUT_SIM",
+                        feed_seq=index,
+                        event_ts=event_at,
+                        symbol=symbol,
+                        alpaca_order_id=f"source-backed-order-{index}",
+                        client_order_id=f"source-backed-{side}-{symbol.lower()}-{index}",
+                        event_type="fill",
+                        status="filled",
+                        qty=Decimal("1"),
+                        filled_qty=Decimal("1"),
+                        filled_qty_delta=Decimal("1"),
+                        filled_notional_delta=Decimal("100"),
+                        avg_fill_price=Decimal("100"),
+                        raw_event={
+                            "event": "fill",
+                            "side": side,
+                            "order": {
+                                "id": f"source-backed-order-{index}",
+                                "client_order_id": f"source-backed-{side}-{symbol.lower()}-{index}",
+                                "symbol": symbol,
+                                "side": side,
+                                "status": "filled",
+                            },
+                        },
+                        execution_id=execution.id,
+                        trade_decision_id=decision.id,
+                        created_at=event_at,
+                    )
+                )
+                session.add(
+                    ExecutionTCAMetric(
+                        execution_id=execution.id,
+                        trade_decision_id=decision.id,
+                        strategy_id=strategy.id,
+                        alpaca_account_label="TORGHUT_SIM",
+                        symbol=symbol,
+                        side=side,
+                        arrival_price=Decimal("100"),
+                        avg_fill_price=Decimal("100"),
+                        filled_qty=Decimal("1"),
+                        signed_qty=Decimal("-1") if side == "sell" else Decimal("1"),
+                        slippage_bps=Decimal("0"),
+                        shortfall_notional=Decimal("0"),
+                        realized_shortfall_bps=Decimal("0"),
+                        churn_qty=Decimal("0"),
+                        churn_ratio=Decimal("0"),
+                        computed_at=event_at,
+                        created_at=event_at,
+                        updated_at=event_at,
+                    )
+                )
+            self._add_flat_account_start_snapshot(
+                session,
+                account_label="TORGHUT_SIM",
+                window_start=window_start,
+            )
+            self._add_flat_account_close_snapshot(
+                session,
+                account_label="TORGHUT_SIM",
+                window_end=window_end,
+            )
+            session.add(
+                StrategyRuntimeLedgerBucket(
+                    run_id="source-backed-import-ready",
+                    candidate_id=candidate_id,
+                    hypothesis_id="H-PAIRS-01",
+                    observed_stage="paper",
+                    bucket_started_at=window_start,
+                    bucket_ended_at=window_end,
+                    account_label="TORGHUT_SIM",
+                    runtime_strategy_name=strategy_name,
+                    strategy_family="microbar_cross_sectional_pairs",
+                    fill_count=4,
+                    decision_count=4,
+                    submitted_order_count=4,
+                    cancelled_order_count=0,
+                    rejected_order_count=0,
+                    unfilled_order_count=0,
+                    closed_trade_count=2,
+                    open_position_count=0,
+                    filled_notional=Decimal("400"),
+                    gross_strategy_pnl=Decimal("12"),
+                    cost_amount=Decimal("2"),
+                    net_strategy_pnl_after_costs=Decimal("10"),
+                    post_cost_expectancy_bps=Decimal("250"),
+                    ledger_schema_version="torghut.runtime-ledger-bucket.v1",
+                    pnl_basis="realized_strategy_pnl_after_explicit_costs",
+                    execution_policy_hash_counts={"policy-a": 4},
+                    cost_model_hash_counts={"cost-a": 4},
+                    lineage_hash_counts={"lineage-a": 4},
+                    blockers_json=[],
+                    payload_json=self._runtime_ledger_source_authority_payload(
+                        window_start=window_start,
+                        window_end=window_end,
+                        suffix="source-backed",
+                    ),
+                )
+            )
+            session.commit()
+
+            payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "paper_route_probe_only",
+                    "blocked_reasons": [],
+                    "promotion_eligible_total": 0,
+                    "dependency_quorum_decision": "allow",
+                    "continuity_ok": True,
+                    "continuity_reason": "signal_continuity_nominal",
+                    "drift_ok": True,
+                    "drift_reason": "drift_live_promotion_eligible",
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "target_count": 1,
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-PAIRS-01",
+                                "candidate_id": candidate_id,
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_cross_sectional_pairs",
+                                "strategy_name": strategy_name,
+                                "account_label": "TORGHUT_SIM",
+                                "source_kind": "paper_route_probe_runtime_observed",
+                                "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
+                                "window_start": window_start.isoformat(),
+                                "window_end": window_end.isoformat(),
+                                "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                                "paper_probation_authorized": True,
+                                "promotion_allowed": False,
+                                "final_promotion_authorized": False,
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "summary": {
+                        "paper_route_probe_eligible_symbols": ["AAPL", "AMZN"],
+                        "paper_route_probe_active_symbols": ["AAPL", "AMZN"],
+                    },
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": True,
+                        "next_session_max_notional": "63180",
+                        "eligible_symbol_count": 2,
+                    },
+                },
+                generated_at=window_end + timedelta(hours=1),
+            )
+
+        target_audit = payload["next_runtime_window_target_audits"][0]
+        metadata = target_audit["source_backed_import_ready_metadata"]
+        self.assertTrue(metadata["ready"])
+        self.assertFalse(metadata["synthetic_pnl_used"])
+        self.assertEqual(metadata["submitted_order_count"], 4)
+        self.assertEqual(metadata["fill_count"], 4)
+        self.assertEqual(metadata["filled_notional"], "400")
+        self.assertTrue(metadata["closed_round_trip_evidence"])
+        self.assertTrue(metadata["zero_open_position_evidence"])
+        self.assertEqual(metadata["blockers"], [])
+        self.assertEqual(
+            payload["runtime_window_import_audit"]["state"],
+            "runtime_ledger_ready_for_gate_review",
+        )
+        self.assertEqual(payload["runtime_window_import_audit"]["blockers"], [])
+        self.assertEqual(
+            payload["runtime_window_import_audit"]["counts"][
+                "targets_with_source_backed_import_ready"
+            ],
+            1,
+        )
+        self.assertFalse(payload["runtime_window_import_plan"]["promotion_allowed"])
+        self.assertFalse(payload["runtime_window_import_plan"]["final_promotion_allowed"])
+
     def test_strategy_source_decision_readiness_queries_session_without_prefetch(
         self,
     ) -> None:
@@ -3089,6 +3675,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
             rejected_activity["blocking_reasons"],
             [
                 "source_signal_rejected_by_quote_quality",
+                "paper_route_submit_blocked",
                 "source_reject_missing_executable_quote",
                 "source_reject_spread_bps_exceeded",
             ],
@@ -4366,6 +4953,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
             audit["rejected_signal_activity"]["blocking_reasons"],
             [
                 "source_signal_rejected_by_quote_quality",
+                "paper_route_submit_blocked",
                 "source_reject_missing_executable_quote",
             ],
         )
