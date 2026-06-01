@@ -492,3 +492,61 @@ class TestRiskEngine(TestCase):
             )
         self.assertFalse(verdict.approved)
         self.assertIn("crypto_live_trading_disabled", verdict.reasons)
+
+    def test_target_sizing_blocks_non_positive_expectancy(self) -> None:
+        decision = StrategyDecision(
+            strategy_id="s1",
+            symbol="AAPL",
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            order_type="market",
+            time_in_force="day",
+            params={
+                "price": Decimal("100"),
+                "target_sizing": {
+                    "observed_post_cost_expectancy_bps": "0",
+                    "capacity_daily_notional": "1000000",
+                    "drawdown_budget": "1000",
+                },
+            },
+        )
+        account = {"equity": "10000", "cash": "10000", "buying_power": "10000"}
+        with self.session_local() as session:
+            verdict = self.risk_engine.evaluate(
+                session, decision, self.strategy, account, [], {"AAPL"}
+            )
+
+        self.assertFalse(verdict.approved)
+        self.assertIn("observed_post_cost_expectancy_bps_non_positive", verdict.reasons)
+
+    def test_target_sizing_blocks_capacity_and_drawdown_over_budget(self) -> None:
+        decision = StrategyDecision(
+            strategy_id="s1",
+            symbol="AAPL",
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            order_type="market",
+            time_in_force="day",
+            params={
+                "price": Decimal("100"),
+                "target_sizing": {
+                    "observed_post_cost_expectancy_bps": "5",
+                    "capacity_daily_notional": "999999",
+                    "drawdown_budget": "3500",
+                    "allocated_sleeve_equity": "100000",
+                },
+            },
+        )
+        account = {"equity": "10000", "cash": "10000", "buying_power": "10000"}
+        with self.session_local() as session:
+            verdict = self.risk_engine.evaluate(
+                session, decision, self.strategy, account, [], {"AAPL"}
+            )
+
+        self.assertFalse(verdict.approved)
+        self.assertIn("target_notional_capacity_below_required", verdict.reasons)
+        self.assertIn("target_drawdown_budget_exceeds_cap", verdict.reasons)

@@ -6,6 +6,10 @@ from pathlib import Path
 from unittest import TestCase
 
 from app.trading.autonomy.policy_checks import evaluate_promotion_prerequisites
+from app.trading.discovery.promotion_contract import (
+    probation_evidence_collection_contract,
+    summary_promotion_readiness,
+)
 from app.trading.evidence_contracts import (
     ArtifactProvenance,
     EvidenceMaturity,
@@ -357,3 +361,34 @@ class TestPromotionTruthfulness(TestCase):
 
         self.assertIn('alpha_readiness_not_promotion_eligible', result.reasons)
         self.assertIn('jangar_dependency_quorum_delay', result.reasons)
+
+
+    def test_probation_evidence_collection_never_becomes_promotion_authority(self) -> None:
+        contract = probation_evidence_collection_contract('probation-500-target')
+        readiness = summary_promotion_readiness(
+            {
+                'candidate_id': 'candidate-1',
+                'family_template_id': 'family-1',
+                'promotion_status': 'probation',
+                'promotion_stage': 'evidence_collection',
+                'promotable': True,
+                'promotion_reason': 'bounded paper evidence collection only',
+                'promotion_blockers': [],
+                'promotion_required_evidence': [],
+                'runtime_family': 'family-1',
+                'runtime_strategy_name': 'strategy-1',
+                'probation_label': 'probation-500-target',
+            }
+        )
+
+        self.assertFalse(contract['promotion_authority'])
+        self.assertFalse(contract['may_set_final_promotion_authority'])
+        self.assertFalse(
+            readiness['probation_evidence_collection']['promotion_authority']
+        )
+        self.assertTrue(readiness['final_authority_contract']['promotion_authority'])
+        self.assertTrue(
+            readiness['final_authority_contract'][
+                'source_backed_runtime_ledger_required'
+            ]
+        )

@@ -232,3 +232,34 @@ class TestSimpleRisk(TestCase):
 
         self.assertFalse(result.approved)
         self.assertEqual(result.reject_reason, "qty_below_min_after_clamp")
+
+    def test_target_sizing_rejects_missing_expectancy_before_order_clamp(self) -> None:
+        decision = self._decision(qty="1")
+        decision = decision.model_copy(
+            update={
+                "params": {
+                    "price": "100",
+                    "target_sizing": {
+                        "capacity_daily_notional": "1000000",
+                        "drawdown_budget": "1000",
+                    },
+                }
+            }
+        )
+
+        result = prepare_simple_decision(
+            decision=decision,
+            account={"buying_power": "10000", "equity": "10000", "cash": "10000"},
+            positions=[],
+            fractional_equities_enabled=False,
+            allow_shorts=True,
+            max_notional_per_order=None,
+            max_notional_per_symbol=None,
+        )
+
+        self.assertFalse(result.approved)
+        self.assertEqual(result.reject_reason, "target_sizing_blocked")
+        self.assertIn(
+            "observed_post_cost_expectancy_bps_missing",
+            result.diagnostics["target_sizing"]["blocking_reasons"],
+        )

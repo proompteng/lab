@@ -12,6 +12,7 @@ from .market_context_domains import (
     ACTIVE_MARKET_CONTEXT_DOMAINS,
     active_market_context_reasons,
 )
+from .risk import target_sizing_payload
 
 
 SCHEMA_VERSION = "torghut.quality-adjusted-profit-frontier.v1"
@@ -267,6 +268,86 @@ def _hypothesis_refs(
     return sorted(refs) or ["global"]
 
 
+def _candidate_target_sizing(
+    hypothesis_payload: Mapping[str, Any],
+) -> dict[str, dict[str, object]]:
+    result: dict[str, dict[str, object]] = {}
+    summary = _mapping(hypothesis_payload.get("summary"))
+    summary_defaults = {
+        "target_daily_net_pnl": summary.get("target_daily_net_pnl"),
+        "capacity_daily_notional": summary.get("capacity_daily_notional"),
+        "drawdown_budget": summary.get("drawdown_budget"),
+        "allocated_sleeve_equity": summary.get("allocated_sleeve_equity"),
+    }
+    for raw_item in _sequence(hypothesis_payload.get("items")):
+        item = _mapping(raw_item)
+        contract = _mapping(item.get("promotion_contract"))
+        sizing = _mapping(item.get("target_sizing"))
+        source = {
+            "target_daily_net_pnl": sizing.get("target_daily_net_pnl")
+            or item.get("target_daily_net_pnl")
+            or contract.get("target_daily_net_pnl")
+            or summary_defaults["target_daily_net_pnl"]
+            or "500",
+            "observed_post_cost_expectancy_bps": sizing.get(
+                "observed_post_cost_expectancy_bps"
+            )
+            or item.get("observed_post_cost_expectancy_bps")
+            or contract.get("observed_post_cost_expectancy_bps")
+            or item.get("post_cost_expectancy_bps")
+            or contract.get("post_cost_expectancy_bps"),
+            "capacity_daily_notional": sizing.get("capacity_daily_notional")
+            or item.get("capacity_daily_notional")
+            or contract.get("capacity_daily_notional")
+            or summary_defaults["capacity_daily_notional"],
+            "drawdown_budget": sizing.get("drawdown_budget")
+            or item.get("drawdown_budget")
+            or contract.get("drawdown_budget")
+            or summary_defaults["drawdown_budget"],
+            "allocated_sleeve_equity": sizing.get("allocated_sleeve_equity")
+            or item.get("allocated_sleeve_equity")
+            or contract.get("allocated_sleeve_equity")
+            or summary_defaults["allocated_sleeve_equity"],
+        }
+        payload = target_sizing_payload(source)
+        refs = [
+            _text(item.get(key))
+            for key in ("hypothesis_id", "id", "candidate_id", "strategy_id")
+        ]
+        lineage = _mapping(item.get("lineage_ref"))
+        refs.extend(_text(lineage.get(key)) for key in ("candidate_id", "strategy_id"))
+        for ref in refs:
+            if ref:
+                result[ref] = payload
+    return result
+
+
+def _target_sizing_for_packet(
+    *,
+    row: Mapping[str, Any] | None,
+    hypothesis_ref: str,
+    candidate_sizing: Mapping[str, Mapping[str, object]],
+) -> dict[str, object]:
+    route = _mapping(row)
+    route_source = {
+        "target_daily_net_pnl": route.get("target_daily_net_pnl"),
+        "observed_post_cost_expectancy_bps": route.get(
+            "observed_post_cost_expectancy_bps"
+        )
+        or route.get("post_cost_expectancy_bps")
+        or route.get("expectancy_bps"),
+        "capacity_daily_notional": route.get("capacity_daily_notional"),
+        "drawdown_budget": route.get("drawdown_budget"),
+        "allocated_sleeve_equity": route.get("allocated_sleeve_equity"),
+    }
+    if any(value is not None for value in route_source.values()):
+        route_source["target_daily_net_pnl"] = (
+            route_source["target_daily_net_pnl"] or "500"
+        )
+        return target_sizing_payload(route_source)
+    return dict(candidate_sizing.get(hypothesis_ref) or target_sizing_payload({}))
+
+
 def _route_repair_class(row: Mapping[str, Any]) -> str:
     state = _text(row.get("state")).lower()
     if state in _ROUTEABLE_STATES:
@@ -353,6 +434,7 @@ def _packet(
     quant_receipts: Sequence[str],
     market_receipts: Sequence[str],
     simulation_receipts: Sequence[str],
+    target_sizing: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     non_promoting = sorted(
         {
@@ -391,6 +473,7 @@ def _packet(
         "repair_class": repair_class,
         "hypothesis_ref": hypothesis_ref,
         "capital_class": "zero_notional_repair" if non_promoting else "observe",
+        "target_notional_ranking": dict(target_sizing or {}),
         **discounts,
         "quality_adjusted_edge": adjusted_edge,
         "jangar_evidence_quality_ref": quality.get("ref"),
@@ -515,6 +598,7 @@ def build_quality_adjusted_profit_frontier(
     )
     route_rows = _route_rows(route_reacquisition_board)
     hypothesis_refs = _hypothesis_refs(hypothesis_payload, route_rows)
+    candidate_sizing = _candidate_target_sizing(hypothesis_payload)
     default_hypothesis = hypothesis_refs[0]
     packets: list[dict[str, object]] = []
 
@@ -542,12 +626,18 @@ def build_quality_adjusted_profit_frontier(
                     simulation_receipts=receipts
                     if repair_class == "simulation"
                     else [],
+                    target_sizing=_target_sizing_for_packet(
+                        row=None,
+                        hypothesis_ref=default_hypothesis,
+                        candidate_sizing=candidate_sizing,
+                    ),
                 )
             )
 
     for row in route_rows:
         repair_class = _route_repair_class(row)
         row_hypotheses = _strings(row.get("hypothesis_ids"))
+        row_hypothesis_ref = row_hypotheses[0] if row_hypotheses else default_hypothesis
         packets.append(
             _packet(
                 account_label=account_label,
@@ -555,21 +645,34 @@ def build_quality_adjusted_profit_frontier(
                 generated_at=generated_at,
                 symbol=_text(row.get("symbol")) or None,
                 repair_class=repair_class,
-                hypothesis_ref=row_hypotheses[0]
-                if row_hypotheses
-                else default_hypothesis,
+                hypothesis_ref=row_hypothesis_ref,
                 raw_edge=_route_edge(row, repair_class),
                 row=row,
                 quality=quality,
                 quant_receipts=quant_receipts,
                 market_receipts=market_receipts,
                 simulation_receipts=simulation_receipts,
+                target_sizing=_target_sizing_for_packet(
+                    row=row,
+                    hypothesis_ref=row_hypothesis_ref,
+                    candidate_sizing=candidate_sizing,
+                ),
             )
         )
 
     packets.sort(
         key=lambda packet: (
             -(_float(packet.get("quality_adjusted_edge")) or 0.0),
+            0
+            if _text(_mapping(packet.get("target_notional_ranking")).get("status"))
+            == "feasible"
+            else 1,
+            _float(
+                _mapping(packet.get("target_notional_ranking")).get(
+                    "required_daily_notional"
+                )
+            )
+            or 0.0,
             _text(packet.get("packet_id")),
         )
     )
@@ -626,5 +729,11 @@ def build_quality_adjusted_profit_frontier(
             "packet_count": len(packets),
             "paper_candidate_count": 1 if capital_ready else 0,
             "capital_ready": capital_ready,
+            "target_notional_feasible_packet_count": sum(
+                1
+                for packet in packets
+                if _text(_mapping(packet.get("target_notional_ranking")).get("status"))
+                == "feasible"
+            ),
         },
     }

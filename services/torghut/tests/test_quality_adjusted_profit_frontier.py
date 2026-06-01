@@ -20,6 +20,8 @@ def _frontier(
     market_context_status: Mapping[str, Any] | None = None,
     simulation_cache_status: Mapping[str, Any] | None = None,
     jangar_evidence_quality: Mapping[str, Any] | None = None,
+    hypothesis_payload: Mapping[str, Any] | None = None,
+    route_reacquisition_board: Mapping[str, Any] | None = None,
 ) -> dict[str, object]:
     quality = (
         {
@@ -39,7 +41,8 @@ def _frontier(
             "capital_state": "paper_allowed",
             "blocking_reasons": [],
         },
-        route_reacquisition_board={
+        route_reacquisition_board=route_reacquisition_board
+        or {
             "rows": [
                 {
                     "symbol": "AAPL",
@@ -52,7 +55,8 @@ def _frontier(
             ]
         },
         live_submission_gate={"allowed": True, "blocked_reasons": []},
-        hypothesis_payload={"items": [{"hypothesis_id": "H-CONT-01"}]},
+        hypothesis_payload=hypothesis_payload
+        or {"items": [{"hypothesis_id": "H-CONT-01"}]},
         quant_evidence=quant_evidence
         or {
             "status": "healthy",
@@ -157,3 +161,85 @@ def test_missing_jangar_quality_ref_keeps_hypothesis_escrow_repair_only() -> Non
     assert "jangar_quality_ledger_missing" in frontier["blocked_capital_surfaces"]
     assert escrow["promotion_state"] == "repair_only"
     assert "jangar_quality" in escrow["missing_receipts"]
+
+
+def test_target_implied_notional_ranking_computes_5bps_and_8bps() -> None:
+    frontier = _frontier(
+        hypothesis_payload={
+            "items": [
+                {
+                    "hypothesis_id": "H-FIVE",
+                    "observed_post_cost_expectancy_bps": "5",
+                    "capacity_daily_notional": "1200000",
+                    "drawdown_budget": "1000",
+                    "allocated_sleeve_equity": "100000",
+                },
+                {
+                    "hypothesis_id": "H-EIGHT",
+                    "observed_post_cost_expectancy_bps": "8",
+                    "capacity_daily_notional": "900000",
+                    "drawdown_budget": "1000",
+                    "allocated_sleeve_equity": "100000",
+                },
+            ]
+        },
+        route_reacquisition_board={
+            "rows": [
+                {
+                    "symbol": "AAPL",
+                    "state": "routeable",
+                    "hypothesis_ids": ["H-FIVE"],
+                    "expected_cost_class": "low",
+                },
+                {
+                    "symbol": "MSFT",
+                    "state": "routeable",
+                    "hypothesis_ids": ["H-EIGHT"],
+                    "expected_cost_class": "low",
+                },
+            ]
+        },
+    )
+
+    packets = cast(list[Mapping[str, Any]], frontier["packets"])
+    aapl = next(packet for packet in packets if packet["symbol"] == "AAPL")
+    msft = next(packet for packet in packets if packet["symbol"] == "MSFT")
+
+    assert aapl["target_notional_ranking"]["required_daily_notional"] == "1000000"
+    assert msft["target_notional_ranking"]["required_daily_notional"] == "625000"
+    assert aapl["target_notional_ranking"]["status"] == "feasible"
+    assert msft["target_notional_ranking"]["status"] == "feasible"
+    assert frontier["summary"]["target_notional_feasible_packet_count"] == 2
+
+
+def test_non_positive_expectancy_blocks_target_notional_ranking() -> None:
+    frontier = _frontier(
+        hypothesis_payload={
+            "items": [
+                {
+                    "hypothesis_id": "H-ZERO",
+                    "observed_post_cost_expectancy_bps": "0",
+                    "capacity_daily_notional": "1200000",
+                    "drawdown_budget": "1000",
+                }
+            ]
+        },
+        route_reacquisition_board={
+            "rows": [
+                {
+                    "symbol": "AAPL",
+                    "state": "routeable",
+                    "hypothesis_ids": ["H-ZERO"],
+                    "expected_cost_class": "low",
+                }
+            ]
+        },
+    )
+    packet = _packet(frontier, "route")
+
+    assert packet["target_notional_ranking"]["status"] == "blocked"
+    assert packet["target_notional_ranking"]["required_daily_notional"] is None
+    assert (
+        "observed_post_cost_expectancy_bps_non_positive"
+        in packet["target_notional_ranking"]["blocking_reasons"]
+    )

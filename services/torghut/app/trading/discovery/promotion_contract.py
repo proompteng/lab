@@ -13,6 +13,49 @@ PROMOTION_REQUIRED_EVIDENCE = (
     'scheduler_v3_approval_replay',
     'live_shadow_validation',
 )
+FINAL_AUTHORITY_MIN_SOURCE_BACKED_TRADING_DAYS = 20
+FINAL_AUTHORITY_TARGET_DAILY_NET_PNL = '500'
+FINAL_AUTHORITY_MEDIAN_DAILY_NET_PNL_FLOOR = '250'
+FINAL_AUTHORITY_P10_DAILY_NET_PNL_FLOOR = '-250'
+FINAL_AUTHORITY_WORST_DAY_FLOOR = '-750'
+FINAL_AUTHORITY_MAX_DRAWDOWN_ABSOLUTE = '1500'
+FINAL_AUTHORITY_MAX_DRAWDOWN_SLEEVE_EQUITY_PCT = '0.03'
+FINAL_AUTHORITY_MAX_BEST_DAY_SHARE = '0.25'
+FINAL_AUTHORITY_MAX_CONCENTRATION_SHARE = '0.35'
+FINAL_AUTHORITY_MIN_CLOSED_TRADES = 100
+FINAL_AUTHORITY_FILLED_NOTIONAL_FLOOR = 'target_implied_notional_x_source_backed_days'
+
+
+def final_authority_parameter_contract() -> dict[str, Any]:
+    return {
+        'authority': 'final_runtime_ledger_live_paper_authority',
+        'promotion_authority': True,
+        'source_backed_runtime_ledger_required': True,
+        'min_source_backed_trading_days': FINAL_AUTHORITY_MIN_SOURCE_BACKED_TRADING_DAYS,
+        'mean_daily_net_pnl_floor': FINAL_AUTHORITY_TARGET_DAILY_NET_PNL,
+        'median_daily_net_pnl_floor': FINAL_AUTHORITY_MEDIAN_DAILY_NET_PNL_FLOOR,
+        'p10_daily_net_pnl_floor': FINAL_AUTHORITY_P10_DAILY_NET_PNL_FLOOR,
+        'worst_day_floor': FINAL_AUTHORITY_WORST_DAY_FLOOR,
+        'max_drawdown_absolute': FINAL_AUTHORITY_MAX_DRAWDOWN_ABSOLUTE,
+        'max_drawdown_sleeve_equity_pct': FINAL_AUTHORITY_MAX_DRAWDOWN_SLEEVE_EQUITY_PCT,
+        'max_best_day_share': FINAL_AUTHORITY_MAX_BEST_DAY_SHARE,
+        'max_concentration_share': FINAL_AUTHORITY_MAX_CONCENTRATION_SHARE,
+        'min_closed_trades': FINAL_AUTHORITY_MIN_CLOSED_TRADES,
+        'filled_notional_floor': FINAL_AUTHORITY_FILLED_NOTIONAL_FLOOR,
+    }
+
+
+def probation_evidence_collection_contract(label: str = 'probation') -> dict[str, Any]:
+    return {
+        'authority': 'evidence_collection_only',
+        'promotion_authority': False,
+        'label': _string(label) or 'probation',
+        'may_rank_candidates': True,
+        'may_collect_bounded_evidence': True,
+        'may_set_final_promotion_authority': False,
+        'final_authority_required_contract': final_authority_parameter_contract(),
+    }
+
 
 
 def _string(value: Any) -> str:
@@ -57,6 +100,8 @@ def blocked_research_candidate_promotion_readiness(
         'runtime_family': resolved_runtime_harness['family'],
         'runtime_strategy_name': resolved_runtime_harness['strategy_name'],
         'runtime_harness': resolved_runtime_harness,
+        'probation_evidence_collection': probation_evidence_collection_contract(),
+        'final_authority_contract': final_authority_parameter_contract(),
     }
 
 
@@ -82,6 +127,8 @@ def missing_candidate_promotion_readiness() -> dict[str, Any]:
         'runtime_family': '',
         'runtime_strategy_name': '',
         'runtime_harness': runtime_harness_payload({}),
+        'probation_evidence_collection': probation_evidence_collection_contract(),
+        'final_authority_contract': final_authority_parameter_contract(),
     }
 
 
@@ -99,4 +146,8 @@ def summary_promotion_readiness(best_candidate: Mapping[str, Any] | None) -> dic
         'required_evidence': list(cast(list[str], best_candidate.get('promotion_required_evidence') or [])),
         'runtime_family': _string(best_candidate.get('runtime_family')),
         'runtime_strategy_name': _string(best_candidate.get('runtime_strategy_name')),
+        'probation_evidence_collection': probation_evidence_collection_contract(
+            _string(best_candidate.get('probation_label')) or 'probation'
+        ),
+        'final_authority_contract': final_authority_parameter_contract(),
     }

@@ -1067,3 +1067,50 @@ def test_route_readiness_uses_settlement_action_without_unsettled_tca_lot() -> N
     assert (
         frontier["next_zero_notional_action"] == "settle_routeability_acceptance_lots"
     )
+
+
+def test_profit_freshness_lots_carry_non_authoritative_target_notional_rankings() -> (
+    None
+):
+    frontier = _frontier(
+        quality_adjusted_profit_frontier={
+            "frontier_id": "quality-frontier:target-notional",
+            "packets": [
+                {
+                    "packet_id": "qapf:empirical-target",
+                    "blocked_dimension": "empirical_proof",
+                    "candidate_id": "candidate-nvda",
+                    "post_cost_daily_net_pnl_unlock": "250.50",
+                    "target_notional_ranking": {
+                        "status": "feasible",
+                        "target_daily_net_pnl": "500",
+                        "observed_post_cost_expectancy_bps": "8",
+                        "required_daily_notional": "625000",
+                        "capacity_daily_notional": "900000",
+                        "drawdown_budget": "1000",
+                        "blocking_reasons": [],
+                    },
+                }
+            ],
+        }
+    )
+
+    selected = cast(list[Mapping[str, Any]], frontier["selected_zero_notional_repairs"])
+
+    assert selected[0]["target_notional_ranking_basis"] == (
+        "non_authoritative_candidate_comparison"
+    )
+    assert selected[0]["target_notional_rankings"] == [
+        {
+            "packet_ref": "qapf:empirical-target",
+            "status": "feasible",
+            "target_daily_net_pnl": "500",
+            "observed_post_cost_expectancy_bps": "8",
+            "required_daily_notional": "625000",
+            "capacity_daily_notional": "900000",
+            "drawdown_budget": "1000",
+            "blocking_reasons": [],
+            "authority": "ranking_metadata_only",
+        }
+    ]
+    assert frontier["summary"]["target_notional_ranked_repair_count"] >= 1
