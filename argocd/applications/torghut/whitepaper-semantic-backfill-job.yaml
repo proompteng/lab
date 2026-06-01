@@ -28,7 +28,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: backfill
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:fa41f8eee2c73d42446701788547ac5235f9ea8279e3ed12ede5ea82b8df73ef
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:8c4a9f4757a2b0f7888c2f73f0d8d8bc857816e36f92e586ac1d10d4964a0552
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
