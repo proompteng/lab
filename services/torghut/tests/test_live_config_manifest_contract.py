@@ -1260,6 +1260,7 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("--wait-flat-seconds 120", args)
         self.assertIn("--poll-seconds 10", args)
         self.assertIn("--persist-snapshot", args)
+        self.assertIn("--persist-lineage", args)
         self.assertIn("--apply", args)
         self.assertIn("--json", args)
 
