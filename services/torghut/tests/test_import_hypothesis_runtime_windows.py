@@ -4880,6 +4880,10 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             ],
         )
         self.assertEqual(bucket["source_materialization"], "execution_order_events")
+        self.assertEqual(
+            bucket["execution_ids"],
+            ["execution-buy", "execution-sell"],
+        )
 
     def test_source_backed_round_trip_materializes_alpaca_payload_delta_when_columns_missing(
         self,
