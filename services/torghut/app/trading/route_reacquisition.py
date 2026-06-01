@@ -3,15 +3,28 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from hashlib import sha256
+import json
 from typing import Any, cast
+
+from .route_metadata import route_repair_recommendation
 
 
 SCHEMA_VERSION = "torghut.route-reacquisition-book.v1"
+ROUTE_REPAIR_AUDIT_RECEIPT_SCHEMA_VERSION = "torghut.route-repair-audit-receipt.v1"
 _PAPER_ROUTE_PROBE_REASONS = {
     "execution_tca_route_universe_empty",
     "execution_tca_symbol_missing",
     "route_tca_passed_but_dependency_receipts_block_capital",
     "tca_evidence_stale",
+    "stale_quote",
+    "missing_bid_ask",
+    "session_closed",
+    "pair_imbalance",
+    "missing_target",
+    "blocked_submit",
+    "missing_close_flatten_handoff",
+    "runtime_import_pending",
 }
 _PAPER_ROUTE_PROBE_STATES = {"missing", "probing"}
 
@@ -71,6 +84,11 @@ def _sequence(value: object) -> Sequence[object]:
     return []
 
 
+def _stable_ref(prefix: str, payload: Mapping[str, object]) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return f"{prefix}:{sha256(encoded.encode()).hexdigest()[:20]}"
+
+
 def _dimension(
     proof_floor_receipt: Mapping[str, Any], dimension_name: str
 ) -> Mapping[str, Any]:
@@ -107,6 +125,168 @@ def _hypothesis_ids(source_ref: Mapping[str, Any]) -> list[str]:
     return sorted(set(ids))
 
 
+def _strings(value: object) -> list[str]:
+    values: list[str] = []
+    seen: set[str] = set()
+    for item in _sequence(value):
+        normalized = _text(item)
+        if normalized and normalized not in seen:
+            values.append(normalized)
+            seen.add(normalized)
+    return values
+
+
+def _first_text(*values: object) -> str | None:
+    for value in values:
+        normalized = _text(value)
+        if normalized:
+            return normalized
+    return None
+
+
+def _first_sequence_text(source: Mapping[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        for item in _sequence(source.get(key)):
+            normalized = _text(item)
+            if normalized:
+                return normalized
+    return None
+
+
+def _symbol_reason(symbol_payload: Mapping[str, Any], fallback_reason: str) -> str:
+    for key in (
+        "reason",
+        "reason_code",
+        "blocker",
+        "blocking_reason",
+        "current_blocker",
+    ):
+        reason = _text(symbol_payload.get(key))
+        if reason:
+            return reason
+    reason_codes = _strings(symbol_payload.get("reason_codes")) or _strings(
+        symbol_payload.get("blocking_reasons")
+    )
+    return reason_codes[0] if reason_codes else fallback_reason
+
+
+def _source_metadata(
+    *,
+    proof_floor_receipt: Mapping[str, Any],
+    symbol_payload: Mapping[str, Any],
+    account_label: str | None,
+    symbol: str,
+    tca_source_ref: Mapping[str, Any],
+    alpha_source_ref: Mapping[str, Any],
+) -> dict[str, object]:
+    hypothesis_id = _first_text(
+        symbol_payload.get("hypothesis_id"),
+        symbol_payload.get("hypothesisId"),
+        _first_sequence_text(alpha_source_ref, "hypothesis_ids"),
+    )
+    candidate_id = _first_text(
+        symbol_payload.get("candidate_id"),
+        symbol_payload.get("candidateId"),
+        _first_sequence_text(alpha_source_ref, "candidate_ids"),
+    )
+    runtime_strategy_id = _first_text(
+        symbol_payload.get("runtime_strategy_id"),
+        symbol_payload.get("runtimeStrategyId"),
+        symbol_payload.get("strategy_id"),
+        alpha_source_ref.get("runtime_strategy_id"),
+        alpha_source_ref.get("strategy_id"),
+        proof_floor_receipt.get("runtime_strategy_id"),
+    )
+    runtime_strategy_name = _first_text(
+        symbol_payload.get("runtime_strategy_name"),
+        symbol_payload.get("runtimeStrategyName"),
+        symbol_payload.get("strategy_name"),
+        alpha_source_ref.get("runtime_strategy_name"),
+        alpha_source_ref.get("strategy_name"),
+        proof_floor_receipt.get("runtime_strategy_name"),
+    )
+    source_manifest_ref = _first_text(
+        symbol_payload.get("source_manifest_ref"),
+        symbol_payload.get("sourceManifestRef"),
+        tca_source_ref.get("source_manifest_ref"),
+        alpha_source_ref.get("source_manifest_ref"),
+        proof_floor_receipt.get("source_manifest_ref"),
+    )
+    metadata: dict[str, object] = {
+        "account_label": account_label,
+        "symbol": symbol,
+    }
+    for key, value in (
+        ("hypothesis_id", hypothesis_id),
+        ("candidate_id", candidate_id),
+        ("runtime_strategy_id", runtime_strategy_id),
+        ("runtime_strategy_name", runtime_strategy_name),
+        ("source_manifest_ref", source_manifest_ref),
+    ):
+        if value is not None:
+            metadata[key] = value
+    for key in ("pair_id", "pair_side", "target_side", "leg_role"):
+        value = _text(symbol_payload.get(key))
+        if value:
+            metadata[key] = value
+    return metadata
+
+
+def _audit_receipt(
+    *,
+    account_label: str | None,
+    symbol: str,
+    state: str,
+    reason: str,
+    repair_recommendation: str,
+    source_metadata: Mapping[str, object],
+    tca_source_ref: Mapping[str, Any],
+    market_context_source_ref: Mapping[str, Any],
+    quant_source_ref: Mapping[str, Any],
+    alpha_source_ref: Mapping[str, Any],
+) -> dict[str, object]:
+    payload = {
+        "account_label": account_label,
+        "symbol": symbol,
+        "state": state,
+        "reason": reason,
+        "source_metadata": dict(source_metadata),
+    }
+    return {
+        "schema_version": ROUTE_REPAIR_AUDIT_RECEIPT_SCHEMA_VERSION,
+        "receipt_id": _stable_ref("route-repair-audit-receipt", payload),
+        "state": "audit_only",
+        "source_metadata": dict(source_metadata),
+        "symbol": symbol,
+        "account_label": account_label,
+        "route_state": state,
+        "reason_codes": [reason],
+        "repair_recommendation": repair_recommendation,
+        "promotion_authority": False,
+        "capital_authority": "none",
+        "max_notional": "0",
+        "requires_runtime_ledger_source_proof": True,
+        "source_refs": {
+            "execution_tca_ref": _receipt_id(
+                tca_source_ref, "receipt_id", "last_receipt_id", "source_ref"
+            ),
+            "market_context_receipt_id": _receipt_id(
+                market_context_source_ref,
+                "receipt_id",
+                "last_receipt_id",
+                "repair_cell_receipt_id",
+            ),
+            "quant_pipeline_receipt_id": _receipt_id(
+                quant_source_ref,
+                "receipt_id",
+                "last_receipt_id",
+                "quant_pipeline_receipt_id",
+            ),
+            "alpha_hypothesis_ids": _hypothesis_ids(alpha_source_ref),
+        },
+    }
+
+
 def _next_action(*, state: str, reason: str) -> str:
     if state == "missing":
         return "create_simulation_probe_before_capital"
@@ -125,6 +305,7 @@ def _next_action(*, state: str, reason: str) -> str:
 
 def _record_from_symbol(
     *,
+    proof_floor_receipt: Mapping[str, Any],
     symbol_payload: Mapping[str, Any],
     account_label: str | None,
     state: str,
@@ -135,6 +316,28 @@ def _record_from_symbol(
     alpha_source_ref: Mapping[str, Any],
 ) -> dict[str, object]:
     symbol = _text(symbol_payload.get("symbol"))
+    normalized_reason = _symbol_reason(symbol_payload, reason)
+    recommendation = route_repair_recommendation(normalized_reason)
+    source_metadata = _source_metadata(
+        proof_floor_receipt=proof_floor_receipt,
+        symbol_payload=symbol_payload,
+        account_label=account_label,
+        symbol=symbol,
+        tca_source_ref=tca_source_ref,
+        alpha_source_ref=alpha_source_ref,
+    )
+    audit_receipt = _audit_receipt(
+        account_label=account_label,
+        symbol=symbol,
+        state=state,
+        reason=normalized_reason,
+        repair_recommendation=recommendation,
+        source_metadata=source_metadata,
+        tca_source_ref=tca_source_ref,
+        market_context_source_ref=market_context_source_ref,
+        quant_source_ref=quant_source_ref,
+        alpha_source_ref=alpha_source_ref,
+    )
     filled_execution_count = _int(
         symbol_payload.get("filled_execution_count"),
         _int(symbol_payload.get("order_count")),
@@ -143,7 +346,7 @@ def _record_from_symbol(
         "symbol": symbol,
         "account_label": account_label,
         "state": state,
-        "reason": reason,
+        "reason": normalized_reason,
         "avg_abs_slippage_bps": symbol_payload.get("avg_abs_slippage_bps"),
         "max_abs_slippage_bps": symbol_payload.get("max_abs_slippage_bps"),
         "slippage_guardrail_bps": tca_source_ref.get("slippage_guardrail_bps"),
@@ -166,8 +369,14 @@ def _record_from_symbol(
         ),
         "hypothesis_ids": _hypothesis_ids(alpha_source_ref),
         "paper_probe_notional_limit": "0",
-        "rollback_trigger": reason,
-        "next_repair_action": _next_action(state=state, reason=reason),
+        "rollback_trigger": normalized_reason,
+        "next_repair_action": _next_action(state=state, reason=normalized_reason),
+        "repair_recommendation": recommendation,
+        "source_metadata": source_metadata,
+        "audit_receipt": audit_receipt,
+        "audit_receipt_ref": audit_receipt["receipt_id"],
+        "promotion_authority": False,
+        "capital_authority": "none",
     }
     for key in (
         "avg_realized_shortfall_bps",
@@ -182,15 +391,19 @@ def _record_from_symbol(
 
 def _missing_record(
     *,
-    symbol: str,
+    proof_floor_receipt: Mapping[str, Any],
+    symbol_payload: Mapping[str, Any],
     account_label: str | None,
     tca_source_ref: Mapping[str, Any],
     market_context_source_ref: Mapping[str, Any],
     quant_source_ref: Mapping[str, Any],
     alpha_source_ref: Mapping[str, Any],
 ) -> dict[str, object]:
+    symbol = _text(symbol_payload.get("symbol"))
     return _record_from_symbol(
+        proof_floor_receipt=proof_floor_receipt,
         symbol_payload={
+            **dict(symbol_payload),
             "symbol": symbol,
             "order_count": 0,
             "avg_abs_slippage_bps": None,
@@ -231,6 +444,9 @@ def _repair_candidate(record: Mapping[str, object], *, rank: int) -> dict[str, o
         "filled_execution_count": _int(record.get("filled_execution_count")),
         "paper_probe_notional_limit": "0",
         "next_repair_action": _text(record.get("next_repair_action")),
+        "repair_recommendation": _text(record.get("repair_recommendation")),
+        "audit_receipt_ref": _text(record.get("audit_receipt_ref")),
+        "promotion_authority": False,
     }
     for key in (
         "avg_realized_shortfall_bps",
@@ -269,11 +485,7 @@ def _paper_route_probe_blockers(
     if configured_limit is None:
         blockers.append("paper_route_probe_max_notional_invalid")
     if market_session_open is not True:
-        blockers.append(
-            "market_session_closed"
-            if market_session_open is False
-            else "market_session_unknown"
-        )
+        blockers.append("session_closed" if market_session_open is False else "market_session_unknown")
     if eligible_symbol_count <= 0:
         blockers.append("paper_route_probe_candidate_missing")
     return blockers
@@ -327,6 +539,7 @@ def build_route_reacquisition_book(
         )
         records.append(
             _record_from_symbol(
+                proof_floor_receipt=proof_floor_receipt,
                 symbol_payload=symbol_payload,
                 account_label=account_label,
                 state=state,
@@ -343,6 +556,7 @@ def build_route_reacquisition_book(
             continue
         records.append(
             _record_from_symbol(
+                proof_floor_receipt=proof_floor_receipt,
                 symbol_payload=symbol_payload,
                 account_label=account_label,
                 state="blocked",
@@ -354,12 +568,18 @@ def build_route_reacquisition_book(
             )
         )
     for raw_symbol in _sequence(symbol_routes.get("missing_symbols")):
-        symbol = _text(raw_symbol)
+        symbol_payload = (
+            cast(Mapping[str, Any], raw_symbol)
+            if isinstance(raw_symbol, Mapping)
+            else {"symbol": raw_symbol}
+        )
+        symbol = _text(symbol_payload.get("symbol"))
         if not symbol:
             continue
         records.append(
             _missing_record(
-                symbol=symbol,
+                proof_floor_receipt=proof_floor_receipt,
+                symbol_payload=symbol_payload,
                 account_label=account_label,
                 tca_source_ref=tca_source_ref,
                 market_context_source_ref=market_context_source_ref,
@@ -400,6 +620,7 @@ def build_route_reacquisition_book(
             else "0",
             "blocking_reasons": probe_blockers if eligible else [],
             "capital_authority": "none",
+            "promotion_authority": False,
         }
 
     counts = {
@@ -445,7 +666,10 @@ def build_route_reacquisition_book(
         "capital_rule": "live_zero_notional_unchanged"
         if live_mode
         else "paper_probe_requires_receipt_chain",
+        "promotion_authority": False,
+        "authority_semantics": "audit_only_until_source_backed_runtime_ledger_fill_proof",
         "records": records,
+        "repair_audit_receipts": [record["audit_receipt"] for record in records],
         "summary": {
             "scope_symbols": list(_sequence(symbol_routes.get("scope_symbols"))),
             "scope_symbol_count": _int(symbol_routes.get("scope_symbol_count")),
@@ -475,6 +699,7 @@ def build_route_reacquisition_book(
             "active_symbols": active_probe_symbols,
             "blocking_reasons": probe_blockers,
             "capital_authority": "none",
+            "promotion_authority": False,
         },
         "source_refs": {
             "proof_floor_generated_at": generated_at,
@@ -488,6 +713,7 @@ def build_route_reacquisition_book(
         "rollback_target": {
             "paper_probe_notional_limit": "0",
             "live_submit_enabled": False,
+            "promotion_authority": False,
         },
     }
 

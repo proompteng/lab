@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from unittest import TestCase
 
-from app.trading.route_metadata import normalize_route_provenance, resolve_order_route_metadata
+from app.trading.route_metadata import (
+    normalize_route_provenance,
+    resolve_order_route_metadata,
+    route_repair_recommendation,
+)
 
 
 class _BasicClient:
@@ -51,3 +55,37 @@ class TestRouteMetadata(TestCase):
         self.assertEqual(actual, 'alpaca')
         self.assertEqual(reason, 'lean_get_order_contract_violation')
         self.assertEqual(count, 1)
+
+    def test_route_repair_recommendations_map_actionable_blockers(self) -> None:
+        self.assertEqual(
+            route_repair_recommendation('stale_quote'),
+            'refresh_quote_snapshot_and_recompute_route_fillability',
+        )
+        self.assertEqual(
+            route_repair_recommendation('missing_bid_ask'),
+            'collect_bid_ask_quote_before_routeability_claim',
+        )
+        self.assertEqual(
+            route_repair_recommendation('session_closed'),
+            'wait_for_regular_session_open_then_refresh_route_probe',
+        )
+        self.assertEqual(
+            route_repair_recommendation('pair_imbalance'),
+            'repair_pair_leg_balance_before_routeability_claim',
+        )
+        self.assertEqual(
+            route_repair_recommendation('missing_target'),
+            'collect_target_notional_and_side_plan_before_probe',
+        )
+        self.assertEqual(
+            route_repair_recommendation('blocked_submit'),
+            'keep_submit_disabled_and_collect_submit_gate_receipt',
+        )
+        self.assertEqual(
+            route_repair_recommendation('missing_close_flatten_handoff'),
+            'collect_close_flatten_handoff_receipt_before_reentry',
+        )
+        self.assertEqual(
+            route_repair_recommendation('runtime_import_pending'),
+            'complete_runtime_import_reconciliation_before_authority',
+        )

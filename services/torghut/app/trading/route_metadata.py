@@ -5,6 +5,56 @@ from __future__ import annotations
 from typing import Any, Mapping, Optional
 
 
+ROUTE_REPAIR_RECOMMENDATIONS: dict[str, str] = {
+    "stale_quote": "refresh_quote_snapshot_and_recompute_route_fillability",
+    "missing_bid_ask": "collect_bid_ask_quote_before_routeability_claim",
+    "session_closed": "wait_for_regular_session_open_then_refresh_route_probe",
+    "market_session_closed": "wait_for_regular_session_open_then_refresh_route_probe",
+    "pair_imbalance": "repair_pair_leg_balance_before_routeability_claim",
+    "missing_target": "collect_target_notional_and_side_plan_before_probe",
+    "blocked_submit": "keep_submit_disabled_and_collect_submit_gate_receipt",
+    "simple_submit_disabled": "keep_submit_disabled_and_collect_submit_gate_receipt",
+    "missing_close_flatten_handoff": "collect_close_flatten_handoff_receipt_before_reentry",
+    "runtime_import_pending": "complete_runtime_import_reconciliation_before_authority",
+}
+
+_ROUTE_REPAIR_RECOMMENDATION_FRAGMENTS: tuple[tuple[str, str], ...] = (
+    ("stale_quote", ROUTE_REPAIR_RECOMMENDATIONS["stale_quote"]),
+    ("quote_stale", ROUTE_REPAIR_RECOMMENDATIONS["stale_quote"]),
+    ("missing_bid_ask", ROUTE_REPAIR_RECOMMENDATIONS["missing_bid_ask"]),
+    ("bid_ask_missing", ROUTE_REPAIR_RECOMMENDATIONS["missing_bid_ask"]),
+    ("session_closed", ROUTE_REPAIR_RECOMMENDATIONS["session_closed"]),
+    ("market_session_closed", ROUTE_REPAIR_RECOMMENDATIONS["market_session_closed"]),
+    ("pair_imbalance", ROUTE_REPAIR_RECOMMENDATIONS["pair_imbalance"]),
+    ("missing_target", ROUTE_REPAIR_RECOMMENDATIONS["missing_target"]),
+    ("target_missing", ROUTE_REPAIR_RECOMMENDATIONS["missing_target"]),
+    ("blocked_submit", ROUTE_REPAIR_RECOMMENDATIONS["blocked_submit"]),
+    ("simple_submit_disabled", ROUTE_REPAIR_RECOMMENDATIONS["simple_submit_disabled"]),
+    ("submit", ROUTE_REPAIR_RECOMMENDATIONS["blocked_submit"]),
+    ("missing_close_flatten_handoff", ROUTE_REPAIR_RECOMMENDATIONS["missing_close_flatten_handoff"]),
+    ("close_flatten_handoff_missing", ROUTE_REPAIR_RECOMMENDATIONS["missing_close_flatten_handoff"]),
+    ("runtime_import_pending", ROUTE_REPAIR_RECOMMENDATIONS["runtime_import_pending"]),
+    ("runtime_ledger_import_pending", ROUTE_REPAIR_RECOMMENDATIONS["runtime_import_pending"]),
+    ("tca_stale", "refresh_execution_tca_and_quote_samples_before_routeability_claim"),
+    ("execution_tca_stale", "refresh_execution_tca_and_quote_samples_before_routeability_claim"),
+    ("slippage", "reduce_route_slippage_and_collect_fresh_tca_receipt"),
+    ("route_universe", "refresh_route_universe_and_symbol_fillability_receipts"),
+)
+
+
+def route_repair_recommendation(reason: str | None) -> str:
+    """Map route/fillability blockers to bounded collection-only repair work."""
+
+    normalized = coerce_route_text(reason) or "unknown"
+    lowered = normalized.lower()
+    if lowered in ROUTE_REPAIR_RECOMMENDATIONS:
+        return ROUTE_REPAIR_RECOMMENDATIONS[lowered]
+    for token, recommendation in _ROUTE_REPAIR_RECOMMENDATION_FRAGMENTS:
+        if token in lowered:
+            return recommendation
+    return "collect_source_backed_route_repair_receipt_before_authority"
+
+
 def resolve_order_route_metadata(
     *,
     expected_adapter: Optional[str],

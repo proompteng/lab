@@ -227,6 +227,8 @@ def test_repair_packets_are_zero_notional_and_single_receipt() -> None:
     for raw_packet in warrant["repair_packets"]:
         packet = dict(raw_packet)
         assert packet["max_notional"] == "0"
+        assert packet["promotion_authority"] is False
+        assert packet["capital_authority"] == "none"
         assert isinstance(packet["expected_output_receipt"], str)
         assert packet["expected_output_receipt"].startswith("torghut.")
         assert packet["target_value_gate"] in {

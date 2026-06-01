@@ -497,6 +497,8 @@ def _lot(
         "next_repair_action": next_repair_action,
         "paper_notional_limit": "0",
         "live_notional_limit": "0",
+        "promotion_authority": False,
+        "authority_semantics": "audit_only_until_source_backed_runtime_ledger_fill_proof",
         "rollback_trigger": rollback_trigger,
     }
 
@@ -745,6 +747,8 @@ def build_routeability_repair_acceptance_ledger(
         "aggregate_state": aggregate_state,
         "aggregate_blocking_reason_codes": aggregate_blockers,
         "accepted_routeable_candidate_count": accepted_routeable_candidate_count,
+        "promotion_authority": False,
+        "authority_semantics": "audit_only_until_source_backed_runtime_ledger_fill_proof",
         "zero_notional_or_stale_evidence_rate": round(
             max(unsettled_lot_count, zero_notional_lot_count) / denominator,
             4,
@@ -773,6 +777,7 @@ def build_routeability_repair_acceptance_ledger(
             "capital_state": "zero_notional",
             "live_submit_enabled": False,
             "routeability_acceptance_consumption_enabled": False,
+            "promotion_authority": False,
         },
     }
 

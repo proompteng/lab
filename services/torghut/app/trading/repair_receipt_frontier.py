@@ -284,6 +284,8 @@ def _frontier_lot_from_compacted(
             raw_lot.get("max_runtime_seconds"), _DEFAULT_MAX_RUNTIME_SECONDS
         ),
         "max_notional": _ZERO_NOTIONAL,
+        "promotion_authority": False,
+        "authority_semantics": "audit_only",
         "dispatchable": dispatchable,
         "hold_reason_codes": hold_reasons,
         "settlement_status": _settlement_status(
@@ -355,6 +357,8 @@ def _frontier_lot_from_profit_repair(
         ],
         "max_runtime_seconds": _DEFAULT_MAX_RUNTIME_SECONDS,
         "max_notional": _ZERO_NOTIONAL,
+        "promotion_authority": False,
+        "authority_semantics": "audit_only",
         "dispatchable": dispatchable,
         "hold_reason_codes": hold_reasons,
         "settlement_status": _settlement_status(
@@ -406,6 +410,8 @@ def _source_serving_lot(
         ],
         "max_runtime_seconds": _DEFAULT_MAX_RUNTIME_SECONDS,
         "max_notional": _ZERO_NOTIONAL,
+        "promotion_authority": False,
+        "authority_semantics": "audit_only",
         "dispatchable": True,
         "hold_reason_codes": [],
         "settlement_status": "pending",
@@ -562,6 +568,18 @@ def _live_requirements(
     gate_allowed = _bool(live_submission_gate.get("allowed"))
     proof_route_state = _text(proof_floor_receipt.get("route_state"), "missing").lower()
     capital_state = _text(proof_floor_receipt.get("capital_state"), "missing").lower()
+    runtime_ledger_source_proof = _mapping(
+        proof_floor_receipt.get("runtime_ledger_source_proof")
+        or proof_floor_receipt.get("source_backed_runtime_ledger_proof")
+    )
+    runtime_source_proof_current = (
+        _bool(runtime_ledger_source_proof.get("source_backed"))
+        and _bool(runtime_ledger_source_proof.get("closed_round_trips"))
+        and _bool(runtime_ledger_source_proof.get("explicit_costs"))
+        and _bool(runtime_ledger_source_proof.get("flat_after_close_grace"))
+        and _text(runtime_ledger_source_proof.get("state"), "missing").lower()
+        in {"current", "pass", "ready"}
+    )
     human_approved = _bool(
         live_submission_gate.get("human_approved_capital_limits")
         or live_submission_gate.get("human_approved_capital_limit")
@@ -600,6 +618,16 @@ def _live_requirements(
             or proof_floor_receipt.get("schema_version"),
             value_gate="post_cost_daily_net_pnl",
             reason_codes=[f"proof_floor_{proof_route_state}_{capital_state}"],
+        ),
+        _requirement(
+            requirement="runtime_ledger_source_proof_current",
+            passed=runtime_source_proof_current,
+            evidence_ref=runtime_ledger_source_proof.get("receipt_id")
+            or runtime_ledger_source_proof.get("ledger_id")
+            or proof_floor_receipt.get("receipt_id")
+            or proof_floor_receipt.get("schema_version"),
+            value_gate="post_cost_daily_net_pnl",
+            reason_codes=["runtime_ledger_source_proof_missing"],
         ),
     ]
 
@@ -719,6 +747,8 @@ def build_repair_receipt_frontier(
         "route_warrant_ref": route_warrant_exchange.get("warrant_id"),
         "capital_state": "zero_notional",
         "max_notional": _ZERO_NOTIONAL,
+        "promotion_authority": False,
+        "authority_semantics": "audit_only_until_source_backed_runtime_ledger_fill_proof",
         "frontier_state": state,
         "selected_lot_id": selected_lot_id,
         "dispatchable_lot_ids": dispatchable_ids,
@@ -747,6 +777,7 @@ def build_repair_receipt_frontier(
             "repair_receipt_frontier_projection_enabled": False,
             "capital_state": "zero_notional",
             "live_submit_enabled": False,
+            "promotion_authority": False,
             "fallback_payloads": [
                 "torghut.profit-freshness-frontier.v1",
                 "torghut.repair-bid-settlement-ledger.v1",

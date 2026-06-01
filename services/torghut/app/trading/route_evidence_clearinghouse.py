@@ -9,9 +9,14 @@ from hashlib import sha256
 import json
 from typing import Any, cast
 
+from .route_metadata import route_repair_recommendation
+
 
 ROUTE_EVIDENCE_CLEARINGHOUSE_SCHEMA_VERSION = (
     "torghut.route-evidence-clearinghouse-packet.v1"
+)
+ROUTE_EVIDENCE_REPAIR_AUDIT_RECEIPT_SCHEMA_VERSION = (
+    "torghut.route-evidence-repair-audit-receipt.v1"
 )
 
 _FRESHNESS_SECONDS = 60
@@ -461,15 +466,51 @@ def _repair_class(reason: str) -> tuple[str, str]:
     return "evidence_freshness_repair", "zero_notional_or_stale_evidence_rate"
 
 
+def _repair_audit_receipt(
+    *,
+    reason: str,
+    repair_class: str,
+    value_gate: str,
+    repair_recommendation: str,
+) -> dict[str, object]:
+    payload = {
+        "reason": reason,
+        "repair_class": repair_class,
+        "value_gate": value_gate,
+        "repair_recommendation": repair_recommendation,
+    }
+    return {
+        "schema_version": ROUTE_EVIDENCE_REPAIR_AUDIT_RECEIPT_SCHEMA_VERSION,
+        "receipt_id": _ref("route-evidence-repair-audit-receipt", payload),
+        "state": "audit_only",
+        "reason_codes": [reason],
+        "repair_class": repair_class,
+        "value_gate": value_gate,
+        "repair_recommendation": repair_recommendation,
+        "promotion_authority": False,
+        "capital_authority": "none",
+        "max_notional": "0",
+        "requires_runtime_ledger_source_proof": True,
+    }
+
+
 def _repair_bid_book(reason_codes: Sequence[str]) -> dict[str, object]:
     bids: list[dict[str, object]] = []
     for reason in _unique(list(reason_codes)):
         repair_class, value_gate = _repair_class(reason)
+        repair_recommendation = route_repair_recommendation(reason)
         payload = {
             "reason": reason,
             "repair_class": repair_class,
             "value_gate": value_gate,
+            "repair_recommendation": repair_recommendation,
         }
+        audit_receipt = _repair_audit_receipt(
+            reason=reason,
+            repair_class=repair_class,
+            value_gate=value_gate,
+            repair_recommendation=repair_recommendation,
+        )
         bids.append(
             {
                 "bid_id": _ref("route-evidence-repair-bid", payload),
@@ -480,6 +521,11 @@ def _repair_bid_book(reason_codes: Sequence[str]) -> dict[str, object]:
                 "reason_codes": [reason],
                 "max_notional": "0",
                 "required_output_receipt": f"{repair_class}_receipt",
+                "repair_recommendation": repair_recommendation,
+                "audit_receipt": audit_receipt,
+                "audit_receipt_ref": audit_receipt["receipt_id"],
+                "promotion_authority": False,
+                "capital_authority": "none",
             }
         )
     return {
@@ -488,6 +534,7 @@ def _repair_bid_book(reason_codes: Sequence[str]) -> dict[str, object]:
         "repair_bids": bids,
         "summary": {
             "bid_count": len(bids),
+            "audit_receipt_count": len(bids),
             "value_gates": _unique([str(bid["value_gate"]) for bid in bids]),
         },
     }
@@ -557,6 +604,10 @@ def _route_claims(
                     route_tca_details, "post_cost_expectancy_bps_proxy"
                 ),
                 "expected_repair_value": 0 if decision == "accepted" else 1,
+                "repair_recommendations": [
+                    route_repair_recommendation(reason) for reason in reason_codes
+                ],
+                "promotion_authority": False,
                 "routeability_decision": decision,
                 "max_notional": "0",
                 "reason_codes": reason_codes,
@@ -678,6 +729,10 @@ def build_route_evidence_clearinghouse_packet(
         "profit_window_custody_book": profit_window_book,
         "capital_hold_book": capital_book,
         "repair_bid_book": repair_book,
+        "repair_audit_receipts": [
+            bid["audit_receipt"]
+            for bid in cast(Sequence[Mapping[str, object]], repair_book["repair_bids"])
+        ],
         "route_claims": claims,
         "selected_repair_bids": repair_book["repair_bids"],
         "held_action_classes": []
@@ -694,6 +749,8 @@ def build_route_evidence_clearinghouse_packet(
         "capital_decision": "observe_only"
         if accepted_count > 0 and not capital_book["reason_codes"]
         else "repair_only",
+        "promotion_authority": False,
+        "authority_semantics": "audit_only_until_source_backed_runtime_ledger_fill_proof",
         "max_notional": "0",
         "summary": {
             "route_claim_count": len(claims),
