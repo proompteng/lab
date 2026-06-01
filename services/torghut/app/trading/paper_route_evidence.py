@@ -1053,6 +1053,18 @@ def _target_identity(
         "paper_probation_authorization_scope": _safe_text(
             target.get("paper_probation_authorization_scope")
         ),
+        "proof_mode": _safe_text(target.get("proof_mode")) or "probation",
+        "evidence_collection_ok": bool(
+            target.get("evidence_collection_ok")
+            or target.get("paper_probation_authorized")
+            or target.get("source_collection_authorized")
+            or target.get("bounded_evidence_collection_authorized")
+        ),
+        "canary_collection_authorized": bool(
+            target.get("canary_collection_authorized")
+            or target.get("bounded_evidence_collection_authorized")
+        ),
+        "capital_promotion_allowed": False,
         "source_promotion_allowed": source_promotion_allowed,
         "source_final_promotion_allowed": source_final_promotion_allowed,
         "promotion_allowed": False,
@@ -1330,6 +1342,10 @@ def _next_paper_route_runtime_window_targets(
         "observed_stage": "paper",
         "import_ready": import_ready,
         "import_blockers": import_blockers,
+        "proof_mode": "probation",
+        "evidence_collection_ok": probe_ready,
+        "canary_collection_authorized": probe_ready,
+        "capital_promotion_allowed": False,
         "promotion_allowed": False,
         "final_promotion_authorized": False,
         "promotion_gate": "runtime_ledger_live_or_live_paper_required",
@@ -1556,6 +1572,20 @@ def _next_paper_route_runtime_window_targets(
         source_collection_reason_codes = _unique_text_items(
             target.get("source_collection_reason_codes")
         )
+        evidence_collection_blockers = _unique_text_items(
+            [
+                *health_gate_blockers,
+                *_unique_text_items(source_decision_readiness.get("blockers")),
+                *account_pre_session_blockers,
+            ]
+        )
+        evidence_collection_ok = not evidence_collection_blockers
+        canary_collection_authorized = (
+            evidence_collection_ok
+            and target_probe_ready
+            and _safe_decimal(next_notional) > 0
+            and bool(target_probe_symbols)
+        )
         planned_target: dict[str, object] = {
             "hypothesis_id": hypothesis_id,
             "candidate_id": candidate_id,
@@ -1640,11 +1670,16 @@ def _next_paper_route_runtime_window_targets(
                 else ""
             ),
             "source_collection_reason_codes": source_collection_reason_codes,
-            "bounded_evidence_collection_authorized": True,
+            "proof_mode": "probation",
+            "evidence_collection_ok": evidence_collection_ok,
+            "canary_collection_authorized": canary_collection_authorized,
+            "capital_promotion_allowed": False,
+            "bounded_evidence_collection_authorized": canary_collection_authorized,
             "bounded_evidence_collection_scope": (
                 "paper_route_probe_next_session_only"
             ),
             "bounded_evidence_collection_max_notional": next_notional,
+            "bounded_evidence_collection_blockers": evidence_collection_blockers,
             "evidence_collection_stage": "paper",
             "probation_allowed": True,
             "probation_reason": "paper_route_probe_next_session_runtime_window",
@@ -1664,7 +1699,7 @@ def _next_paper_route_runtime_window_targets(
                 [
                     "paper_route_runtime_ledger_import_pending",
                     *_unique_text_items(target.get("candidate_blockers")),
-                    *health_gate_blockers,
+                    *evidence_collection_blockers,
                     *health_gate_promotion_blockers,
                 ]
             ),
@@ -1763,6 +1798,15 @@ def _next_paper_route_runtime_window_targets(
         "schema_version": NEXT_PAPER_ROUTE_RUNTIME_WINDOW_TARGETS_SCHEMA_VERSION,
         "source": "paper_route_evidence_audit",
         "purpose": purpose,
+        "proof_mode": "probation",
+        "evidence_collection_ok": any(
+            bool(target.get("evidence_collection_ok")) for target in planned_targets
+        ),
+        "canary_collection_authorized": any(
+            bool(target.get("canary_collection_authorized"))
+            for target in planned_targets
+        ),
+        "capital_promotion_allowed": False,
         "promotion_allowed": False,
         "final_promotion_authorized": False,
         "final_promotion_allowed": False,
@@ -3378,6 +3422,12 @@ def _target_audit(
                 if evidence_collection_blockers
                 else "paper_evidence_collecting"
             ),
+            "evidence_collection_ok": not evidence_collection_blockers,
+            "canary_collection_authorized": bool(
+                target.get("canary_collection_authorized")
+            )
+            and not evidence_collection_blockers,
+            "capital_promotion_allowed": False,
             "promotion_allowed": bool(target.get("promotion_allowed")),
             "final_promotion_allowed": bool(target.get("final_promotion_allowed")),
             "blockers": blockers,
@@ -4036,10 +4086,21 @@ def _next_paper_route_target_summaries(
                 "bounded_evidence_collection_authorized": bool(
                     target.get("bounded_evidence_collection_authorized")
                 ),
+                "evidence_collection_ok": bool(target.get("evidence_collection_ok")),
+                "canary_collection_authorized": bool(
+                    target.get("canary_collection_authorized")
+                ),
                 "bounded_evidence_collection_max_notional": _safe_text(
                     target.get("bounded_evidence_collection_max_notional")
                 )
                 or "0",
+                "bounded_evidence_collection_blockers": _unique_text_items(
+                    target.get("bounded_evidence_collection_blockers")
+                ),
+                "proof_mode": _safe_text(target.get("proof_mode")) or "probation",
+                "capital_promotion_allowed": bool(
+                    target.get("capital_promotion_allowed")
+                ),
                 "source_collection_authorized": bool(
                     target.get("source_collection_authorized")
                 ),
@@ -4151,6 +4212,13 @@ def _runtime_ledger_proof_packet_handoff(
         "schema_version": RUNTIME_LEDGER_PROOF_PACKET_HANDOFF_SCHEMA_VERSION,
         "source": "paper_route_evidence_audit",
         "purpose": "assemble_runtime_ledger_live_paper_proof_packet",
+        "default_proof_mode": "smoke",
+        "evidence_collection_ok": bool(next_targets.get("evidence_collection_ok")),
+        "canary_collection_authorized": bool(
+            next_targets.get("canary_collection_authorized")
+        ),
+        "capital_promotion_allowed": False,
+        "final_promotion_allowed": False,
         "promotion_allowed": False,
         "final_promotion_authorized": False,
         "promotion_gate": "runtime_ledger_live_or_live_paper_required",

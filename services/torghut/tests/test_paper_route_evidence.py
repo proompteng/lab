@@ -1721,6 +1721,13 @@ class TestPaperRouteEvidenceAudit(TestCase):
             summary_target["source_decision_blockers"],
             ["source_strategy_missing"],
         )
+        self.assertFalse(summary_target["evidence_collection_ok"])
+        self.assertFalse(summary_target["canary_collection_authorized"])
+        self.assertFalse(summary_target["bounded_evidence_collection_authorized"])
+        self.assertEqual(
+            summary_target["bounded_evidence_collection_blockers"],
+            ["source_strategy_missing"],
+        )
         self.assertEqual(
             import_audit["diagnostics"]["target_blockers_effective_when"],
             "runtime_window_import_ready",
@@ -1767,6 +1774,10 @@ class TestPaperRouteEvidenceAudit(TestCase):
                 "proof_mode": "authority",
                 "final_authority": True,
                 "evidence_collection_only": False,
+                "evidence_collection_ok": False,
+                "canary_collection_authorized": False,
+                "capital_promotion_allowed": False,
+                "final_promotion_allowed": False,
                 "min_runtime_ledger_net_pnl_after_costs": "10000",
                 "min_runtime_ledger_daily_net_pnl_after_costs": "500",
                 "min_runtime_ledger_trading_days": 20,
@@ -1852,6 +1863,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
             [
                 "paper_route_runtime_ledger_import_pending",
                 "custom_runtime_blocker",
+                "source_strategy_missing",
             ],
         )
         self.assertIn(
@@ -1989,6 +2001,10 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(target["max_notional"], "0")
         self.assertEqual(target["paper_route_probe_next_session_max_notional"], "63180")
         self.assertEqual(target["paper_route_probe_effective_max_notional"], "63180")
+        self.assertTrue(target["evidence_collection_ok"])
+        self.assertTrue(target["canary_collection_authorized"])
+        self.assertFalse(target["capital_promotion_allowed"])
+        self.assertEqual(target["proof_mode"], "probation")
         self.assertTrue(target["bounded_evidence_collection_authorized"])
         self.assertEqual(
             target["bounded_evidence_collection_scope"],
@@ -2012,6 +2028,10 @@ class TestPaperRouteEvidenceAudit(TestCase):
         summary_target = payload["summary"]["next_paper_route_targets"][0]
         self.assertTrue(summary_target["source_decision_ready"])
         self.assertEqual(summary_target["source_decision_blockers"], [])
+        self.assertTrue(summary_target["evidence_collection_ok"])
+        self.assertTrue(summary_target["canary_collection_authorized"])
+        self.assertFalse(summary_target["capital_promotion_allowed"])
+        self.assertEqual(summary_target["proof_mode"], "probation")
         self.assertTrue(summary_target["bounded_evidence_collection_authorized"])
         self.assertEqual(
             summary_target["bounded_evidence_collection_max_notional"], "63180"

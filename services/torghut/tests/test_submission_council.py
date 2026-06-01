@@ -1000,6 +1000,11 @@ class TestSubmissionCouncil(TestCase):
         self.assertEqual(
             paper_candidates[0]["paper_probation_scope"], "evidence_collection_only"
         )
+        self.assertEqual(paper_candidates[0]["proof_mode"], "probation")
+        self.assertTrue(paper_candidates[0]["evidence_collection_ok"])
+        self.assertTrue(paper_candidates[0]["canary_collection_authorized"])
+        self.assertFalse(paper_candidates[0]["capital_promotion_allowed"])
+        self.assertFalse(paper_candidates[0]["final_promotion_allowed"])
         self.assertEqual(paper_candidates[0]["max_notional"], "0")
         import_plan = gate["runtime_ledger_paper_probation_import_plan"]
         self.assertIsInstance(import_plan, dict)
@@ -1009,6 +1014,11 @@ class TestSubmissionCouncil(TestCase):
         )
         self.assertEqual(import_plan["target_count"], 2)
         self.assertEqual(import_plan["skipped_target_count"], 0)
+        self.assertEqual(import_plan["proof_mode"], "probation")
+        self.assertTrue(import_plan["evidence_collection_ok"])
+        self.assertTrue(import_plan["canary_collection_authorized"])
+        self.assertFalse(import_plan["capital_promotion_allowed"])
+        self.assertFalse(import_plan["final_promotion_allowed"])
         target = import_plan["targets"][0]
         self.assertEqual(target["hypothesis_id"], "H-PAIRS-01")
         self.assertEqual(target["candidate_id"], "c88421d619759b2cfaa6f4d0")
@@ -1042,6 +1052,10 @@ class TestSubmissionCouncil(TestCase):
             target["paper_probation_authorization_scope"],
             "evidence_collection_only",
         )
+        self.assertEqual(target["proof_mode"], "probation")
+        self.assertTrue(target["evidence_collection_ok"])
+        self.assertTrue(target["canary_collection_authorized"])
+        self.assertFalse(target["capital_promotion_allowed"])
         self.assertEqual(target["promotion_allowed"], False)
         self.assertEqual(target["final_promotion_authorized"], False)
         self.assertEqual(target["final_promotion_allowed"], False)
@@ -1348,6 +1362,10 @@ class TestSubmissionCouncil(TestCase):
         self.assertEqual(len(candidates), 1)
         source_candidate = candidates[0]
         self.assertTrue(source_candidate["source_collection_authorized"])
+        self.assertEqual(source_candidate["proof_mode"], "probation")
+        self.assertTrue(source_candidate["evidence_collection_ok"])
+        self.assertFalse(source_candidate["canary_collection_authorized"])
+        self.assertFalse(source_candidate["capital_promotion_allowed"])
         self.assertFalse(source_candidate.get("paper_probation_eligible", False))
         self.assertEqual(
             source_candidate["source_collection_scope"],
@@ -1364,6 +1382,10 @@ class TestSubmissionCouncil(TestCase):
         target = plan["targets"][0]
         self.assertFalse(target["paper_probation_authorized"])
         self.assertTrue(target["source_collection_authorized"])
+        self.assertEqual(target["proof_mode"], "probation")
+        self.assertTrue(target["evidence_collection_ok"])
+        self.assertFalse(target["canary_collection_authorized"])
+        self.assertFalse(target["capital_promotion_allowed"])
         self.assertFalse(target["probation_allowed"])
         self.assertFalse(target["promotion_allowed"])
         self.assertFalse(target["final_promotion_allowed"])

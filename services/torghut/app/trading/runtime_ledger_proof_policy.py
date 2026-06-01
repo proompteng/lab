@@ -47,6 +47,10 @@ class RuntimeLedgerProofPolicy:
             "proof_mode": targets["proof_mode"],
             "final_authority": targets["final_authority"],
             "evidence_collection_only": targets["evidence_collection_only"],
+            "evidence_collection_ok": targets["evidence_collection_ok"],
+            "canary_collection_authorized": targets["canary_collection_authorized"],
+            "capital_promotion_allowed": False,
+            "final_promotion_allowed": False,
             "min_runtime_ledger_net_pnl_after_costs": _decimal_text(
                 _target_decimal(targets, "min_net_pnl_after_costs")
             ),
@@ -99,6 +103,8 @@ class RuntimeLedgerProofPolicy:
             "proof_mode": mode,
             "final_authority": mode == "authority",
             "evidence_collection_only": mode != "authority",
+            "evidence_collection_ok": mode != "authority",
+            "canary_collection_authorized": mode == "probation",
             "min_net_pnl_after_costs": min_net,
             "min_daily_net_pnl_after_costs": min_daily,
             "min_trading_days": min_days,
