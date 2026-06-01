@@ -548,7 +548,21 @@ class TestRuntimeLedgerProofPacket(TestCase):
         )
         self.assertEqual(result["proof_mode"], "authority")
         self.assertTrue(result["final_authority_ok"])
+        self.assertTrue(result["promotion_allowed"])
+        self.assertTrue(result["capital_promotion_allowed"])
+        self.assertTrue(result["final_promotion_allowed"])
+        self.assertEqual(result["authority_blockers"], [])
         self.assertFalse(result["evidence_collection_only"])
+        self.assertEqual(
+            result["target"]["min_runtime_ledger_net_pnl_after_costs"], "10000"
+        )
+        self.assertEqual(
+            result["target"]["min_runtime_ledger_daily_net_pnl_after_costs"], "500"
+        )
+        self.assertEqual(result["target"]["min_runtime_ledger_trading_days"], 20)
+        self.assertEqual(
+            result["target"]["min_runtime_ledger_filled_notional"], "10000000"
+        )
         tigerbeetle_refs = result["evidence"]["runtime_window_import"][
             "materialization"
         ]["materialized_targets"][0]["tigerbeetle"]
@@ -783,7 +797,14 @@ class TestRuntimeLedgerProofPacket(TestCase):
         self.assertEqual(result["proof_mode"], "smoke")
         self.assertTrue(result["ok"], result)
         self.assertFalse(result["final_authority_ok"])
+        self.assertFalse(result["promotion_allowed"])
         self.assertFalse(result["capital_promotion_allowed"])
+        self.assertFalse(result["final_promotion_allowed"])
+        self.assertEqual(
+            result["authority_blockers"],
+            ["runtime_ledger_proof_mode_not_authority"],
+        )
+        self.assertFalse(result["target"]["promotion_allowed"])
         self.assertEqual(
             result["post_cost_proof_authority"]["blocking_reasons"],
             ["runtime_ledger_proof_mode_not_authority"],
@@ -914,8 +935,13 @@ class TestRuntimeLedgerProofPacket(TestCase):
         )
         self.assertTrue(result["evidence_collection_ok"])
         self.assertFalse(result["canary_collection_authorized"])
+        self.assertFalse(result["promotion_allowed"])
         self.assertFalse(result["capital_promotion_allowed"])
         self.assertFalse(result["final_promotion_allowed"])
+        self.assertEqual(
+            result["authority_blockers"],
+            ["runtime_ledger_proof_mode_not_authority"],
+        )
         self.assertFalse(result["promotion_authority"]["allowed"])
         self.assertEqual(
             result["target"]["max_runtime_ledger_drawdown_pct_equity"], "0.08"
@@ -954,8 +980,13 @@ class TestRuntimeLedgerProofPacket(TestCase):
         self.assertTrue(result["evidence_collection_ok"])
         self.assertTrue(result["canary_collection_authorized"])
         self.assertFalse(result["final_authority_ok"])
+        self.assertFalse(result["promotion_allowed"])
         self.assertFalse(result["capital_promotion_allowed"])
         self.assertFalse(result["final_promotion_allowed"])
+        self.assertEqual(
+            result["authority_blockers"],
+            ["runtime_ledger_proof_mode_not_authority"],
+        )
         self.assertFalse(result["capital_promotion_authority"]["allowed"])
         self.assertFalse(result["promotion_authority"]["allowed"])
         self.assertIn(
@@ -2496,6 +2527,57 @@ class TestRuntimeLedgerProofPacket(TestCase):
             self.assertIn(
                 "runtime_ledger_pnl_basis_missing",
                 payload["promotion_authority"]["blocking_reasons"],
+            )
+
+    def test_cli_defaults_to_smoke_mode_without_promotion_authority(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            status_path = tmp_path / "status.json"
+            paper_path = tmp_path / "paper.json"
+            import_path = tmp_path / "import.json"
+            completion_path = tmp_path / "completion.json"
+            output_path = tmp_path / "packet.json"
+            status_path.write_text(json.dumps(_status()), encoding="utf-8")
+            paper_path.write_text(json.dumps(_paper_route_evidence()), encoding="utf-8")
+            import_path.write_text(json.dumps(_runtime_import()), encoding="utf-8")
+            completion_path.write_text(
+                json.dumps(_completion(trading_days=1, net_pnl="600")),
+                encoding="utf-8",
+            )
+
+            exit_code = packet.main(
+                [
+                    "--status-file",
+                    str(status_path),
+                    "--paper-route-evidence-file",
+                    str(paper_path),
+                    "--runtime-window-import-file",
+                    str(import_path),
+                    "--completion-file",
+                    str(completion_path),
+                    "--output-file",
+                    str(output_path),
+                ]
+            )
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(output_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["proof_mode"], "smoke")
+            self.assertEqual(
+                payload["verdict"],
+                "smoke_proof_satisfied_evidence_collection_only",
+            )
+            self.assertFalse(payload["promotion_allowed"])
+            self.assertFalse(payload["final_promotion_allowed"])
+            self.assertEqual(
+                payload["authority_blockers"],
+                ["runtime_ledger_proof_mode_not_authority"],
+            )
+            self.assertEqual(
+                payload["checks"]["runtime_ledger_proof_mode_contract"]["observed"][
+                    "promotion_allowed"
+                ],
+                False,
             )
 
     def test_cli_can_write_blocked_packet_without_failing_scheduled_collection(
