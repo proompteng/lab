@@ -2237,6 +2237,123 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         self.assertTrue(payload["summary"]["audit_only"])
         self.assertFalse(payload["summary"]["would_persist"])
 
+    def test_runtime_window_import_discards_contaminated_target_plan_window(
+        self,
+    ) -> None:
+        manifest_path = self.tmp_dir / "empirical-promotion-manifest.yaml"
+        manifest_path.write_text("run_id: renew-1\n", encoding="utf-8")
+        window_start = datetime(2026, 6, 1, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 6, 1, 20, 0, tzinfo=timezone.utc)
+        target = renewal.RuntimeWindowImportTarget(
+            hypothesis_id="H-PAIRS-01",
+            candidate_id="c88421d619759b2cfaa6f4d0",
+            observed_stage="paper",
+            strategy_family="microbar_cross_sectional_pairs",
+            source_dsn_env="SIM_DB_DSN",
+            target_dsn_env="SIM_DB_DSN",
+            strategy_name="microbar-cross-sectional-pairs-v1",
+            account_label="TORGHUT_SIM",
+            source_account_label="TORGHUT_SIM",
+            dataset_snapshot_ref="portfolio-profit-autoresearch-500-v1",
+            source_manifest_ref="config/trading/hypotheses/h-pairs-01.json",
+            source_kind="paper_route_probe_runtime_observed",
+            delay_adjusted_depth_stress_report_ref="",
+            window_start=window_start.isoformat(),
+            window_end=window_end.isoformat(),
+            target_metadata={
+                "runtime_window_import_audit_state": (
+                    "import_due_account_contamination_detected"
+                ),
+                "runtime_window_import_audit_blockers": [
+                    "paper_route_account_contamination_detected",
+                    "unlinked_order_events_present",
+                    "foreign_order_events_present",
+                ],
+            },
+        )
+        args = SimpleNamespace(runtime_window_target_plan_settlement_seconds=3600)
+
+        with patch.object(
+            renewal.subprocess,
+            "run",
+            side_effect=AssertionError("dirty paper windows must not import"),
+        ) as run_mock:
+            payload = renewal._run_runtime_window_import_target(
+                args=args,
+                target=target,
+                manifest={},
+                run_id="renew-1",
+                manifest_path=manifest_path,
+                window_start=window_start,
+                window_end=window_end,
+                now=datetime(2026, 6, 1, 21, 5, tzinfo=timezone.utc),
+            )
+
+        run_mock.assert_not_called()
+        self.assertEqual(payload["status"], "blocked")
+        self.assertEqual(payload["proof_status"], "blocked")
+        self.assertEqual(
+            payload["reason"],
+            "runtime_window_target_plan_import_blocked:"
+            "import_due_account_contamination_detected",
+        )
+        blocker_codes = [item["blocker"] for item in payload["proof_blockers"]]
+        self.assertEqual(
+            blocker_codes,
+            [
+                "import_due_account_contamination_detected",
+                "paper_route_account_contamination_detected",
+                "unlinked_order_events_present",
+                "foreign_order_events_present",
+            ],
+        )
+        self.assertIsNone(payload["summary"])
+
+    def test_runtime_window_import_blocked_result_ignores_source_collection_targets(
+        self,
+    ) -> None:
+        manifest_path = self.tmp_dir / "empirical-promotion-manifest.yaml"
+        manifest_path.write_text("run_id: renew-1\n", encoding="utf-8")
+        window_start = datetime(2026, 5, 13, 15, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 13, 16, 0, tzinfo=timezone.utc)
+        target = renewal.RuntimeWindowImportTarget(
+            hypothesis_id="H-TSMOM-LIQ-01",
+            candidate_id="ca4e6e3c7d639e3363dc5860",
+            observed_stage="paper",
+            strategy_family="intraday_tsmom",
+            source_dsn_env="SIM_DB_DSN",
+            target_dsn_env="SIM_DB_DSN",
+            strategy_name="intraday-tsmom-v2",
+            account_label="TORGHUT_REPLAY",
+            source_account_label="TORGHUT_REPLAY",
+            dataset_snapshot_ref="portfolio-profit-autoresearch-500-v1",
+            source_manifest_ref="config/trading/hypotheses/h-tsmom-liq-01.json",
+            source_kind="runtime_ledger_source_collection_candidate",
+            delay_adjusted_depth_stress_report_ref="",
+            window_start=window_start.isoformat(),
+            window_end=window_end.isoformat(),
+            target_metadata={
+                "runtime_window_import_audit_state": (
+                    "import_due_account_contamination_detected"
+                ),
+                "runtime_window_import_audit_blockers": [
+                    "paper_route_account_contamination_detected",
+                ],
+                "handoff": "runtime_ledger_source_collection_import",
+            },
+        )
+
+        self.assertIsNone(
+            renewal._runtime_window_target_plan_import_blocked_result(
+                target=target,
+                candidate_id=target.candidate_id,
+                manifest_path=manifest_path,
+                window_start=window_start,
+                window_end=window_end,
+                window_selection="target_plan_window",
+            )
+        )
+
     def test_runtime_window_import_passes_probation_metadata_and_artifacts(
         self,
     ) -> None:
