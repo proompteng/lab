@@ -1292,6 +1292,10 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("--account-label TORGHUT_SIM", args)
         self.assertIn("--batch-size 100", args)
         self.assertIn("--max-batches 4", args)
+        self.assertIn("--account-label TORGHUT_REPLAY", args)
+        self.assertEqual(args.count("scripts/repair_order_feed_source_windows.py"), 3)
+        self.assertEqual(args.count("--dsn-env SIM_DB_DSN"), 2)
+        self.assertEqual(args.count("--backfill-execution-events"), 2)
         self.assertIn("--apply", args)
         self.assertNotIn("scripts/journal_tigerbeetle_order_events.py", args)
         self.assertNotIn("--reconcile-limit 1000", args)
@@ -1490,6 +1494,10 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("--account-label TORGHUT_SIM", args)
         self.assertIn("--batch-size 1000", args)
         self.assertIn("--max-batches 2", args)
+        self.assertIn("--account-label TORGHUT_REPLAY", args)
+        self.assertIn("--backfill-execution-events", args)
+        self.assertEqual(args.count("scripts/repair_order_feed_source_windows.py"), 2)
+        self.assertEqual(args.count("--dsn-env SIM_DB_DSN"), 2)
         self.assertIn("scripts/renew_latest_empirical_promotion_jobs.py", args)
         self.assertIn(
             "--runtime-window-target-plan-url "

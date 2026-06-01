@@ -58,6 +58,14 @@ spec:
                     --max-batches 4 \
                     --apply \
                     --json
+                  /opt/venv/bin/python scripts/repair_order_feed_source_windows.py \
+                    --dsn-env SIM_DB_DSN \
+                    --account-label TORGHUT_REPLAY \
+                    --batch-size 100 \
+                    --max-batches 4 \
+                    --backfill-execution-events \
+                    --apply \
+                    --json
                   echo "stage=order_feed_source_window_repair completed_at=$(date -Iseconds)"
               securityContext:
                 seccompProfile:
