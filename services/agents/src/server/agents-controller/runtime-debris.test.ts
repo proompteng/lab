@@ -9,7 +9,7 @@ const nowMs = Date.parse('2026-06-01T00:00:00.000Z')
 const buildPod = (
   name: string,
   overrides: {
-    createdAt?: string
+    createdAt?: Date | string
     deletionTimestamp?: string
     labels?: Record<string, string>
     ownerReferences?: Array<Record<string, unknown>>
@@ -73,6 +73,27 @@ describe('runtime debris cleanup', () => {
     expect(kube.delete).not.toHaveBeenCalled()
     expect(summary).toMatchObject({
       deletedPods: 0,
+      mode: 'audit',
+      orphanTerminalPods: 1,
+      scannedPods: 1,
+    })
+  })
+
+  it('treats Kubernetes client Date creation timestamps as stale candidates', async () => {
+    const kube = buildKube([buildPod('orphan-old-date', { createdAt: new Date(staleCreatedAt) })])
+
+    const summary = await reconcileRuntimeDebris({
+      config: {
+        maxDeletesPerNamespace: 25,
+        mode: 'audit',
+        orphanPodRetentionSeconds: 3600,
+      },
+      kube: kube as never,
+      namespace: 'agents',
+      nowMs,
+    })
+
+    expect(summary).toMatchObject({
       mode: 'audit',
       orphanTerminalPods: 1,
       scannedPods: 1,
