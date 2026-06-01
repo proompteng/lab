@@ -12,6 +12,11 @@ from urllib import error, parse, request
 from typing import Any, Mapping, Sequence, cast
 from zoneinfo import ZoneInfo
 
+from app.trading.session_context import (
+    iter_regular_equities_session_dates,
+    most_recent_regular_equities_session_date,
+)
+
 _NEW_YORK = ZoneInfo("America/New_York")
 _REGULAR_CLOSE_ET = time(hour=16, minute=5)
 
@@ -22,22 +27,11 @@ def _stable_hash(payload: Mapping[str, Any]) -> str:
 
 
 def _business_days(start_day: date, end_day: date) -> tuple[date, ...]:
-    if start_day > end_day:
-        return ()
-    current = start_day
-    values: list[date] = []
-    while current <= end_day:
-        if current.weekday() < 5:
-            values.append(current)
-        current += timedelta(days=1)
-    return tuple(values)
+    return iter_regular_equities_session_dates(start_day, end_day)
 
 
 def _most_recent_business_day(day: date) -> date:
-    current = day
-    while current.weekday() >= 5:
-        current -= timedelta(days=1)
-    return current
+    return most_recent_regular_equities_session_date(day)
 
 
 def resolve_expected_last_trading_day(

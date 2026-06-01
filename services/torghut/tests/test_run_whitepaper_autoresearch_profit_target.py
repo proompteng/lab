@@ -288,6 +288,13 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             replay_tape_frontier_exploitation_slots=runner._DEFAULT_FAST_REPLAY_EXPLOITATION_SLOTS,
             replay_tape_frontier_exploration_slots=runner._DEFAULT_FAST_REPLAY_EXPLORATION_SLOTS,
             materialize_replay_tape=False,
+            coverage_diagnostic_output=None,
+            latest_complete_window_min_days=0,
+            latest_complete_window_receipt_output=None,
+            min_executable_rows_per_symbol_day=1,
+            min_quote_valid_ratio="0",
+            max_coverage_spread_bps="1000000000",
+            max_executable_gap_seconds=999999,
             min_daily_net_pnl=None,
             persist_results=False,
         )
@@ -309,6 +316,30 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         args.seed_recent_whitepapers = False
         args.source_jsonl = [source_path]
         return args
+
+    def _coverage_row(
+        self,
+        *,
+        raw: int,
+        executable: int,
+        microbar: int,
+        symbol_count: int = 2,
+    ) -> dict[str, object]:
+        return {
+            "raw_signal_rows": raw,
+            "executable_signal_rows": executable,
+            "quote_sane_signal_rows": executable,
+            "spread_sane_signal_rows": executable,
+            "microbar_rows": microbar,
+            "raw_signal_symbol_count": symbol_count,
+            "executable_signal_symbol_count": symbol_count,
+            "microbar_symbol_count": symbol_count,
+            "min_executable_rows_per_symbol_day": executable,
+            "min_spread_sane_rows_per_symbol_day": executable,
+            "quote_valid_ratio": "1",
+            "min_quote_valid_ratio_by_symbol_day": "1",
+            "max_executable_gap_seconds": 0,
+        }
 
     def _candidate_spec(
         self,
@@ -1049,6 +1080,15 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertIn(
             '--second-oos-days "{{inputs.parameters.secondOosDays}}"', template
         )
+        self.assertIn(
+            '--latest-complete-window-min-days "{{inputs.parameters.latestCompleteWindowMinDays}}"',
+            template,
+        )
+        self.assertIn(
+            '--min-executable-rows-per-symbol-day "{{inputs.parameters.minExecutableRowsPerSymbolDay}}"',
+            template,
+        )
+        self.assertIn("replay-source-coverage-diagnostics.json", template)
         self.assertIn("cpu: 4", template)
         self.assertIn("memory: 12Gi", template)
         self.assertIn("cpu: 8", template)
@@ -5025,6 +5065,83 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     output_dir=output_dir,
                     epoch_id="epoch-missing-window",
                 )
+
+    def test_materialized_replay_tape_window_preflight_updates_args(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            output_dir = root / "epoch"
+            output_dir.mkdir()
+            args = self._args(output_dir)
+            args.replay_mode = "real"
+            args.materialize_replay_tape = True
+            args.symbols = "NVDA,AAPL"
+            args.full_window_start_date = "2026-02-23"
+            args.full_window_end_date = "2026-02-27"
+            args.latest_complete_window_min_days = 3
+            coverage = {
+                "schema_version": "torghut.replay-coverage-diagnostic.v1",
+                "requested_trading_days": [
+                    "2026-02-23",
+                    "2026-02-24",
+                    "2026-02-25",
+                    "2026-02-26",
+                    "2026-02-27",
+                ],
+                "rows_by_trading_day": {
+                    "2026-02-23": self._coverage_row(
+                        raw=10,
+                        executable=0,
+                        microbar=10,
+                    ),
+                    "2026-02-24": self._coverage_row(
+                        raw=10,
+                        executable=3,
+                        microbar=10,
+                    ),
+                    "2026-02-25": self._coverage_row(
+                        raw=10,
+                        executable=3,
+                        microbar=10,
+                    ),
+                    "2026-02-26": self._coverage_row(
+                        raw=10,
+                        executable=3,
+                        microbar=10,
+                    ),
+                    "2026-02-27": self._coverage_row(
+                        raw=10,
+                        executable=3,
+                        microbar=10,
+                    ),
+                },
+                "missing_executable_signal_days": ["2026-02-23"],
+            }
+
+            with patch.object(
+                runner.replay_materializer,
+                "_fetch_coverage_diagnostics",
+                return_value=coverage,
+            ) as fetch:
+                updated_args, receipt = (
+                    runner._maybe_preflight_materialized_replay_tape_window(
+                        args=args,
+                        output_dir=output_dir,
+                    )
+                )
+
+            self.assertEqual(fetch.call_count, 1)
+            self.assertIsNotNone(receipt)
+            assert receipt is not None
+            self.assertEqual(updated_args.full_window_start_date, "2026-02-24")
+            self.assertEqual(updated_args.full_window_end_date, "2026-02-27")
+            self.assertEqual(updated_args.expected_last_trading_day, "2026-02-27")
+            self.assertEqual(
+                receipt["selected_trading_days"],
+                ["2026-02-24", "2026-02-25", "2026-02-26", "2026-02-27"],
+            )
+            self.assertTrue(
+                (output_dir / "replay-source-latest-complete-window.json").exists()
+            )
 
     def test_replay_tape_preview_error_paths_and_fallback_selection(self) -> None:
         with TemporaryDirectory() as tmpdir:

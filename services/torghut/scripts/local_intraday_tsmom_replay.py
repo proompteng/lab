@@ -59,6 +59,7 @@ from app.trading.quote_quality import (
 )
 from app.trading.session_context import (
     SessionContextTracker,
+    is_regular_equities_session_date,
     regular_session_close_utc_for,
     regular_session_open_utc_for,
 )
@@ -913,9 +914,10 @@ def _iter_signal_rows(config: ReplayConfig) -> Iterable[SignalEnvelope]:
     chunk_delta = timedelta(minutes=config.chunk_minutes)
     current_day = config.start_date
     while current_day <= config.end_date:
-        if current_day.weekday() >= 5:
+        if not is_regular_equities_session_date(current_day):
+            reason = "weekend" if current_day.weekday() >= 5 else "market_holiday"
             logger.info(
-                "replay_day_skip day=%s reason=weekend", current_day.isoformat()
+                "replay_day_skip day=%s reason=%s", current_day.isoformat(), reason
             )
             current_day += timedelta(days=1)
             continue

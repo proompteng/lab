@@ -22,9 +22,9 @@ spec:
         - name: fullWindowStartDate
           value: "2026-05-18"
         - name: fullWindowEndDate
-          value: "2026-05-22"
+          value: "2026-05-29"
         - name: expectedLastTradingDay
-          value: "2026-05-22"
+          value: "2026-05-29"
         - name: trainDays
           value: "3"
         - name: holdoutDays
@@ -35,6 +35,16 @@ spec:
           value: "8"
         - name: replayTapePreviewMinRows
           value: "2"
+        - name: latestCompleteWindowMinDays
+          value: "5"
+        - name: minExecutableRowsPerSymbolDay
+          value: "1"
+        - name: minQuoteValidRatio
+          value: "0"
+        - name: maxCoverageSpreadBps
+          value: "1000000000"
+        - name: maxExecutableGapSeconds
+          value: "999999"
         - name: maxCandidates
           value: "16"
         - name: topK

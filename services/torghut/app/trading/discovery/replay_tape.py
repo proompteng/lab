@@ -7,13 +7,14 @@ import hashlib
 import json
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, TextIO, cast
 
 from app.trading.models import SignalEnvelope
 from app.trading.session_context import (
+    iter_regular_equities_session_dates,
     regular_session_close_utc_for,
     regular_session_open_utc_for,
 )
@@ -571,15 +572,7 @@ def _normalize_symbols(symbols: Sequence[str]) -> tuple[str, ...]:
 
 
 def _business_days(start_day: date, end_day: date) -> tuple[date, ...]:
-    if start_day > end_day:
-        return ()
-    current = start_day
-    values: list[date] = []
-    while current <= end_day:
-        if current.weekday() < 5:
-            values.append(current)
-        current += timedelta(days=1)
-    return tuple(values)
+    return iter_regular_equities_session_dates(start_day, end_day)
 
 
 def _row_count_by_symbol_trading_day(

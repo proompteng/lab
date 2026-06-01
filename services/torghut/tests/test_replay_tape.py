@@ -69,9 +69,10 @@ class TestReplayTape(TestCase):
         seq: int,
         symbol: str = "META",
         price: str = "100.25",
+        month: int = 3,
     ) -> SignalEnvelope:
         return SignalEnvelope(
-            event_ts=datetime(2026, 3, day, 17, 30, seq, tzinfo=timezone.utc),
+            event_ts=datetime(2026, month, day, 17, 30, seq, tzinfo=timezone.utc),
             symbol=symbol,
             timeframe="1Sec",
             seq=seq,
@@ -81,10 +82,10 @@ class TestReplayTape(TestCase):
                 "spread": Decimal("0.02"),
                 "nested": {"bid_px": Decimal("100.24"), "label": "keep-string"},
                 "levels": [Decimal("100.24"), Decimal("100.26")],
-                "computed_at": datetime(2026, 3, day, 17, 30, tzinfo=timezone.utc),
+                "computed_at": datetime(2026, month, day, 17, 30, tzinfo=timezone.utc),
                 "window_size": "PT1S",
             },
-            ingest_ts=datetime(2026, 3, day, 17, 31, tzinfo=timezone.utc),
+            ingest_ts=datetime(2026, month, day, 17, 31, tzinfo=timezone.utc),
         )
 
     def test_materialize_load_and_slice_preserves_order_and_decimal_payloads(
@@ -157,6 +158,57 @@ class TestReplayTape(TestCase):
             ],
             [2],
         )
+
+    def test_materialize_signal_tape_skips_nyse_full_day_holidays(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            tape_path = Path(tmpdir) / "tape.jsonl"
+            manifest = materialize_signal_tape(
+                rows=[
+                    self._signal(day=22, seq=1, symbol="META", month=5),
+                    self._signal(day=26, seq=2, symbol="META", month=5),
+                ],
+                tape_path=tape_path,
+                dataset_snapshot_ref="snapshot-memorial-week",
+                symbols=("META",),
+                start_date=date(2026, 5, 22),
+                end_date=date(2026, 5, 26),
+                source_query_digest=build_source_query_digest({"window": "memorial"}),
+                require_complete_coverage=True,
+            )
+
+        self.assertEqual(
+            manifest.requested_trading_days,
+            (date(2026, 5, 22), date(2026, 5, 26)),
+        )
+        self.assertEqual(manifest.missing_trading_days, ())
+
+    def test_iter_signal_rows_skips_nyse_full_day_holidays(self) -> None:
+        fetched_days: list[date] = []
+
+        def fetch_chunk(**kwargs: object) -> list[SignalEnvelope]:
+            chunk_start = kwargs["chunk_start"]
+            assert isinstance(chunk_start, datetime)
+            fetched_days.append(chunk_start.date())
+            return []
+
+        config = ReplayConfig(
+            strategy_configmap_path=Path("/tmp/strategy.yaml"),
+            clickhouse_http_url="http://clickhouse.invalid:8123",
+            clickhouse_username=None,
+            clickhouse_password=None,
+            start_date=date(2026, 5, 22),
+            end_date=date(2026, 5, 26),
+            chunk_minutes=390,
+            flatten_eod=True,
+            start_equity=Decimal("10000"),
+            symbols=("META",),
+        )
+
+        with patch("scripts.local_intraday_tsmom_replay._fetch_chunk", fetch_chunk):
+            rows = list(_iter_signal_rows(config))
+
+        self.assertEqual(rows, [])
+        self.assertEqual(fetched_days, [date(2026, 5, 22), date(2026, 5, 26)])
 
     def test_manifest_digest_changes_when_source_rows_change(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -713,9 +765,9 @@ class TestMaterializeReplayTapeCli(TestCase):
             "max_executable_gap_seconds": max_gap_seconds,
         }
 
-    def _signal(self, *, day: int, seq: int) -> SignalEnvelope:
+    def _signal(self, *, day: int, seq: int, month: int = 3) -> SignalEnvelope:
         return SignalEnvelope(
-            event_ts=datetime(2026, 3, day, 17, 30, seq, tzinfo=timezone.utc),
+            event_ts=datetime(2026, month, day, 17, 30, seq, tzinfo=timezone.utc),
             symbol="META",
             timeframe="1Sec",
             seq=seq,
@@ -725,7 +777,7 @@ class TestMaterializeReplayTapeCli(TestCase):
                 "spread": Decimal("0.02"),
                 "window_size": "PT1S",
             },
-            ingest_ts=datetime(2026, 3, day, 17, 31, tzinfo=timezone.utc),
+            ingest_ts=datetime(2026, month, day, 17, 31, tzinfo=timezone.utc),
         )
 
     def test_parse_args_and_helpers_normalize_cli_inputs(self) -> None:
@@ -1129,6 +1181,88 @@ class TestMaterializeReplayTapeCli(TestCase):
             receipt_payload["materialized_manifest"]["row_count"],
             2,
         )
+
+    def test_latest_complete_source_window_skips_market_holiday(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            output = root / "tape.jsonl"
+            manifest_output = root / "tape.manifest.json"
+            captured_windows: list[tuple[date, date]] = []
+
+            def iter_rows(config: ReplayConfig) -> tuple[SignalEnvelope, ...]:
+                captured_windows.append((config.start_date, config.end_date))
+                return (
+                    self._signal(day=22, seq=1, month=5),
+                    self._signal(day=26, seq=2, month=5),
+                )
+
+            args = Namespace(
+                strategy_configmap=root / "strategy.yaml",
+                clickhouse_http_url="http://clickhouse.invalid:8123",
+                clickhouse_username="torghut",
+                clickhouse_password="secret",
+                start_date="2026-05-22",
+                end_date="2026-05-26",
+                chunk_minutes=0,
+                start_equity="10000",
+                symbols="meta",
+                dataset_snapshot_ref="snapshot-cli",
+                output=output,
+                manifest_output=manifest_output,
+                coverage_diagnostic_output=None,
+                latest_complete_window_min_days=2,
+                latest_complete_window_receipt_output=None,
+                min_executable_rows_per_symbol_day=1,
+                min_quote_valid_ratio="0",
+                max_coverage_spread_bps="1000000000",
+                max_executable_gap_seconds=999999,
+                source_table_version=[],
+                allow_incomplete_coverage=False,
+                log_level="WARNING",
+            )
+            coverage = {
+                "schema_version": "torghut.replay-coverage-diagnostic.v1",
+                "requested_trading_days": ["2026-05-22", "2026-05-26"],
+                "rows_by_trading_day": {
+                    "2026-05-22": self._coverage_row(
+                        raw=2,
+                        executable=2,
+                        microbar=2,
+                    ),
+                    "2026-05-26": self._coverage_row(
+                        raw=2,
+                        executable=2,
+                        microbar=2,
+                    ),
+                },
+                "missing_executable_signal_days": [],
+            }
+            stdout = io.StringIO()
+            with (
+                patch(
+                    "scripts.materialize_replay_tape._parse_args",
+                    return_value=args,
+                ),
+                patch(
+                    "scripts.materialize_replay_tape._fetch_coverage_diagnostics",
+                    return_value=coverage,
+                ),
+                patch(
+                    "scripts.materialize_replay_tape.replay_mod._iter_signal_rows",
+                    side_effect=iter_rows,
+                ),
+                redirect_stdout(stdout),
+            ):
+                exit_code = materialize_cli.main()
+
+            payload = json.loads(stdout.getvalue())
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(captured_windows, [(date(2026, 5, 22), date(2026, 5, 26))])
+        self.assertEqual(
+            payload["requested_trading_days"], ["2026-05-22", "2026-05-26"]
+        )
+        self.assertEqual(payload["missing_trading_days"], [])
 
     def test_latest_complete_window_failure_writes_diagnostics(self) -> None:
         with TemporaryDirectory() as tmpdir:
