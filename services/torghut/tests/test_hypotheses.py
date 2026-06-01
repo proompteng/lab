@@ -607,6 +607,248 @@ class TestHypothesisReadiness(TestCase):
         self.assertIn("runtime_ledger_stage_not_live", liq["reasons"])
         self.assertNotIn("runtime_ledger_candidate_id_mismatch", liq["reasons"])
 
+    def test_hpairs_manifest_declares_balanced_evidence_universe(self) -> None:
+        registry = load_hypothesis_registry()
+        hpairs_manifest = next(
+            item for item in registry.items if item.hypothesis_id == "H-PAIRS-01"
+        )
+
+        self.assertEqual(hpairs_manifest.evidence_universe_symbols, ["AAPL", "AMZN"])
+        self.assertTrue(hpairs_manifest.require_pair_balance)
+
+        statuses = compile_hypothesis_runtime_statuses(
+            registry=registry,
+            state=_state(
+                feature_rows=5,
+                drift_checks=3,
+                evidence_checks=2,
+                signal_lag_seconds=15,
+                evidence_report={
+                    "ok": True,
+                    "checked_at": "2026-06-01T19:45:00+00:00",
+                },
+            ),
+            tca_summary={
+                "account_label": "TORGHUT_SIM",
+                "order_count": 2,
+                "avg_abs_slippage_bps": "3",
+                "last_computed_at": "2026-06-01T19:50:00+00:00",
+                "scope_symbols": ["AAPL", "AMZN"],
+                "symbol_breakdown": [
+                    {
+                        "symbol": "AAPL",
+                        "order_count": 1,
+                        "avg_abs_slippage_bps": "3",
+                        "last_computed_at": "2026-06-01T19:50:00+00:00",
+                    },
+                    {
+                        "symbol": "AMZN",
+                        "order_count": 1,
+                        "avg_abs_slippage_bps": "3",
+                        "last_computed_at": "2026-06-01T19:50:00+00:00",
+                    },
+                ],
+            },
+            runtime_ledger_summary=_runtime_ledger_summary(
+                "H-PAIRS-01",
+                submitted_order_count=120,
+                post_cost_expectancy_bps="12",
+            ),
+            market_context_status={"last_freshness_seconds": 60},
+            jangar_dependency_quorum=JangarDependencyQuorumStatus(
+                decision="allow",
+                reasons=[],
+                message="ok",
+            ),
+            now=datetime(2026, 6, 1, 19, 55, tzinfo=timezone.utc),
+            market_session_open=True,
+            route_symbol_filter_enabled=True,
+        )
+        hpairs = next(
+            item for item in statuses if item["hypothesis_id"] == "H-PAIRS-01"
+        )
+
+        self.assertEqual(
+            hpairs["lineage_ref"]["evidence_universe_symbols"], ["AAPL", "AMZN"]
+        )
+        self.assertTrue(hpairs["lineage_ref"]["require_pair_balance"])
+        observed = hpairs["observed"]
+        self.assertEqual(observed["evidence_universe_symbols"], ["AAPL", "AMZN"])
+        self.assertEqual(observed["evidence_universe_symbol_count"], 2)
+        self.assertEqual(observed["pair_contract_blockers"], [])
+
+    def test_hpairs_route_tca_ignores_unrelated_tsmom_symbols_without_lineage(
+        self,
+    ) -> None:
+        registry = load_hypothesis_registry()
+        statuses = compile_hypothesis_runtime_statuses(
+            registry=registry,
+            state=_state(
+                feature_rows=2770,
+                drift_checks=3,
+                evidence_checks=2,
+                signal_lag_seconds=14,
+                evidence_report={
+                    "ok": True,
+                    "checked_at": "2026-06-01T19:15:00+00:00",
+                },
+            ),
+            tca_summary={
+                "account_label": "TORGHUT_SIM",
+                "order_count": 4,
+                "avg_abs_slippage_bps": "12",
+                "avg_realized_shortfall_bps": "1",
+                "last_computed_at": "2026-06-01T19:16:00+00:00",
+                "scope_symbols": ["AAPL", "AMZN", "INTC", "NVDA"],
+                "symbol_breakdown": [
+                    {
+                        "symbol": "AAPL",
+                        "order_count": 1,
+                        "avg_abs_slippage_bps": "4",
+                        "avg_realized_shortfall_bps": "1",
+                        "last_computed_at": "2026-06-01T19:16:00+00:00",
+                    },
+                    {
+                        "symbol": "AMZN",
+                        "order_count": 0,
+                        "avg_abs_slippage_bps": None,
+                        "avg_realized_shortfall_bps": None,
+                        "last_computed_at": None,
+                    },
+                    {
+                        "symbol": "INTC",
+                        "order_count": 1,
+                        "avg_abs_slippage_bps": "2",
+                        "avg_realized_shortfall_bps": "1",
+                        "last_computed_at": "2026-06-01T19:16:00+00:00",
+                    },
+                    {
+                        "symbol": "NVDA",
+                        "order_count": 1,
+                        "avg_abs_slippage_bps": "2",
+                        "avg_realized_shortfall_bps": "1",
+                        "last_computed_at": "2026-06-01T19:16:00+00:00",
+                    },
+                ],
+            },
+            runtime_ledger_summary=_runtime_ledger_summary(
+                "H-PAIRS-01",
+                submitted_order_count=120,
+                post_cost_expectancy_bps="12",
+            ),
+            market_context_status={"last_freshness_seconds": 60},
+            jangar_dependency_quorum=JangarDependencyQuorumStatus(
+                decision="allow",
+                reasons=[],
+                message="ok",
+            ),
+            now=datetime(2026, 6, 1, 19, 17, tzinfo=timezone.utc),
+            market_session_open=True,
+            route_symbol_filter_enabled=True,
+        )
+
+        hpairs = next(
+            item for item in statuses if item["hypothesis_id"] == "H-PAIRS-01"
+        )
+        observed = hpairs["observed"]
+        self.assertEqual(observed["route_tca_symbols"], ["AAPL"])
+        self.assertEqual(observed["route_tca_repair_symbols"], ["AMZN"])
+        self.assertEqual(observed["route_tca_excluded_symbol_count"], 2)
+        self.assertIn(
+            "route_tca_out_of_scope_symbol",
+            observed["route_tca_blocking_reason_codes"],
+        )
+        diagnostic_symbols = [
+            diagnostic["symbol"]
+            for diagnostic in observed["route_tca_symbol_diagnostics"]
+        ]
+        self.assertEqual(diagnostic_symbols, ["AAPL", "AMZN"])
+
+    def test_pairs_manifest_fails_closed_without_balanced_evidence_universe(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            manifest_path = Path(tmpdir) / "h-pairs-incomplete.json"
+            manifest_path.write_text(
+                json.dumps(
+                    _hypothesis_manifest_payload(
+                        hypothesis_id="H-PAIRS-INCOMPLETE",
+                        lane_id="microbar-cross-sectional-pairs",
+                        strategy_family="microbar_cross_sectional_pairs",
+                        required_dependency_capabilities=[],
+                        candidate_id="candidate-h-pairs-incomplete",
+                        strategy_id="microbar_cross_sectional_pairs_v1@research",
+                        initial_state="blocked",
+                    )
+                ),
+                encoding="utf-8",
+            )
+            registry = load_hypothesis_registry(path_value=str(manifest_path))
+
+        statuses = compile_hypothesis_runtime_statuses(
+            registry=registry,
+            state=_state(
+                feature_rows=5,
+                drift_checks=3,
+                evidence_checks=2,
+                signal_lag_seconds=15,
+                evidence_report={
+                    "ok": True,
+                    "checked_at": "2026-06-01T19:45:00+00:00",
+                },
+            ),
+            tca_summary={
+                "account_label": "TORGHUT_SIM",
+                "order_count": 2,
+                "avg_abs_slippage_bps": "3",
+                "last_computed_at": "2026-06-01T19:50:00+00:00",
+                "scope_symbols": ["AAPL", "AMZN"],
+            },
+            runtime_ledger_summary={
+                "by_hypothesis": {
+                    "H-PAIRS-INCOMPLETE": {
+                        "hypothesis_id": "H-PAIRS-INCOMPLETE",
+                        "candidate_id": "candidate-h-pairs-incomplete",
+                        "observed_stage": "live",
+                        "bucket_started_at": "2026-06-01T19:00:00+00:00",
+                        "bucket_ended_at": "2026-06-01T19:45:00+00:00",
+                        "strategy_family": "microbar_cross_sectional_pairs",
+                        "fill_count": 120,
+                        "submitted_order_count": 120,
+                        "closed_trade_count": 60,
+                        "open_position_count": 0,
+                        "filled_notional": "100000",
+                        "net_strategy_pnl_after_costs": "100",
+                        "post_cost_expectancy_bps": "12",
+                        "ledger_schema_version": EXACT_REPLAY_LEDGER_SCHEMA_VERSION,
+                        "pnl_basis": POST_COST_PNL_BASIS,
+                        "execution_policy_hash_counts": {"policy-sha": 1},
+                        "cost_model_hash_counts": {"cost-sha": 1},
+                        "lineage_hash_counts": {"lineage-sha": 1},
+                    }
+                }
+            },
+            market_context_status={"last_freshness_seconds": 60},
+            jangar_dependency_quorum=JangarDependencyQuorumStatus(
+                decision="allow",
+                reasons=[],
+                message="ok",
+            ),
+            now=datetime(2026, 6, 1, 19, 55, tzinfo=timezone.utc),
+            market_session_open=True,
+            route_symbol_filter_enabled=True,
+        )
+
+        hpairs = statuses[0]
+        self.assertFalse(hpairs["promotion_eligible"])
+        self.assertEqual(hpairs["state"], "blocked")
+        self.assertIn("evidence_universe_symbols_missing", hpairs["reasons"])
+        self.assertIn("pair_balance_not_declared", hpairs["reasons"])
+        self.assertEqual(
+            hpairs["observed"]["pair_contract_blockers"],
+            ["evidence_universe_symbols_missing", "pair_balance_not_declared"],
+        )
+
     def test_compile_hypothesis_runtime_statuses_prefers_target_live_bucket_over_newer_paper(
         self,
     ) -> None:
