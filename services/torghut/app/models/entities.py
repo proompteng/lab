@@ -125,6 +125,13 @@ class TradeDecision(Base, CreatedAtMixin):
         Index("ix_trade_decisions_status", "status"),
         Index("ix_trade_decisions_decision_hash", "decision_hash"),
         Index(
+            "ix_trade_decisions_account_created_strategy_symbol",
+            "alpaca_account_label",
+            "created_at",
+            "strategy_id",
+            "symbol",
+        ),
+        Index(
             "uq_trade_decisions_account_decision_hash",
             "alpaca_account_label",
             "decision_hash",
@@ -209,6 +216,7 @@ class Execution(Base, TimestampMixin):
     __table_args__ = (
         Index("ix_executions_alpaca_order_id", "alpaca_order_id"),
         Index("ix_executions_account_label", "alpaca_account_label"),
+        Index("ix_executions_trade_decision_id", "trade_decision_id"),
         Index(
             "uq_executions_account_alpaca_order_id",
             "alpaca_account_label",
@@ -420,6 +428,13 @@ class ExecutionOrderEvent(Base, CreatedAtMixin):
         Index("ix_execution_order_events_source_window_id", "source_window_id"),
         Index("ix_execution_order_events_order_id", "alpaca_order_id"),
         Index("ix_execution_order_events_client_order_id", "client_order_id"),
+        Index(
+            "ix_execution_order_events_account_event_symbol_decision",
+            "alpaca_account_label",
+            "event_ts",
+            "symbol",
+            "trade_decision_id",
+        ),
         Index(
             "uq_execution_order_events_source_offset",
             "source_topic",
@@ -1640,6 +1655,14 @@ class StrategyHypothesisMetricWindow(Base, TimestampMixin):
             "window_ended_at",
             "created_at",
         ),
+        Index(
+            "ix_strategy_hypothesis_metric_windows_hypothesis_candidate_window",
+            "hypothesis_id",
+            "candidate_id",
+            "window_started_at",
+            "window_ended_at",
+            "created_at",
+        ),
     )
 
 
@@ -1727,6 +1750,28 @@ class StrategyRuntimeLedgerBucket(Base, TimestampMixin):
         Index("ix_strategy_runtime_ledger_buckets_run_id", "run_id"),
         Index("ix_strategy_runtime_ledger_buckets_hypothesis_id", "hypothesis_id"),
         Index("ix_strategy_runtime_ledger_buckets_candidate_id", "candidate_id"),
+        Index(
+            "ix_strategy_runtime_ledger_buckets_hypothesis_ended_created",
+            "hypothesis_id",
+            "bucket_ended_at",
+            "created_at",
+        ),
+        Index(
+            "ix_strategy_runtime_ledger_buckets_hypothesis_run_candidate_stage_ended",
+            "hypothesis_id",
+            "run_id",
+            "candidate_id",
+            "observed_stage",
+            "bucket_ended_at",
+            "created_at",
+        ),
+        Index(
+            "ix_strategy_runtime_ledger_buckets_account_stage_ended",
+            "account_label",
+            "observed_stage",
+            "bucket_ended_at",
+            "created_at",
+        ),
         Index(
             "ix_strategy_runtime_ledger_buckets_stage_started",
             "observed_stage",
@@ -3062,6 +3107,7 @@ class PositionSnapshot(Base, CreatedAtMixin):
     __table_args__ = (
         Index("ix_position_snapshots_as_of", "as_of"),
         Index("ix_position_snapshots_account_label", "alpaca_account_label"),
+        Index("ix_position_snapshots_account_as_of", "alpaca_account_label", "as_of"),
     )
 
 
@@ -3134,6 +3180,13 @@ class ExecutionTCAMetric(Base, TimestampMixin):
     )
 
     __table_args__ = (
+        Index("ix_execution_tca_metrics_trade_decision_id", "trade_decision_id"),
+        Index(
+            "ix_execution_tca_metrics_account_computed_symbol",
+            "alpaca_account_label",
+            "computed_at",
+            "symbol",
+        ),
         Index("ix_execution_tca_metrics_strategy_symbol", "strategy_id", "symbol"),
         Index("ix_execution_tca_metrics_symbol", "symbol"),
         Index("ix_execution_tca_metrics_computed_at", "computed_at"),

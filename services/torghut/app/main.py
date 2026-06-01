@@ -3959,7 +3959,7 @@ def _daily_runtime_ledger_portfolio_summary(
                 bind = get_bind()
                 dialect = getattr(getattr(bind, "dialect", None), "name", "")
                 if dialect == "postgresql":
-                    session.execute(text("SET LOCAL statement_timeout = 750"))
+                    session.execute(text("SET LOCAL statement_timeout = 5000"))
             except SQLAlchemyError:
                 raise
             except Exception:
