@@ -23,6 +23,32 @@ def _load_migration_module() -> ModuleType:
 
 
 class TestPaperRouteAuditBoundedReadIndexesMigration(TestCase):
+    def test_index_names_fit_postgres_identifier_limit(self) -> None:
+        module = _load_migration_module()
+
+        too_long = [
+            index_name
+            for index_name, _table_name, _columns in module._INDEXES
+            if len(index_name) > 63
+        ]
+
+        self.assertEqual(too_long, [])
+
+    def test_model_index_names_fit_postgres_identifier_limit(self) -> None:
+        from app.models import StrategyHypothesisMetricWindow, StrategyRuntimeLedgerBucket
+
+        too_long = [
+            index.name
+            for table in (
+                StrategyHypothesisMetricWindow.__table__,
+                StrategyRuntimeLedgerBucket.__table__,
+            )
+            for index in table.indexes
+            if index.name is not None and len(index.name) > 63
+        ]
+
+        self.assertEqual(sorted(too_long), [])
+
     def test_revision_follows_current_head(self) -> None:
         module = _load_migration_module()
 
@@ -58,7 +84,11 @@ class TestPaperRouteAuditBoundedReadIndexesMigration(TestCase):
             created_names,
         )
         self.assertIn(
-            "ix_strategy_runtime_ledger_buckets_hypothesis_run_candidate_stage_ended",
+            "ix_metric_windows_hyp_candidate_window",
+            created_names,
+        )
+        self.assertIn(
+            "ix_runtime_ledger_buckets_hyp_run_candidate_stage_ended",
             created_names,
         )
 

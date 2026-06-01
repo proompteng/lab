@@ -1656,7 +1656,7 @@ class StrategyHypothesisMetricWindow(Base, TimestampMixin):
             "created_at",
         ),
         Index(
-            "ix_strategy_hypothesis_metric_windows_hypothesis_candidate_window",
+            "ix_metric_windows_hyp_candidate_window",
             "hypothesis_id",
             "candidate_id",
             "window_started_at",
@@ -1757,7 +1757,7 @@ class StrategyRuntimeLedgerBucket(Base, TimestampMixin):
             "created_at",
         ),
         Index(
-            "ix_strategy_runtime_ledger_buckets_hypothesis_run_candidate_stage_ended",
+            "ix_runtime_ledger_buckets_hyp_run_candidate_stage_ended",
             "hypothesis_id",
             "run_id",
             "candidate_id",
