@@ -145,6 +145,8 @@ class TestFastReplayPreview(TestCase):
         payload = preview.to_manifest_payload()
         row_payload = good.to_payload()
         self.assertFalse(payload["promotion_proof"])
+        self.assertFalse(payload["promotion_allowed"])
+        self.assertFalse(payload["final_promotion_allowed"])
         self.assertEqual(
             payload["proof_semantics_label"], FAST_REPLAY_PROOF_SEMANTICS_LABEL
         )
@@ -171,6 +173,75 @@ class TestFastReplayPreview(TestCase):
         self.assertIn("cost_model_hash", payload["replay_tape"])
         self.assertIn("strategy_family", payload["replay_tape"])
         self.assertFalse(payload["proof_authority"])
+
+    def test_target_implied_notional_blocks_non_positive_expectancy(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            rows = [
+                self._signal(symbol="AAA", offset=1, price="100", ofi="0.50"),
+                self._signal(symbol="AAA", offset=2, price="102", ofi="0.50"),
+                self._signal(symbol="BBB", offset=1, price="102", ofi="0.50"),
+                self._signal(symbol="BBB", offset=2, price="100", ofi="0.50"),
+            ]
+            manifest = materialize_signal_tape(
+                rows=rows,
+                tape_path=Path(tmpdir) / "tape.jsonl",
+                dataset_snapshot_ref="snapshot-notional",
+                symbols=("AAA", "BBB"),
+                start_date=date(2026, 2, 23),
+                end_date=date(2026, 2, 23),
+                source_query_digest=build_source_query_digest({"window": "notional"}),
+            )
+
+        preview = build_fast_replay_preview(
+            specs=(
+                self._spec(
+                    "spec-positive",
+                    symbols=["AAA"],
+                    max_notional_per_trade="0",
+                ),
+                self._spec(
+                    "spec-negative",
+                    symbols=["BBB"],
+                    max_notional_per_trade="0",
+                ),
+            ),
+            rows=rows,
+            replay_tape_manifest=manifest,
+            top_k=2,
+            min_rows_per_candidate=2,
+            exploitation_count=1,
+            exploration_count=1,
+            exact_replay_candidate_cap=2,
+        )
+
+        payloads = {row.candidate_spec_id: row.to_payload() for row in preview.rows}
+        positive = payloads["spec-positive"]
+        positive_expectancy = Decimal(positive["observed_post_cost_expectancy_bps"])
+        self.assertGreater(positive_expectancy, Decimal("0"))
+        self.assertEqual(
+            Decimal(positive["required_daily_notional"]),
+            Decimal("500") / (positive_expectancy / Decimal("10000")),
+        )
+        self.assertFalse(positive["target_implied_notional_context"]["blocked"])
+        self.assertEqual(
+            positive["target_implied_notional_context"]["formula"],
+            "target_net_pnl_per_day/(observed_post_cost_expectancy_bps/10000)",
+        )
+
+        negative = payloads["spec-negative"]
+        self.assertLessEqual(
+            Decimal(negative["observed_post_cost_expectancy_bps"]), Decimal("0")
+        )
+        self.assertIsNone(negative["required_daily_notional"])
+        self.assertTrue(negative["target_implied_notional_context"]["blocked"])
+        self.assertEqual(
+            negative["target_implied_notional_context"]["feasibility_status"],
+            "blocked_non_positive_post_cost_expectancy",
+        )
+        self.assertIn(
+            "target_implied_notional_blocked_non_positive_expectancy",
+            negative["lineage_blockers"],
+        )
 
     def test_frontier_selection_caps_exact_replay_with_exploration_slots(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -201,7 +272,7 @@ class TestFastReplayPreview(TestCase):
             min_rows_per_candidate=2,
             exploitation_count=4,
             exploration_count=2,
-            exact_replay_candidate_cap=6,
+            exact_replay_candidate_cap=99,
         )
 
         self.assertEqual(len(preview.selected_candidate_spec_ids), 6)

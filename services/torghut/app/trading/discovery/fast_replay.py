@@ -26,6 +26,9 @@ FAST_REPLAY_PROOF_SEMANTICS_LABEL = (
     "preview_ranking_only_exact_replay_and_runtime_ledger_required"
 )
 FAST_REPLAY_TARGET_NET_PNL_PER_DAY = Decimal("500")
+FAST_REPLAY_DEFAULT_EXPLOITATION_COUNT = 4
+FAST_REPLAY_DEFAULT_EXPLORATION_COUNT = 2
+FAST_REPLAY_EXACT_REPLAY_CANDIDATE_CAP = 6
 FAST_REPLAY_WHITEPAPER_MECHANISMS = (
     "cluster_lob_event_clustering_proxy",
     "bounded_hpairs_clusterlob_ofi_candidate_prefilter",
@@ -75,6 +78,7 @@ class FastReplayPreviewRow:
         required_daily_notional = _required_daily_notional_for_target(
             observed_post_cost_expectancy_bps
         )
+        notional_blocked = required_daily_notional is None
         lineage_blockers = _lineage_blockers_for_row(self)
         risk_flags = _risk_flags_for_row(self, lineage_blockers=lineage_blockers)
         return {
@@ -123,10 +127,16 @@ class FastReplayPreviewRow:
                 "observed_post_cost_expectancy_bps": str(
                     observed_post_cost_expectancy_bps
                 ),
+                "formula": "target_net_pnl_per_day/(observed_post_cost_expectancy_bps/10000)",
                 "required_daily_notional": str(required_daily_notional)
                 if required_daily_notional is not None
                 else None,
-                "feasibility_status": "unknown_source_backed_adv_required",
+                "feasibility_status": (
+                    "blocked_non_positive_post_cost_expectancy"
+                    if notional_blocked
+                    else "unknown_source_backed_adv_required"
+                ),
+                "blocked": notional_blocked,
                 "prefilter_only": True,
             },
             "cost_impact_lineage": {
@@ -186,8 +196,16 @@ class FastReplayPreviewResult:
             "promotion_proof": False,
             "proof_authority": False,
             "promotion_authority": False,
+            "promotion_allowed": False,
+            "final_promotion_allowed": False,
             "authority": "not_promotion_proof",
             "proof_semantics_label": FAST_REPLAY_PROOF_SEMANTICS_LABEL,
+            "selection_policy": {
+                "exact_replay_candidate_cap": FAST_REPLAY_EXACT_REPLAY_CANDIDATE_CAP,
+                "exploitation_slots": FAST_REPLAY_DEFAULT_EXPLOITATION_COUNT,
+                "exploration_slots": FAST_REPLAY_DEFAULT_EXPLORATION_COUNT,
+                "broad_cluster_fanout_allowed": False,
+            },
             "whitepaper_mechanisms": list(FAST_REPLAY_WHITEPAPER_MECHANISMS),
             "implemented_mechanisms": {
                 "hpairs_clusterlob_ofi_prefilter": "deterministic bounded H-PAIRS candidate prefilter metadata only; never promotion authority",
@@ -258,7 +276,7 @@ def build_fast_replay_preview(
     top_k: int,
     min_rows_per_candidate: int = 2,
     exploitation_count: int | None = None,
-    exploration_count: int = 0,
+    exploration_count: int | None = None,
     exact_replay_candidate_cap: int | None = None,
 ) -> FastReplayPreviewResult:
     """Rank candidate specs with cheap tape-derived features only.
@@ -267,17 +285,48 @@ def build_fast_replay_preview(
     scheduler replay and runtime ledger proof remain required downstream.
     """
 
-    bounded_top_k = max(1, min(len(specs) or 1, int(top_k)))
+    requested_exact_cap = (
+        FAST_REPLAY_EXACT_REPLAY_CANDIDATE_CAP
+        if exact_replay_candidate_cap is None
+        else int(exact_replay_candidate_cap)
+    )
+    bounded_exact_cap = max(
+        1,
+        min(
+            FAST_REPLAY_EXACT_REPLAY_CANDIDATE_CAP,
+            requested_exact_cap,
+        ),
+    )
+    bounded_top_k = max(1, min(len(specs) or 1, int(top_k), bounded_exact_cap))
     if exact_replay_candidate_cap is not None:
-        bounded_top_k = max(1, min(bounded_top_k, int(exact_replay_candidate_cap)))
-    bounded_exploitation_count = (
-        bounded_top_k
+        bounded_top_k = max(1, min(bounded_top_k, bounded_exact_cap))
+    requested_exploitation_count = (
+        FAST_REPLAY_DEFAULT_EXPLOITATION_COUNT
         if exploitation_count is None
-        else max(0, min(bounded_top_k, int(exploitation_count)))
+        else int(exploitation_count)
+    )
+    requested_exploration_count = (
+        FAST_REPLAY_DEFAULT_EXPLORATION_COUNT
+        if exploration_count is None
+        else int(exploration_count)
+    )
+    bounded_exploitation_count = (
+        max(
+            0,
+            min(
+                bounded_top_k,
+                FAST_REPLAY_DEFAULT_EXPLOITATION_COUNT,
+                requested_exploitation_count,
+            ),
+        )
     )
     bounded_exploration_count = max(
         0,
-        min(bounded_top_k - bounded_exploitation_count, int(exploration_count)),
+        min(
+            bounded_top_k - bounded_exploitation_count,
+            FAST_REPLAY_DEFAULT_EXPLORATION_COUNT,
+            requested_exploration_count,
+        ),
     )
     symbol_stats = _build_symbol_stats(rows)
     hpairs_prefilter = build_hpairs_microstructure_prefilter(
@@ -309,7 +358,7 @@ def build_fast_replay_preview(
     selected_bucket_by_id = {
         row.candidate_spec_id: row.frontier_bucket
         for row in hpairs_prefilter.rows
-        if row.selected
+        if row.selected and row.frontier_bucket in {"exploitation", "exploration"}
     }
     if not selected_bucket_by_id:
         selected_bucket_by_id = _select_frontier_buckets(
@@ -627,10 +676,6 @@ def _select_frontier_buckets(
         if len(selected) >= exact_replay_candidate_cap:
             break
         selected[row.candidate_spec_id] = "exploration"
-    for row in eligible:
-        if len(selected) >= exact_replay_candidate_cap:
-            break
-        selected.setdefault(row.candidate_spec_id, "exploitation_backfill")
     if not selected and ranked_rows:
         selected[ranked_rows[0].candidate_spec_id] = "exploitation_backfill"
     return selected
@@ -1058,6 +1103,7 @@ def _lineage_blockers_for_row(row: FastReplayPreviewRow) -> tuple[str, ...]:
     ]
     if _observed_post_cost_expectancy_bps(row) <= 0:
         blockers.append("positive_post_cost_expectancy_missing")
+        blockers.append("target_implied_notional_blocked_non_positive_expectancy")
     return tuple(blockers)
 
 
@@ -1095,6 +1141,9 @@ __all__ = [
     "FAST_REPLAY_PREVIEW_ROW_SCHEMA_VERSION",
     "FAST_REPLAY_PREVIEW_SCHEMA_VERSION",
     "FAST_REPLAY_PROOF_SEMANTICS_LABEL",
+    "FAST_REPLAY_DEFAULT_EXPLOITATION_COUNT",
+    "FAST_REPLAY_DEFAULT_EXPLORATION_COUNT",
+    "FAST_REPLAY_EXACT_REPLAY_CANDIDATE_CAP",
     "FAST_REPLAY_WHITEPAPER_MECHANISMS",
     "FastReplayPreviewResult",
     "FastReplayPreviewRow",
