@@ -27,6 +27,10 @@ from app.models import (
 )
 from app.trading.tigerbeetle_client import FakeTigerBeetleClient
 from app.trading.tigerbeetle_journal import (
+    TIGERBEETLE_AUTHORITY_BLOCKER_ACCOUNTING_ONLY,
+    TIGERBEETLE_AUTHORITY_BLOCKER_RUNTIME_LEDGER_SOURCE_REFS_MISSING,
+    TIGERBEETLE_AUTHORITY_BLOCKER_RUNTIME_LEDGER_SOURCE_WINDOW_REFS_MISSING,
+    TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_STATUS_PASS,
     TigerBeetleLedgerJournal,
     _account_specs,
     _event_amount_usd,
@@ -43,6 +47,7 @@ from app.trading.tigerbeetle_journal import (
     execution_cost_transfer_id,
     execution_transfer_id,
     runtime_ledger_transfer_id,
+    tigerbeetle_runtime_ledger_journal_payload,
 )
 from app.trading.tigerbeetle_ids import u128_decimal
 from app.trading.tigerbeetle_ledger_model import (
@@ -487,6 +492,10 @@ class TestTigerBeetleLedgerJournal(TestCase):
     def test_runtime_bucket_source_writes_real_runtime_ledger_ref(self) -> None:
         with Session(self.engine) as session:
             bucket = _runtime_bucket()
+            bucket.payload_json = {
+                "source_refs": ["postgres:execution_order_events:event-1"],
+                "source_window_refs": ["postgres:source_windows:window-1"],
+            }
             session.add(bucket)
             session.flush()
             client = FakeTigerBeetleClient()
@@ -506,6 +515,25 @@ class TestTigerBeetleLedgerJournal(TestCase):
             self.assertEqual(ref.amount, Decimal("2500000"))
             self.assertEqual(ref.payload_json["pnl_direction"], "profit")
             self.assertEqual(ref.payload_json["signed_amount_micros"], 2500000)
+            parity = tigerbeetle_runtime_ledger_journal_payload(
+                bucket=bucket,
+                ref=ref,
+                status=TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_STATUS_PASS,
+            )
+            self.assertEqual(parity["status"], "pass")
+            self.assertFalse(parity["promotion_authority"])
+            self.assertIn(
+                TIGERBEETLE_AUTHORITY_BLOCKER_ACCOUNTING_ONLY,
+                parity["authority_blockers"],
+            )
+            self.assertNotIn(
+                TIGERBEETLE_AUTHORITY_BLOCKER_RUNTIME_LEDGER_SOURCE_REFS_MISSING,
+                parity["authority_blockers"],
+            )
+            self.assertNotIn(
+                TIGERBEETLE_AUTHORITY_BLOCKER_RUNTIME_LEDGER_SOURCE_WINDOW_REFS_MISSING,
+                parity["authority_blockers"],
+            )
             transfer = client.transfers[int(ref.transfer_id)]
             self.assertEqual(
                 ref.payload_json["debit_account_id"],
@@ -515,6 +543,39 @@ class TestTigerBeetleLedgerJournal(TestCase):
                 ref.payload_json["credit_account_id"],
                 str(getattr(transfer, "credit_account_id")),
             )
+
+    def test_runtime_bucket_journal_payload_marks_aggregate_only_non_authority(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            bucket = _runtime_bucket()
+            bucket.payload_json = {"source": "aggregate-only-fixture"}
+            session.add(bucket)
+            session.flush()
+            client = FakeTigerBeetleClient()
+
+            ref = TigerBeetleLedgerJournal(
+                settings_obj=_settings(),
+                client=client,
+            ).journal_runtime_ledger_bucket(session, bucket)
+
+        self.assertIsNotNone(ref)
+        assert ref is not None
+        parity = tigerbeetle_runtime_ledger_journal_payload(
+            bucket=bucket,
+            ref=ref,
+            status=TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_STATUS_PASS,
+        )
+        self.assertFalse(parity["promotion_authority"])
+        self.assertFalse(parity["overrides_runtime_ledger_authority"])
+        self.assertIn(
+            TIGERBEETLE_AUTHORITY_BLOCKER_RUNTIME_LEDGER_SOURCE_REFS_MISSING,
+            parity["authority_blockers"],
+        )
+        self.assertIn(
+            TIGERBEETLE_AUTHORITY_BLOCKER_RUNTIME_LEDGER_SOURCE_WINDOW_REFS_MISSING,
+            parity["authority_blockers"],
+        )
 
     def test_negative_runtime_bucket_reverses_transfer_direction(self) -> None:
         with Session(self.engine) as session:

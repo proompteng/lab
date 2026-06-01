@@ -49,7 +49,15 @@ from .runtime_ledger_proof_policy import runtime_ledger_proof_policy_from_env
 from .runtime_ledger_source_authority import (
     runtime_ledger_promotion_source_authority_blockers,
 )
-from .tigerbeetle_journal import TigerBeetleLedgerJournal
+from .tigerbeetle_journal import (
+    TIGERBEETLE_BLOCKER_JOURNAL_DISABLED,
+    TIGERBEETLE_BLOCKER_JOURNAL_ENTRY_UNAVAILABLE,
+    TIGERBEETLE_BLOCKER_JOURNAL_ERROR,
+    TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_STATUS_NON_AUTHORITY_BLOCKED,
+    TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_STATUS_PASS,
+    TigerBeetleLedgerJournal,
+    tigerbeetle_runtime_ledger_journal_payload,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1734,6 +1742,17 @@ def _tigerbeetle_account_refs_for_ids(
     )
 
 
+def _tigerbeetle_account_refs_for_transfer_ref(
+    session: Session,
+    ref: TigerBeetleTransferRef,
+) -> list[TigerBeetleAccountRef]:
+    return _tigerbeetle_account_refs_for_ids(
+        session=session,
+        cluster_ids=[ref.cluster_id],
+        account_ids=_tigerbeetle_transfer_account_ids(ref),
+    )
+
+
 def _tigerbeetle_refs_for_ledger_payload(
     session: Session,
     ledger_payload: Mapping[str, Any],
@@ -1952,20 +1971,125 @@ def _journal_tigerbeetle_runtime_ledger_bucket(
     row: StrategyRuntimeLedgerBucket,
 ) -> None:
     if not settings.tigerbeetle_enabled or not settings.tigerbeetle_journal_enabled:
+        _mark_runtime_ledger_bucket_tigerbeetle_journal(
+            session,
+            row,
+            ref=None,
+            status=TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_STATUS_NON_AUTHORITY_BLOCKED,
+            blockers=[TIGERBEETLE_BLOCKER_JOURNAL_DISABLED],
+        )
         return
     session.flush()
     try:
         with TigerBeetleLedgerJournal() as journal, session.begin_nested():
-            journal.journal_runtime_ledger_bucket(session, row)
+            ref = journal.journal_runtime_ledger_bucket(session, row)
     except Exception as exc:
         if settings.tigerbeetle_required:
             raise
+        _mark_runtime_ledger_bucket_tigerbeetle_journal(
+            session,
+            row,
+            ref=None,
+            status=TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_STATUS_NON_AUTHORITY_BLOCKED,
+            blockers=[TIGERBEETLE_BLOCKER_JOURNAL_ERROR],
+            error=f"{type(exc).__name__}: {exc}",
+        )
         logger.warning(
             "TigerBeetle runtime-ledger journal failed for bucket_id=%s run_id=%s: %s",
             row.id,
             row.run_id,
             exc,
         )
+        return
+    if ref is None:
+        _mark_runtime_ledger_bucket_tigerbeetle_journal(
+            session,
+            row,
+            ref=None,
+            status=TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_STATUS_NON_AUTHORITY_BLOCKED,
+            blockers=[TIGERBEETLE_BLOCKER_JOURNAL_ENTRY_UNAVAILABLE],
+        )
+        return
+    _mark_runtime_ledger_bucket_tigerbeetle_journal(
+        session,
+        row,
+        ref=ref,
+        status=TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_STATUS_PASS,
+        blockers=[],
+    )
+
+
+def _mark_runtime_ledger_bucket_tigerbeetle_journal(
+    session: Session,
+    row: StrategyRuntimeLedgerBucket,
+    *,
+    ref: TigerBeetleTransferRef | None,
+    status: str,
+    blockers: Sequence[str],
+    error: str | None = None,
+) -> None:
+    account_refs = (
+        _tigerbeetle_account_refs_for_transfer_ref(session, ref)
+        if ref is not None
+        else []
+    )
+    journal_payload = tigerbeetle_runtime_ledger_journal_payload(
+        bucket=row,
+        ref=ref,
+        status=status,
+        blockers=blockers,
+        account_refs=account_refs,
+        error=error,
+    )
+    existing_payload = _mapping(row.payload_json)
+    source_refs = _string_list(existing_payload.get("source_refs"))
+    for source_ref in _string_list(journal_payload.get("source_refs")):
+        if source_ref not in source_refs:
+            source_refs.append(source_ref)
+    source_row_counts = _mapping(existing_payload.get("source_row_counts"))
+    if ref is not None:
+        source_row_counts["tigerbeetle_transfer_refs"] = 1
+        source_row_counts["tigerbeetle_account_refs"] = len(account_refs)
+    existing_tigerbeetle_refs = _mapping(existing_payload.get("tigerbeetle"))
+    tigerbeetle_refs = (
+        journal_payload
+        if ref is not None or not existing_tigerbeetle_refs
+        else existing_tigerbeetle_refs
+    )
+    tigerbeetle_account_ids = (
+        journal_payload["account_ids"]
+        if ref is not None
+        else existing_payload.get("tigerbeetle_account_ids")
+        or tigerbeetle_refs.get("account_ids")
+        or journal_payload["account_ids"]
+    )
+    tigerbeetle_account_keys = (
+        journal_payload["account_keys"]
+        if ref is not None
+        else existing_payload.get("tigerbeetle_account_keys")
+        or tigerbeetle_refs.get("account_keys")
+        or journal_payload["account_keys"]
+    )
+    tigerbeetle_transfer_ids = (
+        journal_payload["transfer_ids"]
+        if ref is not None
+        else existing_payload.get("tigerbeetle_transfer_ids")
+        or tigerbeetle_refs.get("transfer_ids")
+        or journal_payload["transfer_ids"]
+    )
+    row.payload_json = {
+        **existing_payload,
+        "source_refs": source_refs,
+        "source_row_counts": source_row_counts,
+        "tigerbeetle_journal_parity": journal_payload,
+        "tigerbeetle": tigerbeetle_refs,
+        "tigerbeetle_account_ids": tigerbeetle_account_ids,
+        "tigerbeetle_account_keys": tigerbeetle_account_keys,
+        "tigerbeetle_transfer_ids": tigerbeetle_transfer_ids,
+        "tigerbeetle_non_authority_blockers": journal_payload["authority_blockers"],
+    }
+    session.add(row)
+    session.flush()
 
 
 def _runtime_ledger_daily_summary_from_observed_buckets(

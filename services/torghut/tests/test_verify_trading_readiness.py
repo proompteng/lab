@@ -304,6 +304,33 @@ def _runtime_ledger_proof_packet(
     }
 
 
+def _tigerbeetle_parity(
+    *,
+    ok: bool = True,
+    parity_status: str = "pass",
+    source_count: int = 3,
+    blockers: list[str] | None = None,
+    overrides_runtime_ledger_authority: bool = False,
+) -> dict[str, object]:
+    return {
+        "schema_version": verifier.TIGERBEETLE_RUNTIME_LEDGER_PARITY_SCHEMA_VERSION,
+        "ok": ok,
+        "parity_status": parity_status,
+        "blockers": blockers or [],
+        "totals": {
+            "checked_source_count": source_count,
+            "checked_ref_count": source_count,
+            "checked_actual_transfer_count": source_count,
+        },
+        "read_only_contract": {
+            "generates_proof": False,
+            "synthesizes_fills": False,
+            "overrides_runtime_ledger_authority": (overrides_runtime_ledger_authority),
+            "writes_database": False,
+        },
+    }
+
+
 class _JsonHandler(BaseHTTPRequestHandler):
     payload: ClassVar[object] = {}
 
@@ -428,6 +455,67 @@ class TestVerifyTradingReadiness(TestCase):
             result["runtime_ledger_proof_packet"]["schema_version"],
             verifier.RUNTIME_LEDGER_PROOF_PACKET_SCHEMA_VERSION,
         )
+
+    def test_tigerbeetle_parity_can_be_required_as_accounting_only_gate(
+        self,
+    ) -> None:
+        result = evaluate_trading_readiness(
+            _ready_status(),
+            tigerbeetle_parity=_tigerbeetle_parity(),
+            require_tigerbeetle_parity=True,
+        )
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["failed_checks"], [])
+        self.assertEqual(result["tigerbeetle_parity"]["parity_status"], "pass")
+
+    def test_tigerbeetle_parity_requirement_fails_closed_on_degraded_or_authority_claim(
+        self,
+    ) -> None:
+        degraded = evaluate_trading_readiness(
+            _ready_status(),
+            tigerbeetle_parity=_tigerbeetle_parity(
+                ok=False,
+                parity_status="blocked",
+                blockers=["tigerbeetle_parity_entry_missing"],
+            ),
+            require_tigerbeetle_parity=True,
+        )
+
+        self.assertFalse(degraded["ok"])
+        self.assertIn(
+            "tigerbeetle_runtime_ledger_parity",
+            degraded["failed_checks"],
+        )
+        self.assertEqual(
+            degraded["next_action"],
+            "repair_tigerbeetle_journal_parity_without_using_as_profit_authority",
+        )
+
+        synthetic = evaluate_trading_readiness(
+            _ready_status(),
+            tigerbeetle_parity=_tigerbeetle_parity(
+                overrides_runtime_ledger_authority=True
+            ),
+            require_tigerbeetle_parity=True,
+        )
+        self.assertFalse(synthetic["ok"])
+        self.assertIn("tigerbeetle_runtime_ledger_parity", synthetic["failed_checks"])
+
+    def test_tigerbeetle_parity_does_not_replace_runtime_ledger_authority(
+        self,
+    ) -> None:
+        result = evaluate_trading_readiness(
+            _ready_status(),
+            tigerbeetle_parity=_tigerbeetle_parity(),
+            min_runtime_ledger_net_pnl=Decimal("500"),
+            require_runtime_ledger_profit_proof=True,
+            require_tigerbeetle_parity=True,
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertIn("completion_status_present", result["failed_checks"])
+        self.assertNotIn("tigerbeetle_runtime_ledger_parity", result["failed_checks"])
 
     def test_runtime_ledger_proof_packet_fails_closed_when_blocked(self) -> None:
         result = evaluate_trading_readiness(
