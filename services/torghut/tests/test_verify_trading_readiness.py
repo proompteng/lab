@@ -1360,6 +1360,51 @@ class TestVerifyTradingReadiness(TestCase):
         )
         self.assertTrue(ready["ok"], ready)
 
+    def test_paper_route_readiness_surfaces_quote_fillability_blockers(
+        self,
+    ) -> None:
+        evidence = _paper_route_evidence(import_ready=True)
+        runtime_window_audit = evidence["runtime_window_import_audit"]
+        assert isinstance(runtime_window_audit, dict)
+        diagnostics = runtime_window_audit["diagnostics"]
+        assert isinstance(diagnostics, dict)
+        diagnostics["rejected_signal_diagnostic_reasons"] = [
+            "source_signal_rejected_by_quote_quality",
+            "source_reject_missing_bid",
+            "source_reject_spread_bps_exceeded",
+        ]
+
+        result = evaluate_trading_readiness(
+            _ready_status(),
+            paper_route_evidence=evidence,
+            require_paper_route_target_plan=True,
+            require_paper_route_import_ready=True,
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertIn(
+            "paper_route_target_plan_quote_fillability", result["failed_checks"]
+        )
+        self.assertEqual(
+            result["next_action"],
+            "repair_quote_quality_or_fillability_before_runtime_ledger_collection",
+        )
+        quote_fillability = result["paper_route_target_plan"]["quote_fillability"]
+        self.assertTrue(quote_fillability["blocked"])
+        self.assertEqual(quote_fillability["state"], "blocked")
+        self.assertEqual(
+            quote_fillability["repair_action"],
+            "collect_bid_quote_before_routeability_claim",
+        )
+        self.assertEqual(
+            quote_fillability["blocking_reasons"],
+            [
+                "source_reject_missing_bid",
+                "source_reject_spread_bps_exceeded",
+                "source_signal_rejected_by_quote_quality",
+            ],
+        )
+
     def test_paper_route_target_plan_allows_drift_only_evidence_collection(
         self,
     ) -> None:

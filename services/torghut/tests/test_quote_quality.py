@@ -221,3 +221,85 @@ class TestQuoteQuality(TestCase):
         self.assertEqual(status.quote_age_seconds, Decimal('84.0'))
         self.assertEqual(status.bid, Decimal('190.00'))
         self.assertEqual(status.ask, Decimal('190.02'))
+        self.assertEqual(
+            status.repair_action,
+            'refresh_quote_snapshot_and_recompute_route_fillability',
+        )
+        self.assertIn('fresh_quote_as_of', status.evidence_requirements)
+
+    def test_assess_signal_quote_quality_uses_h_pairs_price_snapshot_quote(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 17, 30, 24, tzinfo=timezone.utc),
+            symbol='AAPL',
+            timeframe='1Sec',
+            seq=19,
+            payload={
+                'price_snapshot': {
+                    'price': '190.01',
+                    'bid': '190.00',
+                    'ask': '190.02',
+                    'spread': '0.02',
+                    'quote_as_of': '2026-03-27T17:30:23+00:00',
+                    'quote_source': 'paper_route_h_pairs_quote',
+                },
+                'strategy_runtime': {
+                    'hypothesis_id': 'H-PAIRS-01',
+                    'strategy_name': 'microbar-cross-sectional-pairs-v1',
+                },
+            },
+        )
+
+        status = assess_signal_quote_quality(
+            signal=signal,
+            previous_price=Decimal('190.00'),
+            policy=QuoteQualityPolicy(max_executable_quote_age_seconds=30),
+        )
+
+        self.assertTrue(status.valid)
+        self.assertIsNone(status.reason)
+        self.assertEqual(status.fillability_state, 'executable_quote_ready')
+        self.assertIsNone(status.repair_action)
+        self.assertEqual(status.source, 'paper_route_h_pairs_quote')
+        self.assertEqual(status.quote_age_seconds, Decimal('1.0'))
+        self.assertEqual(status.price, Decimal('190.01'))
+        self.assertEqual(status.bid, Decimal('190.00'))
+        self.assertEqual(status.ask, Decimal('190.02'))
+        self.assertEqual(
+            status.to_readback()['fillability_state'], 'executable_quote_ready'
+        )
+
+    def test_assess_signal_quote_quality_exposes_fillability_repair_readback(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 17, 30, 24, tzinfo=timezone.utc),
+            symbol='AAPL',
+            timeframe='1Sec',
+            seq=20,
+            payload={
+                'price_snapshot': {
+                    'price': '190.01',
+                    'ask': '190.02',
+                    'quote_as_of': '2026-03-27T17:30:23+00:00',
+                    'quote_source': 'paper_route_h_pairs_quote',
+                },
+            },
+        )
+
+        status = assess_signal_quote_quality(signal=signal, previous_price=None)
+
+        self.assertFalse(status.valid)
+        self.assertEqual(status.reason, 'missing_bid')
+        self.assertEqual(status.fillability_state, 'blocked')
+        self.assertEqual(
+            status.repair_action, 'collect_bid_quote_before_routeability_claim'
+        )
+        self.assertEqual(
+            status.evidence_requirements, ('bid_px', 'quote_source', 'quote_as_of')
+        )
+        self.assertEqual(
+            status.to_readback()['repair_action'],
+            'collect_bid_quote_before_routeability_claim',
+        )

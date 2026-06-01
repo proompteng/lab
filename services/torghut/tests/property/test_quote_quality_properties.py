@@ -26,6 +26,8 @@ def test_tight_positive_quotes_remain_executable(signal: SignalEnvelope) -> None
 
     assert status.valid is True
     assert status.reason is None
+    assert status.fillability_state == 'executable_quote_ready'
+    assert status.repair_action is None
     assert status.spread_bps is not None
     assert status.spread_bps >= 0
 
@@ -39,6 +41,8 @@ def test_crossed_quotes_always_reject(signal: SignalEnvelope) -> None:
 
     assert status.valid is False
     assert status.reason == 'crossed_quote'
+    assert status.fillability_state == 'blocked'
+    assert status.repair_action == 'refresh_uncrossed_executable_quote_before_routeability_claim'
 
 
 @given(ask=positive_prices())
@@ -66,6 +70,8 @@ def test_zero_top_level_bid_does_not_fall_back_to_nested_bid(ask: Decimal) -> No
 
     assert status.valid is False
     assert status.reason == 'non_positive_bid'
+    assert status.fillability_state == 'blocked'
+    assert status.repair_action == 'refresh_bid_quote_before_routeability_claim'
 
 
 @given(
@@ -99,3 +105,5 @@ def test_non_positive_bid_is_never_executable(bid: Decimal, ask: Decimal) -> Non
 
     assert status.valid is False
     assert status.reason == 'non_positive_bid'
+    assert status.fillability_state == 'blocked'
+    assert status.repair_action == 'refresh_bid_quote_before_routeability_claim'
