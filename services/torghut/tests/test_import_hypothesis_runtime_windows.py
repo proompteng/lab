@@ -60,10 +60,12 @@ from scripts.import_hypothesis_runtime_windows import (
     _persistence_session,
     _source_activity_missing_summary,
     _source_backed_fill_lifecycle_rows,
+    _source_backed_order_lifecycle_rows,
     _source_decision_mode,
     _source_decision_mode_counts,
     _source_decision_rows_profit_proof_eligible,
     _source_order_feed_payload_delta_fill,
+    _required_order_lifecycle_source_row_count,
     _stable_payload_digest,
     _strategy_name_candidates,
     _sqlalchemy_dsn,
@@ -2210,7 +2212,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(bucket["source_materialization"], "execution_order_events")
         self.assertEqual(bucket["account_equity"], "10000")
         self.assertEqual(bucket["account_equity_source"], "equity")
-        self.assertEqual(bucket["source_window_start"], "2026-03-06T14:35:01+00:00")
+        self.assertEqual(bucket["source_window_start"], "2026-03-06T14:34:01+00:00")
         self.assertEqual(
             bucket["source_window_end"], "2026-03-06T14:40:01.000001+00:00"
         )
@@ -2227,16 +2229,27 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             bucket["source_row_counts"],
             {
                 "executions": 2,
-                "execution_order_events": 2,
-                "order_feed_source_windows": 2,
+                "execution_order_events": 4,
+                "order_feed_source_windows": 4,
                 "trade_decisions": 2,
             },
         )
         self.assertEqual(
             bucket["source_window_ids"],
             [
+                "source-window-new-buy",
+                "source-window-new-sell",
                 "source-window-fill-buy",
                 "source-window-fill-sell",
+            ],
+        )
+        self.assertEqual(
+            bucket["execution_order_event_ids"],
+            [
+                "event-new-buy",
+                "event-new-sell",
+                "event-fill-buy",
+                "event-fill-sell",
             ],
         )
         self.assertTrue(_runtime_ledger_bucket_profit_proof_present(bucket))
@@ -2429,14 +2442,16 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(bucket["net_strategy_pnl_after_costs"], "0.70")
         self.assertEqual(bucket["open_position_count"], 0)
         self.assertEqual(bucket["closed_trade_count"], 1)
-        self.assertEqual(bucket["source_window_start"], "2026-03-06T14:35:01+00:00")
+        self.assertEqual(bucket["source_window_start"], "2026-03-06T14:34:01+00:00")
         self.assertEqual(
             bucket["source_window_end"], "2026-03-06T14:40:01.000001+00:00"
         )
         self.assertEqual(
             bucket["source_window_ids"],
             [
+                "source-window-new-buy",
                 "source-window-fill-buy",
+                "source-window-new-sell",
                 "source-window-fill-sell",
             ],
         )
@@ -2444,8 +2459,8 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             bucket["source_row_counts"],
             {
                 "executions": 2,
-                "execution_order_events": 2,
-                "order_feed_source_windows": 2,
+                "execution_order_events": 4,
+                "order_feed_source_windows": 4,
                 "trade_decisions": 2,
             },
         )
@@ -3539,6 +3554,90 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             rows[0]["execution_order_event_id"], "source-backed-fill-event"
         )
 
+    def test_source_backed_order_lifecycle_rows_require_row_level_refs(
+        self,
+    ) -> None:
+        rows = _source_backed_order_lifecycle_rows(
+            [
+                {
+                    "execution_order_event_id": "decision-event",
+                    "event_type": "decision",
+                    "alpaca_order_id": "order-decision",
+                    "source_topic": "alpaca.trade_updates",
+                    "source_partition": 0,
+                    "source_offset": 120,
+                    "source_window_id": "source-window-decision",
+                },
+                {
+                    "execution_order_event_id": "missing-order-id-event",
+                    "event_type": "new",
+                    "source_topic": "alpaca.trade_updates",
+                    "source_partition": 0,
+                    "source_offset": 121,
+                    "source_window_id": "source-window-missing-order",
+                },
+                {
+                    "event_type": "new",
+                    "alpaca_order_id": "order-missing-event-ref",
+                    "source_topic": "alpaca.trade_updates",
+                    "source_partition": 0,
+                    "source_offset": 122,
+                    "source_window_id": "source-window-missing-event-ref",
+                },
+                {
+                    "execution_order_event_id": "missing-source-window-event",
+                    "event_type": "new",
+                    "alpaca_order_id": "order-missing-source-window",
+                    "source_topic": "alpaca.trade_updates",
+                    "source_partition": 0,
+                    "source_offset": 123,
+                },
+                {
+                    "execution_order_event_id": "missing-source-offset-event",
+                    "event_type": "new",
+                    "alpaca_order_id": "order-missing-source-offset",
+                    "source_topic": "alpaca.trade_updates",
+                    "source_partition": 0,
+                    "source_window_id": "source-window-missing-offset",
+                },
+                {
+                    "execution_order_event_id": "source-backed-new-event",
+                    "event_type": "new",
+                    "alpaca_order_id": "order-source-backed",
+                    "source_topic": "alpaca.trade_updates",
+                    "source_partition": 0,
+                    "source_offset": 124,
+                    "source_window_id": "source-window-backed",
+                },
+            ]
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["execution_order_event_id"], "source-backed-new-event")
+        self.assertEqual(
+            _required_order_lifecycle_source_row_count(
+                rows,
+                expected_order_ids={"order-source-backed", "order-missing"},
+            ),
+            2,
+        )
+        self.assertEqual(
+            _required_order_lifecycle_source_row_count(
+                [
+                    {
+                        "event_type": "decision",
+                        "alpaca_order_id": "order-source-backed",
+                    },
+                    {
+                        "event_type": "new",
+                        "alpaca_order_id": "order-other",
+                    },
+                ],
+                expected_order_ids={"order-source-backed"},
+            ),
+            1,
+        )
+
     def test_build_realized_strategy_pnl_rows_accepts_execution_economics_with_order_feed_lifecycle(
         self,
     ) -> None:
@@ -3699,7 +3798,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(bucket["source_materialization"], "source_execution_lifecycle")
         self.assertEqual(
             bucket["source_window_start"],
-            "2026-03-06T14:31:01+00:00",
+            "2026-03-06T14:30:01+00:00",
         )
         self.assertEqual(
             bucket["source_window_end"],
@@ -3707,7 +3806,12 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         )
         self.assertEqual(
             bucket["source_window_ids"],
-            ["source-window-fill-buy", "source-window-fill-sell"],
+            [
+                "source-window-new-buy",
+                "source-window-new-sell",
+                "source-window-fill-buy",
+                "source-window-fill-sell",
+            ],
         )
         self.assertEqual(
             bucket["cost_basis_counts"],

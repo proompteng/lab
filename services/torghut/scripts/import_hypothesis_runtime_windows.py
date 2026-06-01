@@ -86,6 +86,9 @@ _RUNTIME_LEDGER_DECISION_EVENTS = frozenset(
 _RUNTIME_LEDGER_FILL_EVENTS = frozenset(
     {"fill", "filled", "partial_fill", "partially_filled"}
 )
+_RUNTIME_LEDGER_ORDER_LIFECYCLE_EVENTS = _RUNTIME_LEDGER_FILL_EVENTS | frozenset(
+    {"order_submitted"}
+)
 ORDER_FEED_FILL_LIFECYCLE_MISSING_BLOCKER = "order_feed_fill_lifecycle_missing"
 ORDER_FEED_FILL_LIFECYCLE_INCOMPLETE_BLOCKER = "order_feed_fill_lifecycle_incomplete"
 ORDER_FEED_FILL_LIFECYCLE_ORDER_ID_MISSING_BLOCKER = (
@@ -2707,6 +2710,53 @@ def _source_backed_fill_lifecycle_rows(
     return source_backed_rows
 
 
+def _source_backed_order_lifecycle_rows(
+    rows: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    source_backed_rows: list[dict[str, object]] = []
+    for row in rows:
+        normalized = {str(key): value for key, value in row.items()}
+        if (
+            _runtime_ledger_event_type(normalized)
+            not in _RUNTIME_LEDGER_ORDER_LIFECYCLE_EVENTS
+        ):
+            continue
+        if _runtime_order_id(normalized) is None:
+            continue
+        if not _source_identifier_values(
+            [normalized], "execution_order_event_id", "event_fingerprint"
+        ):
+            continue
+        if not _source_identifier_values([normalized], "source_window_id"):
+            continue
+        if not _source_offset_values([normalized]):
+            continue
+        source_backed_rows.append(dict(normalized))
+    return source_backed_rows
+
+
+def _required_order_lifecycle_source_row_count(
+    rows: Sequence[Mapping[str, object]],
+    *,
+    expected_order_ids: set[str],
+) -> int:
+    if not expected_order_ids:
+        return 0
+    count = 0
+    for row in rows:
+        normalized = {str(key): value for key, value in row.items()}
+        if (
+            _runtime_ledger_event_type(normalized)
+            not in _RUNTIME_LEDGER_ORDER_LIFECYCLE_EVENTS
+        ):
+            continue
+        order_id = _runtime_order_id(normalized)
+        if order_id is None or order_id not in expected_order_ids:
+            continue
+        count += 1
+    return max(count, len(expected_order_ids))
+
+
 def _source_backed_fill_lifecycle_order_ids(
     rows: Sequence[Mapping[str, object]],
 ) -> set[str]:
@@ -2840,37 +2890,9 @@ def _runtime_source_context_for_bucket(
     source_backed_fill_lifecycle_rows = _source_backed_fill_lifecycle_rows(
         bucket_order_rows
     )
-    source_backed_fill_lifecycle_times = [
-        event_time
-        for row in source_backed_fill_lifecycle_rows
-        if (
-            event_time := _runtime_ledger_row_time(
-                {str(key): value for key, value in row.items()}
-            )
-        )
-        is not None
-    ]
-    source_window_ids = _source_identifier_values(
-        source_backed_fill_lifecycle_rows,
-        "source_window_id",
+    source_backed_order_lifecycle_rows = _source_backed_order_lifecycle_rows(
+        bucket_order_rows
     )
-    source_row_counts = {
-        "trade_decisions": len(bucket_decision_rows),
-        "executions": len(bucket_execution_rows),
-        "execution_order_events": len(source_backed_fill_lifecycle_rows),
-    }
-    if source_window_ids:
-        source_row_counts["order_feed_source_windows"] = len(source_window_ids)
-    source_refs = [
-        ref
-        for table, ref in (
-            ("trade_decisions", "postgres:trade_decisions"),
-            ("executions", "postgres:executions"),
-            ("execution_order_events", "postgres:execution_order_events"),
-            ("order_feed_source_windows", "postgres:order_feed_source_windows"),
-        )
-        if source_row_counts.get(table, 0) > 0
-    ]
     expected_execution_fill_order_ids = set()
     for row in bucket_execution_rows:
         if (
@@ -2901,11 +2923,55 @@ def _runtime_source_context_for_bucket(
     ) and expected_execution_fill_order_ids.issubset(
         source_backed_fill_lifecycle_order_ids
     )
+    source_authority_lifecycle_rows = (
+        source_backed_order_lifecycle_rows
+        if source_backed_fill_lifecycle_complete
+        else source_backed_fill_lifecycle_rows
+    )
+    source_authority_lifecycle_times = [
+        event_time
+        for row in source_authority_lifecycle_rows
+        if (
+            event_time := _runtime_ledger_row_time(
+                {str(key): value for key, value in row.items()}
+            )
+        )
+        is not None
+    ]
+    source_window_ids = _source_identifier_values(
+        source_authority_lifecycle_rows,
+        "source_window_id",
+    )
+    required_order_lifecycle_source_row_count = (
+        _required_order_lifecycle_source_row_count(
+            bucket_order_rows,
+            expected_order_ids=expected_execution_fill_order_ids,
+        )
+    )
+    source_row_counts = {
+        "trade_decisions": len(bucket_decision_rows),
+        "executions": len(bucket_execution_rows),
+        "execution_order_events": required_order_lifecycle_source_row_count,
+    }
+    if source_window_ids:
+        source_row_counts["order_feed_source_windows"] = len(source_window_ids)
+    elif required_order_lifecycle_source_row_count > 0:
+        source_row_counts["order_feed_source_windows"] = 1
+    source_refs = [
+        ref
+        for table, ref in (
+            ("trade_decisions", "postgres:trade_decisions"),
+            ("executions", "postgres:executions"),
+            ("execution_order_events", "postgres:execution_order_events"),
+            ("order_feed_source_windows", "postgres:order_feed_source_windows"),
+        )
+        if source_row_counts.get(table, 0) > 0
+    ]
     source_materialization = None
     authority_class = None
-    source_offsets = _source_offset_values(source_backed_fill_lifecycle_rows)
+    source_offsets = _source_offset_values(source_authority_lifecycle_rows)
     execution_order_event_ids = _source_identifier_values(
-        source_backed_fill_lifecycle_rows,
+        source_authority_lifecycle_rows,
         "execution_order_event_id",
         "event_fingerprint",
     )
@@ -2926,13 +2992,13 @@ def _runtime_source_context_for_bucket(
         "source_rows": source_rows,
         "source_window_ids": source_window_ids,
         "source_window_start": (
-            min(source_backed_fill_lifecycle_times)
-            if source_backed_fill_lifecycle_times
+            min(source_authority_lifecycle_times)
+            if source_authority_lifecycle_times
             else bucket.bucket_started_at
         ),
         "source_window_end": (
-            max(source_backed_fill_lifecycle_times) + timedelta(microseconds=1)
-            if source_backed_fill_lifecycle_times
+            max(source_authority_lifecycle_times) + timedelta(microseconds=1)
+            if source_authority_lifecycle_times
             else bucket.bucket_ended_at
         ),
         "source_row_counts": source_row_counts,
