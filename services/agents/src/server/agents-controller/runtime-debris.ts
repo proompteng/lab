@@ -40,9 +40,11 @@ const getPodName = (pod: unknown) => asString(readNested(pod, ['metadata', 'name
 const getPodPhase = (pod: unknown) => asString(readNested(pod, ['status', 'phase']))?.trim() ?? null
 
 const getCreationTimestampMs = (pod: unknown) => {
-  const raw = asString(readNested(pod, ['metadata', 'creationTimestamp']))
-  if (!raw) return null
-  const parsed = Date.parse(raw)
+  const raw = readNested(pod, ['metadata', 'creationTimestamp'])
+  if (raw instanceof Date) return raw.getTime()
+  const timestamp = asString(raw)
+  if (!timestamp) return null
+  const parsed = Date.parse(timestamp)
   return Number.isNaN(parsed) ? null : parsed
 }
 
