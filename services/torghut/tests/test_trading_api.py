@@ -7491,7 +7491,7 @@ class TestTradingApi(TestCase):
             else:
                 app.state.trading_scheduler = original_scheduler
 
-    def test_trading_paper_route_target_plan_returns_lightweight_plan(self) -> None:
+    def test_trading_paper_route_target_plan_uses_auto_import_audit_mode(self) -> None:
         original_scheduler = getattr(app.state, "trading_scheduler", None)
         target = {
             "hypothesis_id": "H-PAIRS-01",
@@ -7528,6 +7528,60 @@ class TestTradingApi(TestCase):
         try:
             if hasattr(app.state, "trading_scheduler"):
                 del app.state.trading_scheduler
+
+            def _assert_auto_audit_mode(
+                *args: object, **kwargs: object
+            ) -> dict[str, object]:
+                self.assertEqual(
+                    kwargs["live_submission_gate"][
+                        "runtime_ledger_paper_probation_import_plan"
+                    ],
+                    live_gate["runtime_ledger_paper_probation_import_plan"],
+                )
+                self.assertIsNone(kwargs["include_runtime_window_import_audit"])
+                self.assertTrue(kwargs["route_reacquisition_book"])
+                return {
+                    "schema_version": "torghut.paper-route-target-plan.v1",
+                    "target_count": 1,
+                    "skipped_target_count": 0,
+                    "runtime_window_import_audit_mode": "deferred_until_import_ready",
+                    "runtime_window_import_plan": {
+                        "target_count": 1,
+                        "runtime_window_import_handoff": {
+                            "target_plan_endpoint": "/trading/paper-route-target-plan"
+                        },
+                        "targets": [
+                            {
+                                "candidate_id": target["candidate_id"],
+                                "paper_route_probe_symbols": ["AAPL"],
+                                "promotion_allowed": False,
+                                "final_promotion_allowed": False,
+                            }
+                        ],
+                    },
+                    "next_paper_route_runtime_window_targets": {
+                        "purpose": "next_session_paper_route_runtime_window_evidence_collection",
+                        "target_count": 1,
+                        "targets": [
+                            {
+                                "candidate_id": target["candidate_id"],
+                                "paper_route_probe_symbols": ["AAPL"],
+                                "window_start": "2026-05-26T13:30:00+00:00",
+                            }
+                        ],
+                    },
+                    "purpose": "next_session_paper_route_runtime_window_evidence_collection",
+                    "targets": [
+                        {
+                            "candidate_id": target["candidate_id"],
+                            "paper_route_probe_symbols": ["AAPL"],
+                            "window_start": "2026-05-26T13:30:00+00:00",
+                            "promotion_allowed": False,
+                            "final_promotion_allowed": False,
+                        }
+                    ],
+                }
+
             with (
                 patch(
                     "app.main._build_live_submission_gate_payload",
@@ -7545,14 +7599,8 @@ class TestTradingApi(TestCase):
                     },
                 ),
                 patch(
-                    "app.main.build_paper_route_evidence_audit",
-                    side_effect=AssertionError("full audit should not run"),
-                ),
-                patch(
-                    "app.trading.paper_route_evidence._target_audit",
-                    side_effect=AssertionError(
-                        "target-plan endpoint should not run per-target audits"
-                    ),
+                    "app.main.build_paper_route_target_plan_payload",
+                    side_effect=_assert_auto_audit_mode,
                 ),
             ):
                 response = self.client.get("/trading/paper-route-target-plan")
@@ -7867,7 +7915,7 @@ class TestTradingApi(TestCase):
             *args: object, **kwargs: object
         ) -> dict[str, object]:
             self.assertEqual(kwargs["route_reacquisition_book"], {})
-            self.assertFalse(kwargs["include_runtime_window_import_audit"])
+            self.assertIsNone(kwargs["include_runtime_window_import_audit"])
             return {
                 "schema_version": "torghut.paper-route-target-plan.v1",
                 "target_count": 1,

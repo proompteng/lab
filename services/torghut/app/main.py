@@ -4678,7 +4678,7 @@ def trading_paper_route_target_plan(
         session,
         live_submission_gate=cast(Mapping[str, Any], live_submission_gate),
         route_reacquisition_book=route_reacquisition_book,
-        include_runtime_window_import_audit=False,
+        include_runtime_window_import_audit=None,
     )
     return JSONResponse(status_code=200, content=jsonable_encoder(payload))
 
