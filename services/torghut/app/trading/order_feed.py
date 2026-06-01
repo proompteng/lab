@@ -74,6 +74,7 @@ class NormalizationResult:
 
     event: NormalizedOrderEvent | None
     drop_reason: str | None
+    account_label_explicit: bool = False
 
 
 @dataclass(frozen=True)
@@ -161,6 +162,7 @@ class OrderFeedIngestor:
             "malformed_total": 0,
             "missing_payload_total": 0,
             "missing_identity_total": 0,
+            "out_of_scope_account_total": 0,
             "unlinked_execution_total": 0,
             "unlinked_decision_total": 0,
             "failed_unhandled_total": 0,
@@ -223,13 +225,20 @@ class OrderFeedIngestor:
             if normalized.event is not None
             else _coerce_int(getattr(record, "offset", None))
         )
+        out_of_scope_account = (
+            normalized.event is not None
+            and normalized.account_label_explicit
+            and normalized.event.alpaca_account_label != self._default_account_label
+        )
         source_window = _create_order_feed_source_window(
             session,
             source_topic=source_topic,
             source_partition=source_partition,
             source_offset=source_offset,
             alpaca_account_label=(
-                normalized.event.alpaca_account_label
+                self._default_account_label
+                if out_of_scope_account
+                else normalized.event.alpaca_account_label
                 if normalized.event is not None
                 else self._default_account_label
             ),
@@ -238,6 +247,27 @@ class OrderFeedIngestor:
             counters["source_windows_total"] += 1
 
         try:
+            if out_of_scope_account:
+                counters["missing_fields_total"] += 1
+                if source_window is None:
+                    return _IngestRecordOutcome(durable=False)
+                _classify_source_window_drop(source_window, "out_of_scope_account")
+                _increment_drop_counter(counters, "out_of_scope_account")
+                cursor_updated = _upsert_order_feed_consumer_cursor_from_source(
+                    session,
+                    source_topic=source_topic,
+                    source_partition=source_partition,
+                    source_offset=source_offset,
+                    event_fingerprint=None,
+                    event_ts=None,
+                    duplicate=False,
+                    source_window=source_window,
+                )
+                if cursor_updated:
+                    counters["cursor_updates_total"] += 1
+                counters["classified_drops_total"] += 1
+                return _IngestRecordOutcome(durable=True)
+
             if normalized.event is None:
                 counters["missing_fields_total"] += 1
                 if normalized.drop_reason:
@@ -560,12 +590,18 @@ def _classify_source_window_drop(
     source_window.status = "dropped"
     source_window.status_reason = drop_reason or "unknown_drop"
     source_window.dropped_count = 1
-    if drop_reason == "invalid_json":
+    source_window.payload_json = {
+        "classification": drop_reason or "unknown_drop",
+        "classification_counts": {drop_reason or "unknown_drop": 1},
+    }
+    if drop_reason == "malformed_json":
         source_window.malformed_count = 1
     elif drop_reason == "missing_trade_update_payload":
         source_window.missing_payload_count = 1
     elif drop_reason == "missing_order_identity":
         source_window.missing_identity_count = 1
+    elif drop_reason == "out_of_scope_account":
+        source_window.out_of_scope_account_count = 1
 
 
 def _classify_source_window_unhandled_failure(
@@ -574,6 +610,10 @@ def _classify_source_window_unhandled_failure(
     source_window.status = "failed_unhandled"
     source_window.status_reason = _source_window_failure_reason(exc)
     source_window.failed_unhandled_count = 1
+    source_window.payload_json = {
+        "classification": "failed_unhandled",
+        "classification_counts": {"failed_unhandled": 1},
+    }
 
 
 def _source_window_failure_reason(exc: Exception) -> str:
@@ -582,12 +622,14 @@ def _source_window_failure_reason(exc: Exception) -> str:
 
 
 def _increment_drop_counter(counters: dict[str, int], drop_reason: str | None) -> None:
-    if drop_reason == "invalid_json":
+    if drop_reason == "malformed_json":
         counters["malformed_total"] += 1
     elif drop_reason == "missing_trade_update_payload":
         counters["missing_payload_total"] += 1
     elif drop_reason == "missing_order_identity":
         counters["missing_identity_total"] += 1
+    elif drop_reason == "out_of_scope_account":
+        counters["out_of_scope_account_total"] += 1
 
 
 def _classify_source_window_event(
@@ -602,13 +644,24 @@ def _classify_source_window_event(
         source_window.status = "duplicate"
         source_window.status_reason = "duplicate_event_fingerprint"
         source_window.duplicate_count = 1
+        source_window.payload_json = {
+            "classification": "duplicate",
+            "classification_counts": {"duplicate": 1},
+        }
         return
     source_window.status = "inserted"
     source_window.inserted_count = 1
+    classification_counts = {"inserted": 1}
     if persisted.execution_id is None:
         source_window.unlinked_execution_count = 1
+        classification_counts["unlinked_execution"] = 1
     if persisted.trade_decision_id is None:
         source_window.unlinked_decision_count = 1
+        classification_counts["unlinked_decision"] = 1
+    source_window.payload_json = {
+        "classification": "inserted",
+        "classification_counts": classification_counts,
+    }
 
 
 def normalize_order_feed_record(
@@ -619,7 +672,7 @@ def normalize_order_feed_record(
     value = getattr(record, "value", None)
     payload = _decode_json_payload(value)
     if payload is None:
-        return NormalizationResult(event=None, drop_reason="invalid_json")
+        return NormalizationResult(event=None, drop_reason="malformed_json")
 
     envelope = _as_mapping(payload)
     data_payload = _extract_trade_update_payload(payload)
@@ -669,7 +722,7 @@ def normalize_order_feed_record(
     )
     if source_topic is None:
         source_topic = default_topic
-    account_label = (
+    explicit_account_label = (
         _coerce_text(data_payload.get("account_label"))
         or _coerce_text(data_payload.get("accountLabel"))
         or _coerce_text((order or {}).get("alpaca_account_label"))
@@ -677,8 +730,8 @@ def normalize_order_feed_record(
         or _coerce_text((order or {}).get("accountLabel"))
         or _coerce_text(envelope.get("account_label") if envelope else None)
         or _coerce_text(envelope.get("accountLabel") if envelope else None)
-        or default_account_label
     )
+    account_label = explicit_account_label or default_account_label
 
     fingerprint_input = {
         "alpaca_account_label": account_label,
@@ -717,7 +770,11 @@ def normalize_order_feed_record(
         fill_quantity_basis=None,
         raw_event=coerce_json_payload(payload),
     )
-    return NormalizationResult(event=event, drop_reason=None)
+    return NormalizationResult(
+        event=event,
+        drop_reason=None,
+        account_label_explicit=explicit_account_label is not None,
+    )
 
 
 def persist_order_event(

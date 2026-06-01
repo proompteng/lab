@@ -48,6 +48,7 @@ _TCA_PNL_BASES = frozenset(
 _DIAGNOSTIC_EXPECTANCY_SUPPRESSING_BLOCKERS = frozenset(
     {
         "runtime_fills_missing",
+        "execution_economics_missing",
         "zero_fill_runtime_ledger",
         "closed_round_trip_missing",
         "filled_notional_missing",
@@ -147,11 +148,14 @@ class _NormalizedFill:
     filled_qty_delta: Decimal | None = None
     filled_notional_delta: Decimal | None = None
     fill_quantity_basis: str | None = None
+    lifecycle_only: bool = False
+    order_feed_lifecycle_source: bool = False
 
     @property
     def is_usable_fill(self) -> bool:
         return (
             self.event_type in _FILL_EVENTS
+            and not self.lifecycle_only
             and self.executed_at is not None
             and self.side is not None
             and self.filled_qty is not None
@@ -380,9 +384,21 @@ def _build_bucket(
     if accumulator.filled_notional <= 0:
         blockers.append("filled_notional_missing")
     if require_order_lifecycle:
+        source_lifecycle_present = any(
+            row.order_feed_lifecycle_source for row in lifecycle_rows
+        )
         blockers.extend(
             _order_lifecycle_blockers(
                 lifecycle_rows=lifecycle_rows,
+                fill_lifecycle_rows=[
+                    row
+                    for row in lifecycle_rows
+                    if row.event_type in _FILL_EVENTS
+                    and (
+                        row.order_feed_lifecycle_source
+                        or not source_lifecycle_present
+                    )
+                ],
                 usable_fills=all_usable_fills,
                 decision_count=decision_count,
                 submitted_order_count=submitted_order_count,
@@ -460,6 +476,7 @@ def _carry_in_rows_before_bucket(
 def _order_lifecycle_blockers(
     *,
     lifecycle_rows: Sequence[_NormalizedFill],
+    fill_lifecycle_rows: Sequence[_NormalizedFill],
     usable_fills: Sequence[_NormalizedFill],
     decision_count: int,
     submitted_order_count: int,
@@ -472,12 +489,15 @@ def _order_lifecycle_blockers(
     blockers: list[str] = []
     if not lifecycle_rows:
         blockers.append("runtime_order_lifecycle_missing")
+    if not fill_lifecycle_rows:
+        blockers.append("order_feed_lifecycle_missing")
     if decision_count <= 0:
         blockers.append("runtime_decision_lifecycle_missing")
     if submitted_order_count <= 0:
         blockers.append("submitted_order_lifecycle_missing")
     if not usable_fills:
         blockers.append("zero_fill_runtime_ledger")
+        blockers.append("execution_economics_missing")
 
     submitted_order_ids = {
         row.order_id
@@ -492,12 +512,19 @@ def _order_lifecycle_blockers(
     if submitted_without_decision:
         blockers.append("order_decision_linkage_missing")
 
+    fill_lifecycle_order_ids = {
+        row.order_id for row in fill_lifecycle_rows if row.order_id is not None
+    }
     fill_order_ids = {row.order_id for row in usable_fills if row.order_id is not None}
     if any(row.order_id is None for row in usable_fills):
         blockers.append("fill_order_linkage_missing")
-    if fill_order_ids - submitted_order_ids:
+    if any(row.order_id is None for row in fill_lifecycle_rows):
+        blockers.append("fill_order_linkage_missing")
+    if fill_lifecycle_order_ids - submitted_order_ids:
         blockers.append("fill_order_submission_missing")
-    if submitted_order_ids - fill_order_ids:
+    if fill_order_ids - fill_lifecycle_order_ids:
+        blockers.append("order_feed_lifecycle_missing")
+    if submitted_order_ids - fill_lifecycle_order_ids:
         blockers.append("unfilled_order_present")
     if rejected_order_count > 0:
         blockers.append("rejected_order_present")
@@ -650,7 +677,11 @@ def _normalize_fill_row(
     fill_quantity_basis = _coerce_fill_quantity_basis(
         _row_value(row, "fill_quantity_basis", "quantity_basis")
     )
-    order_feed_source_fill = _is_order_feed_source_fill(row)
+    order_feed_lifecycle_source = _is_order_feed_lifecycle_source_row(
+        row, event_type=event_type
+    )
+    order_feed_source_fill = event_type in _FILL_EVENTS and order_feed_lifecycle_source
+    lifecycle_only = _is_order_feed_lifecycle_only_row(row, event_type=event_type)
     if event_type in _FILL_EVENTS and order_feed_source_fill:
         if fill_quantity_basis in {"delta", "cumulative_to_delta"}:
             if filled_qty_delta is not None:
@@ -728,7 +759,7 @@ def _normalize_fill_row(
         blockers.append("tca_shortfall_not_runtime_pnl")
     if executed_at is None and event_type != "diagnostic":
         blockers.append("executed_at_missing")
-    if event_type in _FILL_EVENTS:
+    if event_type in _FILL_EVENTS and not lifecycle_only:
         if side is None:
             blockers.append("side_missing_or_invalid")
         if filled_qty is None:
@@ -778,6 +809,8 @@ def _normalize_fill_row(
         lineage_hash=lineage_hash,
         replay_data_hash=replay_data_hash,
         blockers=tuple(_dedupe(blockers)),
+        lifecycle_only=lifecycle_only,
+        order_feed_lifecycle_source=order_feed_lifecycle_source,
     )
 
 
@@ -859,12 +892,23 @@ def _coerce_fill_quantity_basis(value: object | None) -> str | None:
     return normalized or None
 
 
-def _is_order_feed_source_fill(row: RuntimeLedgerFill | Mapping[str, object]) -> bool:
+def _is_order_feed_lifecycle_source_row(
+    row: RuntimeLedgerFill | Mapping[str, object],
+    *,
+    event_type: str,
+) -> bool:
+    if event_type not in _LIFECYCLE_EVENTS:
+        return False
+    return _is_order_feed_source_row(row)
+
+
+def _is_order_feed_source_row(row: RuntimeLedgerFill | Mapping[str, object]) -> bool:
     source = _coerce_text(
         _row_value(row, "source", "pnl_derivation", "source_materialization")
     )
     authority_class = _coerce_text(_row_value(row, "authority_class"))
     if source in {
+        "order_feed_lifecycle",
         "execution_order_event",
         "execution_order_events",
         "execution_order_events_runtime_ledger",
@@ -885,6 +929,37 @@ def _is_order_feed_source_fill(row: RuntimeLedgerFill | Mapping[str, object]) ->
             "source_window_id",
             "source_offset",
         )
+    )
+
+
+def _is_order_feed_source_fill(row: RuntimeLedgerFill | Mapping[str, object]) -> bool:
+    return _is_order_feed_source_row(row)
+
+
+def _is_order_feed_lifecycle_only_row(
+    row: RuntimeLedgerFill | Mapping[str, object],
+    *,
+    event_type: str,
+) -> bool:
+    if event_type not in _FILL_EVENTS or not _is_order_feed_source_fill(row):
+        return False
+    source = _coerce_text(
+        _row_value(row, "source", "pnl_derivation", "source_materialization")
+    )
+    if source in {"order_feed_lifecycle", "source_execution_lifecycle"}:
+        return True
+    return (
+        _row_value(
+            row,
+            "cost_amount",
+            "total_cost",
+            "explicit_cost",
+            "commission",
+            "fees",
+            "fee_amount",
+        )
+        is None
+        and _row_value(row, "cost_basis", "cost_source", "fee_basis") is None
     )
 
 

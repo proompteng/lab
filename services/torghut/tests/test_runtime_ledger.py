@@ -739,6 +739,201 @@ def test_order_feed_source_fill_requires_delta_basis() -> None:
     assert "runtime_fills_missing" in bucket.blockers
 
 
+def test_order_feed_lifecycle_fill_without_execution_economics_is_not_pnl_proof() -> None:
+    bucket = build_runtime_ledger_buckets(
+        [
+            {
+                "event_type": "decision",
+                "executed_at": _ts(0),
+                "decision_id": "decision-1",
+                "order_id": "order-1",
+                "execution_policy_hash": "policy",
+                "lineage_hash": "lineage",
+            },
+            {
+                "event_type": "new",
+                "executed_at": _ts(1),
+                "source": "order_feed_lifecycle",
+                "decision_id": "decision-1",
+                "order_id": "order-1",
+                "execution_policy_hash": "policy",
+                "lineage_hash": "lineage",
+            },
+            {
+                "event_type": "fill",
+                "executed_at": _ts(2),
+                "source": "order_feed_lifecycle",
+                "execution_order_event_id": "event-1",
+                "source_window_id": "window-1",
+                "source_offset": 7,
+                "decision_id": "decision-1",
+                "order_id": "order-1",
+                "filled_qty": "1",
+                "avg_fill_price": "100",
+                "lineage_hash": "lineage",
+            },
+        ],
+        bucket_ranges=[(_ts(), _ts(60))],
+        require_order_lifecycle=True,
+    )[0]
+
+    assert bucket.fill_count == 0
+    assert bucket.post_cost_expectancy_bps is None
+    assert "execution_economics_missing" in bucket.blockers
+    assert "runtime_fills_missing" in bucket.blockers
+    assert "explicit_cost_missing" not in bucket.blockers
+
+
+def test_execution_economics_with_linked_order_feed_lifecycle_satisfies_runtime_inputs() -> None:
+    bucket = build_runtime_ledger_buckets(
+        [
+            {
+                "event_type": "decision",
+                "executed_at": _ts(0),
+                "decision_id": "decision-1",
+                "order_id": "order-buy",
+                "execution_policy_hash": "policy",
+                "cost_model_hash": "cost-model",
+                "lineage_hash": "lineage",
+            },
+            {
+                "event_type": "new",
+                "executed_at": _ts(1),
+                "source": "order_feed_lifecycle",
+                "decision_id": "decision-1",
+                "order_id": "order-buy",
+                "execution_policy_hash": "policy",
+                "cost_model_hash": "cost-model",
+                "lineage_hash": "lineage",
+            },
+            {
+                "event_type": "new",
+                "executed_at": _ts(2),
+                "source": "order_feed_lifecycle",
+                "decision_id": "decision-2",
+                "order_id": "order-sell",
+                "execution_policy_hash": "policy",
+                "cost_model_hash": "cost-model",
+                "lineage_hash": "lineage",
+            },
+            {
+                "event_type": "fill",
+                "executed_at": _ts(3),
+                "source": "order_feed_lifecycle",
+                "execution_order_event_id": "event-buy",
+                "source_window_id": "window-buy",
+                "source_offset": 7,
+                "decision_id": "decision-1",
+                "order_id": "order-buy",
+                "lineage_hash": "lineage",
+            },
+            {
+                "event_type": "fill",
+                "executed_at": _ts(4),
+                "source": "order_feed_lifecycle",
+                "execution_order_event_id": "event-sell",
+                "source_window_id": "window-sell",
+                "source_offset": 8,
+                "decision_id": "decision-2",
+                "order_id": "order-sell",
+                "lineage_hash": "lineage",
+            },
+            {
+                "event_type": "fill",
+                "executed_at": _ts(3),
+                "source": "runtime_execution",
+                "decision_id": "decision-1",
+                "order_id": "order-buy",
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "symbol": "NVDA",
+                "side": "buy",
+                "filled_qty": "1",
+                "avg_fill_price": "100",
+                "cost_amount": "0",
+                "cost_basis": "broker_reported_zero_cost",
+                "execution_policy_hash": "policy",
+                "cost_model_hash": "cost-model",
+                "lineage_hash": "lineage",
+            },
+            {
+                "event_type": "fill",
+                "executed_at": _ts(4),
+                "source": "runtime_execution",
+                "decision_id": "decision-2",
+                "order_id": "order-sell",
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "symbol": "NVDA",
+                "side": "sell",
+                "filled_qty": "1",
+                "avg_fill_price": "101",
+                "cost_amount": "0",
+                "cost_basis": "broker_reported_zero_cost",
+                "execution_policy_hash": "policy",
+                "cost_model_hash": "cost-model",
+                "lineage_hash": "lineage",
+            },
+        ],
+        bucket_ranges=[(_ts(), _ts(60))],
+        require_order_lifecycle=True,
+    )[0]
+
+    assert bucket.fill_count == 2
+    assert bucket.closed_trade_count == 1
+    assert bucket.post_cost_expectancy_bps is not None
+    assert "order_feed_lifecycle_missing" not in bucket.blockers
+    assert "execution_economics_missing" not in bucket.blockers
+
+
+def test_execution_economics_requires_matching_order_feed_fill_lifecycle() -> None:
+    bucket = build_runtime_ledger_buckets(
+        [
+            {
+                "event_type": "decision",
+                "executed_at": _ts(0),
+                "decision_id": "decision-1",
+                "order_id": "order-1",
+                "execution_policy_hash": "policy",
+                "cost_model_hash": "cost-model",
+                "lineage_hash": "lineage",
+            },
+            {
+                "event_type": "new",
+                "executed_at": _ts(1),
+                "source": "order_feed_lifecycle",
+                "decision_id": "decision-1",
+                "order_id": "order-1",
+                "execution_policy_hash": "policy",
+                "cost_model_hash": "cost-model",
+                "lineage_hash": "lineage",
+            },
+            {
+                "event_type": "fill",
+                "executed_at": _ts(2),
+                "source": "runtime_execution",
+                "decision_id": "decision-1",
+                "order_id": "order-1",
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "symbol": "NVDA",
+                "side": "buy",
+                "filled_qty": "1",
+                "avg_fill_price": "100",
+                "cost_amount": "0",
+                "cost_basis": "broker_reported_zero_cost",
+                "execution_policy_hash": "policy",
+                "cost_model_hash": "cost-model",
+                "lineage_hash": "lineage",
+            },
+        ],
+        bucket_ranges=[(_ts(), _ts(60))],
+        require_order_lifecycle=True,
+    )[0]
+
+    assert "order_feed_lifecycle_missing" in bucket.blockers
+
+
 def test_order_feed_source_fill_requires_positive_delta_quantity() -> None:
     bucket = _bucket(
         [

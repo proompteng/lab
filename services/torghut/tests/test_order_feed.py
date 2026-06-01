@@ -1917,9 +1917,73 @@ class TestOrderFeed(TestCase):
         self.assertEqual(event_count, 0)
         self.assertEqual(cursor.high_watermark_offset, 17)
         self.assertEqual(source_window.status, "dropped")
-        self.assertEqual(source_window.status_reason, "invalid_json")
+        self.assertEqual(source_window.status_reason, "malformed_json")
         self.assertEqual(source_window.malformed_count, 1)
         self.assertEqual(source_window.dropped_count, 1)
+
+    def test_out_of_scope_account_is_durably_classified(self) -> None:
+        record = FakeRecord(
+            value=(
+                b'{"channel":"trade_updates","account_label":"paper-b",'
+                b'"payload":{"event":"fill","timestamp":"2026-02-01T10:00:00Z",'
+                b'"order":{"id":"order-b","client_order_id":"client-b","symbol":"AAPL",'
+                b'"status":"filled","qty":"1","filled_qty":"1","filled_avg_price":"190.2"}},"seq":10}'
+            ),
+            offset=19,
+        )
+        consumer = FakeConsumer([record])
+        ingestor = OrderFeedIngestor(
+            consumer_factory=lambda: consumer,
+            default_account_label="paper-a",
+        )
+
+        with Session(self.engine) as session:
+            counters = ingestor.ingest_once(session)
+            source_window = session.execute(select(OrderFeedSourceWindow)).scalar_one()
+            cursor = session.execute(select(OrderFeedConsumerCursor)).scalar_one()
+            event_count = len(session.execute(select(ExecutionOrderEvent)).all())
+
+        self.assertEqual(counters["classified_drops_total"], 1)
+        self.assertEqual(counters["out_of_scope_account_total"], 1)
+        self.assertEqual(counters["cursor_updates_total"], 1)
+        self.assertEqual(consumer.commit_calls, 1)
+        self.assertEqual(event_count, 0)
+        self.assertEqual(cursor.high_watermark_offset, 19)
+        self.assertEqual(source_window.alpaca_account_label, "paper-a")
+        self.assertEqual(source_window.status, "dropped")
+        self.assertEqual(source_window.status_reason, "out_of_scope_account")
+        self.assertEqual(source_window.out_of_scope_account_count, 1)
+
+    def test_out_of_scope_account_without_source_position_is_not_committed(
+        self,
+    ) -> None:
+        record = SimpleNamespace(
+            value=(
+                b'{"channel":"trade_updates","account_label":"paper-b",'
+                b'"payload":{"event":"fill","timestamp":"2026-02-01T10:00:00Z",'
+                b'"order":{"id":"order-b","client_order_id":"client-b","symbol":"AAPL",'
+                b'"status":"filled","qty":"1","filled_qty":"1","filled_avg_price":"190.2"}},"seq":10}'
+            ),
+            topic="torghut.trade-updates.v1",
+        )
+        consumer = FakeConsumer([record])
+        ingestor = OrderFeedIngestor(
+            consumer_factory=lambda: consumer,
+            default_account_label="paper-a",
+        )
+
+        with Session(self.engine) as session:
+            counters = ingestor.ingest_once(session)
+            source_window_count = len(
+                session.execute(select(OrderFeedSourceWindow)).all()
+            )
+            cursor_count = len(session.execute(select(OrderFeedConsumerCursor)).all())
+
+        self.assertEqual(counters["messages_total"], 1)
+        self.assertEqual(counters["cursor_updates_total"], 0)
+        self.assertEqual(consumer.commit_calls, 0)
+        self.assertEqual(source_window_count, 0)
+        self.assertEqual(cursor_count, 0)
 
     def test_missing_order_identity_is_durably_classified(self) -> None:
         record = FakeRecord(

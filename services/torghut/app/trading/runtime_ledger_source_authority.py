@@ -26,6 +26,9 @@ RUNTIME_LEDGER_SOURCE_MATERIALIZATION_MISSING_BLOCKER = (
 RUNTIME_LEDGER_AUTHORITY_CLASS_MISSING_BLOCKER = (
     "runtime_ledger_authority_class_missing"
 )
+ORDER_FEED_SOURCE_WINDOW_GAP_BLOCKER = "order_feed_source_window_gap"
+ORDER_FEED_LIFECYCLE_MISSING_BLOCKER = "order_feed_lifecycle_missing"
+EXECUTION_ECONOMICS_MISSING_BLOCKER = "execution_economics_missing"
 
 _PROMOTION_GRADE_SOURCE_MATERIALIZATIONS = frozenset(
     {
@@ -177,6 +180,44 @@ def _source_row_counts_have_positive_rows(
     return _source_row_count(bucket, table_name) > 0
 
 
+def _nonnegative_mapping_total(value: object) -> int:
+    if not isinstance(value, Mapping):
+        return 0
+    total = 0
+    for item in cast(Mapping[object, object], value).values():
+        try:
+            parsed = Decimal(str(item))
+        except (InvalidOperation, ValueError):
+            continue
+        if parsed.is_finite() and parsed > 0:
+            total += int(parsed)
+    return total
+
+
+def _nonnegative_int(value: object) -> int:
+    try:
+        parsed = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return 0
+    if not parsed.is_finite() or parsed <= 0:
+        return 0
+    return int(parsed)
+
+
+def _truthy_flag(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    text = _text(value)
+    if text is None:
+        return None
+    normalized = text.lower()
+    if normalized in {"1", "true", "yes", "y"}:
+        return True
+    if normalized in {"0", "false", "no", "n"}:
+        return False
+    return None
+
+
 def _promotion_grade_source_refs_present(bucket: Mapping[str, object]) -> bool:
     source_ref_tables = _source_ref_table_names(bucket.get("source_refs"))
     return all(
@@ -224,6 +265,38 @@ def _source_offset_count(bucket: Mapping[str, object]) -> int:
         and bucket.get("source_partition") is not None
         and bucket.get("source_offset") is not None
     )
+
+
+def _source_window_gap_count(bucket: Mapping[str, object]) -> int:
+    count = _nonnegative_int(
+        bucket.get("source_window_gap_count")
+        or bucket.get("order_feed_source_window_gap_count")
+    )
+    if count > 0:
+        return count
+    gap_ranges = bucket.get("source_window_gap_ranges") or bucket.get(
+        "order_feed_source_window_gap_ranges"
+    )
+    if isinstance(gap_ranges, Sequence) and not isinstance(
+        gap_ranges, (str, bytes, bytearray)
+    ):
+        return len(cast(Sequence[object], gap_ranges))
+    return _nonnegative_mapping_total(bucket.get("source_window_gap_counts"))
+
+
+def _source_window_classification_count(
+    bucket: Mapping[str, object],
+    *classification_names: str,
+) -> int:
+    counts = bucket.get("source_window_classification_counts") or bucket.get(
+        "order_feed_source_window_classification_counts"
+    )
+    if not isinstance(counts, Mapping):
+        return 0
+    total = 0
+    for name in classification_names:
+        total += _nonnegative_int(cast(Mapping[object, object], counts).get(name))
+    return total
 
 
 def _promotion_grade_source_materialization_present(
@@ -376,6 +449,23 @@ def runtime_ledger_promotion_source_authority_blockers(
         bucket
     ) < _source_row_count(bucket, "execution_order_events"):
         blockers.append(RUNTIME_LEDGER_SOURCE_OFFSETS_MISSING_BLOCKER)
+    if _source_window_gap_count(bucket) > 0:
+        blockers.append(ORDER_FEED_SOURCE_WINDOW_GAP_BLOCKER)
+    lifecycle_complete = _truthy_flag(bucket.get("order_feed_lifecycle_complete"))
+    if lifecycle_complete is False or _source_window_classification_count(
+        bucket,
+        "unlinked_execution",
+        "unlinked_decision",
+        "missing_order_identity",
+        "missing_trade_update_payload",
+        "malformed_json",
+        "out_of_scope_account",
+        "failed_unhandled",
+    ) > 0:
+        blockers.append(ORDER_FEED_LIFECYCLE_MISSING_BLOCKER)
+    economics_complete = _truthy_flag(bucket.get("execution_economics_complete"))
+    if economics_complete is False:
+        blockers.append(EXECUTION_ECONOMICS_MISSING_BLOCKER)
     if (
         not _promotion_grade_source_materialization_present(bucket)
         or _non_promotion_authority_marker_present(bucket.get("source_materialization"))
@@ -397,6 +487,9 @@ def runtime_ledger_promotion_source_authority_present(
 
 __all__ = [
     "RUNTIME_LEDGER_AUTHORITY_CLASS_MISSING_BLOCKER",
+    "EXECUTION_ECONOMICS_MISSING_BLOCKER",
+    "ORDER_FEED_LIFECYCLE_MISSING_BLOCKER",
+    "ORDER_FEED_SOURCE_WINDOW_GAP_BLOCKER",
     "RUNTIME_LEDGER_EXECUTION_ORDER_EVENT_REFS_MISSING_BLOCKER",
     "RUNTIME_LEDGER_EXECUTION_REFS_MISSING_BLOCKER",
     "RUNTIME_LEDGER_SOURCE_MATERIALIZATION_MISSING_BLOCKER",

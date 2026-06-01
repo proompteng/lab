@@ -1119,6 +1119,12 @@ def _with_runtime_ledger_source_authority_context(
     execution_order_event_ids: Sequence[object] = (),
     source_window_ids: Sequence[object] = (),
     source_offsets: Sequence[Mapping[str, object]] = (),
+    source_window_status_counts: Mapping[str, int] | None = None,
+    source_window_classification_counts: Mapping[str, int] | None = None,
+    source_window_gap_count: int = 0,
+    source_window_gap_ranges: Sequence[Mapping[str, object]] = (),
+    order_feed_lifecycle_complete: bool | None = None,
+    execution_economics_complete: bool | None = None,
     source_materialization: str | None = None,
     authority_class: str | None = None,
 ) -> dict[str, object]:
@@ -1173,6 +1179,36 @@ def _with_runtime_ledger_source_authority_context(
                 seen_offsets.add(key)
         if existing_offsets:
             payload["source_offsets"] = existing_offsets
+    if source_window_status_counts:
+        payload["source_window_status_counts"] = _merge_count_mappings(
+            _as_mapping(payload.get("source_window_status_counts")),
+            source_window_status_counts,
+        )
+    if source_window_classification_counts:
+        payload["source_window_classification_counts"] = _merge_count_mappings(
+            _as_mapping(payload.get("source_window_classification_counts")),
+            source_window_classification_counts,
+        )
+    if source_window_gap_count > 0:
+        payload["source_window_gap_count"] = max(
+            _nonnegative_int(payload.get("source_window_gap_count")),
+            source_window_gap_count,
+        )
+    if source_window_gap_ranges:
+        existing_gap_ranges = [
+            dict(item)
+            for item in cast(
+                Sequence[object], payload.get("source_window_gap_ranges") or []
+            )
+            if isinstance(item, Mapping)
+        ]
+        existing_gap_ranges.extend(dict(item) for item in source_window_gap_ranges)
+        if existing_gap_ranges:
+            payload["source_window_gap_ranges"] = existing_gap_ranges
+    if order_feed_lifecycle_complete is not None:
+        payload["order_feed_lifecycle_complete"] = order_feed_lifecycle_complete
+    if execution_economics_complete is not None:
+        payload["execution_economics_complete"] = execution_economics_complete
     if source_materialization:
         payload.setdefault("source_materialization", source_materialization)
     if authority_class:
@@ -1186,6 +1222,18 @@ def _with_runtime_ledger_source_authority_context(
     if merged_counts:
         payload["source_row_counts"] = dict(sorted(merged_counts.items()))
     return payload
+
+
+def _merge_count_mappings(
+    existing: Mapping[object, object],
+    incoming: Mapping[str, int],
+) -> dict[str, int]:
+    merged = {
+        str(key): _nonnegative_int(value) for key, value in existing.items()
+    }
+    for key, value in incoming.items():
+        merged[str(key)] = max(0, int(value)) + merged.get(str(key), 0)
+    return dict(sorted((key, value) for key, value in merged.items() if value > 0))
 
 
 def _source_identifier_values(
@@ -1219,6 +1267,83 @@ def _source_offset_values(
         offsets.append({"topic": topic, "partition": partition, "offset": offset})
         seen.add(key)
     return offsets
+
+
+def _unique_source_window_rows(
+    rows: Sequence[Mapping[str, object]] | None,
+) -> list[Mapping[str, object]]:
+    unique_rows: list[Mapping[str, object]] = []
+    seen: set[str] = set()
+    for row in rows or ():
+        source_window_id = _text_or_none(row.get("source_window_id"))
+        if source_window_id is None:
+            continue
+        if source_window_id in seen:
+            continue
+        seen.add(source_window_id)
+        unique_rows.append(row)
+    return unique_rows
+
+
+def _source_window_status_counts(
+    rows: Sequence[Mapping[str, object]] | None,
+) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in _unique_source_window_rows(rows):
+        status = _text_or_none(row.get("source_window_status"))
+        if status is None:
+            continue
+        counts[status] = counts.get(status, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _source_window_classification_counts(
+    rows: Sequence[Mapping[str, object]] | None,
+) -> dict[str, int]:
+    field_names = {
+        "inserted": "source_window_inserted_count",
+        "duplicate": "source_window_duplicate_count",
+        "malformed_json": "source_window_malformed_count",
+        "missing_trade_update_payload": "source_window_missing_payload_count",
+        "missing_order_identity": "source_window_missing_identity_count",
+        "out_of_scope_account": "source_window_out_of_scope_account_count",
+        "unlinked_execution": "source_window_unlinked_execution_count",
+        "unlinked_decision": "source_window_unlinked_decision_count",
+        "failed_unhandled": "source_window_failed_unhandled_count",
+        "dropped": "source_window_dropped_count",
+    }
+    counts: dict[str, int] = {}
+    for row in _unique_source_window_rows(rows):
+        for classification, field_name in field_names.items():
+            count = _nonnegative_int(row.get(field_name))
+            if count > 0:
+                counts[classification] = counts.get(classification, 0) + count
+    return dict(sorted(counts.items()))
+
+
+def _source_window_gap_count(
+    rows: Sequence[Mapping[str, object]] | None,
+) -> int:
+    return sum(
+        _nonnegative_int(row.get("source_window_gap_count"))
+        for row in _unique_source_window_rows(rows)
+    )
+
+
+def _source_window_gap_ranges(
+    rows: Sequence[Mapping[str, object]] | None,
+) -> list[dict[str, object]]:
+    ranges: list[dict[str, object]] = []
+    for row in _unique_source_window_rows(rows):
+        gap_ranges = row.get("source_window_gap_ranges")
+        if not isinstance(gap_ranges, Sequence) or isinstance(
+            gap_ranges, (str, bytes, bytearray)
+        ):
+            continue
+        for item in cast(Sequence[object], gap_ranges):
+            if isinstance(item, Mapping):
+                ranges.append(dict(item))
+    return ranges
 
 
 def _decision_lifecycle_query_row(row: Sequence[object]) -> dict[str, object]:
@@ -1301,6 +1426,32 @@ def _execution_query_row_has_time(row: Sequence[object]) -> bool:
     return (row[3] if len(row) >= 19 else row[1]) is not None
 
 
+def _source_window_query_context(
+    row: Sequence[object],
+    *,
+    start_index: int,
+) -> dict[str, object]:
+    if len(row) < start_index + 15:
+        return {}
+    return {
+        "source_window_status": row[start_index],
+        "source_window_status_reason": row[start_index + 1],
+        "source_window_consumed_count": row[start_index + 2],
+        "source_window_inserted_count": row[start_index + 3],
+        "source_window_duplicate_count": row[start_index + 4],
+        "source_window_malformed_count": row[start_index + 5],
+        "source_window_missing_payload_count": row[start_index + 6],
+        "source_window_missing_identity_count": row[start_index + 7],
+        "source_window_out_of_scope_account_count": row[start_index + 8],
+        "source_window_unlinked_execution_count": row[start_index + 9],
+        "source_window_unlinked_decision_count": row[start_index + 10],
+        "source_window_failed_unhandled_count": row[start_index + 11],
+        "source_window_dropped_count": row[start_index + 12],
+        "source_window_gap_count": row[start_index + 13],
+        "source_window_gap_ranges": row[start_index + 14],
+    }
+
+
 def _order_lifecycle_query_row(row: Sequence[object]) -> dict[str, object]:
     if len(row) >= 28:
         return {
@@ -1332,6 +1483,7 @@ def _order_lifecycle_query_row(row: Sequence[object]) -> dict[str, object]:
             "raw_event": row[25],
             "execution_audit_json": row[26],
             "raw_order": row[27],
+            **_source_window_query_context(row, start_index=28),
         }
     if len(row) >= 25:
         return {
@@ -2963,6 +3115,16 @@ def _runtime_source_context_for_bucket(
     source_materialization = None
     authority_class = None
     source_offsets = _source_offset_values(source_authority_lifecycle_rows)
+    source_window_status_counts = _source_window_status_counts(
+        source_authority_lifecycle_rows
+    )
+    source_window_classification_counts = _source_window_classification_counts(
+        source_authority_lifecycle_rows
+    )
+    source_window_gap_count = _source_window_gap_count(source_authority_lifecycle_rows)
+    source_window_gap_ranges = _source_window_gap_ranges(
+        source_authority_lifecycle_rows
+    )
     execution_order_event_ids = _source_identifier_values(
         source_authority_lifecycle_rows,
         "execution_order_event_id",
@@ -3007,9 +3169,14 @@ def _runtime_source_context_for_bucket(
             "execution_id",
         ),
         "execution_order_event_ids": execution_order_event_ids,
+        "source_window_status_counts": source_window_status_counts,
+        "source_window_classification_counts": source_window_classification_counts,
+        "source_window_gap_count": source_window_gap_count,
+        "source_window_gap_ranges": source_window_gap_ranges,
         "source_offsets": source_offsets,
         "source_materialization": source_materialization,
         "authority_class": authority_class,
+        "order_feed_lifecycle_complete": source_backed_fill_lifecycle_complete,
         "fill_economics_complete": (
             order_feed_fill_economics_complete or execution_fill_economics_complete
         ),
@@ -3322,6 +3489,24 @@ def _build_realized_strategy_pnl_rows(
     ledger_rows: list[RuntimeLedgerFill | dict[str, object]] = []
     carry_in_ledger_rows: list[RuntimeLedgerFill | dict[str, object]] = []
     event_times: list[datetime] = []
+    execution_order_ids = {
+        order_id for row in execution_rows if (order_id := _runtime_order_id(row))
+    }
+    execution_ids = {
+        execution_id
+        for row in execution_rows
+        if (execution_id := _first_text(row, "execution_id"))
+    }
+    carry_in_execution_order_ids = {
+        order_id
+        for row in carry_in_execution_rows or []
+        if (order_id := _runtime_order_id(row))
+    }
+    carry_in_execution_ids = {
+        execution_id
+        for row in carry_in_execution_rows or []
+        if (execution_id := _first_text(row, "execution_id"))
+    }
     for row in decision_lifecycle_rows or []:
         lifecycle_row = _runtime_lifecycle_ledger_row(row, event_type="decision")
         if lifecycle_row is None:
@@ -3340,6 +3525,19 @@ def _build_realized_strategy_pnl_rows(
                 event_type=event_type,
                 require_complete_fill=True,
             )
+            if lifecycle_row is None:
+                row_order_id = _runtime_order_id(row)
+                row_execution_id = _first_text(row, "execution_id")
+                if (
+                    row_order_id in execution_order_ids
+                    or row_execution_id in execution_ids
+                ):
+                    lifecycle_row = _runtime_lifecycle_ledger_row(
+                        row,
+                        event_type=event_type,
+                    )
+                    if lifecycle_row is not None:
+                        lifecycle_row["source"] = "order_feed_lifecycle"
             if lifecycle_row is not None:
                 ledger_rows.append(lifecycle_row)
                 event_time = lifecycle_row.get("executed_at")
@@ -3383,6 +3581,19 @@ def _build_realized_strategy_pnl_rows(
             event_type=event_type,
             require_complete_fill=event_type in _RUNTIME_LEDGER_FILL_EVENTS,
         )
+        if lifecycle_row is None and event_type in _RUNTIME_LEDGER_FILL_EVENTS:
+            row_order_id = _runtime_order_id(row)
+            row_execution_id = _first_text(row, "execution_id")
+            if (
+                row_order_id in carry_in_execution_order_ids
+                or row_execution_id in carry_in_execution_ids
+            ):
+                lifecycle_row = _runtime_lifecycle_ledger_row(
+                    row,
+                    event_type=event_type,
+                )
+                if lifecycle_row is not None:
+                    lifecycle_row["source"] = "order_feed_lifecycle"
         if lifecycle_row is not None:
             carry_in_ledger_rows.append(lifecycle_row)
     combined_order_lifecycle_rows = [
@@ -3440,6 +3651,16 @@ def _build_realized_strategy_pnl_rows(
             list[str], source_context["execution_order_event_ids"]
         )
         source_window_ids = cast(list[str], source_context["source_window_ids"])
+        source_window_status_counts = cast(
+            dict[str, int], source_context["source_window_status_counts"]
+        )
+        source_window_classification_counts = cast(
+            dict[str, int], source_context["source_window_classification_counts"]
+        )
+        source_window_gap_count = int(source_context["source_window_gap_count"] or 0)
+        source_window_gap_ranges = cast(
+            list[Mapping[str, object]], source_context["source_window_gap_ranges"]
+        )
         source_window_start = cast(datetime, source_context["source_window_start"])
         source_window_end = cast(datetime, source_context["source_window_end"])
         source_offsets = cast(
@@ -3449,6 +3670,9 @@ def _build_realized_strategy_pnl_rows(
             str | None, source_context["source_materialization"]
         )
         authority_class = cast(str | None, source_context["authority_class"])
+        order_feed_lifecycle_complete = bool(
+            source_context["order_feed_lifecycle_complete"]
+        )
         fill_economics_complete = bool(source_context["fill_economics_complete"])
         bucket_order_feed_fill_lifecycle_blockers = cast(
             list[str], source_context["order_feed_fill_lifecycle_blockers"]
@@ -3508,6 +3732,12 @@ def _build_realized_strategy_pnl_rows(
                 execution_order_event_ids=execution_order_event_ids,
                 source_window_ids=source_window_ids,
                 source_offsets=source_offsets,
+                source_window_status_counts=source_window_status_counts,
+                source_window_classification_counts=source_window_classification_counts,
+                source_window_gap_count=source_window_gap_count,
+                source_window_gap_ranges=source_window_gap_ranges,
+                order_feed_lifecycle_complete=order_feed_lifecycle_complete,
+                execution_economics_complete=fill_economics_complete,
                 source_materialization=source_materialization,
                 authority_class=authority_class,
             )
@@ -4605,8 +4835,24 @@ def _query_timestamps(
                     oe.source_window_id,
                     oe.raw_event,
                     e.execution_audit_json,
-                    e.raw_order
+                    e.raw_order,
+                    sw.status,
+                    sw.status_reason,
+                    sw.consumed_count,
+                    sw.inserted_count,
+                    sw.duplicate_count,
+                    sw.malformed_count,
+                    sw.missing_payload_count,
+                    sw.missing_identity_count,
+                    sw.out_of_scope_account_count,
+                    sw.unlinked_execution_count,
+                    sw.unlinked_decision_count,
+                    sw.failed_unhandled_count,
+                    sw.dropped_count,
+                    sw.gap_count,
+                    sw.gap_ranges
                 from execution_order_events oe
+                left join order_feed_source_windows sw on sw.id = oe.source_window_id
                 left join lateral (
                     select matched.*
                     from (
@@ -4903,8 +5149,24 @@ def _query_timestamps(
                         oe.source_window_id,
                         oe.raw_event,
                         e.execution_audit_json,
-                        e.raw_order
+                        e.raw_order,
+                        sw.status,
+                        sw.status_reason,
+                        sw.consumed_count,
+                        sw.inserted_count,
+                        sw.duplicate_count,
+                        sw.malformed_count,
+                        sw.missing_payload_count,
+                        sw.missing_identity_count,
+                        sw.out_of_scope_account_count,
+                        sw.unlinked_execution_count,
+                        sw.unlinked_decision_count,
+                        sw.failed_unhandled_count,
+                        sw.dropped_count,
+                        sw.gap_count,
+                        sw.gap_ranges
                     from execution_order_events oe
+                    left join order_feed_source_windows sw on sw.id = oe.source_window_id
                     left join lateral (
                         select matched.*
                         from (
@@ -5041,8 +5303,24 @@ def _query_timestamps(
                         oe.source_window_id,
                         oe.raw_event,
                         e.execution_audit_json,
-                        e.raw_order
+                        e.raw_order,
+                        sw.status,
+                        sw.status_reason,
+                        sw.consumed_count,
+                        sw.inserted_count,
+                        sw.duplicate_count,
+                        sw.malformed_count,
+                        sw.missing_payload_count,
+                        sw.missing_identity_count,
+                        sw.out_of_scope_account_count,
+                        sw.unlinked_execution_count,
+                        sw.unlinked_decision_count,
+                        sw.failed_unhandled_count,
+                        sw.dropped_count,
+                        sw.gap_count,
+                        sw.gap_ranges
                     from execution_order_events oe
+                    left join order_feed_source_windows sw on sw.id = oe.source_window_id
                     left join lateral (
                         select matched.*
                         from (
