@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 import tempfile
@@ -7,6 +8,7 @@ from argparse import Namespace
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
+from urllib.error import HTTPError
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -2516,6 +2518,78 @@ class TestRuntimeLedgerProofPacket(TestCase):
                 },
             )
 
+    def test_cli_records_degraded_paper_route_fetch_as_blocked_packet(self) -> None:
+        class _Response:
+            def __init__(self, body: object) -> None:
+                self.body = body
+
+            def __enter__(self) -> "_Response":
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return json.dumps(self.body).encode("utf-8")
+
+        def open_url(url: str, *, timeout: float) -> _Response:
+            self.assertEqual(timeout, 10.0)
+            if url == "http://torghut-live.local/trading/status":
+                return _Response(_status())
+            if url == "http://torghut-sim.local/trading/paper-route-evidence":
+                raise HTTPError(
+                    url=url,
+                    code=503,
+                    msg="Service Unavailable",
+                    hdrs={},
+                    fp=io.BytesIO(b"Service Unavailable"),
+                )
+            if url == "http://torghut-live.local/trading/completion/doc29":
+                return _Response(_completion())
+            raise AssertionError(f"unexpected URL: {url}")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            import_path = tmp_path / "import.json"
+            output_path = tmp_path / "packet.json"
+            import_path.write_text(json.dumps(_runtime_import()), encoding="utf-8")
+
+            with patch.object(packet, "urlopen", side_effect=open_url):
+                exit_code = packet.main(
+                    [
+                        "--status-service-base-url",
+                        "http://torghut-live.local/",
+                        "--paper-route-service-base-url",
+                        "http://torghut-sim.local/",
+                        "--completion-service-base-url",
+                        "http://torghut-live.local/",
+                        "--runtime-window-import-file",
+                        str(import_path),
+                        "--proof-mode",
+                        "authority",
+                        "--output-file",
+                        str(output_path),
+                        "--allow-blocked-exit-zero",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(output_path.read_text(encoding="utf-8"))
+            self.assertFalse(payload["ok"])
+            self.assertEqual(payload["verdict"], "blocked")
+            self.assertIn(
+                "paper_route_evidence_fetch_failed",
+                payload["evidence"]["paper_route_runtime_window_import_audit"][
+                    "blockers"
+                ],
+            )
+            self.assertIn(
+                "paper_route_evidence_fetch_failed",
+                payload["checks"]["paper_route_runtime_window_import_audit"][
+                    "observed"
+                ]["blockers"],
+            )
+
     def test_cli_rejects_missing_duplicate_and_invalid_sources(self) -> None:
         with self.assertRaisesRegex(SystemExit, "exactly_one_status_source_required"):
             packet.main([])
@@ -2599,5 +2673,58 @@ class TestRuntimeLedgerProofPacket(TestCase):
             with self.assertRaisesRegex(ValueError, "json_object_required"):
                 packet._load_json_url(
                     "http://example.invalid/status.json",
+                    timeout_seconds=1,
+                )
+        http_error_url = "http://example.invalid/degraded.json"
+        with patch.object(
+            packet,
+            "urlopen",
+            side_effect=HTTPError(
+                url=http_error_url,
+                code=503,
+                msg="Service Unavailable",
+                hdrs={},
+                fp=io.BytesIO(json.dumps({"ok": False}).encode("utf-8")),
+            ),
+        ):
+            payload = packet._load_json_url(http_error_url, timeout_seconds=1)
+            self.assertEqual(payload["ok"], False)
+            self.assertEqual(
+                payload["source_load"],
+                {
+                    "source_url": http_error_url,
+                    "http_status": 503,
+                    "http_reason": "Service Unavailable",
+                    "http_error": True,
+                },
+            )
+        with patch.object(
+            packet,
+            "urlopen",
+            side_effect=HTTPError(
+                url=http_error_url,
+                code=503,
+                msg="Service Unavailable",
+                hdrs={},
+                fp=io.BytesIO(json.dumps(["bad"]).encode("utf-8")),
+            ),
+        ):
+            with self.assertRaises(HTTPError):
+                packet._load_json_url(http_error_url, timeout_seconds=1)
+        with patch.object(
+            packet,
+            "_load_json_url",
+            side_effect=HTTPError(
+                url=http_error_url,
+                code=503,
+                msg="Service Unavailable",
+                hdrs={},
+                fp=io.BytesIO(b"Service Unavailable"),
+            ),
+        ):
+            with self.assertRaises(HTTPError):
+                packet._load_optional_json_object(
+                    path=None,
+                    url=http_error_url,
                     timeout_seconds=1,
                 )
