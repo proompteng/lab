@@ -124,6 +124,8 @@ def _hypothesis_manifest_payload(
 def _runtime_ledger_summary(
     *hypothesis_ids: str,
     candidate_id: str | None = None,
+    bucket_started_at: str = "2026-03-06T15:00:00+00:00",
+    bucket_ended_at: str = "2026-03-06T15:55:00+00:00",
     submitted_order_count: int = 45,
     fill_count: int | None = None,
     closed_trade_count: int = 12,
@@ -142,8 +144,8 @@ def _runtime_ledger_summary(
                 or _MANIFEST_CANDIDATE_IDS.get(hypothesis_id)
                 or f"candidate-{hypothesis_id.lower()}",
                 "observed_stage": observed_stage,
-                "bucket_started_at": "2026-03-06T15:00:00+00:00",
-                "bucket_ended_at": "2026-03-06T15:55:00+00:00",
+                "bucket_started_at": bucket_started_at,
+                "bucket_ended_at": bucket_ended_at,
                 "strategy_family": _MANIFEST_STRATEGY_FAMILIES.get(hypothesis_id),
                 "fill_count": fill_count
                 if fill_count is not None
@@ -1320,6 +1322,261 @@ class TestHypothesisReadiness(TestCase):
         self.assertEqual(observed["avg_abs_slippage_bps"], "6")
         self.assertEqual(observed["runtime_ledger_post_cost_expectancy_bps"], "-1")
         self.assertEqual(observed["route_tca_symbols"], ["AAPL"])
+
+    def test_compile_hypothesis_runtime_statuses_keeps_non_authority_route_tca_out_of_final_authority(
+        self,
+    ) -> None:
+        registry = load_hypothesis_registry()
+        state = _state(
+            feature_rows=2770,
+            drift_checks=3,
+            evidence_checks=2,
+            signal_lag_seconds=14,
+            evidence_report={
+                "ok": True,
+                "checked_at": "2026-06-01T19:15:00+00:00",
+            },
+        )
+        statuses = compile_hypothesis_runtime_statuses(
+            registry=registry,
+            state=state,
+            tca_summary={
+                "account_label": "TORGHUT_SIM",
+                "order_count": 2,
+                "avg_abs_slippage_bps": "4",
+                "avg_realized_shortfall_bps": "1",
+                "last_computed_at": "2026-06-01T19:16:00+00:00",
+                "scope_symbols": ["AAPL", "AMZN"],
+                "symbol_breakdown": [
+                    {
+                        "symbol": "AAPL",
+                        "order_count": 1,
+                        "avg_abs_slippage_bps": "4",
+                        "avg_realized_shortfall_bps": "1",
+                        "last_computed_at": "2026-06-01T19:16:00+00:00",
+                        "hypothesis_id": "H-PAIRS-01",
+                        "candidate_id": _MANIFEST_CANDIDATE_IDS["H-PAIRS-01"],
+                        "strategy_family": _MANIFEST_STRATEGY_FAMILIES["H-PAIRS-01"],
+                        "account_label": "TORGHUT_SIM",
+                        "ledger_schema_version": EXACT_REPLAY_LEDGER_SCHEMA_VERSION,
+                    },
+                    {
+                        "symbol": "AMZN",
+                        "order_count": 1,
+                        "avg_abs_slippage_bps": "4",
+                        "avg_realized_shortfall_bps": "1",
+                        "last_computed_at": "2026-06-01T19:16:00+00:00",
+                        "hypothesis_id": "H-PAIRS-01",
+                        "candidate_id": _MANIFEST_CANDIDATE_IDS["H-PAIRS-01"],
+                        "strategy_family": _MANIFEST_STRATEGY_FAMILIES["H-PAIRS-01"],
+                        "account_label": "TORGHUT_SIM",
+                        "source_decision_mode": "bounded_paper_route_collection_only",
+                        "source_decision_mode_profit_proof_eligible": False,
+                    },
+                ],
+            },
+            runtime_ledger_summary=_runtime_ledger_summary(
+                "H-PAIRS-01",
+                bucket_started_at="2026-06-01T19:00:00+00:00",
+                bucket_ended_at="2026-06-01T19:15:00+00:00",
+                submitted_order_count=120,
+                post_cost_expectancy_bps="12",
+            ),
+            market_context_status={"last_freshness_seconds": 60},
+            jangar_dependency_quorum=JangarDependencyQuorumStatus(
+                decision="allow",
+                reasons=[],
+                message="ok",
+            ),
+            now=datetime(2026, 6, 1, 19, 17, tzinfo=timezone.utc),
+            market_session_open=True,
+            route_symbol_filter_enabled=True,
+        )
+
+        hpairs = next(
+            item for item in statuses if item["hypothesis_id"] == "H-PAIRS-01"
+        )
+        observed = hpairs["observed"]
+        self.assertFalse(hpairs["promotion_eligible"])
+        self.assertIn("route_universe_empty", hpairs["reasons"])
+        self.assertEqual(observed["tca_order_count"], 0)
+        self.assertEqual(observed["route_tca_symbols"], [])
+        self.assertEqual(observed["route_tca_repair_symbols"], ["AAPL", "AMZN"])
+        self.assertTrue(observed["bounded_route_evidence_collection_eligible"])
+        self.assertEqual(
+            observed["bounded_route_evidence_collection_authority"],
+            "repair_only_non_authority",
+        )
+        self.assertIn(
+            "route_tca_non_authority_source",
+            observed["route_tca_blocking_reason_codes"],
+        )
+        self.assertIn(
+            "route_tca_non_authority_source_decision_mode",
+            observed["route_tca_blocking_reason_codes"],
+        )
+
+    def test_compile_hypothesis_runtime_statuses_selects_clean_current_hpairs_route_tca(
+        self,
+    ) -> None:
+        registry = load_hypothesis_registry()
+        state = _state(
+            feature_rows=2770,
+            drift_checks=3,
+            evidence_checks=2,
+            signal_lag_seconds=14,
+            evidence_report={
+                "ok": True,
+                "checked_at": "2026-06-01T19:15:00+00:00",
+            },
+        )
+        statuses = compile_hypothesis_runtime_statuses(
+            registry=registry,
+            state=state,
+            tca_summary={
+                "account_label": "TORGHUT_SIM",
+                "order_count": 2,
+                "avg_abs_slippage_bps": "4",
+                "avg_realized_shortfall_bps": "1",
+                "last_computed_at": "2026-06-01T19:16:00+00:00",
+                "scope_symbols": ["AAPL", "AMZN"],
+                "symbol_breakdown": [
+                    {
+                        "symbol": "AAPL",
+                        "order_count": 1,
+                        "avg_abs_slippage_bps": "4",
+                        "avg_realized_shortfall_bps": "1",
+                        "last_computed_at": "2026-06-01T19:16:00+00:00",
+                        "hypothesis_id": "H-PAIRS-01",
+                        "candidate_id": _MANIFEST_CANDIDATE_IDS["H-PAIRS-01"],
+                        "strategy_family": _MANIFEST_STRATEGY_FAMILIES["H-PAIRS-01"],
+                        "account_label": "TORGHUT_SIM",
+                        "source_kind": "live_paper_execution_tca",
+                    },
+                    {
+                        "symbol": "AMZN",
+                        "order_count": 1,
+                        "avg_abs_slippage_bps": "4",
+                        "avg_realized_shortfall_bps": "1",
+                        "last_computed_at": "2026-06-01T19:16:00+00:00",
+                        "hypothesis_id": "H-PAIRS-01",
+                        "candidate_id": _MANIFEST_CANDIDATE_IDS["H-PAIRS-01"],
+                        "strategy_family": _MANIFEST_STRATEGY_FAMILIES["H-PAIRS-01"],
+                        "account_label": "TORGHUT_SIM",
+                        "source_kind": "live_paper_execution_tca",
+                    },
+                ],
+            },
+            runtime_ledger_summary=_runtime_ledger_summary(
+                "H-PAIRS-01",
+                bucket_started_at="2026-06-01T19:00:00+00:00",
+                bucket_ended_at="2026-06-01T19:15:00+00:00",
+                submitted_order_count=120,
+                post_cost_expectancy_bps="12",
+            ),
+            market_context_status={"last_freshness_seconds": 60},
+            jangar_dependency_quorum=JangarDependencyQuorumStatus(
+                decision="allow",
+                reasons=[],
+                message="ok",
+            ),
+            now=datetime(2026, 6, 1, 19, 17, tzinfo=timezone.utc),
+            market_session_open=True,
+            route_symbol_filter_enabled=True,
+        )
+
+        hpairs = next(
+            item for item in statuses if item["hypothesis_id"] == "H-PAIRS-01"
+        )
+        observed = hpairs["observed"]
+        self.assertEqual(observed["tca_order_count"], 2)
+        self.assertEqual(observed["route_tca_symbols"], ["AAPL", "AMZN"])
+        self.assertEqual(observed["route_tca_repair_symbols"], [])
+        self.assertNotIn("route_universe_empty", hpairs["reasons"])
+
+    def test_compile_hypothesis_runtime_statuses_keeps_high_slippage_hpairs_tca_repair_only(
+        self,
+    ) -> None:
+        registry = load_hypothesis_registry()
+        state = _state(
+            feature_rows=2770,
+            drift_checks=3,
+            evidence_checks=2,
+            signal_lag_seconds=14,
+            evidence_report={
+                "ok": True,
+                "checked_at": "2026-06-01T19:15:00+00:00",
+            },
+        )
+        statuses = compile_hypothesis_runtime_statuses(
+            registry=registry,
+            state=state,
+            tca_summary={
+                "account_label": "TORGHUT_SIM",
+                "order_count": 2,
+                "avg_abs_slippage_bps": "24.34",
+                "avg_realized_shortfall_bps": "24.34",
+                "last_computed_at": "2026-06-01T19:16:00+00:00",
+                "scope_symbols": ["AAPL", "AMZN"],
+                "symbol_breakdown": [
+                    {
+                        "symbol": "AAPL",
+                        "order_count": 1,
+                        "avg_abs_slippage_bps": "24.34",
+                        "avg_realized_shortfall_bps": "24.34",
+                        "last_computed_at": "2026-06-01T19:16:00+00:00",
+                        "hypothesis_id": "H-PAIRS-01",
+                        "candidate_id": _MANIFEST_CANDIDATE_IDS["H-PAIRS-01"],
+                        "strategy_family": _MANIFEST_STRATEGY_FAMILIES["H-PAIRS-01"],
+                        "account_label": "TORGHUT_SIM",
+                        "source_kind": "live_paper_execution_tca",
+                    },
+                    {
+                        "symbol": "AMZN",
+                        "order_count": 1,
+                        "avg_abs_slippage_bps": "24.34",
+                        "avg_realized_shortfall_bps": "24.34",
+                        "last_computed_at": "2026-06-01T19:16:00+00:00",
+                        "hypothesis_id": "H-PAIRS-01",
+                        "candidate_id": _MANIFEST_CANDIDATE_IDS["H-PAIRS-01"],
+                        "strategy_family": _MANIFEST_STRATEGY_FAMILIES["H-PAIRS-01"],
+                        "account_label": "TORGHUT_SIM",
+                        "source_kind": "live_paper_execution_tca",
+                    },
+                ],
+            },
+            runtime_ledger_summary=_runtime_ledger_summary(
+                "H-PAIRS-01",
+                bucket_started_at="2026-06-01T19:00:00+00:00",
+                bucket_ended_at="2026-06-01T19:15:00+00:00",
+                submitted_order_count=120,
+                post_cost_expectancy_bps="12",
+            ),
+            market_context_status={"last_freshness_seconds": 60},
+            jangar_dependency_quorum=JangarDependencyQuorumStatus(
+                decision="allow",
+                reasons=[],
+                message="ok",
+            ),
+            now=datetime(2026, 6, 1, 19, 17, tzinfo=timezone.utc),
+            market_session_open=True,
+            route_symbol_filter_enabled=True,
+        )
+
+        hpairs = next(
+            item for item in statuses if item["hypothesis_id"] == "H-PAIRS-01"
+        )
+        observed = hpairs["observed"]
+        self.assertFalse(hpairs["promotion_eligible"])
+        self.assertEqual(hpairs["promotion_contract"]["max_avg_abs_slippage_bps"], "8")
+        self.assertIn("route_universe_empty", hpairs["reasons"])
+        self.assertEqual(observed["tca_order_count"], 0)
+        self.assertEqual(observed["route_tca_symbols"], [])
+        self.assertEqual(observed["route_tca_repair_symbols"], ["AAPL", "AMZN"])
+        self.assertIn(
+            "route_tca_avg_abs_slippage_above_guardrail",
+            observed["route_tca_blocking_reason_codes"],
+        )
 
     def test_compile_hypothesis_runtime_statuses_blocks_stale_tca_evidence(
         self,
