@@ -412,6 +412,21 @@ def _target_probe_action(target: Mapping[str, Any]) -> Literal["buy", "sell"]:
     return "buy"
 
 
+def _target_probe_cap(target: Mapping[str, Any]) -> Decimal | None:
+    for key in (
+        "paper_route_probe_next_session_max_notional",
+        "bounded_evidence_collection_max_notional",
+        "paper_route_probe_effective_max_notional",
+        "paper_route_probe_target_notional",
+        "target_notional",
+        "max_notional",
+    ):
+        cap = _optional_decimal(target.get(key))
+        if cap is not None and cap > 0:
+            return cap
+    return None
+
+
 def _target_probe_exit_minute_after_open(
     target: Mapping[str, Any],
 ) -> tuple[int | None, bool]:
@@ -2973,9 +2988,7 @@ class SimpleTradingPipeline(TradingPipeline):
             window_start, window_end = window
             if now < window_start or now >= window_end:
                 continue
-            target_cap = _optional_decimal(
-                target.get("paper_route_probe_next_session_max_notional")
-            )
+            target_cap = _target_probe_cap(target)
             if target_cap is None or target_cap <= 0:
                 continue
             strategy = self._paper_route_target_strategy(target, strategies)
@@ -3144,7 +3157,7 @@ class SimpleTradingPipeline(TradingPipeline):
                     StrategyDecision(
                         strategy_id=str(strategy.id),
                         symbol=symbol,
-                        event_ts=window_start,
+                        event_ts=now,
                         timeframe=timeframe,
                         action=action,
                         qty=Decimal("1"),

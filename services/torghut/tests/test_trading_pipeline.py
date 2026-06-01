@@ -8657,6 +8657,167 @@ class TestTradingPipeline(TestCase):
             [("AAPL", "buy"), ("AMZN", "sell")],
         )
 
+    def test_bounded_hpairs_target_source_records_decisions_and_executions(
+        self,
+    ) -> None:
+        from app import config
+
+        window_start = datetime(2026, 6, 1, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 6, 1, 20, 0, tzinfo=timezone.utc)
+        now = window_start + timedelta(minutes=15)
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_pipeline_mode = "simple"
+        config.settings.trading_simple_submit_enabled = True
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_allow_shorts = True
+        config.settings.trading_fractional_equities_enabled = True
+        config.settings.trading_simple_max_notional_per_order = 1000.0
+        config.settings.trading_simple_max_notional_per_symbol = 1000.0
+
+        alpaca_client = FakeAlpacaClient()
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=alpaca_client,
+            order_firewall=OrderFirewall(alpaca_client),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=alpaca_client,
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="TORGHUT_SIM",
+            session_factory=self.session_local,
+        )
+        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="microbar-cross-sectional-pairs-v1",
+                enabled=True,
+                base_timeframe="1Sec",
+                universe_type="microbar_cross_sectional_pairs_v1",
+                universe_symbols=["AAPL", "AMZN"],
+                max_notional_per_trade=Decimal("1000"),
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            target = {
+                "account_label": "TORGHUT_SIM",
+                "observed_stage": "paper",
+                "source_kind": "paper_route_probe_runtime_observed",
+                "candidate_id": "c88421d619759b2cfaa6f4d0",
+                "hypothesis_id": "H-PAIRS-01",
+                "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                "strategy_name": "microbar-cross-sectional-pairs-v1",
+                "strategy_lookup_names": [str(strategy.id), strategy.name],
+                "strategy_family": "microbar_cross_sectional_pairs",
+                "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
+                "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                "paper_route_probe_symbol_actions": {
+                    "AAPL": "buy",
+                    "AMZN": "sell",
+                },
+                "paper_route_probe_window_start": window_start.isoformat(),
+                "paper_route_probe_window_end": window_end.isoformat(),
+                "paper_route_probe_next_session_max_notional": "0",
+                "bounded_evidence_collection_max_notional": "500",
+                "max_notional": "0",
+                "bounded_evidence_collection_authorized": True,
+                "bounded_live_paper_collection_authorized": True,
+                "bounded_evidence_collection_scope": "paper_route_probe_next_session_only",
+                "evidence_collection_ok": True,
+                "source_decision_readiness": {"ready": True, "blockers": []},
+                "runtime_window_import_health_gate_blockers": [
+                    "evidence_continuity_not_ok"
+                ],
+                "paper_route_account_pre_session_blockers": [],
+                "paper_route_hpairs_symbol_blockers": [],
+                "promotion_allowed": False,
+                "final_promotion_allowed": False,
+                "final_promotion_authorized": False,
+            }
+            proof_floor = {
+                "route_state": "repair_only",
+                "capital_state": "zero_notional",
+                "max_notional": "0",
+                "market_window": {"session_open": True},
+                "blocking_reasons": ["alpha_readiness_not_promotion_eligible"],
+            }
+
+            def priced_decision(
+                decision: StrategyDecision, signal_price: object = None
+            ) -> tuple[StrategyDecision, MarketSnapshot | None]:
+                del signal_price
+                params = dict(decision.params)
+                params["price"] = Decimal("100")
+                return decision.model_copy(update={"params": params}), None
+
+            with (
+                patch.object(
+                    pipeline,
+                    "_external_paper_route_target_probe_symbols_cached",
+                    return_value=({"AAPL", "AMZN"}, None, [target]),
+                ),
+                patch.object(
+                    SimpleTradingPipeline,
+                    "_profitability_proof_floor",
+                    return_value=proof_floor,
+                ),
+                patch.object(
+                    pipeline,
+                    "_ensure_decision_price",
+                    side_effect=priced_decision,
+                ),
+                patch(
+                    "app.trading.scheduler.simple_pipeline.trading_now",
+                    return_value=now,
+                ),
+                patch(
+                    "app.trading.scheduler.pipeline.trading_now",
+                    return_value=now,
+                ),
+            ):
+                pipeline._process_paper_route_target_source_decisions(
+                    session=session,
+                    strategies=[strategy],
+                    account=alpaca_client.get_account(),
+                    positions=[],
+                    allowed_symbols={"AAPL", "AMZN"},
+                )
+
+            decisions = session.execute(
+                select(TradeDecision).order_by(TradeDecision.symbol)
+            ).scalars().all()
+            executions = session.execute(
+                select(Execution).order_by(Execution.symbol)
+            ).scalars().all()
+
+        self.assertEqual([decision.symbol for decision in decisions], ["AAPL", "AMZN"])
+        self.assertEqual(
+            [decision.status for decision in decisions], ["submitted", "submitted"]
+        )
+        self.assertEqual(
+            [execution.symbol for execution in executions], ["AAPL", "AMZN"]
+        )
+        self.assertEqual(len(alpaca_client.submitted), 2)
+        for decision in decisions:
+            payload = cast(dict[str, Any], decision.decision_json)
+            params = cast(dict[str, Any], payload.get("params") or {})
+            metadata = cast(
+                dict[str, Any], params.get("paper_route_target_plan") or {}
+            )
+            self.assertEqual(
+                metadata.get("paper_route_probe_next_session_max_notional"), "500"
+            )
+            self.assertFalse(params.get("promotion_allowed"))
+            self.assertFalse(params.get("final_promotion_allowed"))
+            self.assertFalse(params.get("final_promotion_authorized"))
+            self.assertEqual(params.get("execution_account_label"), "TORGHUT_SIM")
+
     def test_paper_route_target_source_skips_pair_when_account_not_flat(
         self,
     ) -> None:
