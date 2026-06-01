@@ -4,7 +4,10 @@ from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from typing import Any, cast
 
-from app.trading.proof_floor import build_profitability_proof_floor_receipt
+from app.trading.proof_floor import (
+    _route_universe_adverse_slippage_clear,
+    build_profitability_proof_floor_receipt,
+)
 
 
 NOW = datetime(2026, 5, 6, 21, 27, tzinfo=timezone.utc)
@@ -1056,6 +1059,168 @@ def test_execution_tca_route_universe_uses_adverse_signed_shortfall() -> None:
     aapl_record = next(item for item in route_records if item["symbol"] == "AAPL")
     assert aapl_record["state"] == "routeable"
     assert aapl_record["route_adverse_slippage_bps"] == "0"
+
+
+def test_execution_tca_signed_adverse_clear_unblocks_aggregate_abs_slippage() -> None:
+    receipt = build_profitability_proof_floor_receipt(
+        account_label="TORGHUT_SIM",
+        torghut_revision="torghut-sim-00979",
+        trading_mode="paper",
+        market_session_open=True,
+        live_submission_gate={
+            "allowed": True,
+            "reason": "non_live_mode",
+            "blocked_reasons": [],
+            "capital_stage": "paper",
+        },
+        hypothesis_payload=_healthy_hypothesis_payload(),
+        empirical_jobs_status=_healthy_empirical_jobs(),
+        quant_evidence=_healthy_quant_evidence(),
+        market_context_status=_healthy_market_context(),
+        tca_summary={
+            **_fresh_tca_summary(avg_abs_slippage_bps="29.9205222873469388"),
+            "scope_symbols": ["AAPL", "AMZN", "INTC", "NVDA"],
+            "scope_symbol_count": 4,
+            "symbol_breakdown": [
+                {
+                    "symbol": "AAPL",
+                    "order_count": 19,
+                    "avg_abs_slippage_bps": "10.0605907784615385",
+                    "avg_realized_shortfall_bps": "-3.7676291292307692",
+                    "max_abs_slippage_bps": "52.57029761",
+                    "last_computed_at": NOW.isoformat(),
+                },
+                {
+                    "symbol": "AMZN",
+                    "order_count": 24,
+                    "avg_abs_slippage_bps": "15.533415621",
+                    "avg_realized_shortfall_bps": "-12.782019899",
+                    "max_abs_slippage_bps": "109.74841602",
+                    "last_computed_at": NOW.isoformat(),
+                },
+                {
+                    "symbol": "INTC",
+                    "order_count": 9,
+                    "avg_abs_slippage_bps": "76.5197505133333333",
+                    "avg_realized_shortfall_bps": "-76.21408033",
+                    "max_abs_slippage_bps": "437.54186202",
+                    "last_computed_at": NOW.isoformat(),
+                },
+                {
+                    "symbol": "NVDA",
+                    "order_count": 14,
+                    "avg_abs_slippage_bps": "56.553109646",
+                    "avg_realized_shortfall_bps": "-56.064048032",
+                    "max_abs_slippage_bps": "524.38041507",
+                    "last_computed_at": NOW.isoformat(),
+                },
+            ],
+        },
+        simple_lane_status=_simple_lane_status(),
+        now=NOW,
+    )
+
+    tca_dimension = next(
+        item
+        for item in receipt["proof_dimensions"]
+        if item["dimension"] == "execution_tca"
+    )
+    source_ref = cast(Mapping[str, Any], tca_dimension["source_ref"])
+    symbol_routes = cast(Mapping[str, Any], source_ref["symbol_routes"])
+    adverse_clear = cast(
+        Mapping[str, Any], source_ref["route_universe_adverse_slippage"]
+    )
+
+    assert tca_dimension["state"] == "pass"
+    assert (
+        tca_dimension["reason"] == "execution_tca_route_universe_adverse_slippage_clear"
+    )
+    assert source_ref["aggregate_reason"] == "execution_tca_slippage_guardrail_exceeded"
+    assert symbol_routes["routeable_symbol_count"] == 4
+    assert symbol_routes["blocked_symbol_count"] == 0
+    assert symbol_routes["missing_symbol_count"] == 0
+    assert adverse_clear["state"] == "clear"
+    assert receipt["blocking_reasons"] == []
+    assert [
+        item["code"] for item in cast(list[Mapping[str, Any]], receipt["repair_ladder"])
+    ] == []
+
+
+def test_route_universe_adverse_slippage_clear_fails_closed() -> None:
+    base_symbol_routes: dict[str, object] = {
+        "scope_symbol_count": 1,
+        "routeable_symbol_count": 1,
+        "blocked_symbol_count": 0,
+        "missing_symbol_count": 0,
+        "slippage_guardrail_bps": "20",
+        "routeable_symbols": [
+            {
+                "symbol": "AAPL",
+                "route_slippage_basis": "signed_realized_shortfall_bps",
+                "route_adverse_slippage_bps": "0",
+            }
+        ],
+    }
+    cases: list[tuple[str, dict[str, object], bool]] = [
+        ("filter_disabled", base_symbol_routes, False),
+        (
+            "inconsistent_counts",
+            {**base_symbol_routes, "scope_symbol_count": 2},
+            True,
+        ),
+        (
+            "missing_guardrail",
+            {
+                key: value
+                for key, value in base_symbol_routes.items()
+                if key != "slippage_guardrail_bps"
+            },
+            True,
+        ),
+        (
+            "malformed_routeable_row",
+            {**base_symbol_routes, "routeable_symbols": ["AAPL"]},
+            True,
+        ),
+        (
+            "wrong_slippage_basis",
+            {
+                **base_symbol_routes,
+                "routeable_symbols": [
+                    {
+                        "symbol": "AAPL",
+                        "route_slippage_basis": "avg_abs_slippage_bps_fallback",
+                        "route_adverse_slippage_bps": "0",
+                    }
+                ],
+            },
+            True,
+        ),
+        (
+            "adverse_slippage_above_guardrail",
+            {
+                **base_symbol_routes,
+                "routeable_symbols": [
+                    {
+                        "symbol": "AAPL",
+                        "route_slippage_basis": "signed_realized_shortfall_bps",
+                        "route_adverse_slippage_bps": "25",
+                    }
+                ],
+            },
+            True,
+        ),
+    ]
+
+    for case_name, symbol_routes, route_filter_enabled in cases:
+        assert (
+            _route_universe_adverse_slippage_clear(
+                symbol_routes,
+                route_filter_enabled=route_filter_enabled,
+                aggregate_tca_reason="execution_tca_slippage_guardrail_exceeded",
+            )
+            is False
+        ), case_name
 
 
 def test_execution_tca_route_universe_requires_symbol_filter_before_unblock() -> None:
