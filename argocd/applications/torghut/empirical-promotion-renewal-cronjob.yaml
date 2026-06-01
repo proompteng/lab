@@ -49,6 +49,14 @@ spec:
                     --max-batches 2 \
                     --apply \
                     --json
+                  /opt/venv/bin/python scripts/repair_order_feed_source_windows.py \
+                    --dsn-env SIM_DB_DSN \
+                    --account-label TORGHUT_REPLAY \
+                    --batch-size 1000 \
+                    --max-batches 2 \
+                    --backfill-execution-events \
+                    --apply \
+                    --json
                   /opt/venv/bin/python scripts/renew_latest_empirical_promotion_jobs.py \
                     --output-dir /tmp/torghut-empirical-renewal \
                     --strategy-spec-ref microbar_cross_sectional_pairs_v1@research \
