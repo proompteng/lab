@@ -1227,7 +1227,7 @@ class TestLiveConfigManifestContract(TestCase):
             cast(Mapping[str, object], job_spec.get("template", {})),
         )
         pod_spec = cast(Mapping[str, object], template.get("spec", {}))
-        self.assertEqual(job_spec.get("activeDeadlineSeconds"), 300)
+        self.assertEqual(job_spec.get("activeDeadlineSeconds"), 900)
         self.assertEqual(pod_spec.get("serviceAccountName"), "torghut-runtime")
         self.assertEqual(
             pod_spec.get("nodeSelector"),
