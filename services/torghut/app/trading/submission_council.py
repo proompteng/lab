@@ -96,6 +96,7 @@ _AUTORESEARCH_PORTFOLIO_READY_STATUSES = (
     "promotion_ready",
     "ready_for_promotion",
     "ready_for_promotion_review",
+    "target_met",
     "accepted",
     "promoted",
 )

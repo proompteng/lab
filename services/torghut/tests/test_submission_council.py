@@ -3549,7 +3549,7 @@ class TestSubmissionCouncil(TestCase):
                     },
                     optimizer_report_json={"method": "current_optimizer"},
                     payload_json={"portfolio_candidate_id": "portfolio-current-ready"},
-                    status="promotion_ready",
+                    status="target_met",
                 )
             )
             session.add(
@@ -3838,7 +3838,7 @@ class TestSubmissionCouncil(TestCase):
                         payload_json={
                             "portfolio_candidate_id": "portfolio-current-ready"
                         },
-                        status="promotion_ready",
+                        status="target_met",
                     ),
                 ]
             )

@@ -2565,6 +2565,113 @@ class TestPortfolioOptimizer(TestCase):
         )
         self.assertGreater(portfolio.optimizer_report["finalist_state_count"], 1)
 
+    def test_optimizer_interleaves_large_concentrated_prefix_before_beam_prunes_diversifiers(
+        self,
+    ) -> None:
+        def bundle(
+            *,
+            candidate_id: str,
+            net_pnl_per_day: str,
+            symbol: str,
+            cluster: str,
+        ) -> CandidateEvidenceBundle:
+            return evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=f"spec-{candidate_id}",
+                candidate={
+                    "candidate_id": candidate_id,
+                    "runtime_family": "microbar_cross_sectional_pairs",
+                    "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                    "family_template_id": "microbar_cross_sectional_pairs_v1",
+                    "objective_scorecard": {
+                        "net_pnl_per_day": net_pnl_per_day,
+                        "active_day_ratio": "1.0",
+                        "positive_day_ratio": "1.0",
+                        "worst_day_loss": "0",
+                        "max_drawdown": "0",
+                        "best_day_share": "0.2",
+                        "avg_filled_notional_per_day": "350000",
+                        "regime_slice_pass_rate": "0.55",
+                        "posterior_edge_lower": "0.01",
+                        "shadow_parity_status": "within_budget",
+                        "correlation_cluster": cluster,
+                        "symbol_contribution_shares": {symbol: "1.0"},
+                        **_executable_scorecard_fields(candidate_id),
+                    },
+                    "full_window": {
+                        "daily_net": {
+                            "2026-02-23": net_pnl_per_day,
+                            "2026-02-24": net_pnl_per_day,
+                            "2026-02-25": net_pnl_per_day,
+                            "2026-02-26": net_pnl_per_day,
+                            "2026-02-27": net_pnl_per_day,
+                        },
+                        "daily_filled_notional": {
+                            "2026-02-23": "350000",
+                            "2026-02-24": "350000",
+                            "2026-02-25": "350000",
+                            "2026-02-26": "350000",
+                            "2026-02-27": "350000",
+                        },
+                    },
+                },
+                dataset_snapshot_id="snapshot-concentrated-prefix",
+                result_path=f"/tmp/{candidate_id}.json",
+            )
+
+        concentrated_prefix = [
+            bundle(
+                candidate_id=f"cand-nvda-prefix-{index:03d}",
+                net_pnl_per_day="1000",
+                symbol="NVDA",
+                cluster=f"nvda-prefix-{index:03d}",
+            )
+            for index in range(
+                portfolio_optimizer_module.PORTFOLIO_SEARCH_BEAM_WIDTH + 20
+            )
+        ]
+        portfolio = optimize_portfolio_candidate(
+            evidence_bundles=[
+                *concentrated_prefix,
+                bundle(
+                    candidate_id="cand-ready-aapl",
+                    net_pnl_per_day="450",
+                    symbol="AAPL",
+                    cluster="ready-aapl",
+                ),
+                bundle(
+                    candidate_id="cand-ready-amzn",
+                    net_pnl_per_day="450",
+                    symbol="AMZN",
+                    cluster="ready-amzn",
+                ),
+                bundle(
+                    candidate_id="cand-ready-googl",
+                    net_pnl_per_day="450",
+                    symbol="GOOGL",
+                    cluster="ready-googl",
+                ),
+            ],
+            target_net_pnl_per_day=Decimal("300"),
+            oracle_policy=ProfitTargetOraclePolicy(min_observed_trading_days=5),
+            portfolio_size_min=3,
+            portfolio_size_max=3,
+        )
+
+        self.assertIsNotNone(portfolio)
+        assert portfolio is not None
+        self.assertCountEqual(
+            portfolio.source_candidate_ids,
+            ("cand-ready-aapl", "cand-ready-amzn", "cand-ready-googl"),
+        )
+        self.assertTrue(portfolio.objective_scorecard["target_met"])
+        self.assertTrue(portfolio.objective_scorecard["oracle_passed"])
+        self.assertLessEqual(
+            Decimal(
+                portfolio.objective_scorecard["max_single_symbol_contribution_share"]
+            ),
+            Decimal("0.35"),
+        )
+
     def test_optimizer_prefers_nearest_promotion_candidate_over_raw_target_met(
         self,
     ) -> None:
