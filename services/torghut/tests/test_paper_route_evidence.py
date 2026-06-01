@@ -65,6 +65,18 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(actions, {"AAPL": "buy", "AMZN": "sell"})
         self.assertEqual(_pair_probe_balance_state(actions), "balanced")
 
+    def test_balanced_pair_probe_accepts_explicit_true_and_short_alias(self) -> None:
+        actions = _balanced_pair_probe_symbol_actions(
+            {
+                "paper_route_probe_pair_balance_required": "true",
+                "paper_route_probe_symbol_actions": {"AAPL": "short"},
+            },
+            ["AAPL", "AMZN"],
+        )
+
+        self.assertEqual(actions, {"AAPL": "sell", "AMZN": "buy"})
+        self.assertEqual(_pair_probe_balance_state(actions), "balanced")
+
     def _runtime_ledger_source_authority_payload(
         self,
         *,
