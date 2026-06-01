@@ -67,6 +67,7 @@ TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_STATUS_NON_AUTHORITY_BLOCKED = (
 TIGERBEETLE_BLOCKER_JOURNAL_DISABLED = "tigerbeetle_journal_disabled"
 TIGERBEETLE_BLOCKER_JOURNAL_ENTRY_UNAVAILABLE = "tigerbeetle_journal_entry_unavailable"
 TIGERBEETLE_BLOCKER_JOURNAL_ERROR = "tigerbeetle_journal_error"
+TIGERBEETLE_BLOCKER_TRANSFER_REF_CONFLICT = "tigerbeetle_transfer_ref_conflict"
 TIGERBEETLE_AUTHORITY_BLOCKER_ACCOUNTING_ONLY = (
     "tigerbeetle_accounting_parity_not_promotion_authority"
 )
@@ -880,6 +881,46 @@ def _transfer_matches(
     )
 
 
+def _transfer_ref_mismatches(
+    ref: TigerBeetleTransferRef,
+    expected: TigerBeetleTransferSpec,
+) -> list[str]:
+    mismatches: list[str] = []
+    if ref.transfer_id != u128_decimal(expected.transfer_id):
+        mismatches.append("transfer_id")
+    if ref.transfer_kind != expected.transfer_kind:
+        mismatches.append("transfer_kind")
+    if ref.amount != Decimal(expected.amount):
+        mismatches.append("amount")
+    if ref.ledger != expected.ledger:
+        mismatches.append("ledger")
+    if ref.code != expected.code:
+        mismatches.append("code")
+    payload = _nested_mapping(ref.payload_json)
+    expected_debit = u128_decimal(expected.debit_account_id)
+    expected_credit = u128_decimal(expected.credit_account_id)
+    if payload.get("debit_account_id") not in {None, expected_debit}:
+        mismatches.append("debit_account_id")
+    if payload.get("credit_account_id") not in {None, expected_credit}:
+        mismatches.append("credit_account_id")
+    if expected.pending_id:
+        expected_pending = u128_decimal(expected.pending_id)
+        if payload.get("pending_id") not in {None, expected_pending}:
+            mismatches.append("pending_id")
+    return mismatches
+
+
+def _assert_transfer_ref_matches(
+    ref: TigerBeetleTransferRef,
+    expected: TigerBeetleTransferSpec,
+) -> None:
+    mismatches = _transfer_ref_mismatches(ref, expected)
+    if mismatches:
+        raise RuntimeError(
+            f"{TIGERBEETLE_BLOCKER_TRANSFER_REF_CONFLICT}:{','.join(mismatches)}"
+        )
+
+
 def _source_transfer_spec(
     *,
     transfer_id: int,
@@ -1084,61 +1125,68 @@ class TigerBeetleLedgerJournal:
         payload_json: Mapping[str, object],
     ) -> TigerBeetleTransferRef:
         transfer_id_text = u128_decimal(transfer_spec.transfer_id)
-        existing = session.execute(
+        source_existing = session.execute(
             select(TigerBeetleTransferRef).where(
                 TigerBeetleTransferRef.cluster_id
                 == self._settings.tigerbeetle_cluster_id,
-                TigerBeetleTransferRef.transfer_id == transfer_id_text,
+                TigerBeetleTransferRef.source_type == source_type,
+                TigerBeetleTransferRef.source_id == source_id,
+                TigerBeetleTransferRef.transfer_kind == transfer_spec.transfer_kind,
             )
         ).scalar_one_or_none()
+        if source_existing is not None:
+            _assert_transfer_ref_matches(source_existing, transfer_spec)
+            existing = source_existing
+        else:
+            existing = session.execute(
+                select(TigerBeetleTransferRef).where(
+                    TigerBeetleTransferRef.cluster_id
+                    == self._settings.tigerbeetle_cluster_id,
+                    TigerBeetleTransferRef.transfer_id == transfer_id_text,
+                )
+            ).scalar_one_or_none()
         if existing is not None:
-            if (
-                existing.transfer_kind == transfer_spec.transfer_kind
-                and existing.amount == Decimal(transfer_spec.amount)
-                and existing.code == transfer_spec.code
-                and existing.ledger == transfer_spec.ledger
-            ):
-                if existing.trade_decision_id is None:
-                    existing.trade_decision_id = cast(Any, trade_decision_id)
-                if existing.execution_id is None:
-                    existing.execution_id = cast(Any, execution_id)
-                if existing.execution_order_event_id is None:
-                    existing.execution_order_event_id = cast(
-                        Any,
-                        execution_order_event_id,
-                    )
-                if existing.execution_tca_metric_id is None:
-                    existing.execution_tca_metric_id = cast(
-                        Any,
-                        execution_tca_metric_id,
-                    )
-                if existing.runtime_ledger_bucket_id is None:
-                    existing.runtime_ledger_bucket_id = cast(
-                        Any,
-                        runtime_ledger_bucket_id,
-                    )
-                if existing.source_type is None:
-                    existing.source_type = source_type
-                if existing.source_id is None:
-                    existing.source_id = source_id
-                if existing.event_fingerprint is None:
-                    existing.event_fingerprint = event_fingerprint
-                raw_existing_payload: object = existing.payload_json
-                existing_payload: Mapping[str, object] = (
-                    cast(Mapping[str, object], raw_existing_payload)
-                    if isinstance(raw_existing_payload, Mapping)
-                    else {}
+            _assert_transfer_ref_matches(existing, transfer_spec)
+            if existing.trade_decision_id is None:
+                existing.trade_decision_id = cast(Any, trade_decision_id)
+            if existing.execution_id is None:
+                existing.execution_id = cast(Any, execution_id)
+            if existing.execution_order_event_id is None:
+                existing.execution_order_event_id = cast(
+                    Any,
+                    execution_order_event_id,
                 )
-                existing.payload_json = coerce_json_payload(
-                    {
-                        **existing_payload,
-                        **payload_json,
-                    }
+            if existing.execution_tca_metric_id is None:
+                existing.execution_tca_metric_id = cast(
+                    Any,
+                    execution_tca_metric_id,
                 )
-                session.add(existing)
-                session.flush()
-                return existing
-            raise RuntimeError("tigerbeetle_transfer_ref_conflict")
+            if existing.runtime_ledger_bucket_id is None:
+                existing.runtime_ledger_bucket_id = cast(
+                    Any,
+                    runtime_ledger_bucket_id,
+                )
+            if existing.source_type is None:
+                existing.source_type = source_type
+            if existing.source_id is None:
+                existing.source_id = source_id
+            if existing.event_fingerprint is None:
+                existing.event_fingerprint = event_fingerprint
+            raw_existing_payload: object = existing.payload_json
+            existing_payload: Mapping[str, object] = (
+                cast(Mapping[str, object], raw_existing_payload)
+                if isinstance(raw_existing_payload, Mapping)
+                else {}
+            )
+            existing.payload_json = coerce_json_payload(
+                {
+                    **existing_payload,
+                    **payload_json,
+                }
+            )
+            session.add(existing)
+            session.flush()
+            return existing
 
         _persist_account_refs(
             session,
@@ -1243,11 +1291,19 @@ class TigerBeetleLedgerJournal:
             source_id=str(execution.id),
             payload_json={
                 "source": SOURCE_TYPE_EXECUTION,
+                "source_refs": [
+                    f"postgres:executions:{execution.id}",
+                ],
+                "economic_event_key": f"execution:{execution.id}:fill_notional",
                 "alpaca_order_id": execution.alpaca_order_id,
                 "client_order_id": execution.client_order_id,
                 "filled_qty": str(execution.filled_qty),
                 "avg_fill_price": str(execution.avg_fill_price),
+                "amount_source": str(plan.amount_source),
                 "notional_micros": transfer_spec.amount,
+                "transfer_id": u128_decimal(transfer_spec.transfer_id),
+                "ledger": transfer_spec.ledger,
+                "code": transfer_spec.code,
                 "debit_account_id": u128_decimal(transfer_spec.debit_account_id),
                 "credit_account_id": u128_decimal(transfer_spec.credit_account_id),
             },
@@ -1276,10 +1332,22 @@ class TigerBeetleLedgerJournal:
             source_id=str(metric.id),
             payload_json={
                 "source": SOURCE_TYPE_EXECUTION_TCA_METRIC,
+                "source_refs": [
+                    f"postgres:execution_tca_metrics:{metric.id}",
+                    f"postgres:executions:{metric.execution_id}",
+                ],
+                "economic_event_key": (
+                    f"execution:{metric.execution_id}:tca_metric:{metric.id}:"
+                    "execution_cost"
+                ),
                 "shortfall_notional": str(metric.shortfall_notional),
                 "realized_shortfall_bps": str(metric.realized_shortfall_bps),
                 "simulator_version": metric.simulator_version,
+                "amount_source": str(plan.amount_source),
                 "cost_micros": transfer_spec.amount,
+                "transfer_id": u128_decimal(transfer_spec.transfer_id),
+                "ledger": transfer_spec.ledger,
+                "code": transfer_spec.code,
                 "debit_account_id": u128_decimal(transfer_spec.debit_account_id),
                 "credit_account_id": u128_decimal(transfer_spec.credit_account_id),
             },

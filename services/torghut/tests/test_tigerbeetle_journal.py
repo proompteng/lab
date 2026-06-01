@@ -41,6 +41,7 @@ from app.trading.tigerbeetle_journal import (
     _result_status,
     _transfer_attr,
     _transfer_flag,
+    _transfer_ref_mismatches,
     _transfer_spec,
     build_order_event_transfer_plan,
     submitted_pending_transfer_id,
@@ -489,6 +490,186 @@ class TestTigerBeetleLedgerJournal(TestCase):
             self.assertEqual(ref.transfer_kind, TRANSFER_KIND_EXECUTION_COST)
             self.assertEqual(ref.transfer_id, str(execution_cost_transfer_id(metric)))
             self.assertEqual(ref.amount, Decimal("250000"))
+            self.assertEqual(
+                ref.payload_json["source_refs"],
+                [
+                    f"postgres:execution_tca_metrics:{metric.id}",
+                    f"postgres:executions:{metric.execution_id}",
+                ],
+            )
+            self.assertEqual(
+                ref.payload_json["economic_event_key"],
+                f"execution:{metric.execution_id}:tca_metric:{metric.id}:execution_cost",
+            )
+            self.assertEqual(ref.payload_json["amount_source"], "0.25")
+            self.assertEqual(ref.payload_json["ledger"], LEDGER_USD_MICRO)
+            self.assertEqual(ref.payload_json["code"], 2011)
+            self.assertEqual(ref.payload_json["transfer_id"], ref.transfer_id)
+
+    def test_cost_source_retry_for_same_metric_is_idempotent(self) -> None:
+        with Session(self.engine) as session:
+            event = _create_fill_event(session, fingerprint="fingerprint-cost-retry")
+            metric = ExecutionTCAMetric(
+                execution_id=event.execution_id,
+                trade_decision_id=event.trade_decision_id,
+                strategy_id=event.trade_decision.strategy_id
+                if event.trade_decision
+                else None,
+                alpaca_account_label="paper",
+                symbol="AAPL",
+                side="buy",
+                filled_qty=Decimal("1"),
+                signed_qty=Decimal("1"),
+                shortfall_notional=Decimal("0.25"),
+                realized_shortfall_bps=Decimal("1.3"),
+                computed_at=datetime.now(timezone.utc),
+            )
+            session.add(metric)
+            session.flush()
+            client = FakeTigerBeetleClient()
+            journal = TigerBeetleLedgerJournal(
+                settings_obj=_settings(),
+                client=client,
+            )
+
+            first = journal.journal_execution_tca_metric(session, metric)
+            second = journal.journal_execution_tca_metric(session, metric)
+
+            self.assertIsNotNone(first)
+            self.assertEqual(first, second)
+            refs = session.execute(select(TigerBeetleTransferRef)).scalars().all()
+            self.assertEqual(len(refs), 1)
+            self.assertEqual(len(client.transfers), 1)
+
+    def test_cost_source_same_ref_different_payload_is_blocked(self) -> None:
+        with Session(self.engine) as session:
+            event = _create_fill_event(
+                session, fingerprint="fingerprint-cost-payload-conflict"
+            )
+            metric = ExecutionTCAMetric(
+                execution_id=event.execution_id,
+                trade_decision_id=event.trade_decision_id,
+                strategy_id=event.trade_decision.strategy_id
+                if event.trade_decision
+                else None,
+                alpaca_account_label="paper",
+                symbol="AAPL",
+                side="buy",
+                filled_qty=Decimal("1"),
+                signed_qty=Decimal("1"),
+                shortfall_notional=Decimal("0.25"),
+                realized_shortfall_bps=Decimal("1.3"),
+                computed_at=datetime.now(timezone.utc),
+            )
+            session.add(metric)
+            session.flush()
+            expected_transfer_id = str(execution_cost_transfer_id(metric))
+            session.add(
+                TigerBeetleTransferRef(
+                    cluster_id=2001,
+                    transfer_id=expected_transfer_id,
+                    transfer_kind=TRANSFER_KIND_EXECUTION_COST,
+                    ledger=LEDGER_USD_MICRO,
+                    code=2011,
+                    amount=Decimal("999"),
+                    status="created",
+                    execution_id=metric.execution_id,
+                    execution_tca_metric_id=metric.id,
+                    source_type="execution_tca_metric",
+                    source_id=str(metric.id),
+                    payload_json={
+                        "debit_account_id": "1",
+                        "credit_account_id": "2",
+                    },
+                )
+            )
+            session.flush()
+
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "tigerbeetle_transfer_ref_conflict:.*amount.*debit_account_id.*credit_account_id",
+            ):
+                TigerBeetleLedgerJournal(
+                    settings_obj=_settings(), client=FakeTigerBeetleClient()
+                ).journal_execution_tca_metric(session, metric)
+
+    def test_cost_source_same_ref_different_currency_is_blocked(self) -> None:
+        with Session(self.engine) as session:
+            event = _create_fill_event(
+                session, fingerprint="fingerprint-cost-ledger-conflict"
+            )
+            metric = ExecutionTCAMetric(
+                execution_id=event.execution_id,
+                trade_decision_id=event.trade_decision_id,
+                strategy_id=event.trade_decision.strategy_id
+                if event.trade_decision
+                else None,
+                alpaca_account_label="paper",
+                symbol="AAPL",
+                side="buy",
+                filled_qty=Decimal("1"),
+                signed_qty=Decimal("1"),
+                shortfall_notional=Decimal("0.25"),
+                realized_shortfall_bps=Decimal("1.3"),
+                computed_at=datetime.now(timezone.utc),
+            )
+            session.add(metric)
+            session.flush()
+            expected_transfer_id = str(execution_cost_transfer_id(metric))
+            session.add(
+                TigerBeetleTransferRef(
+                    cluster_id=2001,
+                    transfer_id=expected_transfer_id,
+                    transfer_kind=TRANSFER_KIND_EXECUTION_COST,
+                    ledger=LEDGER_USD_MICRO + 1,
+                    code=2011,
+                    amount=Decimal("250000"),
+                    status="created",
+                    execution_id=metric.execution_id,
+                    execution_tca_metric_id=metric.id,
+                    source_type="execution_tca_metric",
+                    source_id=str(metric.id),
+                    payload_json={},
+                )
+            )
+            session.flush()
+
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "tigerbeetle_transfer_ref_conflict:ledger",
+            ):
+                TigerBeetleLedgerJournal(
+                    settings_obj=_settings(), client=FakeTigerBeetleClient()
+                ).journal_execution_tca_metric(session, metric)
+
+    def test_transfer_ref_mismatch_details_cover_identity_kind_code_and_pending(
+        self,
+    ) -> None:
+        expected = TigerBeetleTransferSpec(
+            transfer_id=123,
+            transfer_kind=TRANSFER_KIND_FILL_POST,
+            debit_account_id=11,
+            credit_account_id=22,
+            amount=1000,
+            ledger=LEDGER_USD_MICRO,
+            code=2001,
+            pending_id=456,
+        )
+        ref = TigerBeetleTransferRef(
+            cluster_id=2001,
+            transfer_id="999",
+            transfer_kind=TRANSFER_KIND_EXECUTION_COST,
+            ledger=LEDGER_USD_MICRO,
+            code=2999,
+            amount=Decimal("1000"),
+            status="created",
+            payload_json={"pending_id": "999"},
+        )
+
+        self.assertEqual(
+            _transfer_ref_mismatches(ref, expected),
+            ["transfer_id", "transfer_kind", "code", "pending_id"],
+        )
 
     def test_runtime_bucket_source_writes_real_runtime_ledger_ref(self) -> None:
         with Session(self.engine) as session:
