@@ -283,6 +283,7 @@ class _SourceLedgerCursor:
                         ],
                         "source_materialization": "execution_order_events",
                         "authority_class": "runtime_order_feed_execution_source",
+                        "authority_reason": "event_sourced_runtime_ledger_profit_proof",
                         "profit_proof_eligible": True,
                     },
                 )
@@ -807,11 +808,95 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertIn("runtime_ledger_trade_decision_refs_missing", blockers)
         self.assertIn("runtime_ledger_execution_refs_missing", blockers)
         self.assertIn("runtime_ledger_execution_order_event_refs_missing", blockers)
+        self.assertIn("runtime_ledger_source_window_missing", blockers)
         self.assertIn("runtime_ledger_source_window_ids_missing", blockers)
         self.assertIn("runtime_ledger_source_offsets_missing", blockers)
         self.assertIn("runtime_ledger_source_materialization_missing", blockers)
         self.assertIn("runtime_ledger_authority_class_missing", blockers)
         self.assertFalse(_runtime_ledger_bucket_profit_proof_present(aggregate_only))
+
+    def test_runtime_ledger_profit_proof_accepts_source_window_ref_aliases(
+        self,
+    ) -> None:
+        source_window_ref_bucket = _complete_runtime_ledger_bucket(
+            source_window_ids=[],
+            source_window_refs=[
+                "postgres:order_feed_source_windows:source-window-new-buy",
+                "postgres:order_feed_source_windows:source-window-fill-buy",
+                "postgres:order_feed_source_windows:source-window-new-sell",
+                "postgres:order_feed_source_windows:source-window-fill-sell",
+            ],
+        )
+        runtime_source_window_id_bucket = _complete_runtime_ledger_bucket(
+            source_window_ids=[],
+            runtime_ledger_source_window_ids=[
+                "source-window-new-buy",
+                "source-window-fill-buy",
+                "source-window-new-sell",
+                "source-window-fill-sell",
+            ],
+        )
+
+        self.assertTrue(
+            _runtime_ledger_bucket_profit_proof_present(source_window_ref_bucket)
+        )
+        self.assertTrue(
+            _runtime_ledger_bucket_profit_proof_present(runtime_source_window_id_bucket)
+        )
+
+    def test_runtime_ledger_profit_proof_requires_authority_class_and_reason(
+        self,
+    ) -> None:
+        missing_class = _complete_runtime_ledger_bucket(authority_class=None)
+        missing_reason = _complete_runtime_ledger_bucket(authority_reason=None)
+
+        self.assertIn(
+            "runtime_ledger_authority_class_missing",
+            _runtime_ledger_bucket_profit_proof_blockers(missing_class),
+        )
+        self.assertIn(
+            "runtime_ledger_authority_class_missing",
+            _runtime_ledger_bucket_profit_proof_blockers(missing_reason),
+        )
+        self.assertFalse(_runtime_ledger_bucket_profit_proof_present(missing_class))
+        self.assertFalse(_runtime_ledger_bucket_profit_proof_present(missing_reason))
+
+    def test_runtime_ledger_profit_proof_blocks_old_exact_replay_empty_blockers(
+        self,
+    ) -> None:
+        old_exact_replay = {
+            key: value
+            for key, value in _complete_runtime_ledger_bucket(
+                ledger_schema_version="torghut.exact_replay_ledger.v1",
+                blockers=[],
+            ).items()
+            if key
+            not in {
+                "source_refs",
+                "source_row_counts",
+                "source_window_ids",
+                "source_window_refs",
+                "trade_decision_ids",
+                "execution_ids",
+                "execution_order_event_ids",
+                "source_offsets",
+                "source_materialization",
+                "authority_class",
+                "authority_reason",
+                "pnl_derivation",
+            }
+        }
+
+        blockers = _runtime_ledger_bucket_profit_proof_blockers(old_exact_replay)
+
+        self.assertIn("runtime_ledger_source_refs_missing", blockers)
+        self.assertIn("runtime_ledger_source_window_missing", blockers)
+        self.assertIn("runtime_ledger_execution_order_event_refs_missing", blockers)
+        self.assertIn("runtime_ledger_execution_refs_missing", blockers)
+        self.assertIn("runtime_ledger_trade_decision_refs_missing", blockers)
+        self.assertIn("runtime_ledger_source_materialization_missing", blockers)
+        self.assertIn("runtime_ledger_authority_class_missing", blockers)
+        self.assertFalse(_runtime_ledger_bucket_profit_proof_present(old_exact_replay))
 
     def test_runtime_ledger_source_context_threads_source_window_classification(
         self,
@@ -1336,6 +1421,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                         ],
                         "source_materialization": "execution_order_events",
                         "authority_class": "runtime_order_feed_execution_source",
+                        "authority_reason": "event_sourced_runtime_ledger_profit_proof",
                         "profit_proof_eligible": True,
                     },
                 )
