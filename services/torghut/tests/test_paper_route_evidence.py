@@ -6,6 +6,7 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from sqlalchemy import create_engine
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -31,6 +32,7 @@ from app.trading.paper_route_evidence import (
     _runtime_ledger_bucket_evidence_grade,
     _runtime_ledger_non_evidence_diagnostic_summary,
     _runtime_ledger_row_diagnostic_expectancy_bps,
+    _strategy_source_activity,
     _strategy_source_decision_readiness,
     build_paper_route_evidence_audit,
     build_paper_route_target_plan_payload,
@@ -92,6 +94,184 @@ class TestPaperRouteEvidenceAudit(TestCase):
             "authority_class": "runtime_order_feed_execution_source",
             "source_decision_mode_counts": {"strategy_signal_paper": 1},
         }
+
+    def test_source_activity_query_timeout_fails_closed(self) -> None:
+        window_start = datetime(2026, 5, 13, 17, tzinfo=timezone.utc)
+        window_end = window_start + timedelta(minutes=30)
+        with Session(self.engine) as session:
+            with (
+                patch.object(
+                    session,
+                    "execute",
+                    side_effect=SQLAlchemyError("statement timeout"),
+                ),
+                patch.object(session, "rollback", wraps=session.rollback) as rollback,
+            ):
+                activity = _strategy_source_activity(
+                    session,
+                    strategy_name="microbar-cross-sectional-pairs-v1",
+                    account_label="TORGHUT_REPLAY",
+                    symbols=["AAPL", "INTC"],
+                    window_start=window_start,
+                    window_end=window_end,
+                    candidate_id="candidate-timeout",
+                    hypothesis_id="hypothesis-timeout",
+                    require_source_lineage=True,
+                )
+
+        rollback.assert_called_once()
+        self.assertTrue(activity["missing"])
+        self.assertTrue(activity["query_unavailable"])
+        self.assertEqual(activity["unavailable_source"], "trade_decisions")
+        self.assertEqual(activity["missing_reasons"], ["source_decisions_unavailable"])
+        self.assertEqual(activity["raw_decision_count"], 0)
+        self.assertEqual(activity["lineage_matched_decision_count"], 0)
+
+    def test_source_activity_timeout_suppresses_rollback_failure(self) -> None:
+        window_start = datetime(2026, 5, 13, 17, tzinfo=timezone.utc)
+        window_end = window_start + timedelta(minutes=30)
+        with Session(self.engine) as session:
+            with (
+                patch.object(
+                    session,
+                    "execute",
+                    side_effect=SQLAlchemyError("statement timeout"),
+                ),
+                patch.object(
+                    session,
+                    "rollback",
+                    side_effect=SQLAlchemyError("rollback failed"),
+                ) as rollback,
+            ):
+                activity = _strategy_source_activity(
+                    session,
+                    strategy_name="microbar-cross-sectional-pairs-v1",
+                    account_label="TORGHUT_REPLAY",
+                    symbols=["AAPL", "INTC"],
+                    window_start=window_start,
+                    window_end=window_end,
+                )
+
+        rollback.assert_called_once()
+        self.assertTrue(activity["query_unavailable"])
+        self.assertEqual(activity["missing_reasons"], ["source_decisions_unavailable"])
+
+    def _seed_source_activity_decision(
+        self,
+        session: Session,
+        *,
+        window_start: datetime,
+    ) -> None:
+        strategy = Strategy(
+            name="microbar-cross-sectional-pairs-v1",
+            description="paper route source timeout fixture",
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="static",
+            universe_symbols=["AAPL", "INTC"],
+            created_at=window_start,
+            updated_at=window_start,
+        )
+        session.add(strategy)
+        session.flush()
+        session.add(
+            TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="TORGHUT_REPLAY",
+                symbol="AAPL",
+                timeframe="1Min",
+                decision_json={
+                    "action": "buy",
+                    "qty": "1",
+                    "candidate_id": "candidate-timeout",
+                    "hypothesis_id": "hypothesis-timeout",
+                },
+                rationale="paper route source timeout fixture",
+                status="executed",
+                created_at=window_start + timedelta(minutes=5),
+                executed_at=window_start + timedelta(minutes=6),
+            )
+        )
+        session.flush()
+
+    def _source_activity_with_failing_query(
+        self,
+        *,
+        failure_call: int,
+    ) -> tuple[dict[str, object], int]:
+        window_start = datetime(2026, 5, 13, 17, tzinfo=timezone.utc)
+        window_end = window_start + timedelta(minutes=30)
+        with Session(self.engine) as session:
+            self._seed_source_activity_decision(session, window_start=window_start)
+            original_execute = session.execute
+            call_count = 0
+
+            def execute_or_fail(*args: object, **kwargs: object) -> object:
+                nonlocal call_count
+                call_count += 1
+                if call_count == failure_call:
+                    raise SQLAlchemyError("statement timeout")
+                return original_execute(*args, **kwargs)
+
+            with (
+                patch.object(
+                    session,
+                    "execute",
+                    side_effect=execute_or_fail,
+                ),
+                patch.object(session, "rollback", wraps=session.rollback) as rollback,
+            ):
+                activity = _strategy_source_activity(
+                    session,
+                    strategy_name="microbar-cross-sectional-pairs-v1",
+                    account_label="TORGHUT_REPLAY",
+                    symbols=["AAPL", "INTC"],
+                    window_start=window_start,
+                    window_end=window_end,
+                    candidate_id="candidate-timeout",
+                    hypothesis_id="hypothesis-timeout",
+                    require_source_lineage=True,
+                )
+                rollback_count = rollback.call_count
+        return activity, rollback_count
+
+    def test_source_activity_execution_query_timeout_fails_closed(self) -> None:
+        activity, rollback_count = self._source_activity_with_failing_query(
+            failure_call=2
+        )
+
+        self.assertEqual(rollback_count, 1)
+        self.assertTrue(activity["query_unavailable"])
+        self.assertEqual(activity["unavailable_source"], "executions")
+        self.assertEqual(activity["missing_reasons"], ["source_executions_unavailable"])
+        self.assertEqual(activity["raw_decision_count"], 1)
+        self.assertEqual(activity["lineage_matched_decision_count"], 1)
+
+    def test_source_activity_order_event_query_timeout_fails_closed(self) -> None:
+        activity, rollback_count = self._source_activity_with_failing_query(
+            failure_call=3
+        )
+
+        self.assertEqual(rollback_count, 1)
+        self.assertTrue(activity["query_unavailable"])
+        self.assertEqual(activity["unavailable_source"], "execution_order_events")
+        self.assertEqual(
+            activity["missing_reasons"], ["source_order_events_unavailable"]
+        )
+        self.assertEqual(activity["raw_decision_count"], 1)
+        self.assertEqual(activity["lineage_matched_decision_count"], 1)
+
+    def test_source_activity_tca_query_timeout_fails_closed(self) -> None:
+        activity, rollback_count = self._source_activity_with_failing_query(
+            failure_call=4
+        )
+
+        self.assertEqual(rollback_count, 1)
+        self.assertTrue(activity["query_unavailable"])
+        self.assertEqual(activity["unavailable_source"], "execution_tca_metrics")
+        self.assertEqual(activity["missing_reasons"], ["source_tca_unavailable"])
+        self.assertEqual(activity["raw_decision_count"], 1)
+        self.assertEqual(activity["lineage_matched_decision_count"], 1)
 
     def _add_flat_account_start_snapshot(
         self,
