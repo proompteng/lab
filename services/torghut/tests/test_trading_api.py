@@ -29,6 +29,7 @@ from app.main import (
     _build_live_submission_gate_payload,
     _build_route_image_proof_summary,
     _check_alpaca,
+    _daily_runtime_ledger_portfolio_summary,
     _decimal_or_none,
     _fetch_paper_route_target_plan_url,
     _forecast_service_status,
@@ -233,15 +234,15 @@ class _OptionsFreshnessSession:
         return _ExecuteResult(
             [
                 {
-                    "active_contracts": 6,
-                    "newest_last_seen_ts": datetime(2026, 5, 12, tzinfo=timezone.utc),
-                    "missing_provider_updated_ts_count": 2,
-                    "newest_provider_updated_ts": datetime(
-                        2026, 5, 12, tzinfo=timezone.utc
+                    "underlying_symbol": f"SYM{idx}",
+                    "last_seen_ts": datetime(2026, 5, 12, tzinfo=timezone.utc),
+                    "provider_updated_ts": (
+                        datetime(2026, 5, 12, tzinfo=timezone.utc) if idx < 4 else None
                     ),
-                    "missing_close_price_count": 1,
-                    "zero_open_interest_count": 1,
+                    "close_price": Decimal("1") if idx != 5 else None,
+                    "open_interest": Decimal("10") if idx != 4 else Decimal("0"),
                 }
+                for idx in range(6)
             ]
         )
 
@@ -637,7 +638,7 @@ class TestTradingApi(TestCase):
             1,
         )
 
-    def test_options_catalog_freshness_summary_skips_global_scan_without_route_scope(
+    def test_options_catalog_freshness_summary_uses_bounded_global_scan_without_route_scope(
         self,
     ) -> None:
         fake_session = _OptionsFreshnessSession()
@@ -646,26 +647,56 @@ class TestTradingApi(TestCase):
             fake_session,  # type: ignore[arg-type]
         )
 
-        self.assertEqual(payload["status"], "unavailable")
-        self.assertEqual(payload["scope"], "route_symbols")
-        self.assertTrue(payload["bounded"])
-        self.assertEqual(payload["active_contracts"], 0)
+        self.assertEqual(payload["scope"], "global")
+        self.assertEqual(payload["active_contracts"], 6)
+        self.assertFalse(payload["active_contracts_exact"])
+        self.assertFalse(payload["coverage_exact"])
+        self.assertEqual(payload["query_limit"], 200)
         self.assertEqual(payload["route_symbols"], [])
-        self.assertIn(
-            "options_catalog_freshness_route_scope_missing",
-            payload["reason_codes"],
-        )
-        self.assertIn(
-            "options_catalog_freshness_unbounded_global_scan_skipped",
-            payload["reason_codes"],
-        )
+        self.assertIn("WHERE status = 'active'", fake_session.calls[1][0])
+        self.assertIn("LIMIT 200", fake_session.calls[1][0])
         self.assertEqual(
             sum(
                 "FROM torghut_options_contract_catalog" in sql
                 for sql, _params in fake_session.calls
             ),
-            0,
+            1,
         )
+
+    def test_daily_runtime_ledger_portfolio_summary_timeout_is_fail_closed(
+        self,
+    ) -> None:
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        with session_local() as session:
+            with (
+                patch.object(
+                    session,
+                    "execute",
+                    side_effect=SQLAlchemyError("statement timeout"),
+                ),
+                patch.object(session, "rollback", wraps=session.rollback) as rollback,
+            ):
+                payload = _daily_runtime_ledger_portfolio_summary(
+                    session=session,
+                    account_label="TORGHUT_SIM",
+                    stage_scope="paper",
+                    observed_at=datetime(2026, 6, 1, 12, tzinfo=timezone.utc),
+                )
+
+        self.assertTrue(payload["read_model_unavailable"])
+        self.assertEqual(payload["bucket_count"], 0)
+        self.assertEqual(
+            payload["blockers"], ["portfolio_runtime_ledger_summary_query_timeout"]
+        )
+        self.assertEqual(payload["query_limit"], 200)
+        self.assertEqual(rollback.call_count, 1)
 
     def test_options_catalog_freshness_summary_caches_unavailable_route_scope(
         self,

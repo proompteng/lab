@@ -36,6 +36,7 @@ from app.trading.paper_route_evidence import (
     _runtime_ledger_row_diagnostic_expectancy_bps,
     _strategy_source_activity,
     _strategy_source_decision_readiness,
+    _target_audit_fail_closed,
     build_paper_route_evidence_audit,
     build_paper_route_target_plan_payload,
 )
@@ -76,6 +77,51 @@ class TestPaperRouteEvidenceAudit(TestCase):
 
         self.assertEqual(actions, {"AAPL": "sell", "AMZN": "buy"})
         self.assertEqual(_pair_probe_balance_state(actions), "balanced")
+
+    def test_target_audit_timeout_fails_closed_with_explicit_blockers(self) -> None:
+        with Session(self.engine) as session:
+            with (
+                patch.object(
+                    session,
+                    "execute",
+                    side_effect=SQLAlchemyError("statement timeout"),
+                ),
+                patch.object(session, "rollback", wraps=session.rollback) as rollback,
+            ):
+                audit = _target_audit_fail_closed(
+                    session,
+                    raw_target={
+                        "hypothesis_id": "H-CONT-01",
+                        "candidate_id": "candidate-1",
+                        "strategy_name": "microbar-cross-sectional-pairs-v1",
+                        "strategy_lookup_names": ["microbar-cross-sectional-pairs-v1"],
+                        "account_label": "TORGHUT_SIM",
+                        "observed_stage": "paper",
+                        "window_start": "2026-05-29T13:30:00+00:00",
+                        "window_end": "2026-05-29T20:00:00+00:00",
+                        "promotion_allowed": False,
+                        "final_promotion_allowed": False,
+                    },
+                    probe={
+                        "configured_enabled": True,
+                        "eligible_symbol_count": 2,
+                        "symbols": ["AAPL", "MSFT"],
+                        "blocking_reasons": [],
+                    },
+                    generated_at=datetime(2026, 5, 29, 21, 0, tzinfo=timezone.utc),
+                    lookback_hours=72,
+                    error_source="paper_route_source_target_audit",
+                )
+
+        readiness = audit["readiness"]
+        self.assertEqual(readiness["state"], "evidence_collection_blocked")
+        self.assertFalse(readiness["promotion_authority"]["allowed"])
+        self.assertIn("paper_route_evidence_db_unavailable", readiness["blockers"])
+        self.assertIn(
+            "paper_route_source_target_audit_db_unavailable",
+            readiness["blockers"],
+        )
+        self.assertGreaterEqual(rollback.call_count, 1)
 
     def _runtime_ledger_source_authority_payload(
         self,
