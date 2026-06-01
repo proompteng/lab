@@ -26,6 +26,7 @@ from app.trading.tigerbeetle_client import (
     TigerBeetleClientProtocol,
     create_tigerbeetle_client,
 )
+from app.trading.tigerbeetle_ids import u128_decimal
 from app.trading.tigerbeetle_journal import (
     SOURCE_TYPE_EXECUTION,
     SOURCE_TYPE_EXECUTION_ORDER_EVENT,
@@ -70,6 +71,7 @@ BLOCKER_RUNTIME_LEDGER_ACCOUNT_REFS_MISSING = (
     "tigerbeetle_runtime_ledger_account_refs_missing"
 )
 BLOCKER_CLIENT_UNAVAILABLE = "tigerbeetle_client_unavailable"
+SAMPLE_LIMIT = 50
 
 
 def _attr(value: object, name: str) -> Any:
@@ -97,6 +99,26 @@ def _payload_value(row: TigerBeetleTransferRef, key: str) -> str | None:
     return None if value is None else str(value)
 
 
+def _u128_text(value: object) -> str | None:
+    if value is None:
+        return None
+    try:
+        return u128_decimal(int(Decimal(str(value).strip())))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+
+
+def _account_payload_matches(
+    ref: TigerBeetleTransferRef,
+    key: str,
+    expected_account_id: int,
+) -> bool:
+    payload_value = _payload_value(ref, key)
+    return payload_value is None or _u128_text(payload_value) == u128_decimal(
+        expected_account_id
+    )
+
+
 def _payload_mapping(row: TigerBeetleTransferRef) -> Mapping[str, object]:
     raw_payload = cast(object, row.payload_json)
     if isinstance(raw_payload, Mapping):
@@ -117,19 +139,77 @@ def _ref_matches_expected_event(
     )
     if event is None:
         return True
-    plan = build_order_event_transfer_plan(session, event, settings_obj=settings_obj)
+    # Fill refs may have been journaled before the submitted/pending ref was
+    # backfilled. Preserve the ref's persisted pending mode when recomputing the
+    # expected transfer so reconciliation distinguishes a representational
+    # readback difference from a real PostgreSQL/TigerBeetle mismatch.
+    plan = build_order_event_transfer_plan(
+        session,
+        event,
+        settings_obj=settings_obj,
+        prefer_pending_ref=_payload_value(ref, "pending_mode") != "standalone_fill",
+    )
     if plan is None:
         return False
     expected = plan.transfer_spec
     return (
-        ref.transfer_id == str(expected.transfer_id)
+        _u128_text(ref.transfer_id) == u128_decimal(expected.transfer_id)
         and ref.transfer_kind == plan.transfer_kind
         and ref.amount == Decimal(expected.amount)
         and ref.ledger == expected.ledger
         and ref.code == expected.code
-        and _payload_value(ref, "debit_account_id") == str(expected.debit_account_id)
-        and _payload_value(ref, "credit_account_id") == str(expected.credit_account_id)
+        and _account_payload_matches(ref, "debit_account_id", expected.debit_account_id)
+        and _account_payload_matches(
+            ref,
+            "credit_account_id",
+            expected.credit_account_id,
+        )
     )
+
+
+def _ref_sample(
+    ref: TigerBeetleTransferRef,
+    *,
+    blocker: str,
+    reason: str,
+    actual: object | None = None,
+) -> dict[str, object]:
+    sample: dict[str, object] = {
+        "blocker": blocker,
+        "reason": reason,
+        "row_id": str(ref.id),
+        "transfer_id": str(ref.transfer_id),
+        "source_type": ref.source_type,
+        "source_id": ref.source_id,
+        "execution_order_event_id": (
+            str(ref.execution_order_event_id)
+            if ref.execution_order_event_id is not None
+            else None
+        ),
+        "execution_id": str(ref.execution_id) if ref.execution_id is not None else None,
+        "execution_tca_metric_id": (
+            str(ref.execution_tca_metric_id)
+            if ref.execution_tca_metric_id is not None
+            else None
+        ),
+        "runtime_ledger_bucket_id": (
+            str(ref.runtime_ledger_bucket_id)
+            if ref.runtime_ledger_bucket_id is not None
+            else None
+        ),
+    }
+    if actual is not None:
+        sample["actual_transfer_id"] = str(_attr(actual, "id"))
+    return sample
+
+
+def _append_sample(samples: list[dict[str, object]], sample: dict[str, object]) -> None:
+    if len(samples) < SAMPLE_LIMIT:
+        samples.append(sample)
+
+
+def _transfer_lookup_key(value: object) -> str | None:
+    return _u128_text(_attr(value, "id"))
 
 
 def _order_event_ref_exists(
@@ -531,16 +611,50 @@ def _latest_run_payload(
         and not isinstance(raw_blockers, (str, bytes, bytearray))
         else []
     )
+    raw_ref_counts = payload.get("ref_counts")
+    ref_counts = (
+        cast(Mapping[str, object], raw_ref_counts)
+        if isinstance(raw_ref_counts, Mapping)
+        else cast(Mapping[str, object], {})
+    )
+    account_ref_count = _payload_int(payload, "account_ref_count") or _payload_int(
+        ref_counts,
+        "account_ref_count",
+    )
+    transfer_ref_count = _payload_int(payload, "transfer_ref_count") or _payload_int(
+        ref_counts,
+        "transfer_ref_count",
+    )
+    runtime_ledger_ref_count = _payload_int(
+        payload,
+        "runtime_ledger_ref_count",
+    ) or _payload_int(ref_counts, "runtime_ledger_ref_count")
+    runtime_ledger_signed_ref_count = _payload_int(
+        payload,
+        "runtime_ledger_signed_ref_count",
+    ) or _payload_int(ref_counts, "runtime_ledger_signed_ref_count")
+    source_row_missing_count = _payload_int(payload, "source_row_missing_count")
+    missing_source_row_count = _payload_int(
+        payload,
+        "missing_source_row_count",
+    ) or source_row_missing_count
+    mismatched_ref_count = _payload_int(payload, "mismatched_ref_count") or int(
+        row.mismatched_transfer_count
+    )
     return {
         "schema_version": SCHEMA_VERSION,
         "ok": row.status == "ok",
         "cluster_id": row.cluster_id,
         "status": row.status,
+        "account_ref_count": account_ref_count,
+        "transfer_ref_count": transfer_ref_count,
         "checked_transfer_count": row.checked_transfer_count,
         "missing_transfer_count": row.missing_transfer_count,
         "mismatched_transfer_count": row.mismatched_transfer_count,
+        "mismatched_ref_count": mismatched_ref_count,
         "source_missing_count": row.source_missing_count,
-        "source_row_missing_count": _payload_int(payload, "source_row_missing_count"),
+        "source_row_missing_count": source_row_missing_count,
+        "missing_source_row_count": missing_source_row_count,
         "source_amount_mismatch_count": _payload_int(
             payload, "source_amount_mismatch_count"
         ),
@@ -550,6 +664,8 @@ def _latest_run_payload(
         "runtime_ledger_signed_transfer_count": _payload_int(
             payload, "runtime_ledger_signed_transfer_count"
         ),
+        "runtime_ledger_ref_count": runtime_ledger_ref_count,
+        "runtime_ledger_signed_ref_count": runtime_ledger_signed_ref_count,
         "runtime_ledger_missing_signed_ref_count": _payload_int(
             payload,
             "runtime_ledger_missing_signed_ref_count",
@@ -568,11 +684,29 @@ def _latest_run_payload(
             payload, "runtime_ledger_metadata_mismatch_count"
         ),
         "unlinked_event_count": _payload_int(payload, "unlinked_event_count"),
+        "unlinked_order_event_ref_count": _payload_int(
+            payload,
+            "unlinked_order_event_ref_count",
+        ),
         "unlinked_execution_count": _payload_int(payload, "unlinked_execution_count"),
+        "unlinked_execution_ref_count": _payload_int(
+            payload,
+            "unlinked_execution_ref_count",
+        ),
         "unlinked_cost_count": _payload_int(payload, "unlinked_cost_count"),
+        "unlinked_cost_ref_count": _payload_int(payload, "unlinked_cost_ref_count"),
         "unlinked_runtime_ledger_count": int(
             _payload_int(payload, "unlinked_runtime_ledger_count")
         ),
+        "unlinked_runtime_ledger_ref_count": _payload_int(
+            payload,
+            "unlinked_runtime_ledger_ref_count",
+        ),
+        "missing_transfer_refs": payload.get("missing_transfer_refs") or [],
+        "mismatched_refs": payload.get("mismatched_refs") or [],
+        "missing_source_rows": payload.get("missing_source_rows") or [],
+        "unlinked_refs": payload.get("unlinked_refs") or [],
+        "blocker_details": payload.get("blocker_details") or {},
         "ref_counts": payload.get("ref_counts") or {},
         "started_at": row.started_at.isoformat(),
         "finished_at": row.finished_at.isoformat() if row.finished_at else None,
@@ -632,6 +766,10 @@ def reconcile_tigerbeetle_transfers(
     runtime_ledger_direction_mismatch_count = 0
     runtime_ledger_metadata_mismatch_count = 0
     blockers: list[str] = []
+    mismatched_refs: list[dict[str, object]] = []
+    missing_transfer_refs: list[dict[str, object]] = []
+    missing_source_rows: list[dict[str, object]] = []
+    unlinked_refs: list[dict[str, object]] = []
 
     transfer_lookup: dict[str, object] = {}
     owned_client = client is None
@@ -642,7 +780,11 @@ def reconcile_tigerbeetle_transfers(
             looked_up = tb_client.lookup_transfers(
                 [int(ref.transfer_id) for ref in refs]
             )
-            transfer_lookup = {str(_attr(item, "id")): item for item in looked_up}
+            transfer_lookup = {
+                lookup_key: item
+                for item in looked_up
+                if (lookup_key := _transfer_lookup_key(item)) is not None
+            }
     except Exception:
         blockers.append(BLOCKER_CLIENT_UNAVAILABLE)
     finally:
@@ -652,30 +794,86 @@ def reconcile_tigerbeetle_transfers(
                 close()
 
     for ref in refs:
-        actual = transfer_lookup.get(ref.transfer_id)
+        ref_transfer_id = _u128_text(ref.transfer_id) or str(ref.transfer_id)
+        actual = transfer_lookup.get(ref_transfer_id)
         if actual is None:
             missing_transfer_count += 1
             blockers.append(BLOCKER_TRANSFER_MISSING)
+            _append_sample(
+                missing_transfer_refs,
+                _ref_sample(
+                    ref,
+                    blocker=BLOCKER_TRANSFER_MISSING,
+                    reason="transfer_ref_not_found_in_tigerbeetle_lookup",
+                ),
+            )
             continue
         if Decimal(str(_attr(actual, "amount"))) != ref.amount:
             mismatched_transfer_count += 1
             blockers.append(BLOCKER_AMOUNT_MISMATCH)
-        if int(_attr(actual, "code")) != ref.code:
+            _append_sample(
+                mismatched_refs,
+                _ref_sample(
+                    ref,
+                    blocker=BLOCKER_AMOUNT_MISMATCH,
+                    reason="actual_amount_micros_differs_from_transfer_ref",
+                    actual=actual,
+                ),
+            )
+        if int(str(_attr(actual, "code"))) != ref.code:
             mismatched_transfer_count += 1
             blockers.append(BLOCKER_CODE_MISMATCH)
-        if int(_attr(actual, "ledger")) != ref.ledger:
+            _append_sample(
+                mismatched_refs,
+                _ref_sample(
+                    ref,
+                    blocker=BLOCKER_CODE_MISMATCH,
+                    reason="actual_code_differs_from_transfer_ref",
+                    actual=actual,
+                ),
+            )
+        if int(str(_attr(actual, "ledger"))) != ref.ledger:
             mismatched_transfer_count += 1
             blockers.append(BLOCKER_LEDGER_MISMATCH)
-        if _payload_value(ref, "debit_account_id") is not None and int(
+            _append_sample(
+                mismatched_refs,
+                _ref_sample(
+                    ref,
+                    blocker=BLOCKER_LEDGER_MISMATCH,
+                    reason="actual_ledger_differs_from_transfer_ref",
+                    actual=actual,
+                ),
+            )
+        debit_account_id = _payload_value(ref, "debit_account_id")
+        if debit_account_id is not None and _u128_text(
             _attr(actual, "debit_account_id")
-        ) != int(_payload_value(ref, "debit_account_id") or "0"):
+        ) != _u128_text(debit_account_id):
             mismatched_transfer_count += 1
             blockers.append(BLOCKER_DEBIT_ACCOUNT_MISMATCH)
-        if _payload_value(ref, "credit_account_id") is not None and int(
+            _append_sample(
+                mismatched_refs,
+                _ref_sample(
+                    ref,
+                    blocker=BLOCKER_DEBIT_ACCOUNT_MISMATCH,
+                    reason="actual_debit_account_differs_from_transfer_ref_payload",
+                    actual=actual,
+                ),
+            )
+        credit_account_id = _payload_value(ref, "credit_account_id")
+        if credit_account_id is not None and _u128_text(
             _attr(actual, "credit_account_id")
-        ) != int(_payload_value(ref, "credit_account_id") or "0"):
+        ) != _u128_text(credit_account_id):
             mismatched_transfer_count += 1
             blockers.append(BLOCKER_CREDIT_ACCOUNT_MISMATCH)
+            _append_sample(
+                mismatched_refs,
+                _ref_sample(
+                    ref,
+                    blocker=BLOCKER_CREDIT_ACCOUNT_MISMATCH,
+                    reason="actual_credit_account_differs_from_transfer_ref_payload",
+                    actual=actual,
+                ),
+            )
         if not _ref_matches_expected_event(
             session,
             ref,
@@ -683,6 +881,15 @@ def reconcile_tigerbeetle_transfers(
         ):
             mismatched_transfer_count += 1
             blockers.append(BLOCKER_POSTGRES_REF_MISMATCH)
+            _append_sample(
+                mismatched_refs,
+                _ref_sample(
+                    ref,
+                    blocker=BLOCKER_POSTGRES_REF_MISMATCH,
+                    reason="transfer_ref_no_longer_matches_order_event_plan",
+                    actual=actual,
+                ),
+            )
         if ref.source_type in {
             SOURCE_TYPE_EXECUTION,
             SOURCE_TYPE_EXECUTION_TCA_METRIC,
@@ -696,9 +903,27 @@ def reconcile_tigerbeetle_transfers(
                 else:
                     source_row_missing_count += 1
                     blockers.append(BLOCKER_SOURCE_ROW_MISSING)
+                    _append_sample(
+                        missing_source_rows,
+                        _ref_sample(
+                            ref,
+                            blocker=BLOCKER_SOURCE_ROW_MISSING,
+                            reason="source_row_missing_or_source_id_not_uuid",
+                            actual=actual,
+                        ),
+                    )
             elif ref.amount != expected_source_amount:
                 source_amount_mismatch_count += 1
                 blockers.append(BLOCKER_SOURCE_AMOUNT_MISMATCH)
+                _append_sample(
+                    mismatched_refs,
+                    _ref_sample(
+                        ref,
+                        blocker=BLOCKER_SOURCE_AMOUNT_MISMATCH,
+                        reason="source_amount_micros_differs_from_transfer_ref",
+                        actual=actual,
+                    ),
+                )
         if ref.source_type == SOURCE_TYPE_RUNTIME_LEDGER_BUCKET:
             runtime_ledger_checked_transfer_count += 1
             source_uuid = _uuid_or_none(ref.source_id)
@@ -717,10 +942,28 @@ def reconcile_tigerbeetle_transfers(
                     runtime_ledger_direction_mismatch_count += 1
                     mismatched_transfer_count += 1
                     blockers.append(BLOCKER_RUNTIME_LEDGER_DIRECTION_MISMATCH)
+                    _append_sample(
+                        mismatched_refs,
+                        _ref_sample(
+                            ref,
+                            blocker=BLOCKER_RUNTIME_LEDGER_DIRECTION_MISMATCH,
+                            reason="runtime_ledger_signed_direction_or_accounts_mismatch",
+                            actual=actual,
+                        ),
+                    )
                 if not metadata_matches:
                     runtime_ledger_metadata_mismatch_count += 1
                     mismatched_transfer_count += 1
                     blockers.append(BLOCKER_RUNTIME_LEDGER_METADATA_MISMATCH)
+                    _append_sample(
+                        mismatched_refs,
+                        _ref_sample(
+                            ref,
+                            blocker=BLOCKER_RUNTIME_LEDGER_METADATA_MISMATCH,
+                            reason="runtime_ledger_metadata_mismatch",
+                            actual=actual,
+                        ),
+                    )
 
     recent_events = (
         session.execute(
@@ -731,17 +974,29 @@ def reconcile_tigerbeetle_transfers(
         .scalars()
         .all()
     )
-    unlinked_event_count = sum(
-        1
-        for event in recent_events
-        if not _order_event_ref_exists(session, event, settings_obj=settings_obj)
-        and build_order_event_transfer_plan(
-            session,
-            event,
-            settings_obj=settings_obj,
+    unlinked_event_count = 0
+    for event in recent_events:
+        if _order_event_ref_exists(session, event, settings_obj=settings_obj):
+            continue
+        if (
+            build_order_event_transfer_plan(
+                session,
+                event,
+                settings_obj=settings_obj,
+            )
+            is None
+        ):
+            continue
+        unlinked_event_count += 1
+        _append_sample(
+            unlinked_refs,
+            {
+                "blocker": BLOCKER_UNLINKED_EVENT,
+                "source_type": SOURCE_TYPE_EXECUTION_ORDER_EVENT,
+                "source_id": str(event.id),
+                "event_fingerprint": event.event_fingerprint,
+            },
         )
-        is not None
-    )
     if unlinked_event_count:
         blockers.append(BLOCKER_UNLINKED_EVENT)
 
@@ -758,17 +1013,26 @@ def reconcile_tigerbeetle_transfers(
         .scalars()
         .all()
     )
-    unlinked_execution_count = sum(
-        1
-        for execution in recent_executions
-        if not _source_ref_exists(
+    unlinked_execution_count = 0
+    for execution in recent_executions:
+        if _source_ref_exists(
             session,
             settings_obj=settings_obj,
             source_type=SOURCE_TYPE_EXECUTION,
             source_id=str(execution.id),
             transfer_kind=TRANSFER_KIND_EXECUTION_FILL,
+        ):
+            continue
+        unlinked_execution_count += 1
+        _append_sample(
+            unlinked_refs,
+            {
+                "blocker": BLOCKER_UNLINKED_EXECUTION,
+                "source_type": SOURCE_TYPE_EXECUTION,
+                "source_id": str(execution.id),
+                "alpaca_order_id": execution.alpaca_order_id,
+            },
         )
-    )
     if unlinked_execution_count:
         blockers.append(BLOCKER_UNLINKED_EXECUTION)
 
@@ -785,17 +1049,26 @@ def reconcile_tigerbeetle_transfers(
         .scalars()
         .all()
     )
-    unlinked_cost_count = sum(
-        1
-        for metric in recent_cost_metrics
-        if not _source_ref_exists(
+    unlinked_cost_count = 0
+    for metric in recent_cost_metrics:
+        if _source_ref_exists(
             session,
             settings_obj=settings_obj,
             source_type=SOURCE_TYPE_EXECUTION_TCA_METRIC,
             source_id=str(metric.id),
             transfer_kind=TRANSFER_KIND_EXECUTION_COST,
+        ):
+            continue
+        unlinked_cost_count += 1
+        _append_sample(
+            unlinked_refs,
+            {
+                "blocker": BLOCKER_UNLINKED_COST,
+                "source_type": SOURCE_TYPE_EXECUTION_TCA_METRIC,
+                "source_id": str(metric.id),
+                "execution_id": str(metric.execution_id),
+            },
         )
-    )
     if unlinked_cost_count:
         blockers.append(BLOCKER_UNLINKED_COST)
 
@@ -812,17 +1085,27 @@ def reconcile_tigerbeetle_transfers(
         .scalars()
         .all()
     )
-    unlinked_runtime_ledger_count = sum(
-        1
-        for bucket in recent_runtime_buckets
-        if not _source_ref_exists(
+    unlinked_runtime_ledger_count = 0
+    for bucket in recent_runtime_buckets:
+        if _source_ref_exists(
             session,
             settings_obj=settings_obj,
             source_type=SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
             source_id=str(bucket.id),
             transfer_kind=TRANSFER_KIND_RUNTIME_NET_PNL,
+        ):
+            continue
+        unlinked_runtime_ledger_count += 1
+        _append_sample(
+            unlinked_refs,
+            {
+                "blocker": BLOCKER_UNLINKED_RUNTIME_LEDGER,
+                "source_type": SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                "source_id": str(bucket.id),
+                "run_id": bucket.run_id,
+                "candidate_id": bucket.candidate_id,
+            },
         )
-    )
     if unlinked_runtime_ledger_count:
         blockers.append(BLOCKER_UNLINKED_RUNTIME_LEDGER)
 
@@ -857,14 +1140,26 @@ def reconcile_tigerbeetle_transfers(
         "schema_version": SCHEMA_VERSION,
         "ok": ok,
         "cluster_id": settings_obj.tigerbeetle_cluster_id,
+        "account_ref_count": _payload_int(ref_counts, "account_ref_count"),
+        "transfer_ref_count": _payload_int(ref_counts, "transfer_ref_count"),
         "checked_transfer_count": checked_transfer_count,
         "missing_transfer_count": missing_transfer_count,
         "mismatched_transfer_count": mismatched_transfer_count,
+        "mismatched_ref_count": mismatched_transfer_count,
         "source_missing_count": source_missing_count,
         "source_row_missing_count": source_row_missing_count,
+        "missing_source_row_count": source_row_missing_count,
         "source_amount_mismatch_count": source_amount_mismatch_count,
         "runtime_ledger_checked_transfer_count": runtime_ledger_checked_transfer_count,
         "runtime_ledger_signed_transfer_count": runtime_ledger_signed_transfer_count,
+        "runtime_ledger_ref_count": _payload_int(
+            ref_counts,
+            "runtime_ledger_ref_count",
+        ),
+        "runtime_ledger_signed_ref_count": _payload_int(
+            ref_counts,
+            "runtime_ledger_signed_ref_count",
+        ),
         "runtime_ledger_missing_signed_ref_count": (
             runtime_ledger_missing_signed_ref_count
         ),
@@ -879,10 +1174,24 @@ def reconcile_tigerbeetle_transfers(
             runtime_ledger_metadata_mismatch_count
         ),
         "unlinked_event_count": unlinked_event_count,
+        "unlinked_order_event_ref_count": unlinked_event_count,
         "unlinked_execution_count": unlinked_execution_count,
+        "unlinked_execution_ref_count": unlinked_execution_count,
         "unlinked_cost_count": unlinked_cost_count,
+        "unlinked_cost_ref_count": unlinked_cost_count,
         "unlinked_runtime_ledger_count": unlinked_runtime_ledger_count,
+        "unlinked_runtime_ledger_ref_count": unlinked_runtime_ledger_count,
         "ref_counts": ref_counts,
+        "missing_transfer_refs": missing_transfer_refs,
+        "mismatched_refs": mismatched_refs,
+        "missing_source_rows": missing_source_rows,
+        "unlinked_refs": unlinked_refs,
+        "blocker_details": {
+            "missing_transfer_refs": missing_transfer_refs,
+            "mismatched_refs": mismatched_refs,
+            "missing_source_rows": missing_source_rows,
+            "unlinked_refs": unlinked_refs,
+        },
         "blockers": unique_blockers,
     }
     if persist:

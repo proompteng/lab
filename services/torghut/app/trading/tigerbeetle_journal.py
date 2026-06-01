@@ -575,6 +575,7 @@ def build_order_event_transfer_plan(
     event: ExecutionOrderEvent,
     *,
     settings_obj: Settings = settings,
+    prefer_pending_ref: bool = True,
 ) -> TigerBeetleOrderEventTransferPlan | None:
     transfer_kind = transfer_kind_for_event(event.event_type, event.status)
     if transfer_kind is None:
@@ -586,7 +587,8 @@ def build_order_event_transfer_plan(
             event,
             cluster_id=settings_obj.tigerbeetle_cluster_id,
         )
-        if transfer_kind
+        if prefer_pending_ref
+        and transfer_kind
         in {
             TRANSFER_KIND_FILL_POST,
             TRANSFER_KIND_CANCEL_VOID,

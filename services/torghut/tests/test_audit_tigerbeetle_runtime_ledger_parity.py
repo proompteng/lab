@@ -44,6 +44,7 @@ from app.trading.tigerbeetle_runtime_ledger_parity import (
     PARITY_STATUS_NO_SOURCE_DATA,
     PARITY_STATUS_OPTIONAL_DEGRADED,
     PARITY_STATUS_PASS,
+    BLOCKER_RECONCILIATION_NOT_OK,
     audit_tigerbeetle_runtime_ledger_parity,
     tigerbeetle_runtime_ledger_parity_blockers,
 )
@@ -471,6 +472,23 @@ class TestAuditTigerBeetleRuntimeLedgerParity(TestCase):
                 {"required": True, "blockers": "not-a-list"}
             ),
             [],
+        )
+        self.assertEqual(
+            tigerbeetle_runtime_ledger_parity_blockers(
+                {
+                    "required": True,
+                    "reconciliation_ok": False,
+                    "latest_reconciliation": {
+                        "blockers": ["tigerbeetle_postgres_ref_mismatch"],
+                    },
+                    "blockers": [BLOCKER_ENTRY_MISSING],
+                }
+            ),
+            [
+                BLOCKER_ENTRY_MISSING,
+                "tigerbeetle_postgres_ref_mismatch",
+                BLOCKER_RECONCILIATION_NOT_OK,
+            ],
         )
 
     def test_script_parsers_normalize_dsn_and_requirement_values(self) -> None:
