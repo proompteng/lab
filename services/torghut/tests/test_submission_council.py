@@ -28,6 +28,9 @@ from app.models import (
 )
 from app.trading.hypotheses import JangarDependencyQuorumStatus
 from app.trading.submission_council import (
+    _CERTIFICATE_EVIDENCE_PER_HYPOTHESIS_LIMIT,
+    _PROMOTION_PORTFOLIO_READY_SCAN_LIMIT,
+    _PROMOTION_TABLE_COUNT_SCAN_LIMIT,
     _QUANT_HEALTH_CACHE,
     _certificate_evidence_authority_score,
     _certificate_evidence_selection_key,
@@ -435,9 +438,15 @@ class TestSubmissionCouncil(TestCase):
         newer = datetime(2026, 3, 6, 15, 30, tzinfo=timezone.utc)
 
         with session_local() as session:
+            empty_summary = _load_latest_runtime_ledger_summary(
+                session, hypothesis_ids=[]
+            )
+            self.assertEqual(empty_summary["by_hypothesis"], {})
+            self.assertEqual(empty_summary["runtime_ledger_buckets"], [])
+            self.assertEqual(empty_summary["query_status"], "skipped")
             self.assertEqual(
-                _load_latest_runtime_ledger_summary(session, hypothesis_ids=[]),
-                {"by_hypothesis": {}, "runtime_ledger_buckets": []},
+                empty_summary["query_reason_codes"],
+                ["runtime_ledger_hypothesis_scope_missing"],
             )
             session.add_all(
                 [
@@ -596,7 +605,12 @@ class TestSubmissionCouncil(TestCase):
             hypothesis_ids=["H-PAIRS-01"],
         )
 
-        self.assertEqual(summary, {"by_hypothesis": {}, "runtime_ledger_buckets": []})
+        self.assertEqual(summary["by_hypothesis"], {})
+        self.assertEqual(summary["runtime_ledger_buckets"], [])
+        self.assertEqual(summary["query_status"], "timeout")
+        self.assertEqual(
+            summary["query_reason_codes"], ["runtime_ledger_summary_query_timeout"]
+        )
         self.assertEqual(fake_session.rollback_count, 1)
 
     def test_load_latest_certificate_evidence_fails_closed_on_window_timeout(
@@ -618,6 +632,8 @@ class TestSubmissionCouncil(TestCase):
                     "metric_window": None,
                     "promotion_decision": None,
                     "runtime_ledger_bucket": None,
+                    "query_status": "timeout",
+                    "query_reason_codes": ["certificate_metric_window_query_timeout"],
                 }
             ],
         )
@@ -690,9 +706,58 @@ class TestSubmissionCouncil(TestCase):
                     "metric_window": None,
                     "promotion_decision": None,
                     "runtime_ledger_bucket": None,
+                    "query_status": "timeout",
+                    "query_reason_codes": [
+                        "certificate_promotion_decision_query_timeout"
+                    ],
                 }
             ],
         )
+
+    def test_load_latest_certificate_evidence_uses_bounded_status_reads(
+        self,
+    ) -> None:
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        with session_local() as session:
+            execute = session.execute
+            statements: list[str] = []
+
+            def capture_execute(
+                statement: object, *args: object, **kwargs: object
+            ) -> object:
+                statements.append(str(statement))
+                return execute(statement, *args, **kwargs)
+
+            with patch.object(session, "execute", side_effect=capture_execute):
+                evidence = _load_latest_certificate_evidence(
+                    session,
+                    hypothesis_ids=["H-PAIRS-01", "H-REV-01"],
+                )
+
+        self.assertEqual(len(evidence), 2)
+        bounded_limit = 2 * _CERTIFICATE_EVIDENCE_PER_HYPOTHESIS_LIMIT
+        self.assertTrue(
+            any(
+                "FROM strategy_hypothesis_metric_windows" in statement
+                and "LIMIT" in statement
+                for statement in statements
+            )
+        )
+        self.assertTrue(
+            any(
+                "FROM strategy_promotion_decisions" in statement
+                and "LIMIT" in statement
+                for statement in statements
+            )
+        )
+        self.assertGreaterEqual(bounded_limit, 1)
 
     def test_attach_lineage_refs_fails_closed_on_query_timeout(self) -> None:
         fake_session = _FailingRuntimeLedgerStatusSession()
@@ -766,7 +831,12 @@ class TestSubmissionCouncil(TestCase):
             hypothesis_ids=["H-PAIRS-01"],
         )
 
-        self.assertEqual(summary, {"by_hypothesis": {}, "runtime_ledger_buckets": []})
+        self.assertEqual(summary["by_hypothesis"], {})
+        self.assertEqual(summary["runtime_ledger_buckets"], [])
+        self.assertEqual(summary["query_status"], "timeout")
+        self.assertEqual(
+            summary["query_reason_codes"], ["runtime_ledger_summary_query_timeout"]
+        )
         self.assertEqual(fake_session.rollback_count, 1)
 
     def test_load_runtime_ledger_repair_candidates_fails_closed_on_query_timeout(
@@ -3737,6 +3807,92 @@ class TestSubmissionCouncil(TestCase):
         self.assertEqual(counts["autoresearch_portfolio_blocked"], 1)
         self.assertEqual(counts["autoresearch_portfolio_ready"], 0)
         self.assertEqual(counts["count_errors"], [])
+        self.assertEqual(counts["count_basis"], "bounded_latest_rows")
+        self.assertEqual(counts["count_limit"], _PROMOTION_TABLE_COUNT_SCAN_LIMIT)
+
+    def test_load_profit_promotion_counts_use_bounded_row_reads(self) -> None:
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        with session_local() as session:
+            session.add(
+                AutoresearchEpoch(
+                    epoch_id="epoch-1",
+                    status="complete",
+                    target_net_pnl_per_day=Decimal("500"),
+                    paper_run_ids_json=[],
+                    snapshot_manifest_json={},
+                    runner_config_json={},
+                    summary_json={},
+                    started_at=datetime.now(timezone.utc),
+                    completed_at=datetime.now(timezone.utc),
+                )
+            )
+            session.commit()
+            execute = session.execute
+            statements: list[str] = []
+
+            def capture_execute(
+                statement: object, *args: object, **kwargs: object
+            ) -> object:
+                statements.append(str(statement))
+                return execute(statement, *args, **kwargs)
+
+            with patch.object(session, "execute", side_effect=capture_execute):
+                counts = _load_profit_promotion_table_counts(session)
+
+        self.assertEqual(counts["autoresearch_epochs"], 1)
+        self.assertEqual(counts["truncated_counts"], [])
+        self.assertFalse(any("count(" in statement.lower() for statement in statements))
+        self.assertTrue(
+            any(
+                "FROM autoresearch_epochs" in statement and "LIMIT" in statement
+                for statement in statements
+            )
+        )
+
+    def test_load_profit_promotion_counts_fail_closed_when_portfolio_scan_truncated(
+        self,
+    ) -> None:
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        with session_local() as session:
+            for idx in range(_PROMOTION_PORTFOLIO_READY_SCAN_LIMIT + 1):
+                session.add(
+                    AutoresearchPortfolioCandidate(
+                        portfolio_candidate_id=f"portfolio-{idx}",
+                        epoch_id="epoch-1",
+                        source_candidate_ids_json=[f"spec-{idx}"],
+                        target_net_pnl_per_day=Decimal("500"),
+                        objective_scorecard_json={},
+                        optimizer_report_json={"selected_count": 1},
+                        payload_json={"portfolio_candidate_id": f"portfolio-{idx}"},
+                        status="blocked",
+                    )
+                )
+            session.commit()
+
+            counts = _load_profit_promotion_table_counts(session)
+
+        self.assertEqual(
+            counts["autoresearch_portfolio_scan_limit"],
+            _PROMOTION_PORTFOLIO_READY_SCAN_LIMIT,
+        )
+        self.assertIn(
+            "autoresearch_portfolio_candidates_bounded_scan_truncated",
+            counts["count_errors"],
+        )
 
     def test_load_profit_promotion_counts_fail_closed_for_timed_out_count(
         self,
@@ -3796,7 +3952,11 @@ class TestSubmissionCouncil(TestCase):
             def fail_proposal_score_count(
                 statement: object, *args: object, **kwargs: object
             ) -> object:
-                if "count(autoresearch_proposal_scores.id)" in str(statement):
+                statement_text = str(statement)
+                if (
+                    "FROM autoresearch_proposal_scores" in statement_text
+                    and "LIMIT" in statement_text
+                ):
                     raise SQLAlchemyError("statement timeout")
                 return execute(statement, *args, **kwargs)
 

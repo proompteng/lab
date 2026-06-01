@@ -433,6 +433,24 @@ def _promotion_source(
         name: _safe_int(promotion_table_counts.get(name))
         for name in _PROMOTION_TABLE_NAMES
     }
+    count_errors = _string_list(promotion_table_counts.get("count_errors"))
+    truncated_counts = _string_list(promotion_table_counts.get("truncated_counts"))
+    read_blockers = [
+        f"promotion_table_read_unavailable:{name}" for name in count_errors
+    ] + [f"promotion_table_count_truncated:{name}" for name in truncated_counts]
+    if read_blockers:
+        return _source_record(
+            proof_id=proof_id,
+            hypothesis_id=hypothesis_id,
+            account=account,
+            window=window,
+            source_class="research_candidate",
+            source_ref="postgres:promotion_tables:bounded_read",
+            freshness_state="blocked",
+            rows=sum(counts.values()),
+            decision="repair_only",
+            blocking_reason_codes=read_blockers,
+        )
     legacy_counts = {name: counts[name] for name in _LEGACY_PROMOTION_TABLE_NAMES}
     legacy_missing = [name for name, count in legacy_counts.items() if count <= 0]
     if not legacy_missing:
@@ -760,6 +778,12 @@ def build_profit_lease_projection(
     promotion_evidence: dict[str, Any] = dict(counts)
     promotion_evidence["autoresearch_portfolio_ready_refs"] = _string_list(
         raw_promotion_counts.get("autoresearch_portfolio_ready_refs")
+    )
+    promotion_evidence["count_errors"] = _string_list(
+        raw_promotion_counts.get("count_errors")
+    )
+    promotion_evidence["truncated_counts"] = _string_list(
+        raw_promotion_counts.get("truncated_counts")
     )
     readiness = _as_mapping(data_readiness)
     controls = _as_mapping(live_controls)

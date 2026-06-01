@@ -637,7 +637,7 @@ class TestTradingApi(TestCase):
             1,
         )
 
-    def test_options_catalog_freshness_summary_uses_global_scan_without_route_scope(
+    def test_options_catalog_freshness_summary_skips_global_scan_without_route_scope(
         self,
     ) -> None:
         fake_session = _OptionsFreshnessSession()
@@ -646,16 +646,25 @@ class TestTradingApi(TestCase):
             fake_session,  # type: ignore[arg-type]
         )
 
-        self.assertEqual(payload["scope"], "global")
-        self.assertEqual(payload["active_contracts"], 6)
+        self.assertEqual(payload["status"], "unavailable")
+        self.assertEqual(payload["scope"], "route_symbols")
+        self.assertTrue(payload["bounded"])
+        self.assertEqual(payload["active_contracts"], 0)
         self.assertEqual(payload["route_symbols"], [])
-        self.assertIn("WHERE status = 'active'", fake_session.calls[1][0])
+        self.assertIn(
+            "options_catalog_freshness_route_scope_missing",
+            payload["reason_codes"],
+        )
+        self.assertIn(
+            "options_catalog_freshness_unbounded_global_scan_skipped",
+            payload["reason_codes"],
+        )
         self.assertEqual(
             sum(
                 "FROM torghut_options_contract_catalog" in sql
                 for sql, _params in fake_session.calls
             ),
-            1,
+            0,
         )
 
     def test_options_catalog_freshness_summary_caches_unavailable_route_scope(
