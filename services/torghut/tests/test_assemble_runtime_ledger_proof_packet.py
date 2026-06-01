@@ -40,10 +40,15 @@ class _FakeObjectStoreClient:
         }
 
 
+_DEFAULT_TIGERBEETLE_LEDGER = object()
+
+
 def _status(
     *,
     blockers: list[str] | None = None,
-    tigerbeetle_ledger: dict[str, object] | None = None,
+    tigerbeetle_ledger: dict[str, object] | None | object = (
+        _DEFAULT_TIGERBEETLE_LEDGER
+    ),
 ) -> dict[str, object]:
     payload: dict[str, object] = {
         "mode": "paper",
@@ -57,7 +62,9 @@ def _status(
             "blocking_reasons": [],
         },
     }
-    if tigerbeetle_ledger is not None:
+    if tigerbeetle_ledger is _DEFAULT_TIGERBEETLE_LEDGER:
+        payload["tigerbeetle_ledger"] = _tigerbeetle_ledger_status()
+    elif tigerbeetle_ledger is not None:
         payload["tigerbeetle_ledger"] = tigerbeetle_ledger
     return payload
 
@@ -2065,6 +2072,53 @@ class TestRuntimeLedgerProofPacket(TestCase):
             target_blockers,
         )
         self.assertIn("source_runtime_ledger_missing", target_blockers)
+
+    def test_packet_blocks_count_only_runtime_import_materialization(self) -> None:
+        runtime_import = _runtime_import()
+        first_import = runtime_import["imports"][0]
+        assert isinstance(first_import, dict)
+        first_summary = first_import["summary"]
+        assert isinstance(first_summary, dict)
+        target = first_summary["runtime_materialization_target"]
+        assert isinstance(target, dict)
+        target["metric_window_ids"] = []
+        target["promotion_decision_id"] = None
+        target["runtime_ledger_bucket_ids"] = []
+        target["evidence_grade_runtime_ledger_bucket_ids"] = []
+
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=runtime_import,
+            completion_status=_completion(),
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        materialization = result["evidence"]["runtime_window_import"]["materialization"]
+        self.assertFalse(result["ok"])
+        self.assertFalse(
+            result["checks"]["runtime_window_import_materialization"]["passed"]
+        )
+        target_blockers = materialization["unmaterialized_targets"][0]["blockers"]
+        self.assertIn(
+            "runtime_window_import_metric_window_refs_missing", target_blockers
+        )
+        self.assertIn(
+            "runtime_window_import_promotion_decision_ref_missing",
+            target_blockers,
+        )
+        self.assertIn(
+            "runtime_window_import_runtime_ledger_bucket_refs_missing",
+            target_blockers,
+        )
+        self.assertIn(
+            "runtime_window_import_evidence_grade_runtime_ledger_bucket_refs_missing",
+            target_blockers,
+        )
+        self.assertIn(
+            "runtime_window_import_runtime_ledger_bucket_refs_missing",
+            result["promotion_authority"]["blocking_reasons"],
+        )
 
     def test_packet_waits_on_target_level_settlement_blocker(self) -> None:
         paper = _paper_route_evidence()

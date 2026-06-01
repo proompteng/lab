@@ -934,14 +934,34 @@ def _runtime_import_target_surface_blockers(
     blockers = _text_list(target.get("materialization_blockers"))
     if _int(target.get("metric_window_count")) <= 0:
         blockers.append("runtime_window_import_metric_window_missing")
+    elif not _text_list(target.get("metric_window_ids")):
+        blockers.append("runtime_window_import_metric_window_refs_missing")
     if _int(target.get("promotion_decision_count")) <= 0:
         blockers.append("runtime_window_import_promotion_decision_missing")
+    elif not _text(target.get("promotion_decision_id")):
+        blockers.append("runtime_window_import_promotion_decision_ref_missing")
     if profit_proof_count > 0:
-        if _int(target.get("runtime_ledger_bucket_count")) <= 0:
+        runtime_ledger_bucket_count = _int(target.get("runtime_ledger_bucket_count"))
+        evidence_grade_runtime_ledger_bucket_count = _int(
+            target.get("evidence_grade_runtime_ledger_bucket_count")
+        )
+        if runtime_ledger_bucket_count <= 0:
             blockers.append("runtime_window_import_runtime_ledger_bucket_missing")
-        if _int(target.get("evidence_grade_runtime_ledger_bucket_count")) <= 0:
+        elif (
+            len(_text_list(target.get("runtime_ledger_bucket_ids")))
+            < runtime_ledger_bucket_count
+        ):
+            blockers.append("runtime_window_import_runtime_ledger_bucket_refs_missing")
+        if evidence_grade_runtime_ledger_bucket_count <= 0:
             blockers.append(
                 "runtime_window_import_evidence_grade_runtime_ledger_bucket_missing"
+            )
+        elif (
+            len(_text_list(target.get("evidence_grade_runtime_ledger_bucket_ids")))
+            < evidence_grade_runtime_ledger_bucket_count
+        ):
+            blockers.append(
+                "runtime_window_import_evidence_grade_runtime_ledger_bucket_refs_missing"
             )
     if target.get("materialized") is False:
         blockers.extend(
