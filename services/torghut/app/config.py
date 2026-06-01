@@ -521,6 +521,15 @@ class Settings(BaseSettings):
             "preserving fail-closed evidence semantics."
         ),
     )
+    trading_options_catalog_freshness_exact_route_scope_enabled: bool = Field(
+        default=False,
+        alias="TRADING_OPTIONS_CATALOG_FRESHNESS_EXACT_ROUTE_SCOPE_ENABLED",
+        description=(
+            "Enable exact active-contract aggregation for route-scoped options catalog "
+            "freshness. Defaults off so readiness probes use explicitly non-exact "
+            "bounded reads instead of waiting for large catalog aggregates to time out."
+        ),
+    )
     trading_poll_ms: int = Field(default=5000, alias="TRADING_POLL_MS")
     trading_reconcile_ms: int = Field(default=15000, alias="TRADING_RECONCILE_MS")
     trading_order_feed_enabled: bool = Field(

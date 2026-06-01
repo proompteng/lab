@@ -540,6 +540,18 @@ class TestTradingApi(TestCase):
             )
             session.commit()
 
+    def _enable_exact_options_catalog_route_scope(self) -> None:
+        original_exact_scope = (
+            settings.trading_options_catalog_freshness_exact_route_scope_enabled
+        )
+        settings.trading_options_catalog_freshness_exact_route_scope_enabled = True
+        self.addCleanup(
+            setattr,
+            settings,
+            "trading_options_catalog_freshness_exact_route_scope_enabled",
+            original_exact_scope,
+        )
+
     def test_forecast_service_status_uses_empirical_job_lineage_when_registry_empty(
         self,
     ) -> None:
@@ -615,6 +627,7 @@ class TestTradingApi(TestCase):
     def test_options_catalog_freshness_summary_includes_route_symbol_scope(
         self,
     ) -> None:
+        self._enable_exact_options_catalog_route_scope()
         fake_session = _OptionsFreshnessSession()
 
         payload = _load_options_catalog_freshness_summary(
@@ -643,6 +656,38 @@ class TestTradingApi(TestCase):
                 for sql, _params in fake_session.calls
             ),
             1,
+        )
+
+    def test_options_catalog_freshness_summary_uses_bounded_route_scope_by_default(
+        self,
+    ) -> None:
+        fake_session = _FallbackOptionsFreshnessSession()
+
+        payload = _load_options_catalog_freshness_summary(
+            fake_session,  # type: ignore[arg-type]
+            route_symbols=["AAPL", "MSFT"],
+        )
+
+        self.assertEqual(payload["scope"], "route_symbols")
+        self.assertEqual(payload["route_symbols"], ["AAPL", "MSFT"])
+        self.assertTrue(payload["bounded"])
+        self.assertFalse(payload["coverage_exact"])
+        self.assertFalse(payload["active_contracts_exact"])
+        self.assertEqual(payload["active_contracts"], 1)
+        self.assertIn(
+            "options_catalog_freshness_exact_route_scope_disabled",
+            payload["reason_codes"],
+        )
+        self.assertEqual(
+            sum(
+                "GROUP BY underlying_symbol" in sql
+                for sql, _params in fake_session.calls
+            ),
+            0,
+        )
+        self.assertEqual(
+            sum("LIMIT 1" in sql for sql, _params in fake_session.calls),
+            2,
         )
 
     def test_options_catalog_freshness_summary_uses_bounded_global_scan_without_route_scope(
@@ -733,11 +778,6 @@ class TestTradingApi(TestCase):
         self.assertEqual(second["status"], "unavailable")
         self.assertEqual(first["route_symbols"], ["AAPL"])
         self.assertEqual(second["route_symbols"], ["AAPL"])
-        self.assertEqual(len(fake_session.calls), 2)
-        self.assertIn(
-            "options_catalog_freshness_query_timeout",
-            first["reason_codes"],
-        )
         first_cache = first.get("cache")
         second_cache = second.get("cache")
         self.assertIsInstance(first_cache, dict)
@@ -746,10 +786,16 @@ class TestTradingApi(TestCase):
         assert isinstance(second_cache, dict)
         self.assertEqual(first_cache["hit"], False)
         self.assertEqual(second_cache["hit"], True)
+        self.assertEqual(len(fake_session.calls), 1)
+        self.assertIn(
+            "options_catalog_freshness_exact_route_scope_disabled",
+            first["reason_codes"],
+        )
 
     def test_options_catalog_freshness_summary_falls_back_to_bounded_on_timeout(
         self,
     ) -> None:
+        self._enable_exact_options_catalog_route_scope()
         fake_session = _TimedOutAggregateOptionsFreshnessSession()
 
         payload = _load_options_catalog_freshness_summary(
@@ -780,6 +826,7 @@ class TestTradingApi(TestCase):
     def test_options_catalog_freshness_summary_expires_cached_route_scope(
         self,
     ) -> None:
+        self._enable_exact_options_catalog_route_scope()
         original_cache_seconds = (
             settings.trading_options_catalog_freshness_cache_seconds
         )
@@ -824,6 +871,7 @@ class TestTradingApi(TestCase):
     def test_options_catalog_freshness_summary_falls_back_to_bounded_route_scope(
         self,
     ) -> None:
+        self._enable_exact_options_catalog_route_scope()
         fake_session = _FallbackOptionsFreshnessSession()
 
         payload = _load_options_catalog_freshness_summary(
@@ -860,6 +908,7 @@ class TestTradingApi(TestCase):
     def test_options_catalog_freshness_summary_rolls_back_before_bounded_fallback(
         self,
     ) -> None:
+        self._enable_exact_options_catalog_route_scope()
         fake_session = _FallbackOptionsFreshnessRequiresRollbackSession()
 
         payload = _load_options_catalog_freshness_summary(
@@ -879,6 +928,7 @@ class TestTradingApi(TestCase):
     def test_options_catalog_freshness_bounded_fallback_skips_blank_symbols(
         self,
     ) -> None:
+        self._enable_exact_options_catalog_route_scope()
         fake_session = _FallbackOptionsFreshnessBlankSymbolSession()
 
         payload = _load_options_catalog_freshness_summary(
