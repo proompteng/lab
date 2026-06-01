@@ -84,6 +84,7 @@ RUNTIME_LEDGER_SUMMARY_ROW_LIMIT = 50
 US_EQUITIES_TIMEZONE = "America/New_York"
 US_EQUITIES_OPEN = time(hour=9, minute=30)
 US_EQUITIES_CLOSE = time(hour=16, minute=0)
+logger = logging.getLogger(__name__)
 PROMOTION_ONLY_READINESS_BLOCKERS = frozenset(
     {
         "paper_probation_evidence_collection_only",
@@ -1848,6 +1849,70 @@ def _next_paper_route_runtime_window_targets(
     }
 
 
+def _rollback_after_source_activity_error(
+    session: Session,
+    *,
+    source: str,
+    exc: SQLAlchemyError,
+) -> None:
+    logger.warning(
+        "Paper route source activity query unavailable source=%s error=%s",
+        source,
+        exc,
+    )
+    try:
+        session.rollback()
+    except SQLAlchemyError as rollback_exc:
+        logger.warning(
+            "Failed to rollback paper route source activity session source=%s error=%s",
+            source,
+            rollback_exc,
+        )
+
+
+def _unavailable_source_activity(
+    *,
+    strategy_name: str | None,
+    strategy_lookup_names: Sequence[str],
+    account_label: str | None,
+    symbols: Sequence[str],
+    candidate_id: str | None,
+    hypothesis_id: str | None,
+    require_source_lineage: bool,
+    source: str,
+    missing_reason: str,
+    raw_decision_count: int = 0,
+    lineage_matched_decision_count: int = 0,
+) -> dict[str, object]:
+    return {
+        "strategy_name": strategy_name,
+        "strategy_lookup_names": list(strategy_lookup_names),
+        "account_label": account_label,
+        "symbols": list(symbols),
+        "lineage_required": require_source_lineage,
+        "expected_candidate_id": candidate_id,
+        "expected_hypothesis_id": hypothesis_id,
+        "raw_decision_count": raw_decision_count,
+        "lineage_matched_decision_count": lineage_matched_decision_count,
+        "lineage_blockers": [],
+        "decision_count": lineage_matched_decision_count,
+        "execution_count": 0,
+        "filled_execution_count": 0,
+        "order_event_count": 0,
+        "fill_order_event_count": 0,
+        "complete_fill_order_event_count": 0,
+        "tca_sample_count": 0,
+        "last_decision_at": None,
+        "last_execution_at": None,
+        "last_order_event_at": None,
+        "last_tca_at": None,
+        "missing": True,
+        "missing_reasons": [missing_reason],
+        "query_unavailable": True,
+        "unavailable_source": source,
+    }
+
+
 def _strategy_source_activity(
     session: Session,
     *,
@@ -1907,11 +1972,29 @@ def _strategy_source_activity(
         decision_stmt = decision_stmt.where(
             func.upper(TradeDecision.symbol).in_(symbol_filters)
         )
-    decision_rows = list(
-        session.execute(
-            decision_stmt.order_by(TradeDecision.created_at.desc()).limit(500)
-        ).scalars()
-    )
+    try:
+        decision_rows = list(
+            session.execute(
+                decision_stmt.order_by(TradeDecision.created_at.desc()).limit(500)
+            ).scalars()
+        )
+    except SQLAlchemyError as exc:
+        _rollback_after_source_activity_error(
+            session,
+            source="trade_decisions",
+            exc=exc,
+        )
+        return _unavailable_source_activity(
+            strategy_name=strategy_name,
+            strategy_lookup_names=strategy_filters,
+            account_label=account_label,
+            symbols=symbol_filters,
+            candidate_id=candidate_id,
+            hypothesis_id=hypothesis_id,
+            require_source_lineage=require_source_lineage,
+            source="trade_decisions",
+            missing_reason="source_decisions_unavailable",
+        )
     raw_decision_count = len(decision_rows)
     lineage_blockers = (
         _source_lineage_blockers(
@@ -1950,11 +2033,31 @@ def _strategy_source_activity(
             execution_stmt = execution_stmt.where(
                 func.upper(Execution.symbol).in_(symbol_filters)
             )
-        execution_rows = list(
-            session.execute(
-                execution_stmt.order_by(execution_activity_ts.desc()).limit(500)
-            ).scalars()
-        )
+        try:
+            execution_rows = list(
+                session.execute(
+                    execution_stmt.order_by(execution_activity_ts.desc()).limit(500)
+                ).scalars()
+            )
+        except SQLAlchemyError as exc:
+            _rollback_after_source_activity_error(
+                session,
+                source="executions",
+                exc=exc,
+            )
+            return _unavailable_source_activity(
+                strategy_name=strategy_name,
+                strategy_lookup_names=strategy_filters,
+                account_label=account_label,
+                symbols=symbol_filters,
+                candidate_id=candidate_id,
+                hypothesis_id=hypothesis_id,
+                require_source_lineage=require_source_lineage,
+                source="executions",
+                missing_reason="source_executions_unavailable",
+                raw_decision_count=raw_decision_count,
+                lineage_matched_decision_count=len(decision_rows),
+            )
     order_event_rows: list[ExecutionOrderEvent] = []
     if decision_ids:
         order_event_activity_ts = _order_event_activity_timestamp()
@@ -1972,11 +2075,31 @@ def _strategy_source_activity(
             order_event_stmt = order_event_stmt.where(
                 func.upper(ExecutionOrderEvent.symbol).in_(symbol_filters)
             )
-        order_event_rows = list(
-            session.execute(
-                order_event_stmt.order_by(order_event_activity_ts.desc()).limit(500)
-            ).scalars()
-        )
+        try:
+            order_event_rows = list(
+                session.execute(
+                    order_event_stmt.order_by(order_event_activity_ts.desc()).limit(500)
+                ).scalars()
+            )
+        except SQLAlchemyError as exc:
+            _rollback_after_source_activity_error(
+                session,
+                source="execution_order_events",
+                exc=exc,
+            )
+            return _unavailable_source_activity(
+                strategy_name=strategy_name,
+                strategy_lookup_names=strategy_filters,
+                account_label=account_label,
+                symbols=symbol_filters,
+                candidate_id=candidate_id,
+                hypothesis_id=hypothesis_id,
+                require_source_lineage=require_source_lineage,
+                source="execution_order_events",
+                missing_reason="source_order_events_unavailable",
+                raw_decision_count=raw_decision_count,
+                lineage_matched_decision_count=len(decision_rows),
+            )
     tca_rows: list[ExecutionTCAMetric] = []
     if decision_ids:
         tca_stmt = (
@@ -1997,11 +2120,31 @@ def _strategy_source_activity(
             tca_stmt = tca_stmt.where(
                 func.upper(ExecutionTCAMetric.symbol).in_(symbol_filters)
             )
-        tca_rows = list(
-            session.execute(
-                tca_stmt.order_by(ExecutionTCAMetric.computed_at.desc()).limit(500)
-            ).scalars()
-        )
+        try:
+            tca_rows = list(
+                session.execute(
+                    tca_stmt.order_by(ExecutionTCAMetric.computed_at.desc()).limit(500)
+                ).scalars()
+            )
+        except SQLAlchemyError as exc:
+            _rollback_after_source_activity_error(
+                session,
+                source="execution_tca_metrics",
+                exc=exc,
+            )
+            return _unavailable_source_activity(
+                strategy_name=strategy_name,
+                strategy_lookup_names=strategy_filters,
+                account_label=account_label,
+                symbols=symbol_filters,
+                candidate_id=candidate_id,
+                hypothesis_id=hypothesis_id,
+                require_source_lineage=require_source_lineage,
+                source="execution_tca_metrics",
+                missing_reason="source_tca_unavailable",
+                raw_decision_count=raw_decision_count,
+                lineage_matched_decision_count=len(decision_rows),
+            )
     decision_count = len(decision_rows)
     execution_count = len(execution_rows)
     tca_sample_count = len(tca_rows)
