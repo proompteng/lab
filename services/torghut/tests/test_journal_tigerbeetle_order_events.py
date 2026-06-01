@@ -644,6 +644,11 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
 
         payload = json.loads(stdout.getvalue())
         self.assertEqual(exit_code, 0)
+        self.assertEqual(
+            payload["schema_version"],
+            "torghut.tigerbeetle-journal-order-events.v1",
+        )
+        self.assertTrue(payload["ok"])
         self.assertEqual(payload["journaled"], 4)
         self.assertEqual(payload["failed"], 0)
         self.assertEqual(FakeJournal.instances[0].events, ["selected"])

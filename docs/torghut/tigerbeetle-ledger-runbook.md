@@ -58,7 +58,7 @@ For HTTP checks, inspect:
 - `/trading/health`: same readiness dependency payload
 - `/trading/status`: top-level `tigerbeetle_ledger`
 
-Optional protocol failures do not make Torghut unready while `TORGHUT_TIGERBEETLE_REQUIRED=false`. If `TORGHUT_TIGERBEETLE_REQUIRED=true`, protocol failure becomes a readiness blocker. If `TORGHUT_TIGERBEETLE_RECONCILE_REQUIRED=true`, missing or degraded reconciliation becomes a readiness blocker.
+Optional protocol failures do not make Torghut unready while `TORGHUT_TIGERBEETLE_REQUIRED=false`. If `TORGHUT_TIGERBEETLE_REQUIRED=true`, protocol failure becomes a readiness blocker. If `TORGHUT_TIGERBEETLE_RECONCILE_REQUIRED=true`, missing, degraded, or stale reconciliation becomes a readiness blocker. Staleness is controlled by `TORGHUT_TIGERBEETLE_RECONCILE_MAX_AGE_SECONDS` (default `3600`) and is exposed as `reconciliation_age_seconds`, `reconciliation_max_age_seconds`, `reconciliation_stale`, and the `tigerbeetle_reconciliation_stale` blocker.
 
 ## Reconciliation Semantics
 
@@ -76,8 +76,23 @@ Reconciliation blockers are proof blockers, not profitability claims:
 - `tigerbeetle_transfer_amount_mismatch`
 - `tigerbeetle_transfer_code_mismatch`
 - `tigerbeetle_transfer_ledger_mismatch`
+- `tigerbeetle_transfer_debit_account_mismatch`
+- `tigerbeetle_transfer_credit_account_mismatch`
+- `tigerbeetle_postgres_ref_mismatch`
+- `tigerbeetle_source_row_missing`
+- `tigerbeetle_source_amount_mismatch`
+- `tigerbeetle_runtime_ledger_direction_mismatch`
+- `tigerbeetle_runtime_ledger_metadata_mismatch`
+- `tigerbeetle_runtime_ledger_signed_refs_missing`
+- `tigerbeetle_runtime_ledger_account_refs_missing`
 - `tigerbeetle_unlinked_order_event`
+- `tigerbeetle_unlinked_execution`
+- `tigerbeetle_unlinked_execution_cost`
+- `tigerbeetle_unlinked_runtime_ledger`
 - `tigerbeetle_client_unavailable`
+- `tigerbeetle_reconciliation_stale`
+
+The journal job emits stable JSON with schema version `torghut.tigerbeetle-journal-order-events.v1`, top-level `ok`/`status`, per-source batch counts, sampled errors, and the reconciliation payload so proof packets and readiness readback can distinguish durable ledger evidence from degraded or stale ledger parity.
 
 ## Rollout Checklist
 

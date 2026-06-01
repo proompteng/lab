@@ -90,11 +90,26 @@ tigerbeetle_transfer_missing
 tigerbeetle_transfer_amount_mismatch
 tigerbeetle_transfer_code_mismatch
 tigerbeetle_transfer_ledger_mismatch
+tigerbeetle_transfer_debit_account_mismatch
+tigerbeetle_transfer_credit_account_mismatch
+tigerbeetle_postgres_ref_mismatch
+tigerbeetle_source_row_missing
+tigerbeetle_source_amount_mismatch
+tigerbeetle_runtime_ledger_direction_mismatch
+tigerbeetle_runtime_ledger_metadata_mismatch
+tigerbeetle_runtime_ledger_signed_refs_missing
+tigerbeetle_runtime_ledger_account_refs_missing
 tigerbeetle_unlinked_order_event
+tigerbeetle_unlinked_execution
+tigerbeetle_unlinked_execution_cost
+tigerbeetle_unlinked_runtime_ledger
 tigerbeetle_client_unavailable
+tigerbeetle_reconciliation_stale
 ```
 
-Readiness may fail closed on protocol or reconciliation blockers only when the corresponding `TORGHUT_TIGERBEETLE_REQUIRED` or `TORGHUT_TIGERBEETLE_RECONCILE_REQUIRED` flag is enabled.
+Readiness may fail closed on protocol or reconciliation blockers only when the corresponding `TORGHUT_TIGERBEETLE_REQUIRED` or `TORGHUT_TIGERBEETLE_RECONCILE_REQUIRED` flag is enabled. Stale reconciliation is explicit: `TORGHUT_TIGERBEETLE_RECONCILE_MAX_AGE_SECONDS` bounds the age of the latest reconciliation row, readiness reports the measured age, and stale rows produce `tigerbeetle_reconciliation_stale`.
+
+TigerBeetle evidence is supplementary durability/accounting evidence. It never sets `proof_authority` or `promotion_authority` by itself; final promotion still requires source-backed runtime-ledger/live-paper post-cost proof from the broker/order-feed/runtime sources.
 
 ## Production Topology
 

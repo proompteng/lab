@@ -72,6 +72,7 @@ BLOCKER_RUNTIME_LEDGER_ACCOUNT_REFS_MISSING = (
     "tigerbeetle_runtime_ledger_account_refs_missing"
 )
 BLOCKER_CLIENT_UNAVAILABLE = "tigerbeetle_client_unavailable"
+BLOCKER_RECONCILIATION_STALE = "tigerbeetle_reconciliation_stale"
 SAMPLE_LIMIT = 50
 
 
@@ -281,14 +282,18 @@ def _payload_int(payload: Mapping[str, object], key: str) -> int:
 
 def _payload_string_list(payload: Mapping[str, object], key: str) -> list[str]:
     value = payload.get(key)
-    if isinstance(value, Sequence) and not isinstance(
-        value, (str, bytes, bytearray)
-    ):
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         items = cast(Sequence[object], value)
         return [str(item) for item in items if item is not None]
     if value is None:
         return []
     return [str(value)]
+
+
+def _as_aware_utc(value: datetime) -> datetime:
+    if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def _uuid_or_none(value: str | None) -> UUID | None:
@@ -476,9 +481,7 @@ def _runtime_ledger_ref_coverage(
         if ref.runtime_ledger_bucket_id is not None or ref.source_id
     }
     runtime_source_ids = [
-        str(ref.source_id)
-        for ref in runtime_refs
-        if ref.source_id is not None
+        str(ref.source_id) for ref in runtime_refs if ref.source_id is not None
     ][:sample_limit]
     runtime_transfer_ids = [str(ref.transfer_id) for ref in runtime_refs][:sample_limit]
     runtime_account_ids: list[str] = []
@@ -656,18 +659,27 @@ def _latest_run_payload(
         "runtime_ledger_signed_ref_count",
     ) or _payload_int(ref_counts, "runtime_ledger_signed_ref_count")
     source_row_missing_count = _payload_int(payload, "source_row_missing_count")
-    missing_source_row_count = _payload_int(
-        payload,
-        "missing_source_row_count",
-    ) or source_row_missing_count
+    missing_source_row_count = (
+        _payload_int(
+            payload,
+            "missing_source_row_count",
+        )
+        or source_row_missing_count
+    )
     mismatched_ref_count = _payload_int(payload, "mismatched_ref_count") or int(
         row.mismatched_transfer_count
+    )
+    observed_at = _as_aware_utc(row.finished_at or row.started_at)
+    age_seconds = max(
+        0,
+        int((datetime.now(timezone.utc) - observed_at).total_seconds()),
     )
     return {
         "schema_version": SCHEMA_VERSION,
         "ok": row.status == "ok",
         "cluster_id": row.cluster_id,
         "status": row.status,
+        "age_seconds": age_seconds,
         "account_ref_count": account_ref_count,
         "transfer_ref_count": transfer_ref_count,
         "checked_transfer_count": row.checked_transfer_count,
