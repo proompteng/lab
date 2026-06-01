@@ -7,6 +7,9 @@ from typing import Any, cast
 
 ROUTE_ACQUISITION_SOURCE_DECISION_MODE = "route_acquisition_probe"
 STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE = "strategy_signal_paper"
+BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE = (
+    "bounded_paper_route_collection"
+)
 LIVE_STRATEGY_SIGNAL_SOURCE_DECISION_MODE = "live_strategy_signal"
 SOURCE_DECISION_MODE_NOT_PROFIT_PROOF_ELIGIBLE_BLOCKER = (
     "source_decision_mode_not_profit_proof_eligible"
@@ -22,8 +25,18 @@ _ROUTE_ACQUISITION_ALIASES = frozenset(
         ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
     }
 )
+_BOUNDED_PAPER_ROUTE_COLLECTION_ALIASES = frozenset(
+    {
+        "bounded_paper_route",
+        "bounded_paper_route_source_decision",
+        "bounded_paper_route_target_plan_source_decision",
+        "bounded_live_paper_route_collection",
+        BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
+    }
+)
 PROFIT_PROOF_ELIGIBLE_SOURCE_DECISION_MODES = frozenset(
     {
+        BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
         STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE,
         LIVE_STRATEGY_SIGNAL_SOURCE_DECISION_MODE,
     }
@@ -36,6 +49,8 @@ def normalize_source_decision_mode(value: object) -> str | None:
         return None
     if text in _ROUTE_ACQUISITION_ALIASES:
         return ROUTE_ACQUISITION_SOURCE_DECISION_MODE
+    if text in _BOUNDED_PAPER_ROUTE_COLLECTION_ALIASES:
+        return BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE
     return text
 
 
@@ -71,6 +86,7 @@ def source_decision_mode_counts_have_profit_proof_modes(value: Any) -> bool:
 
 
 __all__ = [
+    "BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE",
     "LIVE_STRATEGY_SIGNAL_SOURCE_DECISION_MODE",
     "PROFIT_PROOF_ELIGIBLE_SOURCE_DECISION_MODES",
     "ROUTE_ACQUISITION_SOURCE_DECISION_MODE",
