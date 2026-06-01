@@ -1283,6 +1283,11 @@ class TestOrderFeed(TestCase):
         self.assertEqual(source_window.inserted_count, 1)
         self.assertEqual(source_window.unlinked_execution_count, 0)
         self.assertEqual(source_window.unlinked_decision_count, 0)
+        self.assertTrue(source_window.payload_json["source_coverage_complete"])
+        self.assertEqual(
+            source_window.payload_json["authority_class"],
+            "runtime_order_feed_execution_source",
+        )
         self.assertEqual(source_window.payload_json["cursor_authority"], False)
         self.assertEqual(counters["messages_total"], 0)
         self.assertEqual(consumer.seek_calls, [])
@@ -1479,6 +1484,46 @@ class TestOrderFeed(TestCase):
         self.assertEqual(source_window.inserted_count, 1)
         self.assertEqual(source_window.unlinked_execution_count, 0)
         self.assertEqual(source_window.unlinked_decision_count, 0)
+        self.assertEqual(
+            source_window.status_reason, "historical_execution_order_event_backfill"
+        )
+        self.assertEqual(
+            source_window.payload_json["source_ref"],
+            {
+                "topic": "torghut.trade-updates.v1",
+                "partition": 0,
+                "offset": 188,
+            },
+        )
+        self.assertEqual(
+            source_window.payload_json["order_identity"],
+            {"alpaca_order_id": "order-1", "client_order_id": "client-1"},
+        )
+        self.assertEqual(
+            source_window.payload_json["execution_order_event_id"],
+            str(linkable_event.id),
+        )
+        self.assertEqual(
+            source_window.payload_json["execution_id"], str(linkable_event.execution_id)
+        )
+        self.assertEqual(
+            source_window.payload_json["trade_decision_id"],
+            str(linkable_event.trade_decision_id),
+        )
+        self.assertEqual(
+            source_window.payload_json["lifecycle"],
+            {
+                "event_type": "fill",
+                "status": "filled",
+                "event_ts": "2026-02-01T10:00:00+00:00",
+                "feed_seq": None,
+            },
+        )
+        self.assertTrue(source_window.payload_json["source_coverage_complete"])
+        self.assertEqual(
+            source_window.payload_json["authority_class"],
+            "runtime_order_feed_execution_source",
+        )
 
     def test_linking_event_uses_client_order_decision_when_execution_is_unlinked(
         self,
@@ -1594,6 +1639,19 @@ class TestOrderFeed(TestCase):
         self.assertEqual(tca_metric.execution_id, execution_id)
         self.assertEqual(source_window.unlinked_execution_count, 0)
         self.assertEqual(source_window.unlinked_decision_count, 0)
+        self.assertTrue(source_window.payload_json["source_coverage_complete"])
+        self.assertEqual(
+            source_window.payload_json["linked_refs"],
+            {
+                "execution_order_event_id": str(linkable_event.id),
+                "execution_id": str(execution_id),
+                "trade_decision_id": str(trade_decision_id),
+            },
+        )
+        self.assertEqual(
+            source_window.payload_json["authority_class"],
+            "runtime_order_feed_execution_source",
+        )
 
     def test_repair_order_feed_execution_links_links_matching_decision_without_execution(
         self,
@@ -1667,6 +1725,19 @@ class TestOrderFeed(TestCase):
         self.assertEqual(event.source_window_id, source_window.id)
         self.assertEqual(source_window.unlinked_execution_count, 1)
         self.assertEqual(source_window.unlinked_decision_count, 0)
+        self.assertFalse(source_window.payload_json["source_coverage_complete"])
+        self.assertEqual(
+            source_window.payload_json["linked_refs"],
+            {
+                "execution_order_event_id": str(event.id),
+                "execution_id": None,
+                "trade_decision_id": str(decision_id),
+            },
+        )
+        self.assertEqual(
+            source_window.payload_json["authority_class"],
+            "order_feed_lifecycle_unlinked",
+        )
 
     def test_repair_order_feed_execution_links_counts_missing_decision_identity(
         self,
@@ -2043,6 +2114,43 @@ class TestOrderFeed(TestCase):
         self.assertEqual(source_window.inserted_count, 1)
         self.assertEqual(source_window.unlinked_execution_count, 0)
         self.assertEqual(source_window.unlinked_decision_count, 0)
+        self.assertEqual(source_window.status_reason, "linked_execution_and_decision")
+        self.assertEqual(
+            source_window.payload_json["source_ref"],
+            {
+                "topic": "torghut.trade-updates.v1",
+                "partition": 0,
+                "offset": 7,
+            },
+        )
+        self.assertEqual(
+            source_window.payload_json["order_identity"],
+            {"alpaca_order_id": "order-1", "client_order_id": "client-1"},
+        )
+        self.assertEqual(
+            source_window.payload_json["execution_order_event_id"], str(event.id)
+        )
+        self.assertEqual(
+            source_window.payload_json["execution_id"], str(event.execution_id)
+        )
+        self.assertEqual(
+            source_window.payload_json["trade_decision_id"],
+            str(event.trade_decision_id),
+        )
+        self.assertEqual(
+            source_window.payload_json["lifecycle"],
+            {
+                "event_type": "fill",
+                "status": "filled",
+                "event_ts": "2026-02-01T10:00:00+00:00",
+                "feed_seq": 10,
+            },
+        )
+        self.assertTrue(source_window.payload_json["source_coverage_complete"])
+        self.assertEqual(
+            source_window.payload_json["authority_class"],
+            "runtime_order_feed_execution_source",
+        )
 
     def test_source_window_records_scope_revision_and_available_high_watermark(
         self,
@@ -2137,6 +2245,16 @@ class TestOrderFeed(TestCase):
         self.assertEqual(source_window.status_reason, "malformed_json")
         self.assertEqual(source_window.malformed_count, 1)
         self.assertEqual(source_window.dropped_count, 1)
+        self.assertFalse(source_window.payload_json["source_coverage_complete"])
+        self.assertFalse(source_window.payload_json["promotion_authority_eligible"])
+        self.assertEqual(
+            source_window.payload_json["source_ref"],
+            {
+                "topic": "torghut.trade-updates.v1",
+                "partition": 0,
+                "offset": 17,
+            },
+        )
 
     def test_missing_trade_update_payload_is_durably_classified(self) -> None:
         record = FakeRecord(
@@ -2248,6 +2366,25 @@ class TestOrderFeed(TestCase):
         self.assertEqual(source_window.status, "dropped")
         self.assertEqual(source_window.status_reason, "missing_order_identity")
         self.assertEqual(source_window.missing_identity_count, 1)
+        self.assertEqual(
+            source_window.payload_json["order_identity"],
+            {"alpaca_order_id": None, "client_order_id": None},
+        )
+        self.assertEqual(
+            source_window.payload_json["lifecycle"],
+            {
+                "event_type": "fill",
+                "status": "filled",
+                "event_ts": "2026-02-01T10:00:00+00:00",
+                "feed_seq": 10,
+            },
+        )
+        self.assertFalse(source_window.payload_json["source_coverage_complete"])
+        self.assertFalse(source_window.payload_json["promotion_authority_eligible"])
+        self.assertEqual(
+            source_window.payload_json["authority_class"],
+            "invalid_order_feed_message",
+        )
         self.assertEqual(cursor.high_watermark_offset, 18)
 
     def test_unhandled_persist_failure_is_classified_without_cursor_or_kafka_commit(
@@ -2597,9 +2734,25 @@ class TestOrderFeed(TestCase):
         self.assertEqual(counters["unlinked_decision_total"], 1)
         self.assertEqual(event.source_window_id, source_window.id)
         self.assertEqual(source_window.status, "inserted")
+        self.assertEqual(
+            source_window.status_reason, "missing_execution_and_decision_links"
+        )
         self.assertEqual(source_window.inserted_count, 1)
         self.assertEqual(source_window.unlinked_execution_count, 1)
         self.assertEqual(source_window.unlinked_decision_count, 1)
+        self.assertEqual(
+            source_window.payload_json["linked_refs"],
+            {
+                "execution_order_event_id": str(event.id),
+                "execution_id": None,
+                "trade_decision_id": None,
+            },
+        )
+        self.assertFalse(source_window.payload_json["source_coverage_complete"])
+        self.assertEqual(
+            source_window.payload_json["authority_class"],
+            "order_feed_lifecycle_unlinked",
+        )
 
     def test_cursor_consumer_group_falls_back_to_client_id(self) -> None:
         settings.trading_order_feed_group_id = " "
@@ -3110,6 +3263,20 @@ class TestOrderFeed(TestCase):
         self.assertEqual(
             duplicate_source_window.payload_json["classification_counts"],
             {"duplicate": 1},
+        )
+        self.assertEqual(
+            duplicate_source_window.payload_json["order_identity"],
+            {"alpaca_order_id": "order-1", "client_order_id": "client-1"},
+        )
+        self.assertEqual(
+            duplicate_source_window.payload_json["lifecycle"]["status"], "filled"
+        )
+        self.assertFalse(
+            duplicate_source_window.payload_json["source_coverage_complete"]
+        )
+        self.assertEqual(
+            duplicate_source_window.payload_json["authority_class"],
+            "duplicate_order_feed_message",
         )
 
     def test_manual_assignment_skips_missing_topic_metadata_then_fails_closed(

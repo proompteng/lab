@@ -290,7 +290,12 @@ class OrderFeedIngestor:
                 counters["missing_fields_total"] += 1
                 if source_window is None:
                     return _IngestRecordOutcome(durable=False)
-                _classify_source_window_drop(source_window, "out_of_scope_account")
+                _classify_source_window_drop(
+                    source_window,
+                    "out_of_scope_account",
+                    record=record,
+                    default_account_label=self._default_account_label,
+                )
                 _increment_drop_counter(counters, "out_of_scope_account")
                 cursor_updated = _upsert_order_feed_consumer_cursor_from_source(
                     session,
@@ -315,7 +320,12 @@ class OrderFeedIngestor:
                     )
                 if source_window is None:
                     return _IngestRecordOutcome(durable=False)
-                _classify_source_window_drop(source_window, normalized.drop_reason)
+                _classify_source_window_drop(
+                    source_window,
+                    normalized.drop_reason,
+                    record=record,
+                    default_account_label=self._default_account_label,
+                )
                 _increment_drop_counter(counters, normalized.drop_reason)
                 cursor_updated = _upsert_order_feed_consumer_cursor_from_source(
                     session,
@@ -653,7 +663,11 @@ def _broker_high_watermark_from_record(record: Any) -> int | None:
 
 
 def _classify_source_window_drop(
-    source_window: OrderFeedSourceWindow, drop_reason: str | None
+    source_window: OrderFeedSourceWindow,
+    drop_reason: str | None,
+    *,
+    record: Any | None = None,
+    default_account_label: str | None = None,
 ) -> None:
     source_window.status = "dropped"
     source_window.status_reason = drop_reason or "unknown_drop"
@@ -661,6 +675,15 @@ def _classify_source_window_drop(
     source_window.payload_json = {
         "classification": drop_reason or "unknown_drop",
         "classification_counts": {drop_reason or "unknown_drop": 1},
+        "source_coverage_complete": False,
+        "promotion_authority_eligible": False,
+        "authority_class": "invalid_order_feed_message",
+        **_source_window_source_identity_payload(source_window),
+        **_raw_record_source_evidence_payload(
+            record,
+            source_window=source_window,
+            default_account_label=default_account_label,
+        ),
     }
     if drop_reason == "malformed_json":
         source_window.malformed_count = 1
@@ -681,6 +704,10 @@ def _classify_source_window_unhandled_failure(
     source_window.payload_json = {
         "classification": "failed_unhandled",
         "classification_counts": {"failed_unhandled": 1},
+        "source_coverage_complete": False,
+        "promotion_authority_eligible": False,
+        "authority_class": "failed_unhandled_order_feed_message",
+        **_source_window_source_identity_payload(source_window),
     }
 
 
@@ -716,12 +743,18 @@ def _classify_source_window_event(
         payload: dict[str, Any] = {
             "classification": "duplicate",
             "classification_counts": {"duplicate": 1},
+            **_source_window_source_identity_payload(source_window),
+            **_order_event_evidence_payload(persisted),
+            "source_coverage_complete": False,
+            "promotion_authority_eligible": False,
+            "authority_class": "duplicate_order_feed_message",
         }
         if account_label_alias is not None:
             payload["account_label_alias"] = account_label_alias
         source_window.payload_json = payload
         return
     source_window.status = "inserted"
+    source_window.status_reason = _source_window_event_status_reason(persisted)
     source_window.inserted_count = 1
     classification_counts = {"inserted": 1}
     if persisted.execution_id is None:
@@ -733,10 +766,223 @@ def _classify_source_window_event(
     payload = {
         "classification": "inserted",
         "classification_counts": classification_counts,
+        **_source_window_source_identity_payload(source_window),
+        **_order_event_evidence_payload(persisted),
     }
     if account_label_alias is not None:
         payload["account_label_alias"] = account_label_alias
     source_window.payload_json = payload
+
+
+def _source_window_source_identity_payload(
+    source_window: OrderFeedSourceWindow,
+) -> dict[str, Any]:
+    return _source_window_source_identity_payload_for_values(
+        source_topic=source_window.source_topic,
+        source_partition=source_window.source_partition,
+        start_offset=source_window.start_offset,
+        end_offset=source_window.end_offset,
+        alpaca_account_label=source_window.alpaca_account_label,
+        source_revision=source_window.source_revision,
+    )
+
+
+def _source_window_source_identity_payload_for_values(
+    *,
+    source_topic: str,
+    source_partition: int | None,
+    start_offset: int | None,
+    end_offset: int | None,
+    alpaca_account_label: str,
+    source_revision: str | None,
+) -> dict[str, Any]:
+    return {
+        "source_ref": {
+            "topic": source_topic,
+            "partition": source_partition,
+            "offset": start_offset,
+        },
+        "source_offsets": {
+            "topic": source_topic,
+            "partition": source_partition,
+            "start_offset": start_offset,
+            "end_offset": end_offset,
+        },
+        "alpaca_account_label": alpaca_account_label,
+        "source_revision": source_revision,
+    }
+
+
+def _raw_record_source_evidence_payload(
+    record: Any | None,
+    *,
+    source_window: OrderFeedSourceWindow,
+    default_account_label: str | None,
+) -> dict[str, Any]:
+    if record is None:
+        return {}
+
+    decoded_payload = _decode_json_payload(getattr(record, "value", None))
+    if decoded_payload is None:
+        return {}
+
+    envelope = _as_mapping(decoded_payload)
+    data_payload = _extract_trade_update_payload(decoded_payload)
+    order = _as_mapping(data_payload.get("order")) if data_payload is not None else None
+    explicit_account_label = (
+        _coerce_text(data_payload.get("account_label")) if data_payload else None
+    ) or (_coerce_text(data_payload.get("accountLabel")) if data_payload else None)
+    if order is not None:
+        explicit_account_label = (
+            explicit_account_label
+            or _coerce_text(order.get("alpaca_account_label"))
+            or _coerce_text(order.get("account_label"))
+            or _coerce_text(order.get("accountLabel"))
+        )
+    if envelope is not None:
+        explicit_account_label = (
+            explicit_account_label
+            or _coerce_text(envelope.get("account_label"))
+            or _coerce_text(envelope.get("accountLabel"))
+        )
+    account_label = (
+        explicit_account_label
+        or default_account_label
+        or source_window.alpaca_account_label
+    )
+    order_identity = _order_identity_payload(
+        alpaca_order_id=(_coerce_text(order.get("id")) if order is not None else None)
+        or (_coerce_text(order.get("order_id")) if order is not None else None),
+        client_order_id=(
+            _coerce_text(order.get("client_order_id")) if order is not None else None
+        ),
+    )
+    lifecycle = _lifecycle_payload(
+        event_type=(
+            _coerce_text(data_payload.get("event"))
+            if data_payload is not None
+            else None
+        )
+        or (
+            _coerce_text(data_payload.get("event_type"))
+            if data_payload is not None
+            else None
+        ),
+        status=(_coerce_text(order.get("status")) if order is not None else None)
+        or (
+            _coerce_text(data_payload.get("status"))
+            if data_payload is not None
+            else None
+        ),
+        event_ts=_coerce_datetime(
+            (
+                data_payload.get("timestamp")
+                or data_payload.get("t")
+                or (order or {}).get("updated_at")
+                or (order or {}).get("submitted_at")
+                or (envelope.get("event_ts") if envelope else None)
+            )
+            if data_payload is not None
+            else None
+        ),
+        feed_seq=_coerce_int(
+            ((envelope.get("seq") if envelope else None) if envelope else None)
+            or (data_payload.get("seq") if data_payload is not None else None)
+        ),
+    )
+    payload: dict[str, Any] = {
+        "alpaca_account_label": account_label,
+        "order_identity": order_identity,
+        "lifecycle": lifecycle,
+    }
+    if explicit_account_label is not None:
+        payload["source_account_label"] = explicit_account_label
+    return payload
+
+
+def _order_event_evidence_payload(event: ExecutionOrderEvent) -> dict[str, Any]:
+    linked_refs = {
+        "execution_order_event_id": str(event.id),
+        "execution_id": str(event.execution_id)
+        if event.execution_id is not None
+        else None,
+        "trade_decision_id": (
+            str(event.trade_decision_id)
+            if event.trade_decision_id is not None
+            else None
+        ),
+    }
+    source_coverage_complete = (
+        event.execution_id is not None
+        and event.trade_decision_id is not None
+        and event.source_partition is not None
+        and event.source_offset is not None
+    )
+    return {
+        "event_source_ref": {
+            "topic": event.source_topic,
+            "partition": event.source_partition,
+            "offset": event.source_offset,
+        },
+        "order_identity": _order_identity_payload(
+            alpaca_order_id=event.alpaca_order_id,
+            client_order_id=event.client_order_id,
+        ),
+        "execution_order_event_id": linked_refs["execution_order_event_id"],
+        "execution_id": linked_refs["execution_id"],
+        "trade_decision_id": linked_refs["trade_decision_id"],
+        "linked_refs": linked_refs,
+        "lifecycle": _lifecycle_payload(
+            event_type=event.event_type,
+            status=event.status,
+            event_ts=event.event_ts,
+            feed_seq=event.feed_seq,
+        ),
+        "source_materialization": "execution_order_events",
+        "authority_class": (
+            "runtime_order_feed_execution_source"
+            if source_coverage_complete
+            else "order_feed_lifecycle_unlinked"
+        ),
+        "source_coverage_complete": source_coverage_complete,
+        "promotion_authority_eligible": source_coverage_complete,
+    }
+
+
+def _order_identity_payload(
+    *,
+    alpaca_order_id: str | None,
+    client_order_id: str | None,
+) -> dict[str, str | None]:
+    return {
+        "alpaca_order_id": alpaca_order_id,
+        "client_order_id": client_order_id,
+    }
+
+
+def _lifecycle_payload(
+    *,
+    event_type: str | None,
+    status: str | None,
+    event_ts: datetime | None,
+    feed_seq: int | None,
+) -> dict[str, Any]:
+    return {
+        "event_type": event_type,
+        "status": status,
+        "event_ts": _isoformat_datetime(event_ts),
+        "feed_seq": feed_seq,
+    }
+
+
+def _source_window_event_status_reason(event: ExecutionOrderEvent) -> str:
+    if event.execution_id is not None and event.trade_decision_id is not None:
+        return "linked_execution_and_decision"
+    if event.execution_id is None and event.trade_decision_id is None:
+        return "missing_execution_and_decision_links"
+    if event.execution_id is None:
+        return "missing_execution_link"
+    return "missing_trade_decision_link"
 
 
 def normalize_order_feed_record(
@@ -1863,7 +2109,15 @@ def _create_historical_source_window_for_event(
         payload_json={
             "cursor_authority": False,
             "source": "execution_order_events",
-            "execution_order_event_id": str(event.id),
+            **_source_window_source_identity_payload_for_values(
+                source_topic=event.source_topic,
+                source_partition=event.source_partition,
+                start_offset=event.source_offset,
+                end_offset=event.source_offset,
+                alpaca_account_label=event.alpaca_account_label,
+                source_revision=HISTORICAL_ORDER_EVENT_SOURCE_WINDOW_REVISION,
+            ),
+            **_order_event_evidence_payload(event),
         },
     )
     session.add(source_window)
@@ -1911,6 +2165,24 @@ def _create_execution_backfill_source_window(
         payload_json={
             "cursor_authority": False,
             "source": "executions.raw_order",
+            **_source_window_source_identity_payload_for_values(
+                source_topic=EXECUTION_RAW_ORDER_SOURCE_TOPIC,
+                source_partition=EXECUTION_RAW_ORDER_SOURCE_PARTITION,
+                start_offset=source_offset,
+                end_offset=source_offset,
+                alpaca_account_label=execution.alpaca_account_label,
+                source_revision=EXECUTION_RAW_ORDER_SOURCE_WINDOW_REVISION,
+            ),
+            "order_identity": _order_identity_payload(
+                alpaca_order_id=execution.alpaca_order_id,
+                client_order_id=execution.client_order_id,
+            ),
+            "lifecycle": _lifecycle_payload(
+                event_type=_execution_backfill_event_type(execution),
+                status=execution.status,
+                event_ts=event_ts,
+                feed_seq=None,
+            ),
             "execution_id": str(execution.id),
             "trade_decision_id": (
                 str(execution.trade_decision_id)
@@ -2115,6 +2387,59 @@ def _refresh_source_window_linkage_counts(
     source_window.inserted_count = max(
         int(source_window.inserted_count or 0), event_count
     )
+    payload = coerce_json_payload(source_window.payload_json)
+    payload_dict: dict[str, Any]
+    if isinstance(payload, Mapping):
+        payload_dict = {
+            str(key): value
+            for key, value in cast(Mapping[object, Any], payload).items()
+        }
+    else:
+        payload_dict = {}
+    payload_dict.update(_source_window_source_identity_payload(source_window))
+    payload_dict.update(_order_event_evidence_payload(event))
+    raw_classification_counts = payload_dict.get("classification_counts", {})
+    classification_counts = (
+        {
+            str(key): value
+            for key, value in cast(
+                Mapping[object, Any],
+                raw_classification_counts,
+            ).items()
+        }
+        if isinstance(raw_classification_counts, Mapping)
+        else {}
+    )
+    if source_window.inserted_count:
+        classification_counts["inserted"] = int(source_window.inserted_count)
+    if source_window.unlinked_execution_count:
+        classification_counts["unlinked_execution"] = int(
+            source_window.unlinked_execution_count
+        )
+    else:
+        classification_counts.pop("unlinked_execution", None)
+    if source_window.unlinked_decision_count:
+        classification_counts["unlinked_decision"] = int(
+            source_window.unlinked_decision_count
+        )
+    else:
+        classification_counts.pop("unlinked_decision", None)
+    payload_dict["classification_counts"] = classification_counts
+    source_window_complete = bool(
+        event_count
+        and source_window.unlinked_execution_count == 0
+        and source_window.unlinked_decision_count == 0
+        and event.source_partition is not None
+        and event.source_offset is not None
+    )
+    payload_dict["source_coverage_complete"] = source_window_complete
+    payload_dict["promotion_authority_eligible"] = source_window_complete
+    payload_dict["authority_class"] = (
+        "runtime_order_feed_execution_source"
+        if source_window_complete
+        else "order_feed_lifecycle_unlinked"
+    )
+    source_window.payload_json = coerce_json_payload(payload_dict)
     session.add(source_window)
 
 
