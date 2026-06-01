@@ -19,6 +19,18 @@ spec:
       name: torghut-whitepaper-autoresearch-profit-target
     arguments:
       parameters:
+        - name: fullWindowStartDate
+          value: "2026-05-18"
+        - name: fullWindowEndDate
+          value: "2026-05-22"
+        - name: expectedLastTradingDay
+          value: "2026-05-22"
+        - name: trainDays
+          value: "3"
+        - name: holdoutDays
+          value: "2"
+        - name: secondOosDays
+          value: "0"
         - name: replayTapePreviewTopK
           value: "8"
         - name: replayTapePreviewMinRows
