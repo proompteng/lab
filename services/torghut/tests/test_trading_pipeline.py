@@ -3634,6 +3634,77 @@ class TestTradingPipeline(TestCase):
             ),
             120,
         )
+        window_end = datetime(2026, 3, 26, 20, 0, tzinfo=timezone.utc)
+        strategy = Strategy(
+            name="paper-route-candidate-v1",
+            description="paper route candidate without explicit exit",
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="static",
+            universe_symbols=["AAPL"],
+        )
+        target = {
+            "candidate_id": "cand-paper-route",
+            "hypothesis_id": "H-PAPER-ROUTE",
+            "source_kind": "paper_route_probe_runtime_observed",
+            "paper_route_probe_symbols": ["AAPL"],
+            "paper_route_probe_window_start": event_ts.isoformat(),
+            "paper_route_probe_window_end": window_end.isoformat(),
+            "paper_probation_authorized": True,
+            "bounded_evidence_collection_authorized": True,
+        }
+        source_decision_metadata = (
+            SimpleTradingPipeline._paper_route_target_source_decision_metadata(
+                target=target,
+                strategy=strategy,
+                symbol="AAPL",
+                window_start=event_ts,
+                window_end=window_end,
+                max_notional=Decimal("250"),
+            )
+        )
+        self.assertEqual(source_decision_metadata["exit_minute_after_open"], 390)
+        self.assertEqual(
+            source_decision_metadata["effective_exit_minute_after_open"], 389
+        )
+        self.assertEqual(
+            source_decision_metadata["exit_due_at"],
+            "2026-03-26T19:59:00+00:00",
+        )
+        self.assertTrue(source_decision_metadata["paper_route_probe_exit_defaulted"])
+        self.assertEqual(
+            SimpleTradingPipeline._paper_route_probe_exit_minute_after_open(
+                decision=decision.model_copy(
+                    update={
+                        "params": {
+                            "paper_route_target_plan_source_decision": (
+                                source_decision_metadata
+                            )
+                        }
+                    }
+                )
+            ),
+            390,
+        )
+        strategy_signal_metadata = (
+            SimpleTradingPipeline._strategy_signal_paper_metadata(
+                decision=decision,
+                target=target,
+                strategy=strategy,
+            )
+        )
+        self.assertEqual(strategy_signal_metadata["exit_minute_after_open"], 390)
+        self.assertTrue(strategy_signal_metadata["paper_route_probe_exit_defaulted"])
+        self.assertEqual(
+            SimpleTradingPipeline._paper_route_probe_exit_minute_after_open(
+                decision=decision.model_copy(
+                    update={
+                        "params": {"strategy_signal_paper": strategy_signal_metadata}
+                    }
+                )
+            ),
+            390,
+        )
         old_row = TradeDecision(
             strategy_id=strategy_id,
             alpaca_account_label="paper",
