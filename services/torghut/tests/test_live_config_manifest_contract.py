@@ -913,6 +913,7 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertEqual(manifest.get("kind"), "CronWorkflow")
         metadata = cast(Mapping[str, object], manifest.get("metadata", {}))
         self.assertEqual(metadata.get("name"), "torghut-replay-source-materialization")
+        self.assertLessEqual(len(str(metadata.get("name"))), 52)
         spec = cast(Mapping[str, object], manifest.get("spec", {}))
         self.assertEqual(spec.get("schedules"), ["5 5 * * 2-6"])
         self.assertEqual(spec.get("concurrencyPolicy"), "Forbid")
