@@ -93,7 +93,7 @@ describe('torghut post-deploy verifier workflow', () => {
   })
 
   it('rotates the options TA Kafka transactional client prefix with the restart nonce', () => {
-    expect(optionsTaFlinkDeployment).toContain('restartNonce: 8')
+    expect(optionsTaFlinkDeployment).toContain('restartNonce: 9')
     expect(optionsTaConfigmap).toContain('TA_KAFKA_TRANSACTION_TIMEOUT_MS: "120000"')
     expect(optionsTaConfigmap).toContain('TA_CLIENT_ID: "torghut-options-ta-r8"')
     expect(optionsTaConfigmap).toContain('TA_GROUP_ID: "torghut-options-ta-2026-03-08"')

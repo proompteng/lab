@@ -1,0 +1,60 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentRun
+metadata:
+  name: autonomous-trader-template
+  namespace: synthesis
+  annotations:
+    agents.proompteng.ai/template: "true"
+  labels:
+    app.kubernetes.io/part-of: synthesis
+    app.kubernetes.io/component: autonomous-trader
+spec:
+  agentRef:
+    name: autonomous-trader-agent
+  implementationSpecRef:
+    name: autonomous-trader-v1
+  goal:
+    objective: Reach 500000 USD account equity in the Alpaca paper account using autonomous day trading through Alpaca MCP across stocks, ETFs, options, or any other financial instruments available in the account.
+  vcsRef:
+    name: github
+  vcsPolicy:
+    required: true
+    mode: read-only
+  runtime:
+    type: job
+    config:
+      serviceAccountName: agents-sa
+      backoffLimit: 0
+      logRetentionSeconds: 604800
+  ttlSecondsAfterFinished: 86400
+  parameters:
+    repository: proompteng/lab
+    base: main
+    head: codex/synthesis-autonomous-trader-session
+    mode: market-open
+    synthesisSessionMode: market_open
+    accountType: paper
+    targetEquityUsd: "500000"
+    marketOpenTimezone: America/New_York
+    premarketBootstrapMinutes: "15"
+  secrets:
+    - alpaca-mcp
+    - agents-artifacts
+    - codex-auth
+    - github-token
+    - synthesis-env
+  workload:
+    volumes:
+      - type: secret
+        name: synthesis-env
+        secretName: synthesis-env
+        mountPath: /var/run/synthesis
+        readOnly: true
+    resources:
+      requests:
+        cpu: "2"
+        memory: 4Gi
+        ephemeral-storage: 2Gi
+      limits:
+        memory: 16Gi
+        ephemeral-storage: 16Gi
