@@ -7547,12 +7547,16 @@ class TestTradingApi(TestCase):
                     return_value=proof_floor,
                 ),
             ):
-                response = self.client.get("/trading/paper-route-evidence")
+                response = self.client.get(
+                    "/trading/paper-route-evidence?lookback_hours=24&target_limit=1"
+                )
             self.assertEqual(response.status_code, 200)
             payload = response.json()
             self.assertEqual(
                 payload["schema_version"], "torghut.paper-route-evidence.v1"
             )
+            self.assertEqual(payload["window"]["lookback_hours"], 24)
+            self.assertEqual(payload["window"]["target_limit"], 1)
             self.assertEqual(payload["summary"]["target_count"], 1)
             self.assertEqual(payload["summary"]["target_with_runtime_ledger_count"], 1)
             self.assertEqual(payload["summary"]["target_with_source_activity_count"], 0)

@@ -83,6 +83,10 @@ RUNTIME_LEDGER_PROOF_PACKET_OUTPUT_FILE = "artifacts/runtime-ledger-proof-packet
 RUNTIME_WINDOW_IMPORT_OUTPUT_FILE = "artifacts/runtime-window-import.json"
 RUNTIME_LEDGER_PROOF_PACKET_ARTIFACT_PREFIX = "runtime-ledger-proof-packets/{run_id}"
 RUNTIME_LEDGER_SUMMARY_ROW_LIMIT = 50
+PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT = 100
+PAPER_ROUTE_SOURCE_ACTIVITY_REF_LIMIT = 25
+MAX_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS = 168
+MAX_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT = 20
 PAPER_ROUTE_EVIDENCE_QUERY_TIMEOUT_MS = 5000
 US_EQUITIES_TIMEZONE = "America/New_York"
 US_EQUITIES_OPEN = time(hour=9, minute=30)
@@ -488,6 +492,13 @@ def _safe_int(value: object) -> int:
         except ValueError:
             return 0
     return 0
+
+
+def _bounded_int(value: object, *, default: int, minimum: int, maximum: int) -> int:
+    parsed = _safe_int(value)
+    if parsed <= 0:
+        parsed = default
+    return max(minimum, min(parsed, maximum))
 
 
 def _safe_decimal(value: object) -> Decimal:
@@ -2434,6 +2445,23 @@ def _unavailable_source_activity(
         "fill_order_event_count": 0,
         "complete_fill_order_event_count": 0,
         "tca_sample_count": 0,
+        "readback_state": "query_unavailable",
+        "stage_presence": {
+            "source_decisions_present": raw_decision_count > 0,
+            "submitted_lifecycle_present": False,
+            "fills_present": False,
+            "source_refs_present": False,
+            "runtime_execution_economics_present": False,
+        },
+        "query_limits": {
+            "row_limit": PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT,
+            "ref_limit": PAPER_ROUTE_SOURCE_ACTIVITY_REF_LIMIT,
+            "decision_truncated": False,
+            "execution_truncated": False,
+            "order_event_truncated": False,
+            "tca_truncated": False,
+            "truncated_sources": [],
+        },
         "last_decision_at": None,
         "last_execution_at": None,
         "last_order_event_at": None,
@@ -2575,6 +2603,30 @@ def _source_activity_lifecycle_summary(
     }
 
 
+def _source_activity_readback_state(
+    *,
+    decision_count: int,
+    execution_count: int,
+    filled_execution_count: int,
+    fill_order_event_count: int,
+    complete_fill_order_event_count: int,
+    tca_sample_count: int,
+) -> str:
+    if tca_sample_count > 0:
+        return "source_execution_economics_present"
+    if (
+        filled_execution_count > 0
+        or fill_order_event_count > 0
+        or complete_fill_order_event_count > 0
+    ):
+        return "source_fills_present"
+    if execution_count > 0:
+        return "submitted_lifecycle_present"
+    if decision_count > 0:
+        return "source_decisions_present"
+    return "no_source_activity"
+
+
 def _strategy_source_activity(
     session: Session,
     *,
@@ -2621,6 +2673,23 @@ def _strategy_source_activity(
             "fill_order_event_count": 0,
             "complete_fill_order_event_count": 0,
             "tca_sample_count": 0,
+            "readback_state": "no_source_activity",
+            "stage_presence": {
+                "source_decisions_present": False,
+                "submitted_lifecycle_present": False,
+                "fills_present": False,
+                "source_refs_present": False,
+                "runtime_execution_economics_present": False,
+            },
+            "query_limits": {
+                "row_limit": PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT,
+                "ref_limit": PAPER_ROUTE_SOURCE_ACTIVITY_REF_LIMIT,
+                "decision_truncated": False,
+                "execution_truncated": False,
+                "order_event_truncated": False,
+                "tca_truncated": False,
+                "truncated_sources": [],
+            },
             "last_decision_at": None,
             "last_execution_at": None,
             "last_order_event_at": None,
@@ -2648,13 +2717,20 @@ def _strategy_source_activity(
         )
     if symbol_filters:
         decision_stmt = decision_stmt.where(TradeDecision.symbol.in_(symbol_filters))
+    decision_truncated = False
     try:
         _maybe_set_paper_route_audit_statement_timeout(session)
-        decision_rows = list(
+        queried_decision_rows = list(
             session.execute(
-                decision_stmt.order_by(TradeDecision.created_at.desc()).limit(500)
+                decision_stmt.order_by(TradeDecision.created_at.desc()).limit(
+                    PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT + 1
+                )
             ).scalars()
         )
+        decision_truncated = (
+            len(queried_decision_rows) > PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT
+        )
+        decision_rows = queried_decision_rows[:PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT]
     except SQLAlchemyError as exc:
         _rollback_after_source_activity_error(
             session,
@@ -2710,11 +2786,19 @@ def _strategy_source_activity(
             execution_stmt = execution_stmt.where(Execution.symbol.in_(symbol_filters))
         try:
             _maybe_set_paper_route_audit_statement_timeout(session)
-            execution_rows = list(
+            queried_execution_rows = list(
                 session.execute(
-                    execution_stmt.order_by(execution_activity_ts.desc()).limit(500)
+                    execution_stmt.order_by(execution_activity_ts.desc()).limit(
+                        PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT + 1
+                    )
                 ).scalars()
             )
+            execution_truncated = (
+                len(queried_execution_rows) > PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT
+            )
+            execution_rows = queried_execution_rows[
+                :PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT
+            ]
         except SQLAlchemyError as exc:
             _rollback_after_source_activity_error(
                 session,
@@ -2734,6 +2818,8 @@ def _strategy_source_activity(
                 raw_decision_count=raw_decision_count,
                 lineage_matched_decision_count=len(decision_rows),
             )
+    else:
+        execution_truncated = False
     order_event_rows: list[ExecutionOrderEvent] = []
     if decision_ids:
         order_event_activity_ts = _order_event_activity_timestamp()
@@ -2753,11 +2839,19 @@ def _strategy_source_activity(
             )
         try:
             _maybe_set_paper_route_audit_statement_timeout(session)
-            order_event_rows = list(
+            queried_order_event_rows = list(
                 session.execute(
-                    order_event_stmt.order_by(order_event_activity_ts.desc()).limit(500)
+                    order_event_stmt.order_by(order_event_activity_ts.desc()).limit(
+                        PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT + 1
+                    )
                 ).scalars()
             )
+            order_event_truncated = (
+                len(queried_order_event_rows) > PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT
+            )
+            order_event_rows = queried_order_event_rows[
+                :PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT
+            ]
         except SQLAlchemyError as exc:
             _rollback_after_source_activity_error(
                 session,
@@ -2777,6 +2871,8 @@ def _strategy_source_activity(
                 raw_decision_count=raw_decision_count,
                 lineage_matched_decision_count=len(decision_rows),
             )
+    else:
+        order_event_truncated = False
     tca_rows: list[ExecutionTCAMetric] = []
     if decision_ids:
         tca_stmt = (
@@ -2797,11 +2893,15 @@ def _strategy_source_activity(
             tca_stmt = tca_stmt.where(ExecutionTCAMetric.symbol.in_(symbol_filters))
         try:
             _maybe_set_paper_route_audit_statement_timeout(session)
-            tca_rows = list(
+            queried_tca_rows = list(
                 session.execute(
-                    tca_stmt.order_by(ExecutionTCAMetric.computed_at.desc()).limit(500)
+                    tca_stmt.order_by(ExecutionTCAMetric.computed_at.desc()).limit(
+                        PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT + 1
+                    )
                 ).scalars()
             )
+            tca_truncated = len(queried_tca_rows) > PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT
+            tca_rows = queried_tca_rows[:PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT]
         except SQLAlchemyError as exc:
             _rollback_after_source_activity_error(
                 session,
@@ -2821,6 +2921,8 @@ def _strategy_source_activity(
                 raw_decision_count=raw_decision_count,
                 lineage_matched_decision_count=len(decision_rows),
             )
+    else:
+        tca_truncated = False
     decision_count = len(decision_rows)
     execution_count = len(execution_rows)
     tca_sample_count = len(tca_rows)
@@ -2842,15 +2944,26 @@ def _strategy_source_activity(
     if tca_sample_count <= 0 and complete_fill_order_event_count <= 0:
         missing_reasons.append("source_tca_missing")
     missing_reasons.extend(lineage_blockers)
+    if decision_truncated or execution_truncated or order_event_truncated or tca_truncated:
+        missing_reasons.append("source_activity_readback_truncated")
     lifecycle_summary = _source_activity_lifecycle_summary(
         execution_rows=execution_rows,
         order_event_rows=order_event_rows,
         tca_rows=tca_rows,
     )
-    decision_refs = [str(row.id) for row in decision_rows]
-    execution_refs = [str(row.id) for row in execution_rows]
-    order_lifecycle_refs = [str(row.id) for row in order_event_rows]
-    tca_metric_refs = [str(row.id) for row in tca_rows]
+    decision_refs = [
+        str(row.id) for row in decision_rows[:PAPER_ROUTE_SOURCE_ACTIVITY_REF_LIMIT]
+    ]
+    execution_refs = [
+        str(row.id) for row in execution_rows[:PAPER_ROUTE_SOURCE_ACTIVITY_REF_LIMIT]
+    ]
+    order_lifecycle_refs = [
+        str(row.id)
+        for row in order_event_rows[:PAPER_ROUTE_SOURCE_ACTIVITY_REF_LIMIT]
+    ]
+    tca_metric_refs = [
+        str(row.id) for row in tca_rows[:PAPER_ROUTE_SOURCE_ACTIVITY_REF_LIMIT]
+    ]
     source_reference_blockers = _unique_text_items(
         [
             *(["source_decision_refs_missing"] if not decision_refs else []),
@@ -2867,7 +2980,33 @@ def _strategy_source_activity(
         [
             *_unique_text_items(lifecycle_summary.get("blockers")),
             *source_reference_blockers,
+            *(
+                ["source_activity_readback_truncated"]
+                if decision_truncated
+                or execution_truncated
+                or order_event_truncated
+                or tca_truncated
+                else []
+            ),
         ]
+    )
+    truncated_sources = [
+        source
+        for source, truncated in (
+            ("trade_decisions", decision_truncated),
+            ("executions", execution_truncated),
+            ("execution_order_events", order_event_truncated),
+            ("execution_tca_metrics", tca_truncated),
+        )
+        if truncated
+    ]
+    readback_state = _source_activity_readback_state(
+        decision_count=decision_count,
+        execution_count=execution_count,
+        filled_execution_count=filled_execution_count,
+        fill_order_event_count=fill_order_event_count,
+        complete_fill_order_event_count=complete_fill_order_event_count,
+        tca_sample_count=tca_sample_count,
     )
     return {
         "strategy_name": strategy_name,
@@ -2893,6 +3032,32 @@ def _strategy_source_activity(
         "complete_fill_order_event_count": complete_fill_order_event_count,
         "tca_sample_count": tca_sample_count,
         "submitted_order_count": execution_count,
+        "readback_state": readback_state,
+        "stage_presence": {
+            "source_decisions_present": decision_count > 0,
+            "submitted_lifecycle_present": execution_count > 0
+            or order_event_count > 0,
+            "fills_present": filled_execution_count > 0
+            or fill_order_event_count > 0
+            or complete_fill_order_event_count > 0,
+            "source_refs_present": bool(
+                decision_refs
+                or execution_refs
+                or order_lifecycle_refs
+                or tca_metric_refs
+            ),
+            "runtime_execution_economics_present": tca_sample_count > 0
+            or complete_fill_order_event_count > 0,
+        },
+        "query_limits": {
+            "row_limit": PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT,
+            "ref_limit": PAPER_ROUTE_SOURCE_ACTIVITY_REF_LIMIT,
+            "decision_truncated": decision_truncated,
+            "execution_truncated": execution_truncated,
+            "order_event_truncated": order_event_truncated,
+            "tca_truncated": tca_truncated,
+            "truncated_sources": truncated_sources,
+        },
         "source_lifecycle": lifecycle_summary,
         "source_lifecycle_blockers": source_lifecycle_blockers,
         "last_decision_at": _isoformat(
@@ -2950,6 +3115,23 @@ def _database_unavailable_source_activity(
         "fill_order_event_count": 0,
         "complete_fill_order_event_count": 0,
         "tca_sample_count": 0,
+        "readback_state": "query_unavailable",
+        "stage_presence": {
+            "source_decisions_present": False,
+            "submitted_lifecycle_present": False,
+            "fills_present": False,
+            "source_refs_present": False,
+            "runtime_execution_economics_present": False,
+        },
+        "query_limits": {
+            "row_limit": PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT,
+            "ref_limit": PAPER_ROUTE_SOURCE_ACTIVITY_REF_LIMIT,
+            "decision_truncated": False,
+            "execution_truncated": False,
+            "order_event_truncated": False,
+            "tca_truncated": False,
+            "truncated_sources": [],
+        },
         "last_decision_at": None,
         "last_execution_at": None,
         "last_order_event_at": None,
@@ -4350,6 +4532,109 @@ def _source_backed_import_ready_metadata(
     }
 
 
+def _target_evidence_readback_diagnostics(
+    *,
+    target: Mapping[str, object],
+    source_activity: Mapping[str, object],
+    runtime_ledger: Mapping[str, object],
+    promotion_decisions: Mapping[str, object],
+    readiness_blockers: Sequence[str],
+) -> dict[str, object]:
+    stage_presence = _as_mapping(source_activity.get("stage_presence"))
+    decision_count = _safe_int(source_activity.get("decision_count"))
+    execution_count = _safe_int(source_activity.get("execution_count"))
+    filled_execution_count = _safe_int(source_activity.get("filled_execution_count"))
+    fill_order_event_count = _safe_int(source_activity.get("fill_order_event_count"))
+    complete_fill_order_event_count = _safe_int(
+        source_activity.get("complete_fill_order_event_count")
+    )
+    tca_sample_count = _safe_int(source_activity.get("tca_sample_count"))
+    runtime_bucket_count = _safe_int(runtime_ledger.get("bucket_count"))
+    evidence_grade_runtime_bucket_count = _safe_int(
+        runtime_ledger.get("evidence_grade_bucket_count")
+    )
+    source_decisions_present = bool(stage_presence.get("source_decisions_present")) or (
+        decision_count > 0
+    )
+    submitted_lifecycle_present = bool(
+        stage_presence.get("submitted_lifecycle_present")
+    ) or execution_count > 0
+    fills_present = (
+        bool(stage_presence.get("fills_present"))
+        or filled_execution_count > 0
+        or fill_order_event_count > 0
+        or complete_fill_order_event_count > 0
+    )
+    source_refs_present = bool(stage_presence.get("source_refs_present")) or bool(
+        _unique_text_items(source_activity.get("decision_refs"))
+        or _unique_text_items(source_activity.get("execution_refs"))
+        or _unique_text_items(source_activity.get("order_lifecycle_refs"))
+        or _unique_text_items(source_activity.get("tca_metric_refs"))
+    )
+    runtime_buckets_present = runtime_bucket_count > 0
+    if evidence_grade_runtime_bucket_count > 0:
+        state = "evidence_grade_runtime_buckets_present"
+    elif runtime_buckets_present:
+        state = "runtime_buckets_present"
+    elif tca_sample_count > 0:
+        state = "source_execution_economics_present"
+    elif fills_present:
+        state = "source_fills_present"
+    elif submitted_lifecycle_present:
+        state = "submitted_lifecycle_present"
+    elif source_decisions_present:
+        state = "source_decisions_present"
+    else:
+        state = "no_source_activity"
+    promotion_authority_blockers = _unique_text_items(
+        [
+            *readiness_blockers,
+            *_unique_text_items(runtime_ledger.get("blockers")),
+            *(
+                ["final_promotion_authority_blocked"]
+                if not bool(target.get("final_promotion_allowed"))
+                else []
+            ),
+            *(
+                ["promotion_decision_not_allowed"]
+                if not bool(_as_mapping(promotion_decisions.get("latest")).get("allowed"))
+                and _safe_int(promotion_decisions.get("decision_count")) > 0
+                else []
+            ),
+        ]
+    )
+    return {
+        "schema_version": "torghut.paper-route-evidence-readback-diagnostics.v1",
+        "state": state,
+        "source_decisions_present": source_decisions_present,
+        "submitted_lifecycle_present": submitted_lifecycle_present,
+        "fills_or_executions_present": fills_present,
+        "source_refs_present": source_refs_present,
+        "runtime_buckets_present": runtime_buckets_present,
+        "evidence_grade_runtime_buckets_present": (
+            evidence_grade_runtime_bucket_count > 0
+        ),
+        "runtime_bucket_count": runtime_bucket_count,
+        "evidence_grade_runtime_bucket_count": evidence_grade_runtime_bucket_count,
+        "final_promotion_authority_blocked": not bool(
+            target.get("final_promotion_allowed")
+        ),
+        "promotion_decision_count": _safe_int(promotion_decisions.get("decision_count")),
+        "promotion_decision_allowed_count": _safe_int(
+            promotion_decisions.get("allowed_count")
+        ),
+        "query_unavailable": bool(source_activity.get("query_unavailable")),
+        "query_limits": {
+            "source_activity": _as_mapping(source_activity.get("query_limits")),
+            "runtime_ledger": {
+                "row_limit": _safe_int(runtime_ledger.get("query_limit")),
+                "truncated": bool(runtime_ledger.get("truncated")),
+            },
+        },
+        "blockers": promotion_authority_blockers,
+    }
+
+
 def _evidence_window_contract(
     *,
     target: Mapping[str, object],
@@ -4524,6 +4809,13 @@ def _target_audit(
         account_contamination=account_contamination,
         account_state=account_state,
     )
+    evidence_readback = _target_evidence_readback_diagnostics(
+        target=target,
+        source_activity=source_activity,
+        runtime_ledger=runtime_ledger,
+        promotion_decisions=promotion_decisions,
+        readiness_blockers=blockers,
+    )
     return {
         "target": target,
         "window": {
@@ -4535,6 +4827,7 @@ def _target_audit(
         "account_state": account_state,
         "account_close_state": account_close_state,
         "evidence_window_contract": evidence_window_contract,
+        "evidence_readback": evidence_readback,
         "source_backed_import_ready_metadata": _source_backed_import_ready_metadata(
             target=target,
             source_activity=source_activity,
@@ -4704,6 +4997,28 @@ def _database_unavailable_target_audit(
         "state": "database_unavailable",
         "db_load_error": error_payload,
     }
+    runtime_ledger = {
+        "bucket_count": 0,
+        "evidence_grade_bucket_count": 0,
+        "non_evidence_grade_bucket_count": 0,
+        "returned_bucket_count": 0,
+        "query_limit": RUNTIME_LEDGER_SUMMARY_ROW_LIMIT,
+        "truncated": False,
+        "filled_notional": "0",
+        "net_strategy_pnl_after_costs": "0",
+        "closed_trade_count": 0,
+        "open_position_count": 0,
+        "blockers": [PAPER_ROUTE_EVIDENCE_DB_UNAVAILABLE_BLOCKER, source_blocker],
+        "db_load_error": error_payload,
+    }
+    promotion_decisions = {
+        "decision_count": 0,
+        "allowed_count": 0,
+        "latest": None,
+        "db_row_refs": [],
+        "blockers": [PAPER_ROUTE_EVIDENCE_DB_UNAVAILABLE_BLOCKER, source_blocker],
+        "db_load_error": error_payload,
+    }
     return {
         "target": target,
         "window": {
@@ -4739,6 +5054,13 @@ def _database_unavailable_target_audit(
             "account_label": _safe_text(target.get("account_label")),
             "blockers": [PAPER_ROUTE_EVIDENCE_DB_UNAVAILABLE_BLOCKER, source_blocker],
         },
+        "evidence_readback": _target_evidence_readback_diagnostics(
+            target=target,
+            source_activity=source_activity,
+            runtime_ledger=runtime_ledger,
+            promotion_decisions=promotion_decisions,
+            readiness_blockers=blockers,
+        ),
         "source_backed_import_ready_metadata": {
             "schema_version": "torghut.paper-route-source-backed-import-ready.v1",
             "ready": False,
@@ -4750,19 +5072,7 @@ def _database_unavailable_target_audit(
             "blocking_reasons": [PAPER_ROUTE_EVIDENCE_DB_UNAVAILABLE_BLOCKER],
             "db_load_error": error_payload,
         },
-        "runtime_ledger": {
-            "bucket_count": 0,
-            "evidence_grade_bucket_count": 0,
-            "non_evidence_grade_bucket_count": 0,
-            "returned_bucket_count": 0,
-            "query_limit": RUNTIME_LEDGER_SUMMARY_ROW_LIMIT,
-            "filled_notional": "0",
-            "net_strategy_pnl_after_costs": "0",
-            "closed_trade_count": 0,
-            "open_position_count": 0,
-            "blockers": [PAPER_ROUTE_EVIDENCE_DB_UNAVAILABLE_BLOCKER, source_blocker],
-            "db_load_error": error_payload,
-        },
+        "runtime_ledger": runtime_ledger,
         "hypothesis_windows": {
             "window_count": 0,
             "decision_count": 0,
@@ -4776,14 +5086,7 @@ def _database_unavailable_target_audit(
             "blockers": [PAPER_ROUTE_EVIDENCE_DB_UNAVAILABLE_BLOCKER, source_blocker],
             "db_load_error": error_payload,
         },
-        "promotion_decisions": {
-            "decision_count": 0,
-            "allowed_count": 0,
-            "latest": None,
-            "db_row_refs": [],
-            "blockers": [PAPER_ROUTE_EVIDENCE_DB_UNAVAILABLE_BLOCKER, source_blocker],
-            "db_load_error": error_payload,
-        },
+        "promotion_decisions": promotion_decisions,
         "readiness": {
             "state": "evidence_collection_blocked",
             "evidence_collection_ok": False,
@@ -5975,10 +6278,22 @@ def build_paper_route_evidence_audit(
     """Build a target-by-target audit for paper-route evidence collection."""
 
     resolved_generated_at = generated_at or datetime.now(timezone.utc)
+    effective_lookback_hours = _bounded_int(
+        lookback_hours,
+        default=DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
+        minimum=1,
+        maximum=MAX_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
+    )
+    effective_target_limit = _bounded_int(
+        target_limit,
+        default=DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
+        minimum=1,
+        maximum=MAX_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
+    )
     plan = _as_mapping(
         live_submission_gate.get("runtime_ledger_paper_probation_import_plan")
     )
-    targets = _as_mapping_items(plan.get("targets"))[: max(0, target_limit)]
+    targets = _as_mapping_items(plan.get("targets"))[:effective_target_limit]
     probe = _paper_route_probe_summary(
         route_reacquisition_book,
         target_plan=plan,
@@ -5996,7 +6311,7 @@ def build_paper_route_evidence_audit(
             raw_target=target,
             probe=probe,
             generated_at=resolved_generated_at,
-            lookback_hours=lookback_hours,
+            lookback_hours=effective_lookback_hours,
             error_source="paper_route_source_target_audit",
         )
         for target in targets
@@ -6027,12 +6342,12 @@ def build_paper_route_evidence_audit(
     next_target_audits = [
         _target_audit_fail_closed(
             session,
-            raw_target=target,
-            probe=probe,
-            generated_at=resolved_generated_at,
-            lookback_hours=lookback_hours,
-            error_source="paper_route_next_target_audit",
-        )
+                raw_target=target,
+                probe=probe,
+                generated_at=resolved_generated_at,
+                lookback_hours=effective_lookback_hours,
+                error_source="paper_route_next_target_audit",
+            )
         for target in _as_mapping_items(next_targets.get("targets"))
     ]
     runtime_window_import_plan = next_targets
@@ -6048,7 +6363,7 @@ def build_paper_route_evidence_audit(
                 raw_target=target,
                 probe=probe,
                 generated_at=resolved_generated_at,
-                lookback_hours=lookback_hours,
+                lookback_hours=effective_lookback_hours,
                 error_source="paper_route_runtime_window_import_target_audit",
             )
             for target in _as_mapping_items(latest_closed_targets.get("targets"))
@@ -6082,12 +6397,33 @@ def build_paper_route_evidence_audit(
     )
     if not targets:
         summary_blockers.append("paper_probation_import_plan_missing")
+    readback_items = [
+        _as_mapping(audit.get("evidence_readback")) for audit in target_audits
+    ]
+    source_activity_limits = [
+        _as_mapping(_as_mapping(audit.get("source_activity")).get("query_limits"))
+        for audit in target_audits
+    ]
+    truncated_source_names = sorted(
+        {
+            source
+            for limits in source_activity_limits
+            for source in _unique_text_items(limits.get("truncated_sources"))
+        }
+    )
     return {
         "schema_version": PAPER_ROUTE_EVIDENCE_SCHEMA_VERSION,
         "generated_at": _isoformat(resolved_generated_at),
         "window": {
-            "lookback_hours": lookback_hours,
-            "target_limit": target_limit,
+            "lookback_hours": effective_lookback_hours,
+            "requested_lookback_hours": lookback_hours,
+            "max_lookback_hours": MAX_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
+            "target_limit": effective_target_limit,
+            "requested_target_limit": target_limit,
+            "max_target_limit": MAX_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
+            "source_activity_row_limit": PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT,
+            "source_activity_ref_limit": PAPER_ROUTE_SOURCE_ACTIVITY_REF_LIMIT,
+            "runtime_ledger_row_limit": RUNTIME_LEDGER_SUMMARY_ROW_LIMIT,
         },
         "live_submission_gate": {
             "allowed": bool(live_submission_gate.get("allowed")),
@@ -6175,6 +6511,50 @@ def build_paper_route_evidence_audit(
                 )
                 for audit in target_audits
             ),
+            "readback": {
+                "schema_version": "torghut.paper-route-evidence-readback-summary.v1",
+                "target_count": len(readback_items),
+                "no_source_activity_count": sum(
+                    int(item.get("state") == "no_source_activity")
+                    for item in readback_items
+                ),
+                "source_decisions_present_count": sum(
+                    int(bool(item.get("source_decisions_present")))
+                    for item in readback_items
+                ),
+                "submitted_lifecycle_present_count": sum(
+                    int(bool(item.get("submitted_lifecycle_present")))
+                    for item in readback_items
+                ),
+                "fills_or_executions_present_count": sum(
+                    int(bool(item.get("fills_or_executions_present")))
+                    for item in readback_items
+                ),
+                "source_refs_present_count": sum(
+                    int(bool(item.get("source_refs_present")))
+                    for item in readback_items
+                ),
+                "runtime_buckets_present_count": sum(
+                    int(bool(item.get("runtime_buckets_present")))
+                    for item in readback_items
+                ),
+                "evidence_grade_runtime_buckets_present_count": sum(
+                    int(bool(item.get("evidence_grade_runtime_buckets_present")))
+                    for item in readback_items
+                ),
+                "final_promotion_authority_blocked_count": sum(
+                    int(bool(item.get("final_promotion_authority_blocked")))
+                    for item in readback_items
+                ),
+                "query_unavailable_count": sum(
+                    int(bool(item.get("query_unavailable"))) for item in readback_items
+                ),
+                "truncated_source_activity_count": sum(
+                    int(bool(_unique_text_items(limits.get("truncated_sources"))))
+                    for limits in source_activity_limits
+                ),
+                "truncated_source_activity_sources": truncated_source_names,
+            },
             "promotion_allowed_count": sum(
                 int(
                     bool(
@@ -6276,6 +6656,8 @@ def build_paper_route_evidence_audit(
 __all__ = [
     "DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS",
     "NEXT_PAPER_ROUTE_RUNTIME_WINDOW_TARGETS_SCHEMA_VERSION",
+    "MAX_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS",
+    "MAX_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT",
     "PAPER_ROUTE_EVIDENCE_SCHEMA_VERSION",
     "PAPER_ROUTE_TARGET_PLAN_PAYLOAD_SCHEMA_VERSION",
     "PAPER_ROUTE_RUNTIME_WINDOW_IMPORT_AUDIT_SCHEMA_VERSION",

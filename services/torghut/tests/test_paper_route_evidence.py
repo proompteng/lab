@@ -24,6 +24,8 @@ from app.models import (
     TradeDecision,
 )
 from app.trading.paper_route_evidence import (
+    PAPER_ROUTE_SOURCE_ACTIVITY_REF_LIMIT,
+    PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT,
     RUNTIME_LEDGER_PROOF_PACKET_HANDOFF_SCHEMA_VERSION,
     _account_pre_session_snapshot_audit,
     _account_window_start_snapshot_audit,
@@ -454,6 +456,277 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(activity["missing_reasons"], ["source_tca_unavailable"])
         self.assertEqual(activity["raw_decision_count"], 1)
         self.assertEqual(activity["lineage_matched_decision_count"], 1)
+
+    def test_source_activity_noisy_dataset_is_bounded_and_reports_truncation(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 5, 29, 13, 30, tzinfo=timezone.utc)
+        window_end = window_start + timedelta(hours=1)
+        strategy_name = "paper-route-noisy-readback"
+        with Session(self.engine) as session:
+            strategy = Strategy(
+                name=strategy_name,
+                description="noisy bounded readback fixture",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+                created_at=window_start,
+                updated_at=window_start,
+            )
+            session.add(strategy)
+            session.flush()
+            for index in range(PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT + 7):
+                session.add(
+                    TradeDecision(
+                        strategy_id=strategy.id,
+                        alpaca_account_label="TORGHUT_SIM",
+                        symbol="AAPL",
+                        timeframe="1Min",
+                        decision_json={
+                            "action": "buy",
+                            "qty": "1",
+                            "candidate_id": "candidate-noisy-readback",
+                            "hypothesis_id": "H-NOISY-READBACK",
+                        },
+                        rationale="bounded noisy source readback",
+                        status="planned",
+                        created_at=window_start + timedelta(seconds=index),
+                        executed_at=None,
+                    )
+                )
+            session.commit()
+
+            activity = _strategy_source_activity(
+                session,
+                strategy_name=strategy_name,
+                account_label="TORGHUT_SIM",
+                symbols=["AAPL"],
+                window_start=window_start,
+                window_end=window_end,
+                candidate_id="candidate-noisy-readback",
+                hypothesis_id="H-NOISY-READBACK",
+                require_source_lineage=True,
+            )
+
+        self.assertEqual(activity["raw_decision_count"], PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT)
+        self.assertEqual(
+            activity["lineage_matched_decision_count"],
+            PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT,
+        )
+        self.assertEqual(len(activity["decision_refs"]), PAPER_ROUTE_SOURCE_ACTIVITY_REF_LIMIT)
+        self.assertEqual(activity["readback_state"], "source_decisions_present")
+        self.assertTrue(activity["stage_presence"]["source_decisions_present"])
+        self.assertFalse(activity["stage_presence"]["submitted_lifecycle_present"])
+        self.assertEqual(
+            activity["query_limits"]["truncated_sources"], ["trade_decisions"]
+        )
+        self.assertTrue(activity["query_limits"]["decision_truncated"])
+        self.assertIn("source_executions_missing", activity["missing_reasons"])
+
+    def test_evidence_readback_diagnostics_distinguish_source_lifecycle_and_blockers(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 5, 29, 13, 30, tzinfo=timezone.utc)
+        window_end = window_start + timedelta(hours=1)
+        event_at = window_start + timedelta(minutes=5)
+        strategy_name = "paper-route-diagnostic-readback"
+        with Session(self.engine) as session:
+            strategy = Strategy(
+                name=strategy_name,
+                description="diagnostic readback fixture",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+                created_at=window_start,
+                updated_at=window_start,
+            )
+            session.add(strategy)
+            session.flush()
+            decision = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="TORGHUT_SIM",
+                symbol="AAPL",
+                timeframe="1Min",
+                decision_json={
+                    "action": "buy",
+                    "qty": "1",
+                    "candidate_id": "candidate-diagnostic-readback",
+                    "hypothesis_id": "H-DIAGNOSTIC-READBACK",
+                },
+                rationale="diagnostic source-backed readback",
+                status="executed",
+                created_at=event_at,
+                executed_at=event_at,
+            )
+            session.add(decision)
+            session.flush()
+            execution = Execution(
+                trade_decision_id=decision.id,
+                alpaca_account_label="TORGHUT_SIM",
+                alpaca_order_id="diagnostic-readback-order",
+                client_order_id="diagnostic-readback-client",
+                symbol="AAPL",
+                side="buy",
+                order_type="limit",
+                time_in_force="day",
+                submitted_qty=Decimal("1"),
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("100"),
+                status="filled",
+                raw_order={},
+                created_at=event_at,
+                updated_at=event_at,
+                last_update_at=event_at,
+            )
+            session.add(execution)
+            session.flush()
+            session.add_all(
+                [
+                    ExecutionOrderEvent(
+                        event_fingerprint="diagnostic-readback-fill",
+                        source_topic="trade_updates",
+                        source_partition=0,
+                        source_offset=501,
+                        alpaca_account_label="TORGHUT_SIM",
+                        feed_seq=501,
+                        event_ts=event_at,
+                        symbol="AAPL",
+                        alpaca_order_id="diagnostic-readback-order",
+                        client_order_id="diagnostic-readback-client",
+                        event_type="fill",
+                        status="filled",
+                        qty=Decimal("1"),
+                        filled_qty=Decimal("1"),
+                        filled_qty_delta=Decimal("1"),
+                        filled_notional_delta=Decimal("100"),
+                        avg_fill_price=Decimal("100"),
+                        raw_event={"event": "fill", "side": "buy"},
+                        execution_id=execution.id,
+                        trade_decision_id=decision.id,
+                        created_at=event_at,
+                    ),
+                    ExecutionTCAMetric(
+                        execution_id=execution.id,
+                        trade_decision_id=decision.id,
+                        strategy_id=strategy.id,
+                        alpaca_account_label="TORGHUT_SIM",
+                        symbol="AAPL",
+                        side="buy",
+                        arrival_price=Decimal("99"),
+                        avg_fill_price=Decimal("100"),
+                        filled_qty=Decimal("1"),
+                        signed_qty=Decimal("1"),
+                        slippage_bps=Decimal("5"),
+                        shortfall_notional=Decimal("1"),
+                        realized_shortfall_bps=Decimal("5"),
+                        churn_qty=Decimal("0"),
+                        churn_ratio=Decimal("0"),
+                        computed_at=event_at,
+                        created_at=event_at,
+                        updated_at=event_at,
+                    ),
+                    StrategyRuntimeLedgerBucket(
+                        run_id="diagnostic-readback-ledger",
+                        candidate_id="candidate-diagnostic-readback",
+                        hypothesis_id="H-DIAGNOSTIC-READBACK",
+                        observed_stage="paper",
+                        bucket_started_at=window_start,
+                        bucket_ended_at=window_end,
+                        account_label="TORGHUT_SIM",
+                        runtime_strategy_name=strategy_name,
+                        strategy_family="microbar_pairs",
+                        fill_count=1,
+                        decision_count=1,
+                        submitted_order_count=1,
+                        closed_trade_count=0,
+                        open_position_count=1,
+                        filled_notional=Decimal("100"),
+                        gross_strategy_pnl=Decimal("1"),
+                        cost_amount=Decimal("0.25"),
+                        net_strategy_pnl_after_costs=Decimal("0.75"),
+                        post_cost_expectancy_bps=Decimal("75"),
+                        ledger_schema_version="torghut.runtime-ledger-bucket.v1",
+                        pnl_basis="realized_strategy_pnl_after_explicit_costs",
+                        execution_policy_hash_counts={"policy": 1},
+                        cost_model_hash_counts={"cost": 1},
+                        lineage_hash_counts={"lineage": 1},
+                        blockers_json=["paper_route_missing_close"],
+                    ),
+                    StrategyPromotionDecision(
+                        run_id="diagnostic-readback-ledger",
+                        candidate_id="candidate-diagnostic-readback",
+                        hypothesis_id="H-DIAGNOSTIC-READBACK",
+                        promotion_target="paper",
+                        state="blocked",
+                        allowed=False,
+                        reason_summary="paper_probation_evidence_collection_only",
+                    ),
+                ]
+            )
+            session.commit()
+
+            payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "paper_route_probe_only",
+                    "blocked_reasons": [],
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "target_count": 1,
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-DIAGNOSTIC-READBACK",
+                                "candidate_id": "candidate-diagnostic-readback",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_pairs",
+                                "strategy_name": strategy_name,
+                                "account_label": "TORGHUT_SIM",
+                                "source_manifest_ref": "config/trading/hypotheses/h-diagnostic.json",
+                                "window_start": window_start.isoformat(),
+                                "window_end": window_end.isoformat(),
+                                "paper_probation_authorized": True,
+                                "promotion_allowed": False,
+                                "final_promotion_allowed": False,
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "summary": {
+                        "paper_route_probe_eligible_symbols": ["AAPL"],
+                        "paper_route_probe_active_symbols": ["AAPL"],
+                    },
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": True,
+                        "effective_max_notional": 25,
+                        "next_session_max_notional": 25,
+                    },
+                },
+                generated_at=window_end + timedelta(minutes=5),
+            )
+
+        diagnostic = payload["targets"][0]["evidence_readback"]
+        self.assertEqual(diagnostic["state"], "runtime_buckets_present")
+        self.assertTrue(diagnostic["source_decisions_present"])
+        self.assertTrue(diagnostic["submitted_lifecycle_present"])
+        self.assertTrue(diagnostic["fills_or_executions_present"])
+        self.assertTrue(diagnostic["source_refs_present"])
+        self.assertTrue(diagnostic["runtime_buckets_present"])
+        self.assertTrue(diagnostic["final_promotion_authority_blocked"])
+        self.assertIn("final_promotion_authority_blocked", diagnostic["blockers"])
+        self.assertIn("paper_route_missing_close", diagnostic["blockers"])
+        summary = payload["summary"]["readback"]
+        self.assertEqual(summary["source_decisions_present_count"], 1)
+        self.assertEqual(summary["submitted_lifecycle_present_count"], 1)
+        self.assertEqual(summary["fills_or_executions_present_count"], 1)
+        self.assertEqual(summary["runtime_buckets_present_count"], 1)
+        self.assertEqual(summary["final_promotion_authority_blocked_count"], 1)
 
     def _add_flat_account_start_snapshot(
         self,
