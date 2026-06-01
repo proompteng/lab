@@ -101,7 +101,7 @@ def _positive_mapping_value_count(value: object) -> int:
 
 def _source_ref_present(value: object) -> bool:
     if isinstance(value, Mapping):
-        return len(cast(Mapping[object, object], value)) > 0
+        return _source_ref_count({"refs": cast(object, value)}, "refs") > 0
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         return bool(_string_list(cast(Sequence[object], value)))
     return bool(_string_list(value) or _text(value) is not None)
@@ -117,8 +117,10 @@ def _source_ref_count(bucket: Mapping[str, object], *keys: str) -> int:
         value = bucket.get(key)
         if isinstance(value, Mapping):
             for ref_key, ref_value in cast(Mapping[object, object], value).items():
+                if ref_value is None or ref_value is False:
+                    continue
                 ref_text = _text(ref_value)
-                if ref_text is None or ref_text in {"True", "False"}:
+                if ref_value is True or ref_text is None:
                     ref_text = _text(ref_key)
                 if ref_text is not None:
                     refs.add(ref_text)
@@ -190,7 +192,9 @@ def _source_offset_count(bucket: Mapping[str, object]) -> int:
 
     source_offsets = bucket.get("source_offsets")
     if isinstance(source_offsets, Mapping):
-        return int(has_source_offset_triplet(cast(Mapping[object, object], source_offsets)))
+        return int(
+            has_source_offset_triplet(cast(Mapping[object, object], source_offsets))
+        )
     if isinstance(source_offsets, Sequence) and not isinstance(
         source_offsets, (str, bytes, bytearray)
     ):

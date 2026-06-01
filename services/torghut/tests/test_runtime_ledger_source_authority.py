@@ -188,6 +188,42 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
 
         self.assertEqual(blockers, [])
 
+    def test_promotion_source_authority_rejects_false_mapping_refs(
+        self,
+    ) -> None:
+        blockers = runtime_ledger_promotion_source_authority_blockers(
+            {
+                "source_window_start": "2026-05-29T14:30:00+00:00",
+                "source_window_end": "2026-05-29T15:00:00+00:00",
+                "source_refs": [
+                    "postgres:trade_decisions",
+                    "postgres:executions",
+                    "postgres:execution_order_events",
+                    "postgres:order_feed_source_windows",
+                ],
+                "source_row_counts": {
+                    "trade_decisions": 1,
+                    "executions": 1,
+                    "execution_order_events": 1,
+                    "order_feed_source_windows": 1,
+                },
+                "trade_decision_ids": {"decision-1": False},
+                "execution_ids": {"execution-1": False},
+                "execution_order_event_ids": {"event-1": False},
+                "source_window_ids": {"source-window-1": False},
+                "source_offsets": [
+                    {"topic": "alpaca.trade_updates", "partition": 0, "offset": 42}
+                ],
+                "source_materialization": "execution_order_events",
+                "authority_class": "runtime_order_feed_execution_source",
+            }
+        )
+
+        self.assertIn("runtime_ledger_trade_decision_refs_missing", blockers)
+        self.assertIn("runtime_ledger_execution_refs_missing", blockers)
+        self.assertIn("runtime_ledger_execution_order_event_refs_missing", blockers)
+        self.assertIn("runtime_ledger_source_window_ids_missing", blockers)
+
     def test_promotion_source_authority_rejects_duplicate_refs_and_offsets(
         self,
     ) -> None:
