@@ -84,7 +84,7 @@ RUNTIME_LEDGER_PROOF_PACKET_OUTPUT_FILE = "artifacts/runtime-ledger-proof-packet
 RUNTIME_WINDOW_IMPORT_OUTPUT_FILE = "artifacts/runtime-window-import.json"
 RUNTIME_LEDGER_PROOF_PACKET_ARTIFACT_PREFIX = "runtime-ledger-proof-packets/{run_id}"
 RUNTIME_LEDGER_SUMMARY_ROW_LIMIT = 50
-PAPER_ROUTE_EVIDENCE_QUERY_TIMEOUT_MS = 750
+PAPER_ROUTE_EVIDENCE_QUERY_TIMEOUT_MS = 5000
 US_EQUITIES_TIMEZONE = "America/New_York"
 US_EQUITIES_OPEN = time(hour=9, minute=30)
 US_EQUITIES_CLOSE = time(hour=16, minute=0)
@@ -855,12 +855,20 @@ def _hpairs_probe_symbol_blockers(
 ) -> list[str]:
     if not _target_is_hpairs(target):
         return []
-    symbol_set = {str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()}
-    missing = [symbol for symbol in HPAIRS_REQUIRED_PAPER_ROUTE_SYMBOLS if symbol not in symbol_set]
+    symbol_set = {
+        str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()
+    }
+    missing = [
+        symbol
+        for symbol in HPAIRS_REQUIRED_PAPER_ROUTE_SYMBOLS
+        if symbol not in symbol_set
+    ]
     blockers: list[str] = []
     if missing:
         blockers.append("paper_route_hpairs_aapl_amzn_legs_missing")
-        blockers.extend(f"paper_route_hpairs_{symbol.lower()}_leg_missing" for symbol in missing)
+        blockers.extend(
+            f"paper_route_hpairs_{symbol.lower()}_leg_missing" for symbol in missing
+        )
     return blockers
 
 
@@ -2148,7 +2156,9 @@ def _source_activity_lifecycle_summary(
                 net_filled_qty_by_symbol.get(symbol, Decimal("0")) + signed_qty
             )
     open_symbols = sorted(
-        symbol for symbol, qty in net_filled_qty_by_symbol.items() if _safe_decimal(qty) != 0
+        symbol
+        for symbol, qty in net_filled_qty_by_symbol.items()
+        if _safe_decimal(qty) != 0
     )
     lifecycle_blockers: list[str] = []
     fill_count = sum(int(_safe_decimal(row.filled_qty) > 0) for row in execution_rows)
@@ -2163,7 +2173,9 @@ def _source_activity_lifecycle_summary(
     if fill_event_count > 0 and complete_fill_event_count <= 0:
         lifecycle_blockers.append("source_fill_lifecycle_incomplete")
     if (fill_count > 0 or fill_event_count > 0) and open_symbols:
-        lifecycle_blockers.extend(["source_close_missing", "source_closed_round_trip_missing"])
+        lifecycle_blockers.extend(
+            ["source_close_missing", "source_closed_round_trip_missing"]
+        )
     if len(tca_rows) <= 0 and complete_fill_event_count <= 0:
         lifecycle_blockers.append("source_execution_economics_missing")
     return {
@@ -2182,8 +2194,10 @@ def _source_activity_lifecycle_summary(
             for symbol, qty in sorted(net_filled_qty_by_symbol.items())
         },
         "open_symbols_after_source_fills": open_symbols,
-        "closed_round_trip_evidence": bool(fill_count > 0 or fill_event_count > 0) and not open_symbols,
-        "execution_economics_present": len(tca_rows) > 0 or complete_fill_event_count > 0,
+        "closed_round_trip_evidence": bool(fill_count > 0 or fill_event_count > 0)
+        and not open_symbols,
+        "execution_economics_present": len(tca_rows) > 0
+        or complete_fill_event_count > 0,
         "blockers": sorted(dict.fromkeys(lifecycle_blockers)),
     }
 
@@ -2244,9 +2258,7 @@ def _strategy_source_activity(
             TradeDecision.alpaca_account_label == account_label
         )
     if symbol_filters:
-        decision_stmt = decision_stmt.where(
-            func.upper(TradeDecision.symbol).in_(symbol_filters)
-        )
+        decision_stmt = decision_stmt.where(TradeDecision.symbol.in_(symbol_filters))
     try:
         _maybe_set_paper_route_audit_statement_timeout(session)
         decision_rows = list(
@@ -2306,9 +2318,7 @@ def _strategy_source_activity(
                 Execution.alpaca_account_label == account_label
             )
         if symbol_filters:
-            execution_stmt = execution_stmt.where(
-                func.upper(Execution.symbol).in_(symbol_filters)
-            )
+            execution_stmt = execution_stmt.where(Execution.symbol.in_(symbol_filters))
         try:
             _maybe_set_paper_route_audit_statement_timeout(session)
             execution_rows = list(
@@ -2350,7 +2360,7 @@ def _strategy_source_activity(
             )
         if symbol_filters:
             order_event_stmt = order_event_stmt.where(
-                func.upper(ExecutionOrderEvent.symbol).in_(symbol_filters)
+                ExecutionOrderEvent.symbol.in_(symbol_filters)
             )
         try:
             _maybe_set_paper_route_audit_statement_timeout(session)
@@ -2395,9 +2405,7 @@ def _strategy_source_activity(
                 ExecutionTCAMetric.alpaca_account_label == account_label
             )
         if symbol_filters:
-            tca_stmt = tca_stmt.where(
-                func.upper(ExecutionTCAMetric.symbol).in_(symbol_filters)
-            )
+            tca_stmt = tca_stmt.where(ExecutionTCAMetric.symbol.in_(symbol_filters))
         try:
             _maybe_set_paper_route_audit_statement_timeout(session)
             tca_rows = list(
@@ -2470,7 +2478,9 @@ def _strategy_source_activity(
         "tca_sample_count": tca_sample_count,
         "submitted_order_count": execution_count,
         "source_lifecycle": lifecycle_summary,
-        "source_lifecycle_blockers": _unique_text_items(lifecycle_summary.get("blockers")),
+        "source_lifecycle_blockers": _unique_text_items(
+            lifecycle_summary.get("blockers")
+        ),
         "last_decision_at": _isoformat(
             decision_rows[0].created_at if decision_rows else None
         ),
@@ -2574,7 +2584,7 @@ def _account_contamination_audit(
         .where(ExecutionOrderEvent.trade_decision_id.is_(None))
     )
     if symbol_filters:
-        stmt = stmt.where(func.upper(ExecutionOrderEvent.symbol).in_(symbol_filters))
+        stmt = stmt.where(ExecutionOrderEvent.symbol.in_(symbol_filters))
     _maybe_set_paper_route_audit_statement_timeout(session)
     rows = list(
         session.execute(
@@ -3075,9 +3085,7 @@ def _rejected_signal_activity(
     if account_label:
         stmt = stmt.where(RejectedSignalOutcomeEvent.account_label == account_label)
     if symbol_filters:
-        stmt = stmt.where(
-            func.upper(RejectedSignalOutcomeEvent.symbol).in_(symbol_filters)
-        )
+        stmt = stmt.where(RejectedSignalOutcomeEvent.symbol.in_(symbol_filters))
     _maybe_set_paper_route_audit_statement_timeout(session)
     rows = list(
         session.execute(
@@ -3738,7 +3746,9 @@ def _source_backed_import_ready_metadata(
         "runtime_ledger_evidence_grade_bucket_count": _safe_int(
             runtime_ledger.get("evidence_grade_bucket_count")
         ),
-        "runtime_ledger_db_row_refs": _unique_text_items(runtime_ledger.get("db_row_refs")),
+        "runtime_ledger_db_row_refs": _unique_text_items(
+            runtime_ledger.get("db_row_refs")
+        ),
         "blockers": _unique_text_items(
             [
                 *(
@@ -4241,7 +4251,9 @@ def _runtime_window_import_audit(
             if _target_is_hpairs(_as_mapping(audit.get("target")))
             and not bool(_as_mapping(audit.get("source_activity")).get("missing"))
             for blocker in _as_sequence(
-                _as_mapping(audit.get("source_activity")).get("source_lifecycle_blockers")
+                _as_mapping(audit.get("source_activity")).get(
+                    "source_lifecycle_blockers"
+                )
             )
             if str(blocker).strip()
         }
@@ -4263,11 +4275,23 @@ def _runtime_window_import_audit(
     ]
     targets_with_promotion_decision = selected_target_counts["promotion_decision"]
     targets_with_zero_open_position_evidence = sum(
-        int(bool(_as_mapping(audit.get("account_close_state")).get("zero_open_position_evidence")))
+        int(
+            bool(
+                _as_mapping(audit.get("account_close_state")).get(
+                    "zero_open_position_evidence"
+                )
+            )
+        )
         for audit in next_target_audits
     )
     targets_with_source_backed_import_ready = sum(
-        int(bool(_as_mapping(audit.get("source_backed_import_ready_metadata")).get("ready")))
+        int(
+            bool(
+                _as_mapping(audit.get("source_backed_import_ready_metadata")).get(
+                    "ready"
+                )
+            )
+        )
         for audit in next_target_audits
     )
     import_ready = bool(session_readiness.get("import_ready"))
@@ -4433,12 +4457,14 @@ def _runtime_window_target_blockers(
                 *_unique_text_items(account_state.get("blockers")),
                 *(
                     _unique_text_items(source_activity.get("source_lifecycle_blockers"))
-                    if _target_is_hpairs(target) and not bool(source_activity.get("missing"))
+                    if _target_is_hpairs(target)
+                    and not bool(source_activity.get("missing"))
                     else []
                 ),
                 *(
                     _unique_text_items(account_close_state.get("blockers"))
-                    if _target_is_hpairs(target) and not bool(source_activity.get("missing"))
+                    if _target_is_hpairs(target)
+                    and not bool(source_activity.get("missing"))
                     else []
                 ),
                 *(
@@ -4551,14 +4577,20 @@ def _runtime_window_target_blockers(
                         account_close_state.get("zero_open_position_evidence")
                     ),
                     "snapshot_id": _safe_text(account_close_state.get("snapshot_id")),
-                    "snapshot_as_of": _safe_text(account_close_state.get("snapshot_as_of")),
-                    "position_count": _safe_int(account_close_state.get("position_count")),
+                    "snapshot_as_of": _safe_text(
+                        account_close_state.get("snapshot_as_of")
+                    ),
+                    "position_count": _safe_int(
+                        account_close_state.get("position_count")
+                    ),
                     "target_symbol_position_count": _safe_int(
                         account_close_state.get("target_symbol_position_count")
                     ),
                     "sample_positions": [
                         _as_mapping(item)
-                        for item in _as_sequence(account_close_state.get("sample_positions"))
+                        for item in _as_sequence(
+                            account_close_state.get("sample_positions")
+                        )
                     ],
                 },
                 "runtime_ledger": {
@@ -4936,7 +4968,9 @@ def _deferred_runtime_window_target_audits(
                 "source_backed_import_ready_metadata": {
                     "ready": False,
                     "synthetic_pnl_used": False,
-                    "blockers": ["runtime_window_import_audit_deferred_until_import_ready"],
+                    "blockers": [
+                        "runtime_window_import_audit_deferred_until_import_ready"
+                    ],
                 },
                 "runtime_ledger": {
                     "bucket_count": 0,
