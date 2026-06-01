@@ -168,6 +168,43 @@ def _runtime_ledger_summary(
     }
 
 
+def _hpairs_route_repair_tca_summary() -> dict[str, object]:
+    return {
+        "account_label": "TORGHUT_SIM",
+        "order_count": 2,
+        "avg_abs_slippage_bps": "24.34",
+        "avg_realized_shortfall_bps": "24.34",
+        "last_computed_at": "2026-06-01T19:16:00+00:00",
+        "scope_symbols": ["AAPL", "AMZN"],
+        "symbol_breakdown": [
+            {
+                "symbol": "AAPL",
+                "order_count": 1,
+                "avg_abs_slippage_bps": "24.34",
+                "avg_realized_shortfall_bps": "24.34",
+                "last_computed_at": "2026-06-01T19:16:00+00:00",
+                "hypothesis_id": "H-PAIRS-01",
+                "candidate_id": _MANIFEST_CANDIDATE_IDS["H-PAIRS-01"],
+                "strategy_family": _MANIFEST_STRATEGY_FAMILIES["H-PAIRS-01"],
+                "account_label": "TORGHUT_SIM",
+                "source_kind": "live_paper_execution_tca",
+            },
+            {
+                "symbol": "AMZN",
+                "order_count": 1,
+                "avg_abs_slippage_bps": "24.34",
+                "avg_realized_shortfall_bps": "24.34",
+                "last_computed_at": "2026-06-01T19:16:00+00:00",
+                "hypothesis_id": "H-PAIRS-01",
+                "candidate_id": _MANIFEST_CANDIDATE_IDS["H-PAIRS-01"],
+                "strategy_family": _MANIFEST_STRATEGY_FAMILIES["H-PAIRS-01"],
+                "account_label": "TORGHUT_SIM",
+                "source_kind": "live_paper_execution_tca",
+            },
+        ],
+    }
+
+
 class _FakeHttpResponse:
     def __init__(self, payload: dict[str, object], status: int = 200) -> None:
         self.status = status
@@ -1656,6 +1693,173 @@ class TestHypothesisReadiness(TestCase):
         self.assertIn(
             "route_tca_non_authority_source_decision_mode",
             observed["route_tca_blocking_reason_codes"],
+        )
+        self.assertTrue(observed["bounded_route_evidence_collection_ready"])
+        self.assertEqual(
+            observed["bounded_route_evidence_collection_next_action"],
+            "collect_bounded_paper_route_source_rows",
+        )
+        self.assertEqual(observed["bounded_route_evidence_collection_blockers"], [])
+
+    def test_compile_hypothesis_runtime_statuses_blocks_bounded_hpairs_collection_when_drift_missing(
+        self,
+    ) -> None:
+        registry = load_hypothesis_registry()
+        statuses = compile_hypothesis_runtime_statuses(
+            registry=registry,
+            state=_state(
+                feature_rows=2770,
+                drift_checks=0,
+                evidence_checks=2,
+                signal_lag_seconds=14,
+                evidence_report={
+                    "ok": True,
+                    "checked_at": "2026-06-01T19:15:00+00:00",
+                },
+            ),
+            tca_summary=_hpairs_route_repair_tca_summary(),
+            runtime_ledger_summary=_runtime_ledger_summary(
+                "H-PAIRS-01",
+                bucket_started_at="2026-06-01T19:00:00+00:00",
+                bucket_ended_at="2026-06-01T19:15:00+00:00",
+                submitted_order_count=120,
+                post_cost_expectancy_bps="12",
+            ),
+            market_context_status={"last_freshness_seconds": 60},
+            jangar_dependency_quorum=JangarDependencyQuorumStatus(
+                decision="allow",
+                reasons=[],
+                message="ok",
+            ),
+            now=datetime(2026, 6, 1, 19, 17, tzinfo=timezone.utc),
+            market_session_open=True,
+            route_symbol_filter_enabled=True,
+        )
+
+        hpairs = next(
+            item for item in statuses if item["hypothesis_id"] == "H-PAIRS-01"
+        )
+        observed = hpairs["observed"]
+        self.assertIn("drift_checks_missing", hpairs["reasons"])
+        self.assertFalse(hpairs["promotion_eligible"])
+        self.assertTrue(observed["bounded_route_evidence_collection_eligible"])
+        self.assertFalse(observed["bounded_route_evidence_collection_ready"])
+        self.assertEqual(
+            observed["bounded_route_evidence_collection_next_action"],
+            "materialize_drift_checks",
+        )
+        self.assertEqual(
+            observed["bounded_route_evidence_collection_blockers"],
+            ["drift_checks_missing"],
+        )
+
+    def test_compile_hypothesis_runtime_statuses_blocks_bounded_hpairs_collection_on_stale_signal_lag(
+        self,
+    ) -> None:
+        registry = load_hypothesis_registry()
+        statuses = compile_hypothesis_runtime_statuses(
+            registry=registry,
+            state=_state(
+                feature_rows=2770,
+                drift_checks=3,
+                evidence_checks=2,
+                signal_lag_seconds=9_958,
+                evidence_report={
+                    "ok": True,
+                    "checked_at": "2026-06-01T19:15:00+00:00",
+                },
+            ),
+            tca_summary=_hpairs_route_repair_tca_summary(),
+            runtime_ledger_summary=_runtime_ledger_summary(
+                "H-PAIRS-01",
+                bucket_started_at="2026-06-01T19:00:00+00:00",
+                bucket_ended_at="2026-06-01T19:15:00+00:00",
+                submitted_order_count=120,
+                post_cost_expectancy_bps="12",
+            ),
+            market_context_status={"last_freshness_seconds": 60},
+            jangar_dependency_quorum=JangarDependencyQuorumStatus(
+                decision="allow",
+                reasons=[],
+                message="ok",
+            ),
+            now=datetime(2026, 6, 1, 19, 17, tzinfo=timezone.utc),
+            market_session_open=True,
+            route_symbol_filter_enabled=True,
+        )
+
+        hpairs = next(
+            item for item in statuses if item["hypothesis_id"] == "H-PAIRS-01"
+        )
+        observed = hpairs["observed"]
+        self.assertIn("signal_lag_exceeded", hpairs["reasons"])
+        self.assertFalse(hpairs["promotion_eligible"])
+        self.assertTrue(observed["bounded_route_evidence_collection_eligible"])
+        self.assertFalse(observed["bounded_route_evidence_collection_ready"])
+        self.assertEqual(
+            observed["bounded_route_evidence_collection_next_action"],
+            "wait_for_fresh_signal_window",
+        )
+        self.assertEqual(
+            observed["bounded_route_evidence_collection_blockers"],
+            ["signal_lag_exceeded"],
+        )
+        self.assertEqual(
+            observed["bounded_route_evidence_collection_liveness"][
+                "fresh_signal_window"
+            ],
+            False,
+        )
+
+    def test_compile_hypothesis_runtime_statuses_does_not_ready_bounded_hpairs_collection_while_market_closed(
+        self,
+    ) -> None:
+        registry = load_hypothesis_registry()
+        statuses = compile_hypothesis_runtime_statuses(
+            registry=registry,
+            state=_state(
+                feature_rows=2770,
+                drift_checks=3,
+                evidence_checks=2,
+                signal_lag_seconds=14,
+                evidence_report={
+                    "ok": True,
+                    "checked_at": "2026-06-01T19:15:00+00:00",
+                },
+            ),
+            tca_summary=_hpairs_route_repair_tca_summary(),
+            runtime_ledger_summary=_runtime_ledger_summary(
+                "H-PAIRS-01",
+                bucket_started_at="2026-06-01T19:00:00+00:00",
+                bucket_ended_at="2026-06-01T19:15:00+00:00",
+                submitted_order_count=120,
+                post_cost_expectancy_bps="12",
+            ),
+            market_context_status={"last_freshness_seconds": 60},
+            jangar_dependency_quorum=JangarDependencyQuorumStatus(
+                decision="allow",
+                reasons=[],
+                message="ok",
+            ),
+            now=datetime(2026, 6, 1, 23, 17, tzinfo=timezone.utc),
+            market_session_open=False,
+            route_symbol_filter_enabled=True,
+        )
+
+        hpairs = next(
+            item for item in statuses if item["hypothesis_id"] == "H-PAIRS-01"
+        )
+        observed = hpairs["observed"]
+        self.assertFalse(hpairs["promotion_eligible"])
+        self.assertTrue(observed["bounded_route_evidence_collection_eligible"])
+        self.assertFalse(observed["bounded_route_evidence_collection_ready"])
+        self.assertEqual(
+            observed["bounded_route_evidence_collection_next_action"],
+            "wait_for_market_session_open",
+        )
+        self.assertEqual(
+            observed["bounded_route_evidence_collection_blockers"],
+            ["market_session_closed"],
         )
 
     def test_compile_hypothesis_runtime_statuses_selects_clean_current_hpairs_route_tca(
