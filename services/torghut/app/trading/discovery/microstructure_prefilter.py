@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timezone
 from decimal import Decimal
 from math import exp, isfinite, log, sqrt
@@ -60,6 +60,12 @@ class MicrostructureCandidatePrefilterRow:
     horizon_ofi_features: Mapping[str, Any]
     cluster_behavior: Mapping[str, Any]
     regime_stress_veto: Mapping[str, Any]
+    macro_window_stress: Mapping[str, Any] = field(
+        default_factory=lambda: cast(dict[str, Any], {})
+    )
+    impact_capacity_lineage: Mapping[str, Any] = field(
+        default_factory=lambda: cast(dict[str, Any], {})
+    )
     proof_source: str = HPAIRS_PREFILTER_PROOF_SOURCE
     proof_semantics_label: str = HPAIRS_PREFILTER_PROOF_SEMANTICS_LABEL
     promotion_allowed: bool = False
@@ -87,6 +93,11 @@ class MicrostructureCandidatePrefilterRow:
             "horizon_ofi_features": dict(self.horizon_ofi_features),
             "cluster_behavior": dict(self.cluster_behavior),
             "regime_stress_veto": dict(self.regime_stress_veto),
+            "macro_window_stress": dict(self.macro_window_stress),
+            "impact_capacity_lineage": dict(self.impact_capacity_lineage),
+            "source_input_blockers": list(
+                _source_input_blockers(self.blockers, self.warnings)
+            ),
             "proof_source": self.proof_source,
             "proof_semantics_label": self.proof_semantics_label,
             "promotion_allowed": self.promotion_allowed,
@@ -128,6 +139,8 @@ class MicrostructurePrefilterResult:
                 "horizon_specific_ofi_shock_memory_prefilter",
                 "microbar_order_flow_fallback_when_lob_absent",
                 "regime_stress_veto_metadata",
+                "macro_window_concentration_stress_metadata",
+                "square_root_power_law_impact_capacity_lineage",
                 "bounded_exploitation_plus_exploration_handoff",
             ],
             "requested_top_k": self.requested_top_k,
@@ -159,6 +172,7 @@ class _SymbolMicrostructureStats:
     horizon_features: Mapping[str, Any]
     cluster_behavior: Mapping[str, Any]
     regime_stress_veto: Mapping[str, Any]
+    stress_values: tuple[float, ...]
 
 
 def build_hpairs_microstructure_prefilter(
@@ -332,6 +346,7 @@ def _build_symbol_microstructure_stats(
             returns_bps=returns,
             volume_values=volume_values,
             stress_values=stress_values,
+            row_count=len(ordered),
         )
         stats[symbol] = _SymbolMicrostructureStats(
             symbol=symbol,
@@ -352,6 +367,7 @@ def _build_symbol_microstructure_stats(
             horizon_features=horizon_features,
             cluster_behavior=cluster_behavior,
             regime_stress_veto=regime_stress_veto,
+            stress_values=tuple(stress_values),
         )
     return stats
 
@@ -405,6 +421,14 @@ def _score_spec(
             horizon_ofi_features=_empty_horizon_features(),
             cluster_behavior=_empty_cluster_behavior(),
             regime_stress_veto=_empty_regime_stress_veto(),
+            macro_window_stress=_empty_macro_window_stress(),
+            impact_capacity_lineage=_impact_capacity_lineage(
+                spec=spec,
+                median_price=0.0,
+                median_volume=0.0,
+                median_spread_bps=0.0,
+                capacity_penalty_bps=0.0,
+            ),
         )
 
     direction = _candidate_direction(spec)
@@ -431,14 +455,15 @@ def _score_spec(
             for stat in matched
         ),
     )
+    merged_stress_values = tuple(
+        value for stat in matched for value in stat.stress_values
+    )
     regime_stress_veto = _regime_stress_veto(
         spread_values=spread_values,
         returns_bps=returns,
         volume_values=volume_values,
-        stress_values=[
-            float(stat.regime_stress_veto.get("input_stress_score") or 0.0)
-            for stat in matched
-        ],
+        stress_values=merged_stress_values,
+        row_count=matched_row_count,
     )
     if float(regime_stress_veto["veto_score"]) >= 0.65:
         blockers.add("regime_stress_veto_active")
@@ -457,13 +482,22 @@ def _score_spec(
     cluster_score = float(cluster_behavior["cluster_score"])
     stress_veto = float(regime_stress_veto["veto_score"])
     microprice_alignment = direction * _mean(microprice_bias)
+    median_price = _weighted_average(
+        tuple((stat.median_price, stat.row_count) for stat in matched)
+    )
+    median_volume = _percentile(volume_values, 50.0)
     capacity_penalty = _capacity_penalty_bps(
         spec=spec,
-        median_price=_weighted_average(
-            tuple((stat.median_price, stat.row_count) for stat in matched)
-        ),
-        median_volume=_percentile(volume_values, 50.0),
+        median_price=median_price,
+        median_volume=median_volume,
         median_spread_bps=median_spread_bps,
+    )
+    impact_capacity_lineage = _impact_capacity_lineage(
+        spec=spec,
+        median_price=median_price,
+        median_volume=median_volume,
+        median_spread_bps=median_spread_bps,
+        capacity_penalty_bps=capacity_penalty,
     )
     exploitation_score = (
         signed_return_bps
@@ -512,6 +546,8 @@ def _score_spec(
         horizon_ofi_features=horizon_features,
         cluster_behavior=cluster_behavior,
         regime_stress_veto=regime_stress_veto,
+        macro_window_stress=_macro_window_stress_from_regime(regime_stress_veto),
+        impact_capacity_lineage=impact_capacity_lineage,
     )
 
 
@@ -586,6 +622,8 @@ def _with_rank_and_bucket(
         horizon_ofi_features=row.horizon_ofi_features,
         cluster_behavior=row.cluster_behavior,
         regime_stress_veto=row.regime_stress_veto,
+        macro_window_stress=row.macro_window_stress,
+        impact_capacity_lineage=row.impact_capacity_lineage,
     )
 
 
@@ -620,6 +658,17 @@ def _source_field_diagnostics(
     if not stress_values:
         warnings.add("missing_regime_stress_veto_fields")
     return tuple(sorted(blockers)), tuple(sorted(warnings))
+
+
+def _source_input_blockers(
+    blockers: Sequence[str], warnings: Sequence[str]
+) -> tuple[str, ...]:
+    """Surface missing input blockers separately from permanent authority blockers."""
+
+    prefixes = ("missing_", "insufficient_")
+    return tuple(
+        sorted({item for item in (*blockers, *warnings) if item.startswith(prefixes)})
+    )
 
 
 def _horizon_ofi_features(values: NDArray[np.float64]) -> dict[str, Any]:
@@ -749,10 +798,20 @@ def _regime_stress_veto(
     returns_bps: NDArray[np.float64],
     volume_values: NDArray[np.float64],
     stress_values: Sequence[float],
+    row_count: int,
 ) -> dict[str, Any]:
     spread_tail_bps = _percentile(spread_values, 95.0)
     return_tail_bps = _percentile(np.abs(returns_bps), 95.0)
     liquidity_score = _volume_score(volume_values)
+    bounded_row_count = max(0, int(row_count))
+    stress_sample_count = len(stress_values)
+    stress_active_count = sum(1 for value in stress_values if value > 0.0)
+    macro_window_concentration = (
+        stress_sample_count / bounded_row_count if bounded_row_count > 0 else 0.0
+    )
+    macro_window_active_share = (
+        stress_active_count / bounded_row_count if bounded_row_count > 0 else 0.0
+    )
     input_stress_score = (
         float(np.clip(_mean(np.asarray(stress_values, dtype=np.float64)), 0.0, 1.0))
         if stress_values
@@ -780,6 +839,10 @@ def _regime_stress_veto(
         "veto_score": str(_decimal(veto_score)),
         "veto_active": veto_score >= 0.65,
         "input_stress_score": str(_decimal(input_stress_score)),
+        "macro_window_sample_count": stress_sample_count,
+        "macro_window_active_count": stress_active_count,
+        "macro_window_concentration": str(_decimal(macro_window_concentration)),
+        "macro_window_active_share": str(_decimal(macro_window_active_share)),
         "spread_tail_bps": str(_decimal(spread_tail_bps)),
         "return_tail_abs_bps": str(_decimal(return_tail_bps)),
         "liquidity_score": str(_decimal(liquidity_score)),
@@ -795,11 +858,40 @@ def _empty_regime_stress_veto() -> dict[str, Any]:
         "veto_score": "0",
         "veto_active": False,
         "input_stress_score": "0",
+        "macro_window_sample_count": 0,
+        "macro_window_active_count": 0,
+        "macro_window_concentration": "0",
+        "macro_window_active_share": "0",
         "spread_tail_bps": "0",
         "return_tail_abs_bps": "0",
         "liquidity_score": "0",
         "source": "missing_regime_stress_fields",
     }
+
+
+def _macro_window_stress_from_regime(
+    regime_stress_veto: Mapping[str, Any],
+) -> dict[str, Any]:
+    return {
+        "status": regime_stress_veto.get("status", "missing_inputs"),
+        "concentration": str(
+            regime_stress_veto.get("macro_window_concentration") or "0"
+        ),
+        "active_share": str(regime_stress_veto.get("macro_window_active_share") or "0"),
+        "sample_count": int(regime_stress_veto.get("macro_window_sample_count") or 0),
+        "active_count": int(regime_stress_veto.get("macro_window_active_count") or 0),
+        "stress_score": str(regime_stress_veto.get("input_stress_score") or "0"),
+        "veto_score": str(regime_stress_veto.get("veto_score") or "0"),
+        "veto_active": bool(regime_stress_veto.get("veto_active")),
+        "source": regime_stress_veto.get("source", "missing_regime_stress_fields"),
+        "prefilter_only": True,
+        "proof_authority": False,
+        "promotion_authority": False,
+    }
+
+
+def _empty_macro_window_stress() -> dict[str, Any]:
+    return _macro_window_stress_from_regime(_empty_regime_stress_veto())
 
 
 def _extract_price(signal: SignalEnvelope, *, source_fields: set[str]) -> float | None:
@@ -1073,6 +1165,50 @@ def _capacity_penalty_bps(
             sqrt(max(0.0, participation)) * 100.0 + median_spread_bps * 0.25, 0.0, 500.0
         )
     )
+
+
+def _impact_capacity_lineage(
+    *,
+    spec: CandidateSpec,
+    median_price: float,
+    median_volume: float,
+    median_spread_bps: float,
+    capacity_penalty_bps: float,
+) -> dict[str, Any]:
+    """Return square-root/power-law impact context as non-authoritative metadata."""
+
+    notional = _candidate_notional(spec)
+    dollar_volume = max(0.0, median_price) * max(0.0, median_volume)
+    participation_rate_proxy = notional / dollar_volume if dollar_volume > 0.0 else None
+    blockers: list[str] = []
+    if notional <= 0.0:
+        blockers.append("candidate_notional_missing")
+    if median_price <= 0.0:
+        blockers.append("median_price_missing")
+    if median_volume <= 0.0:
+        blockers.append("median_volume_missing")
+    return {
+        "schema_version": "torghut.hpairs-impact-capacity-lineage.v1",
+        "status": "available"
+        if dollar_volume > 0.0 and notional > 0.0
+        else "missing_inputs",
+        "model": "square_root_power_law_impact_proxy",
+        "source": "replay_tape_price_volume_spread_fields",
+        "candidate_notional": str(_decimal(notional)),
+        "median_price": str(_decimal(median_price)),
+        "median_volume": str(_decimal(median_volume)),
+        "dollar_volume_proxy": str(_decimal(dollar_volume)),
+        "participation_rate_proxy": str(_decimal(participation_rate_proxy))
+        if participation_rate_proxy is not None
+        else None,
+        "median_spread_bps": str(_decimal(median_spread_bps)),
+        "capacity_penalty_bps": str(_decimal(capacity_penalty_bps)),
+        "blockers": blockers,
+        "prefilter_only": True,
+        "proof_authority": False,
+        "promotion_authority": False,
+        "requires_source_backed_adv": True,
+    }
 
 
 def _volume_score(values: NDArray[np.float64]) -> float:

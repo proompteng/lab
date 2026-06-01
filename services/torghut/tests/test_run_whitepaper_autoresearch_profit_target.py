@@ -4835,6 +4835,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertIn("target_implied_notional_context", first_entry)
         self.assertIn("cost_impact_lineage", first_entry)
+        self.assertIn("impact_capacity_lineage", first_entry)
+        self.assertIn("hpairs_macro_window_stress", first_entry)
+        self.assertIn("hpairs_impact_capacity_lineage", first_entry)
         self.assertIn("exact_replay_handoff_lineage", first_entry)
         self.assertIn(
             first_entry["handoff_lineage_hash"],
@@ -4878,6 +4881,14 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertIn(
             "horizon_ofi_features",
+            first_entry["hpairs_microstructure_prefilter"],
+        )
+        self.assertIn(
+            "macro_window_stress",
+            first_entry["hpairs_microstructure_prefilter"],
+        )
+        self.assertIn(
+            "impact_capacity_lineage",
             first_entry["hpairs_microstructure_prefilter"],
         )
 
@@ -6478,7 +6489,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             updated.objective_scorecard["executable_replay_artifact_ref"],
             str(approval_replay_path),
         )
-        self.assertNotIn("exact_replay_ledger_artifact_ref", updated.objective_scorecard)
+        self.assertNotIn(
+            "exact_replay_ledger_artifact_ref", updated.objective_scorecard
+        )
         self.assertNotIn(
             "exact_replay_ledger_artifact_row_count",
             updated.objective_scorecard,

@@ -3634,8 +3634,7 @@ def _flag_int(value: Any) -> int | None:
 def _unsafe_next_epoch_remediation_flag(key: str) -> bool:
     normalized = key.strip().lower()
     return any(
-        marker in normalized
-        for marker in _UNSAFE_NEXT_EPOCH_REMEDIATION_FLAG_MARKERS
+        marker in normalized for marker in _UNSAFE_NEXT_EPOCH_REMEDIATION_FLAG_MARKERS
     )
 
 
@@ -3780,12 +3779,9 @@ def _profitability_next_epoch_plan(
                     current_value = flags.get(key)
                     current_int = _flag_int(current_value)
                     recommended_int = _flag_int(value)
-                    if (
-                        key == "--real-replay-shard-workers"
-                        and (
-                            recommended_int is None
-                            or recommended_int > _DEFAULT_REAL_REPLAY_SHARD_WORKERS
-                        )
+                    if key == "--real-replay-shard-workers" and (
+                        recommended_int is None
+                        or recommended_int > _DEFAULT_REAL_REPLAY_SHARD_WORKERS
                     ):
                         rejected_recommended_flags.append(
                             {
@@ -6649,6 +6645,18 @@ def _apply_fast_replay_preview_narrowing(
                 updated["hpairs_microstructure_behavior_bucket"] = _mapping(
                     microstructure_prefilter.get("cluster_behavior")
                 ).get("behavior_bucket")
+                updated["hpairs_microstructure_macro_window_stress"] = _mapping(
+                    microstructure_prefilter.get("macro_window_stress")
+                )
+                updated["hpairs_microstructure_impact_capacity_lineage"] = _mapping(
+                    microstructure_prefilter.get("impact_capacity_lineage")
+                )
+                updated["hpairs_microstructure_source_input_blockers"] = list(
+                    cast(
+                        Sequence[Any],
+                        microstructure_prefilter.get("source_input_blockers") or (),
+                    )
+                )
                 updated["hpairs_microstructure_proof_source"] = (
                     microstructure_prefilter.get("proof_source")
                 )
@@ -6824,6 +6832,11 @@ def _bounded_sim_target_queue_metadata(
                 "exact_replay_handoff_lineage": handoff_lineage,
                 "handoff_lineage_hash": handoff_lineage_hash,
                 "cost_impact_lineage": row.get("cost_impact_lineage"),
+                "impact_capacity_lineage": row.get("impact_capacity_lineage"),
+                "hpairs_macro_window_stress": row.get("hpairs_macro_window_stress"),
+                "hpairs_impact_capacity_lineage": row.get(
+                    "hpairs_impact_capacity_lineage"
+                ),
                 "adv_capacity_context": row.get("adv_capacity_context"),
                 "lineage_blockers": list(
                     cast(Sequence[Any], row.get("lineage_blockers") or ())
@@ -6889,9 +6902,7 @@ def _bounded_sim_target_queue_metadata(
         "exploration_slots": exploration_slots,
         "exact_replay_candidate_count": len(entries),
         "candidate_spec_ids": [entry["candidate_spec_id"] for entry in entries],
-        "handoff_lineage_hashes": [
-            entry["handoff_lineage_hash"] for entry in entries
-        ],
+        "handoff_lineage_hashes": [entry["handoff_lineage_hash"] for entry in entries],
         "entries": entries,
     }
 
