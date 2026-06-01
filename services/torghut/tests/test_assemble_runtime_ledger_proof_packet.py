@@ -42,6 +42,24 @@ class _FakeObjectStoreClient:
         }
 
 
+class _IncompleteReceiptObjectStoreClient(_FakeObjectStoreClient):
+    def put_object(
+        self,
+        *,
+        bucket: str,
+        key: str,
+        body: bytes,
+        content_type: str,
+    ) -> dict[str, object]:
+        super().put_object(
+            bucket=bucket,
+            key=key,
+            body=body,
+            content_type=content_type,
+        )
+        return {"bucket": bucket, "key": key}
+
+
 _DEFAULT_TIGERBEETLE_LEDGER = object()
 
 
@@ -1184,9 +1202,13 @@ class TestRuntimeLedgerProofPacket(TestCase):
                 "sim-2026-05-05-chip-renew-20260526T212300Z/"
                 "authority-packet.json",
             )
-            uploaded_payload = json.loads(cast(bytes, upload["body"]).decode("utf-8"))
             local_payload = json.loads(output_path.read_text(encoding="utf-8"))
-            self.assertEqual(uploaded_payload, local_payload)
+            uploaded_payload = json.loads(cast(bytes, upload["body"]).decode("utf-8"))
+            self.assertEqual(
+                uploaded_payload["artifact"]["payload_sha256"],
+                local_payload["artifact"]["payload_sha256"],
+            )
+            self.assertNotIn("upload_receipt", uploaded_payload["artifact"])
             self.assertEqual(
                 local_payload["artifact"]["runtime_window_import_run_id"],
                 "sim-2026-05-05-chip-renew-20260526T212300Z",
@@ -1205,6 +1227,25 @@ class TestRuntimeLedgerProofPacket(TestCase):
             )
             self.assertTrue(local_payload["artifact"]["uploaded"])
             self.assertTrue(local_payload["artifact"]["upload_required"])
+            self.assertTrue(local_payload["artifact"]["receipt_verified"])
+            self.assertEqual(
+                local_payload["artifact"]["upload_receipt"],
+                {
+                    "bucket": "torghut-empirical-artifacts",
+                    "key": (
+                        "runtime-ledger-proof-packets/"
+                        "sim-2026-05-05-chip-renew-20260526T212300Z/"
+                        "authority-packet.json"
+                    ),
+                    "uri": (
+                        "s3://torghut-empirical-artifacts/"
+                        "runtime-ledger-proof-packets/"
+                        "sim-2026-05-05-chip-renew-20260526T212300Z/"
+                        "authority-packet.json"
+                    ),
+                },
+            )
+            self.assertRegex(local_payload["artifact"]["payload_sha256"], r"^[0-9a-f]{64}$")
             lineage = local_payload["evidence"]["runtime_window_import"]["lineage"]
             self.assertEqual(
                 lineage["run_id"],
@@ -1225,6 +1266,30 @@ class TestRuntimeLedgerProofPacket(TestCase):
             )
             self.assertTrue(lineage["nested_runtime_window_import_present"])
             self.assertEqual(lineage["runtime_window_import_item_count"], 1)
+            immutable_lineage = local_payload["lineage"]
+            self.assertEqual(immutable_lineage["hypothesis_id"], "H-PAIRS-01")
+            self.assertEqual(
+                immutable_lineage["runtime_strategy"],
+                "microbar-pairs-vwap-cap-safe",
+            )
+            self.assertEqual(immutable_lineage["account_label"], "TORGHUT_SIM")
+            self.assertEqual(immutable_lineage["stage"], "paper")
+            self.assertEqual(
+                immutable_lineage["strategy_runtime_ledger_bucket_refs"],
+                ["strategy-runtime-ledger-buckets:H-PAIRS-01:2026-05-26"],
+            )
+            self.assertEqual(
+                immutable_lineage["runtime_ledger_bucket_ids"],
+                ["runtime-ledger-bucket-1"],
+            )
+            self.assertEqual(
+                immutable_lineage["artifact"]["uri"],
+                local_payload["artifact"]["uri"],
+            )
+            self.assertEqual(
+                immutable_lineage["artifact"]["payload_sha256"],
+                local_payload["artifact"]["payload_sha256"],
+            )
 
     def test_cli_fails_closed_when_required_artifact_upload_is_not_configured(
         self,
@@ -1270,6 +1335,127 @@ class TestRuntimeLedgerProofPacket(TestCase):
                     )
 
             self.assertFalse(output_path.exists())
+
+    def test_cli_fails_closed_when_required_artifact_prefix_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            status_path = root / "status.json"
+            paper_path = root / "paper.json"
+            output_path = root / "packet.json"
+            status_path.write_text(json.dumps(_status()), encoding="utf-8")
+            paper_path.write_text(
+                json.dumps(
+                    _paper_route_evidence(
+                        import_ready=False,
+                        import_blockers=["paper_route_session_window_not_open"],
+                    )
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                SystemExit,
+                "runtime_ledger_proof_artifact_upload_prefix_missing",
+            ):
+                packet.main(
+                    [
+                        "--status-file",
+                        str(status_path),
+                        "--paper-route-evidence-file",
+                        str(paper_path),
+                        "--output-file",
+                        str(output_path),
+                        "--require-artifact-upload",
+                        "--allow-blocked-exit-zero",
+                    ]
+                )
+
+            self.assertFalse(output_path.exists())
+
+    def test_cli_fails_closed_when_required_artifact_receipt_is_incomplete(
+        self,
+    ) -> None:
+        fake_client = _IncompleteReceiptObjectStoreClient()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            status_path = root / "status.json"
+            paper_path = root / "paper.json"
+            runtime_path = root / "runtime.json"
+            completion_path = root / "completion.json"
+            output_path = root / "packet.json"
+            status_path.write_text(json.dumps(_status()), encoding="utf-8")
+            paper_path.write_text(json.dumps(_paper_route_evidence()), encoding="utf-8")
+            runtime_path.write_text(json.dumps(_runtime_import()), encoding="utf-8")
+            completion_path.write_text(json.dumps(_completion()), encoding="utf-8")
+
+            with patch.object(
+                packet,
+                "_ceph_client_from_env",
+                return_value=(fake_client, "torghut-empirical-artifacts"),
+            ):
+                with self.assertRaisesRegex(
+                    SystemExit,
+                    (
+                        "runtime_ledger_proof_artifact_upload_receipt_incomplete:"
+                        "runtime_ledger_proof_artifact_upload_receipt_uri_missing"
+                    ),
+                ):
+                    packet.main(
+                        [
+                            "--status-file",
+                            str(status_path),
+                            "--paper-route-evidence-file",
+                            str(paper_path),
+                            "--runtime-window-import-file",
+                            str(runtime_path),
+                            "--completion-file",
+                            str(completion_path),
+                            "--proof-mode",
+                            "authority",
+                            "--output-file",
+                            str(output_path),
+                            "--artifact-prefix",
+                            "runtime-ledger-proof-packets/{run_id}",
+                            "--require-artifact-upload",
+                        ]
+                    )
+
+            self.assertEqual(len(fake_client.uploads), 1)
+            self.assertFalse(output_path.exists())
+
+    def test_authority_one_day_blockers_are_stable_json_codes(self) -> None:
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            proof_mode="authority",
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=_runtime_import(),
+            completion_status=_completion(trading_days=1, net_pnl="600"),
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertFalse(result["final_authority_ok"])
+        self.assertEqual(
+            result["checks"]["runtime_ledger_post_cost_profit_target"]["blockers"],
+            [
+                "runtime_ledger_net_pnl_below_target",
+                "runtime_ledger_trading_days_below_target",
+            ],
+        )
+        self.assertIn(
+            "runtime_ledger_trading_days_below_target",
+            result["authority_blockers"],
+        )
+        json_payload = json.loads(json.dumps(result, sort_keys=True))
+        self.assertEqual(
+            json_payload["checks"]["runtime_ledger_post_cost_profit_target"][
+                "blockers"
+            ],
+            [
+                "runtime_ledger_net_pnl_below_target",
+                "runtime_ledger_trading_days_below_target",
+            ],
+        )
 
     def test_packet_waits_before_paper_route_window_is_importable(self) -> None:
         result = packet.build_runtime_ledger_proof_packet(
