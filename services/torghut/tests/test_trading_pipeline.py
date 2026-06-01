@@ -66,9 +66,11 @@ from app.trading.risk import RiskEngine
 from app.trading.scheduler.pipeline import TradingPipeline
 from app.trading.scheduler.simple_pipeline import (
     SimpleTradingPipeline,
+    _bounded_sim_collection_target_with_runtime_account_audit,
     _bounded_sim_collection_metadata_from_decision,
     _paper_route_probe_entry_metadata,
     _paper_route_probe_lineage_from_params,
+    _strategy_signal_paper_entry_metadata,
     _parse_target_datetime,
     _safe_int,
     _target_probe_action,
@@ -5327,6 +5329,98 @@ class TestTradingPipeline(TestCase):
                 "source_decision_mode": "route_acquisition_probe",
             },
         )
+
+    def test_strategy_signal_paper_entry_metadata_rejects_incomplete_payloads(
+        self,
+    ) -> None:
+        base_params: dict[str, Any] = {
+            "source_decision_mode": STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE,
+            "profit_proof_eligible": True,
+            "strategy_signal_paper": {
+                "mode": STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE,
+                "profit_proof_eligible": True,
+            },
+        }
+
+        self.assertIsNotNone(_strategy_signal_paper_entry_metadata(base_params))
+        self.assertIsNone(
+            _strategy_signal_paper_entry_metadata(
+                {
+                    **base_params,
+                    "profit_proof_eligible": False,
+                }
+            )
+        )
+        self.assertIsNone(
+            _strategy_signal_paper_entry_metadata(
+                {
+                    "source_decision_mode": STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE,
+                    "profit_proof_eligible": True,
+                }
+            )
+        )
+        self.assertIsNone(
+            _strategy_signal_paper_entry_metadata(
+                {
+                    **base_params,
+                    "strategy_signal_paper": {
+                        "mode": ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
+                        "profit_proof_eligible": True,
+                    },
+                }
+            )
+        )
+        self.assertIsNone(
+            _strategy_signal_paper_entry_metadata(
+                {
+                    **base_params,
+                    "strategy_signal_paper": {
+                        "mode": STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE,
+                        "profit_proof_eligible": False,
+                    },
+                }
+            )
+        )
+
+    def test_runtime_account_audit_normalization_keeps_missing_readiness_blocked(
+        self,
+    ) -> None:
+        normalized = _bounded_sim_collection_target_with_runtime_account_audit(
+            {
+                "hypothesis_id": "H-PAIRS-01",
+                "candidate_id": "c88421d619759b2cfaa6f4d0",
+                "account_label": "TORGHUT_SIM",
+                "observed_stage": "paper",
+                "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                "source_kind": "paper_route_probe_runtime_observed",
+                "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
+                "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                "bounded_evidence_collection_blockers": [
+                    "paper_route_target_account_audit_unavailable"
+                ],
+                "paper_route_target_account_audit_blockers": [
+                    "paper_route_target_account_audit_unavailable"
+                ],
+                "evidence_collection_ok": False,
+                "canary_collection_authorized": False,
+                "bounded_evidence_collection_authorized": False,
+                "bounded_live_paper_collection_authorized": False,
+                "promotion_allowed": False,
+                "final_promotion_authorized": False,
+                "final_promotion_allowed": False,
+                "capital_promotion_allowed": False,
+            },
+            positions=[],
+            account_label="TORGHUT_SIM",
+        )
+
+        audit_state = cast(
+            Mapping[str, Any],
+            normalized["paper_route_target_account_audit_state"],
+        )
+        self.assertEqual(audit_state["state"], "available")
+        self.assertEqual(normalized["paper_route_target_account_audit_blockers"], [])
+        self.assertFalse(normalized["evidence_collection_ok"])
 
     def test_paper_route_probe_lineage_parses_profit_proof_eligibility(self) -> None:
         self.assertTrue(
