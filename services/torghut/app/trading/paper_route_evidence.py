@@ -2395,14 +2395,13 @@ def _next_paper_route_runtime_window_targets(
                 break
         if len(account_contamination_sample_order_event_refs) >= 10:
             break
+    account_contamination_summary_state = "unknown"
     if not account_contamination_items:
         account_contamination_summary_state = "no_targets"
     elif account_contamination_contaminated_count:
         account_contamination_summary_state = "contaminated_window_discarded"
     elif account_contamination_clean_count == len(account_contamination_items):
         account_contamination_summary_state = "clean"
-    else:
-        account_contamination_summary_state = "unknown"
     return {
         "schema_version": NEXT_PAPER_ROUTE_RUNTIME_WINDOW_TARGETS_SCHEMA_VERSION,
         "source": "paper_route_evidence_audit",
@@ -2427,11 +2426,7 @@ def _next_paper_route_runtime_window_targets(
         "session_readiness": session_readiness,
         "collection_session_readiness": {
             "schema_version": "torghut.paper-route-collection-session-readiness.v1",
-            "state": (
-                "ready"
-                if not collection_session_blockers
-                else "blocked"
-            ),
+            "state": ("ready" if not collection_session_blockers else "blocked"),
             "blockers": collection_session_blockers,
         },
         "runtime_window_import_handoff": {
@@ -3080,7 +3075,9 @@ def _strategy_source_activity(
                     )
                 ).scalars()
             )
-            tca_truncated = len(queried_tca_rows) > PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT
+            tca_truncated = (
+                len(queried_tca_rows) > PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT
+            )
             tca_rows = queried_tca_rows[:PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT]
         except SQLAlchemyError as exc:
             _rollback_after_source_activity_error(
@@ -3124,7 +3121,12 @@ def _strategy_source_activity(
     if tca_sample_count <= 0 and complete_fill_order_event_count <= 0:
         missing_reasons.append("source_tca_missing")
     missing_reasons.extend(lineage_blockers)
-    if decision_truncated or execution_truncated or order_event_truncated or tca_truncated:
+    if (
+        decision_truncated
+        or execution_truncated
+        or order_event_truncated
+        or tca_truncated
+    ):
         missing_reasons.append("source_activity_readback_truncated")
     lifecycle_summary = _source_activity_lifecycle_summary(
         execution_rows=execution_rows,
@@ -3138,8 +3140,7 @@ def _strategy_source_activity(
         str(row.id) for row in execution_rows[:PAPER_ROUTE_SOURCE_ACTIVITY_REF_LIMIT]
     ]
     order_lifecycle_refs = [
-        str(row.id)
-        for row in order_event_rows[:PAPER_ROUTE_SOURCE_ACTIVITY_REF_LIMIT]
+        str(row.id) for row in order_event_rows[:PAPER_ROUTE_SOURCE_ACTIVITY_REF_LIMIT]
     ]
     tca_metric_refs = [
         str(row.id) for row in tca_rows[:PAPER_ROUTE_SOURCE_ACTIVITY_REF_LIMIT]
@@ -3215,8 +3216,7 @@ def _strategy_source_activity(
         "readback_state": readback_state,
         "stage_presence": {
             "source_decisions_present": decision_count > 0,
-            "submitted_lifecycle_present": execution_count > 0
-            or order_event_count > 0,
+            "submitted_lifecycle_present": execution_count > 0 or order_event_count > 0,
             "fills_present": filled_execution_count > 0
             or fill_order_event_count > 0
             or complete_fill_order_event_count > 0,
@@ -3442,7 +3442,9 @@ def _account_contamination_audit(
         event_type_counts[_safe_text(row.event_type) or "missing"] += 1
         status_counts[_safe_text(row.status) or "missing"] += 1
     contaminating_rows = [*unlinked_rows, *foreign_linked_rows]
-    last_event_row = contaminating_rows[0] if contaminating_rows else rows[0] if rows else None
+    last_event_row = (
+        contaminating_rows[0] if contaminating_rows else rows[0] if rows else None
+    )
     reason = _account_contamination_reason(
         unlinked_order_event_count=len(unlinked_rows),
         foreign_linked_order_event_count=len(foreign_linked_rows),
@@ -3466,7 +3468,9 @@ def _account_contamination_audit(
         "status_counts": dict(sorted(status_counts.items())),
         "foreign_strategy_counts": dict(sorted(foreign_strategy_counts.items())),
         "last_event_at": _isoformat(
-            _order_event_activity_at(last_event_row) if last_event_row is not None else None
+            _order_event_activity_at(last_event_row)
+            if last_event_row is not None
+            else None
         ),
         "reason": reason,
         "blockers": blockers,
@@ -4790,9 +4794,9 @@ def _target_evidence_readback_diagnostics(
     source_decisions_present = bool(stage_presence.get("source_decisions_present")) or (
         decision_count > 0
     )
-    submitted_lifecycle_present = bool(
-        stage_presence.get("submitted_lifecycle_present")
-    ) or execution_count > 0
+    submitted_lifecycle_present = (
+        bool(stage_presence.get("submitted_lifecycle_present")) or execution_count > 0
+    )
     fills_present = (
         bool(stage_presence.get("fills_present"))
         or filled_execution_count > 0
@@ -4831,7 +4835,9 @@ def _target_evidence_readback_diagnostics(
             ),
             *(
                 ["promotion_decision_not_allowed"]
-                if not bool(_as_mapping(promotion_decisions.get("latest")).get("allowed"))
+                if not bool(
+                    _as_mapping(promotion_decisions.get("latest")).get("allowed")
+                )
                 and _safe_int(promotion_decisions.get("decision_count")) > 0
                 else []
             ),
@@ -4853,7 +4859,9 @@ def _target_evidence_readback_diagnostics(
         "final_promotion_authority_blocked": not bool(
             target.get("final_promotion_allowed")
         ),
-        "promotion_decision_count": _safe_int(promotion_decisions.get("decision_count")),
+        "promotion_decision_count": _safe_int(
+            promotion_decisions.get("decision_count")
+        ),
         "promotion_decision_allowed_count": _safe_int(
             promotion_decisions.get("allowed_count")
         ),
@@ -4918,7 +4926,9 @@ def _evidence_window_contract(
         ),
         "sample_order_event_refs": [
             _as_mapping(item)
-            for item in _as_sequence(account_contamination.get("sample_order_event_refs"))
+            for item in _as_sequence(
+                account_contamination.get("sample_order_event_refs")
+            )
         ],
         "sample_positions": [
             _as_mapping(item)
@@ -6602,12 +6612,12 @@ def build_paper_route_evidence_audit(
     next_target_audits = [
         _target_audit_fail_closed(
             session,
-                raw_target=target,
-                probe=probe,
-                generated_at=resolved_generated_at,
-                lookback_hours=effective_lookback_hours,
-                error_source="paper_route_next_target_audit",
-            )
+            raw_target=target,
+            probe=probe,
+            generated_at=resolved_generated_at,
+            lookback_hours=effective_lookback_hours,
+            error_source="paper_route_next_target_audit",
+        )
         for target in _as_mapping_items(next_targets.get("targets"))
     ]
     runtime_window_import_plan = next_targets

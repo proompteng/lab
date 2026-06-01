@@ -521,12 +521,16 @@ class TestPaperRouteEvidenceAudit(TestCase):
                 require_source_lineage=True,
             )
 
-        self.assertEqual(activity["raw_decision_count"], PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT)
+        self.assertEqual(
+            activity["raw_decision_count"], PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT
+        )
         self.assertEqual(
             activity["lineage_matched_decision_count"],
             PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT,
         )
-        self.assertEqual(len(activity["decision_refs"]), PAPER_ROUTE_SOURCE_ACTIVITY_REF_LIMIT)
+        self.assertEqual(
+            len(activity["decision_refs"]), PAPER_ROUTE_SOURCE_ACTIVITY_REF_LIMIT
+        )
         self.assertEqual(activity["readback_state"], "source_decisions_present")
         self.assertTrue(activity["stage_presence"]["source_decisions_present"])
         self.assertFalse(activity["stage_presence"]["submitted_lifecycle_present"])
@@ -6706,6 +6710,264 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(
             contamination_readiness["sample_order_event_refs"][0]["client_order_id"],
             "tsmom-AAPL-foreign-linked-1",
+        )
+
+    def test_account_contamination_summary_deduplicates_and_caps_order_event_refs(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, tzinfo=timezone.utc)
+        now = datetime(2026, 5, 26, 18, 5, tzinfo=timezone.utc)
+
+        with Session(self.engine) as session:
+            first_strategy = Strategy(
+                name="hpairs-overlap-aapl",
+                description="overlap target fixture",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+                created_at=window_start,
+                updated_at=window_start,
+            )
+            second_strategy = Strategy(
+                name="hpairs-overlap-pair",
+                description="overlap target pair fixture",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL", "AMZN"],
+                created_at=window_start,
+                updated_at=window_start,
+            )
+            foreign_strategy = Strategy(
+                name="intraday-tsmom-overlap",
+                description="foreign paper account fixture",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AMZN"],
+                created_at=window_start,
+                updated_at=window_start,
+            )
+            session.add_all([first_strategy, second_strategy, foreign_strategy])
+            session.flush()
+            foreign_decision = TradeDecision(
+                strategy_id=foreign_strategy.id,
+                alpaca_account_label="TORGHUT_SIM",
+                symbol="AMZN",
+                timeframe="1Min",
+                decision_json={
+                    "action": "buy",
+                    "qty": "1",
+                    "candidate_id": "candidate-foreign",
+                    "hypothesis_id": "H-FOREIGN",
+                },
+                rationale="foreign linked overlap contamination fixture",
+                status="executed",
+                created_at=window_start + timedelta(minutes=49),
+                executed_at=window_start + timedelta(minutes=50),
+            )
+            session.add(foreign_decision)
+            session.flush()
+            session.add(
+                ExecutionOrderEvent(
+                    event_fingerprint="overlap-foreign-amzn-event",
+                    source_topic="alpaca.trade_updates",
+                    source_partition=0,
+                    source_offset=90,
+                    alpaca_account_label="TORGHUT_SIM",
+                    event_ts=window_start + timedelta(minutes=50),
+                    symbol="AMZN",
+                    alpaca_order_id="overlap-foreign-amzn-order",
+                    client_order_id="tsmom-AMZN-foreign-overlap",
+                    event_type="fill",
+                    status="filled",
+                    qty=Decimal("1"),
+                    filled_qty=Decimal("1"),
+                    avg_fill_price=Decimal("101"),
+                    raw_event={"source": "foreign_tsmom_strategy"},
+                    execution_id=None,
+                    trade_decision_id=foreign_decision.id,
+                )
+            )
+            for index in range(5):
+                session.add(
+                    ExecutionOrderEvent(
+                        event_fingerprint=f"overlap-unlinked-aapl-event-{index}",
+                        source_topic="alpaca.trade_updates",
+                        source_partition=0,
+                        source_offset=100 + index,
+                        alpaca_account_label="TORGHUT_SIM",
+                        event_ts=window_start + timedelta(minutes=40, seconds=index),
+                        symbol="AAPL",
+                        alpaca_order_id=f"overlap-unlinked-aapl-order-{index}",
+                        client_order_id=f"external-AAPL-overlap-{index}",
+                        event_type="fill",
+                        status="filled",
+                        qty=Decimal("1"),
+                        filled_qty=Decimal("1"),
+                        avg_fill_price=Decimal("101"),
+                        raw_event={"source": "external_unlinked_aapl"},
+                        execution_id=None,
+                        trade_decision_id=None,
+                    )
+                )
+            for index in range(5):
+                session.add(
+                    ExecutionOrderEvent(
+                        event_fingerprint=f"overlap-unlinked-amzn-event-{index}",
+                        source_topic="alpaca.trade_updates",
+                        source_partition=0,
+                        source_offset=200 + index,
+                        alpaca_account_label="TORGHUT_SIM",
+                        event_ts=window_start + timedelta(minutes=20, seconds=index),
+                        symbol="AMZN",
+                        alpaca_order_id=f"overlap-unlinked-amzn-order-{index}",
+                        client_order_id=f"external-AMZN-overlap-{index}",
+                        event_type="fill",
+                        status="filled",
+                        qty=Decimal("1"),
+                        filled_qty=Decimal("1"),
+                        avg_fill_price=Decimal("101"),
+                        raw_event={"source": "external_unlinked_amzn"},
+                        execution_id=None,
+                        trade_decision_id=None,
+                    )
+                )
+            self._add_flat_account_start_snapshot(
+                session,
+                account_label="TORGHUT_SIM",
+                window_start=window_start,
+            )
+            session.commit()
+
+            payload = build_paper_route_target_plan_payload(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "paper_route_probe_only",
+                    "blocked_reasons": [],
+                    "dependency_quorum_decision": "allow",
+                    "continuity_ok": True,
+                    "continuity_reason": "signal_continuity_nominal",
+                    "drift_ok": True,
+                    "drift_reason": "drift_live_promotion_eligible",
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": (
+                            "torghut.runtime-ledger-paper-probation-import-plan.v1"
+                        ),
+                        "target_count": "2",
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-OVERLAP-AAPL",
+                                "candidate_id": "candidate-overlap-aapl",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_pairs",
+                                "strategy_name": first_strategy.name,
+                                "strategy_id": "hpairs_overlap_aapl@research",
+                                "account_label": "TORGHUT_SIM",
+                                "source_kind": "paper_route_probe_runtime_observed",
+                                "source_manifest_ref": (
+                                    "config/trading/hypotheses/overlap-aapl.json"
+                                ),
+                                "paper_route_probe_scope_authority": (
+                                    "external_target_plan"
+                                ),
+                                "paper_route_probe_symbols": ["AAPL"],
+                                "window_start": window_start.isoformat(),
+                                "window_end": window_end.isoformat(),
+                                "paper_probation_authorized": True,
+                            },
+                            {
+                                "hypothesis_id": "H-OVERLAP-PAIR",
+                                "candidate_id": "candidate-overlap-pair",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_pairs",
+                                "strategy_name": second_strategy.name,
+                                "strategy_id": "hpairs_overlap_pair@research",
+                                "account_label": "TORGHUT_SIM",
+                                "source_kind": "paper_route_probe_runtime_observed",
+                                "source_manifest_ref": (
+                                    "config/trading/hypotheses/overlap-pair.json"
+                                ),
+                                "paper_route_probe_scope_authority": (
+                                    "external_target_plan"
+                                ),
+                                "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                                "window_start": window_start.isoformat(),
+                                "window_end": window_end.isoformat(),
+                                "paper_probation_authorized": True,
+                            },
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "summary": {
+                        "paper_route_probe_eligible_symbols": ["AAPL", "AMZN"],
+                        "paper_route_probe_active_symbols": ["AAPL", "AMZN"],
+                    },
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": True,
+                        "effective_max_notional": 25,
+                        "next_session_max_notional": 25,
+                        "eligible_symbols": ["AAPL", "AMZN"],
+                    },
+                },
+                generated_at=now,
+            )
+
+        plan = payload["next_paper_route_runtime_window_targets"]
+        self.assertEqual(plan["target_count"], 2)
+        first_target, second_target = plan["targets"]
+        self.assertEqual(
+            first_target["paper_route_account_contamination_state"]["reason"],
+            "unlinked_account_order_events_present",
+        )
+        self.assertEqual(
+            second_target["paper_route_account_contamination_state"]["reason"],
+            "unlinked_and_foreign_account_order_events_present",
+        )
+        contamination_readiness = plan["account_contamination_readiness"]
+        self.assertEqual(
+            contamination_readiness["state"], "contaminated_window_discarded"
+        )
+        self.assertEqual(contamination_readiness["target_count"], 2)
+        self.assertEqual(contamination_readiness["contaminated_target_count"], 2)
+        self.assertEqual(contamination_readiness["unlinked_order_event_count"], 15)
+        self.assertEqual(contamination_readiness["foreign_linked_order_event_count"], 1)
+        sample_refs = contamination_readiness["sample_order_event_refs"]
+        self.assertEqual(len(sample_refs), 10)
+        sample_keys = {
+            (item["event_fingerprint"], item["client_order_id"]) for item in sample_refs
+        }
+        self.assertEqual(len(sample_keys), 10)
+        self.assertNotIn(
+            ("overlap-foreign-amzn-event", "tsmom-AMZN-foreign-overlap"),
+            sample_keys,
+        )
+        self.assertEqual(
+            sum(
+                1
+                for item in sample_refs
+                if str(item["event_fingerprint"]).startswith(
+                    "overlap-unlinked-aapl-event"
+                )
+            ),
+            5,
+        )
+        self.assertEqual(
+            sum(
+                1
+                for item in sample_refs
+                if str(item["event_fingerprint"]).startswith(
+                    "overlap-unlinked-amzn-event"
+                )
+            ),
+            5,
         )
 
     def test_account_window_start_positions_block_runtime_window_import(
