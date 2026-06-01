@@ -7,6 +7,11 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import cast
 
+from .runtime_cost_authority import (
+    cost_basis_counts_have_non_promotion_grade_costs,
+    is_non_promotion_grade_runtime_cost_basis,
+)
+
 RUNTIME_LEDGER_SOURCE_WINDOW_MISSING_BLOCKER = "runtime_ledger_source_window_missing"
 RUNTIME_LEDGER_SOURCE_WINDOW_IDS_MISSING_BLOCKER = (
     "runtime_ledger_source_window_ids_missing"
@@ -55,9 +60,15 @@ _PROMOTION_GRADE_SOURCE_REF_TABLES = frozenset(
 )
 _NON_PROMOTION_AUTHORITY_MARKERS = frozenset(
     {
+        "aggregate_only",
         "exact_replay",
         "artifact_only",
+        "paper_route_probe",
+        "probe",
+        "recovery",
         "replay_artifact",
+        "route_acquisition",
+        "route_reacquisition",
         "simulation_source_replay_only",
     }
 )
@@ -326,6 +337,9 @@ def _promotion_grade_authority_marker_present(bucket: Mapping[str, object]) -> b
 
 
 def _non_promotion_derivation_present(bucket: Mapping[str, object]) -> bool:
+    promotion_authority = _truthy_flag(bucket.get("promotion_authority"))
+    if promotion_authority is False:
+        return True
     return any(
         _non_promotion_authority_marker_present(bucket.get(key))
         for key in (
@@ -336,6 +350,89 @@ def _non_promotion_derivation_present(bucket: Mapping[str, object]) -> bool:
             "source_kind",
             "promotion_authority",
         )
+    )
+
+
+def _positive_decimal_present(value: object) -> bool:
+    try:
+        parsed = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return False
+    return parsed.is_finite() and parsed > 0
+
+
+def _filled_notional_present(bucket: Mapping[str, object]) -> bool:
+    return any(
+        _positive_decimal_present(bucket.get(key))
+        for key in (
+            "filled_notional",
+            "runtime_ledger_filled_notional",
+            "filled_notional_delta",
+            "fill_notional_delta",
+            "delta_filled_notional",
+        )
+    )
+
+
+def _explicit_cost_basis_present(bucket: Mapping[str, object]) -> bool:
+    if is_non_promotion_grade_runtime_cost_basis(bucket.get("cost_basis")):
+        return False
+    if cost_basis_counts_have_non_promotion_grade_costs(bucket.get("cost_basis_counts")):
+        return False
+    if cost_basis_counts_have_non_promotion_grade_costs(
+        bucket.get("post_cost_basis_counts")
+    ):
+        return False
+    cost_basis_counts = bucket.get("cost_basis_counts") or bucket.get(
+        "post_cost_basis_counts"
+    )
+    if _positive_mapping_value_count(cost_basis_counts) > 0:
+        return True
+    return _text(
+        bucket.get("cost_basis")
+        or bucket.get("cost_source")
+        or bucket.get("fee_basis")
+        or bucket.get("commission_basis")
+        or bucket.get("broker_fee_basis")
+    ) is not None
+
+
+def _explicit_cost_amount_present(bucket: Mapping[str, object]) -> bool:
+    for key in (
+        "cost_amount",
+        "runtime_ledger_cost_amount",
+        "explicit_cost",
+        "explicit_cost_amount",
+        "commission",
+        "fees",
+        "fee_amount",
+        "broker_fee",
+    ):
+        if bucket.get(key) is None:
+            continue
+        try:
+            parsed = Decimal(str(bucket.get(key)))
+        except (InvalidOperation, ValueError):
+            continue
+        if parsed.is_finite() and parsed >= 0:
+            return True
+    # Bucket-level readback can prove explicit zero/non-zero costs with a cost
+    # basis histogram and a cost-model lineage hash even when it does not carry
+    # per-fill fee amounts in payload_json.
+    cost_basis_counts = bucket.get("cost_basis_counts") or bucket.get(
+        "post_cost_basis_counts"
+    )
+    return _positive_mapping_value_count(cost_basis_counts) > 0 and (
+        _positive_mapping_value_count(bucket.get("cost_model_hash_counts")) > 0
+        or _source_refs_present(bucket, "cost_model_hashes", "cost_model_hash")
+    )
+
+
+def _execution_economics_present(bucket: Mapping[str, object]) -> bool:
+    return (
+        _filled_notional_present(bucket)
+        and _explicit_cost_basis_present(bucket)
+        and _explicit_cost_amount_present(bucket)
     )
 
 
@@ -464,7 +561,13 @@ def runtime_ledger_promotion_source_authority_blockers(
     ) > 0:
         blockers.append(ORDER_FEED_LIFECYCLE_MISSING_BLOCKER)
     economics_complete = _truthy_flag(bucket.get("execution_economics_complete"))
-    if economics_complete is False:
+    economics_required = _truthy_flag(
+        bucket.get("execution_economics_required")
+        or bucket.get("requires_execution_economics")
+    )
+    if economics_complete is False or (
+        economics_required is True and not _execution_economics_present(bucket)
+    ):
         blockers.append(EXECUTION_ECONOMICS_MISSING_BLOCKER)
     if (
         not _promotion_grade_source_materialization_present(bucket)

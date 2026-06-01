@@ -1011,6 +1011,256 @@ def test_order_feed_source_fill_uses_delta_not_cumulative_quantity() -> None:
     assert bucket.gross_strategy_pnl == Decimal("1")
 
 
+def test_linked_order_feed_fill_materializes_fill_economics_lineage() -> None:
+    common = {
+        "account_label": "paper",
+        "strategy_id": "strategy-1",
+        "symbol": "NVDA",
+        "source_materialization": "execution_order_events",
+        "authority_class": "runtime_order_feed_execution_source",
+        "execution_policy_hash": "policy",
+        "cost_model_hash": "broker-cost-v1",
+        "lineage_hash": "lineage",
+    }
+
+    bucket = build_runtime_ledger_buckets(
+        [
+            {
+                **common,
+                "event_type": "decision",
+                "executed_at": _ts(0),
+                "decision_id": "decision-buy",
+                "order_id": "execution-buy",
+            },
+            {
+                **common,
+                "event_type": "order_submitted",
+                "executed_at": _ts(1),
+                "decision_id": "decision-buy",
+                "order_id": "execution-buy",
+            },
+            {
+                **common,
+                "event_type": "decision",
+                "executed_at": _ts(2),
+                "decision_id": "decision-sell",
+                "order_id": "execution-sell",
+            },
+            {
+                **common,
+                "event_type": "order_submitted",
+                "executed_at": _ts(3),
+                "decision_id": "decision-sell",
+                "order_id": "execution-sell",
+            },
+            {
+                **common,
+                "event_type": "fill",
+                "executed_at": _ts(4),
+                "execution_order_event_id": "event-buy",
+                "execution_id": "execution-buy",
+                "trade_decision_id": "decision-buy",
+                "source_window_id": "window-buy",
+                "source_topic": "alpaca.trade_updates",
+                "source_partition": 0,
+                "source_offset": 7,
+                "side": "buy",
+                "quantity": "1",
+                "avg_fill_price": "100",
+                "filled_notional_delta": "100",
+                "explicit_cost_amount": "0.25",
+                "broker_fee_basis": "broker_reported_commission_and_fees",
+            },
+            {
+                **common,
+                "event_type": "fill",
+                "executed_at": _ts(5),
+                "execution_order_event_id": "event-sell",
+                "execution_id": "execution-sell",
+                "trade_decision_id": "decision-sell",
+                "source_window_id": "window-sell",
+                "source_topic": "alpaca.trade_updates",
+                "source_partition": 0,
+                "source_offset": 8,
+                "side": "sell",
+                "quantity": "1",
+                "avg_fill_price": "101",
+                "filled_notional_delta": "101",
+                "broker_fee": "0.25",
+                "broker_fee_basis": "broker_reported_commission_and_fees",
+            },
+        ],
+        bucket_ranges=[(_ts(), _ts(60))],
+        require_order_lifecycle=True,
+    )[0]
+
+    assert bucket.blockers == []
+    assert bucket.fill_count == 2
+    assert bucket.closed_trade_count == 1
+    assert bucket.open_position_count == 0
+    assert bucket.filled_notional == Decimal("201")
+    assert bucket.cost_amount == Decimal("0.50")
+    assert bucket.net_strategy_pnl_after_costs == Decimal("0.50")
+    assert bucket.cost_basis_counts == {"broker_reported_commission_and_fees": 2}
+    assert bucket.cost_model_hash_counts == {"broker-cost-v1": 2}
+    assert bucket.post_cost_expectancy_bps is not None
+
+
+def test_linked_order_feed_fill_accepts_structured_source_offsets_mapping() -> None:
+    bucket = _bucket(
+        [
+            {
+                "event_type": "fill",
+                "executed_at": _ts(1),
+                "source_materialization": "execution_order_events",
+                "authority_class": "runtime_order_feed_execution_source",
+                "execution_order_event_id": "event-buy",
+                "execution_id": "execution-buy",
+                "trade_decision_id": "decision-buy",
+                "source_window_id": "window-buy",
+                "source_offsets": {
+                    "topic": "alpaca.trade_updates",
+                    "partition": 0,
+                    "offset": 7,
+                },
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "symbol": "NVDA",
+                "side": "buy",
+                "avg_fill_price": "100",
+                "filled_notional_delta": "100",
+                "broker_fee": "0",
+                "broker_fee_basis": "broker_reported_zero_cost",
+            }
+        ]
+    )
+
+    assert bucket.fill_count == 1
+    assert "runtime_fills_missing" not in bucket.blockers
+    assert "filled_notional_missing" in bucket.blockers
+
+
+def test_linked_order_feed_fill_without_explicit_costs_stays_non_authority() -> None:
+    bucket = build_runtime_ledger_buckets(
+        [
+            {
+                "event_type": "decision",
+                "executed_at": _ts(0),
+                "decision_id": "decision-buy",
+                "order_id": "execution-buy",
+                "execution_policy_hash": "policy",
+                "lineage_hash": "lineage",
+            },
+            {
+                "event_type": "order_submitted",
+                "executed_at": _ts(1),
+                "decision_id": "decision-buy",
+                "order_id": "execution-buy",
+                "execution_policy_hash": "policy",
+                "lineage_hash": "lineage",
+            },
+            {
+                "event_type": "fill",
+                "executed_at": _ts(2),
+                "source_materialization": "execution_order_events",
+                "authority_class": "runtime_order_feed_execution_source",
+                "execution_order_event_id": "event-buy",
+                "execution_id": "execution-buy",
+                "trade_decision_id": "decision-buy",
+                "source_window_id": "window-buy",
+                "source_topic": "alpaca.trade_updates",
+                "source_partition": 0,
+                "source_offset": 7,
+                "side": "buy",
+                "quantity": "1",
+                "avg_fill_price": "100",
+                "filled_notional_delta": "100",
+                "execution_policy_hash": "policy",
+                "lineage_hash": "lineage",
+            },
+        ],
+        bucket_ranges=[(_ts(), _ts(60))],
+        require_order_lifecycle=True,
+    )[0]
+
+    assert bucket.fill_count == 0
+    assert bucket.post_cost_expectancy_bps is None
+    assert "execution_economics_missing" in bucket.blockers
+    assert "runtime_fills_missing" in bucket.blockers
+
+
+def test_probe_route_order_feed_fill_remains_non_promotion_authority() -> None:
+    bucket = _bucket(
+        [
+            {
+                "event_type": "fill",
+                "executed_at": _ts(1),
+                "source_materialization": "execution_order_events",
+                "authority_class": "runtime_order_feed_execution_source",
+                "source_kind": "paper_route_probe_runtime_observed",
+                "promotion_authority": False,
+                "execution_order_event_id": "event-buy",
+                "execution_id": "execution-buy",
+                "trade_decision_id": "decision-buy",
+                "source_window_id": "window-buy",
+                "source_topic": "alpaca.trade_updates",
+                "source_partition": 0,
+                "source_offset": 7,
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "symbol": "NVDA",
+                "side": "buy",
+                "quantity": "1",
+                "avg_fill_price": "100",
+                "filled_notional_delta": "100",
+                "cost_amount": "0",
+                "cost_basis": "broker_reported_zero_cost",
+            }
+        ]
+    )
+
+    assert bucket.fill_count == 0
+    assert "runtime_source_not_promotion_authority" in bucket.blockers
+    assert bucket.post_cost_expectancy_bps is None
+
+
+def test_non_promotion_source_marker_strings_block_fill_authority() -> None:
+    for marker in (
+        {"promotion_authority": "false"},
+        {"authority_reason": "route_reacquisition"},
+    ):
+        bucket = _bucket(
+            [
+                {
+                    "event_type": "fill",
+                    "executed_at": _ts(1),
+                    "source_materialization": "execution_order_events",
+                    "authority_class": "runtime_order_feed_execution_source",
+                    **marker,
+                    "execution_order_event_id": "event-buy",
+                    "execution_id": "execution-buy",
+                    "trade_decision_id": "decision-buy",
+                    "source_window_id": "window-buy",
+                    "source_topic": "alpaca.trade_updates",
+                    "source_partition": 0,
+                    "source_offset": 7,
+                    "account_label": "paper",
+                    "strategy_id": "strategy-1",
+                    "symbol": "NVDA",
+                    "side": "buy",
+                    "quantity": "1",
+                    "avg_fill_price": "100",
+                    "filled_notional_delta": "100",
+                    "cost_amount": "0",
+                    "cost_basis": "broker_reported_zero_cost",
+                }
+            ]
+        )
+
+        assert bucket.fill_count == 0
+        assert "runtime_source_not_promotion_authority" in bucket.blockers
+
+
 def test_order_feed_source_fill_accepts_authority_class_marker() -> None:
     bucket = _bucket(
         [

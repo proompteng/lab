@@ -7,6 +7,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
+from typing import cast
 
 from .runtime_cost_authority import is_non_promotion_grade_runtime_cost_basis
 
@@ -43,6 +44,32 @@ _TCA_PNL_BASES = frozenset(
         "shortfall_proxy",
         "realized_pnl_proxy_from_tca_shortfall",
         "execution_tca_shortfall_cost",
+    }
+)
+_DELTA_FILL_QUANTITY_BASES = frozenset(
+    {"delta", "cumulative_to_delta", "source_notional_delta"}
+)
+_PROMOTION_GRADE_SOURCE_MATERIALIZATIONS = frozenset(
+    {
+        "execution_order_event",
+        "execution_order_events",
+        "execution_order_events_runtime_ledger",
+        "runtime_order_feed_execution_source",
+        "source_execution_lifecycle",
+        "source_execution_lifecycle_materialized_runtime_ledger",
+    }
+)
+_NON_PROMOTION_SOURCE_MARKERS = frozenset(
+    {
+        "aggregate_only",
+        "artifact_only",
+        "paper_route_probe",
+        "probe",
+        "recovery",
+        "replay_artifact",
+        "route_acquisition",
+        "route_reacquisition",
+        "simulation_source_replay_only",
     }
 )
 _DIAGNOSTIC_EXPECTANCY_SUPPRESSING_BLOCKERS = frozenset(
@@ -683,13 +710,20 @@ def _normalize_fill_row(
     order_feed_source_fill = event_type in _FILL_EVENTS and order_feed_lifecycle_source
     lifecycle_only = _is_order_feed_lifecycle_only_row(row, event_type=event_type)
     if event_type in _FILL_EVENTS and order_feed_source_fill:
-        if fill_quantity_basis in {"delta", "cumulative_to_delta"}:
+        if fill_quantity_basis in _DELTA_FILL_QUANTITY_BASES:
             if filled_qty_delta is not None:
                 filled_qty = filled_qty_delta
                 if filled_notional_delta is not None:
                     filled_notional = filled_notional_delta
                 elif avg_fill_price is not None:
                     filled_notional = filled_qty_delta * avg_fill_price
+        elif _is_linked_materialized_order_event_fill(row) and (
+            filled_notional_delta is not None and avg_fill_price is not None
+        ):
+            filled_notional = filled_notional_delta
+            filled_qty = filled_qty_delta or (filled_notional_delta / avg_fill_price)
+            filled_qty_delta = filled_qty
+            fill_quantity_basis = "source_notional_delta"
         else:
             filled_qty = None
             filled_notional = None
@@ -708,9 +742,22 @@ def _normalize_fill_row(
             "commission",
             "fees",
             "fee_amount",
+            "broker_fee",
+            "explicit_cost_amount",
+            "total_fees",
+            "total_fee_amount",
         )
     )
-    cost_basis = _coerce_text(_row_value(row, "cost_basis", "cost_source", "fee_basis"))
+    cost_basis = _coerce_text(
+        _row_value(
+            row,
+            "cost_basis",
+            "cost_source",
+            "fee_basis",
+            "commission_basis",
+            "broker_fee_basis",
+        )
+    )
     decision_id = _coerce_text(
         _row_value(row, "decision_id", "trade_decision_id", "decision_hash")
     )
@@ -757,6 +804,8 @@ def _normalize_fill_row(
     blockers: list[str] = []
     if _has_tca_pnl_shortcut(row):
         blockers.append("tca_shortfall_not_runtime_pnl")
+    if _is_non_promotion_runtime_source_row(row):
+        blockers.append("runtime_source_not_promotion_authority")
     if executed_at is None and event_type != "diagnostic":
         blockers.append("executed_at_missing")
     if event_type in _FILL_EVENTS and not lifecycle_only:
@@ -764,10 +813,7 @@ def _normalize_fill_row(
             blockers.append("side_missing_or_invalid")
         if filled_qty is None:
             blockers.append("filled_qty_missing_or_non_positive")
-        if order_feed_source_fill and fill_quantity_basis not in {
-            "delta",
-            "cumulative_to_delta",
-        }:
+        if order_feed_source_fill and fill_quantity_basis not in _DELTA_FILL_QUANTITY_BASES:
             blockers.append("fill_quantity_delta_basis_missing")
         elif (
             order_feed_source_fill
@@ -936,6 +982,79 @@ def _is_order_feed_source_fill(row: RuntimeLedgerFill | Mapping[str, object]) ->
     return _is_order_feed_source_row(row)
 
 
+def _is_linked_materialized_order_event_fill(
+    row: RuntimeLedgerFill | Mapping[str, object],
+) -> bool:
+    """Return true for row-level order-feed fills with source/economics lineage.
+
+    This is intentionally stricter than general order-feed source detection so
+    cumulative/aggregate rows do not become fill authority merely because they
+    carry a quantity. A linked order-event fill can infer delta quantity from a
+    positive filled_notional_delta and avg price only when the row also carries
+    execution, decision, source-window, offset, and materialization lineage.
+    """
+
+    if _is_non_promotion_runtime_source_row(row):
+        return False
+    materialization = _coerce_text(
+        _row_value(row, "source_materialization", "authority_class", "source")
+    )
+    if materialization not in _PROMOTION_GRADE_SOURCE_MATERIALIZATIONS:
+        return False
+    return (
+        _row_value(row, "execution_order_event_id", "event_fingerprint") is not None
+        and _row_value(row, "execution_id", "execution_correlation_id") is not None
+        and _row_value(row, "trade_decision_id", "decision_id", "decision_hash")
+        is not None
+        and _row_value(row, "source_window_id", "runtime_ledger_source_window_id")
+        is not None
+        and _source_offset_present(row)
+    )
+
+
+def _source_offset_present(row: RuntimeLedgerFill | Mapping[str, object]) -> bool:
+    source_offsets = _row_value(row, "source_offsets")
+    if isinstance(source_offsets, Mapping):
+        typed_offsets = cast(Mapping[str, object], source_offsets)
+        return (
+            _row_value(typed_offsets, "topic") is not None
+            and _row_value(typed_offsets, "partition") is not None
+            and _row_value(typed_offsets, "offset") is not None
+        )
+    return (
+        _row_value(row, "source_topic") is not None
+        and _row_value(row, "source_partition") is not None
+        and _row_value(row, "source_offset") is not None
+    ) or _row_value(row, "source_offset") is not None
+
+
+def _is_non_promotion_runtime_source_row(
+    row: RuntimeLedgerFill | Mapping[str, object],
+) -> bool:
+    promotion_authority = _row_value(row, "promotion_authority", "promotion_authority_eligible")
+    if promotion_authority is False:
+        return True
+    for key in (
+        "authority_class",
+        "authority_reason",
+        "pnl_derivation",
+        "route_mode",
+        "source",
+        "source_kind",
+        "source_materialization",
+        "promotion_authority",
+    ):
+        text = _coerce_text(_row_value(row, key))
+        if text is None:
+            continue
+        normalized = text.lower().replace("-", "_")
+        if normalized in {"0", "false", "no", "n"} and key == "promotion_authority":
+            return True
+        if any(marker in normalized for marker in _NON_PROMOTION_SOURCE_MARKERS):
+            return True
+    return False
+
+
 def _is_order_feed_lifecycle_only_row(
     row: RuntimeLedgerFill | Mapping[str, object],
     *,
@@ -957,9 +1076,21 @@ def _is_order_feed_lifecycle_only_row(
             "commission",
             "fees",
             "fee_amount",
+            "broker_fee",
+            "explicit_cost_amount",
+            "total_fees",
+            "total_fee_amount",
         )
         is None
-        and _row_value(row, "cost_basis", "cost_source", "fee_basis") is None
+        and _row_value(
+            row,
+            "cost_basis",
+            "cost_source",
+            "fee_basis",
+            "commission_basis",
+            "broker_fee_basis",
+        )
+        is None
     )
 
 

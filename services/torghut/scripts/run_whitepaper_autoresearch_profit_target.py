@@ -8361,80 +8361,10 @@ def _portfolio_executable_max_notional(portfolio: PortfolioCandidateSpec) -> Dec
 def _runtime_closure_exact_replay_ledger_update(
     runtime_closure: Mapping[str, Any],
 ) -> dict[str, Any]:
-    artifact_ref = next(
-        (
-            ref
-            for ref in (
-                _string(runtime_closure.get("exact_replay_ledger_artifact_path")),
-                _string(runtime_closure.get("exact_replay_ledger_artifact_ref")),
-                _string(runtime_closure.get("runtime_ledger_artifact_path")),
-                _string(runtime_closure.get("runtime_ledger_artifact_ref")),
-            )
-            if ref and Path(ref).exists()
-        ),
-        "",
-    )
-    if not artifact_ref:
-        return {}
-    ledger = _load_json_mapping_artifact(artifact_ref)
-    if _string(ledger.get("artifact_kind")) != _EXACT_REPLAY_LEDGER_ARTIFACT_KIND:
-        return {}
-    schema_version = _string(
-        ledger.get("schema_version")
-        or ledger.get("ledger_schema_version")
-        or ledger.get("runtime_ledger_schema_version")
-    )
-    if schema_version not in _EXACT_REPLAY_LEDGER_SCHEMA_VERSIONS:
-        return {}
-    raw_rows = ledger.get("runtime_ledger_rows")
-    if not isinstance(raw_rows, list) or not raw_rows:
-        return {}
-    if not all(isinstance(row, Mapping) for row in raw_rows):
-        return {}
-    runtime_rows = [
-        cast(Mapping[str, object], row)
-        for row in cast(Sequence[object], raw_rows)
-        if isinstance(row, Mapping)
-    ]
-    runtime_bucket = _runtime_closure_exact_replay_bucket(
-        ledger=ledger,
-        rows=runtime_rows,
-    )
-    if runtime_bucket is None:
-        return {}
-    row_count = len(raw_rows)
-    fill_count = _runtime_report_int(
-        ledger.get("runtime_ledger_artifact_fill_count")
-        or ledger.get("exact_replay_ledger_artifact_fill_count")
-        or ledger.get("fill_row_count")
-    )
-    if fill_count != runtime_bucket.fill_count:
-        return {}
-    return {
-        "exact_replay_ledger_artifact_ref": artifact_ref,
-        "runtime_ledger_artifact_ref": artifact_ref,
-        "exact_replay_ledger_artifact_row_count": row_count,
-        "runtime_ledger_artifact_row_count": row_count,
-        "exact_replay_ledger_artifact_fill_count": fill_count,
-        "runtime_ledger_artifact_fill_count": fill_count,
-        "runtime_ledger_closed_trade_count": runtime_bucket.closed_trade_count,
-        "runtime_ledger_open_position_count": runtime_bucket.open_position_count,
-        "runtime_ledger_filled_notional": str(runtime_bucket.filled_notional),
-        "runtime_ledger_net_strategy_pnl_after_costs": str(
-            runtime_bucket.net_strategy_pnl_after_costs
-        ),
-        "runtime_ledger_post_cost_expectancy_bps": str(
-            runtime_bucket.post_cost_expectancy_bps
-        )
-        if runtime_bucket.post_cost_expectancy_bps is not None
-        else None,
-        "portfolio_post_cost_net_pnl_basis": POST_COST_PNL_BASIS,
-        "portfolio_post_cost_net_pnl_source": _EXACT_REPLAY_RUNTIME_LEDGER_PNL_SOURCE,
-        "runtime_ledger_pnl_basis": POST_COST_PNL_BASIS,
-        "runtime_ledger_pnl_source": _EXACT_REPLAY_RUNTIME_LEDGER_PNL_SOURCE,
-        "exact_replay_ledger_pnl_basis": POST_COST_PNL_BASIS,
-        "exact_replay_ledger_pnl_source": _EXACT_REPLAY_RUNTIME_LEDGER_PNL_SOURCE,
-    }
+    # Exact-replay rows are useful diagnostics, but they are not runtime or
+    # live-paper ledger authority. Final proof must come from source-backed
+    # runtime-ledger materialization instead of replay artifacts.
+    return {}
 
 
 def _runtime_closure_market_impact_stress_update(

@@ -129,6 +129,8 @@ def _fixture(*, days: int = 20, source_backed: bool = True) -> dict[str, object]
                 'event_type': 'fill',
                 'status': 'filled',
                 'filled_qty_delta': '10',
+                'avg_fill_price': '100',
+                'filled_notional_delta': '1000',
                 'event_ts': _iso(day, 15),
             }
             for day in range(days)
@@ -194,6 +196,9 @@ def test_full_source_backed_census_is_authority_candidate_ready() -> None:
     assert report['totals']['filled_execution_count'] == 20
     assert report['totals']['execution_order_event_count'] == 20
     assert report['totals']['fill_lifecycle_event_count'] == 20
+    assert report['totals']['linked_order_event_fill_count'] == 20
+    assert report['totals']['execution_order_events_with_execution_ref_count'] == 20
+    assert report['totals']['execution_order_events_with_filled_notional_delta_count'] == 20
     assert report['totals']['tca_cost_row_count'] == 20
     assert report['totals']['source_window_count'] == 20
     assert report['totals']['runtime_ledger_bucket_count'] == 20
@@ -237,6 +242,7 @@ def test_missing_order_event_refs_and_source_offsets_are_exact_source_ref_gaps()
     for event in payload['execution_order_events']:
         event.pop('source_offset')
         event.pop('source_window_id')
+        event.pop('filled_notional_delta')
     for bucket in payload['runtime_ledger_buckets']:
         bucket['payload']['execution_order_event_ids'] = []
         bucket['payload']['source_offsets'] = []
@@ -248,6 +254,19 @@ def test_missing_order_event_refs_and_source_offsets_are_exact_source_ref_gaps()
     assert RUNTIME_LEDGER_EXECUTION_ORDER_EVENT_REFS_MISSING_BLOCKER in report['blockers']
     assert RUNTIME_LEDGER_SOURCE_OFFSETS_MISSING_BLOCKER in report['blockers']
     assert report['missing_source_ref_categories'][RUNTIME_LEDGER_SOURCE_OFFSETS_MISSING_BLOCKER] is True
+
+
+def test_order_events_missing_execution_and_decision_refs_are_exact_source_ref_gaps() -> None:
+    payload = _fixture()
+    for event in payload['execution_order_events']:
+        event.pop('execution_id')
+        event.pop('trade_decision_id')
+
+    report = _report(payload)
+
+    assert report['verdict']['classification'] == census.SOURCE_REFS_MISSING
+    assert census.RUNTIME_LEDGER_EXECUTION_REFS_MISSING_BLOCKER in report['blockers']
+    assert RUNTIME_LEDGER_TRADE_DECISION_REFS_MISSING_BLOCKER in report['blockers']
 
 
 def test_missing_tca_costs_are_economics_missing() -> None:
@@ -362,6 +381,7 @@ def test_session_loader_normalizes_bounded_sqlalchemy_rows(monkeypatch) -> None:
         status='filled',
         filled_qty='10',
         filled_qty_delta='10',
+        avg_fill_price='100',
         filled_notional_delta='1000',
         execution_id='execution-0',
         trade_decision_id='decision-0',

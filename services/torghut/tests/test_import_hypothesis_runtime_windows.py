@@ -346,6 +346,7 @@ def _complete_runtime_ledger_bucket(**overrides: object) -> dict[str, object]:
         "pnl_basis": POST_COST_BASIS_RUNTIME_LEDGER,
         "execution_policy_hash_counts": {"policy-sha": 2},
         "cost_model_hash_counts": {"cost-sha": 2},
+        "cost_basis_counts": {"broker_reported": 2},
         "lineage_hash_counts": {"lineage-sha": 2},
         "source_decision_mode_counts": {"strategy_signal_paper": 2},
         "source_window_start": "2026-03-06T14:30:00+00:00",
@@ -1282,6 +1283,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     blockers_json=[],
                     payload_json={
                         "source_decision_mode_counts": {"strategy_signal_paper": 2},
+                        "cost_basis_counts": {"broker_reported": 2},
                         "source_window_start": "2026-03-06T14:30:00+00:00",
                         "source_window_end": "2026-03-06T15:00:00+00:00",
                         "source_refs": [

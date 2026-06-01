@@ -184,6 +184,7 @@ def build_source_proof_census(
     totals = _totals(rows, daily, ledger_report)
     blockers = _census_blockers(rows, totals, ledger_report, read_error=read_error)
     missing_source_ref_categories = _missing_source_ref_categories(blockers)
+    missing_requirement_categories = _missing_requirement_categories(blockers)
     classification = _classify_verdict(totals, blockers)
     return {
         'schema_version': SCHEMA_VERSION,
@@ -212,6 +213,7 @@ def build_source_proof_census(
             'aggregate': ledger_report['aggregate'],
         },
         'missing_source_ref_categories': missing_source_ref_categories,
+        'missing_requirement_categories': missing_requirement_categories,
         'blockers': blockers,
         'verdict': {
             'classification': classification,
@@ -426,6 +428,7 @@ def _daily_payload(day: str, rows: CensusSourceRows, ledger_report: Mapping[str,
     ledger = ledger_by_day.get(day, {})
     day_executions = _rows_on_day(rows.executions, day, 'created_at')
     day_events = _rows_on_day(rows.execution_order_events, day, 'event_ts', fallback_key='created_at')
+    day_tca_metrics = _rows_on_day(rows.execution_tca_metrics, day, 'computed_at')
     return {
         'trading_day': day,
         'trade_decision_count': len(_rows_on_day(rows.trade_decisions, day, 'created_at')),
@@ -433,7 +436,27 @@ def _daily_payload(day: str, rows: CensusSourceRows, ledger_report: Mapping[str,
         'filled_execution_count': sum(1 for row in day_executions if _filled_execution(row)),
         'execution_order_event_count': len(day_events),
         'fill_lifecycle_event_count': sum(1 for row in day_events if _fill_event(row)),
-        'tca_cost_row_count': len(_rows_on_day(rows.execution_tca_metrics, day, 'computed_at')),
+        'linked_order_event_fill_count': sum(1 for row in day_events if _linked_order_event_fill(row)),
+        'execution_order_events_with_execution_ref_count': sum(
+            1 for row in day_events if _text(row.get('execution_id')) is not None
+        ),
+        'execution_order_events_with_trade_decision_ref_count': sum(
+            1 for row in day_events if _text(row.get('trade_decision_id')) is not None
+        ),
+        'execution_order_events_with_filled_notional_delta_count': sum(
+            1 for row in day_events if _decimal(row.get('filled_notional_delta')) > 0
+        ),
+        'execution_order_events_with_quantity_count': sum(1 for row in day_events if _event_quantity_present(row)),
+        'execution_order_events_with_avg_price_count': sum(
+            1 for row in day_events if _decimal(row.get('avg_fill_price')) > 0
+        ),
+        'tca_cost_row_count': len(day_tca_metrics),
+        'tca_cost_rows_with_execution_ref_count': sum(
+            1 for row in day_tca_metrics if _text(row.get('execution_id')) is not None
+        ),
+        'tca_cost_rows_with_trade_decision_ref_count': sum(
+            1 for row in day_tca_metrics if _text(row.get('trade_decision_id')) is not None
+        ),
         'source_window_count': len(_rows_on_day(rows.order_feed_source_windows, day, 'window_started_at')),
         'execution_order_events_with_source_window_count': sum(
             1 for row in day_events if _text(row.get('source_window_id')) is not None
@@ -441,6 +464,7 @@ def _daily_payload(day: str, rows: CensusSourceRows, ledger_report: Mapping[str,
         'execution_order_events_with_source_offset_count': sum(1 for row in day_events if _event_source_offset_present(row)),
         'runtime_ledger_bucket_count': _int(ledger.get('bucket_count')),
         'blocker_free_runtime_ledger_bucket_count': _int(ledger.get('source_authority_bucket_count')),
+        'explicit_cost_runtime_ledger_bucket_count': _int(ledger.get('explicit_cost_bucket_count')),
         'closed_trade_count': _int(ledger.get('closed_trade_count')),
         'open_position_count': _int(ledger.get('open_position_count')),
         'filled_notional': _decimal_text(_decimal(ledger.get('filled_notional'))),
@@ -462,7 +486,29 @@ def _totals(
         'filled_execution_count': sum(1 for row in rows.executions if _filled_execution(row)),
         'execution_order_event_count': len(rows.execution_order_events),
         'fill_lifecycle_event_count': sum(1 for row in rows.execution_order_events if _fill_event(row)),
+        'linked_order_event_fill_count': sum(1 for row in rows.execution_order_events if _linked_order_event_fill(row)),
+        'execution_order_events_with_execution_ref_count': sum(
+            1 for row in rows.execution_order_events if _text(row.get('execution_id')) is not None
+        ),
+        'execution_order_events_with_trade_decision_ref_count': sum(
+            1 for row in rows.execution_order_events if _text(row.get('trade_decision_id')) is not None
+        ),
+        'execution_order_events_with_filled_notional_delta_count': sum(
+            1 for row in rows.execution_order_events if _decimal(row.get('filled_notional_delta')) > 0
+        ),
+        'execution_order_events_with_quantity_count': sum(
+            1 for row in rows.execution_order_events if _event_quantity_present(row)
+        ),
+        'execution_order_events_with_avg_price_count': sum(
+            1 for row in rows.execution_order_events if _decimal(row.get('avg_fill_price')) > 0
+        ),
         'tca_cost_row_count': len(rows.execution_tca_metrics),
+        'tca_cost_rows_with_execution_ref_count': sum(
+            1 for row in rows.execution_tca_metrics if _text(row.get('execution_id')) is not None
+        ),
+        'tca_cost_rows_with_trade_decision_ref_count': sum(
+            1 for row in rows.execution_tca_metrics if _text(row.get('trade_decision_id')) is not None
+        ),
         'source_window_count': len(rows.order_feed_source_windows),
         'execution_order_events_with_source_window_count': sum(
             1 for row in rows.execution_order_events if _text(row.get('source_window_id')) is not None
@@ -472,6 +518,10 @@ def _totals(
         ),
         'runtime_ledger_bucket_count': len(rows.runtime_ledger_buckets),
         'blocker_free_runtime_ledger_bucket_count': source_authority_bucket_count,
+        'explicit_cost_runtime_ledger_bucket_count': _int(aggregate.get('explicit_cost_bucket_count')),
+        'runtime_ledger_buckets_with_filled_notional_count': sum(
+            1 for row in rows.runtime_ledger_buckets if _decimal(row.get('filled_notional')) > 0
+        ),
         'closed_trade_count': _int(aggregate.get('closed_round_trips')),
         'open_position_count': _int(aggregate.get('open_position_count')),
         'filled_notional': _text(aggregate.get('total_filled_notional'), default='0'),
@@ -510,6 +560,18 @@ def _census_blockers(
         )
     if _int(totals.get('fill_lifecycle_event_count')) <= 0:
         blockers.append(ORDER_FEED_LIFECYCLE_MISSING_BLOCKER)
+    if _int(totals.get('execution_order_events_with_execution_ref_count')) < _int(
+        totals.get('execution_order_event_count')
+    ):
+        blockers.append(RUNTIME_LEDGER_EXECUTION_REFS_MISSING_BLOCKER)
+    if _int(totals.get('execution_order_events_with_trade_decision_ref_count')) < _int(
+        totals.get('execution_order_event_count')
+    ):
+        blockers.append(RUNTIME_LEDGER_TRADE_DECISION_REFS_MISSING_BLOCKER)
+    if _int(totals.get('execution_order_events_with_filled_notional_delta_count')) < _int(
+        totals.get('fill_lifecycle_event_count')
+    ):
+        blockers.append(AUTHORITY_FILLED_NOTIONAL_MISSING_BLOCKER)
     if _int(totals.get('tca_cost_row_count')) <= 0:
         blockers.extend([AUTHORITY_EXPLICIT_COSTS_BLOCKER, EXECUTION_ECONOMICS_MISSING_BLOCKER])
     if _int(totals.get('source_window_count')) <= 0:
@@ -526,6 +588,12 @@ def _census_blockers(
         blockers.append(AUTHORITY_OPEN_POSITIONS_BLOCKER)
     if _int(totals.get('closed_trade_count')) <= 0:
         blockers.append(AUTHORITY_CLOSED_ROUND_TRIP_MISSING_BLOCKER)
+    if _decimal(totals.get('filled_notional')) <= 0:
+        blockers.append(AUTHORITY_FILLED_NOTIONAL_MISSING_BLOCKER)
+    if rows.runtime_ledger_buckets and _int(totals.get('explicit_cost_runtime_ledger_bucket_count')) < len(
+        rows.runtime_ledger_buckets
+    ):
+        blockers.append(AUTHORITY_EXPLICIT_COSTS_BLOCKER)
     if not rows.runtime_ledger_buckets:
         blockers.append(AUTHORITY_EVIDENCE_MISSING_BLOCKER)
     blockers.extend(str(item) for item in _sequence(ledger_report.get('blockers')))
@@ -534,6 +602,22 @@ def _census_blockers(
 
 def _missing_source_ref_categories(blockers: Sequence[str]) -> dict[str, bool]:
     return {code: code in blockers for code in sorted(_SOURCE_REF_BLOCKERS)}
+
+
+def _missing_requirement_categories(blockers: Sequence[str]) -> dict[str, bool]:
+    blocker_set = set(blockers)
+    return {
+        'filled_notional': AUTHORITY_FILLED_NOTIONAL_MISSING_BLOCKER in blocker_set,
+        'explicit_costs': AUTHORITY_EXPLICIT_COSTS_BLOCKER in blocker_set
+        or EXECUTION_ECONOMICS_MISSING_BLOCKER in blocker_set,
+        'closed_round_trip': AUTHORITY_CLOSED_ROUND_TRIP_MISSING_BLOCKER in blocker_set,
+        'execution_refs': RUNTIME_LEDGER_EXECUTION_REFS_MISSING_BLOCKER in blocker_set,
+        'execution_order_event_refs': RUNTIME_LEDGER_EXECUTION_ORDER_EVENT_REFS_MISSING_BLOCKER in blocker_set,
+        'source_window_refs': RUNTIME_LEDGER_SOURCE_WINDOW_IDS_MISSING_BLOCKER in blocker_set
+        or RUNTIME_LEDGER_SOURCE_WINDOW_MISSING_BLOCKER in blocker_set,
+        'source_offsets': RUNTIME_LEDGER_SOURCE_OFFSETS_MISSING_BLOCKER in blocker_set,
+        'tca_cost_rows': AUTHORITY_EXPLICIT_COSTS_BLOCKER in blocker_set,
+    }
 
 
 def _classify_verdict(totals: Mapping[str, object], blockers: Sequence[str]) -> str:
@@ -621,6 +705,23 @@ def _fill_event(row: Mapping[str, object]) -> bool:
     return 'fill' in event_type or status in {'filled', 'partially_filled'} or _decimal(row.get('filled_qty_delta')) > 0
 
 
+def _event_quantity_present(row: Mapping[str, object]) -> bool:
+    return any(_decimal(row.get(key)) > 0 for key in ('filled_qty_delta', 'filled_qty', 'qty', 'quantity'))
+
+
+def _linked_order_event_fill(row: Mapping[str, object]) -> bool:
+    return (
+        _fill_event(row)
+        and _text(row.get('execution_id')) is not None
+        and _text(row.get('trade_decision_id')) is not None
+        and _text(row.get('source_window_id')) is not None
+        and _event_source_offset_present(row)
+        and _event_quantity_present(row)
+        and _decimal(row.get('avg_fill_price')) > 0
+        and _decimal(row.get('filled_notional_delta')) > 0
+    )
+
+
 def _event_source_offset_present(row: Mapping[str, object]) -> bool:
     return (
         _text(row.get('source_topic')) is not None
@@ -677,6 +778,7 @@ def _order_event_row(row: ExecutionOrderEvent) -> dict[str, object]:
         'status': row.status,
         'filled_qty': row.filled_qty,
         'filled_qty_delta': row.filled_qty_delta,
+        'avg_fill_price': row.avg_fill_price,
         'filled_notional_delta': row.filled_notional_delta,
         'execution_id': str(row.execution_id) if row.execution_id is not None else None,
         'trade_decision_id': str(row.trade_decision_id) if row.trade_decision_id is not None else None,

@@ -6169,24 +6169,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 {"exact_replay_ledger_artifact_path": str(artifact_path)}
             )
 
-        self.assertEqual(update["exact_replay_ledger_artifact_row_count"], 6)
-        self.assertEqual(update["runtime_ledger_artifact_row_count"], 6)
-        self.assertEqual(update["exact_replay_ledger_artifact_fill_count"], 2)
-        self.assertEqual(update["runtime_ledger_artifact_fill_count"], 2)
-        self.assertEqual(update["runtime_ledger_closed_trade_count"], 1)
-        self.assertEqual(update["runtime_ledger_open_position_count"], 0)
-        self.assertEqual(update["runtime_ledger_filled_notional"], "201")
-        self.assertEqual(update["runtime_ledger_net_strategy_pnl_after_costs"], "0.80")
-        self.assertEqual(
-            update["portfolio_post_cost_net_pnl_basis"],
-            "realized_strategy_pnl_after_explicit_costs",
-        )
-        self.assertEqual(
-            update["portfolio_post_cost_net_pnl_source"],
-            "exact_replay_runtime_ledger",
-        )
+        self.assertEqual(update, {})
 
-    def test_runtime_closure_proof_updates_portfolio_oracle_from_real_artifacts(
+    def test_runtime_closure_proof_blocks_oracle_without_source_runtime_ledger(
         self,
     ) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -6409,7 +6394,16 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 oracle_policy=policy,
             )
 
-        self.assertTrue(updated.objective_scorecard["oracle_passed"])
+        self.assertFalse(updated.objective_scorecard["oracle_passed"])
+        self.assertFalse(updated.objective_scorecard["profit_target_oracle"]["passed"])
+        oracle_blockers = updated.objective_scorecard["profit_target_oracle"][
+            "blockers"
+        ]
+        self.assertIn("exact_replay_ledger_artifact_present_failed", oracle_blockers)
+        self.assertIn("exact_replay_ledger_artifact_row_count_failed", oracle_blockers)
+        self.assertIn("exact_replay_ledger_artifact_fill_count_failed", oracle_blockers)
+        self.assertIn("portfolio_post_cost_net_pnl_basis_failed", oracle_blockers)
+        self.assertIn("portfolio_post_cost_net_pnl_source_failed", oracle_blockers)
         self.assertTrue(updated.objective_scorecard["executable_replay_passed"])
         self.assertEqual(
             updated.objective_scorecard["shadow_parity_status"], "within_budget"
@@ -6421,17 +6415,14 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             updated.objective_scorecard["executable_replay_artifact_ref"],
             str(approval_replay_path),
         )
-        self.assertEqual(
-            updated.objective_scorecard["exact_replay_ledger_artifact_ref"],
-            str(exact_ledger_path),
+        self.assertNotIn("exact_replay_ledger_artifact_ref", updated.objective_scorecard)
+        self.assertNotIn(
+            "exact_replay_ledger_artifact_row_count",
+            updated.objective_scorecard,
         )
-        self.assertEqual(
-            updated.objective_scorecard["exact_replay_ledger_artifact_row_count"],
-            6,
-        )
-        self.assertEqual(
-            updated.objective_scorecard["exact_replay_ledger_artifact_fill_count"],
-            2,
+        self.assertNotIn(
+            "exact_replay_ledger_artifact_fill_count",
+            updated.objective_scorecard,
         )
         self.assertEqual(
             updated.objective_scorecard["market_impact_stress_artifact_ref"],
