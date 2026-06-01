@@ -109,6 +109,88 @@ def _optional_bool(value: object) -> bool | None:
     return None
 
 
+def _first_matching_reason(reasons: set[str], ordered: Sequence[str]) -> str | None:
+    for reason in ordered:
+        if reason in reasons:
+            return reason
+    return None
+
+
+def _bounded_route_evidence_collection_readiness(
+    *,
+    route_repair_symbols: Sequence[str],
+    requirements: HypothesisEntryRequirements,
+    signal_lag_seconds: int | None,
+    drift_detection_checks_total: int,
+    market_session_open: bool | None,
+) -> dict[str, object]:
+    """Return fail-closed H-PAIRS bounded-route liveness gates.
+
+    Route-repair eligibility only means there is a non-authority target worth
+    collecting. This readback keeps the live/SIM collector honest by separately
+    requiring a fresh signal window, materialized drift checks, and an open
+    market session before any bounded collection can be considered ready.
+    """
+
+    has_route_repair_symbols = bool(route_repair_symbols)
+    blockers: list[str] = []
+    if not has_route_repair_symbols:
+        blockers.append("bounded_route_repair_symbols_missing")
+
+    drift_checks_required = requirements.require_drift_checks
+    drift_checks_present = (
+        True if not drift_checks_required else drift_detection_checks_total > 0
+    )
+    if not drift_checks_present:
+        blockers.append("drift_checks_missing")
+
+    max_signal_lag_seconds = requirements.max_signal_lag_seconds
+    fresh_signal_window: bool | None = None
+    if max_signal_lag_seconds is not None:
+        if signal_lag_seconds is None:
+            blockers.append("signal_lag_unmeasured")
+        else:
+            fresh_signal_window = signal_lag_seconds <= max_signal_lag_seconds
+            if not fresh_signal_window:
+                blockers.append("signal_lag_exceeded")
+
+    if market_session_open is False:
+        blockers.append("market_session_closed")
+
+    blocker_set = set(blockers)
+    next_blocker = _first_matching_reason(
+        blocker_set,
+        (
+            "bounded_route_repair_symbols_missing",
+            "drift_checks_missing",
+            "signal_lag_unmeasured",
+            "signal_lag_exceeded",
+            "market_session_closed",
+        ),
+    )
+    next_action = {
+        "bounded_route_repair_symbols_missing": "wait_for_bounded_route_repair_target",
+        "drift_checks_missing": "materialize_drift_checks",
+        "signal_lag_unmeasured": "measure_signal_lag",
+        "signal_lag_exceeded": "wait_for_fresh_signal_window",
+        "market_session_closed": "wait_for_market_session_open",
+        None: "collect_bounded_paper_route_source_rows",
+    }[next_blocker]
+    ready = has_route_repair_symbols and not blockers
+
+    return {
+        "ready": ready,
+        "blockers": sorted(set(blockers)),
+        "next_action": next_action,
+        "fresh_signal_window": fresh_signal_window,
+        "signal_lag_seconds": signal_lag_seconds,
+        "max_signal_lag_seconds": max_signal_lag_seconds,
+        "drift_checks_present": drift_checks_present,
+        "drift_detection_checks_total": drift_detection_checks_total,
+        "market_session_open": market_session_open,
+    }
+
+
 def _parse_iso8601(value: object) -> datetime | None:
     if isinstance(value, datetime):
         parsed = value
@@ -2247,6 +2329,13 @@ def compile_hypothesis_runtime_statuses(
             "runtime_ledger_pnl_basis": runtime_ledger_inputs.pnl_basis,
         }
         if tca_inputs.route_filter_applied:
+            bounded_route_liveness = _bounded_route_evidence_collection_readiness(
+                route_repair_symbols=tca_inputs.route_repair_symbols,
+                requirements=requirements,
+                signal_lag_seconds=signal_lag_seconds,
+                drift_detection_checks_total=drift_detection_checks_total,
+                market_session_open=market_session_open,
+            )
             observed.update(
                 {
                     "route_symbol_filter_enabled": True,
@@ -2266,6 +2355,21 @@ def compile_hypothesis_runtime_statuses(
                     ),
                     "bounded_route_evidence_collection_eligible": bool(
                         tca_inputs.route_repair_symbols
+                    ),
+                    "bounded_route_evidence_collection_ready": bool(
+                        bounded_route_liveness["ready"]
+                    ),
+                    "bounded_route_evidence_collection_blockers": list(
+                        cast(
+                            Sequence[str],
+                            bounded_route_liveness["blockers"],
+                        )
+                    ),
+                    "bounded_route_evidence_collection_next_action": str(
+                        bounded_route_liveness["next_action"]
+                    ),
+                    "bounded_route_evidence_collection_liveness": dict(
+                        bounded_route_liveness
                     ),
                     "bounded_route_evidence_collection_authority": (
                         "repair_only_non_authority"
