@@ -27,6 +27,8 @@ class TestRuntimeLedgerProofPolicy(TestCase):
                 "max_runtime_ledger_drawdown_pct_equity": "0.08",
                 "max_runtime_ledger_best_day_share": "0.25",
                 "max_runtime_ledger_symbol_concentration_share": "0.5",
+                "min_runtime_ledger_closed_round_trips": 1,
+                "min_runtime_ledger_filled_notional": "0",
             },
         )
         self.assertEqual(
@@ -83,6 +85,8 @@ class TestRuntimeLedgerProofPolicy(TestCase):
                 "max_runtime_ledger_drawdown_pct_equity": "0.12",
                 "max_runtime_ledger_best_day_share": "0.25",
                 "max_runtime_ledger_symbol_concentration_share": "0.5",
+                "min_runtime_ledger_closed_round_trips": 1,
+                "min_runtime_ledger_filled_notional": "0",
             },
         )
         self.assertEqual(
@@ -101,6 +105,8 @@ class TestRuntimeLedgerProofPolicy(TestCase):
                 "max_runtime_ledger_drawdown_pct_equity": "0.025",
                 "max_runtime_ledger_best_day_share": "0.25",
                 "max_runtime_ledger_symbol_concentration_share": "0.3",
+                "min_runtime_ledger_closed_round_trips": 300,
+                "min_runtime_ledger_filled_notional": "10000000",
             },
         )
 

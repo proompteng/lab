@@ -324,15 +324,27 @@ def _completion(
     symbol_concentration_share: str | None = "0.35",
     ledger_refs: list[str] | None = None,
     unbacked_refs: list[str] | None = None,
+    summary_overrides: dict[str, object] | None = None,
 ) -> dict[str, object]:
     runtime_ledger_summary: dict[str, object] = {
         "runtime_ledger_bucket_count": 1,
         "runtime_ledger_fill_count": 4,
-        "runtime_ledger_closed_trade_count": 2,
+        "runtime_ledger_closed_trade_count": 300,
+        "runtime_ledger_closed_round_trip_count": 300,
+        "runtime_ledger_open_position_count": 0,
         "runtime_ledger_filled_notional": filled_notional,
+        "runtime_ledger_cost_amount": "1250",
+        "runtime_ledger_cost_basis_counts": {
+            "alpaca_2026_equity_fee_schedule": 300,
+        },
+        "runtime_ledger_cost_model_hash_count": 1,
         "runtime_ledger_net_strategy_pnl_after_costs": net_pnl,
         "runtime_ledger_post_cost_expectancy_bps": expectancy_bps,
         "runtime_ledger_observed_trading_day_count": trading_days,
+        "runtime_ledger_schema_versions": ["torghut.runtime-ledger-bucket.v1"],
+        "runtime_ledger_source_authority_bucket_count": 1,
+        "runtime_ledger_source_authority_blockers": [],
+        "runtime_ledger_authority_blockers": [],
     }
     if avg_daily_filled_notional is not None:
         runtime_ledger_summary["runtime_ledger_avg_daily_filled_notional"] = (
@@ -362,6 +374,8 @@ def _completion(
         runtime_ledger_summary["runtime_ledger_symbol_concentration_share"] = (
             symbol_concentration_share
         )
+    if summary_overrides:
+        runtime_ledger_summary.update(summary_overrides)
     return {
         "doc_id": "doc29",
         "summary": {"all_satisfied": status == "satisfied"},
@@ -478,6 +492,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
     def test_packet_allows_only_complete_post_cost_runtime_ledger_proof(self) -> None:
         result = packet.build_runtime_ledger_proof_packet(
             _status(),
+            proof_mode="authority",
             paper_route_evidence=_paper_route_evidence(),
             runtime_window_import=_runtime_import(),
             completion_status=_completion(),
@@ -494,7 +509,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
         self.assertEqual(result["candidate"]["hypothesis_id"], "H-PAIRS-01")
         self.assertEqual(
             result["checks"]["runtime_ledger_post_cost_profit_target"]["observed"][
-                "daily_net_pnl_after_costs"
+                "mean_daily_net_pnl_after_costs"
             ],
             "500",
         )
@@ -600,6 +615,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
 
         result = packet.build_runtime_ledger_proof_packet(
             _status(),
+            proof_mode="authority",
             paper_route_evidence=evidence,
             runtime_window_import=_runtime_import(),
             completion_status=_completion(),
@@ -624,6 +640,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
     ) -> None:
         result = packet.build_runtime_ledger_proof_packet(
             _status(tigerbeetle_ledger=_tigerbeetle_ledger_status()),
+            proof_mode="authority",
             paper_route_evidence=_paper_route_evidence(),
             runtime_window_import=_runtime_import(),
             completion_status=_completion(),
@@ -650,6 +667,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
                     signed_ref_count=0,
                 )
             ),
+            proof_mode="authority",
             paper_route_evidence=_paper_route_evidence(),
             runtime_window_import=_runtime_import(),
             completion_status=_completion(),
@@ -673,6 +691,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
     def test_authority_packet_requires_daily_distribution_and_scale(self) -> None:
         result = packet.build_runtime_ledger_proof_packet(
             _status(),
+            proof_mode="authority",
             paper_route_evidence=_paper_route_evidence(),
             runtime_window_import=_runtime_import(),
             completion_status=_completion(
@@ -681,6 +700,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
                 p10_daily_net_pnl="-300",
                 worst_day_net_pnl="-800",
                 max_intraday_drawdown="1600",
+                drawdown_pct="0.031",
             ),
             generated_at="2026-05-26T21:05:00+00:00",
         )
@@ -715,6 +735,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
     def test_authority_packet_requires_daily_distribution_fields(self) -> None:
         result = packet.build_runtime_ledger_proof_packet(
             _status(),
+            proof_mode="authority",
             paper_route_evidence=_paper_route_evidence(),
             runtime_window_import=_runtime_import(),
             completion_status=_completion(
@@ -723,6 +744,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
                 p10_daily_net_pnl=None,
                 worst_day_net_pnl=None,
                 max_intraday_drawdown=None,
+                drawdown_pct=None,
             ),
             generated_at="2026-05-26T21:05:00+00:00",
         )
@@ -747,6 +769,130 @@ class TestRuntimeLedgerProofPacket(TestCase):
         self.assertIn(
             "runtime_ledger_max_intraday_drawdown_missing",
             result["promotion_authority"]["blocking_reasons"],
+        )
+
+    def test_default_one_day_packet_is_smoke_not_authority(self) -> None:
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=_runtime_import(),
+            completion_status=_completion(trading_days=1, net_pnl="600"),
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        self.assertEqual(result["proof_mode"], "smoke")
+        self.assertTrue(result["ok"], result)
+        self.assertFalse(result["final_authority_ok"])
+        self.assertFalse(result["capital_promotion_allowed"])
+        self.assertEqual(
+            result["post_cost_proof_authority"]["blocking_reasons"],
+            ["runtime_ledger_proof_mode_not_authority"],
+        )
+        self.assertEqual(result["next_action"], "rerun_proof_packet_in_authority_mode")
+
+    def test_authority_packet_fails_each_mechanical_authority_floor(self) -> None:
+        cases = [
+            (
+                {"trading_days": 19, "net_pnl": "9500"},
+                "runtime_ledger_trading_days_below_target",
+            ),
+            (
+                {
+                    "summary_overrides": {
+                        "runtime_ledger_closed_round_trip_count": 299,
+                        "runtime_ledger_closed_trade_count": 299,
+                    }
+                },
+                "runtime_ledger_closed_round_trips_below_authority_floor",
+            ),
+            (
+                {"filled_notional": "9999999"},
+                "runtime_ledger_filled_notional_below_authority_floor",
+            ),
+            (
+                {"summary_overrides": {"runtime_ledger_open_position_count": 1}},
+                "runtime_ledger_open_position_count_nonzero",
+            ),
+            (
+                {
+                    "summary_overrides": {
+                        "runtime_ledger_cost_amount": None,
+                        "runtime_ledger_cost_basis_counts": {},
+                        "runtime_ledger_cost_model_hash_count": 0,
+                    }
+                },
+                "runtime_ledger_explicit_costs_missing",
+            ),
+            (
+                {
+                    "summary_overrides": {
+                        "runtime_ledger_source_authority_bucket_count": 0,
+                    }
+                },
+                "runtime_ledger_source_authority_missing",
+            ),
+            (
+                {
+                    "summary_overrides": {
+                        "runtime_ledger_authority_blockers": [
+                            "runtime_ledger_cost_basis_modeled"
+                        ],
+                    }
+                },
+                "runtime_ledger_authority_blockers_present",
+            ),
+            (
+                {
+                    "summary_overrides": {
+                        "runtime_ledger_schema_versions": [
+                            "torghut.exact_replay_ledger.v1"
+                        ],
+                    }
+                },
+                "runtime_ledger_exact_replay_schema_not_authority",
+            ),
+            (
+                {"best_day_share": "0.251"},
+                "runtime_ledger_best_day_share_above_limit",
+            ),
+            (
+                {"symbol_concentration_share": "0.351"},
+                "runtime_ledger_symbol_concentration_share_above_limit",
+            ),
+            (
+                {"max_intraday_drawdown": "1501", "drawdown_pct": "0.031"},
+                "runtime_ledger_max_intraday_drawdown_above_limit",
+            ),
+        ]
+        for completion_kwargs, blocker in cases:
+            with self.subTest(blocker=blocker):
+                result = packet.build_runtime_ledger_proof_packet(
+                    _status(),
+                    proof_mode="authority",
+                    paper_route_evidence=_paper_route_evidence(),
+                    runtime_window_import=_runtime_import(),
+                    completion_status=_completion(**completion_kwargs),
+                    generated_at="2026-05-26T21:05:00+00:00",
+                )
+                self.assertFalse(result["final_authority_ok"], result)
+                self.assertIn(
+                    blocker, result["promotion_authority"]["blocking_reasons"]
+                )
+
+    def test_source_backed_fixture_preserves_missing_live_data_blockers(self) -> None:
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            proof_mode="authority",
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=None,
+            completion_status=_completion(),
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        self.assertFalse(result["final_authority_ok"])
+        self.assertIn("runtime_window_import_missing", result["blockers"])
+        self.assertEqual(
+            result["next_action"], "run_runtime_window_import_from_paper_route_target_plan"
         )
 
     def test_smoke_packet_cannot_grant_promotion_authority(self) -> None:
@@ -827,6 +973,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
                     "promotion_certificate_shadow_only",
                 ]
             ),
+            proof_mode="authority",
             paper_route_evidence=_paper_route_evidence(),
             runtime_window_import=_runtime_import(),
             completion_status=_completion(),
@@ -901,6 +1048,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
 
         result = packet.build_runtime_ledger_proof_packet(
             _status(),
+            proof_mode="authority",
             paper_route_evidence=evidence,
             runtime_window_import=_runtime_import(),
             completion_status=_completion(),
@@ -1095,6 +1243,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
     def test_packet_waits_before_paper_route_window_is_importable(self) -> None:
         result = packet.build_runtime_ledger_proof_packet(
             _status(),
+            proof_mode="authority",
             paper_route_evidence=_paper_route_evidence(
                 import_ready=False,
                 import_blockers=["paper_route_session_window_not_open"],
@@ -1144,6 +1293,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
 
         result = packet.build_runtime_ledger_proof_packet(
             _status(),
+            proof_mode="authority",
             paper_route_evidence=evidence,
             generated_at="2026-05-25T21:05:00+00:00",
         )
@@ -1173,6 +1323,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
 
         result = packet.build_runtime_ledger_proof_packet(
             _status(),
+            proof_mode="authority",
             paper_route_evidence=_paper_route_evidence(
                 import_ready=False,
                 import_blockers=["paper_route_session_window_not_open"],
@@ -1211,6 +1362,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
     ) -> None:
         result = packet.build_runtime_ledger_proof_packet(
             _status(),
+            proof_mode="authority",
             paper_route_evidence=_paper_route_evidence(
                 import_ready=True,
                 import_audit={
@@ -1300,6 +1452,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
 
         result = packet.build_runtime_ledger_proof_packet(
             _status(),
+            proof_mode="authority",
             paper_route_evidence=paper,
             runtime_window_import=_runtime_import(),
             completion_status=_completion(),
@@ -1341,6 +1494,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
 
         result = packet.build_runtime_ledger_proof_packet(
             _status(),
+            proof_mode="authority",
             paper_route_evidence=evidence,
             runtime_window_import=_runtime_import(),
             completion_status=_completion(),
@@ -1390,6 +1544,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
 
         result = packet.build_runtime_ledger_proof_packet(
             _status(),
+            proof_mode="authority",
             paper_route_evidence=evidence,
             runtime_window_import=_runtime_import(),
             completion_status=_completion(),
@@ -1434,6 +1589,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
     def test_packet_blocks_non_authoritative_import_and_weak_daily_profit(self) -> None:
         result = packet.build_runtime_ledger_proof_packet(
             _status(),
+            proof_mode="authority",
             paper_route_evidence=_paper_route_evidence(),
             runtime_window_import=_runtime_import(
                 proof_status="blocked",
@@ -1454,7 +1610,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
             result["promotion_authority"]["blocking_reasons"],
         )
         self.assertIn(
-            "runtime_ledger_daily_net_pnl_below_target",
+            "runtime_ledger_mean_daily_net_pnl_after_costs_below_floor",
             result["promotion_authority"]["blocking_reasons"],
         )
 
@@ -1463,10 +1619,12 @@ class TestRuntimeLedgerProofPacket(TestCase):
     ) -> None:
         result = packet.build_runtime_ledger_proof_packet(
             _status(),
+            proof_mode="authority",
             paper_route_evidence=_paper_route_evidence(),
             runtime_window_import=_runtime_import(),
             completion_status=_completion(
                 drawdown_pct=None,
+                max_intraday_drawdown=None,
                 best_day_share=None,
                 symbol_concentration_share=None,
             ),
@@ -1505,10 +1663,12 @@ class TestRuntimeLedgerProofPacket(TestCase):
     def test_packet_blocks_excessive_runtime_ledger_risk_quality(self) -> None:
         result = packet.build_runtime_ledger_proof_packet(
             _status(),
+            proof_mode="authority",
             paper_route_evidence=_paper_route_evidence(),
             runtime_window_import=_runtime_import(),
             completion_status=_completion(
                 drawdown_pct="0.13",
+                max_intraday_drawdown="1600",
                 best_day_share="0.40",
                 symbol_concentration_share="0.75",
             ),
@@ -1567,6 +1727,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
 
         result = packet.build_runtime_ledger_proof_packet(
             _status(blockers=["simple_submit_disabled"]),
+            proof_mode="authority",
             paper_route_evidence=paper,
             runtime_window_import={"runtime_window_import": _runtime_import()},
             completion_status=completion,
@@ -1590,7 +1751,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
         self.assertIn("runtime_ledger_post_cost_expectancy_not_positive", blockers)
         self.assertIn("runtime_ledger_net_pnl_below_target", blockers)
         self.assertIn("runtime_ledger_trading_days_below_target", blockers)
-        self.assertIn("runtime_ledger_daily_net_pnl_below_target", blockers)
+        self.assertIn("runtime_ledger_mean_daily_net_pnl_after_costs_below_floor", blockers)
         self.assertIn(
             "keep_promotion_blocked_until_live_gate_and_proof_floor_pass",
             result["required_actions"],
@@ -1625,6 +1786,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
 
         result = packet.build_runtime_ledger_proof_packet(
             _status(),
+            proof_mode="authority",
             paper_route_evidence=_paper_route_evidence(),
             runtime_window_import=runtime_import,
             completion_status=_completion(),
@@ -1672,6 +1834,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
 
         result = packet.build_runtime_ledger_proof_packet(
             _status(),
+            proof_mode="authority",
             paper_route_evidence=_paper_route_evidence(),
             runtime_window_import=runtime_import,
             completion_status=_completion(),
@@ -1707,6 +1870,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
 
         result = packet.build_runtime_ledger_proof_packet(
             _status(),
+            proof_mode="authority",
             paper_route_evidence=_paper_route_evidence(),
             runtime_window_import=runtime_import,
             completion_status=_completion(),
@@ -1758,6 +1922,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
 
         result = packet.build_runtime_ledger_proof_packet(
             _status(),
+            proof_mode="authority",
             paper_route_evidence=_paper_route_evidence(),
             runtime_window_import=runtime_import,
             completion_status=_completion(),
@@ -1792,6 +1957,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
 
         result = packet.build_runtime_ledger_proof_packet(
             _status(),
+            proof_mode="authority",
             paper_route_evidence=_paper_route_evidence(),
             runtime_window_import=runtime_import,
             completion_status=_completion(),
@@ -1825,6 +1991,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
 
         result = packet.build_runtime_ledger_proof_packet(
             _status(),
+            proof_mode="authority",
             paper_route_evidence=_paper_route_evidence(),
             runtime_window_import=runtime_import,
             completion_status=_completion(),
@@ -1864,6 +2031,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
 
         result = packet.build_runtime_ledger_proof_packet(
             _status(),
+            proof_mode="authority",
             paper_route_evidence=_paper_route_evidence(),
             runtime_window_import=runtime_import,
             completion_status=_completion(),
@@ -1899,6 +2067,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
 
         result = packet.build_runtime_ledger_proof_packet(
             _status(),
+            proof_mode="authority",
             paper_route_evidence=_paper_route_evidence(),
             runtime_window_import=runtime_import,
             completion_status=_completion(),
@@ -1973,6 +2142,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
 
         result = packet.build_runtime_ledger_proof_packet(
             _status(),
+            proof_mode="authority",
             paper_route_evidence=_paper_route_evidence(),
             runtime_window_import=runtime_import,
             completion_status=_completion(),
@@ -2010,6 +2180,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
     ) -> None:
         result = packet.build_runtime_ledger_proof_packet(
             _status(),
+            proof_mode="authority",
             paper_route_evidence=_paper_route_evidence(),
             runtime_window_import=_runtime_import(authoritative=False),
             completion_status=_completion(),
@@ -2036,6 +2207,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
 
         result = packet.build_runtime_ledger_proof_packet(
             _status(),
+            proof_mode="authority",
             paper_route_evidence=_paper_route_evidence(),
             runtime_window_import=runtime_import,
             completion_status=_completion(),
@@ -2083,6 +2255,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
 
         result = packet.build_runtime_ledger_proof_packet(
             _status(),
+            proof_mode="authority",
             paper_route_evidence=_paper_route_evidence(),
             runtime_window_import=runtime_import,
             completion_status=_completion(),
@@ -2124,6 +2297,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
 
         result = packet.build_runtime_ledger_proof_packet(
             _status(),
+            proof_mode="authority",
             paper_route_evidence=_paper_route_evidence(),
             runtime_window_import=runtime_import,
             completion_status=_completion(),
@@ -2166,6 +2340,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
 
         result = packet.build_runtime_ledger_proof_packet(
             _status(),
+            proof_mode="authority",
             paper_route_evidence=paper,
             generated_at="2026-05-26T20:01:00+00:00",
         )
@@ -2191,6 +2366,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
 
         result = packet.build_runtime_ledger_proof_packet(
             {"mode": "paper", "running": True, "live_gate": {"allowed": True}},
+            proof_mode="authority",
             paper_route_evidence=paper,
             runtime_window_import={
                 "status": "ok",
@@ -2243,6 +2419,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
     def test_packet_preserves_string_proof_blockers_from_runtime_imports(self) -> None:
         result = packet.build_runtime_ledger_proof_packet(
             _status(),
+            proof_mode="authority",
             paper_route_evidence=_paper_route_evidence(),
             runtime_window_import={
                 "proof_status": "blocked",

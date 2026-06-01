@@ -925,6 +925,38 @@ class TestCompletionTrace(TestCase):
         self.assertEqual(matched_buckets, [])
         self.assertEqual(unbacked_window_refs, [str(window.id)])
 
+    def test_runtime_ledger_window_refs_reject_exact_replay_aggregate_ledgers(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc)
+        with self.session_local() as session:
+            window = StrategyHypothesisMetricWindow(
+                run_id='exact-replay-run',
+                candidate_id='cand-1',
+                hypothesis_id='legacy_macd_rsi',
+                observed_stage='live',
+                window_started_at=window_start,
+                window_ended_at=window_end,
+            )
+            exact_replay = _runtime_ledger_bucket(
+                run_id='exact-replay-run',
+                bucket_started_at=window_start,
+                bucket_ended_at=window_end,
+                ledger_schema_version='torghut.exact_replay_ledger.v1',
+            )
+            session.add_all([window, exact_replay])
+            session.commit()
+
+            backed_windows, matched_buckets, unbacked_window_refs = _runtime_ledger_bucket_refs_for_windows(
+                session,
+                [window],
+            )
+
+        self.assertEqual(backed_windows, [])
+        self.assertEqual(matched_buckets, [])
+        self.assertEqual(unbacked_window_refs, [str(window.id)])
+
     def test_doc29_live_scale_blocks_non_runtime_ledger_window_pnl(self) -> None:
         trace = build_completion_trace(
             doc_id='doc29',

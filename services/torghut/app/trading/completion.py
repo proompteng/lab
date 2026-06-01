@@ -27,7 +27,7 @@ from .runtime_cost_authority import (
     cost_basis_counts_have_non_promotion_grade_costs,
     is_non_promotion_grade_runtime_cost_basis,
 )
-from .runtime_ledger import EXACT_REPLAY_LEDGER_SCHEMA_VERSION, POST_COST_PNL_BASIS
+from .runtime_ledger import POST_COST_PNL_BASIS
 from .runtime_ledger_source_authority import runtime_ledger_promotion_source_authority_blockers
 
 
@@ -600,7 +600,6 @@ def _windows_with_allowed_promotion_decisions(
 
 _RUNTIME_LEDGER_BUCKET_SCHEMAS = frozenset(
     {
-        EXACT_REPLAY_LEDGER_SCHEMA_VERSION,
         'torghut.runtime-ledger-bucket.v1',
     }
 )
@@ -749,6 +748,19 @@ def _runtime_ledger_bucket_summary(
         (row.net_strategy_pnl_after_costs for row in rows),
         Decimal('0'),
     )
+    total_cost_amount = sum((row.cost_amount for row in rows), Decimal('0'))
+    cost_basis_counts: dict[str, int] = {}
+    source_authority_blockers: list[str] = []
+    for row in rows:
+        payload = _runtime_ledger_bucket_promotion_payload(row)
+        for cost_basis, count in _as_dict(payload.get('cost_basis_counts')).items():
+            key = _as_text(cost_basis)
+            if key is None:
+                continue
+            cost_basis_counts[key] = cost_basis_counts.get(key, 0) + _safe_int(count)
+        for blocker in runtime_ledger_promotion_source_authority_blockers(payload):
+            if blocker not in source_authority_blockers:
+                source_authority_blockers.append(blocker)
     expectancy_bps = (
         float((total_net_pnl / total_filled_notional) * Decimal('10000')) if total_filled_notional > 0 else 0.0
     )
@@ -758,9 +770,28 @@ def _runtime_ledger_bucket_summary(
         'runtime_ledger_fill_count': sum(max(0, _safe_int(row.fill_count)) for row in rows),
         'runtime_ledger_submitted_order_count': sum(max(0, _safe_int(row.submitted_order_count)) for row in rows),
         'runtime_ledger_closed_trade_count': sum(max(0, _safe_int(row.closed_trade_count)) for row in rows),
+        'runtime_ledger_closed_round_trip_count': sum(max(0, _safe_int(row.closed_trade_count)) for row in rows),
+        'runtime_ledger_open_position_count': sum(max(0, _safe_int(row.open_position_count)) for row in rows),
         'runtime_ledger_filled_notional': float(total_filled_notional),
+        'runtime_ledger_cost_amount': float(total_cost_amount),
+        'runtime_ledger_cost_basis_counts': cost_basis_counts,
+        'runtime_ledger_cost_model_hash_count': sum(
+            len(_as_dict(row.cost_model_hash_counts)) for row in rows
+        ),
         'runtime_ledger_net_strategy_pnl_after_costs': float(total_net_pnl),
         'runtime_ledger_post_cost_expectancy_bps': expectancy_bps,
+        'runtime_ledger_schema_versions': sorted(
+            {
+                schema_version
+                for row in rows
+                if (schema_version := _as_text(row.ledger_schema_version)) is not None
+            }
+        ),
+        'runtime_ledger_source_authority_bucket_count': len(rows)
+        if not source_authority_blockers
+        else 0,
+        'runtime_ledger_source_authority_blockers': source_authority_blockers,
+        'runtime_ledger_authority_blockers': [],
         **daily_summary,
         'db_row_refs': [str(row.id) for row in rows],
     }
