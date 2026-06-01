@@ -111,6 +111,13 @@ _BOUNDED_SIM_COLLECTION_LINEAGE_MAPPING_KEYS = ("source_decision_readiness",)
 _FLATTEN_CLOSE_DECISION_SCHEMA_VERSION = (
     "torghut.paper-account-flatten-close-decision.v1"
 )
+_BOUNDED_SIM_COLLECTION_RUNTIME_ACCOUNT_ALIAS_FIELDS = (
+    "execution_account_label",
+    "runtime_account_label",
+    "paper_account_label",
+    "paper_route_runtime_account_label",
+    "source_account_label",
+)
 
 
 def _safe_int(value: object) -> int:
@@ -197,11 +204,9 @@ def _bounded_sim_collection_blockers(
     blockers: list[str] = []
     runtime_account = _safe_text(account_label)
     target_account = _safe_text(target.get("account_label"))
-    if (
-        runtime_account is not None
-        and runtime_account != _BOUNDED_SIM_COLLECTION_ACCOUNT_LABEL
-    ):
-        blockers.append("bounded_sim_collection_runtime_account_not_torghut_sim")
+    runtime_account_aliases = _bounded_sim_collection_runtime_account_aliases(target)
+    if runtime_account is not None and runtime_account not in runtime_account_aliases:
+        blockers.append("bounded_sim_collection_runtime_account_not_target")
     if target_account != _BOUNDED_SIM_COLLECTION_ACCOUNT_LABEL:
         blockers.append("bounded_sim_collection_target_account_not_torghut_sim")
     if _safe_text(target.get("observed_stage")) != "paper":
@@ -270,6 +275,21 @@ def _bounded_sim_collection_blockers(
             ]
         blockers.extend(field_blockers)
     return list(dict.fromkeys(blockers))
+
+
+def _bounded_sim_collection_runtime_account_aliases(
+    target: Mapping[str, Any],
+) -> set[str]:
+    aliases = {_BOUNDED_SIM_COLLECTION_ACCOUNT_LABEL}
+    for key in _BOUNDED_SIM_COLLECTION_RUNTIME_ACCOUNT_ALIAS_FIELDS:
+        aliases.update(_lineage_text_values(target.get(key)))
+    identity = target.get("account_stage_runtime_identity")
+    if isinstance(identity, Mapping):
+        identity_mapping = cast(Mapping[str, Any], identity)
+        aliases.update(_lineage_text_values(identity_mapping.get("account_label")))
+        for key in _BOUNDED_SIM_COLLECTION_RUNTIME_ACCOUNT_ALIAS_FIELDS:
+            aliases.update(_lineage_text_values(identity_mapping.get(key)))
+    return {alias for alias in aliases if alias}
 
 
 def _bounded_sim_collection_authorized(
@@ -2814,6 +2834,65 @@ class SimpleTradingPipeline(TradingPipeline):
         return metadata
 
     @staticmethod
+    def _bounded_paper_route_execution_metadata(
+        *,
+        target: Mapping[str, Any],
+        strategy: Strategy,
+        symbol: str,
+        action: str,
+        account_label: str | None,
+        max_notional: Decimal,
+    ) -> dict[str, Any]:
+        target_account_label = (
+            _safe_text(target.get("account_label"))
+            or _BOUNDED_SIM_COLLECTION_ACCOUNT_LABEL
+        )
+        runtime_account_label = (
+            _safe_text(account_label)
+            or _safe_text(target.get("execution_account_label"))
+            or target_account_label
+        )
+        source_account_label = _safe_text(target.get("source_account_label"))
+        execution_policy = {
+            "schema_version": "torghut.bounded-paper-route-execution-policy.v1",
+            "authority": "bounded_paper_route_collection_only",
+            "live_capital_routing_enabled": False,
+            "capital_promotion_allowed": False,
+            "target_account_label": target_account_label,
+            "runtime_account_label": runtime_account_label,
+            "source_account_label": source_account_label,
+            "strategy_id": str(strategy.id),
+            "strategy_name": strategy.name,
+            "symbol": symbol,
+            "side": action,
+            "max_notional": str(max_notional),
+            "idempotency_key_basis": "trade_decision_hash_client_order_id",
+            "order_feed_linkage_keys": [
+                "alpaca_account_label",
+                "client_order_id",
+            ],
+        }
+        return {
+            "execution_lane": "simple",
+            "submit_path": "bounded_paper_route_collection",
+            "execution_account_label": runtime_account_label,
+            "execution_policy": execution_policy,
+            "lineage": {
+                "schema_version": "torghut.bounded-paper-route-lineage.v1",
+                "hypothesis_id": _safe_text(target.get("hypothesis_id")),
+                "candidate_id": _safe_text(target.get("candidate_id")),
+                "source_manifest_ref": _safe_text(target.get("source_manifest_ref")),
+                "target_account_label": target_account_label,
+                "runtime_account_label": runtime_account_label,
+                "source_account_label": source_account_label,
+                "source_kind": _safe_text(target.get("source_kind")),
+                "bounded_evidence_collection_scope": _safe_text(
+                    target.get("bounded_evidence_collection_scope")
+                ),
+            },
+        }
+
+    @staticmethod
     def _paper_route_target_source_cap(
         params: Mapping[str, Any],
     ) -> Decimal | None:
@@ -2985,6 +3064,18 @@ class SimpleTradingPipeline(TradingPipeline):
                 )
                 metadata["paper_route_probe_pair_balance_state"] = pair_balance_state
                 metadata["paper_route_probe_leg_action"] = action
+                execution_metadata = (
+                    self._bounded_paper_route_execution_metadata(
+                        target=target,
+                        strategy=strategy,
+                        symbol=symbol,
+                        action=action,
+                        account_label=self.account_label,
+                        max_notional=target_cap,
+                    )
+                    if _target_requires_bounded_sim_collection_gate(target)
+                    else {}
+                )
                 simple_lane = {
                     "source": "external_target_plan_url",
                     "target_plan_source_decision": True,
@@ -2994,6 +3085,18 @@ class SimpleTradingPipeline(TradingPipeline):
                     "paper_route_probe_symbol_actions": dict(symbol_actions),
                     "paper_route_probe_pair_balance_state": pair_balance_state,
                     "paper_route_probe_leg_action": action,
+                    "live_capital_routing_enabled": False,
+                    "client_order_id_basis": "trade_decision_hash",
+                    **(
+                        {
+                            "execution_account_label": execution_metadata[
+                                "execution_account_label"
+                            ],
+                            "submit_path": execution_metadata["submit_path"],
+                        }
+                        if execution_metadata
+                        else {}
+                    ),
                 }
                 params: dict[str, Any] = {
                     "paper_route_target_plan": metadata,
@@ -3005,6 +3108,8 @@ class SimpleTradingPipeline(TradingPipeline):
                     "final_promotion_authorized": False,
                     "final_authority_ok": False,
                     "final_promotion_allowed": False,
+                    "live_capital_routing_enabled": False,
+                    **execution_metadata,
                     **_target_plan_lineage([dict(target)], symbol),
                 }
                 if "exit_minute_after_open" in metadata:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
+from types import SimpleNamespace
 
 from app.config import settings
 from app.models import Strategy
@@ -302,7 +303,7 @@ def test_bounded_sim_collection_authorizes_non_final_hpairs_target_only() -> Non
 
     assert _bounded_sim_collection_blockers(target, account_label='TORGHUT_SIM') == []
 
-    assert 'bounded_sim_collection_runtime_account_not_torghut_sim' in (
+    assert 'bounded_sim_collection_runtime_account_not_target' in (
         _bounded_sim_collection_blockers(target, account_label='TORGHUT_LIVE')
     )
     assert 'bounded_sim_collection_non_final_state_required' in (
@@ -331,6 +332,15 @@ def test_bounded_sim_collection_blocks_missing_source_lineage_prerequisites() ->
     assert 'bounded_sim_collection_evidence_collection_not_ready' in blockers
     assert 'bounded_sim_collection_source_decision_not_ready' in blockers
     assert 'source_strategy_missing' in blockers
+
+
+def test_bounded_sim_collection_accepts_declared_paper_account_alias() -> None:
+    target = _bounded_hpairs_target(source_account_label='PA3SX7FYNUTF')
+
+    assert _bounded_sim_collection_blockers(target, account_label='PA3SX7FYNUTF') == []
+    assert 'bounded_sim_collection_runtime_account_not_target' in (
+        _bounded_sim_collection_blockers(target, account_label='UNRELATED_ACCOUNT')
+    )
 
 
 def test_simple_submit_disabled_bypass_requires_explicit_bounded_sim_collection() -> None:
@@ -384,3 +394,93 @@ def test_simple_submit_disabled_bypass_requires_explicit_bounded_sim_collection(
         )
         is None
     )
+
+
+def test_bounded_paper_route_authorized_without_live_simple_submit_enabled() -> None:
+    trading_enabled_before = settings.trading_enabled
+    trading_mode_before = settings.trading_mode
+    simple_submit_before = settings.trading_simple_submit_enabled
+    emergency_stop_before = settings.trading_emergency_stop_enabled
+    try:
+        settings.trading_enabled = True
+        settings.trading_mode = 'paper'
+        settings.trading_simple_submit_enabled = False
+        settings.trading_emergency_stop_enabled = False
+        pipeline = object.__new__(SimpleTradingPipeline)
+        pipeline.account_label = 'PA3SX7FYNUTF'
+        pipeline.order_firewall = SimpleNamespace(
+            status=lambda: SimpleNamespace(kill_switch_enabled=False)
+        )
+        pipeline.state = SimpleNamespace(
+            emergency_stop_active=False,
+            emergency_stop_reason=None,
+        )
+        pipeline._profitability_proof_floor = lambda session: {
+            'route_state': 'repair_only',
+            'capital_state': 'zero_notional',
+            'max_notional': '0',
+            'blocking_reasons': ['simple_submit_disabled'],
+        }
+        pipeline._active_bounded_paper_route_target_window = lambda decision: None
+
+        decision = StrategyDecision(
+            strategy_id='00000000-0000-0000-0000-000000000001',
+            symbol='AAPL',
+            event_ts=datetime(2026, 6, 1, 14, 30, tzinfo=timezone.utc),
+            timeframe='1Min',
+            action='buy',
+            qty=Decimal('1'),
+            params={
+                'paper_route_target_plan_source_decision': _bounded_hpairs_target(
+                    source_account_label='PA3SX7FYNUTF'
+                )
+            },
+        )
+
+        assert pipeline._is_trading_submission_allowed(
+            session=SimpleNamespace(),
+            decision=decision,
+            decision_row=SimpleNamespace(status='planned'),
+        )
+    finally:
+        settings.trading_enabled = trading_enabled_before
+        settings.trading_mode = trading_mode_before
+        settings.trading_simple_submit_enabled = simple_submit_before
+        settings.trading_emergency_stop_enabled = emergency_stop_before
+
+
+def test_bounded_paper_route_execution_metadata_keeps_live_capital_closed() -> None:
+    target = _bounded_hpairs_target(source_account_label='PA3SX7FYNUTF')
+    strategy = Strategy(
+        name='microbar-cross-sectional-pairs-v1',
+        description='metadata fixture',
+        enabled=True,
+        base_timeframe='1Sec',
+        universe_type='static',
+        universe_symbols=['AAPL', 'AMZN'],
+    )
+
+    metadata = SimpleTradingPipeline._bounded_paper_route_execution_metadata(
+        target=target,
+        strategy=strategy,
+        symbol='AAPL',
+        action='buy',
+        account_label='PA3SX7FYNUTF',
+        max_notional=Decimal('25'),
+    )
+
+    assert metadata['execution_lane'] == 'simple'
+    assert metadata['submit_path'] == 'bounded_paper_route_collection'
+    assert metadata['execution_account_label'] == 'PA3SX7FYNUTF'
+    policy = metadata['execution_policy']
+    assert isinstance(policy, dict)
+    assert policy['authority'] == 'bounded_paper_route_collection_only'
+    assert policy['live_capital_routing_enabled'] is False
+    assert policy['capital_promotion_allowed'] is False
+    assert policy['target_account_label'] == 'TORGHUT_SIM'
+    assert policy['runtime_account_label'] == 'PA3SX7FYNUTF'
+    assert policy['idempotency_key_basis'] == 'trade_decision_hash_client_order_id'
+    assert policy['order_feed_linkage_keys'] == [
+        'alpaca_account_label',
+        'client_order_id',
+    ]
