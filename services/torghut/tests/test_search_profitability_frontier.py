@@ -694,6 +694,20 @@ class TestSearchProfitabilityFrontier(TestCase):
                 ],
                 "0.55",
             )
+            self.assertTrue(
+                payload["frontier_ranking_policy"][
+                    "prefers_distribution_over_single_lucky_day"
+                ]
+            )
+            ranking = payload["top"][0]["frontier_ranking"]
+            self.assertEqual(ranking["median_daily_net_pnl"], "300")
+            self.assertEqual(ranking["p10_daily_net_pnl"], "0")
+            self.assertIn("best_day_share", ranking)
+            self.assertIn("drawdown", ranking)
+            self.assertEqual(ranking["closed_trade_count"], 3)
+            self.assertIn("filled_notional", ranking)
+            self.assertIn("target_implied_notional", ranking)
+            self.assertIn("filled_notional_missing", ranking["blockers"])
 
     def test_main_ranks_three_candidates_deterministically(self) -> None:
         with TemporaryDirectory() as tmpdir:

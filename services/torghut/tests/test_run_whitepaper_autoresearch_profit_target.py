@@ -4615,9 +4615,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             tape_path = Path(tmpdir) / "tape.jsonl"
             rows = [
                 SignalEnvelope(
-                    event_ts=datetime(
-                        2026, 2, 23, 14, 30 + index, tzinfo=timezone.utc
-                    ),
+                    event_ts=datetime(2026, 2, 23, 14, 30 + index, tzinfo=timezone.utc),
                     symbol=symbol,
                     timeframe="1Min",
                     seq=index,
@@ -4651,6 +4649,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             args.symbols = "NVDA,AAPL,INTC"
             args.replay_tape_path = tape_path
             args.replay_tape_preview_top_k = 8
+            args.replay_tape_exact_candidate_cap = 99
             candidate_selection = {
                 "schema_version": "torghut.whitepaper-autoresearch-selection.v1",
                 "budget": {"selected_count": len(specs)},
@@ -4687,6 +4686,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             queue_payload["proof_semantics"]["label"],
             fast_replay.FAST_REPLAY_PROOF_SEMANTICS_LABEL,
         )
+        self.assertTrue(queue_payload["prefilter_only"])
+        self.assertFalse(queue_payload["promotion_allowed"])
+        self.assertFalse(queue_payload["final_promotion_allowed"])
         self.assertEqual(
             [entry["frontier_bucket"] for entry in queue_payload["entries"]],
             [
@@ -4698,6 +4700,17 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 "exploration",
             ],
         )
+        first_entry = queue_payload["entries"][0]
+        self.assertIn("observed_post_cost_expectancy_bps", first_entry)
+        self.assertIn("required_daily_notional", first_entry)
+        self.assertIn("target_implied_notional_context", first_entry)
+        self.assertIn("cost_impact_lineage", first_entry)
+        self.assertEqual(
+            first_entry["adv_capacity_context"]["status"], "missing_source_backed_adv"
+        )
+        self.assertIn("source_backed_adv_missing", first_entry["lineage_blockers"])
+        self.assertFalse(first_entry["promotion_allowed"])
+        self.assertFalse(first_entry["final_promotion_allowed"])
 
     def test_fast_replay_preview_scores_microstructure_diagnostics_preview_only(
         self,
