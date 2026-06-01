@@ -1738,6 +1738,20 @@ class TestRuntimeWindowImport(TestCase):
         self.assertEqual(readback["runtime_ledger_closed_trade_count"], 1)
         self.assertEqual(readback["runtime_ledger_open_position_count"], 0)
         self.assertEqual(readback["runtime_ledger_filled_notional"], "200")
+        self.assertEqual(
+            readback["runtime_ledger_bucket_refs"],
+            [
+                "strategy_runtime_ledger_buckets:"
+                f"{summary['runtime_materialization_target']['runtime_ledger_bucket_ids'][0]}"
+            ],
+        )
+        self.assertEqual(
+            readback["evidence_grade_runtime_ledger_bucket_refs"],
+            [
+                "strategy_runtime_ledger_buckets:"
+                f"{summary['runtime_materialization_target']['evidence_grade_runtime_ledger_bucket_ids'][0]}"
+            ],
+        )
         self.assertIn("postgres:trade_decisions", readback["source_refs"])
         self.assertIn(
             "runtime_order_feed_execution_source", readback["authority_classes"]
@@ -3138,6 +3152,10 @@ class TestRuntimeWindowImport(TestCase):
         self.assertEqual(target["promotion_decision_count"], 1)
         self.assertEqual(target["runtime_ledger_bucket_count"], 0)
         self.assertEqual(target["evidence_grade_runtime_ledger_bucket_count"], 0)
+        self.assertEqual(target["readback"]["runtime_ledger_bucket_count"], 0)
+        self.assertEqual(
+            target["readback"]["evidence_grade_runtime_ledger_bucket_count"], 0
+        )
         self.assertIn(
             "runtime_window_import_runtime_ledger_bucket_missing",
             target["materialization_blockers"],

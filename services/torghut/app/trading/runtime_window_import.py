@@ -1447,82 +1447,22 @@ def _runtime_ledger_bucket_payloads(payload: Mapping[str, Any]) -> list[dict[str
     return [single_payload] if single_payload else []
 
 
-def _candidate_filter(column: Any, candidate_id: str | None) -> ColumnElement[bool]:
-    if candidate_id is None:
-        return column.is_(None)
-    return column == candidate_id
-
-
 def _row_ref(table_name: str, row_id: Any) -> str:
     return f"{table_name}:{row_id}"
 
 
-def _runtime_window_import_readback(
+def _runtime_window_import_readback_from_rows(
     *,
-    session: Session,
     run_id: str,
     candidate_id: str | None,
     hypothesis_id: str,
     observed_stage: str,
     window_start: datetime,
     window_end: datetime,
+    metric_rows: Sequence[StrategyHypothesisMetricWindow],
+    promotion_rows: Sequence[StrategyPromotionDecision],
+    ledger_rows: Sequence[StrategyRuntimeLedgerBucket],
 ) -> dict[str, Any]:
-    metric_rows = (
-        session.execute(
-            select(StrategyHypothesisMetricWindow)
-            .where(
-                StrategyHypothesisMetricWindow.run_id == run_id,
-                _candidate_filter(
-                    StrategyHypothesisMetricWindow.candidate_id, candidate_id
-                ),
-                StrategyHypothesisMetricWindow.hypothesis_id == hypothesis_id,
-                StrategyHypothesisMetricWindow.observed_stage == observed_stage,
-            )
-            .order_by(
-                StrategyHypothesisMetricWindow.window_started_at,
-                StrategyHypothesisMetricWindow.window_ended_at,
-                StrategyHypothesisMetricWindow.id,
-            )
-        )
-        .scalars()
-        .all()
-    )
-    promotion_rows = (
-        session.execute(
-            select(StrategyPromotionDecision)
-            .where(
-                StrategyPromotionDecision.run_id == run_id,
-                _candidate_filter(StrategyPromotionDecision.candidate_id, candidate_id),
-                StrategyPromotionDecision.hypothesis_id == hypothesis_id,
-                StrategyPromotionDecision.promotion_target == observed_stage,
-            )
-            .order_by(
-                StrategyPromotionDecision.created_at, StrategyPromotionDecision.id
-            )
-        )
-        .scalars()
-        .all()
-    )
-    ledger_rows = (
-        session.execute(
-            select(StrategyRuntimeLedgerBucket)
-            .where(
-                StrategyRuntimeLedgerBucket.run_id == run_id,
-                _candidate_filter(
-                    StrategyRuntimeLedgerBucket.candidate_id, candidate_id
-                ),
-                StrategyRuntimeLedgerBucket.hypothesis_id == hypothesis_id,
-                StrategyRuntimeLedgerBucket.observed_stage == observed_stage,
-            )
-            .order_by(
-                StrategyRuntimeLedgerBucket.bucket_started_at,
-                StrategyRuntimeLedgerBucket.bucket_ended_at,
-                StrategyRuntimeLedgerBucket.id,
-            )
-        )
-        .scalars()
-        .all()
-    )
     evidence_grade_ledger_rows = [
         row
         for row in ledger_rows
@@ -2958,14 +2898,20 @@ def persist_observed_runtime_windows(
             )
     proof_status = "blocked" if proof_blockers else "ok"
     tigerbeetle_proof_refs = _runtime_ledger_tigerbeetle_proof_refs(runtime_ledger_rows)
-    runtime_import_readback = _runtime_window_import_readback(
-        session=session,
+    # Build readback from flushed rows in the current unit of work instead of
+    # re-querying broad governance tables before commit. Large SIM ledgers can
+    # make those scans slow enough for the import job to be killed, rolling back
+    # otherwise-valid source-backed buckets to zero durable rows.
+    runtime_import_readback = _runtime_window_import_readback_from_rows(
         run_id=run_id,
         candidate_id=candidate_id,
         hypothesis_id=hypothesis_id,
         observed_stage=observed_stage,
         window_start=import_window_start,
         window_end=import_window_end,
+        metric_rows=metric_window_rows,
+        promotion_rows=[promotion_decision_row],
+        ledger_rows=runtime_ledger_rows,
     )
     runtime_materialization_target.update(
         {
