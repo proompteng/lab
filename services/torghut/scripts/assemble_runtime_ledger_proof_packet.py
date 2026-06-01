@@ -941,6 +941,10 @@ def _runtime_import_target_materialization_ref(
         materialization_target,
         observation,
     )
+    readback = _runtime_import_readback_payload(
+        summary=summary,
+        target=materialization_target,
+    )
     ref: dict[str, Any] = {
         "materialized": materialized,
         "candidate_id": first_text("candidate_id"),
@@ -985,6 +989,29 @@ def _runtime_import_target_materialization_ref(
         ),
         "blockers": list(blockers),
     }
+    if readback:
+        ref["readback"] = {
+            "schema_version": _text(readback.get("schema_version")),
+            "metric_window_count": _int(readback.get("metric_window_count")),
+            "promotion_decision_count": _int(readback.get("promotion_decision_count")),
+            "runtime_ledger_bucket_count": _int(
+                readback.get("runtime_ledger_bucket_count")
+            ),
+            "evidence_grade_runtime_ledger_bucket_count": _int(
+                readback.get("evidence_grade_runtime_ledger_bucket_count")
+            ),
+            "metric_window_refs": _text_list(readback.get("metric_window_refs")),
+            "promotion_decision_refs": _text_list(
+                readback.get("promotion_decision_refs")
+            ),
+            "runtime_ledger_bucket_refs": _text_list(
+                readback.get("runtime_ledger_bucket_refs")
+            ),
+            "evidence_grade_runtime_ledger_bucket_refs": _text_list(
+                readback.get("evidence_grade_runtime_ledger_bucket_refs")
+            ),
+            "source_refs": _text_list(readback.get("source_refs")),
+        }
     if tigerbeetle_refs:
         ref["tigerbeetle"] = tigerbeetle_refs
     return {key: value for key, value in ref.items() if value not in ("", [], None)}
@@ -1065,6 +1092,80 @@ def _runtime_import_materialization_metadata_blockers(
     ]
 
 
+def _runtime_import_readback_payload(
+    *,
+    summary: Mapping[str, Any],
+    target: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    nested = _mapping(target.get("readback"))
+    if nested:
+        return nested
+    return _mapping(summary.get("runtime_window_import_readback"))
+
+
+def _runtime_import_readback_blockers(
+    *,
+    target: Mapping[str, Any],
+    readback: Mapping[str, Any],
+    profit_proof_count: int,
+) -> list[str]:
+    if not readback:
+        return ["runtime_window_import_readback_missing"]
+
+    blockers: list[str] = []
+    count_pairs = (
+        (
+            "metric_window_count",
+            "runtime_window_import_metric_window_readback_mismatch",
+        ),
+        (
+            "promotion_decision_count",
+            "runtime_window_import_promotion_decision_readback_mismatch",
+        ),
+        (
+            "runtime_ledger_bucket_count",
+            "runtime_window_import_runtime_ledger_bucket_readback_mismatch",
+        ),
+        (
+            "evidence_grade_runtime_ledger_bucket_count",
+            "runtime_window_import_evidence_grade_runtime_ledger_bucket_readback_mismatch",
+        ),
+    )
+    for key, blocker in count_pairs:
+        if _int(target.get(key)) != _int(readback.get(key)):
+            blockers.append(blocker)
+
+    ref_pairs = (
+        (
+            "metric_window_ids",
+            "metric_window_refs",
+            "runtime_window_import_metric_window_refs_readback_mismatch",
+        ),
+        (
+            "runtime_ledger_bucket_ids",
+            "runtime_ledger_bucket_refs",
+            "runtime_window_import_runtime_ledger_bucket_refs_readback_mismatch",
+        ),
+        (
+            "evidence_grade_runtime_ledger_bucket_ids",
+            "evidence_grade_runtime_ledger_bucket_refs",
+            "runtime_window_import_evidence_grade_runtime_ledger_bucket_refs_readback_mismatch",
+        ),
+    )
+    for target_key, readback_key, blocker in ref_pairs:
+        target_refs = _text_list(target.get(target_key))
+        readback_refs = _text_list(readback.get(readback_key))
+        if len(readback_refs) < len(target_refs):
+            blockers.append(blocker)
+    if _text(target.get("promotion_decision_id")) and not _text_list(
+        readback.get("promotion_decision_refs")
+    ):
+        blockers.append("runtime_window_import_promotion_decision_ref_readback_missing")
+    if profit_proof_count > 0 and not _text_list(readback.get("source_refs")):
+        blockers.append("runtime_window_import_readback_source_refs_missing")
+    return list(dict.fromkeys(blockers))
+
+
 def _runtime_import_target_surface_blockers(
     *,
     summary: Mapping[str, Any],
@@ -1109,6 +1210,13 @@ def _runtime_import_target_surface_blockers(
         blockers.extend(
             _runtime_import_target_blocker_codes(target.get("proof_blockers"))
         )
+    blockers.extend(
+        _runtime_import_readback_blockers(
+            target=target,
+            readback=_runtime_import_readback_payload(summary=summary, target=target),
+            profit_proof_count=profit_proof_count,
+        )
+    )
     return list(dict.fromkeys(blockers))
 
 
@@ -2034,8 +2142,12 @@ def build_runtime_ledger_proof_packet(
             runtime_summary.get("runtime_ledger_closed_trade_count"),
         )
     )
-    open_position_count_present = "runtime_ledger_open_position_count" in runtime_summary
-    open_position_count = _int(runtime_summary.get("runtime_ledger_open_position_count"))
+    open_position_count_present = (
+        "runtime_ledger_open_position_count" in runtime_summary
+    )
+    open_position_count = _int(
+        runtime_summary.get("runtime_ledger_open_position_count")
+    )
     filled_notional = _decimal(runtime_summary.get("runtime_ledger_filled_notional"))
     cost_amount = _decimal(runtime_summary.get("runtime_ledger_cost_amount"))
     net_pnl = _decimal(
@@ -2113,7 +2225,9 @@ def build_runtime_ledger_proof_packet(
     ledger_schema_versions = _text_list(
         runtime_summary.get("runtime_ledger_schema_versions")
     )
-    cost_basis_counts = _mapping(runtime_summary.get("runtime_ledger_cost_basis_counts"))
+    cost_basis_counts = _mapping(
+        runtime_summary.get("runtime_ledger_cost_basis_counts")
+    )
     cost_model_hash_count = _int(
         runtime_summary.get("runtime_ledger_cost_model_hash_count")
     )
@@ -2193,8 +2307,12 @@ def build_runtime_ledger_proof_packet(
             authority_mechanical_blockers.append(
                 "runtime_ledger_open_position_count_nonzero"
             )
-        if cost_amount is None or (not cost_basis_counts and cost_model_hash_count <= 0):
-            authority_mechanical_blockers.append("runtime_ledger_explicit_costs_missing")
+        if cost_amount is None or (
+            not cost_basis_counts and cost_model_hash_count <= 0
+        ):
+            authority_mechanical_blockers.append(
+                "runtime_ledger_explicit_costs_missing"
+            )
         if source_authority_bucket_count < max(1, bucket_count):
             authority_mechanical_blockers.append(
                 "runtime_ledger_source_authority_missing"
@@ -2230,9 +2348,7 @@ def build_runtime_ledger_proof_packet(
         },
         expected={
             "min_closed_round_trips": min_runtime_ledger_closed_round_trips,
-            "min_filled_notional": _decimal_text(
-                min_runtime_ledger_filled_notional
-            ),
+            "min_filled_notional": _decimal_text(min_runtime_ledger_filled_notional),
             "open_position_count": 0,
             "explicit_costs": True,
             "source_backed_runtime_ledger_refs": True,
