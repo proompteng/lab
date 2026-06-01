@@ -6487,6 +6487,24 @@ class TestPaperRouteEvidenceAudit(TestCase):
             target_plan_payload["runtime_window_import_plan"]["purpose"],
             "next_clean_session_paper_route_runtime_window_collection_after_discard",
         )
+        self.assertEqual(
+            target_plan_payload["purpose"],
+            "next_clean_session_paper_route_runtime_window_collection_after_discard",
+        )
+        self.assertEqual(
+            target_plan_payload["targets"][0]["paper_route_probe_window_start"],
+            "2026-05-27T13:30:00+00:00",
+        )
+        self.assertEqual(
+            target_plan_payload["targets"][0]["paper_route_clean_window_state"],
+            "clean_window_required",
+        )
+        self.assertEqual(
+            target_plan_payload["targets"][0][
+                "paper_route_account_contamination_blockers"
+            ],
+            [],
+        )
 
     def test_active_window_contamination_blocks_target_plan_collection(self) -> None:
         window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)

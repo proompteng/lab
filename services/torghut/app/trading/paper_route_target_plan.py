@@ -58,6 +58,9 @@ def paper_route_target_plan_targets(plan: Mapping[str, Any]) -> list[dict[str, A
 
 def paper_route_target_plan_from_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     live_gate = _to_str_map(payload.get("live_submission_gate"))
+    next_clean_after_discard_plan = _to_str_map(
+        payload.get("next_clean_paper_route_runtime_window_targets_after_discard")
+    )
     runtime_window_plan = _to_str_map(payload.get("runtime_window_import_plan"))
     source_runtime_window_plan = _to_str_map(
         payload.get("source_runtime_window_import_plan")
@@ -66,6 +69,7 @@ def paper_route_target_plan_from_payload(payload: Mapping[str, Any]) -> dict[str
         payload.get("next_paper_route_runtime_window_targets")
     )
     candidate_plans = [
+        next_clean_after_discard_plan,
         next_paper_route_plan,
         source_runtime_window_plan,
         runtime_window_plan,
@@ -213,9 +217,7 @@ def _text_items(value: object) -> list[str]:
     if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
         return []
     return [
-        str(item).strip()
-        for item in cast(Sequence[object], value)
-        if str(item).strip()
+        str(item).strip() for item in cast(Sequence[object], value) if str(item).strip()
     ]
 
 
@@ -374,7 +376,10 @@ def _target_identity_blockers(identity: Mapping[str, Any]) -> list[str]:
         or (field == "target_notional" and _safe_decimal(identity.get(field)) <= 0)
         or (field == "target_quantity" and _safe_decimal(identity.get(field)) <= 0)
     ]
-    if _safe_text(identity.get("account_label")) != PAPER_ROUTE_MATERIALIZATION_ACCOUNT_LABEL:
+    if (
+        _safe_text(identity.get("account_label"))
+        != PAPER_ROUTE_MATERIALIZATION_ACCOUNT_LABEL
+    ):
         blockers.append("paper_route_target_torghut_sim_account_required")
     if _safe_text(identity.get("bounded_collection_stage")) not in {
         "paper",
@@ -406,7 +411,9 @@ def _target_materialization_blockers(
     quantities = _target_symbol_quantities(target)
     if not actions:
         blockers.append("paper_route_target_symbol_actions_missing")
-    missing_quantity_symbols = sorted(symbol for symbol in actions if symbol not in quantities)
+    missing_quantity_symbols = sorted(
+        symbol for symbol in actions if symbol not in quantities
+    )
     if missing_quantity_symbols:
         blockers.append("paper_route_target_symbol_quantities_missing")
     return sorted(dict.fromkeys(blockers))

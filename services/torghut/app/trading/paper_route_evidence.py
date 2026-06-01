@@ -6622,6 +6622,7 @@ def build_paper_route_target_plan_payload(
     )
     effective_target_plan: Mapping[str, Any] = {}
     for candidate_plan in (
+        next_clean_after_discard_targets,
         next_targets,
         source_targets,
         runtime_window_import_plan,

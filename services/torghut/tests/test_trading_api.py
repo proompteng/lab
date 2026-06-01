@@ -9081,6 +9081,48 @@ class TestTradingApi(TestCase):
             plan["targets"][0]["window_start"], "2026-06-01T13:30:00+00:00"
         )
 
+    def test_paper_route_target_plan_from_payload_prefers_clean_after_discard(
+        self,
+    ) -> None:
+        plan = _paper_route_target_plan_from_payload(
+            {
+                "schema_version": "torghut.paper-route-target-plan.v1",
+                "next_clean_paper_route_runtime_window_targets_after_discard": {
+                    "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                    "target_count": 1,
+                    "purpose": "next_clean_session_paper_route_runtime_window_collection_after_discard",
+                    "targets": [
+                        {
+                            "hypothesis_id": "H-PAIRS-01",
+                            "candidate_id": "clean-followup-target",
+                            "window_start": "2026-06-02T13:30:00+00:00",
+                            "window_end": "2026-06-02T20:00:00+00:00",
+                            "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                        }
+                    ],
+                },
+                "next_paper_route_runtime_window_targets": {
+                    "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+                    "target_count": 1,
+                    "purpose": "latest_closed_session_paper_route_runtime_window_import",
+                    "targets": [
+                        {
+                            "hypothesis_id": "H-PAIRS-01",
+                            "candidate_id": "contaminated-closed-target",
+                            "window_start": "2026-06-01T13:30:00+00:00",
+                            "window_end": "2026-06-01T20:00:00+00:00",
+                            "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                        }
+                    ],
+                },
+            }
+        )
+
+        self.assertEqual(plan["targets"][0]["candidate_id"], "clean-followup-target")
+        self.assertEqual(
+            plan["targets"][0]["window_start"], "2026-06-02T13:30:00+00:00"
+        )
+
     def test_paper_route_target_plan_from_payload_falls_back_to_source_plan(
         self,
     ) -> None:
