@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import hashlib
+import json
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -34,6 +36,60 @@ ADAPTIVE_PARTICIPATION_TIGHTEN = Decimal("0.75")
 ADAPTIVE_PARTICIPATION_RELAX = Decimal("1.0")
 ADAPTIVE_EXECUTION_SLOWDOWN = Decimal("1.40")
 ADAPTIVE_EXECUTION_SPEEDUP = Decimal("0.85")
+EXECUTION_TCA_COST_LINEAGE_SCHEMA_VERSION = "torghut.execution-tca-cost-lineage.v1"
+POST_COST_PNL_BASIS = "realized_strategy_pnl_after_explicit_costs"
+
+_EXPLICIT_COST_AMOUNT_KEYS = (
+    "cost_amount",
+    "explicit_cost",
+    "explicit_cost_amount",
+    "commission",
+    "fees",
+    "fee_amount",
+    "broker_fee",
+    "total_fees",
+    "total_fee_amount",
+)
+_COST_BASIS_KEYS = (
+    "cost_basis",
+    "cost_source",
+    "fee_basis",
+    "commission_basis",
+    "broker_fee_basis",
+)
+_EXECUTION_POLICY_HASH_KEYS = (
+    "execution_policy_hash",
+    "execution_policy_sha256",
+    "policy_hash",
+)
+_EXECUTION_POLICY_PAYLOAD_KEYS = (
+    "execution_policy",
+    "execution_policy_context",
+    "execution_advisor",
+    "_execution_advice_provenance",
+)
+_COST_MODEL_HASH_KEYS = (
+    "cost_model_hash",
+    "fee_model_hash",
+    "cost_model_sha256",
+)
+_COST_MODEL_PAYLOAD_KEYS = (
+    "cost_model",
+    "cost_model_config",
+    "transaction_cost_model",
+    "fee_model",
+    "fees_model",
+)
+_LINEAGE_HASH_KEYS = (
+    "lineage_hash",
+    "candidate_lineage_hash",
+    "replay_lineage_hash",
+    "candidate_evaluation_key",
+    "replay_data_hash",
+    "replay_tape_content_sha256",
+    "dataset_snapshot_hash",
+    "source_query_digest",
+)
 
 
 @dataclass(frozen=True)
@@ -147,6 +203,12 @@ def upsert_execution_tca_metric(
         signed_qty=signed_qty,
         filled_qty=filled_qty,
     )
+    _repair_execution_tca_cost_lineage(
+        execution=execution,
+        decision=decision,
+        filled_qty=filled_qty,
+        avg_fill_price=avg_fill_price,
+    )
 
     existing = session.execute(
         select(ExecutionTCAMetric).where(
@@ -202,6 +264,282 @@ def upsert_execution_tca_metric(
     session.add(existing)
     _journal_tigerbeetle_execution_cost(session, execution, existing)
     return existing
+
+
+def _repair_execution_tca_cost_lineage(
+    *,
+    execution: Execution,
+    decision: TradeDecision | None,
+    filled_qty: Decimal,
+    avg_fill_price: Decimal | None,
+) -> dict[str, object]:
+    """Attach deterministic runtime-ledger cost lineage to execution audit JSON.
+
+    The repair is intentionally conservative: it computes filled notional only
+    from persisted fill quantity and average fill price, accepts explicit costs
+    only from persisted execution/order payload fields, and records missing or
+    ambiguous source evidence as blockers instead of fabricating authority.
+    """
+
+    audit_payload = _mapping_from_any(execution.execution_audit_json)
+    raw_order_payload = _mapping_from_any(execution.raw_order)
+    decision_payload = _mapping_from_any(decision.decision_json if decision else None)
+    source_payloads = _lineage_source_payloads(
+        raw_order_payload,
+        audit_payload,
+        decision_payload,
+    )
+    blockers: list[str] = []
+    source_fields: dict[str, object] = {}
+
+    filled_notional: Decimal | None = None
+    if filled_qty > 0 and avg_fill_price is not None and avg_fill_price > 0:
+        filled_notional = filled_qty * avg_fill_price
+        source_fields["filled_notional"] = [
+            "executions.filled_qty",
+            "executions.avg_fill_price",
+        ]
+    else:
+        blockers.append("filled_notional_missing")
+
+    cost_amount, cost_basis, cost_source_field = _resolve_explicit_cost(source_payloads)
+    if cost_amount is None:
+        blockers.append("explicit_cost_missing")
+    elif cost_basis is None:
+        blockers.append("cost_basis_missing")
+    else:
+        source_fields["explicit_cost"] = cost_source_field
+
+    execution_policy_hashes = _hash_candidates(
+        source_payloads,
+        hash_keys=_EXECUTION_POLICY_HASH_KEYS,
+        payload_keys=_EXECUTION_POLICY_PAYLOAD_KEYS,
+    )
+    if len(execution_policy_hashes) == 0:
+        blockers.append("execution_policy_hash_missing")
+    elif len(execution_policy_hashes) > 1:
+        blockers.append("execution_policy_hash_ambiguous")
+    execution_policy_hash = (
+        next(iter(execution_policy_hashes))
+        if len(execution_policy_hashes) == 1
+        else None
+    )
+
+    cost_model_hashes = _hash_candidates(
+        source_payloads,
+        hash_keys=_COST_MODEL_HASH_KEYS,
+        payload_keys=_COST_MODEL_PAYLOAD_KEYS,
+    )
+    if (
+        len(cost_model_hashes) == 0
+        and cost_amount is not None
+        and cost_basis is not None
+        and cost_source_field is not None
+    ):
+        cost_model_hashes.add(
+            _stable_payload_digest(
+                {
+                    "cost_basis": cost_basis,
+                    "kind": "explicit_cost_source",
+                    "source_field": cost_source_field,
+                }
+            )
+        )
+    if len(cost_model_hashes) == 0:
+        blockers.append("cost_model_hash_missing")
+    elif len(cost_model_hashes) > 1:
+        blockers.append("cost_model_hash_ambiguous")
+    cost_model_hash = (
+        next(iter(cost_model_hashes)) if len(cost_model_hashes) == 1 else None
+    )
+
+    lineage_hash = _resolve_lineage_hash(
+        source_payloads=source_payloads,
+        execution=execution,
+        decision=decision,
+    )
+    blockers = _dedupe_texts(blockers)
+    source_backed = not blockers
+    lineage_payload: dict[str, object] = {
+        "schema_version": EXECUTION_TCA_COST_LINEAGE_SCHEMA_VERSION,
+        "status": "source_backed" if source_backed else "blocked",
+        "source_backed": source_backed,
+        "promotion_authority": False,
+        "promotion_authority_reason": "lineage_dimension_only_not_promotion_authority",
+        "blockers": blockers,
+        "pnl_basis": POST_COST_PNL_BASIS,
+        "filled_notional": str(filled_notional)
+        if filled_notional is not None
+        else None,
+        "filled_notional_basis": "execution_filled_qty_x_avg_fill_price"
+        if filled_notional is not None
+        else None,
+        "explicit_cost_amount": str(cost_amount) if cost_amount is not None else None,
+        "cost_basis": cost_basis,
+        "execution_policy_hash": execution_policy_hash,
+        "cost_model_hash": cost_model_hash,
+        "lineage_hash": lineage_hash,
+        "source_fields": source_fields,
+    }
+
+    repaired_audit = dict(audit_payload)
+    repaired_audit["runtime_ledger_lineage"] = lineage_payload
+    repaired_audit["execution_tca_cost_lineage"] = lineage_payload
+    if filled_notional is not None:
+        repaired_audit["filled_notional"] = str(filled_notional)
+    if cost_amount is not None:
+        repaired_audit["cost_amount"] = str(cost_amount)
+    if cost_basis is not None:
+        repaired_audit["cost_basis"] = cost_basis
+    if execution_policy_hash is not None:
+        repaired_audit["execution_policy_hash"] = execution_policy_hash
+    if cost_model_hash is not None:
+        repaired_audit["cost_model_hash"] = cost_model_hash
+    repaired_audit["lineage_hash"] = lineage_hash
+    repaired_audit["pnl_basis"] = POST_COST_PNL_BASIS
+    execution.execution_audit_json = repaired_audit
+    return lineage_payload
+
+
+def _mapping_from_any(value: object | None) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        return {}
+    mapping = cast(Mapping[object, object], value)
+    return {str(key): item for key, item in mapping.items()}
+
+
+def _lineage_source_payloads(
+    *values: Mapping[str, object],
+) -> list[Mapping[str, object]]:
+    payloads: list[Mapping[str, object]] = []
+
+    def append_payload(value: object, *, depth: int) -> None:
+        if not isinstance(value, Mapping):
+            return
+        mapping = cast(Mapping[object, object], value)
+        payload = {str(item_key): item for item_key, item in mapping.items()}
+        payloads.append(payload)
+        if depth <= 0:
+            return
+        for nested in payload.values():
+            if isinstance(nested, Mapping):
+                append_payload(cast(Mapping[object, object], nested), depth=depth - 1)
+
+    for value in values:
+        append_payload(value, depth=4)
+    return payloads
+
+
+def _resolve_explicit_cost(
+    payloads: Collection[Mapping[str, object]],
+) -> tuple[Decimal | None, str | None, str | None]:
+    missing_basis_candidate: tuple[Decimal, str] | None = None
+    for payload in payloads:
+        for key in _EXPLICIT_COST_AMOUNT_KEYS:
+            amount = _non_negative_decimal(payload.get(key))
+            if amount is None:
+                continue
+            basis = _text_from_payload(payload, *_COST_BASIS_KEYS)
+            if basis is None:
+                basis = _default_cost_basis_for_field(key)
+            if basis is None:
+                missing_basis_candidate = (amount, key)
+                continue
+            return amount, basis, key
+    if missing_basis_candidate is not None:
+        amount, key = missing_basis_candidate
+        return amount, None, key
+    return None, None, None
+
+
+def _default_cost_basis_for_field(key: str) -> str | None:
+    normalized = key.strip().lower()
+    if normalized == "commission":
+        return "broker_reported_commission"
+    if normalized in {
+        "fees",
+        "fee_amount",
+        "broker_fee",
+        "total_fees",
+        "total_fee_amount",
+    }:
+        return "broker_reported_fees"
+    return None
+
+
+def _hash_candidates(
+    payloads: Collection[Mapping[str, object]],
+    *,
+    hash_keys: Collection[str],
+    payload_keys: Collection[str],
+) -> set[str]:
+    candidates: set[str] = set()
+    for payload in payloads:
+        for key in hash_keys:
+            text = _text_from_payload(payload, key)
+            if text is not None:
+                candidates.add(text)
+        for key in payload_keys:
+            value = payload.get(key)
+            if value is not None and (digest := _stable_payload_digest(value)):
+                candidates.add(digest)
+    return candidates
+
+
+def _resolve_lineage_hash(
+    *,
+    source_payloads: Collection[Mapping[str, object]],
+    execution: Execution,
+    decision: TradeDecision | None,
+) -> str:
+    explicit_hashes = _hash_candidates(
+        source_payloads,
+        hash_keys=_LINEAGE_HASH_KEYS,
+        payload_keys=("lineage", "candidate_lineage", "source_lineage"),
+    )
+    if len(explicit_hashes) == 1:
+        return next(iter(explicit_hashes))
+    return _stable_payload_digest(
+        {
+            "alpaca_account_label": execution.alpaca_account_label,
+            "alpaca_order_id": execution.alpaca_order_id,
+            "client_order_id": execution.client_order_id,
+            "decision_hash": decision.decision_hash if decision is not None else None,
+            "execution_id": str(execution.id),
+            "trade_decision_id": str(execution.trade_decision_id)
+            if execution.trade_decision_id
+            else None,
+        }
+    )
+
+
+def _stable_payload_digest(value: object) -> str:
+    body = json.dumps(value, default=str, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
+def _text_from_payload(payload: Mapping[str, object], *keys: str) -> str | None:
+    for key in keys:
+        text = str(payload.get(key) or "").strip()
+        if text:
+            return text
+    return None
+
+
+def _non_negative_decimal(value: object | None) -> Decimal | None:
+    parsed = _decimal_or_none(value)
+    if parsed is None or parsed < 0:
+        return None
+    return parsed
+
+
+def _dedupe_texts(values: Collection[str]) -> list[str]:
+    deduped: list[str] = []
+    for value in values:
+        text = value.strip()
+        if text and text not in deduped:
+            deduped.append(text)
+    return deduped
 
 
 def _journal_tigerbeetle_execution_cost(
@@ -288,6 +626,7 @@ def refresh_execution_tca_metrics(
             "limit": bounded_limit,
             "account_label": normalized_account_label or None,
             "stale_before": stale_before.isoformat() if stale_before else None,
+            "runtime_ledger_lineage": _execution_lineage_summary(executions),
         }
 
     refreshed = 0
@@ -295,6 +634,7 @@ def refresh_execution_tca_metrics(
         upsert_execution_tca_metric(session, execution)
         refreshed += 1
 
+    lineage_summary = _execution_lineage_summary(executions)
     return {
         "selected": len(executions),
         "refreshed": refreshed,
@@ -302,6 +642,7 @@ def refresh_execution_tca_metrics(
         "limit": bounded_limit,
         "account_label": normalized_account_label or None,
         "stale_before": stale_before.isoformat() if stale_before else None,
+        "runtime_ledger_lineage": lineage_summary,
     }
 
 
@@ -387,6 +728,12 @@ def build_tca_gate_inputs(
         account_label=normalized_account_label,
         symbols=normalized_symbols,
     )
+    runtime_ledger_lineage = _build_tca_runtime_ledger_lineage_summary(
+        session,
+        strategy_id=strategy_id,
+        account_label=normalized_account_label,
+        symbols=normalized_symbols,
+    )
     return {
         "account_label": normalized_account_label or None,
         "scope_symbols": list(normalized_symbols),
@@ -429,6 +776,7 @@ def build_tca_gate_inputs(
         "latest_execution_created_at": latest_execution_created_at,
         "unsettled_execution_count": unsettled_execution_count,
         "symbol_breakdown": symbol_breakdown,
+        "runtime_ledger_lineage": runtime_ledger_lineage,
     }
 
 
@@ -464,6 +812,103 @@ def _tca_execution_coverage_stmt(
     if symbols:
         stmt = stmt.where(Execution.symbol.in_(symbols))
     return stmt
+
+
+def _build_tca_runtime_ledger_lineage_summary(
+    session: Session,
+    *,
+    strategy_id: str | None,
+    account_label: str,
+    symbols: tuple[str, ...],
+) -> dict[str, object]:
+    stmt = (
+        select(Execution)
+        .join(ExecutionTCAMetric, ExecutionTCAMetric.execution_id == Execution.id)
+        .where(
+            Execution.avg_fill_price.is_not(None),
+            Execution.filled_qty > 0,
+        )
+    )
+    if strategy_id:
+        stmt = stmt.where(ExecutionTCAMetric.strategy_id == strategy_id)
+    if account_label:
+        stmt = stmt.where(Execution.alpaca_account_label == account_label)
+    if symbols:
+        stmt = stmt.where(Execution.symbol.in_(symbols))
+    return _execution_lineage_summary(session.execute(stmt).scalars().all())
+
+
+def _execution_lineage_summary(executions: Collection[Execution]) -> dict[str, object]:
+    blocker_counts: dict[str, int] = {}
+    source_backed_count = 0
+    filled_notional_count = 0
+    explicit_cost_count = 0
+    execution_policy_hash_count = 0
+    cost_model_hash_count = 0
+    post_cost_pnl_basis_count = 0
+    sample_blockers: list[dict[str, object]] = []
+    for execution in executions:
+        audit_payload = _mapping_from_any(execution.execution_audit_json)
+        lineage = _mapping_from_any(
+            audit_payload.get("runtime_ledger_lineage")
+            or audit_payload.get("execution_tca_cost_lineage")
+        )
+        blockers = [
+            str(item).strip()
+            for item in cast(Collection[object], lineage.get("blockers") or [])
+            if str(item).strip()
+        ]
+        if not lineage:
+            blockers = ["runtime_tca_cost_lineage_readback_missing"]
+        if lineage.get("source_backed") is True and not blockers:
+            source_backed_count += 1
+        if lineage.get("filled_notional") is not None:
+            filled_notional_count += 1
+        if lineage.get("explicit_cost_amount") is not None:
+            explicit_cost_count += 1
+        if lineage.get("execution_policy_hash") is not None:
+            execution_policy_hash_count += 1
+        if lineage.get("cost_model_hash") is not None:
+            cost_model_hash_count += 1
+        if lineage.get("pnl_basis") == POST_COST_PNL_BASIS:
+            post_cost_pnl_basis_count += 1
+        for blocker in blockers:
+            blocker_counts[blocker] = blocker_counts.get(blocker, 0) + 1
+        if blockers and len(sample_blockers) < 10:
+            sample_blockers.append(
+                {
+                    "execution_id": str(execution.id),
+                    "alpaca_order_id": execution.alpaca_order_id,
+                    "symbol": execution.symbol,
+                    "blockers": blockers,
+                }
+            )
+
+    execution_count = len(executions)
+    blockers = sorted(blocker_counts)
+    return {
+        "schema_version": EXECUTION_TCA_COST_LINEAGE_SCHEMA_VERSION,
+        "status": "source_backed"
+        if execution_count > 0
+        and source_backed_count == execution_count
+        and not blockers
+        else "blocked"
+        if execution_count > 0
+        else "missing",
+        "promotion_authority": False,
+        "promotion_authority_reason": "lineage_dimension_only_not_promotion_authority",
+        "execution_count": execution_count,
+        "source_backed_count": source_backed_count,
+        "blocked_count": max(0, execution_count - source_backed_count),
+        "filled_notional_count": filled_notional_count,
+        "explicit_cost_count": explicit_cost_count,
+        "execution_policy_hash_count": execution_policy_hash_count,
+        "cost_model_hash_count": cost_model_hash_count,
+        "post_cost_pnl_basis_count": post_cost_pnl_basis_count,
+        "blockers": blockers,
+        "blocker_counts": dict(sorted(blocker_counts.items())),
+        "sample_blockers": sample_blockers,
+    }
 
 
 def _normalize_tca_symbols(symbols: Collection[str] | None) -> tuple[str, ...]:

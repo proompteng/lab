@@ -995,6 +995,86 @@ def _add_runtime_ledger_profit_proof_checks(
     )
 
 
+def _execution_tca_lineage_summary(tca_source_ref: Mapping[str, Any]) -> dict[str, Any]:
+    lineage = _mapping(
+        tca_source_ref.get("runtime_ledger_lineage")
+        or tca_source_ref.get("execution_tca_cost_lineage")
+    )
+    if not lineage:
+        return {
+            "present": False,
+            "status": "missing",
+            "schema_version": None,
+            "promotion_authority": False,
+            "execution_count": 0,
+            "source_backed_count": 0,
+            "blocked_count": 0,
+            "blockers": ["runtime_tca_cost_lineage_readback_missing"],
+            "blocker_counts": {
+                "runtime_tca_cost_lineage_readback_missing": 1,
+            },
+        }
+    blockers = [
+        _text(item) for item in _sequence(lineage.get("blockers")) if _text(item)
+    ]
+    return {
+        "present": True,
+        "schema_version": _text(lineage.get("schema_version")),
+        "status": _text(lineage.get("status")),
+        "promotion_authority": lineage.get("promotion_authority") is True,
+        "promotion_authority_reason": _text(lineage.get("promotion_authority_reason")),
+        "execution_count": _int(lineage.get("execution_count")),
+        "source_backed_count": _int(lineage.get("source_backed_count")),
+        "blocked_count": _int(lineage.get("blocked_count")),
+        "filled_notional_count": _int(lineage.get("filled_notional_count")),
+        "explicit_cost_count": _int(lineage.get("explicit_cost_count")),
+        "execution_policy_hash_count": _int(lineage.get("execution_policy_hash_count")),
+        "cost_model_hash_count": _int(lineage.get("cost_model_hash_count")),
+        "post_cost_pnl_basis_count": _int(lineage.get("post_cost_pnl_basis_count")),
+        "blockers": blockers,
+        "blocker_counts": _mapping(lineage.get("blocker_counts")),
+        "sample_blockers": list(_sequence(lineage.get("sample_blockers"))),
+    }
+
+
+def _add_execution_tca_lineage_check(
+    checks: dict[str, dict[str, Any]],
+    lineage: Mapping[str, Any],
+) -> None:
+    execution_count = _int(lineage.get("execution_count"))
+    source_backed_count = _int(lineage.get("source_backed_count"))
+    blockers = [
+        _text(item) for item in _sequence(lineage.get("blockers")) if _text(item)
+    ]
+    _add_check(
+        checks,
+        "execution_tca_cost_lineage_source_backed",
+        passed=(
+            lineage.get("present") is True
+            and lineage.get("schema_version") == "torghut.execution-tca-cost-lineage.v1"
+            and lineage.get("status") == "source_backed"
+            and execution_count > 0
+            and source_backed_count == execution_count
+            and _int(lineage.get("filled_notional_count")) == execution_count
+            and _int(lineage.get("explicit_cost_count")) == execution_count
+            and _int(lineage.get("execution_policy_hash_count")) == execution_count
+            and _int(lineage.get("cost_model_hash_count")) == execution_count
+            and _int(lineage.get("post_cost_pnl_basis_count")) == execution_count
+            and lineage.get("promotion_authority") is False
+            and not blockers
+        ),
+        observed=lineage,
+        expected={
+            "schema_version": "torghut.execution-tca-cost-lineage.v1",
+            "status": "source_backed",
+            "execution_count": ">0",
+            "source_backed_count": "execution_count",
+            "promotion_authority": False,
+            "blockers": [],
+        },
+    )
+
+
 def evaluate_trading_readiness(
     status: Mapping[str, Any],
     *,
@@ -1154,6 +1234,7 @@ def evaluate_trading_readiness(
     )
 
     tca_source_ref = _mapping(dimensions.get("execution_tca", {}).get("source_ref"))
+    execution_tca_lineage = _execution_tca_lineage_summary(tca_source_ref)
     symbol_routes = _mapping(tca_source_ref.get("symbol_routes"))
     routeable_symbol_count = _int(symbol_routes.get("routeable_symbol_count"))
     blocked_symbol_count = _int(symbol_routes.get("blocked_symbol_count"))
@@ -1185,6 +1266,8 @@ def evaluate_trading_readiness(
         expected=0,
         detail=symbol_routes.get("missing_symbols") or [],
     )
+    if require_runtime_ledger_profit_proof or require_runtime_ledger_proof_packet:
+        _add_execution_tca_lineage_check(checks, execution_tca_lineage)
 
     route_board = _mapping(status.get("route_reacquisition_board"))
     route_board_summary = _mapping(route_board.get("summary"))
@@ -1523,6 +1606,7 @@ def evaluate_trading_readiness(
         "paper_route_preopen_evidence_collection": (
             paper_route_preopen_evidence_collection
         ),
+        "execution_tca_lineage": execution_tca_lineage,
         "completion_profit_proof": {
             "required": require_runtime_ledger_profit_proof,
             "gate_id": DOC29_LIVE_SCALE_GATE,
