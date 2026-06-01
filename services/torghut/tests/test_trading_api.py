@@ -4649,6 +4649,7 @@ class TestTradingApi(TestCase):
         original = {
             "trading_enabled": settings.trading_enabled,
             "trading_mode": settings.trading_mode,
+            "trading_pipeline_mode": settings.trading_pipeline_mode,
             "trading_autonomy_enabled": settings.trading_autonomy_enabled,
             "trading_autonomy_allow_live_promotion": settings.trading_autonomy_allow_live_promotion,
             "trading_kill_switch_enabled": settings.trading_kill_switch_enabled,
@@ -4656,6 +4657,7 @@ class TestTradingApi(TestCase):
         try:
             settings.trading_enabled = True
             settings.trading_mode = "live"
+            settings.trading_pipeline_mode = "legacy"
             settings.trading_autonomy_enabled = False
             settings.trading_autonomy_allow_live_promotion = False
             settings.trading_kill_switch_enabled = True
@@ -4719,6 +4721,7 @@ class TestTradingApi(TestCase):
         finally:
             settings.trading_enabled = original["trading_enabled"]
             settings.trading_mode = original["trading_mode"]
+            settings.trading_pipeline_mode = original["trading_pipeline_mode"]
             settings.trading_autonomy_enabled = original["trading_autonomy_enabled"]
             settings.trading_autonomy_allow_live_promotion = original[
                 "trading_autonomy_allow_live_promotion"
