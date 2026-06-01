@@ -214,6 +214,26 @@ def _target_probe_action(target: Mapping[str, Any]) -> Literal["buy", "sell"]:
     return "buy"
 
 
+def _target_probe_exit_minute_after_open(
+    target: Mapping[str, Any],
+) -> tuple[int | None, bool]:
+    for key in ("exit_minute_after_open", "paper_route_probe_exit_minute_after_open"):
+        exit_minute = SimpleTradingPipeline._paper_route_probe_exit_minute_value(
+            target.get(key)
+        )
+        if exit_minute is not None:
+            return exit_minute, False
+    if _safe_text(
+        target.get("source_kind")
+    ) == "paper_route_probe_runtime_observed" and (
+        _target_truthy(target.get("bounded_evidence_collection_authorized"))
+        or _target_truthy(target.get("paper_probation_authorized"))
+        or _target_truthy(target.get("source_collection_authorized"))
+    ):
+        return _REGULAR_SESSION_MINUTES, True
+    return None, False
+
+
 def _target_truthy(value: object) -> bool:
     if isinstance(value, bool):
         return value
@@ -819,6 +839,26 @@ class SimpleTradingPipeline(TradingPipeline):
                 metadata_exit_minute = (
                     SimpleTradingPipeline._paper_route_probe_exit_minute_value(
                         probe_mapping.get(key)
+                    )
+                )
+                if metadata_exit_minute is not None:
+                    return metadata_exit_minute
+        for params_key in (
+            "paper_route_target_plan_source_decision",
+            "paper_route_target_plan",
+            "strategy_signal_paper",
+        ):
+            target_metadata = decision.params.get(params_key)
+            if not isinstance(target_metadata, Mapping):
+                continue
+            target_mapping = cast(Mapping[str, object], target_metadata)
+            for key in (
+                "exit_minute_after_open",
+                "effective_exit_minute_after_open",
+            ):
+                metadata_exit_minute = (
+                    SimpleTradingPipeline._paper_route_probe_exit_minute_value(
+                        target_mapping.get(key)
                     )
                 )
                 if metadata_exit_minute is not None:
@@ -2340,10 +2380,7 @@ class SimpleTradingPipeline(TradingPipeline):
             "final_promotion_allowed": False,
             **lineage,
         }
-        exit_minute = SimpleTradingPipeline._paper_route_probe_exit_minute_value(
-            target.get("exit_minute_after_open")
-            or target.get("paper_route_probe_exit_minute_after_open")
-        )
+        exit_minute, exit_defaulted = _target_probe_exit_minute_after_open(target)
         if exit_minute is not None:
             effective_exit_minute = min(exit_minute, _REGULAR_SESSION_MINUTES - 1)
             metadata["exit_minute_after_open"] = exit_minute
@@ -2351,6 +2388,11 @@ class SimpleTradingPipeline(TradingPipeline):
             metadata["exit_due_at"] = (
                 window_start + timedelta(minutes=effective_exit_minute)
             ).isoformat()
+            if exit_defaulted:
+                metadata["paper_route_probe_exit_defaulted"] = True
+                metadata["paper_route_probe_exit_default_reason"] = (
+                    "target_plan_evidence_collection_session_close"
+                )
         for key in (
             "candidate_id",
             "hypothesis_id",
@@ -2784,6 +2826,19 @@ class SimpleTradingPipeline(TradingPipeline):
             window_start, window_end = window
             metadata["paper_route_probe_window_start"] = window_start.isoformat()
             metadata["paper_route_probe_window_end"] = window_end.isoformat()
+            exit_minute, exit_defaulted = _target_probe_exit_minute_after_open(target)
+            if exit_minute is not None:
+                effective_exit_minute = min(exit_minute, _REGULAR_SESSION_MINUTES - 1)
+                metadata["exit_minute_after_open"] = exit_minute
+                metadata["effective_exit_minute_after_open"] = effective_exit_minute
+                metadata["exit_due_at"] = (
+                    window_start + timedelta(minutes=effective_exit_minute)
+                ).isoformat()
+                if exit_defaulted:
+                    metadata["paper_route_probe_exit_defaulted"] = True
+                    metadata["paper_route_probe_exit_default_reason"] = (
+                        "target_plan_evidence_collection_session_close"
+                    )
         return metadata
 
     def _with_paper_route_target_lineage(
@@ -2821,6 +2876,11 @@ class SimpleTradingPipeline(TradingPipeline):
             params.setdefault("promotion_allowed", False)
             params.setdefault("final_promotion_authorized", False)
             params.setdefault("final_promotion_allowed", False)
+            if "exit_minute_after_open" in metadata:
+                params.setdefault(
+                    "exit_minute_after_open",
+                    metadata["exit_minute_after_open"],
+                )
             target_plan = params.get("paper_route_target_plan")
             if isinstance(target_plan, Mapping):
                 merged_target_plan = dict(cast(Mapping[str, Any], target_plan))
