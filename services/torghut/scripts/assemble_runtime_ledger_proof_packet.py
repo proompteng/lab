@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Protocol, cast
+from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin
 from urllib.request import urlopen
 
@@ -218,11 +219,78 @@ def _load_json_object(path: Path) -> dict[str, Any]:
 
 
 def _load_json_url(url: str, *, timeout_seconds: float) -> dict[str, Any]:
-    with urlopen(url, timeout=timeout_seconds) as response:
-        payload = json.loads(response.read().decode("utf-8"))
+    try:
+        with urlopen(url, timeout=timeout_seconds) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        body = exc.read()
+        if body:
+            try:
+                payload = json.loads(body.decode("utf-8"))
+            except json.JSONDecodeError:
+                raise exc from None
+            if isinstance(payload, Mapping):
+                result = {
+                    str(key): value
+                    for key, value in cast(Mapping[str, Any], payload).items()
+                }
+                result["source_load"] = {
+                    "source_url": url,
+                    "http_status": exc.code,
+                    "http_reason": str(exc.reason),
+                    "http_error": True,
+                }
+                return result
+        raise
     if not isinstance(payload, Mapping):
         raise ValueError(f"json_object_required:{url}")
     return {str(key): value for key, value in cast(Mapping[str, Any], payload).items()}
+
+
+def _source_fetch_error_payload(
+    *,
+    source_name: str,
+    url: str,
+    error: BaseException,
+) -> dict[str, Any]:
+    blocker = f"{source_name}_fetch_failed"
+    http_status = getattr(error, "code", None)
+    reason = getattr(error, "reason", None)
+    error_payload: dict[str, Any] = {
+        "source_url": url,
+        "blocker": blocker,
+        "error_type": type(error).__name__,
+        "error": str(error),
+    }
+    if http_status is not None:
+        error_payload["http_status"] = http_status
+    if reason is not None:
+        error_payload["http_reason"] = str(reason)
+    return {
+        "schema_version": f"torghut.{source_name}.unavailable.v1",
+        "status": "unavailable",
+        "summary": {
+            "status": "unavailable",
+            "blockers": [blocker],
+        },
+        "runtime_window_import_audit": {
+            "state": blocker,
+            "next_action": f"retry_{source_name}_fetch",
+            "import_ready": False,
+            "blockers": [blocker],
+            "target_blockers": [blocker],
+            "counts": {},
+        },
+        "gates": [
+            {
+                "gate_id": DOC29_LIVE_SCALE_GATE,
+                "status": "blocked",
+                "blocking_reasons": [blocker],
+                "blocked_reason": blocker,
+            }
+        ],
+        "source_load_error": error_payload,
+    }
 
 
 def _ceph_client_from_env() -> tuple[_ObjectStoreClient | None, str]:
@@ -378,11 +446,21 @@ def _load_optional_json_object(
     path: Path | None,
     url: str | None,
     timeout_seconds: float,
+    unavailable_source_name: str | None = None,
 ) -> dict[str, Any] | None:
     if path is not None:
         return _load_json_object(path)
     if url:
-        return _load_json_url(url, timeout_seconds=timeout_seconds)
+        try:
+            return _load_json_url(url, timeout_seconds=timeout_seconds)
+        except (HTTPError, URLError, TimeoutError) as exc:
+            if unavailable_source_name is None:
+                raise
+            return _source_fetch_error_payload(
+                source_name=unavailable_source_name,
+                url=url,
+                error=exc,
+            )
     return None
 
 
@@ -2419,9 +2497,10 @@ def _parser() -> argparse.ArgumentParser:
         "--allow-blocked-exit-zero",
         action="store_true",
         help=(
-            "Exit 0 after writing a blocked/waiting packet. Source load and "
-            "schema errors still fail; this is for scheduled evidence collection "
-            "where a blocked verdict is expected proof state, not job failure."
+            "Exit 0 after writing a blocked/waiting packet. Required source "
+            "schema errors still fail; degraded paper-route/completion service "
+            "fetches are recorded as proof blockers so scheduled evidence "
+            "collection still uploads an honest packet."
         ),
     )
     return parser
@@ -2485,6 +2564,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         path=args.paper_route_evidence_file,
         url=args.paper_route_evidence_url,
         timeout_seconds=args.timeout_seconds,
+        unavailable_source_name="paper_route_evidence",
     )
     runtime_window_import = _load_optional_json_object(
         path=args.runtime_window_import_file,
@@ -2495,6 +2575,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         path=args.completion_file,
         url=args.completion_url,
         timeout_seconds=args.timeout_seconds,
+        unavailable_source_name="completion",
     )
     assert status is not None
     packet = build_runtime_ledger_proof_packet(
