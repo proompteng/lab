@@ -131,6 +131,10 @@ from .trading.paper_route_target_plan import (
     paper_route_target_plan_from_payload as _shared_paper_route_target_plan_from_payload,
 )
 from .trading.paper_route_evidence import (
+    DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
+    DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
+    MAX_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
+    MAX_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
     build_paper_route_evidence_audit,
     build_paper_route_target_plan_payload,
 )
@@ -4609,6 +4613,18 @@ def trading_runtime_profitability(
 
 @app.get("/trading/paper-route-evidence")
 def trading_paper_route_evidence(
+    lookback_hours: int = Query(
+        DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
+        ge=1,
+        le=MAX_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
+        description="Bounded fallback lookback window for targets without explicit windows.",
+    ),
+    target_limit: int = Query(
+        DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
+        ge=1,
+        le=MAX_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
+        description="Maximum number of paper-route targets to audit.",
+    ),
     session: Session = Depends(get_session),
 ) -> JSONResponse:
     """Return target-by-target paper-route evidence collection status."""
@@ -4672,6 +4688,8 @@ def trading_paper_route_evidence(
         session,
         live_submission_gate=cast(Mapping[str, Any], live_submission_gate),
         route_reacquisition_book=route_reacquisition_book,
+        lookback_hours=lookback_hours,
+        target_limit=target_limit,
         target_account_audit_available=settings.trading_mode == "paper",
     )
     return JSONResponse(status_code=200, content=jsonable_encoder(payload))
