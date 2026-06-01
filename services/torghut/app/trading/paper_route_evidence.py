@@ -1624,8 +1624,7 @@ def _next_paper_route_runtime_window_targets(
     account_pre_session_clean_count = sum(
         1
         for item in account_pre_session_items
-        if item.get("state") == "clean"
-        and not _unique_text_items(item.get("blockers"))
+        if item.get("state") == "clean" and not _unique_text_items(item.get("blockers"))
     )
     account_pre_session_blocked_count = sum(
         1
@@ -2473,7 +2472,9 @@ def _runtime_ledger_bucket_diagnostic_blockers(
         if str(item).strip()
     ]
     blockers.extend(
-        runtime_ledger_promotion_source_authority_blockers(_as_mapping(row.payload_json))
+        runtime_ledger_promotion_source_authority_blockers(
+            _as_mapping(row.payload_json)
+        )
     )
     return list(dict.fromkeys(blockers))
 
@@ -2626,7 +2627,9 @@ def _runtime_ledger_non_evidence_diagnostic_summary(
             else Decimal("0")
         ),
         "blocker_counts": dict(sorted(blocker_counts.items())),
-        "source_decision_mode_counts": dict(sorted(source_decision_mode_counts.items())),
+        "source_decision_mode_counts": dict(
+            sorted(source_decision_mode_counts.items())
+        ),
         "source_decision_mode_bucket_counts": dict(
             sorted(source_decision_mode_bucket_counts.items())
         ),
@@ -3698,6 +3701,44 @@ def _runtime_ledger_proof_packet_handoff(
     }
 
 
+def _deferred_runtime_window_target_audits(
+    targets: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    audits: list[dict[str, object]] = []
+    for target in targets:
+        audits.append(
+            {
+                "target": dict(target),
+                "source_activity": {
+                    "missing": True,
+                    "missing_reasons": [
+                        "runtime_window_import_audit_deferred_until_import_ready"
+                    ],
+                },
+                "rejected_signal_activity": {
+                    "event_count": 0,
+                    "blocking_reasons": [],
+                },
+                "account_contamination": {
+                    "contaminated": False,
+                    "blockers": [],
+                },
+                "account_state": {
+                    "blockers": [],
+                },
+                "runtime_ledger": {
+                    "bucket_count": 0,
+                    "evidence_grade_bucket_count": 0,
+                    "blockers": [],
+                },
+                "promotion_decisions": {
+                    "decision_count": 0,
+                },
+            }
+        )
+    return audits
+
+
 def build_paper_route_target_plan_payload(
     session: Session,
     *,
@@ -3705,6 +3746,7 @@ def build_paper_route_target_plan_payload(
     route_reacquisition_book: Mapping[str, Any],
     generated_at: datetime | None = None,
     target_limit: int = DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
+    include_runtime_window_import_audit: bool | None = True,
 ) -> dict[str, object]:
     """Build the lightweight runtime-window target-plan payload."""
 
@@ -3762,26 +3804,50 @@ def build_paper_route_target_plan_payload(
         and _safe_int(latest_closed_targets.get("target_count")) > 0
         else next_targets
     )
-    source_target_audits = [
-        _target_audit(
-            session,
-            raw_target=target,
-            probe=probe,
-            generated_at=resolved_generated_at,
-            lookback_hours=DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
+    runtime_import_readiness = _as_mapping(
+        runtime_window_import_plan.get("session_readiness")
+    )
+    runtime_import_handoff = _as_mapping(
+        runtime_window_import_plan.get("runtime_window_import_handoff")
+    )
+    runtime_import_ready = bool(
+        runtime_import_readiness.get("import_ready")
+        or runtime_import_handoff.get("import_ready")
+    )
+    run_full_runtime_import_audit = (
+        runtime_import_ready
+        if include_runtime_window_import_audit is None
+        else include_runtime_window_import_audit
+    )
+    runtime_window_import_audit_mode = (
+        "full" if run_full_runtime_import_audit else "deferred_until_import_ready"
+    )
+    if run_full_runtime_import_audit:
+        source_target_audits = [
+            _target_audit(
+                session,
+                raw_target=target,
+                probe=probe,
+                generated_at=resolved_generated_at,
+                lookback_hours=DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
+            )
+            for target in targets
+        ]
+        runtime_window_import_target_audits = [
+            _target_audit(
+                session,
+                raw_target=target,
+                probe=probe,
+                generated_at=resolved_generated_at,
+                lookback_hours=DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
+            )
+            for target in _as_mapping_items(runtime_window_import_plan.get("targets"))
+        ]
+    else:
+        source_target_audits = _deferred_runtime_window_target_audits(targets)
+        runtime_window_import_target_audits = _deferred_runtime_window_target_audits(
+            _as_mapping_items(runtime_window_import_plan.get("targets"))
         )
-        for target in targets
-    ]
-    runtime_window_import_target_audits = [
-        _target_audit(
-            session,
-            raw_target=target,
-            probe=probe,
-            generated_at=resolved_generated_at,
-            lookback_hours=DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
-        )
-        for target in _as_mapping_items(runtime_window_import_plan.get("targets"))
-    ]
     runtime_window_import_audit = _runtime_window_import_audit(
         next_targets=runtime_window_import_plan,
         target_audits=source_target_audits,
@@ -3821,6 +3887,7 @@ def build_paper_route_target_plan_payload(
         "skipped_target_count": effective_skipped_target_count,
         "targets": effective_targets,
         "skipped_targets": effective_skipped_targets,
+        "runtime_window_import_audit_mode": runtime_window_import_audit_mode,
         "live_submission_gate": {
             "allowed": bool(live_submission_gate.get("allowed")),
             "reason": _safe_text(live_submission_gate.get("reason")),
@@ -3877,6 +3944,7 @@ def build_paper_route_target_plan_payload(
             "runtime_window_import_audit_state": _safe_text(
                 runtime_window_import_audit.get("state")
             ),
+            "runtime_window_import_audit_mode": runtime_window_import_audit_mode,
             "runtime_window_import_audit_blockers": _unique_text_items(
                 runtime_window_import_audit.get("blockers")
             ),
