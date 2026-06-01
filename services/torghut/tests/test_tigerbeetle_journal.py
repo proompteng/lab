@@ -27,12 +27,17 @@ from app.models import (
 )
 from app.trading.tigerbeetle_client import FakeTigerBeetleClient
 from app.trading.tigerbeetle_journal import (
+    TIGERBEETLE_AUTHORITY_BLOCKER_ACCOUNTING_ONLY,
+    TIGERBEETLE_AUTHORITY_BLOCKER_RUNTIME_LEDGER_SOURCE_REFS_MISSING,
+    TIGERBEETLE_AUTHORITY_BLOCKER_RUNTIME_LEDGER_SOURCE_WINDOW_REFS_MISSING,
+    TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_STATUS_PASS,
     TigerBeetleLedgerJournal,
     _account_specs,
     _event_amount_usd,
     _lookup_payload_decimal,
     _order_event_precedes,
     _persist_account_refs,
+    _positive_payload_count,
     _result_status,
     _transfer_attr,
     _transfer_flag,
@@ -43,6 +48,7 @@ from app.trading.tigerbeetle_journal import (
     execution_cost_transfer_id,
     execution_transfer_id,
     runtime_ledger_transfer_id,
+    tigerbeetle_runtime_ledger_journal_payload,
 )
 from app.trading.tigerbeetle_ids import u128_decimal
 from app.trading.tigerbeetle_ledger_model import (
@@ -487,6 +493,10 @@ class TestTigerBeetleLedgerJournal(TestCase):
     def test_runtime_bucket_source_writes_real_runtime_ledger_ref(self) -> None:
         with Session(self.engine) as session:
             bucket = _runtime_bucket()
+            bucket.payload_json = {
+                "source_refs": ["postgres:execution_order_events:event-1"],
+                "source_window_refs": ["postgres:source_windows:window-1"],
+            }
             session.add(bucket)
             session.flush()
             client = FakeTigerBeetleClient()
@@ -506,6 +516,25 @@ class TestTigerBeetleLedgerJournal(TestCase):
             self.assertEqual(ref.amount, Decimal("2500000"))
             self.assertEqual(ref.payload_json["pnl_direction"], "profit")
             self.assertEqual(ref.payload_json["signed_amount_micros"], 2500000)
+            parity = tigerbeetle_runtime_ledger_journal_payload(
+                bucket=bucket,
+                ref=ref,
+                status=TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_STATUS_PASS,
+            )
+            self.assertEqual(parity["status"], "pass")
+            self.assertFalse(parity["promotion_authority"])
+            self.assertIn(
+                TIGERBEETLE_AUTHORITY_BLOCKER_ACCOUNTING_ONLY,
+                parity["authority_blockers"],
+            )
+            self.assertNotIn(
+                TIGERBEETLE_AUTHORITY_BLOCKER_RUNTIME_LEDGER_SOURCE_REFS_MISSING,
+                parity["authority_blockers"],
+            )
+            self.assertNotIn(
+                TIGERBEETLE_AUTHORITY_BLOCKER_RUNTIME_LEDGER_SOURCE_WINDOW_REFS_MISSING,
+                parity["authority_blockers"],
+            )
             transfer = client.transfers[int(ref.transfer_id)]
             self.assertEqual(
                 ref.payload_json["debit_account_id"],
@@ -515,6 +544,103 @@ class TestTigerBeetleLedgerJournal(TestCase):
                 ref.payload_json["credit_account_id"],
                 str(getattr(transfer, "credit_account_id")),
             )
+
+    def test_runtime_bucket_journal_payload_marks_aggregate_only_non_authority(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            bucket = _runtime_bucket()
+            bucket.payload_json = {"source": "aggregate-only-fixture"}
+            session.add(bucket)
+            session.flush()
+            client = FakeTigerBeetleClient()
+
+            ref = TigerBeetleLedgerJournal(
+                settings_obj=_settings(),
+                client=client,
+            ).journal_runtime_ledger_bucket(session, bucket)
+
+        self.assertIsNotNone(ref)
+        assert ref is not None
+        parity = tigerbeetle_runtime_ledger_journal_payload(
+            bucket=bucket,
+            ref=ref,
+            status=TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_STATUS_PASS,
+        )
+        self.assertFalse(parity["promotion_authority"])
+        self.assertFalse(parity["overrides_runtime_ledger_authority"])
+        self.assertIn(
+            TIGERBEETLE_AUTHORITY_BLOCKER_RUNTIME_LEDGER_SOURCE_REFS_MISSING,
+            parity["authority_blockers"],
+        )
+        self.assertIn(
+            TIGERBEETLE_AUTHORITY_BLOCKER_RUNTIME_LEDGER_SOURCE_WINDOW_REFS_MISSING,
+            parity["authority_blockers"],
+        )
+
+    def test_source_authority_count_parser_rejects_invalid_values(self) -> None:
+        self.assertFalse(_positive_payload_count("not-a-number"))
+
+    def test_runtime_bucket_journal_payload_merges_transfer_account_refs(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            bucket = _runtime_bucket()
+            session.add(bucket)
+            session.flush()
+            ref = TigerBeetleTransferRef(
+                cluster_id=2001,
+                transfer_id="340282366920938463463374607431768210",
+                transfer_kind=TRANSFER_KIND_RUNTIME_NET_PNL,
+                ledger=LEDGER_USD_MICRO,
+                code=2001,
+                amount=Decimal("2500000"),
+                status="created",
+                runtime_ledger_bucket_id=bucket.id,
+                payload_json={
+                    "debit_account_id": "100100100100100100100100100100100101",
+                    "credit_account_id": "100100100100100100100100100100100102",
+                },
+            )
+            duplicate_cash_ref = TigerBeetleAccountRef(
+                cluster_id=2001,
+                account_id="100100100100100100100100100100100101",
+                account_key="TORGHUT_SIM:cash",
+                ledger=840001,
+                code=1001,
+                account_label="paper",
+            )
+            missing_fee_ref = TigerBeetleAccountRef(
+                cluster_id=2002,
+                account_id="100100100100100100100100100100100103",
+                account_key="TORGHUT_SIM:fees",
+                ledger=840001,
+                code=1003,
+                account_label="paper",
+            )
+            session.add_all([ref, duplicate_cash_ref, missing_fee_ref])
+            session.flush()
+
+            parity = tigerbeetle_runtime_ledger_journal_payload(
+                bucket=bucket,
+                ref=ref,
+                status=TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_STATUS_PASS,
+                account_refs=[duplicate_cash_ref, missing_fee_ref],
+            )
+
+        self.assertEqual(parity["cluster_ids"], [2001, 2002])
+        self.assertEqual(
+            parity["account_ids"],
+            [
+                "100100100100100100100100100100100101",
+                "100100100100100100100100100100100102",
+                "100100100100100100100100100100100103",
+            ],
+        )
+        self.assertEqual(
+            parity["account_keys"],
+            ["TORGHUT_SIM:cash", "TORGHUT_SIM:fees"],
+        )
 
     def test_negative_runtime_bucket_reverses_transfer_direction(self) -> None:
         with Session(self.engine) as session:

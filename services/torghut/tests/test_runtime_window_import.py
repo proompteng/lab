@@ -22,6 +22,7 @@ from app.models import (
     TigerBeetleTransferRef,
     VNextDatasetSnapshot,
 )
+from app.trading.tigerbeetle_client import FakeTigerBeetleClient
 from app.trading.runtime_cost_authority import (
     cost_basis_counts_have_non_promotion_grade_costs,
 )
@@ -212,6 +213,15 @@ class TestRuntimeWindowImport(TestCase):
                     level="WARNING",
                 ):
                     _journal_tigerbeetle_runtime_ledger_bucket(session, row)
+            session.refresh(row)
+            parity = row.payload_json["tigerbeetle_journal_parity"]
+            self.assertEqual(parity["status"], "non_authority_blocked")
+            self.assertEqual(parity["blockers"], ["tigerbeetle_journal_error"])
+            self.assertFalse(parity["promotion_authority"])
+            self.assertIn(
+                "tigerbeetle_accounting_parity_not_promotion_authority",
+                row.payload_json["tigerbeetle_non_authority_blockers"],
+            )
 
             with (
                 patch.object(
@@ -236,6 +246,125 @@ class TestRuntimeWindowImport(TestCase):
             ):
                 with self.assertRaisesRegex(RuntimeError, "journal failed"):
                     _journal_tigerbeetle_runtime_ledger_bucket(session, row)
+
+    def test_runtime_bucket_journal_records_durable_tigerbeetle_refs(self) -> None:
+        with self.session_local() as session:
+            row = StrategyRuntimeLedgerBucket(
+                run_id="run-journal-success",
+                candidate_id="cand",
+                hypothesis_id="hyp",
+                observed_stage="paper",
+                bucket_started_at=datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                bucket_ended_at=datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                account_label="TORGHUT_SIM",
+                runtime_strategy_name="strategy",
+                fill_count=2,
+                decision_count=2,
+                submitted_order_count=2,
+                closed_trade_count=1,
+                open_position_count=0,
+                filled_notional=Decimal("200"),
+                gross_strategy_pnl=Decimal("1"),
+                cost_amount=Decimal("0.20"),
+                net_strategy_pnl_after_costs=Decimal("0.80"),
+                post_cost_expectancy_bps=Decimal("40"),
+                pnl_basis="realized_strategy_pnl_after_explicit_costs",
+                ledger_schema_version="torghut.runtime-ledger-bucket.v1",
+                payload_json={
+                    "source_refs": ["postgres:execution_order_events:event-1"],
+                    "source_window_refs": ["postgres:source_windows:window-1"],
+                },
+            )
+            session.add(row)
+            session.flush()
+            fake_client = FakeTigerBeetleClient()
+
+            with (
+                patch.object(
+                    runtime_window_import_module.settings,
+                    "tigerbeetle_enabled",
+                    True,
+                ),
+                patch.object(
+                    runtime_window_import_module.settings,
+                    "tigerbeetle_journal_enabled",
+                    True,
+                ),
+                patch.object(
+                    runtime_window_import_module.settings,
+                    "tigerbeetle_required",
+                    False,
+                ),
+                patch(
+                    "app.trading.tigerbeetle_journal.create_tigerbeetle_client",
+                    return_value=fake_client,
+                ),
+            ):
+                _journal_tigerbeetle_runtime_ledger_bucket(session, row)
+
+            session.refresh(row)
+            payload = row.payload_json
+            parity = payload["tigerbeetle_journal_parity"]
+            self.assertEqual(parity["status"], "pass")
+            self.assertEqual(parity["blockers"], [])
+            self.assertFalse(parity["promotion_authority"])
+            self.assertEqual(parity["transfer_count"], 1)
+            self.assertEqual(len(payload["tigerbeetle_transfer_ids"]), 1)
+            self.assertEqual(len(fake_client.transfers), 1)
+            self.assertIn(
+                "postgres:tigerbeetle_transfer_refs",
+                " ".join(payload["source_refs"]),
+            )
+
+    def test_runtime_bucket_journal_disabled_records_non_authority_blocker(
+        self,
+    ) -> None:
+        with self.session_local() as session:
+            row = StrategyRuntimeLedgerBucket(
+                run_id="run-journal-disabled",
+                candidate_id="cand",
+                hypothesis_id="hyp",
+                observed_stage="paper",
+                bucket_started_at=datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                bucket_ended_at=datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                account_label="TORGHUT_SIM",
+                runtime_strategy_name="strategy",
+                fill_count=2,
+                decision_count=2,
+                submitted_order_count=2,
+                closed_trade_count=1,
+                open_position_count=0,
+                filled_notional=Decimal("200"),
+                gross_strategy_pnl=Decimal("1"),
+                cost_amount=Decimal("0.20"),
+                net_strategy_pnl_after_costs=Decimal("0.80"),
+                post_cost_expectancy_bps=Decimal("40"),
+                pnl_basis="realized_strategy_pnl_after_explicit_costs",
+                ledger_schema_version="torghut.runtime-ledger-bucket.v1",
+                payload_json={},
+            )
+            session.add(row)
+            session.flush()
+
+            with (
+                patch.object(
+                    runtime_window_import_module.settings,
+                    "tigerbeetle_enabled",
+                    False,
+                ),
+                patch.object(
+                    runtime_window_import_module.settings,
+                    "tigerbeetle_journal_enabled",
+                    True,
+                ),
+            ):
+                _journal_tigerbeetle_runtime_ledger_bucket(session, row)
+
+            session.refresh(row)
+            parity = row.payload_json["tigerbeetle_journal_parity"]
+            self.assertEqual(parity["status"], "non_authority_blocked")
+            self.assertEqual(parity["blockers"], ["tigerbeetle_journal_disabled"])
+            self.assertEqual(parity["transfer_ids"], [])
 
     def test_build_regular_session_buckets_counts_session_samples(self) -> None:
         buckets = build_regular_session_buckets(
@@ -1798,11 +1927,15 @@ class TestRuntimeWindowImport(TestCase):
 
         summary = _runtime_ledger_daily_summary_from_observed_buckets(buckets)
 
+        self.assertEqual(summary["runtime_ledger_observed_trading_day_count"], 2)
         self.assertEqual(
             summary["runtime_ledger_net_pnl_by_trading_day"]["2026-03-06"], "-30"
         )
         self.assertEqual(
             summary["runtime_ledger_mean_daily_net_pnl_after_costs"], "-10"
+        )
+        self.assertEqual(
+            summary["runtime_ledger_median_daily_net_pnl_after_costs"], "-10"
         )
         self.assertEqual(summary["runtime_ledger_p10_daily_net_pnl_after_costs"], "-30")
         self.assertEqual(summary["runtime_ledger_max_intraday_drawdown"], "130")

@@ -6,9 +6,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import String, create_engine, select
 from sqlalchemy.orm import sessionmaker
@@ -26,8 +27,10 @@ from app.trading.tigerbeetle_journal import (
     SOURCE_TYPE_EXECUTION_ORDER_EVENT,
     SOURCE_TYPE_EXECUTION_TCA_METRIC,
     SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+    TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_STATUS_PASS,
     TigerBeetleLedgerJournal,
     build_order_event_transfer_plan,
+    tigerbeetle_runtime_ledger_journal_payload,
 )
 from app.trading.tigerbeetle_ledger_model import (
     TRANSFER_KIND_EXECUTION_COST,
@@ -268,6 +271,10 @@ def _journal_source_batch(
             if ref is None:
                 batch["skipped"] = int(batch["skipped"]) + 1
             else:
+                if source == SOURCE_TYPE_RUNTIME_LEDGER_BUCKET and isinstance(
+                    ref, TigerBeetleTransferRef
+                ):
+                    _attach_runtime_bucket_journal_payload(row, ref)
                 batch["journaled"] = int(batch["journaled"]) + 1
         except Exception as exc:
             batch["failed"] = int(batch["failed"]) + 1
@@ -285,6 +292,52 @@ def _journal_source_batch(
                     }
                 )
     return batch
+
+
+def _attach_runtime_bucket_journal_payload(
+    row: StrategyRuntimeLedgerBucket,
+    ref: TigerBeetleTransferRef,
+) -> None:
+    journal_payload = tigerbeetle_runtime_ledger_journal_payload(
+        bucket=row,
+        ref=ref,
+        status=TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_STATUS_PASS,
+    )
+    existing_payload = (
+        dict(row.payload_json) if isinstance(row.payload_json, dict) else {}
+    )
+    source_refs = [
+        str(item)
+        for item in existing_payload.get("source_refs", [])
+        if str(item).strip()
+    ]
+    raw_journal_source_refs = journal_payload.get("source_refs")
+    journal_source_refs = (
+        cast(Sequence[object], raw_journal_source_refs)
+        if isinstance(raw_journal_source_refs, Sequence)
+        and not isinstance(raw_journal_source_refs, (str, bytes, bytearray))
+        else ()
+    )
+    for source_ref in journal_source_refs:
+        if isinstance(source_ref, str) and source_ref not in source_refs:
+            source_refs.append(source_ref)
+    source_row_counts = (
+        dict(existing_payload.get("source_row_counts", {}))
+        if isinstance(existing_payload.get("source_row_counts"), dict)
+        else {}
+    )
+    source_row_counts["tigerbeetle_transfer_refs"] = 1
+    row.payload_json = {
+        **existing_payload,
+        "source_refs": source_refs,
+        "source_row_counts": source_row_counts,
+        "tigerbeetle_journal_parity": journal_payload,
+        "tigerbeetle": journal_payload,
+        "tigerbeetle_account_ids": journal_payload["account_ids"],
+        "tigerbeetle_account_keys": journal_payload["account_keys"],
+        "tigerbeetle_transfer_ids": journal_payload["transfer_ids"],
+        "tigerbeetle_non_authority_blockers": journal_payload["authority_blockers"],
+    }
 
 
 def _error_summary(exc: Exception) -> str:

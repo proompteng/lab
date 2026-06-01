@@ -22,6 +22,10 @@ NEXT_PAPER_ROUTE_TARGET_PLAN_SCHEMA_VERSION = (
 RUNTIME_LEDGER_PROOF_PACKET_SCHEMA_VERSION = (
     "torghut.runtime-ledger-live-paper-proof-packet.v1"
 )
+TIGERBEETLE_RUNTIME_LEDGER_PARITY_SCHEMA_VERSION = (
+    "torghut.tigerbeetle-runtime-ledger-parity.v1"
+)
+TIGERBEETLE_PARITY_STATUS_PASS = "pass"
 DOC29_LIVE_SCALE_GATE = "live_scale_observed"
 REQUIRED_RUNTIME_WINDOW_TARGET_PLAN_FLAGS = (
     "--runtime-window-import",
@@ -752,6 +756,56 @@ def _add_runtime_ledger_proof_packet_check(
     )
 
 
+def _add_tigerbeetle_parity_check(
+    checks: dict[str, dict[str, Any]],
+    tigerbeetle_parity: Mapping[str, Any] | None,
+) -> None:
+    parity = _mapping(tigerbeetle_parity)
+    totals = _mapping(parity.get("totals"))
+    read_only_contract = _mapping(parity.get("read_only_contract"))
+    blockers = [
+        text for item in _sequence(parity.get("blockers")) if (text := _text(item))
+    ]
+    schema_version = _text(parity.get("schema_version"))
+    parity_status = _text(parity.get("parity_status"))
+    checked_source_count = _int(totals.get("checked_source_count"))
+    accounting_only = (
+        read_only_contract.get("generates_proof") is False
+        and read_only_contract.get("synthesizes_fills") is False
+        and read_only_contract.get("overrides_runtime_ledger_authority") is False
+    )
+    _add_check(
+        checks,
+        "tigerbeetle_runtime_ledger_parity",
+        passed=(
+            bool(parity)
+            and schema_version == TIGERBEETLE_RUNTIME_LEDGER_PARITY_SCHEMA_VERSION
+            and parity.get("ok") is True
+            and parity_status == TIGERBEETLE_PARITY_STATUS_PASS
+            and checked_source_count > 0
+            and not blockers
+            and accounting_only
+        ),
+        observed={
+            "present": bool(parity),
+            "schema_version": schema_version,
+            "ok": parity.get("ok"),
+            "parity_status": parity_status,
+            "checked_source_count": checked_source_count,
+            "blockers": blockers,
+            "read_only_contract": read_only_contract,
+        },
+        expected={
+            "schema_version": TIGERBEETLE_RUNTIME_LEDGER_PARITY_SCHEMA_VERSION,
+            "ok": True,
+            "parity_status": TIGERBEETLE_PARITY_STATUS_PASS,
+            "checked_source_count": ">0",
+            "blockers": [],
+            "read_only_contract.overrides_runtime_ledger_authority": False,
+        },
+    )
+
+
 def _readiness_next_action(
     *,
     failed_checks: Sequence[str],
@@ -762,6 +816,8 @@ def _readiness_next_action(
     packet_next_action = _text(packet.get("next_action"))
     if "runtime_ledger_proof_packet_authority" in failed_checks and packet_next_action:
         return packet_next_action
+    if "tigerbeetle_runtime_ledger_parity" in failed_checks:
+        return "repair_tigerbeetle_journal_parity_without_using_as_profit_authority"
     blockers: list[str] = []
     for check_name in failed_checks:
         check = _mapping(checks.get(check_name))
@@ -945,6 +1001,7 @@ def evaluate_trading_readiness(
     completion_status: Mapping[str, Any] | None = None,
     paper_route_evidence: Mapping[str, Any] | None = None,
     runtime_ledger_proof_packet: Mapping[str, Any] | None = None,
+    tigerbeetle_parity: Mapping[str, Any] | None = None,
     profile: str = "paper",
     min_routeable_symbols: int = 2,
     min_decisions: int = 0,
@@ -959,6 +1016,7 @@ def evaluate_trading_readiness(
     require_paper_route_import_ready: bool = False,
     require_runtime_ledger_profit_proof: bool = False,
     require_runtime_ledger_proof_packet: bool = False,
+    require_tigerbeetle_parity: bool = False,
     allow_paper_route_preopen_evidence_collection: bool = False,
 ) -> dict[str, Any]:
     """Return a strict readiness verdict from a Torghut trading status payload."""
@@ -1405,6 +1463,8 @@ def evaluate_trading_readiness(
             checks,
             runtime_ledger_proof_packet,
         )
+    if require_tigerbeetle_parity:
+        _add_tigerbeetle_parity_check(checks, tigerbeetle_parity)
 
     paper_route_preopen_evidence_collection = (
         _paper_route_preopen_evidence_collection_ready(
@@ -1450,6 +1510,7 @@ def evaluate_trading_readiness(
         runtime_ledger_proof_packet=runtime_ledger_proof_packet,
     )
     packet_summary = _mapping(runtime_ledger_proof_packet)
+    tigerbeetle_parity_summary = _mapping(tigerbeetle_parity)
     return {
         "schema_version": SCHEMA_VERSION,
         "ok": not failed_checks,
@@ -1471,9 +1532,7 @@ def evaluate_trading_readiness(
         },
         "runtime_ledger_proof_packet": {
             "required": require_runtime_ledger_proof_packet,
-            "schema_version": _text(
-                packet_summary.get("schema_version")
-            ),
+            "schema_version": _text(packet_summary.get("schema_version")),
             "proof_mode": _text(packet_summary.get("proof_mode")),
             "final_authority_ok": packet_summary.get("final_authority_ok"),
             "capital_promotion_allowed": packet_summary.get(
@@ -1481,6 +1540,12 @@ def evaluate_trading_readiness(
             ),
             "evidence_collection_ok": packet_summary.get("evidence_collection_ok"),
             "next_action": _text(packet_summary.get("next_action")),
+        },
+        "tigerbeetle_parity": {
+            "required": require_tigerbeetle_parity,
+            "schema_version": _text(tigerbeetle_parity_summary.get("schema_version")),
+            "parity_status": _text(tigerbeetle_parity_summary.get("parity_status")),
+            "ok": tigerbeetle_parity_summary.get("ok"),
         },
     }
 
@@ -1523,6 +1588,16 @@ def _parser() -> argparse.ArgumentParser:
     runtime_ledger_packet_source.add_argument(
         "--runtime-ledger-proof-packet-url",
         help="URL returning an assemble_runtime_ledger_proof_packet.py JSON payload.",
+    )
+    tigerbeetle_parity_source = parser.add_mutually_exclusive_group(required=False)
+    tigerbeetle_parity_source.add_argument(
+        "--tigerbeetle-parity-file",
+        type=Path,
+        help="Path to an audit_tigerbeetle_runtime_ledger_parity.py JSON payload.",
+    )
+    tigerbeetle_parity_source.add_argument(
+        "--tigerbeetle-parity-url",
+        help="URL returning a TigerBeetle/runtime-ledger parity payload.",
     )
     parser.add_argument(
         "--profile", choices=("paper", "live", "either"), default="paper"
@@ -1574,6 +1649,14 @@ def _parser() -> argparse.ArgumentParser:
         help="Require canonical runtime-ledger proof packet promotion authority.",
     )
     parser.add_argument(
+        "--require-tigerbeetle-parity",
+        action="store_true",
+        help=(
+            "Require TigerBeetle journal parity to pass as an accounting-only "
+            "companion check; this never satisfies runtime-ledger proof authority."
+        ),
+    )
+    parser.add_argument(
         "--allow-paper-route-preopen-evidence-collection",
         action="store_true",
         help=(
@@ -1610,6 +1693,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         url=args.runtime_ledger_proof_packet_url,
         timeout_seconds=args.timeout_seconds,
     )
+    tigerbeetle_parity = _load_optional_json_object(
+        path=args.tigerbeetle_parity_file,
+        url=args.tigerbeetle_parity_url,
+        timeout_seconds=args.timeout_seconds,
+    )
     min_runtime_ledger_net_pnl = _decimal(args.min_runtime_ledger_net_pnl)
     if min_runtime_ledger_net_pnl is None:
         raise SystemExit(
@@ -1626,6 +1714,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         completion_status=completion_status,
         paper_route_evidence=paper_route_evidence,
         runtime_ledger_proof_packet=runtime_ledger_proof_packet,
+        tigerbeetle_parity=tigerbeetle_parity,
         profile=str(args.profile),
         min_routeable_symbols=max(0, int(args.min_routeable_symbols)),
         min_decisions=max(0, int(args.min_decisions)),
@@ -1648,6 +1737,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         require_runtime_ledger_proof_packet=bool(
             args.require_runtime_ledger_proof_packet
         ),
+        require_tigerbeetle_parity=bool(args.require_tigerbeetle_parity),
         allow_paper_route_preopen_evidence_collection=bool(
             args.allow_paper_route_preopen_evidence_collection
         ),

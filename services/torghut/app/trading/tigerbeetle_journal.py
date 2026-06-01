@@ -57,6 +57,25 @@ SOURCE_TYPE_EXECUTION = "execution"
 SOURCE_TYPE_EXECUTION_ORDER_EVENT = "execution_order_event"
 SOURCE_TYPE_EXECUTION_TCA_METRIC = "execution_tca_metric"
 SOURCE_TYPE_RUNTIME_LEDGER_BUCKET = "strategy_runtime_ledger_bucket"
+TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_PARITY_SCHEMA_VERSION = (
+    "torghut.tigerbeetle-runtime-ledger-journal-parity.v1"
+)
+TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_STATUS_PASS = "pass"
+TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_STATUS_NON_AUTHORITY_BLOCKED = (
+    "non_authority_blocked"
+)
+TIGERBEETLE_BLOCKER_JOURNAL_DISABLED = "tigerbeetle_journal_disabled"
+TIGERBEETLE_BLOCKER_JOURNAL_ENTRY_UNAVAILABLE = "tigerbeetle_journal_entry_unavailable"
+TIGERBEETLE_BLOCKER_JOURNAL_ERROR = "tigerbeetle_journal_error"
+TIGERBEETLE_AUTHORITY_BLOCKER_ACCOUNTING_ONLY = (
+    "tigerbeetle_accounting_parity_not_promotion_authority"
+)
+TIGERBEETLE_AUTHORITY_BLOCKER_RUNTIME_LEDGER_SOURCE_REFS_MISSING = (
+    "runtime_ledger_source_refs_missing"
+)
+TIGERBEETLE_AUTHORITY_BLOCKER_RUNTIME_LEDGER_SOURCE_WINDOW_REFS_MISSING = (
+    "runtime_ledger_source_window_refs_missing"
+)
 
 
 def _official_status_name(value: object) -> str | None:
@@ -125,6 +144,151 @@ def _lookup_payload_decimal(
 
 def _nested_mapping(value: object) -> Mapping[str, Any]:
     return cast(Mapping[str, Any], value) if isinstance(value, Mapping) else {}
+
+
+def _payload_text_list(value: object) -> list[str]:
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        items = cast(Sequence[object], value)
+        return [text for item in items if (text := str(item).strip())]
+    text = str(value).strip() if value is not None else ""
+    return [text] if text else []
+
+
+def runtime_ledger_bucket_source_authority_blockers(
+    bucket: StrategyRuntimeLedgerBucket,
+) -> list[str]:
+    """Return source-window blockers that keep TigerBeetle parity non-authoritative.
+
+    TigerBeetle is a deterministic double-entry accounting mirror. Runtime-ledger
+    source rows and source-window refs remain the promotion authority for honest
+    PnL proof, so the journal records explicitly carry blockers when that source
+    context is not present on the persisted bucket payload.
+    """
+
+    payload = _nested_mapping(bucket.payload_json)
+    source_refs = [
+        source_ref
+        for source_ref in [
+            *(_payload_text_list(payload.get("source_refs"))),
+            *(_payload_text_list(payload.get("runtime_ledger_source_refs"))),
+        ]
+        if "tigerbeetle" not in source_ref
+        and "strategy_runtime_ledger_buckets" not in source_ref
+    ]
+    source_row_counts = _nested_mapping(payload.get("source_row_counts"))
+    source_window_refs = [
+        *(_payload_text_list(payload.get("source_window_refs"))),
+        *(_payload_text_list(payload.get("runtime_ledger_source_window_refs"))),
+        *(_payload_text_list(payload.get("source_window_id"))),
+    ]
+    has_source_rows = bool(source_refs) or any(
+        _positive_payload_count(value)
+        for key, value in source_row_counts.items()
+        if str(key).startswith(
+            (
+                "execution",
+                "runtime_ledger",
+                "strategy_runtime",
+                "trade_decision",
+            )
+        )
+    )
+    blockers = [TIGERBEETLE_AUTHORITY_BLOCKER_ACCOUNTING_ONLY]
+    if not has_source_rows:
+        blockers.append(
+            TIGERBEETLE_AUTHORITY_BLOCKER_RUNTIME_LEDGER_SOURCE_REFS_MISSING
+        )
+    if not source_window_refs:
+        blockers.append(
+            TIGERBEETLE_AUTHORITY_BLOCKER_RUNTIME_LEDGER_SOURCE_WINDOW_REFS_MISSING
+        )
+    return blockers
+
+
+def _positive_payload_count(value: object) -> bool:
+    try:
+        return Decimal(str(value or "0")) > 0
+    except Exception:
+        return False
+
+
+def tigerbeetle_runtime_ledger_journal_payload(
+    *,
+    bucket: StrategyRuntimeLedgerBucket,
+    ref: TigerBeetleTransferRef | None,
+    status: str,
+    blockers: Sequence[str] = (),
+    account_refs: Sequence[TigerBeetleAccountRef] = (),
+    error: str | None = None,
+) -> dict[str, object]:
+    """Build stable bucket metadata for TigerBeetle journal parity.
+
+    The payload is intentionally explicit that TigerBeetle is not the final
+    promotion authority. It gives proof assemblers durable refs when present and
+    gives readiness checks deterministic non-authority blockers when journaling is
+    disabled, skipped, or degraded.
+    """
+
+    account_ids: list[str] = []
+    transfer_ids: list[str] = []
+    source_refs = [f"postgres:strategy_runtime_ledger_buckets:{bucket.id}"]
+    cluster_ids: list[int] = []
+    transfer_payload: Mapping[str, object] = {}
+    if ref is not None:
+        transfer_ids.append(ref.transfer_id)
+        source_refs.append(f"postgres:tigerbeetle_transfer_refs:{ref.id}")
+        cluster_ids.append(ref.cluster_id)
+        transfer_payload = _nested_mapping(ref.payload_json)
+        for key in ("debit_account_id", "credit_account_id"):
+            raw_account_id = transfer_payload.get(key)
+            if raw_account_id is not None:
+                account_id = str(raw_account_id)
+                if account_id not in account_ids:
+                    account_ids.append(account_id)
+    for account_ref in account_refs:
+        if account_ref.account_id not in account_ids:
+            account_ids.append(account_ref.account_id)
+        if account_ref.cluster_id not in cluster_ids:
+            cluster_ids.append(account_ref.cluster_id)
+
+    return coerce_json_payload(
+        {
+            "schema_version": (
+                TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_PARITY_SCHEMA_VERSION
+            ),
+            "status": status,
+            "journal_record_available": ref is not None,
+            "authority": "accounting_parity_only",
+            "promotion_authority": False,
+            "overrides_runtime_ledger_authority": False,
+            "blockers": sorted({str(item) for item in blockers if str(item)}),
+            "authority_blockers": runtime_ledger_bucket_source_authority_blockers(
+                bucket
+            ),
+            "error": error,
+            "runtime_ledger_bucket_id": str(bucket.id),
+            "cluster_ids": sorted(cluster_ids),
+            "account_count": len(account_refs),
+            "account_ids": sorted(account_ids),
+            "account_keys": sorted({row.account_key for row in account_refs}),
+            "transfer_count": len(transfer_ids),
+            "transfer_ids": sorted(transfer_ids),
+            "source_refs": source_refs,
+            "transfer": {
+                "cluster_id": ref.cluster_id,
+                "transfer_id": ref.transfer_id,
+                "transfer_kind": ref.transfer_kind,
+                "ledger": ref.ledger,
+                "code": ref.code,
+                "amount": str(ref.amount),
+                "status": ref.status,
+                "debit_account_id": transfer_payload.get("debit_account_id"),
+                "credit_account_id": transfer_payload.get("credit_account_id"),
+            }
+            if ref is not None
+            else None,
+        }
+    )
 
 
 FILL_POST_EVENT_TYPES = {"fill", "filled", "partial_fill", "partially_filled"}
