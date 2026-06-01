@@ -66,6 +66,7 @@ from app.trading.risk import RiskEngine
 from app.trading.scheduler.pipeline import TradingPipeline
 from app.trading.scheduler.simple_pipeline import (
     SimpleTradingPipeline,
+    _bounded_sim_collection_metadata_from_decision,
     _paper_route_probe_entry_metadata,
     _paper_route_probe_lineage_from_params,
     _parse_target_datetime,
@@ -3415,6 +3416,163 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(target_window.get("source_hypothesis_ids"), ["H-PAIRS-01"])
         self.assertEqual(scoped_row.status, "planned")
         self.assertNotIn("submission_block_reason", scoped_json)
+
+    def test_strategy_signal_paper_collection_bypasses_repair_only_floor(
+        self,
+    ) -> None:
+        from app import config
+
+        now = datetime(2026, 6, 1, 14, 30, tzinfo=timezone.utc)
+        window_start = datetime(2026, 6, 1, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 6, 1, 20, 0, tzinfo=timezone.utc)
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_simple_submit_enabled = True
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_paper_route_target_plan_url = "http://torghut.test/plan"
+
+        strategy_id = uuid4()
+        strategy = Strategy(
+            id=strategy_id,
+            name="microbar-cross-sectional-pairs-v1",
+            description="bounded strategy-signal collection",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="static",
+            universe_symbols=["AAPL", "AMZN"],
+            max_notional_per_trade=Decimal("75000"),
+        )
+        target: dict[str, Any] = {
+            "candidate_id": "c88421d619759b2cfaa6f4d0",
+            "hypothesis_id": "H-PAIRS-01",
+            "observed_stage": "paper",
+            "strategy_family": "microbar_cross_sectional_pairs",
+            "strategy_name": strategy.name,
+            "runtime_strategy_name": strategy.name,
+            "strategy_lookup_names": [str(strategy_id), strategy.name],
+            "account_label": "TORGHUT_SIM",
+            "source_account_label": "TORGHUT_REPLAY",
+            "source_kind": "paper_route_probe_runtime_observed",
+            "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
+            "paper_route_probe_symbols": ["AAPL", "AMZN"],
+            "paper_route_probe_pair_balance_state": "balanced",
+            "paper_route_probe_window_start": window_start.isoformat(),
+            "paper_route_probe_window_end": window_end.isoformat(),
+            "evidence_collection_ok": True,
+            "canary_collection_authorized": True,
+            "bounded_evidence_collection_authorized": True,
+            "bounded_live_paper_collection_authorized": True,
+            "bounded_evidence_collection_scope": "paper_route_probe_next_session_only",
+            "bounded_evidence_collection_blockers": [],
+            "runtime_window_import_health_gate_blockers": [],
+            "paper_route_account_pre_session_blockers": [],
+            "paper_route_hpairs_symbol_blockers": [],
+            "source_decision_readiness": {"ready": True, "blockers": []},
+            "paper_probation_authorized": True,
+        }
+        base_decision = StrategyDecision(
+            strategy_id=str(strategy_id),
+            symbol="AAPL",
+            event_ts=now,
+            timeframe="1Sec",
+            action="sell",
+            qty=Decimal("1"),
+            rationale="bounded strategy-signal paper collection",
+            params={"price": "100"},
+        )
+        metadata = SimpleTradingPipeline._strategy_signal_paper_metadata(
+            decision=base_decision,
+            target=target,
+            strategy=strategy,
+        )
+        blocked_metadata = SimpleTradingPipeline._strategy_signal_paper_metadata(
+            decision=base_decision,
+            target={
+                **target,
+                "paper_route_account_pre_session_blockers": [
+                    "unlinked_order_events_present",
+                ],
+            },
+            strategy=strategy,
+        )
+        self.assertEqual(
+            blocked_metadata.get("paper_route_account_pre_session_blockers"),
+            ["unlinked_order_events_present"],
+        )
+        decision = base_decision.model_copy(
+            update={
+                "params": {
+                    "price": "100",
+                    "paper_route_target_plan": metadata,
+                    "strategy_signal_paper": metadata,
+                    "source_decision_mode": STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE,
+                    "profit_proof_eligible": True,
+                }
+            }
+        )
+        proof_floor = {
+            "route_state": "repair_only",
+            "capital_state": "zero_notional",
+            "max_notional": "0",
+            "market_window": {"session_open": True},
+            "blocking_reasons": ["alpha_readiness_not_promotion_eligible"],
+        }
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="TORGHUT_SIM",
+            session_factory=self.session_local,
+        )
+
+        with self.session_local() as session:
+            row = TradeDecision(
+                strategy_id=strategy_id,
+                alpaca_account_label="TORGHUT_SIM",
+                symbol="AAPL",
+                timeframe="1Sec",
+                decision_json=decision.model_dump(mode="json"),
+                status="planned",
+            )
+            session.add(row)
+            session.commit()
+
+            with (
+                patch.object(
+                    pipeline,
+                    "_external_paper_route_target_probe_symbols_cached",
+                    return_value=({"AAPL", "AMZN"}, None, [target]),
+                ),
+                patch.object(
+                    SimpleTradingPipeline,
+                    "_profitability_proof_floor",
+                    return_value=proof_floor,
+                ),
+                patch(
+                    "app.trading.scheduler.simple_pipeline.trading_now",
+                    return_value=now,
+                ),
+            ):
+                self.assertTrue(
+                    pipeline._is_trading_submission_allowed(
+                        session=session,
+                        decision=decision,
+                        decision_row=row,
+                    )
+                )
+
+            session.refresh(row)
+            row_json = cast(dict[str, Any], row.decision_json)
+
+        self.assertEqual(row.status, "planned")
+        self.assertNotIn("submission_block_reason", row_json)
 
     def test_simple_pipeline_retry_metadata_requires_prior_profit_floor_block(
         self,
@@ -7558,7 +7716,7 @@ class TestTradingPipeline(TestCase):
             reconciler=Reconciler(),
             universe_resolver=UniverseResolver(),
             state=TradingState(),
-            account_label="paper",
+            account_label="TORGHUT_SIM",
             session_factory=self.session_local,
         )
         with self.session_local() as session:
@@ -7605,6 +7763,27 @@ class TestTradingPipeline(TestCase):
                             "dataset_snapshot_ref": (
                                 "portfolio-profit-autoresearch-500-v1"
                             ),
+                            "account_label": "TORGHUT_SIM",
+                            "source_account_label": "TORGHUT_REPLAY",
+                            "runtime_strategy_name": (
+                                "microbar-cross-sectional-pairs-v1"
+                            ),
+                            "evidence_collection_ok": True,
+                            "canary_collection_authorized": True,
+                            "bounded_evidence_collection_authorized": True,
+                            "bounded_live_paper_collection_authorized": True,
+                            "bounded_evidence_collection_scope": (
+                                "paper_route_probe_next_session_only"
+                            ),
+                            "bounded_evidence_collection_blockers": [],
+                            "runtime_window_import_health_gate_blockers": [],
+                            "paper_route_account_pre_session_blockers": [],
+                            "paper_route_hpairs_symbol_blockers": [],
+                            "paper_route_probe_pair_balance_state": "balanced",
+                            "source_decision_readiness": {
+                                "ready": True,
+                                "blockers": [],
+                            },
                             "paper_probation_authorized": True,
                         }
                     ]
@@ -7640,7 +7819,27 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(
             target_plan.get("source_decision_mode"), "strategy_signal_paper"
         )
+        self.assertEqual(target_plan.get("account_label"), "TORGHUT_SIM")
+        self.assertEqual(
+            target_plan.get("bounded_evidence_collection_scope"),
+            "paper_route_probe_next_session_only",
+        )
         self.assertTrue(target_plan.get("profit_proof_eligible"))
+        self.assertIsNotNone(
+            _bounded_sim_collection_metadata_from_decision(
+                StrategyDecision(
+                    strategy_id=params.get("strategy_id", ""),
+                    symbol="AAPL",
+                    event_ts=datetime(2026, 5, 28, 15, 30, tzinfo=timezone.utc),
+                    timeframe="1Sec",
+                    action="sell",
+                    qty=Decimal("1"),
+                    params=params,
+                ),
+                account_label="TORGHUT_SIM",
+                trading_mode="paper",
+            )
+        )
         self.assertNotIn("paper_route_probe", params)
         self.assertNotIn("paper_route_target_plan_source_decision", params)
 
@@ -7670,7 +7869,7 @@ class TestTradingPipeline(TestCase):
             reconciler=Reconciler(),
             universe_resolver=UniverseResolver(),
             state=TradingState(),
-            account_label="paper",
+            account_label="TORGHUT_SIM",
             session_factory=self.session_local,
         )
         with self.session_local() as session:
@@ -7736,6 +7935,27 @@ class TestTradingPipeline(TestCase):
                             "dataset_snapshot_ref": (
                                 "portfolio-profit-autoresearch-500-v1"
                             ),
+                            "account_label": "TORGHUT_SIM",
+                            "source_account_label": "TORGHUT_REPLAY",
+                            "runtime_strategy_name": (
+                                "microbar-cross-sectional-pairs-v1"
+                            ),
+                            "evidence_collection_ok": True,
+                            "canary_collection_authorized": True,
+                            "bounded_evidence_collection_authorized": True,
+                            "bounded_live_paper_collection_authorized": True,
+                            "bounded_evidence_collection_scope": (
+                                "paper_route_probe_next_session_only"
+                            ),
+                            "bounded_evidence_collection_blockers": [],
+                            "runtime_window_import_health_gate_blockers": [],
+                            "paper_route_account_pre_session_blockers": [],
+                            "paper_route_hpairs_symbol_blockers": [],
+                            "paper_route_probe_pair_balance_state": "balanced",
+                            "source_decision_readiness": {
+                                "ready": True,
+                                "blockers": [],
+                            },
                             "paper_probation_authorized": True,
                         }
                     ],
@@ -7798,7 +8018,7 @@ class TestTradingPipeline(TestCase):
             reconciler=Reconciler(),
             universe_resolver=UniverseResolver(),
             state=TradingState(),
-            account_label="paper",
+            account_label="TORGHUT_SIM",
             session_factory=self.session_local,
         )
         strategy = Strategy(
@@ -7834,8 +8054,25 @@ class TestTradingPipeline(TestCase):
                 "candidate_id": "candidate-pairs-a",
                 "hypothesis_id": "H-PAIRS-01",
                 "observed_stage": "paper",
+                "account_label": "TORGHUT_SIM",
+                "source_account_label": "TORGHUT_REPLAY",
+                "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
                 "strategy_lookup_names": [str(strategy.id), strategy.name],
                 "source_kind": "paper_route_probe_runtime_observed",
+                "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
+                "evidence_collection_ok": True,
+                "canary_collection_authorized": True,
+                "bounded_evidence_collection_authorized": True,
+                "bounded_live_paper_collection_authorized": True,
+                "bounded_evidence_collection_scope": (
+                    "paper_route_probe_next_session_only"
+                ),
+                "bounded_evidence_collection_blockers": [],
+                "runtime_window_import_health_gate_blockers": [],
+                "paper_route_account_pre_session_blockers": [],
+                "paper_route_hpairs_symbol_blockers": [],
+                "paper_route_probe_pair_balance_state": "balanced",
+                "source_decision_readiness": {"ready": True, "blockers": []},
                 "paper_probation_authorized": "yes",
             }
             target.update(overrides)
@@ -7901,12 +8138,28 @@ class TestTradingPipeline(TestCase):
             (
                 "strategy mismatch",
                 good_decision,
-                [make_target(strategy_lookup_names=["other-strategy"])],
+                [
+                    make_target(
+                        strategy_lookup_names=["other-strategy"],
+                        runtime_strategy_name="other-strategy",
+                    )
+                ],
             ),
             ("missing candidate", good_decision, [make_target(candidate_id=None)]),
             ("missing hypothesis", good_decision, [make_target(hypothesis_id=None)]),
             ("wrong stage", good_decision, [make_target(observed_stage="backtest")]),
             ("wrong source kind", good_decision, [make_target(source_kind="manual")]),
+            (
+                "bounded collection blockers",
+                good_decision,
+                [
+                    make_target(
+                        paper_route_account_pre_session_blockers=[
+                            "unlinked_order_events_present"
+                        ]
+                    )
+                ],
+            ),
             (
                 "probation unauthorized",
                 good_decision,
@@ -8048,6 +8301,10 @@ class TestTradingPipeline(TestCase):
                 "bounded_evidence_collection_authorized": True,
                 "evidence_collection_ok": True,
                 "source_decision_readiness": {"ready": True, "blockers": []},
+                "runtime_window_import_health_gate_blockers": [
+                    "evidence_continuity_not_ok"
+                ],
+                "runtime_window_import_promotion_blockers": ["drift_checks_not_ok"],
             }
             setattr(
                 pipeline,
@@ -8066,6 +8323,428 @@ class TestTradingPipeline(TestCase):
                 )
 
         self.assertEqual(decisions, [])
+
+    def test_paper_route_target_source_allows_flat_repaired_strategy_exposure(
+        self,
+    ) -> None:
+        from app import config
+
+        window_start = datetime(2026, 6, 1, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 6, 1, 20, 0, tzinfo=timezone.utc)
+        config.settings.trading_mode = "paper"
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_allow_shorts = True
+        pipeline = object.__new__(SimpleTradingPipeline)
+        setattr(pipeline, "account_label", "TORGHUT_SIM")
+        setattr(pipeline, "_is_market_session_open", lambda _now: True)
+
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="microbar-cross-sectional-pairs-v1",
+                enabled=True,
+                base_timeframe="1Sec",
+                universe_type="microbar_cross_sectional_pairs_v1",
+                universe_symbols=["AAPL", "AMZN"],
+                max_notional_per_trade=Decimal("1000"),
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="TORGHUT_SIM",
+                symbol="AMZN",
+                timeframe="1Sec",
+                decision_json={
+                    "action": "sell",
+                    "qty": "10",
+                    "event_ts": (
+                        window_start - timedelta(days=3) + timedelta(minutes=3)
+                    ).isoformat(),
+                    "params": {
+                        "source_decision_mode": ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
+                        "profit_proof_eligible": False,
+                    },
+                },
+                rationale="paper-route-entry",
+                status="filled",
+                created_at=window_start - timedelta(days=3) + timedelta(minutes=3),
+            )
+            session.add(decision)
+            session.commit()
+            session.refresh(decision)
+            session.add(
+                Execution(
+                    trade_decision_id=decision.id,
+                    alpaca_account_label="TORGHUT_SIM",
+                    alpaca_order_id="paper-amzn-stale-open",
+                    client_order_id="paper-amzn-stale-open-client",
+                    symbol="AMZN",
+                    side="sell",
+                    order_type="market",
+                    time_in_force="day",
+                    submitted_qty=Decimal("10"),
+                    filled_qty=Decimal("10"),
+                    avg_fill_price=Decimal("272"),
+                    status="filled",
+                    raw_order={},
+                    created_at=window_start - timedelta(days=3) + timedelta(minutes=2),
+                    updated_at=window_start - timedelta(days=3) + timedelta(minutes=2),
+                )
+            )
+            session.add(
+                PositionSnapshot(
+                    alpaca_account_label="TORGHUT_SIM",
+                    as_of=window_start - timedelta(minutes=5),
+                    equity=Decimal("100000"),
+                    cash=Decimal("100000"),
+                    buying_power=Decimal("200000"),
+                    positions=[],
+                )
+            )
+            session.commit()
+
+            target = {
+                "account_label": "TORGHUT_SIM",
+                "observed_stage": "paper",
+                "source_kind": "paper_route_probe_runtime_observed",
+                "candidate_id": "candidate-pairs-monday",
+                "hypothesis_id": "H-PAIRS-01",
+                "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                "strategy_name": "microbar-cross-sectional-pairs-v1",
+                "strategy_lookup_names": [str(strategy.id), strategy.name],
+                "strategy_family": "microbar_cross_sectional_pairs",
+                "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
+                "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                "paper_route_probe_symbol_actions": {
+                    "AAPL": "buy",
+                    "AMZN": "sell",
+                },
+                "paper_route_probe_window_start": window_start.isoformat(),
+                "paper_route_probe_window_end": window_end.isoformat(),
+                "paper_route_probe_next_session_max_notional": "1000",
+                "bounded_evidence_collection_authorized": True,
+                "evidence_collection_ok": True,
+                "source_decision_readiness": {"ready": True, "blockers": []},
+                "runtime_window_import_health_gate_blockers": [
+                    "evidence_continuity_not_ok"
+                ],
+                "runtime_window_import_promotion_blockers": ["drift_checks_not_ok"],
+            }
+            setattr(
+                pipeline,
+                "_external_paper_route_target_probe_symbols_cached",
+                lambda: ({"AAPL", "AMZN"}, None, [target]),
+            )
+            with patch(
+                "app.trading.scheduler.simple_pipeline.trading_now",
+                return_value=window_start + timedelta(minutes=5),
+            ):
+                decisions = pipeline._paper_route_target_source_decisions(
+                    strategies=[strategy],
+                    allowed_symbols=set(),
+                    positions=[],
+                    session=session,
+                )
+
+        self.assertEqual(
+            [(decision.symbol, decision.action) for decision in decisions],
+            [("AAPL", "buy"), ("AMZN", "sell")],
+        )
+
+    def test_paper_route_target_source_skips_pair_when_account_not_flat(
+        self,
+    ) -> None:
+        from app import config
+
+        window_start = datetime(2026, 6, 1, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 6, 1, 20, 0, tzinfo=timezone.utc)
+        config.settings.trading_mode = "paper"
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_allow_shorts = True
+        pipeline = object.__new__(SimpleTradingPipeline)
+        setattr(pipeline, "account_label", "TORGHUT_SIM")
+        setattr(pipeline, "_is_market_session_open", lambda _now: True)
+
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="microbar-cross-sectional-pairs-v1",
+                enabled=True,
+                base_timeframe="1Sec",
+                universe_type="microbar_cross_sectional_pairs_v1",
+                universe_symbols=["AAPL", "AMZN"],
+                max_notional_per_trade=Decimal("1000"),
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+            target = {
+                "account_label": "TORGHUT_SIM",
+                "observed_stage": "paper",
+                "source_kind": "paper_route_probe_runtime_observed",
+                "candidate_id": "candidate-pairs-monday",
+                "hypothesis_id": "H-PAIRS-01",
+                "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                "strategy_name": "microbar-cross-sectional-pairs-v1",
+                "strategy_lookup_names": [str(strategy.id), strategy.name],
+                "strategy_family": "microbar_cross_sectional_pairs",
+                "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
+                "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                "paper_route_probe_symbol_actions": {
+                    "AAPL": "buy",
+                    "AMZN": "sell",
+                },
+                "paper_route_probe_window_start": window_start.isoformat(),
+                "paper_route_probe_window_end": window_end.isoformat(),
+                "paper_route_probe_next_session_max_notional": "1000",
+                "bounded_evidence_collection_authorized": True,
+                "evidence_collection_ok": True,
+                "source_decision_readiness": {"ready": True, "blockers": []},
+            }
+            setattr(
+                pipeline,
+                "_external_paper_route_target_probe_symbols_cached",
+                lambda: ({"AAPL", "AMZN"}, None, [target]),
+            )
+            with patch(
+                "app.trading.scheduler.simple_pipeline.trading_now",
+                return_value=window_start + timedelta(minutes=5),
+            ):
+                decisions = pipeline._paper_route_target_source_decisions(
+                    strategies=[strategy],
+                    allowed_symbols=set(),
+                    positions=[{"symbol": "NVDA", "qty": "1", "side": "long"}],
+                    session=session,
+                )
+
+        self.assertEqual(decisions, [])
+
+    def test_paper_route_target_plan_reserves_account_for_collection(self) -> None:
+        from app import config
+
+        window_start = datetime(2026, 6, 1, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 6, 1, 20, 0, tzinfo=timezone.utc)
+        config.settings.trading_mode = "paper"
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        pipeline = object.__new__(SimpleTradingPipeline)
+        setattr(pipeline, "account_label", "TORGHUT_SIM")
+        setattr(pipeline, "_is_market_session_open", lambda _now: True)
+        target = {
+            "account_label": "TORGHUT_SIM",
+            "observed_stage": "paper",
+            "source_kind": "paper_route_probe_runtime_observed",
+            "candidate_id": "candidate-pairs-monday",
+            "hypothesis_id": "H-PAIRS-01",
+            "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+            "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
+            "paper_route_probe_symbols": ["AAPL", "AMZN"],
+            "paper_route_probe_window_start": window_start.isoformat(),
+            "paper_route_probe_window_end": window_end.isoformat(),
+            "bounded_evidence_collection_authorized": True,
+            "evidence_collection_ok": True,
+            "source_decision_readiness": {"ready": True, "blockers": []},
+            "runtime_window_import_health_gate_blockers": [
+                "evidence_continuity_not_ok"
+            ],
+            "runtime_window_import_promotion_blockers": ["drift_checks_not_ok"],
+        }
+        setattr(
+            pipeline,
+            "_external_paper_route_target_probe_symbols_cached",
+            lambda: ({"AAPL", "AMZN"}, None, [target]),
+        )
+
+        with patch(
+            "app.trading.scheduler.simple_pipeline.trading_now",
+            return_value=window_start + timedelta(minutes=5),
+        ):
+            reserves = pipeline._paper_route_target_plan_reserves_account(
+                allowed_symbols=set()
+            )
+
+        self.assertTrue(reserves)
+
+    def test_run_once_commits_and_skips_regular_signals_when_target_reserves_account(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 6, 1, 14, 30, tzinfo=timezone.utc),
+            symbol="NVDA",
+            payload={"price": Decimal("100")},
+            timeframe="1Min",
+        )
+        ingestor = FakeIngestor([signal])
+        pipeline = object.__new__(SimpleTradingPipeline)
+        setattr(pipeline, "account_label", "TORGHUT_SIM")
+        setattr(pipeline, "session_factory", self.session_local)
+        setattr(pipeline, "state", TradingState())
+        setattr(pipeline, "ingestor", ingestor)
+        strategy = Strategy(
+            name="microbar-cross-sectional-pairs-v1",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="microbar_cross_sectional_pairs_v1",
+            universe_symbols=["AAPL", "AMZN"],
+        )
+        setattr(pipeline, "_label_mature_rejected_signal_outcome_events", lambda: None)
+        setattr(pipeline, "_prepare_run_once", lambda _session: [strategy])
+        setattr(
+            pipeline,
+            "_capture_runtime_window_account_snapshot_if_due",
+            lambda _session: None,
+        )
+        setattr(
+            pipeline,
+            "_warm_session_context_from_open",
+            lambda _session, *, strategies: None,
+        )
+        setattr(pipeline, "_record_ingest_window", lambda _batch: None)
+        setattr(
+            pipeline,
+            "_build_run_context",
+            lambda _session: ({}, {}, [], {"AAPL", "AMZN"}),
+        )
+        setattr(
+            pipeline,
+            "_process_paper_route_probe_exit_decisions",
+            lambda **_kwargs: None,
+        )
+        setattr(
+            pipeline,
+            "_process_paper_route_target_source_decisions",
+            lambda **_kwargs: None,
+        )
+        setattr(
+            pipeline,
+            "_paper_route_target_plan_reserves_account",
+            lambda *, allowed_symbols: True,
+        )
+        setattr(
+            pipeline,
+            "_quality_gate_signals",
+            Mock(side_effect=AssertionError("regular signal path should be skipped")),
+        )
+
+        pipeline.run_once()
+
+        self.assertEqual(ingestor.committed_batches, 1)
+
+    def test_paper_route_target_plan_reservation_rejects_unusable_targets(self) -> None:
+        from app import config
+
+        window_start = datetime(2026, 6, 1, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 6, 1, 20, 0, tzinfo=timezone.utc)
+        now = window_start + timedelta(minutes=5)
+        config.settings.trading_mode = "paper"
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        pipeline = object.__new__(SimpleTradingPipeline)
+        setattr(pipeline, "account_label", "TORGHUT_SIM")
+        base_target = {
+            "account_label": "TORGHUT_SIM",
+            "observed_stage": "paper",
+            "source_kind": "paper_route_probe_runtime_observed",
+            "candidate_id": "candidate-pairs-monday",
+            "hypothesis_id": "H-PAIRS-01",
+            "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+            "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
+            "paper_route_probe_symbols": ["AAPL", "AMZN"],
+            "paper_route_probe_window_start": window_start.isoformat(),
+            "paper_route_probe_window_end": window_end.isoformat(),
+            "bounded_evidence_collection_authorized": True,
+            "evidence_collection_ok": True,
+            "source_decision_readiness": {"ready": True, "blockers": []},
+        }
+        targets = [
+            {
+                **base_target,
+                "paper_route_account_pre_session_blockers": [
+                    "unlinked_order_events_present"
+                ],
+            },
+            {**base_target, "paper_route_probe_window_start": None},
+            {
+                **base_target,
+                "paper_route_probe_window_start": (
+                    window_start + timedelta(days=1)
+                ).isoformat(),
+                "paper_route_probe_window_end": (
+                    window_end + timedelta(days=1)
+                ).isoformat(),
+            },
+            base_target,
+        ]
+        setattr(
+            pipeline,
+            "_external_paper_route_target_probe_symbols_cached",
+            lambda: ({"AAPL", "AMZN"}, None, targets),
+        )
+
+        with patch(
+            "app.trading.scheduler.simple_pipeline.trading_now",
+            return_value=now,
+        ):
+            setattr(pipeline, "_is_market_session_open", lambda _now: False)
+            self.assertFalse(
+                pipeline._paper_route_target_plan_reserves_account(
+                    allowed_symbols=set()
+                )
+            )
+            setattr(pipeline, "_is_market_session_open", lambda _now: True)
+            self.assertFalse(
+                pipeline._paper_route_target_plan_reserves_account(
+                    allowed_symbols={"MSFT"}
+                )
+            )
+
+    def test_paper_route_flat_repair_snapshot_handles_query_and_shape_failures(
+        self,
+    ) -> None:
+        class RaisingSession:
+            def execute(self, *_args: object, **_kwargs: object) -> object:
+                raise RuntimeError("snapshot query failed")
+
+        class ResultWithStringPositions:
+            def first(self) -> tuple[str, datetime]:
+                return (
+                    "not-a-position-list",
+                    datetime(2026, 6, 1, tzinfo=timezone.utc),
+                )
+
+        class StringPositionsSession:
+            def execute(
+                self, *_args: object, **_kwargs: object
+            ) -> ResultWithStringPositions:
+                return ResultWithStringPositions()
+
+        self.assertFalse(
+            SimpleTradingPipeline._paper_route_target_symbol_has_flat_repair_snapshot(
+                session=cast(Session, RaisingSession()),
+                account_label="TORGHUT_SIM",
+                symbol="AMZN",
+                after=datetime(2026, 6, 1, tzinfo=timezone.utc),
+            )
+        )
+        self.assertFalse(
+            SimpleTradingPipeline._paper_route_target_symbol_has_flat_repair_snapshot(
+                session=cast(Session, StringPositionsSession()),
+                account_label="TORGHUT_SIM",
+                symbol="AMZN",
+                after=datetime(2026, 6, 1, tzinfo=timezone.utc),
+            )
+        )
+
+    def test_paper_route_account_exposure_detects_market_value(self) -> None:
+        self.assertTrue(
+            SimpleTradingPipeline._paper_route_target_account_has_open_exposure(
+                [{"symbol": "NVDA", "qty": "0", "market_value": "10"}]
+            )
+        )
+        self.assertFalse(
+            SimpleTradingPipeline._paper_route_target_account_has_open_exposure(
+                [{"symbol": "NVDA", "qty": "0", "market_value": "0"}]
+            )
+        )
 
     def test_paper_decision_persists_external_target_lineage_existing_row(
         self,

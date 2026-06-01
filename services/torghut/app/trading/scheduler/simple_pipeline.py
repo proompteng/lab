@@ -10,11 +10,11 @@ from decimal import Decimal, ROUND_DOWN
 from typing import Any, Literal, Optional, cast
 from uuid import UUID
 
-from sqlalchemy import select  # pyright: ignore[reportUnknownVariableType]
+from sqlalchemy import desc, select  # pyright: ignore[reportUnknownVariableType]
 from sqlalchemy.orm import Session
 
 from ...config import settings
-from ...models import Execution, Strategy, TradeDecision
+from ...models import Execution, PositionSnapshot, Strategy, TradeDecision
 from ...strategies.catalog import extract_catalog_metadata
 from ..autonomy import DriftThresholds, detect_drift
 from ..empirical_jobs import build_empirical_jobs_status
@@ -87,6 +87,9 @@ _BOUNDED_SIM_COLLECTION_BLOCKER_FIELDS = (
     "runtime_window_import_health_gate_blockers",
     "paper_route_account_pre_session_blockers",
     "paper_route_hpairs_symbol_blockers",
+)
+_BOUNDED_SIM_COLLECTION_ALLOWED_HEALTH_GATE_BLOCKERS = frozenset(
+    {"evidence_continuity_not_ok"}
 )
 _BOUNDED_SIM_COLLECTION_LINEAGE_KEYS = (
     "account_label",
@@ -255,7 +258,14 @@ def _bounded_sim_collection_blockers(
     if _safe_text(target.get("paper_route_probe_pair_balance_state")) == "imbalanced":
         blockers.append("paper_route_probe_pair_imbalanced")
     for key in _BOUNDED_SIM_COLLECTION_BLOCKER_FIELDS:
-        blockers.extend(_lineage_text_values(target.get(key)))
+        field_blockers = _lineage_text_values(target.get(key))
+        if key == "runtime_window_import_health_gate_blockers":
+            field_blockers = [
+                blocker
+                for blocker in field_blockers
+                if blocker not in _BOUNDED_SIM_COLLECTION_ALLOWED_HEALTH_GATE_BLOCKERS
+            ]
+        blockers.extend(field_blockers)
     return list(dict.fromkeys(blockers))
 
 
@@ -291,6 +301,7 @@ def _bounded_sim_collection_metadata_from_decision(
     for key in (
         "paper_route_target_plan_source_decision",
         "paper_route_target_plan",
+        "strategy_signal_paper",
         "paper_route_probe",
         "paper_route_probe_exit",
     ):
@@ -825,6 +836,16 @@ class SimpleTradingPipeline(TradingPipeline):
                 positions=positions,
                 allowed_symbols=allowed_symbols,
             )
+            if self._paper_route_target_plan_reserves_account(
+                allowed_symbols=allowed_symbols
+            ):
+                logger.info(
+                    "Skipping regular simple-lane signal processing while bounded "
+                    "paper-route evidence collection owns account=%s",
+                    self.account_label,
+                )
+                self.ingestor.commit_cursor(session, batch)
+                return
             quality_signals = self._quality_gate_signals(
                 signals=batch.signals,
                 strategies=strategies,
@@ -2860,6 +2881,16 @@ class SimpleTradingPipeline(TradingPipeline):
                 symbols = [symbol for symbol in symbols if symbol in strategy_symbols]
             symbol_actions = _target_probe_symbol_actions(target, symbols)
             pair_balance_state = _target_pair_balance_state(target, symbol_actions)
+            if _target_requires_bounded_sim_collection_gate(
+                target
+            ) and self._paper_route_target_account_has_open_exposure(positions):
+                logger.warning(
+                    "Skipping paper-route target source collection because account "
+                    "is not flat for bounded SIM evidence strategy=%s symbols=%s",
+                    strategy.name,
+                    symbols,
+                )
+                continue
             if pair_balance_state == "imbalanced":
                 logger.warning(
                     "Skipping imbalanced paper-route pair target strategy=%s symbols=%s actions=%s",
@@ -2991,6 +3022,47 @@ class SimpleTradingPipeline(TradingPipeline):
                 )
         return decisions
 
+    def _paper_route_target_plan_reserves_account(
+        self,
+        *,
+        allowed_symbols: set[str],
+    ) -> bool:
+        if settings.trading_mode != "paper":
+            return False
+        if not settings.trading_simple_paper_route_probe_enabled:
+            return False
+        now = trading_now(account_label=self.account_label).astimezone(timezone.utc)
+        if not self._is_market_session_open(now):
+            return False
+        target_symbols, target_plan_error, target_plan_targets = (
+            self._external_paper_route_target_probe_symbols_cached()
+        )
+        if target_plan_error or not target_symbols:
+            return False
+        normalized_allowed = {
+            symbol.strip().upper() for symbol in allowed_symbols if symbol.strip()
+        }
+        for target in target_plan_targets:
+            if not _target_requires_bounded_sim_collection_gate(target):
+                continue
+            if not _bounded_sim_collection_authorized(
+                target,
+                account_label=self.account_label,
+            ):
+                continue
+            window = _target_probe_window(target)
+            if window is None:
+                continue
+            window_start, window_end = window
+            if now < window_start or now >= window_end:
+                continue
+            symbols = _target_symbols(target) & target_symbols
+            if normalized_allowed:
+                symbols = {symbol for symbol in symbols if symbol in normalized_allowed}
+            if symbols:
+                return True
+        return False
+
     @staticmethod
     def _paper_route_target_symbol_has_open_strategy_exposure(
         *,
@@ -3008,7 +3080,7 @@ class SimpleTradingPipeline(TradingPipeline):
         guard_start = window_start - _PAPER_ROUTE_TARGET_PROFIT_PROOF_EXPOSURE_LOOKBACK
         try:
             rows = session.execute(
-                select(Execution.side, Execution.filled_qty)
+                select(Execution.side, Execution.filled_qty, Execution.created_at)
                 .join(TradeDecision, Execution.trade_decision_id == TradeDecision.id)
                 .where(
                     Execution.alpaca_account_label == account_label,
@@ -3032,7 +3104,11 @@ class SimpleTradingPipeline(TradingPipeline):
             return True
 
         signed_qty = Decimal("0")
-        for side, filled_qty in rows:
+        latest_fill_at: datetime | None = None
+        for row in rows:
+            side = row[0]
+            filled_qty = row[1]
+            created_at = row[2] if len(row) > 2 else None
             qty = _optional_decimal(filled_qty)
             if qty is None or qty <= 0:
                 continue
@@ -3040,7 +3116,61 @@ class SimpleTradingPipeline(TradingPipeline):
                 signed_qty -= qty
             else:
                 signed_qty += qty
-        return abs(signed_qty) > _PAPER_ROUTE_TARGET_OPEN_EXPOSURE_EPSILON
+            if isinstance(created_at, datetime):
+                latest_fill_at = (
+                    created_at
+                    if latest_fill_at is None or created_at > latest_fill_at
+                    else latest_fill_at
+                )
+        if abs(signed_qty) <= _PAPER_ROUTE_TARGET_OPEN_EXPOSURE_EPSILON:
+            return False
+        if SimpleTradingPipeline._paper_route_target_symbol_has_flat_repair_snapshot(
+            session=session,
+            account_label=account_label,
+            symbol=normalized_symbol,
+            after=latest_fill_at,
+        ):
+            return False
+        return True
+
+    @staticmethod
+    def _paper_route_target_symbol_has_flat_repair_snapshot(
+        *,
+        session: Session,
+        account_label: str,
+        symbol: str,
+        after: datetime | None,
+    ) -> bool:
+        if after is None:
+            return False
+        try:
+            row = session.execute(
+                select(PositionSnapshot.positions, PositionSnapshot.as_of)
+                .where(
+                    PositionSnapshot.alpaca_account_label == account_label,
+                    PositionSnapshot.as_of >= after,
+                )
+                .order_by(desc(PositionSnapshot.as_of))
+                .limit(1)
+            ).first()
+        except Exception:
+            logger.exception(
+                "Failed to inspect paper-route flat repair snapshot symbol=%s account_label=%s",
+                symbol,
+                account_label,
+            )
+            return False
+        if row is None:
+            return False
+        positions = row[0]
+        if not isinstance(positions, Sequence) or isinstance(
+            positions, (bytes, bytearray, str)
+        ):
+            return False
+        return not SimpleTradingPipeline._paper_route_target_symbol_has_open_position(
+            cast(Sequence[Mapping[str, Any]], positions),
+            symbol,
+        )
 
     @staticmethod
     def _paper_route_target_symbol_has_open_profit_proof_exposure(
@@ -3128,6 +3258,22 @@ class SimpleTradingPipeline(TradingPipeline):
         for position in positions:
             if str(position.get("symbol") or "").strip().upper() != normalized_symbol:
                 continue
+            for qty_key in ("qty", "quantity", "qty_available"):
+                qty = _optional_decimal(position.get(qty_key))
+                if qty is not None and qty != 0:
+                    return True
+            market_value = _optional_decimal(position.get("market_value"))
+            if market_value is not None and market_value != 0:
+                return True
+        return False
+
+    @staticmethod
+    def _paper_route_target_account_has_open_exposure(
+        positions: Sequence[Mapping[str, Any]] | None,
+    ) -> bool:
+        if not positions:
+            return False
+        for position in positions:
             for qty_key in ("qty", "quantity", "qty_available"):
                 qty = _optional_decimal(position.get(qty_key))
                 if qty is not None and qty != 0:
@@ -3274,6 +3420,20 @@ class SimpleTradingPipeline(TradingPipeline):
                 != "paper_route_probe_runtime_observed"
             ):
                 continue
+            if _target_requires_bounded_sim_collection_gate(target):
+                blockers = _bounded_sim_collection_blockers(
+                    target,
+                    account_label=self.account_label,
+                )
+                if blockers:
+                    logger.warning(
+                        "Skipping strategy-signal paper authority because bounded SIM "
+                        "collection is not authorized strategy=%s symbol=%s blockers=%s",
+                        strategy.name if strategy is not None else decision.strategy_id,
+                        symbol,
+                        ",".join(blockers),
+                    )
+                    continue
             if not _target_truthy(target.get("paper_probation_authorized")):
                 continue
             return target
@@ -3317,6 +3477,32 @@ class SimpleTradingPipeline(TradingPipeline):
             "dataset_snapshot_ref",
         ):
             value = _safe_text(target.get(key))
+            if value is not None:
+                metadata[key] = value
+        for key in _BOUNDED_SIM_COLLECTION_LINEAGE_KEYS:
+            value = _safe_text(target.get(key))
+            if value is not None:
+                metadata[key] = value
+        for key in _BOUNDED_SIM_COLLECTION_LINEAGE_BOOL_KEYS:
+            value = _target_bool(target.get(key))
+            if value is not None:
+                metadata[key] = value
+        for key in _BOUNDED_SIM_COLLECTION_LINEAGE_MAPPING_KEYS:
+            value = target.get(key)
+            if isinstance(value, Mapping):
+                metadata[key] = dict(cast(Mapping[str, Any], value))
+        for key in _BOUNDED_SIM_COLLECTION_BLOCKER_FIELDS:
+            values = _lineage_text_values(target.get(key))
+            if values:
+                metadata[key] = values
+        symbols = _lineage_text_values(target.get("paper_route_probe_symbols"))
+        if symbols:
+            metadata["paper_route_probe_symbols"] = symbols
+        for key in (
+            "paper_route_probe_pair_balance_required",
+            "paper_route_probe_pair_balance_state",
+        ):
+            value = target.get(key)
             if value is not None:
                 metadata[key] = value
         if window is not None:
@@ -3756,12 +3942,12 @@ class SimpleTradingPipeline(TradingPipeline):
         )
         paper_route_probe_applied = False
         if proof_floor_block_reason is not None:
+            collection_metadata = _bounded_sim_collection_metadata_from_decision(
+                decision,
+                account_label=self.account_label,
+                trading_mode=settings.trading_mode,
+            )
             if not settings.trading_simple_submit_enabled:
-                collection_metadata = _bounded_sim_collection_metadata_from_decision(
-                    decision,
-                    account_label=self.account_label,
-                    trading_mode=settings.trading_mode,
-                )
                 if collection_metadata is None:
                     self._block_decision_submission(
                         session=session,
@@ -3783,6 +3969,7 @@ class SimpleTradingPipeline(TradingPipeline):
             if settings.trading_mode == "paper" and (
                 self._paper_route_probe_exit_metadata(decision) is not None
                 or _paper_route_probe_entry_metadata(decision.params) is not None
+                or collection_metadata is not None
             ):
                 paper_route_probe_applied = True
             if not paper_route_probe_applied:
