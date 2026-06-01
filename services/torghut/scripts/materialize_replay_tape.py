@@ -12,7 +12,9 @@ from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Mapping
+from urllib import parse
 
+from app.trading.market_calendar import regular_equities_session_days
 from app.trading.discovery.replay_tape import (
     ReplayTapeCoverageError,
     build_source_query_digest,
@@ -28,6 +30,7 @@ _DEFAULT_MIN_EXECUTABLE_ROWS_PER_SYMBOL_DAY = 18_000
 _DEFAULT_MIN_QUOTE_VALID_RATIO = Decimal("0.90")
 _DEFAULT_MAX_COVERAGE_SPREAD_BPS = Decimal("50")
 _DEFAULT_MAX_EXECUTABLE_GAP_SECONDS = 120
+_DEFAULT_QUOTE_CARRY_FORWARD_MAX_AGE_SECONDS = 0
 
 
 def _parse_args() -> argparse.Namespace:
@@ -59,10 +62,32 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--clickhouse-password",
-        default=os.environ.get(
-            "TA_CLICKHOUSE_PASSWORD",
-            os.environ.get("CLICKHOUSE_PASSWORD", ""),
+        default="",
+    )
+    parser.add_argument(
+        "--clickhouse-password-env",
+        default=os.environ.get("TA_CLICKHOUSE_PASSWORD_ENV", "TA_CLICKHOUSE_PASSWORD"),
+        help=(
+            "Environment variable that contains the ClickHouse password; ignored when "
+            "--clickhouse-password is set."
         ),
+    )
+    parser.add_argument(
+        "--clickhouse-kubectl-context",
+        default=os.environ.get("TA_CLICKHOUSE_KUBECTL_CONTEXT", ""),
+        help=(
+            "Optional kubectl context for ClickHouse access. When set, namespace and "
+            "pod must also be set and --clickhouse-http-url is replaced with an encoded "
+            "kubectl:// URL."
+        ),
+    )
+    parser.add_argument(
+        "--clickhouse-kubectl-namespace",
+        default=os.environ.get("TA_CLICKHOUSE_KUBECTL_NAMESPACE", ""),
+    )
+    parser.add_argument(
+        "--clickhouse-kubectl-pod",
+        default=os.environ.get("TA_CLICKHOUSE_KUBECTL_POD", ""),
     )
     parser.add_argument("--start-date", required=True)
     parser.add_argument("--end-date", required=True)
@@ -185,6 +210,20 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--quote-carry-forward-max-age-seconds",
+        type=int,
+        default=int(
+            os.environ.get(
+                "TORGHUT_REPLAY_QUOTE_CARRY_FORWARD_MAX_AGE_SECONDS",
+                str(_DEFAULT_QUOTE_CARRY_FORWARD_MAX_AGE_SECONDS),
+            )
+        ),
+        help=(
+            "Opt-in bounded ASOF quote carry-forward for replay rows. "
+            "The default 0 keeps strict direct quote-backed rows only."
+        ),
+    )
+    parser.add_argument(
         "--log-level",
         default=os.environ.get("TORGHUT_REPLAY_LOG_LEVEL", "INFO"),
     )
@@ -207,6 +246,51 @@ def _parse_source_table_versions(values: list[str]) -> dict[str, str]:
             raise ValueError(f"source_table_version_invalid:{value}")
         parsed[key.strip()] = item.strip()
     return parsed
+
+
+def _encoded_kubectl_clickhouse_url(
+    *,
+    context: str,
+    namespace: str,
+    pod: str,
+) -> str:
+    context_value = str(context or "").strip()
+    namespace_value = str(namespace or "").strip()
+    pod_value = str(pod or "").strip()
+    if not (context_value and namespace_value and pod_value):
+        raise ValueError(
+            "clickhouse_kubectl_target_incomplete:context_namespace_pod_required"
+        )
+    return (
+        f"kubectl://{parse.quote(context_value, safe='')}/"
+        f"{parse.quote(namespace_value, safe='')}/"
+        f"{parse.quote(pod_value, safe='')}"
+    )
+
+
+def _resolved_clickhouse_http_url(args: argparse.Namespace) -> str:
+    context = str(getattr(args, "clickhouse_kubectl_context", "") or "").strip()
+    namespace = str(getattr(args, "clickhouse_kubectl_namespace", "") or "").strip()
+    pod = str(getattr(args, "clickhouse_kubectl_pod", "") or "").strip()
+    if context or namespace or pod:
+        return _encoded_kubectl_clickhouse_url(
+            context=context,
+            namespace=namespace,
+            pod=pod,
+        )
+    return str(getattr(args, "clickhouse_http_url", "") or "")
+
+
+def _resolved_clickhouse_password(args: argparse.Namespace) -> str:
+    direct_password = str(getattr(args, "clickhouse_password", "") or "").strip()
+    if direct_password:
+        return direct_password
+    password_env = str(getattr(args, "clickhouse_password_env", "") or "").strip()
+    if password_env:
+        password = os.environ.get(password_env, "")
+        if password:
+            return password
+    return os.environ.get("CLICKHOUSE_PASSWORD", "")
 
 
 def _executable_day_policy(args: argparse.Namespace) -> dict[str, Any]:
@@ -266,6 +350,20 @@ def _executable_day_policy(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def _quote_carry_forward_max_age_seconds(args: argparse.Namespace) -> int:
+    return max(
+        0,
+        int(
+            getattr(
+                args,
+                "quote_carry_forward_max_age_seconds",
+                _DEFAULT_QUOTE_CARRY_FORWARD_MAX_AGE_SECONDS,
+            )
+            or 0
+        ),
+    )
+
+
 def _source_query_payload(
     args: argparse.Namespace, symbols: tuple[str, ...]
 ) -> dict[str, Any]:
@@ -279,19 +377,14 @@ def _source_query_payload(
         "source": "ta",
         "window_size": "PT1S",
         "join": "torghut.ta_microbars",
+        "quote_carry_forward_max_age_seconds": _quote_carry_forward_max_age_seconds(
+            args
+        ),
     }
 
 
 def _business_days(start_day: date, end_day: date) -> tuple[date, ...]:
-    if start_day > end_day:
-        return ()
-    days: list[date] = []
-    current = start_day
-    while current <= end_day:
-        if current.weekday() < 5:
-            days.append(current)
-        current += timedelta(days=1)
-    return tuple(days)
+    return regular_equities_session_days(start_day, end_day)
 
 
 def _coverage_diagnostics_query(
@@ -337,6 +430,11 @@ WHERE source = 'ta'
     abs(imbalance_ask_px - imbalance_bid_px) / ((imbalance_bid_px + imbalance_ask_px) / 2) * 10000
   ) <= {str(max_spread_bps)}
 """.rstrip()
+    regular_session_where = f"""
+{shared_where}
+  AND formatDateTime(event_ts, '%H:%M:%S', 'America/New_York') >= '09:30:00'
+  AND formatDateTime(event_ts, '%H:%M:%S', 'America/New_York') < '16:00:00'
+""".rstrip()
     return f"""
 SELECT
   toString(trading_day) AS trading_day,
@@ -363,7 +461,12 @@ SELECT
     ),
     raw_signal_rows_by_symbol > 0
   )) AS min_quote_valid_ratio_by_symbol_day,
-  toString(max(max_executable_gap_seconds_by_symbol)) AS max_executable_gap_seconds
+  toString(max(max_executable_gap_seconds_by_symbol)) AS max_executable_gap_seconds,
+  toString(sum(regular_session_raw_signal_rows_by_symbol)) AS regular_session_raw_signal_rows,
+  toString(sum(quote_carry_forward_rows_120s_by_symbol)) AS quote_carry_forward_rows_120s,
+  toString(sum(quote_carry_forward_rows_300s_by_symbol)) AS quote_carry_forward_rows_300s,
+  toString(sum(quote_carry_forward_rows_600s_by_symbol)) AS quote_carry_forward_rows_600s,
+  toString(max(max_quote_carry_forward_age_seconds_by_symbol)) AS max_quote_carry_forward_age_seconds
 FROM
 (
   SELECT
@@ -374,7 +477,12 @@ FROM
     sum(toUInt64OrZero(toString(quote_sane_signal_rows))) AS quote_sane_signal_rows_by_symbol,
     sum(toUInt64OrZero(toString(spread_sane_signal_rows))) AS spread_sane_signal_rows_by_symbol,
     sum(toUInt64OrZero(toString(microbar_rows))) AS microbar_rows_by_symbol,
-    max(toUInt64OrZero(toString(max_executable_gap_seconds))) AS max_executable_gap_seconds_by_symbol
+    max(toUInt64OrZero(toString(max_executable_gap_seconds))) AS max_executable_gap_seconds_by_symbol,
+    sum(toUInt64OrZero(toString(regular_session_raw_signal_rows))) AS regular_session_raw_signal_rows_by_symbol,
+    sum(toUInt64OrZero(toString(quote_carry_forward_rows_120s))) AS quote_carry_forward_rows_120s_by_symbol,
+    sum(toUInt64OrZero(toString(quote_carry_forward_rows_300s))) AS quote_carry_forward_rows_300s_by_symbol,
+    sum(toUInt64OrZero(toString(quote_carry_forward_rows_600s))) AS quote_carry_forward_rows_600s_by_symbol,
+    max(toUInt64OrZero(toString(max_quote_carry_forward_age_seconds))) AS max_quote_carry_forward_age_seconds_by_symbol
   FROM
   (
     SELECT
@@ -385,7 +493,12 @@ FROM
     0 AS quote_sane_signal_rows,
     0 AS spread_sane_signal_rows,
     0 AS microbar_rows,
-    0 AS max_executable_gap_seconds
+    0 AS max_executable_gap_seconds,
+    0 AS regular_session_raw_signal_rows,
+    0 AS quote_carry_forward_rows_120s,
+    0 AS quote_carry_forward_rows_300s,
+    0 AS quote_carry_forward_rows_600s,
+    0 AS max_quote_carry_forward_age_seconds
   FROM torghut.ta_signals
   {shared_where}
   GROUP BY trading_day, symbol
@@ -398,7 +511,12 @@ FROM
     0 AS quote_sane_signal_rows,
     0 AS spread_sane_signal_rows,
     0 AS microbar_rows,
-    0 AS max_executable_gap_seconds
+    0 AS max_executable_gap_seconds,
+    0 AS regular_session_raw_signal_rows,
+    0 AS quote_carry_forward_rows_120s,
+    0 AS quote_carry_forward_rows_300s,
+    0 AS quote_carry_forward_rows_600s,
+    0 AS max_quote_carry_forward_age_seconds
   FROM torghut.ta_signals
   {executable_where}
   GROUP BY trading_day, symbol
@@ -411,7 +529,12 @@ FROM
     count() AS quote_sane_signal_rows,
     0 AS spread_sane_signal_rows,
     0 AS microbar_rows,
-    0 AS max_executable_gap_seconds
+    0 AS max_executable_gap_seconds,
+    0 AS regular_session_raw_signal_rows,
+    0 AS quote_carry_forward_rows_120s,
+    0 AS quote_carry_forward_rows_300s,
+    0 AS quote_carry_forward_rows_600s,
+    0 AS max_quote_carry_forward_age_seconds
   FROM torghut.ta_signals
   {sane_quote_where}
   GROUP BY trading_day, symbol
@@ -424,7 +547,12 @@ FROM
     0 AS quote_sane_signal_rows,
     count() AS spread_sane_signal_rows,
     0 AS microbar_rows,
-    0 AS max_executable_gap_seconds
+    0 AS max_executable_gap_seconds,
+    0 AS regular_session_raw_signal_rows,
+    0 AS quote_carry_forward_rows_120s,
+    0 AS quote_carry_forward_rows_300s,
+    0 AS quote_carry_forward_rows_600s,
+    0 AS max_quote_carry_forward_age_seconds
   FROM torghut.ta_signals
   {spread_sane_where}
   GROUP BY trading_day, symbol
@@ -437,7 +565,12 @@ FROM
     0 AS quote_sane_signal_rows,
     0 AS spread_sane_signal_rows,
     0 AS microbar_rows,
-    max(gap_seconds) AS max_executable_gap_seconds
+    max(gap_seconds) AS max_executable_gap_seconds,
+    0 AS regular_session_raw_signal_rows,
+    0 AS quote_carry_forward_rows_120s,
+    0 AS quote_carry_forward_rows_300s,
+    0 AS quote_carry_forward_rows_600s,
+    0 AS max_quote_carry_forward_age_seconds
   FROM
   (
     SELECT
@@ -461,6 +594,49 @@ FROM
   GROUP BY trading_day, symbol
   UNION ALL
   SELECT
+    trading_day,
+    symbol,
+    0 AS raw_signal_rows,
+    0 AS executable_signal_rows,
+    0 AS quote_sane_signal_rows,
+    0 AS spread_sane_signal_rows,
+    0 AS microbar_rows,
+    0 AS max_executable_gap_seconds,
+    count() AS regular_session_raw_signal_rows,
+    countIf(quote_age_seconds <= 120) AS quote_carry_forward_rows_120s,
+    countIf(quote_age_seconds <= 300) AS quote_carry_forward_rows_300s,
+    countIf(quote_age_seconds <= 600) AS quote_carry_forward_rows_600s,
+    maxIf(quote_age_seconds, quote_age_seconds < 1000000000) AS max_quote_carry_forward_age_seconds
+  FROM
+  (
+    SELECT
+      t.trading_day,
+      t.symbol,
+      ifNull(dateDiff('second', q.quote_ts, t.event_ts), 1000000000) AS quote_age_seconds
+    FROM
+    (
+      SELECT
+        toDate(event_ts, 'UTC') AS trading_day,
+        symbol,
+        event_ts
+      FROM torghut.ta_signals
+      {regular_session_where}
+      ORDER BY symbol, event_ts
+    ) AS t
+    ASOF LEFT JOIN
+    (
+      SELECT
+        symbol,
+        event_ts AS quote_ts
+      FROM torghut.ta_signals
+      {spread_sane_where}
+      ORDER BY symbol, quote_ts
+    ) AS q
+    ON t.symbol = q.symbol AND t.event_ts >= q.quote_ts
+  )
+  GROUP BY trading_day, symbol
+  UNION ALL
+  SELECT
     toDate(event_ts, 'UTC') AS trading_day,
     symbol,
     0 AS raw_signal_rows,
@@ -468,7 +644,12 @@ FROM
     0 AS quote_sane_signal_rows,
     0 AS spread_sane_signal_rows,
     count() AS microbar_rows,
-    0 AS max_executable_gap_seconds
+    0 AS max_executable_gap_seconds,
+    0 AS regular_session_raw_signal_rows,
+    0 AS quote_carry_forward_rows_120s,
+    0 AS quote_carry_forward_rows_300s,
+    0 AS quote_carry_forward_rows_600s,
+    0 AS max_quote_carry_forward_age_seconds
   FROM torghut.ta_microbars
   {shared_where}
   GROUP BY trading_day, symbol
@@ -504,6 +685,11 @@ def _parse_coverage_diagnostics(
             quote_valid_ratio = "1"
             min_quote_valid_ratio_by_symbol_day = "1"
             max_executable_gap_seconds = "0"
+            regular_session_raw_signal_rows = "0"
+            quote_carry_forward_rows_120s = "0"
+            quote_carry_forward_rows_300s = "0"
+            quote_carry_forward_rows_600s = "0"
+            max_quote_carry_forward_age_seconds = "0"
         elif len(parts) == 14:
             (
                 trading_day,
@@ -520,6 +706,33 @@ def _parse_coverage_diagnostics(
                 quote_valid_ratio,
                 min_quote_valid_ratio_by_symbol_day,
                 max_executable_gap_seconds,
+            ) = parts
+            regular_session_raw_signal_rows = "0"
+            quote_carry_forward_rows_120s = "0"
+            quote_carry_forward_rows_300s = "0"
+            quote_carry_forward_rows_600s = "0"
+            max_quote_carry_forward_age_seconds = "0"
+        elif len(parts) == 19:
+            (
+                trading_day,
+                raw_signal_rows,
+                executable_signal_rows,
+                quote_sane_signal_rows,
+                spread_sane_signal_rows,
+                microbar_rows,
+                raw_signal_symbol_count,
+                executable_signal_symbol_count,
+                microbar_symbol_count,
+                min_executable_rows_per_symbol_day,
+                min_spread_sane_rows_per_symbol_day,
+                quote_valid_ratio,
+                min_quote_valid_ratio_by_symbol_day,
+                max_executable_gap_seconds,
+                regular_session_raw_signal_rows,
+                quote_carry_forward_rows_120s,
+                quote_carry_forward_rows_300s,
+                quote_carry_forward_rows_600s,
+                max_quote_carry_forward_age_seconds,
             ) = parts
         else:
             continue
@@ -543,6 +756,21 @@ def _parse_coverage_diagnostics(
                 min_quote_valid_ratio_by_symbol_day or "0"
             ),
             "max_executable_gap_seconds": int(max_executable_gap_seconds or 0),
+            "regular_session_raw_signal_rows": int(
+                regular_session_raw_signal_rows or 0
+            ),
+            "quote_carry_forward_rows_120s": int(
+                quote_carry_forward_rows_120s or 0
+            ),
+            "quote_carry_forward_rows_300s": int(
+                quote_carry_forward_rows_300s or 0
+            ),
+            "quote_carry_forward_rows_600s": int(
+                quote_carry_forward_rows_600s or 0
+            ),
+            "max_quote_carry_forward_age_seconds": int(
+                max_quote_carry_forward_age_seconds or 0
+            ),
         }
     return diagnostics
 
@@ -832,6 +1060,13 @@ def _select_effective_window(
 
 def main() -> int:
     args = _parse_args()
+    args = argparse.Namespace(
+        **{
+            **vars(args),
+            "clickhouse_http_url": _resolved_clickhouse_http_url(args),
+            "clickhouse_password": _resolved_clickhouse_password(args),
+        }
+    )
     logging.basicConfig(
         level=getattr(logging, str(args.log_level).upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(message)s",
@@ -873,6 +1108,7 @@ def main() -> int:
         flatten_eod=True,
         start_equity=Decimal(str(args.start_equity)),
         symbols=symbols,
+        quote_carry_forward_max_age_seconds=_quote_carry_forward_max_age_seconds(args),
     )
     rows = tuple(replay_mod._iter_signal_rows(config))
     manifest_path = args.manifest_output or default_manifest_path(args.output)

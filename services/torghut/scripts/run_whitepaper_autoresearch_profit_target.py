@@ -95,6 +95,9 @@ from app.trading.discovery.replay_tape import (
     slice_tape_by_window,
     validate_tape_freshness,
 )
+from app.trading.discovery.sleeve_simulation_preview import (
+    build_sleeve_simulation_preview,
+)
 from app.trading.discovery.runtime_closure import (
     RuntimeClosureExecutionContext,
     write_runtime_closure_bundle,
@@ -115,6 +118,7 @@ from app.whitepapers.claim_compiler import (
 
 import scripts.run_strategy_factory_v2 as strategy_factory_runner
 import scripts.local_intraday_tsmom_replay as replay_mod
+import scripts.materialize_replay_tape as replay_tape_materializer
 
 
 _DEFAULT_CHIP_UNIVERSE_CSV = ",".join(LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE)
@@ -126,7 +130,15 @@ _RANKER_BACKEND_CHOICES = (
     "numpy-fallback",
     "torch",
     "torch-cuda",
-    "cuda",
+)
+_RAPIDS_TAPE_FEATURE_PANEL_REF_SCHEMA_VERSION = (
+    "torghut.rapids-tape-feature-panel-ref.v1"
+)
+_RAPIDS_TAPE_FEATURE_PANEL_BLOCKERS = (
+    "rapids_research_preview_only",
+    "exact_replay_required",
+    "runtime_ledger_proof_required",
+    "live_paper_parity_required",
 )
 _DEFAULT_PORTFOLIO_PROFIT_PROGRAM = Path(
     "config/trading/research-programs/portfolio-profit-autoresearch-500-v1.yaml"
@@ -350,8 +362,9 @@ def _parse_args() -> argparse.Namespace:
         default=_DEFAULT_RANKER_BACKEND_PREFERENCE,
         choices=_RANKER_BACKEND_CHOICES,
         help=(
-            "Array backend for advisory ranker training. CUDA choices only "
-            "accelerate research ranking and do not change promotion gates."
+            "Array backend for advisory ranker training. torch-cuda only "
+            "accelerates the PyTorch ranker slice and does not change "
+            "promotion gates."
         ),
     )
     parser.add_argument("--portfolio-size-min", type=int, default=2)
@@ -578,11 +591,109 @@ def _parse_args() -> argparse.Namespace:
         help="Minimum manifest-verified tape rows required to score a candidate in preview narrowing.",
     )
     parser.add_argument(
+        "--replay-tape-preview-array-backend",
+        default="numpy",
+        choices=("numpy", "numpy-fallback", "auto", "cupy"),
+        help=(
+            "Array backend for preview-only replay tape narrowing. Explicit cupy "
+            "requests fail closed when unavailable; auto may fall back to NumPy. "
+            "This never counts as promotion proof."
+        ),
+    )
+    parser.add_argument(
+        "--sleeve-simulation-preview-top-k",
+        type=int,
+        default=0,
+        help=(
+            "Preview-only sleeve simulation narrowing budget after replay-tape "
+            "preview. Requires --replay-tape-path and never counts as promotion proof."
+        ),
+    )
+    parser.add_argument(
+        "--sleeve-simulation-preview-backend",
+        default="auto",
+        choices=("cpu", "numpy", "auto", "numba-cuda"),
+        help=(
+            "Backend for preview-only sleeve simulation. Explicit numba-cuda "
+            "fails closed when unavailable; auto may fall back to CPU."
+        ),
+    )
+    parser.add_argument(
+        "--sleeve-simulation-preview-min-returns-per-path",
+        type=int,
+        default=2,
+        help="Minimum manifest-verified tape returns required per simulated sleeve path.",
+    )
+    parser.add_argument(
+        "--rapids-tape-feature-panel",
+        type=Path,
+        default=None,
+        help=(
+            "Optional RAPIDS/cuDF tape feature panel to attach as advisory "
+            "candidate-selection context. This never counts as promotion proof."
+        ),
+    )
+    parser.add_argument(
+        "--rapids-tape-feature-rows",
+        type=Path,
+        default=None,
+        help="Optional JSONL row artifact for --rapids-tape-feature-panel.",
+    )
+    parser.add_argument(
         "--materialize-replay-tape",
         action="store_true",
         help=(
             "Fetch the resolved full-window signal rows once, write a run-scoped "
             "manifest-verified replay tape, and use it for preview narrowing and exact replay."
+        ),
+    )
+    parser.add_argument(
+        "--materialize-replay-tape-latest-complete-window-min-days",
+        type=int,
+        default=0,
+        help=(
+            "Before materializing a replay tape, require the latest consecutive "
+            "sub-window to contain at least this many strict executable trading days. "
+            "Failures write run-scoped coverage diagnostics and fail closed."
+        ),
+    )
+    parser.add_argument(
+        "--clickhouse-query-timeout-seconds",
+        type=int,
+        default=replay_mod.DEFAULT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS,
+        help="Per ClickHouse HTTP or kubectl query timeout for materialized replay tapes.",
+    )
+    parser.add_argument(
+        "--materialize-replay-tape-min-executable-rows-per-symbol-day",
+        type=int,
+        default=18_000,
+        help="Strict executable row floor for latest-complete replay tape windows.",
+    )
+    parser.add_argument(
+        "--materialize-replay-tape-min-quote-valid-ratio",
+        default="0.90",
+        help="Strict quote-valid ratio floor for latest-complete replay tape windows.",
+    )
+    parser.add_argument(
+        "--materialize-replay-tape-max-coverage-spread-bps",
+        default="50",
+        help="Maximum spread for a row to count as quote-valid in coverage preflight.",
+    )
+    parser.add_argument(
+        "--materialize-replay-tape-max-executable-gap-seconds",
+        type=int,
+        default=120,
+        help="Maximum per-symbol executable row gap for latest-complete replay tape windows.",
+    )
+    parser.add_argument(
+        "--materialize-replay-tape-quote-carry-forward-max-age-seconds",
+        type=int,
+        default=int(
+            os.environ.get("TORGHUT_REPLAY_QUOTE_CARRY_FORWARD_MAX_AGE_SECONDS", "0")
+        ),
+        help=(
+            "Opt-in bounded ASOF quote carry-forward for materialized replay rows. "
+            "Default 0 keeps strict direct quote-backed rows only."
         ),
     )
     parser.add_argument(
@@ -1570,6 +1681,56 @@ def _stable_hash(payload: Mapping[str, Any]) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _rapids_tape_feature_panel_ref(args: argparse.Namespace) -> dict[str, Any] | None:
+    panel_arg = getattr(args, "rapids_tape_feature_panel", None)
+    rows_arg = getattr(args, "rapids_tape_feature_rows", None)
+    if panel_arg is None and rows_arg is None:
+        return None
+    if panel_arg is None:
+        raise ValueError("rapids_tape_feature_panel_required_with_rows")
+
+    panel_path = _resolve_existing_path(Path(panel_arg))
+    if not panel_path.exists():
+        raise ValueError(f"rapids_tape_feature_panel_missing:{panel_path}")
+    try:
+        panel_payload = _mapping(json.loads(panel_path.read_text(encoding="utf-8")))
+    except Exception as exc:
+        raise ValueError(
+            f"rapids_tape_feature_panel_invalid_json:{type(exc).__name__}"
+        ) from exc
+    if panel_payload.get("schema_version") != "torghut.rapids-tape-feature-panel.v1":
+        raise ValueError("rapids_tape_feature_panel_schema_mismatch")
+    if panel_payload.get("promotion_proof") is not False:
+        raise ValueError("rapids_tape_feature_panel_must_not_be_promotion_proof")
+    research_backend = _mapping(panel_payload.get("research_backend"))
+    if research_backend and research_backend.get("promotion_proof") is not False:
+        raise ValueError("rapids_tape_feature_backend_must_not_be_promotion_proof")
+
+    rows_path: Path | None = None
+    if rows_arg is not None:
+        rows_path = _resolve_existing_path(Path(rows_arg))
+        if not rows_path.exists():
+            raise ValueError(f"rapids_tape_feature_rows_missing:{rows_path}")
+
+    return {
+        "schema_version": _RAPIDS_TAPE_FEATURE_PANEL_REF_SCHEMA_VERSION,
+        "panel_path": str(panel_path),
+        "rows_path": str(rows_path or ""),
+        "panel_sha256": _file_sha256(panel_path),
+        "rows_sha256": _file_sha256(rows_path) if rows_path is not None else "",
+        "promotion_proof": False,
+        "blockers": list(_RAPIDS_TAPE_FEATURE_PANEL_BLOCKERS),
+    }
+
+
 def _decimal(value: Any, *, default: str = "0") -> Decimal:
     try:
         return Decimal(str(value if value is not None else default))
@@ -1656,6 +1817,34 @@ def _candidate_universe_symbols_for_compilation(
     ) == len(LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE):
         return ()
     return symbols
+
+
+def _replay_tape_materialization_symbols(
+    args: argparse.Namespace,
+    candidate_specs: Sequence[CandidateSpec],
+) -> tuple[tuple[str, ...], str]:
+    requested_symbols = _candidate_universe_symbols_from_args(args)
+    if not candidate_specs:
+        return requested_symbols, "args_symbols"
+
+    requested_symbol_set = set(requested_symbols)
+    symbols: list[str] = []
+    seen: set[str] = set()
+    for spec in candidate_specs:
+        for raw_symbol in _string_list_from_value(
+            spec.strategy_overrides.get("universe_symbols")
+        ):
+            symbol = raw_symbol.strip().upper()
+            if (
+                symbol
+                and symbol in requested_symbol_set
+                and symbol not in seen
+            ):
+                symbols.append(symbol)
+                seen.add(symbol)
+    if not symbols:
+        return requested_symbols, "args_symbols"
+    return tuple(symbols), "candidate_spec_union"
 
 
 def _mapping(value: Any) -> dict[str, Any]:
@@ -6337,6 +6526,9 @@ def _apply_fast_replay_preview_narrowing(
         min_rows_per_candidate=max(
             1, int(getattr(args, "replay_tape_preview_min_rows", 2) or 2)
         ),
+        array_backend_preference=str(
+            getattr(args, "replay_tape_preview_array_backend", "numpy") or "numpy"
+        ),
     )
     preview_scores_path = output_dir / "replay-tape-preview-scores.jsonl"
     preview_manifest_path = output_dir / "replay-tape-preview-manifest.json"
@@ -6415,6 +6607,12 @@ def _apply_fast_replay_preview_narrowing(
             **_mapping(candidate_selection.get("budget")),
             "fast_replay_preview_enabled": True,
             "fast_replay_preview_requested_top_k": preview_top_k,
+            "fast_replay_preview_array_backend": preview_manifest.get(
+                "research_backend", {}
+            ).get("selected_backend"),
+            "fast_replay_preview_requested_array_backend": preview_manifest.get(
+                "research_backend", {}
+            ).get("requested_backend"),
             "fast_replay_preview_selected_count": len(narrowed_specs),
             "pre_fast_replay_preview_selected_count": len(specs),
             "selected_count": len(narrowed_specs),
@@ -6432,11 +6630,289 @@ def _apply_fast_replay_preview_narrowing(
     return narrowed_specs, updated_selection
 
 
+def _apply_sleeve_simulation_preview_narrowing(
+    *,
+    args: argparse.Namespace,
+    output_dir: Path,
+    specs: Sequence[CandidateSpec],
+    candidate_selection: Mapping[str, Any],
+) -> tuple[list[CandidateSpec], dict[str, Any]]:
+    preview_top_k = max(
+        0, int(getattr(args, "sleeve_simulation_preview_top_k", 0) or 0)
+    )
+    if preview_top_k <= 0:
+        return list(specs), dict(candidate_selection)
+    if str(getattr(args, "replay_mode", "") or "") != "real":
+        raise ValueError("sleeve_simulation_preview_requires_real_replay")
+    tape_path = getattr(args, "replay_tape_path", None)
+    if tape_path is None:
+        raise ValueError("sleeve_simulation_preview_requires_replay_tape_path")
+
+    start_date = _fast_replay_preview_date_arg(args, "full_window_start_date")
+    end_date = _fast_replay_preview_date_arg(args, "full_window_end_date")
+    tape = load_replay_tape(
+        Path(tape_path).resolve(),
+        manifest_path=(
+            Path(args.replay_tape_manifest).resolve()
+            if getattr(args, "replay_tape_manifest", None) is not None
+            else None
+        ),
+    )
+    validation = validate_tape_freshness(
+        tape.manifest,
+        start_date=start_date,
+        end_date=end_date,
+        symbols=_candidate_universe_symbols_from_args(args),
+        allow_stale_tape=bool(getattr(args, "allow_stale_tape", False)),
+    )
+    selected_rows = slice_tape_by_symbols(
+        slice_tape_by_window(
+            tape.rows,
+            start_date=start_date,
+            end_date=end_date,
+        ),
+        symbols=_candidate_universe_symbols_from_args(args),
+    )
+    panel = build_sleeve_simulation_preview(
+        specs=specs,
+        rows=selected_rows,
+        replay_tape_manifest=tape.manifest,
+        preview_scores=_preview_scores_from_candidate_selection(candidate_selection),
+        top_k=preview_top_k,
+        backend_preference=str(
+            getattr(args, "sleeve_simulation_preview_backend", "auto") or "auto"
+        ),
+        min_returns_per_path=max(
+            1,
+            int(
+                getattr(args, "sleeve_simulation_preview_min_returns_per_path", 2)
+                or 2
+            ),
+        ),
+    )
+    if specs and not panel.selected_candidate_spec_ids:
+        raise ValueError("sleeve_simulation_preview_produced_no_selected_candidates")
+
+    rows_path = output_dir / "sleeve-simulation-preview-rows.jsonl"
+    manifest_path = output_dir / "sleeve-simulation-preview-manifest.json"
+    panel_payload = {
+        **panel.to_payload(),
+        "validation": validation,
+        "artifacts": {
+            "rows_jsonl": str(rows_path),
+            "manifest_json": str(manifest_path),
+        },
+    }
+    _write_jsonl(rows_path, [row.to_payload() for row in panel.rows])
+    _write_json(manifest_path, panel_payload)
+
+    spec_by_id = {spec.candidate_spec_id: spec for spec in specs}
+    narrowed_specs = [
+        spec_by_id[candidate_spec_id]
+        for candidate_spec_id in panel.selected_candidate_spec_ids
+        if candidate_spec_id in spec_by_id
+    ]
+    selected_ids = {spec.candidate_spec_id for spec in narrowed_specs}
+    replay_order_by_spec = {
+        spec.candidate_spec_id: index
+        for index, spec in enumerate(narrowed_specs, start=1)
+    }
+    preview_row_by_spec = {
+        row.candidate_spec_id: row.to_payload() for row in panel.rows
+    }
+    original_selected_ids = _selected_candidate_spec_ids(candidate_selection)
+    updated_rows: list[dict[str, Any]] = []
+    for row in _list_of_mappings(candidate_selection.get("rows")):
+        candidate_spec_id = _string(row.get("candidate_spec_id"))
+        updated = dict(row)
+        preview_row = preview_row_by_spec.get(candidate_spec_id)
+        if preview_row is not None:
+            updated["sleeve_simulation_preview_rank"] = preview_row["rank"]
+            updated["sleeve_simulation_preview_selected"] = preview_row["selected"]
+            updated["sleeve_simulation_preview_selection_reason"] = preview_row[
+                "selection_reason"
+            ]
+            updated["sleeve_simulation_preview_path_count"] = preview_row["path_count"]
+            updated["sleeve_simulation_preview_step_count"] = preview_row["step_count"]
+            updated["sleeve_simulation_preview_mean_final_pnl_bps"] = preview_row[
+                "mean_final_pnl_bps"
+            ]
+            updated["sleeve_simulation_preview_p10_final_pnl_bps"] = preview_row[
+                "p10_final_pnl_bps"
+            ]
+            updated["sleeve_simulation_preview_mean_max_drawdown_bps"] = preview_row[
+                "mean_max_drawdown_bps"
+            ]
+            updated["sleeve_simulation_preview_advisory_score"] = preview_row[
+                "advisory_score"
+            ]
+        if candidate_spec_id in original_selected_ids:
+            updated["pre_sleeve_simulation_preview_selected_for_replay"] = bool(
+                row.get("selected_for_replay")
+            )
+            updated["selected_for_replay"] = candidate_spec_id in selected_ids
+            updated["replay_order"] = replay_order_by_spec.get(candidate_spec_id)
+            if candidate_spec_id not in selected_ids:
+                updated["selection_reason"] = "sleeve_simulation_preview_filtered"
+        updated_rows.append(updated)
+
+    panel_reference_payload = {
+        key: item for key, item in panel_payload.items() if key != "rows"
+    }
+    updated_selection = {
+        **dict(candidate_selection),
+        "budget": {
+            **_mapping(candidate_selection.get("budget")),
+            "sleeve_simulation_preview_enabled": True,
+            "sleeve_simulation_preview_requested_top_k": preview_top_k,
+            "sleeve_simulation_preview_requested_backend": panel.requested_backend,
+            "sleeve_simulation_preview_selected_count": len(narrowed_specs),
+            "pre_sleeve_simulation_preview_selected_count": len(specs),
+            "selected_count": len(narrowed_specs),
+        },
+        "selected_candidate_spec_ids": [
+            spec.candidate_spec_id for spec in narrowed_specs
+        ],
+        "rows": updated_rows,
+        "sleeve_simulation_preview": {
+            **panel_reference_payload,
+            "rows_artifact": str(rows_path),
+            "manifest_artifact": str(manifest_path),
+        },
+    }
+    return narrowed_specs, updated_selection
+
+
+def _preview_scores_from_candidate_selection(
+    candidate_selection: Mapping[str, Any],
+) -> dict[str, float]:
+    scores: dict[str, float] = {}
+    for row in _list_of_mappings(candidate_selection.get("rows")):
+        candidate_spec_id = _string(row.get("candidate_spec_id"))
+        if not candidate_spec_id:
+            continue
+        value = row.get("fast_replay_preview_score")
+        if value is None:
+            continue
+        try:
+            scores[candidate_spec_id] = float(value)
+        except (TypeError, ValueError):
+            continue
+    return scores
+
+
+def _materialized_replay_tape_coverage_args(
+    *,
+    args: argparse.Namespace,
+    output_dir: Path,
+) -> argparse.Namespace:
+    return argparse.Namespace(
+        **{
+            **vars(args),
+            "latest_complete_window_min_days": max(
+                0,
+                int(
+                    getattr(
+                        args,
+                        "materialize_replay_tape_latest_complete_window_min_days",
+                        0,
+                    )
+                    or 0
+                ),
+            ),
+            "latest_complete_window_receipt_output": (
+                output_dir / "latest-complete-window-receipt.json"
+            ),
+            "coverage_diagnostic_output": (
+                output_dir / "replay-tape-coverage-diagnostics.json"
+            ),
+            "min_executable_rows_per_symbol_day": max(
+                0,
+                int(
+                    getattr(
+                        args,
+                        "materialize_replay_tape_min_executable_rows_per_symbol_day",
+                        18_000,
+                    )
+                    or 0
+                ),
+            ),
+            "min_quote_valid_ratio": str(
+                getattr(
+                    args,
+                    "materialize_replay_tape_min_quote_valid_ratio",
+                    "0.90",
+                )
+                or "0"
+            ),
+            "max_coverage_spread_bps": str(
+                getattr(
+                    args,
+                    "materialize_replay_tape_max_coverage_spread_bps",
+                    "50",
+                )
+                or "0"
+            ),
+            "max_executable_gap_seconds": max(
+                0,
+                int(
+                    getattr(
+                        args,
+                        "materialize_replay_tape_max_executable_gap_seconds",
+                        120,
+                    )
+                    or 0
+                ),
+            ),
+            "quote_carry_forward_max_age_seconds": max(
+                0,
+                int(
+                    getattr(
+                        args,
+                        "materialize_replay_tape_quote_carry_forward_max_age_seconds",
+                        0,
+                    )
+                    or 0
+                ),
+            ),
+            "clickhouse_query_timeout_seconds": max(
+                1,
+                int(
+                    getattr(
+                        args,
+                        "clickhouse_query_timeout_seconds",
+                        replay_mod.DEFAULT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS,
+                    )
+                    or replay_mod.DEFAULT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS
+                ),
+            ),
+        }
+    )
+
+
+def _materialized_replay_tape_artifact_refs(output_dir: Path) -> dict[str, Any]:
+    receipt_path = output_dir / "replay-tape-receipt.json"
+    latest_window_receipt_path = output_dir / "latest-complete-window-receipt.json"
+    coverage_diagnostic_path = output_dir / "replay-tape-coverage-diagnostics.json"
+    refs: dict[str, Any] = {}
+    if receipt_path.exists():
+        refs["receipt_path"] = str(receipt_path)
+    if latest_window_receipt_path.exists():
+        refs["latest_complete_window_receipt_path"] = str(latest_window_receipt_path)
+        receipt = _load_json_mapping_artifact(latest_window_receipt_path)
+        if receipt:
+            refs["latest_complete_window"] = receipt
+    if coverage_diagnostic_path.exists():
+        refs["coverage_diagnostic_path"] = str(coverage_diagnostic_path)
+    return refs
+
+
 def _maybe_materialize_epoch_replay_tape(
     *,
     args: argparse.Namespace,
     output_dir: Path,
     epoch_id: str,
+    candidate_specs: Sequence[CandidateSpec] = (),
 ) -> tuple[argparse.Namespace, dict[str, Any] | None]:
     if not bool(getattr(args, "materialize_replay_tape", False)):
         return args, None
@@ -6447,11 +6923,31 @@ def _maybe_materialize_epoch_replay_tape(
     if bool(getattr(args, "selection_only", False)):
         raise ValueError("replay_tape_materialization_requires_replay_execution")
 
-    start_date = _materialized_replay_tape_date_arg(args, "full_window_start_date")
-    end_date = _materialized_replay_tape_date_arg(args, "full_window_end_date")
-    symbols = _candidate_universe_symbols_from_args(args)
+    requested_start_date = _materialized_replay_tape_date_arg(
+        args, "full_window_start_date"
+    )
+    requested_end_date = _materialized_replay_tape_date_arg(
+        args, "full_window_end_date"
+    )
+    requested_symbols = _candidate_universe_symbols_from_args(args)
+    symbols, symbol_source = _replay_tape_materialization_symbols(
+        args,
+        candidate_specs,
+    )
     tape_path = output_dir / "replay-tape.jsonl"
     manifest_path = output_dir / "replay-tape.jsonl.manifest.json"
+    coverage_args = _materialized_replay_tape_coverage_args(
+        args=args,
+        output_dir=output_dir,
+    )
+    start_date, end_date, window_receipt = (
+        replay_tape_materializer._select_effective_window(
+            args=coverage_args,
+            symbols=symbols,
+            requested_start_date=requested_start_date,
+            requested_end_date=requested_end_date,
+        )
+    )
     config = replay_mod.ReplayConfig(
         strategy_configmap_path=_resolve_existing_path(args.strategy_configmap),
         clickhouse_http_url=str(getattr(args, "clickhouse_http_url", "")),
@@ -6460,9 +6956,27 @@ def _maybe_materialize_epoch_replay_tape(
         start_date=start_date,
         end_date=end_date,
         chunk_minutes=max(1, int(getattr(args, "chunk_minutes", 10) or 10)),
+        clickhouse_query_timeout_seconds=int(
+            getattr(
+                coverage_args,
+                "clickhouse_query_timeout_seconds",
+                replay_mod.DEFAULT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS,
+            )
+        ),
         flatten_eod=True,
         start_equity=Decimal(str(getattr(args, "start_equity", "31590.02"))),
         symbols=symbols,
+        quote_carry_forward_max_age_seconds=max(
+            0,
+            int(
+                getattr(
+                    args,
+                    "materialize_replay_tape_quote_carry_forward_max_age_seconds",
+                    0,
+                )
+                or 0
+            ),
+        ),
     )
     rows = tuple(replay_mod._iter_signal_rows(config))
     source_query_digest = _materialized_replay_tape_source_query_digest(
@@ -6490,11 +7004,30 @@ def _maybe_materialize_epoch_replay_tape(
         "manifest_path": str(manifest_path),
         "receipt_path": str(receipt_path),
         "dataset_snapshot_ref": manifest.dataset_snapshot_ref,
+        "requested_start_date": requested_start_date.isoformat(),
+        "requested_end_date": requested_end_date.isoformat(),
+        "effective_start_date": start_date.isoformat(),
+        "effective_end_date": end_date.isoformat(),
+        "requested_symbols": list(requested_symbols),
+        "effective_symbols": list(symbols),
+        "effective_symbol_source": symbol_source,
         "row_count": manifest.row_count,
         "trading_day_count": manifest.trading_day_count,
         "row_symbols": list(manifest.row_symbols),
         "content_sha256": manifest.content_sha256,
         "source_query_digest": manifest.source_query_digest,
+        "quote_carry_forward_max_age_seconds": max(
+            0,
+            int(
+                getattr(
+                    args,
+                    "materialize_replay_tape_quote_carry_forward_max_age_seconds",
+                    0,
+                )
+                or 0
+            ),
+        ),
+        "latest_complete_window": window_receipt,
     }
     _write_json(receipt_path, receipt)
     updated_args = argparse.Namespace(
@@ -6535,6 +7068,17 @@ def _materialized_replay_tape_source_query_digest(
             "source": "ta",
             "window_size": "PT1S",
             "join": "torghut.ta_microbars",
+            "quote_carry_forward_max_age_seconds": max(
+                0,
+                int(
+                    getattr(
+                        args,
+                        "materialize_replay_tape_quote_carry_forward_max_age_seconds",
+                        0,
+                    )
+                    or 0
+                ),
+            ),
         }
     )
 
@@ -11153,20 +11697,47 @@ def run_whitepaper_autoresearch_profit_target(
             output_dir / "selected-candidate-specs.jsonl"
         ),
     }
+    try:
+        rapids_tape_feature_panel = _rapids_tape_feature_panel_ref(args)
+    except ValueError as exc:
+        return _write_failure_summary(
+            output_dir=output_dir,
+            epoch_id=epoch_id,
+            status="invalid_rapids_tape_feature_panel",
+            reason=str(exc),
+            started_at=started_at,
+        )
+    if rapids_tape_feature_panel is not None:
+        candidate_selection = {
+            **candidate_selection,
+            "rapids_tape_feature_panel": rapids_tape_feature_panel,
+        }
     materialized_replay_tape_receipt: dict[str, Any] | None = None
     try:
         args, materialized_replay_tape_receipt = _maybe_materialize_epoch_replay_tape(
             args=args,
             output_dir=output_dir,
             epoch_id=epoch_id,
+            candidate_specs=replay_candidate_specs,
         )
     except Exception as exc:
+        materialization_artifacts = _materialized_replay_tape_artifact_refs(output_dir)
         return _write_failure_summary(
             output_dir=output_dir,
             epoch_id=epoch_id,
             status="replay_tape_materialization_failed",
             reason=str(exc),
             started_at=started_at,
+            extra={
+                "replay_tape_materialization": {
+                    "schema_version": "torghut.whitepaper-autoresearch-replay-tape-receipt.v1",
+                    "status": "failed",
+                    "failure_reason": str(exc),
+                    **materialization_artifacts,
+                }
+            }
+            if materialization_artifacts
+            else None,
         )
     if materialized_replay_tape_receipt is not None:
         candidate_selection = {
@@ -11187,6 +11758,23 @@ def run_whitepaper_autoresearch_profit_target(
             output_dir=output_dir,
             epoch_id=epoch_id,
             status="invalid_replay_tape_preview",
+            reason=str(exc),
+            started_at=started_at,
+        )
+    try:
+        replay_candidate_specs, candidate_selection = (
+            _apply_sleeve_simulation_preview_narrowing(
+                args=args,
+                output_dir=output_dir,
+                specs=replay_candidate_specs,
+                candidate_selection=candidate_selection,
+            )
+        )
+    except ValueError as exc:
+        return _write_failure_summary(
+            output_dir=output_dir,
+            epoch_id=epoch_id,
+            status="invalid_sleeve_simulation_preview",
             reason=str(exc),
             started_at=started_at,
         )
@@ -11271,6 +11859,24 @@ def run_whitepaper_autoresearch_profit_target(
                 ),
             },
         }
+        sleeve_preview = _mapping(candidate_selection.get("sleeve_simulation_preview"))
+        if sleeve_preview:
+            summary["artifacts"]["sleeve_simulation_preview_manifest"] = _string(
+                sleeve_preview.get("manifest_artifact")
+            )
+            summary["artifacts"]["sleeve_simulation_preview_rows"] = _string(
+                sleeve_preview.get("rows_artifact")
+            )
+        rapids_feature_ref = _mapping(
+            candidate_selection.get("rapids_tape_feature_panel")
+        )
+        if rapids_feature_ref:
+            summary["artifacts"]["rapids_tape_feature_panel"] = _string(
+                rapids_feature_ref.get("panel_path")
+            )
+            summary["artifacts"]["rapids_tape_feature_rows"] = _string(
+                rapids_feature_ref.get("rows_path")
+            )
         _write_json(output_dir / "summary.json", summary)
         write_whitepaper_autoresearch_diagnostics_notebook(
             output_dir / "whitepaper-autoresearch-diagnostics.ipynb",
@@ -11760,6 +12366,14 @@ def run_whitepaper_autoresearch_profit_target(
             ),
         },
     }
+    rapids_feature_ref = _mapping(candidate_selection.get("rapids_tape_feature_panel"))
+    if rapids_feature_ref:
+        summary["artifacts"]["rapids_tape_feature_panel"] = _string(
+            rapids_feature_ref.get("panel_path")
+        )
+        summary["artifacts"]["rapids_tape_feature_rows"] = _string(
+            rapids_feature_ref.get("rows_path")
+        )
     _write_json(output_dir / "summary.json", summary)
     write_whitepaper_autoresearch_diagnostics_notebook(
         output_dir / "whitepaper-autoresearch-diagnostics.ipynb",
@@ -11812,12 +12426,79 @@ def run_whitepaper_autoresearch_profit_target(
             "replay_tape_preview_min_rows": int(
                 getattr(args, "replay_tape_preview_min_rows", 2) or 2
             ),
+            "replay_tape_preview_array_backend": str(
+                getattr(args, "replay_tape_preview_array_backend", "numpy") or "numpy"
+            ),
+            "sleeve_simulation_preview_top_k": int(
+                getattr(args, "sleeve_simulation_preview_top_k", 0) or 0
+            ),
+            "sleeve_simulation_preview_backend": str(
+                getattr(args, "sleeve_simulation_preview_backend", "auto") or "auto"
+            ),
+            "sleeve_simulation_preview_min_returns_per_path": int(
+                getattr(args, "sleeve_simulation_preview_min_returns_per_path", 2)
+                or 2
+            ),
             "materialize_replay_tape": bool(
                 getattr(args, "materialize_replay_tape", False)
+            ),
+            "materialize_replay_tape_latest_complete_window_min_days": int(
+                getattr(
+                    args,
+                    "materialize_replay_tape_latest_complete_window_min_days",
+                    0,
+                )
+                or 0
+            ),
+            "clickhouse_query_timeout_seconds": int(
+                getattr(
+                    args,
+                    "clickhouse_query_timeout_seconds",
+                    replay_mod.DEFAULT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS,
+                )
+                or replay_mod.DEFAULT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS
+            ),
+            "materialize_replay_tape_min_executable_rows_per_symbol_day": int(
+                getattr(
+                    args,
+                    "materialize_replay_tape_min_executable_rows_per_symbol_day",
+                    18_000,
+                )
+                or 0
+            ),
+            "materialize_replay_tape_min_quote_valid_ratio": str(
+                getattr(
+                    args,
+                    "materialize_replay_tape_min_quote_valid_ratio",
+                    "0.90",
+                )
+                or "0"
+            ),
+            "materialize_replay_tape_max_coverage_spread_bps": str(
+                getattr(
+                    args,
+                    "materialize_replay_tape_max_coverage_spread_bps",
+                    "50",
+                )
+                or "0"
+            ),
+            "materialize_replay_tape_max_executable_gap_seconds": int(
+                getattr(
+                    args,
+                    "materialize_replay_tape_max_executable_gap_seconds",
+                    120,
+                )
+                or 0
             ),
             "replay_tape_path": str(getattr(args, "replay_tape_path", "") or ""),
             "replay_tape_manifest": str(
                 getattr(args, "replay_tape_manifest", "") or ""
+            ),
+            "rapids_tape_feature_panel": str(
+                getattr(args, "rapids_tape_feature_panel", "") or ""
+            ),
+            "rapids_tape_feature_rows": str(
+                getattr(args, "rapids_tape_feature_rows", "") or ""
             ),
             "source_jsonl": [str(path) for path in getattr(args, "source_jsonl", [])],
         }

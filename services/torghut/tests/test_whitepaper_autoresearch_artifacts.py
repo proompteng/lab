@@ -357,7 +357,7 @@ class TestWhitepaperAutoresearchArtifacts(TestCase):
                 mlx_training_data_module._import_torch_array_backend("torch-cuda")
             )
             self.assertEqual(
-                mlx_training_data_module._import_array_backend("cuda")[0],
+                mlx_training_data_module._import_array_backend("torch-cuda")[0],
                 "numpy-fallback",
             )
             self.assertEqual(

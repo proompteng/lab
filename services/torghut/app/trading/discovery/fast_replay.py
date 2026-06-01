@@ -2,17 +2,31 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import timezone
 from decimal import Decimal
 from typing import Any, cast
 
 import numpy as np
-from numpy.typing import NDArray
 
 from app.trading.discovery.candidate_specs import CandidateSpec
-from app.trading.discovery.replay_tape import ReplayTapeManifest
+from app.trading.discovery.gpu_backends import (
+    GpuResearchBackendReport,
+    gpu_research_artifact_context,
+    probe_gpu_research_backend,
+)
+from app.trading.discovery.replay_tape import (
+    ReplayTapeManifest,
+    build_source_query_digest,
+)
+from app.trading.discovery.tape_feature_extractors import (
+    extract_microprice_bias_bps,
+    extract_ofi_pressure,
+    extract_price,
+    extract_spread_bps,
+    extract_volume,
+)
 from app.trading.models import SignalEnvelope
 
 FAST_REPLAY_PREVIEW_SCHEMA_VERSION = "torghut.fast-replay-preview.v1"
@@ -76,6 +90,7 @@ class FastReplayPreviewResult:
     input_candidate_count: int
     replay_tape_manifest: ReplayTapeManifest
     selected_row_count: int
+    research_backend: Mapping[str, Any]
 
     def to_manifest_payload(self) -> dict[str, Any]:
         return {
@@ -92,6 +107,7 @@ class FastReplayPreviewResult:
             "selected_candidate_spec_ids": list(self.selected_candidate_spec_ids),
             "selected_candidate_spec_count": len(self.selected_candidate_spec_ids),
             "selected_row_count": self.selected_row_count,
+            "research_backend": dict(self.research_backend),
             "replay_tape": {
                 "dataset_snapshot_ref": self.replay_tape_manifest.dataset_snapshot_ref,
                 "content_sha256": self.replay_tape_manifest.content_sha256,
@@ -109,13 +125,93 @@ class _SymbolTapeStats:
     symbol: str
     row_count: int
     trading_day_count: int
-    returns_bps: NDArray[np.float64]
+    returns_bps: Any
     median_spread_bps: float
     spread_tail_bps: float
     ofi_pressure_score: float
     microprice_bias_bps: float
     median_volume: float
     return_tail_abs_bps: float
+
+
+@dataclass(frozen=True)
+class _ArrayBackend:
+    name: str
+    xp: Any
+    to_host: Callable[[Any], Any]
+    report: Mapping[str, Any]
+
+
+def _resolve_array_backend(preference: str) -> _ArrayBackend:
+    normalized = preference.strip().lower()
+    if normalized in {"", "numpy", "numpy-fallback"}:
+        return _numpy_array_backend(requested_backend=normalized or "numpy")
+    if normalized not in {"auto", "cupy"}:
+        raise ValueError(f"unsupported_fast_replay_array_backend:{preference}")
+
+    cupy_probe = probe_gpu_research_backend("cupy")
+    if cupy_probe.available:
+        cupy = __import__("cupy")
+        return _ArrayBackend(
+            name="cupy",
+            xp=cupy,
+            to_host=cupy.asnumpy,
+            report=cupy_probe.to_payload(),
+        )
+    if normalized == "cupy":
+        raise ValueError(f"fast_replay_preview_cupy_unavailable:{cupy_probe.reason}")
+
+    numpy_report = GpuResearchBackendReport(
+        backend="numpy",
+        available=True,
+        module="numpy",
+        version=np.__version__,
+        reason=f"auto_fallback:{cupy_probe.reason or 'cupy_unavailable'}",
+    )
+    return _ArrayBackend(
+        name="numpy-fallback",
+        xp=np,
+        to_host=lambda value: value,
+        report=numpy_report.to_payload(),
+    )
+
+
+def _numpy_array_backend(*, requested_backend: str) -> _ArrayBackend:
+    report = GpuResearchBackendReport(
+        backend="numpy",
+        available=True,
+        module="numpy",
+        version=np.__version__,
+        reason=(
+            "explicit_cpu_reference_backend"
+            if requested_backend == "numpy"
+            else "explicit_numpy_fallback_backend"
+        ),
+    )
+    return _ArrayBackend(
+        name="numpy-fallback",
+        xp=np,
+        to_host=lambda value: value,
+        report=report.to_payload(),
+    )
+
+
+def _backend_array(array_backend: _ArrayBackend, values: Sequence[float]) -> Any:
+    dtype = getattr(array_backend.xp, "float64", np.float64)
+    return array_backend.xp.asarray(list(values), dtype=dtype)
+
+
+def _array_size(value: Any) -> int:
+    try:
+        return int(getattr(value, "size", 0) or 0)
+    except Exception:
+        return 0
+
+
+def _backend_scalar(value: Any, array_backend: _ArrayBackend) -> float:
+    host_value = array_backend.to_host(value)
+    item = host_value.item() if hasattr(host_value, "item") else host_value
+    return float(item)
 
 
 def build_fast_replay_preview(
@@ -125,6 +221,7 @@ def build_fast_replay_preview(
     replay_tape_manifest: ReplayTapeManifest,
     top_k: int,
     min_rows_per_candidate: int = 2,
+    array_backend_preference: str = "numpy",
 ) -> FastReplayPreviewResult:
     """Rank candidate specs with cheap tape-derived features only.
 
@@ -133,13 +230,35 @@ def build_fast_replay_preview(
     """
 
     bounded_top_k = max(1, min(len(specs) or 1, int(top_k)))
-    symbol_stats = _build_symbol_stats(rows)
+    array_backend = _resolve_array_backend(array_backend_preference)
+    research_backend = gpu_research_artifact_context(
+        requested_backend=array_backend_preference,
+        selected_backend=array_backend.name,
+        workload="fast_replay_preview",
+        backend_report=array_backend.report,
+        source_query_digest=replay_tape_manifest.source_query_digest,
+        replay_tape_digest=replay_tape_manifest.content_sha256,
+        config_hash=build_source_query_digest(
+            {
+                "workload": "fast_replay_preview",
+                "array_backend_preference": array_backend_preference,
+                "selected_backend": array_backend.name,
+                "top_k": bounded_top_k,
+                "min_rows_per_candidate": max(1, int(min_rows_per_candidate)),
+                "input_candidate_count": len(specs),
+                "row_count": len(rows),
+                "replay_tape_digest": replay_tape_manifest.content_sha256,
+            }
+        ),
+    )
+    symbol_stats = _build_symbol_stats(rows, array_backend=array_backend)
     scored_rows: list[FastReplayPreviewRow] = []
     for spec in specs:
         scored_rows.append(
             _score_candidate_spec(
                 spec=spec,
                 symbol_stats=symbol_stats,
+                array_backend=array_backend,
                 min_rows_per_candidate=max(1, int(min_rows_per_candidate)),
             )
         )
@@ -192,11 +311,14 @@ def build_fast_replay_preview(
         input_candidate_count=len(specs),
         replay_tape_manifest=replay_tape_manifest,
         selected_row_count=len(rows),
+        research_backend=research_backend,
     )
 
 
 def _build_symbol_stats(
     rows: Sequence[SignalEnvelope],
+    *,
+    array_backend: _ArrayBackend,
 ) -> dict[str, _SymbolTapeStats]:
     rows_by_symbol: dict[str, list[SignalEnvelope]] = {}
     for row in rows:
@@ -209,14 +331,15 @@ def _build_symbol_stats(
     for symbol, symbol_rows in rows_by_symbol.items():
         ordered = sorted(symbol_rows, key=lambda item: item.event_ts)
         prices = [_extract_price(row) for row in ordered]
-        price_array = np.asarray(
+        xp = array_backend.xp
+        price_array = _backend_array(
+            array_backend,
             [price for price in prices if price is not None and price > 0.0],
-            dtype=np.float64,
         )
         returns = (
-            np.diff(price_array) / price_array[:-1] * 10_000.0
-            if price_array.size >= 2
-            else np.asarray([], dtype=np.float64)
+            xp.diff(price_array) / price_array[:-1] * 10_000.0
+            if _array_size(price_array) >= 2
+            else _backend_array(array_backend, [])
         )
         spread_values = [
             spread
@@ -234,7 +357,11 @@ def _build_symbol_stats(
         volume_values = [
             volume for row in ordered if (volume := _extract_volume(row)) is not None
         ]
-        abs_returns = np.abs(returns) if returns.size else np.asarray([], dtype=np.float64)
+        abs_returns = (
+            xp.abs(returns)
+            if _array_size(returns)
+            else _backend_array(array_backend, [])
+        )
         stats[symbol] = _SymbolTapeStats(
             symbol=symbol,
             row_count=len(ordered),
@@ -243,18 +370,31 @@ def _build_symbol_stats(
             ),
             returns_bps=returns,
             median_spread_bps=float(np.median(spread_values)) if spread_values else 0.0,
-            spread_tail_bps=float(np.percentile(spread_values, 95))
+            spread_tail_bps=_backend_scalar(
+                xp.percentile(_backend_array(array_backend, spread_values), 95),
+                array_backend,
+            )
             if spread_values
             else 0.0,
-            ofi_pressure_score=float(np.mean(ofi_values)) if ofi_values else 0.0,
+            ofi_pressure_score=_backend_scalar(
+                xp.mean(_backend_array(array_backend, ofi_values)),
+                array_backend,
+            )
+            if ofi_values
+            else 0.0,
             microprice_bias_bps=(
-                float(np.mean(microprice_bias_values))
+                _backend_scalar(
+                    xp.mean(_backend_array(array_backend, microprice_bias_values)),
+                    array_backend,
+                )
                 if microprice_bias_values
                 else 0.0
             ),
             median_volume=float(np.median(volume_values)) if volume_values else 0.0,
             return_tail_abs_bps=(
-                float(np.percentile(abs_returns, 95)) if abs_returns.size else 0.0
+                _backend_scalar(xp.percentile(abs_returns, 95), array_backend)
+                if _array_size(abs_returns)
+                else 0.0
             ),
         )
     return stats
@@ -264,6 +404,7 @@ def _score_candidate_spec(
     *,
     spec: CandidateSpec,
     symbol_stats: Mapping[str, _SymbolTapeStats],
+    array_backend: _ArrayBackend,
     min_rows_per_candidate: int,
 ) -> FastReplayPreviewRow:
     requested_symbols = _candidate_symbols(spec)
@@ -298,15 +439,26 @@ def _score_candidate_spec(
             impact_liquidity_penalty_bps=Decimal("0"),
         )
 
-    return_vectors = [stat.returns_bps for stat in matched if stat.returns_bps.size]
+    xp = array_backend.xp
+    return_vectors = [
+        stat.returns_bps for stat in matched if _array_size(stat.returns_bps)
+    ]
     returns = (
-        np.concatenate(return_vectors)
+        xp.concatenate(return_vectors)
         if return_vectors
-        else np.asarray([], dtype=np.float64)
+        else _backend_array(array_backend, [])
     )
     direction = _candidate_direction(spec)
-    signed_return_bps = float(np.mean(returns)) * direction if returns.size else 0.0
-    avg_abs_return_bps = float(np.mean(np.abs(returns))) if returns.size else 0.0
+    signed_return_bps = (
+        _backend_scalar(xp.mean(returns), array_backend) * direction
+        if _array_size(returns)
+        else 0.0
+    )
+    avg_abs_return_bps = (
+        _backend_scalar(xp.mean(xp.abs(returns)), array_backend)
+        if _array_size(returns)
+        else 0.0
+    )
     median_spread_bps = float(np.median([stat.median_spread_bps for stat in matched]))
     spread_tail_bps = float(np.median([stat.spread_tail_bps for stat in matched]))
     ofi_pressure_score = _weighted_average(
@@ -398,136 +550,23 @@ def _candidate_direction(spec: CandidateSpec) -> float:
 
 
 def _extract_price(signal: SignalEnvelope) -> float | None:
-    payload = signal.payload
-    for key in ("price", "mid_price", "mid", "mark", "last_price", "close"):
-        value = _float_or_none(payload.get(key))
-        if value is not None and value > 0.0:
-            return value
-    bid = _float_or_none(payload.get("bid"))
-    ask = _float_or_none(payload.get("ask"))
-    if bid is not None and ask is not None and bid > 0.0 and ask > 0.0:
-        return (bid + ask) / 2.0
-    return None
+    return extract_price(signal)
 
 
 def _extract_spread_bps(signal: SignalEnvelope) -> float | None:
-    payload = signal.payload
-    explicit = _float_or_none(payload.get("spread_bps"))
-    if explicit is not None:
-        return max(0.0, explicit)
-    bid = _float_or_none(payload.get("bid"))
-    ask = _float_or_none(payload.get("ask"))
-    if bid is not None and ask is not None and bid > 0.0 and ask >= bid:
-        return (ask - bid) / ((ask + bid) / 2.0) * 10_000.0
-    spread = _float_or_none(payload.get("spread"))
-    price = _extract_price(signal)
-    if spread is not None and price is not None and price > 0.0:
-        return max(0.0, spread / price * 10_000.0)
-    return None
+    return extract_spread_bps(signal)
 
 
 def _extract_ofi_pressure(signal: SignalEnvelope) -> float | None:
-    payload = signal.payload
-    for key in (
-        "ofi_pressure_score",
-        "order_flow_imbalance",
-        "ofi",
-        "signed_order_flow_imbalance",
-        "queue_imbalance",
-        "book_imbalance",
-        "depth_imbalance",
-    ):
-        value = _float_or_none(payload.get(key))
-        if value is None:
-            continue
-        if -1.0 <= value <= 1.0:
-            return value
-        return float(np.tanh(value / 100.0))
-    return _extract_quote_depth_imbalance(signal)
-
-
-def _extract_quote_depth_imbalance(signal: SignalEnvelope) -> float | None:
-    payload = signal.payload
-    bid_size = _first_float(
-        payload,
-        (
-            "bid_size",
-            "bid_qty",
-            "best_bid_size",
-            "best_bid_qty",
-            "bid_depth",
-            "bid_volume",
-        ),
-    )
-    ask_size = _first_float(
-        payload,
-        (
-            "ask_size",
-            "ask_qty",
-            "best_ask_size",
-            "best_ask_qty",
-            "ask_depth",
-            "ask_volume",
-        ),
-    )
-    if (
-        bid_size is None
-        or ask_size is None
-        or bid_size < 0.0
-        or ask_size < 0.0
-        or bid_size + ask_size <= 0.0
-    ):
-        return None
-    return float(np.clip((bid_size - ask_size) / (bid_size + ask_size), -1.0, 1.0))
+    return extract_ofi_pressure(signal)
 
 
 def _extract_microprice_bias_bps(signal: SignalEnvelope) -> float | None:
-    payload = signal.payload
-    bid = _first_float(payload, ("bid", "best_bid", "bid_price", "best_bid_price"))
-    ask = _first_float(payload, ("ask", "best_ask", "ask_price", "best_ask_price"))
-    explicit_microprice = _first_float(payload, ("microprice", "micro_price"))
-    price = _extract_price(signal)
-    if explicit_microprice is not None and price is not None and price > 0.0:
-        return (explicit_microprice - price) / price * 10_000.0
-
-    bid_size = _first_float(
-        payload, ("bid_size", "bid_qty", "best_bid_size", "best_bid_qty")
-    )
-    ask_size = _first_float(
-        payload, ("ask_size", "ask_qty", "best_ask_size", "best_ask_qty")
-    )
-    if (
-        bid is None
-        or ask is None
-        or bid <= 0.0
-        or ask <= 0.0
-        or ask < bid
-        or bid_size is None
-        or ask_size is None
-        or bid_size < 0.0
-        or ask_size < 0.0
-        or bid_size + ask_size <= 0.0
-    ):
-        return None
-    mid = (bid + ask) / 2.0
-    microprice = (ask * bid_size + bid * ask_size) / (bid_size + ask_size)
-    return (microprice - mid) / mid * 10_000.0
+    return extract_microprice_bias_bps(signal)
 
 
 def _extract_volume(signal: SignalEnvelope) -> float | None:
-    payload = signal.payload
-    return _first_float(
-        payload,
-        (
-            "microbar_volume",
-            "bar_volume",
-            "trade_volume",
-            "volume",
-            "qty",
-            "size",
-        ),
-        positive=True,
-    )
+    return extract_volume(signal)
 
 
 def _impact_liquidity_penalty_bps(
@@ -542,29 +581,6 @@ def _weighted_average(values: Sequence[tuple[float, int]]) -> float:
     if total_weight <= 0:
         return 0.0
     return sum(value * max(0, weight) for value, weight in values) / total_weight
-
-
-def _first_float(
-    payload: Mapping[str, Any], keys: Sequence[str], *, positive: bool = False
-) -> float | None:
-    for key in keys:
-        value = _float_or_none(payload.get(key))
-        if value is None:
-            continue
-        if positive and value <= 0.0:
-            continue
-        return value
-    return None
-
-
-def _float_or_none(value: Any) -> float | None:
-    try:
-        parsed = float(value)
-    except (TypeError, ValueError):
-        return None
-    if not np.isfinite(parsed):
-        return None
-    return parsed
 
 
 def _decimal_from_float(value: float) -> Decimal:

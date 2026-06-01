@@ -155,6 +155,7 @@ class ReplayConfig:
     max_quote_mid_jump_bps: Decimal = DEFAULT_MAX_QUOTE_MID_JUMP_BPS
     max_jump_with_wide_spread_bps: Decimal = DEFAULT_MAX_JUMP_WITH_WIDE_SPREAD_BPS
     clickhouse_query_timeout_seconds: int = DEFAULT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS
+    quote_carry_forward_max_age_seconds: int = 0
 
 
 @dataclass
@@ -946,6 +947,9 @@ def _iter_signal_rows(config: ReplayConfig) -> Iterable[SignalEnvelope]:
                 chunk_start=chunk_start,
                 chunk_end=chunk_end,
                 symbols=config.symbols,
+                quote_carry_forward_max_age_seconds=(
+                    config.quote_carry_forward_max_age_seconds
+                ),
             )
             logger.debug(
                 "replay_chunk_fetch_done day=%s chunk_start=%s chunk_end=%s rows=%s elapsed_s=%.3f",
@@ -1005,12 +1009,98 @@ def _fetch_chunk(
     chunk_start: datetime,
     chunk_end: datetime,
     symbols: tuple[str, ...] = (),
+    quote_carry_forward_max_age_seconds: int = 0,
 ) -> list[SignalEnvelope]:
     symbol_filter = ""
+    quote_symbol_filter = ""
     if symbols:
         rendered_symbols = ", ".join(f"'{symbol}'" for symbol in symbols)
         symbol_filter = f"\n  AND s.symbol IN ({rendered_symbols})"
-    query = f"""
+        quote_symbol_filter = f"\n  AND symbol IN ({rendered_symbols})"
+    max_quote_age_seconds = max(0, int(quote_carry_forward_max_age_seconds or 0))
+    if max_quote_age_seconds > 0:
+        quote_lookup_start = chunk_start - timedelta(seconds=max_quote_age_seconds)
+        query = f"""
+SELECT
+  s.symbol,
+  s.event_ts,
+  s.seq,
+  toString(s.macd) AS macd,
+  toString(s.macd_signal) AS macd_signal,
+  toString(s.ema12) AS ema12,
+  toString(s.ema26) AS ema26,
+  toString(s.rsi14) AS rsi14,
+  toString((q.imbalance_bid_px + q.imbalance_ask_px) / 2) AS price,
+  toString(q.imbalance_bid_px) AS bid_px,
+  toString(q.imbalance_ask_px) AS ask_px,
+  toString(q.imbalance_ask_px - q.imbalance_bid_px) AS spread,
+  toString(q.imbalance_bid_sz) AS bid_sz,
+  toString(q.imbalance_ask_sz) AS ask_sz,
+  toString(q.imbalance_spread) AS imbalance_spread,
+  toString(s.vwap_session) AS vwap_session,
+  toString(s.vwap_w5m) AS vwap_w5m,
+  toString(s.vol_realized_w60s) AS vol_realized_w60s,
+  toString(s.microbar_volume) AS microbar_volume,
+  toString(q.quote_ts) AS quote_source_event_ts,
+  toString(dateDiff('second', q.quote_ts, s.event_ts)) AS quote_age_seconds
+FROM
+(
+  SELECT
+    s.symbol,
+    s.event_ts,
+    s.seq,
+    s.macd,
+    s.macd_signal,
+    s.ema12,
+    s.ema26,
+    s.rsi14,
+    s.vwap_session,
+    s.vwap_w5m,
+    s.vol_realized_w60s,
+    m.v AS microbar_volume
+  FROM torghut.ta_signals AS s
+  ANY LEFT JOIN torghut.ta_microbars AS m
+    ON s.symbol = m.symbol
+    AND s.event_ts = m.event_ts
+    AND s.source = m.source
+    AND s.window_size = m.window_size
+  WHERE s.source = 'ta'
+    AND s.window_size = 'PT1S'
+    AND s.event_ts >= toDateTime64('{chunk_start.strftime("%Y-%m-%d %H:%M:%S")}', 3, 'UTC')
+    AND s.event_ts < toDateTime64('{chunk_end.strftime("%Y-%m-%d %H:%M:%S")}', 3, 'UTC')
+    {symbol_filter}
+  ORDER BY s.symbol, s.event_ts
+) AS s
+ASOF LEFT JOIN
+(
+  SELECT
+    symbol,
+    event_ts AS quote_ts,
+    imbalance_bid_px,
+    imbalance_ask_px,
+    imbalance_bid_sz,
+    imbalance_ask_sz,
+    imbalance_spread
+  FROM torghut.ta_signals
+  WHERE source = 'ta'
+    AND window_size = 'PT1S'
+    AND event_ts >= toDateTime64('{quote_lookup_start.strftime("%Y-%m-%d %H:%M:%S")}', 3, 'UTC')
+    AND event_ts < toDateTime64('{chunk_end.strftime("%Y-%m-%d %H:%M:%S")}', 3, 'UTC')
+    {quote_symbol_filter}
+    AND isNotNull(imbalance_bid_px)
+    AND isNotNull(imbalance_ask_px)
+    AND imbalance_bid_px > 0
+    AND imbalance_ask_px > 0
+    AND imbalance_ask_px >= imbalance_bid_px
+  ORDER BY symbol, quote_ts
+) AS q
+ON s.symbol = q.symbol AND s.event_ts >= q.quote_ts
+WHERE q.quote_ts IS NOT NULL
+  AND dateDiff('second', q.quote_ts, s.event_ts) <= {max_quote_age_seconds}
+FORMAT TSVRaw
+""".strip()
+    else:
+        query = f"""
 SELECT
   s.symbol,
   s.event_ts,
@@ -1063,8 +1153,14 @@ FORMAT TSVRaw
 
 
 def _parse_signal_row(parts: list[str]) -> SignalEnvelope | None:
-    if len(parts) != 19:
+    if len(parts) not in (19, 21):
         return None
+    quote_source_event_ts = ""
+    quote_age_seconds = ""
+    if len(parts) == 21:
+        quote_source_event_ts = parts[19]
+        quote_age_seconds = parts[20]
+        parts = parts[:19]
     (
         symbol,
         event_ts,
@@ -1128,6 +1224,12 @@ def _parse_signal_row(parts: list[str]) -> SignalEnvelope | None:
         "window_size": "PT1S",
         "window_step": "PT1S",
     }
+    if quote_source_event_ts.strip():
+        parsed_quote_ts = _parse_clickhouse_ts(quote_source_event_ts)
+        quote_age = int(_to_decimal(quote_age_seconds) or Decimal("0"))
+        payload["quote_source_event_ts"] = parsed_quote_ts.isoformat()
+        payload["quote_carry_forward_age_seconds"] = quote_age
+        payload["quote_carry_forward_applied"] = quote_age > 0
     return SignalEnvelope(
         event_ts=_parse_clickhouse_ts(event_ts),
         symbol=symbol,

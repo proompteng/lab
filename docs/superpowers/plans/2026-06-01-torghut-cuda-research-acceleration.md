@@ -4,9 +4,9 @@
 
 **Goal:** Use the local RTX 5090 to accelerate Torghut candidate and sleeve research while keeping promotion authority in runtime-ledger, live-paper, exact-replay, and post-cost profitability evidence.
 
-**Architecture:** Add an optional CUDA ranker backend behind explicit backend preference plumbing, then use the faster ranker to prioritize candidate/sleeve replay queues. The GPU path may rank, triage, and search; it must not set promotion flags, relax blockers, or replace realized runtime-ledger proof packets.
+**Architecture:** Treat the existing PyTorch CUDA ranker as a narrow smoke slice only. The production GPU research lane should use RAPIDS/cuDF for tape and factor dataframe work, CuPy/cuBLAS/cuSOLVER/cuFFT for dense numeric kernels, and Numba-CUDA for custom path-dependent replay/simulation kernels. PyTorch may remain optional for learned ranking, but it is not the generic CUDA stack and must not be described that way. The GPU path may rank, triage, and search; it must not set promotion flags, relax blockers, or replace realized runtime-ledger proof packets.
 
-**Tech Stack:** Python 3.11-3.12, uv, optional PyTorch CUDA, NumPy fallback, Torghut MLX ranker artifacts, runtime-ledger proof packets, paper-route evidence artifacts.
+**Tech Stack:** Python 3.11-3.12, uv, RAPIDS/cuDF in a Linux/WSL2 or container GPU environment for dataframe-heavy research, CuPy for NumPy-shaped vector math, Numba-CUDA for custom simulation kernels, optional PyTorch CUDA for learned rankers only, NumPy fallback, Torghut replay artifacts, runtime-ledger proof packets, paper-route evidence artifacts.
 
 ---
 
@@ -30,8 +30,13 @@
 ## Implementation Checkpoint
 
 - Added an optional `cuda-research` extra in `services/torghut/pyproject.toml`
-  using the explicit PyTorch CUDA 12.8 wheel index; base Torghut dependencies
-  remain unchanged.
+  using the explicit PyTorch CUDA 12.8 wheel index. This is a PyTorch ranker
+  slice, not the production quant GPU stack; base Torghut dependencies remain
+  unchanged.
+- Removed the misleading generic `cuda` ranker backend alias from the Python
+  CLI/code path. The current implemented backend name is explicitly
+  `torch-cuda`; future RAPIDS/CuPy/Numba work must use separate explicit
+  backend names.
 - Added `services/torghut/tests/test_cuda_research_runtime_contract.py` to keep
   the CUDA extra and explicit wheel source reproducible.
 - Added a Windows-safe real-replay timeout path: platforms without `SIGALRM`
@@ -102,7 +107,7 @@ Run: `uv run --frozen pytest tests/test_whitepaper_autoresearch_artifacts.py::Te
 
 Expected: fail because `torch-cuda` is not currently a supported array backend.
 
-### Task 3: Implement Optional Torch CUDA Backend
+### Task 3: Implement Optional Torch CUDA Backend Smoke Slice
 
 **Files:**
 
@@ -130,7 +135,7 @@ class _TorchCudaArrayBackend:
 
 - [ ] **Step 2: Wire backend selection**
 
-Extend `_import_array_backend()` so `torch-cuda`, `cuda`, and `torch` attempt dynamic `import torch`, require `torch.cuda.is_available()` for CUDA names, and return `("torch-cuda", _TorchCudaArrayBackend(...))` when available. If unavailable, fall through to the existing NumPy fallback for advisory research continuity.
+Extend `_import_array_backend()` so `torch-cuda` and `torch` attempt dynamic `import torch`, require `torch.cuda.is_available()` for `torch-cuda`, and return `("torch-cuda", _TorchCudaArrayBackend(...))` when available. If unavailable, fall through to the existing NumPy fallback for advisory research continuity. Do not expose a generic `cuda` alias for this PyTorch-only path.
 
 - [ ] **Step 3: Run the CUDA backend test and confirm green**
 
@@ -153,10 +158,10 @@ Add:
     parser.add_argument(
         "--ranker-backend-preference",
         default="mlx",
-        choices=("mlx", "numpy", "numpy-fallback", "torch", "torch-cuda", "cuda"),
+        choices=("mlx", "numpy", "numpy-fallback", "torch", "torch-cuda"),
         help=(
-            "Array backend for advisory MLX ranker training. CUDA choices only "
-            "accelerate research ranking and do not change promotion gates."
+            "Array backend for advisory MLX ranker training. torch-cuda only "
+            "accelerates the PyTorch ranker slice and does not change promotion gates."
         ),
     )
 ```
@@ -244,7 +249,43 @@ uv run --frozen pyright --project pyrightconfig.scripts.json
 
 Expected: all commands exit 0 before claiming type checks pass.
 
-### Task 7: Save Notes
+### Task 7: Production Quant GPU Lane
+
+**Files:**
+
+- Create: `docs/torghut/production-gpu-research-stack.md`
+- Future modify: `services/torghut/app/trading/discovery/fast_replay.py`
+- Future create: `services/torghut/app/trading/discovery/gpu_backends.py`
+- Future create: `services/torghut/app/trading/discovery/gpu_fast_replay.py`
+
+- [ ] **Step 1: Add explicit backend contracts**
+
+Create separate backend probes and artifact metadata for:
+
+- `rapids-cudf`: ClickHouse/tape dataframe ingestion, grouping, rolling features, joins, and factor panels.
+- `cupy`: NumPy-shaped vector kernels, covariance/correlation, dense portfolio math, and Monte Carlo arrays.
+- `numba-cuda`: path-dependent order-book/replay/market-impact kernels that are branchy enough to need custom kernels.
+- `torch-cuda`: learned ranker/model training only.
+
+- [ ] **Step 2: Port the right bottlenecks first**
+
+Prioritize GPU work in this order:
+
+1. Tape and microstructure feature extraction from ClickHouse/exported replay tapes with cuDF.
+2. Fast replay preview scoring in CuPy/Numba-CUDA.
+3. Parameter sweeps and Monte Carlo execution-stress simulation in Numba-CUDA.
+4. Portfolio covariance/risk/concentration search in CuPy/cuSOLVER.
+5. Learned ranking in PyTorch only after the data/replay lane is GPU-fed.
+
+- [ ] **Step 3: Preserve evidence authority**
+
+Every GPU artifact must include backend, device, package versions, source query digest, tape digest, seed, kernel/config hash, and promotion-proof=false unless exact replay/live-paper/runtime-ledger gates pass.
+
+- [ ] **Step 4: Validate speed and equivalence**
+
+For each GPU port, add a CPU equivalence test on a deterministic fixture, a real-tape smoke test, and a benchmark artifact showing wall-clock speedup and row/spec throughput. Do not merge a GPU port that only changes dependencies without moving a measured bottleneck.
+
+### Task 8: Save Notes
 
 **Files:**
 

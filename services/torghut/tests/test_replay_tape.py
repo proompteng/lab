@@ -386,6 +386,45 @@ class TestReplayTape(TestCase):
         self.assertEqual(receipt["status"], "stale_override")
         self.assertEqual(receipt["missing_trading_days"], ["2026-03-26"])
 
+    def test_manifest_does_not_require_nyse_full_day_holidays(self) -> None:
+        rows = (
+            SignalEnvelope(
+                event_ts=datetime(2026, 5, 22, 17, 30, tzinfo=timezone.utc),
+                symbol="META",
+                timeframe="1Sec",
+                seq=1,
+                source="ta",
+                payload={"price": Decimal("100.25"), "window_size": "PT1S"},
+                ingest_ts=datetime(2026, 5, 22, 17, 31, tzinfo=timezone.utc),
+            ),
+            SignalEnvelope(
+                event_ts=datetime(2026, 5, 26, 17, 30, tzinfo=timezone.utc),
+                symbol="META",
+                timeframe="1Sec",
+                seq=2,
+                source="ta",
+                payload={"price": Decimal("101.25"), "window_size": "PT1S"},
+                ingest_ts=datetime(2026, 5, 26, 17, 31, tzinfo=timezone.utc),
+            ),
+        )
+        with TemporaryDirectory() as tmpdir:
+            manifest = materialize_signal_tape(
+                rows=rows,
+                tape_path=Path(tmpdir) / "tape.jsonl",
+                dataset_snapshot_ref="snapshot-a",
+                symbols=("META",),
+                start_date=date(2026, 5, 22),
+                end_date=date(2026, 5, 26),
+                source_query_digest=build_source_query_digest({"window": "a"}),
+                require_complete_coverage=True,
+            )
+
+        self.assertEqual(
+            manifest.requested_trading_days,
+            (date(2026, 5, 22), date(2026, 5, 26)),
+        )
+        self.assertEqual(manifest.missing_trading_days, ())
+
     def test_manifest_records_and_validates_missing_symbol_trading_days(
         self,
     ) -> None:
@@ -650,6 +689,16 @@ class TestMaterializeReplayTapeCli(TestCase):
                     "ta_signals=v1",
                     "--clickhouse-query-timeout-seconds",
                     "9",
+                    "--clickhouse-password-env",
+                    "TORGHUT_CLICKHOUSE_PASSWORD",
+                    "--clickhouse-kubectl-context",
+                    "admin@ryzen",
+                    "--clickhouse-kubectl-namespace",
+                    "torghut",
+                    "--clickhouse-kubectl-pod",
+                    "chi-torghut-clickhouse-default-0-0-0",
+                    "--quote-carry-forward-max-age-seconds",
+                    "120",
                 ],
             ):
                 args = materialize_cli._parse_args()
@@ -657,10 +706,16 @@ class TestMaterializeReplayTapeCli(TestCase):
         symbols = materialize_cli._parse_symbols(str(args.symbols))
         self.assertEqual(symbols, ("NVDA", "META"))
         self.assertEqual(args.clickhouse_query_timeout_seconds, 9)
+        self.assertEqual(args.clickhouse_password_env, "TORGHUT_CLICKHOUSE_PASSWORD")
+        self.assertEqual(
+            materialize_cli._resolved_clickhouse_http_url(args),
+            "kubectl://admin%40ryzen/torghut/chi-torghut-clickhouse-default-0-0-0",
+        )
         self.assertEqual(args.min_executable_rows_per_symbol_day, 18000)
         self.assertEqual(args.min_quote_valid_ratio, "0.90")
         self.assertEqual(args.max_coverage_spread_bps, "50")
         self.assertEqual(args.max_executable_gap_seconds, 120)
+        self.assertEqual(args.quote_carry_forward_max_age_seconds, 120)
         self.assertEqual(
             args.coverage_diagnostic_output,
             output.with_suffix(".coverage.json"),
@@ -681,6 +736,12 @@ class TestMaterializeReplayTapeCli(TestCase):
             ],
             ["NVDA", "META"],
         )
+        self.assertEqual(
+            materialize_cli._source_query_payload(args=args, symbols=symbols)[
+                "quote_carry_forward_max_age_seconds"
+            ],
+            120,
+        )
         with patch.object(
             sys,
             "argv",
@@ -700,6 +761,42 @@ class TestMaterializeReplayTapeCli(TestCase):
             self.assertTrue(materialize_cli._parse_args().allow_incomplete_coverage)
         with self.assertRaisesRegex(ValueError, "source_table_version_invalid"):
             materialize_cli._parse_source_table_versions(["broken"])
+
+    def test_materialize_cli_clickhouse_auth_resolution_keeps_secret_out_of_argv(
+        self,
+    ) -> None:
+        args = Namespace(
+            clickhouse_password="",
+            clickhouse_password_env="TORGHUT_TEST_CLICKHOUSE_PASSWORD",
+            clickhouse_http_url="http://clickhouse.invalid:8123",
+            clickhouse_kubectl_context="",
+            clickhouse_kubectl_namespace="",
+            clickhouse_kubectl_pod="",
+        )
+        with patch.dict("os.environ", {"TORGHUT_TEST_CLICKHOUSE_PASSWORD": "from-env"}):
+            self.assertEqual(
+                materialize_cli._resolved_clickhouse_password(args),
+                "from-env",
+            )
+        self.assertEqual(
+            materialize_cli._resolved_clickhouse_password(
+                Namespace(
+                    clickhouse_password="direct",
+                    clickhouse_password_env="TORGHUT_TEST_CLICKHOUSE_PASSWORD",
+                )
+            ),
+            "direct",
+        )
+        self.assertEqual(
+            materialize_cli._resolved_clickhouse_http_url(args),
+            "http://clickhouse.invalid:8123",
+        )
+        with self.assertRaisesRegex(ValueError, "clickhouse_kubectl_target_incomplete"):
+            materialize_cli._encoded_kubectl_clickhouse_url(
+                context="admin@ryzen",
+                namespace="torghut",
+                pod="",
+            )
 
     def test_coverage_diagnostics_parse_day_level_counts(self) -> None:
         diagnostics = materialize_cli._parse_coverage_diagnostics(
@@ -723,6 +820,11 @@ class TestMaterializeReplayTapeCli(TestCase):
                     "quote_valid_ratio": "1",
                     "min_quote_valid_ratio_by_symbol_day": "1",
                     "max_executable_gap_seconds": 0,
+                    "regular_session_raw_signal_rows": 0,
+                    "quote_carry_forward_rows_120s": 0,
+                    "quote_carry_forward_rows_300s": 0,
+                    "quote_carry_forward_rows_600s": 0,
+                    "max_quote_carry_forward_age_seconds": 0,
                 },
             },
         )
@@ -736,6 +838,31 @@ class TestMaterializeReplayTapeCli(TestCase):
             "0.95",
         )
         self.assertEqual(diagnostics["2026-03-27"]["max_executable_gap_seconds"], 7)
+        self.assertEqual(
+            diagnostics["2026-03-27"]["regular_session_raw_signal_rows"],
+            0,
+        )
+
+        diagnostics = materialize_cli._parse_coverage_diagnostics(
+            "2026-03-28\t100\t90\t89\t88\t95\t2\t2\t2\t44\t43\t"
+            "0.9777777778\t0.95\t7\t13000\t11000\t12500\t12800\t454\n"
+        )
+        self.assertEqual(
+            diagnostics["2026-03-28"]["regular_session_raw_signal_rows"],
+            13000,
+        )
+        self.assertEqual(
+            diagnostics["2026-03-28"]["quote_carry_forward_rows_120s"],
+            11000,
+        )
+        self.assertEqual(
+            diagnostics["2026-03-28"]["quote_carry_forward_rows_600s"],
+            12800,
+        )
+        self.assertEqual(
+            diagnostics["2026-03-28"]["max_quote_carry_forward_age_seconds"],
+            454,
+        )
 
     def test_fetch_coverage_diagnostics_marks_missing_source_layers(self) -> None:
         args = Namespace(
@@ -762,10 +889,38 @@ class TestMaterializeReplayTapeCli(TestCase):
         query_payload = str(query.call_args.kwargs["query"])
         self.assertIn("symbol IN ('META')", query_payload)
         self.assertIn("toUInt64OrZero(toString(raw_signal_rows))", query_payload)
+        self.assertIn("quote_carry_forward_rows_120s", query_payload)
         self.assertEqual(query.call_args.kwargs["timeout_seconds"], 7)
         self.assertEqual(diagnostics["missing_raw_signal_days"], ["2026-03-27"])
         self.assertEqual(diagnostics["missing_executable_signal_days"], ["2026-03-27"])
         self.assertEqual(diagnostics["missing_microbar_days"], ["2026-03-27"])
+
+    def test_fetch_coverage_diagnostics_excludes_nyse_full_day_holidays(self) -> None:
+        args = Namespace(
+            clickhouse_http_url="http://clickhouse.invalid:8123",
+            clickhouse_username="torghut",
+            clickhouse_password="secret",
+            clickhouse_query_timeout_seconds=7,
+        )
+        with patch(
+            "scripts.materialize_replay_tape.replay_mod._http_query",
+            return_value=(
+                "2026-05-22\t10\t10\t10\t1\t1\t1\n"
+                "2026-05-26\t10\t10\t10\t1\t1\t1\n"
+            ),
+        ):
+            diagnostics = materialize_cli._fetch_coverage_diagnostics(
+                args=args,
+                symbols=("META",),
+                start_date=date(2026, 5, 22),
+                end_date=date(2026, 5, 26),
+            )
+
+        self.assertEqual(
+            diagnostics["requested_trading_days"],
+            ["2026-05-22", "2026-05-26"],
+        )
+        self.assertEqual(diagnostics["missing_raw_signal_days"], [])
 
     def test_latest_complete_window_selects_latest_consecutive_complete_days(
         self,
@@ -927,9 +1082,13 @@ class TestMaterializeReplayTapeCli(TestCase):
             diagnostic_output = root / "coverage.json"
             receipt_output = root / "window.json"
             captured_windows: list[tuple[date, date]] = []
+            captured_quote_carry_forward_ages: list[int] = []
 
             def iter_rows(config: ReplayConfig) -> tuple[SignalEnvelope, ...]:
                 captured_windows.append((config.start_date, config.end_date))
+                captured_quote_carry_forward_ages.append(
+                    config.quote_carry_forward_max_age_seconds
+                )
                 return (
                     self._signal(day=30, seq=1),
                     self._signal(day=31, seq=2),
@@ -955,6 +1114,7 @@ class TestMaterializeReplayTapeCli(TestCase):
                 min_quote_valid_ratio="0.90",
                 max_coverage_spread_bps="50",
                 max_executable_gap_seconds=120,
+                quote_carry_forward_max_age_seconds=120,
                 source_table_version=[],
                 allow_incomplete_coverage=False,
                 log_level="WARNING",
@@ -1007,6 +1167,7 @@ class TestMaterializeReplayTapeCli(TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(captured_windows, [(date(2026, 3, 30), date(2026, 3, 31))])
+        self.assertEqual(captured_quote_carry_forward_ages, [120])
         self.assertEqual(fetch.call_count, 1)
         self.assertEqual(payload["start_date"], "2026-03-30")
         self.assertEqual(payload["end_date"], "2026-03-31")

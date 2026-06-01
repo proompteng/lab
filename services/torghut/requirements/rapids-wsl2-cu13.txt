@@ -1,0 +1,6 @@
+--extra-index-url https://pypi.nvidia.com
+cudf-cu13==26.4.*
+dask-cudf-cu13==26.4.*
+rmm-cu13==26.4.*
+cuml-cu13==26.4.*
+cugraph-cu13==26.4.*

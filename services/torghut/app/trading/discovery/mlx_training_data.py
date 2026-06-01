@@ -128,7 +128,7 @@ def _import_torch_array_backend(preference: str) -> tuple[str, Any] | None:
     cuda = getattr(torch_module, "cuda", None)
     cuda_available_fn = getattr(cuda, "is_available", None)
     cuda_available = bool(callable(cuda_available_fn) and cuda_available_fn())
-    if preference in {"cuda", "torch-cuda"}:
+    if preference == "torch-cuda":
         if not cuda_available:
             return None
         return "torch-cuda", _TorchArrayBackend(torch_module, device="cuda")
@@ -145,7 +145,7 @@ def _import_array_backend(preference: str) -> tuple[str, Any]:
         import numpy as np
 
         return "numpy-fallback", np
-    if normalized in {"cuda", "torch", "torch-cuda"}:
+    if normalized in {"torch", "torch-cuda"}:
         torch_backend = _import_torch_array_backend(normalized)
         if torch_backend is not None:
             return torch_backend

@@ -319,6 +319,73 @@ class TestLocalIntradayTsmomReplay(TestCase):
         self.assertEqual([row.symbol for row in rows], ["META"])
         self.assertIn("s.symbol IN ('META', 'NVDA')", captured_queries[0])
 
+    def test_fetch_chunk_can_bound_quote_carry_forward_with_lineage(self) -> None:
+        captured_queries: list[str] = []
+
+        def fake_http_query(
+            *,
+            url: str,
+            username: str | None,
+            password: str | None,
+            timeout_seconds: int,
+            query: str,
+        ) -> str:
+            captured_queries.append(query)
+            return "\t".join(
+                [
+                    "META",
+                    "2026-03-27 17:30:24.000",
+                    "12",
+                    "0.031",
+                    "0.019",
+                    "523.10",
+                    "522.80",
+                    "57",
+                    "523.25",
+                    "523.22",
+                    "523.28",
+                    "0.06",
+                    "1200",
+                    "800",
+                    "0.06",
+                    "522.95",
+                    "523.05",
+                    "0.00018",
+                    "18200",
+                    "2026-03-27 17:29:42.000",
+                    "42",
+                ]
+            )
+
+        with patch(
+            "scripts.local_intraday_tsmom_replay._http_query",
+            side_effect=fake_http_query,
+        ):
+            rows = _fetch_chunk(
+                http_url="http://clickhouse",
+                username="reader",
+                password="secret",
+                timeout_seconds=7,
+                chunk_start=datetime(2026, 3, 27, 17, 0, tzinfo=timezone.utc),
+                chunk_end=datetime(2026, 3, 27, 18, 0, tzinfo=timezone.utc),
+                symbols=("META",),
+                quote_carry_forward_max_age_seconds=120,
+            )
+
+        self.assertEqual(len(rows), 1)
+        self.assertIn("ASOF LEFT JOIN", captured_queries[0])
+        self.assertIn(
+            "dateDiff('second', q.quote_ts, s.event_ts) <= 120",
+            captured_queries[0],
+        )
+        self.assertNotIn("AND isNotNull(s.imbalance_bid_px)", captured_queries[0])
+        self.assertEqual(rows[0].payload["quote_carry_forward_age_seconds"], 42)
+        self.assertEqual(
+            rows[0].payload["quote_source_event_ts"],
+            "2026-03-27T17:29:42+00:00",
+        )
+        self.assertTrue(rows[0].payload["quote_carry_forward_applied"])
+
     def test_http_query_supports_kubectl_clickhouse_transport(self) -> None:
         completed = type(
             "Completed",

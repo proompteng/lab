@@ -39,3 +39,19 @@ class TestCudaResearchRuntimeContract(TestCase):
                 }
             ],
         )
+
+    def test_quant_gpu_research_extra_uses_cupy_and_numba_cuda(self) -> None:
+        pyproject_path = Path(__file__).parents[1] / "pyproject.toml"
+        payload = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+
+        optional_dependencies = cast(
+            dict[str, list[str]], payload["project"]["optional-dependencies"]
+        )
+
+        self.assertEqual(
+            optional_dependencies["quant-gpu-research"],
+            [
+                "cupy-cuda12x>=13.0,<14",
+                "numba-cuda[cu12]>=0.16,<1",
+            ],
+        )

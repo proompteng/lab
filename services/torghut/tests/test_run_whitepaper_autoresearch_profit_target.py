@@ -39,6 +39,10 @@ from app.trading.discovery.replay_tape import (
     build_source_query_digest,
     materialize_signal_tape,
 )
+from app.trading.discovery.tape_feature_extractors import (
+    extract_quote_depth_imbalance,
+    float_or_none,
+)
 from app.trading.discovery.evidence_bundles import evidence_bundle_blockers
 from app.trading.models import SignalEnvelope
 
@@ -284,10 +288,40 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             replay_tape_manifest=None,
             replay_tape_preview_top_k=0,
             replay_tape_preview_min_rows=2,
+            replay_tape_preview_array_backend="numpy",
+            sleeve_simulation_preview_top_k=0,
+            sleeve_simulation_preview_backend="auto",
+            sleeve_simulation_preview_min_returns_per_path=2,
+            rapids_tape_feature_panel=None,
+            rapids_tape_feature_rows=None,
             materialize_replay_tape=False,
+            materialize_replay_tape_latest_complete_window_min_days=0,
+            clickhouse_query_timeout_seconds=runner.replay_mod.DEFAULT_CLICKHOUSE_QUERY_TIMEOUT_SECONDS,
+            materialize_replay_tape_min_executable_rows_per_symbol_day=18000,
+            materialize_replay_tape_min_quote_valid_ratio="0.90",
+            materialize_replay_tape_max_coverage_spread_bps="50",
+            materialize_replay_tape_max_executable_gap_seconds=120,
+            materialize_replay_tape_quote_carry_forward_max_age_seconds=0,
             min_daily_net_pnl=None,
             persist_results=False,
         )
+
+    def _complete_replay_coverage_row(self, *, rows: int = 10) -> dict[str, object]:
+        return {
+            "raw_signal_rows": rows,
+            "executable_signal_rows": rows,
+            "quote_sane_signal_rows": rows,
+            "spread_sane_signal_rows": rows,
+            "microbar_rows": rows,
+            "raw_signal_symbol_count": 1,
+            "executable_signal_symbol_count": 1,
+            "microbar_symbol_count": 1,
+            "min_executable_rows_per_symbol_day": rows,
+            "min_spread_sane_rows_per_symbol_day": rows,
+            "quote_valid_ratio": "1",
+            "min_quote_valid_ratio_by_symbol_day": "1",
+            "max_executable_gap_seconds": 0,
+        }
 
     def _source_jsonl_args(
         self,
@@ -405,10 +439,10 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 specs=specs,
                 evidence_bundles=evidence_bundles,
                 replay_selection_by_spec=None,
-                ranker_backend_preference="cuda",
+                ranker_backend_preference="torch",
             )
 
-        self.assertEqual(captured_backend_preferences, ["torch-cuda", "cuda"])
+        self.assertEqual(captured_backend_preferences, ["torch-cuda", "torch"])
 
     def test_ranker_backend_preference_falls_back_for_invalid_internal_value(
         self,
@@ -417,6 +451,21 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         args.ranker_backend_preference = "not-a-backend"
 
         self.assertEqual(runner._ranker_backend_preference(args), "mlx")
+
+    def test_runner_rejects_generic_cuda_ranker_backend_alias(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            with patch(
+                "sys.argv",
+                [
+                    "run_whitepaper_autoresearch_profit_target.py",
+                    "--output-dir",
+                    str(Path(tmpdir) / "epoch"),
+                    "--ranker-backend-preference",
+                    "cuda",
+                ],
+            ):
+                with self.assertRaises(SystemExit):
+                    runner._parse_args()
 
     def test_candidate_board_adds_factor_acceptance_replay_metadata(self) -> None:
         spec = replace(
@@ -4603,6 +4652,144 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertFalse(aapl_row["selected_for_replay"])
         self.assertEqual(aapl_row["selection_reason"], "fast_replay_preview_filtered")
 
+    def test_sleeve_simulation_preview_narrows_direct_specs_without_promotion_proof(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            output_dir = root / "epoch"
+            specs_path = root / "candidate-specs.jsonl"
+            tape_path = root / "preview-tape.jsonl"
+            base_nvda = self._candidate_spec("spec-nvda-sleeve-preview")
+            nvda_spec = replace(
+                base_nvda,
+                strategy_overrides={
+                    **base_nvda.strategy_overrides,
+                    "universe_symbols": ["NVDA"],
+                },
+            )
+            base_aapl = self._candidate_spec("spec-aapl-sleeve-preview")
+            aapl_spec = replace(
+                base_aapl,
+                strategy_overrides={
+                    **base_aapl.strategy_overrides,
+                    "universe_symbols": ["AAPL"],
+                },
+            )
+            specs_path.write_text(
+                "\n".join(
+                    json.dumps(spec.to_payload(), sort_keys=True)
+                    for spec in (nvda_spec, aapl_spec)
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            materialize_signal_tape(
+                rows=[
+                    SignalEnvelope(
+                        event_ts=datetime(
+                            2026, 2, 23, 15, minute, tzinfo=timezone.utc
+                        ),
+                        symbol=symbol,
+                        timeframe="1Sec",
+                        seq=seq,
+                        source="ta",
+                        payload={"price": Decimal(price)},
+                    )
+                    for seq, (minute, symbol, price) in enumerate(
+                        (
+                            (30, "NVDA", "100"),
+                            (31, "NVDA", "101"),
+                            (32, "NVDA", "102"),
+                            (30, "AAPL", "200"),
+                            (31, "AAPL", "199"),
+                            (32, "AAPL", "198"),
+                        ),
+                        start=1,
+                    )
+                ],
+                tape_path=tape_path,
+                dataset_snapshot_ref="sleeve-preview-snapshot",
+                symbols=("NVDA", "AAPL"),
+                start_date=date(2026, 2, 23),
+                end_date=date(2026, 2, 23),
+                source_query_digest=build_source_query_digest(
+                    {"query": "sleeve-preview"}
+                ),
+            )
+            args = self._args(output_dir)
+            args.candidate_specs = [specs_path]
+            args.seed_recent_whitepapers = False
+            args.replay_mode = "real"
+            args.selection_only = True
+            args.replay_tape_path = tape_path
+            args.sleeve_simulation_preview_top_k = 1
+            args.sleeve_simulation_preview_backend = "cpu"
+            args.full_window_start_date = "2026-02-23"
+            args.full_window_end_date = "2026-02-23"
+            args.symbols = "NVDA,AAPL"
+
+            payload = runner.run_whitepaper_autoresearch_profit_target(args)
+
+            selection = json.loads(
+                (output_dir / "candidate-selection-manifest.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            selected_specs = [
+                json.loads(line)
+                for line in (output_dir / "selected-candidate-specs.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+                if line
+            ]
+            preview_manifest = json.loads(
+                (output_dir / "sleeve-simulation-preview-manifest.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            preview_rows_exist = (
+                output_dir / "sleeve-simulation-preview-rows.jsonl"
+            ).exists()
+
+        self.assertEqual(payload["status"], "selection_only")
+        self.assertEqual(payload["replay_candidate_spec_count"], 1)
+        self.assertEqual(
+            selection["selected_candidate_spec_ids"], ["spec-nvda-sleeve-preview"]
+        )
+        self.assertEqual(
+            [spec["candidate_spec_id"] for spec in selected_specs],
+            ["spec-nvda-sleeve-preview"],
+        )
+        self.assertFalse(selection["sleeve_simulation_preview"]["promotion_proof"])
+        self.assertFalse(preview_manifest["promotion_proof"])
+        self.assertIn(
+            "runtime_ledger_proof_required",
+            selection["sleeve_simulation_preview"]["blockers"],
+        )
+        self.assertTrue(preview_rows_exist)
+        self.assertEqual(
+            payload["artifacts"]["sleeve_simulation_preview_manifest"],
+            str(output_dir / "sleeve-simulation-preview-manifest.json"),
+        )
+        nvda_row = next(
+            row
+            for row in selection["rows"]
+            if row["candidate_spec_id"] == "spec-nvda-sleeve-preview"
+        )
+        self.assertTrue(nvda_row["sleeve_simulation_preview_selected"])
+        self.assertIn("sleeve_simulation_preview_advisory_score", nvda_row)
+        aapl_row = next(
+            row
+            for row in selection["rows"]
+            if row["candidate_spec_id"] == "spec-aapl-sleeve-preview"
+        )
+        self.assertTrue(aapl_row["pre_sleeve_simulation_preview_selected_for_replay"])
+        self.assertFalse(aapl_row["selected_for_replay"])
+        self.assertEqual(
+            aapl_row["selection_reason"], "sleeve_simulation_preview_filtered"
+        )
+
     def test_fast_replay_preview_scores_microstructure_diagnostics_preview_only(
         self,
     ) -> None:
@@ -4696,12 +4883,105 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(manifest_payload["status"], "preview_only")
         self.assertFalse(manifest_payload["promotion_proof"])
         self.assertIn("exact_replay_required", manifest_payload["blockers"])
+        self.assertEqual(
+            manifest_payload["research_backend"]["selected_backend"],
+            "numpy-fallback",
+        )
+        self.assertEqual(
+            manifest_payload["research_backend"]["replay_tape_digest"],
+            "microstructure-preview-sha",
+        )
+        self.assertFalse(manifest_payload["research_backend"]["promotion_proof"])
         self.assertGreater(Decimal(row_payload["ofi_pressure_score"]), Decimal("0"))
         self.assertGreater(Decimal(row_payload["microprice_bias_bps"]), Decimal("0"))
         self.assertGreater(Decimal(row_payload["spread_tail_bps"]), Decimal("0"))
         self.assertGreater(
             Decimal(row_payload["impact_liquidity_penalty_bps"]), Decimal("0")
         )
+
+    def test_fast_replay_preview_gpu_backend_fails_closed_and_auto_fallbacks(
+        self,
+    ) -> None:
+        class MissingCupyProbe:
+            available = False
+            reason = "module_not_installed"
+
+            @staticmethod
+            def to_payload() -> dict[str, object]:
+                return {
+                    "schema_version": "torghut.gpu-research-backend-report.v1",
+                    "backend": "cupy",
+                    "available": False,
+                    "module": "cupy",
+                    "reason": "module_not_installed",
+                }
+
+        spec = self._candidate_spec("spec-gpu-preview")
+        rows = [
+            SignalEnvelope(
+                event_ts=datetime(2026, 2, 23, 15, 30, tzinfo=timezone.utc),
+                symbol="NVDA",
+                timeframe="1Sec",
+                seq=1,
+                source="ta",
+                payload={"price": Decimal("100")},
+            ),
+            SignalEnvelope(
+                event_ts=datetime(2026, 2, 23, 15, 31, tzinfo=timezone.utc),
+                symbol="NVDA",
+                timeframe="1Sec",
+                seq=2,
+                source="ta",
+                payload={"price": Decimal("101")},
+            ),
+        ]
+        manifest = ReplayTapeManifest(
+            schema_version=REPLAY_TAPE_MANIFEST_SCHEMA_VERSION,
+            dataset_snapshot_ref="gpu-preview",
+            symbols=("NVDA",),
+            row_symbols=("NVDA",),
+            start_date=date(2026, 2, 23),
+            end_date=date(2026, 2, 23),
+            start_ts=datetime(2026, 2, 23, 14, 30, tzinfo=timezone.utc),
+            end_ts=datetime(2026, 2, 23, 21, 0, tzinfo=timezone.utc),
+            min_event_ts=rows[0].event_ts,
+            max_event_ts=rows[-1].event_ts,
+            trading_day_count=1,
+            row_count=len(rows),
+            source_query_digest="gpu-preview-query",
+            content_sha256="gpu-preview-sha",
+            artifact_refs={},
+            source_table_versions={},
+            created_at=datetime(2026, 2, 24, tzinfo=timezone.utc),
+        )
+
+        with patch.object(
+            fast_replay,
+            "probe_gpu_research_backend",
+            return_value=MissingCupyProbe(),
+        ):
+            with self.assertRaisesRegex(
+                ValueError, "fast_replay_preview_cupy_unavailable"
+            ):
+                fast_replay.build_fast_replay_preview(
+                    specs=(spec,),
+                    rows=rows,
+                    replay_tape_manifest=manifest,
+                    top_k=1,
+                    array_backend_preference="cupy",
+                )
+            preview = fast_replay.build_fast_replay_preview(
+                specs=(spec,),
+                rows=rows,
+                replay_tape_manifest=manifest,
+                top_k=1,
+                array_backend_preference="auto",
+            )
+
+        backend = preview.to_manifest_payload()["research_backend"]
+        self.assertEqual(backend["requested_backend"], "auto")
+        self.assertEqual(backend["selected_backend"], "numpy-fallback")
+        self.assertIn("auto_fallback", str(backend["backend"]["reason"]))
 
     def test_materialize_replay_tape_writes_run_artifacts_and_updates_args(
         self,
@@ -4717,6 +4997,13 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             args.replay_mode = "real"
             args.materialize_replay_tape = True
             args.symbols = "NVDA"
+            args.materialize_replay_tape_latest_complete_window_min_days = 2
+            args.materialize_replay_tape_min_executable_rows_per_symbol_day = 1
+            args.clickhouse_query_timeout_seconds = 7
+            args.materialize_replay_tape_quote_carry_forward_max_age_seconds = 120
+            args.full_window_start_date = "2026-02-26"
+            args.full_window_end_date = "2026-02-27"
+            captured_quote_carry_forward_ages: list[int] = []
             rows = [
                 SignalEnvelope(
                     event_ts=datetime(2026, 2, day, 15, 30, tzinfo=timezone.utc),
@@ -4727,10 +5014,37 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     payload={"price": Decimal("100"), "spread": Decimal("0.01")},
                 )
                 for seq, day in enumerate(range(23, 28), start=1)
+                if day >= 26
             ]
+            coverage = {
+                "schema_version": "torghut.replay-coverage-diagnostic.v1",
+                "requested_trading_days": ["2026-02-26", "2026-02-27"],
+                "missing_raw_signal_days": [],
+                "missing_executable_signal_days": [],
+                "missing_microbar_days": [],
+                "rows_by_trading_day": {
+                    "2026-02-26": self._complete_replay_coverage_row(),
+                    "2026-02-27": self._complete_replay_coverage_row(),
+                },
+            }
 
-            with patch.object(
-                runner.replay_mod, "_iter_signal_rows", return_value=rows
+            def iter_signal_rows(config: Any) -> list[SignalEnvelope]:
+                captured_quote_carry_forward_ages.append(
+                    config.quote_carry_forward_max_age_seconds
+                )
+                return rows
+
+            with (
+                patch.object(
+                    runner.replay_mod,
+                    "_iter_signal_rows",
+                    side_effect=iter_signal_rows,
+                ),
+                patch.object(
+                    runner.replay_tape_materializer,
+                    "_fetch_coverage_diagnostics",
+                    return_value=coverage,
+                ),
             ):
                 updated_args, receipt = runner._maybe_materialize_epoch_replay_tape(
                     args=args,
@@ -4748,12 +5062,134 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 output_dir / "replay-tape.jsonl.manifest.json",
             )
             self.assertEqual(receipt["status"], "materialized")
-            self.assertEqual(receipt["row_count"], 5)
+            self.assertEqual(receipt["row_count"], 2)
             self.assertEqual(receipt["row_symbols"], ["NVDA"])
+            self.assertEqual(receipt["requested_symbols"], ["NVDA"])
+            self.assertEqual(receipt["effective_symbols"], ["NVDA"])
+            self.assertEqual(receipt["effective_symbol_source"], "args_symbols")
+            self.assertEqual(receipt["effective_start_date"], "2026-02-26")
+            self.assertEqual(receipt["effective_end_date"], "2026-02-27")
+            self.assertEqual(receipt["quote_carry_forward_max_age_seconds"], 120)
+            self.assertEqual(captured_quote_carry_forward_ages, [120])
+            self.assertEqual(
+                receipt["latest_complete_window"]["selected_trading_days"],
+                ["2026-02-26", "2026-02-27"],
+            )
             self.assertTrue((output_dir / "replay-tape-receipt.json").exists())
+            self.assertTrue(
+                (output_dir / "latest-complete-window-receipt.json").exists()
+            )
+            self.assertTrue(
+                (output_dir / "replay-tape-coverage-diagnostics.json").exists()
+            )
             self.assertEqual(tape.manifest.dataset_snapshot_ref, "epoch-materialized")
-            self.assertEqual(tape.manifest.row_count, 5)
+            self.assertEqual(tape.manifest.row_count, 2)
             self.assertEqual(tape.manifest.missing_trading_days, ())
+
+    def test_materialize_replay_tape_uses_selected_candidate_symbol_union(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            output_dir = root / "epoch"
+            output_dir.mkdir()
+            strategy_configmap = root / "strategy-configmap.yaml"
+            strategy_configmap.write_text("{}", encoding="utf-8")
+            args = self._args(output_dir)
+            args.strategy_configmap = strategy_configmap
+            args.replay_mode = "real"
+            args.materialize_replay_tape = True
+            args.symbols = "NVDA,AAPL,AMD,GOOGL"
+            args.full_window_start_date = "2026-02-26"
+            args.full_window_end_date = "2026-02-27"
+            base_spec = self._candidate_spec("spec-materialized-union")
+            spec = replace(
+                base_spec,
+                strategy_overrides={
+                    **dict(base_spec.strategy_overrides),
+                    "universe_symbols": ["NVDA", "AMD", "MSFT"],
+                },
+            )
+            rows = [
+                SignalEnvelope(
+                    event_ts=datetime(2026, 2, day, 15, 30, tzinfo=timezone.utc),
+                    symbol=symbol,
+                    timeframe="1Sec",
+                    seq=seq,
+                    source="ta",
+                    payload={"price": Decimal("100"), "spread": Decimal("0.01")},
+                )
+                for seq, (day, symbol) in enumerate(
+                    (
+                        (26, "NVDA"),
+                        (26, "AMD"),
+                        (27, "NVDA"),
+                        (27, "AMD"),
+                    ),
+                    start=1,
+                )
+            ]
+            selector_symbols: list[tuple[str, ...]] = []
+            replay_symbols: list[tuple[str, ...]] = []
+
+            def select_effective_window(
+                *,
+                args: Namespace,
+                symbols: tuple[str, ...],
+                requested_start_date: date,
+                requested_end_date: date,
+            ) -> tuple[date, date, dict[str, object]]:
+                selector_symbols.append(symbols)
+                return (
+                    requested_start_date,
+                    requested_end_date,
+                    {
+                        "schema_version": "torghut.replay-latest-complete-window.v1",
+                        "status": "selected",
+                        "selected_trading_days": ["2026-02-26", "2026-02-27"],
+                        "symbols": list(symbols),
+                    },
+                )
+
+            def iter_signal_rows(config: Any) -> tuple[SignalEnvelope, ...]:
+                replay_symbols.append(tuple(config.symbols))
+                return tuple(rows)
+
+            with (
+                patch.object(
+                    runner.replay_tape_materializer,
+                    "_select_effective_window",
+                    side_effect=select_effective_window,
+                ),
+                patch.object(
+                    runner.replay_mod,
+                    "_iter_signal_rows",
+                    side_effect=iter_signal_rows,
+                ),
+            ):
+                updated_args, receipt = runner._maybe_materialize_epoch_replay_tape(
+                    args=args,
+                    output_dir=output_dir,
+                    epoch_id="epoch-materialized-union",
+                    candidate_specs=(spec,),
+                )
+
+            self.assertIsNotNone(receipt)
+            assert receipt is not None
+            self.assertEqual(selector_symbols, [("NVDA", "AMD")])
+            self.assertEqual(replay_symbols, [("NVDA", "AMD")])
+            self.assertEqual(
+                receipt["requested_symbols"],
+                ["NVDA", "AAPL", "AMD", "GOOGL"],
+            )
+            self.assertEqual(receipt["effective_symbols"], ["NVDA", "AMD"])
+            self.assertEqual(
+                receipt["effective_symbol_source"],
+                "candidate_spec_union",
+            )
+            tape = runner.load_replay_tape(updated_args.replay_tape_path)
+            self.assertEqual(tape.manifest.symbols, ("AMD", "NVDA"))
+            self.assertEqual(tape.manifest.row_count, 4)
 
     def test_materialize_replay_tape_fails_closed_on_missing_days(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -4793,6 +5229,63 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
 
             self.assertFalse((output_dir / "replay-tape.jsonl").exists())
             self.assertFalse((output_dir / "replay-tape.jsonl.manifest.json").exists())
+
+    def test_materialize_replay_tape_latest_complete_window_failure_writes_refs(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            output_dir = root / "epoch"
+            output_dir.mkdir()
+            strategy_configmap = root / "strategy-configmap.yaml"
+            strategy_configmap.write_text("{}", encoding="utf-8")
+            args = self._args(output_dir)
+            args.strategy_configmap = strategy_configmap
+            args.replay_mode = "real"
+            args.materialize_replay_tape = True
+            args.symbols = "NVDA"
+            args.full_window_start_date = "2026-02-26"
+            args.full_window_end_date = "2026-02-27"
+            args.materialize_replay_tape_latest_complete_window_min_days = 2
+            args.materialize_replay_tape_min_executable_rows_per_symbol_day = 1
+            coverage = {
+                "schema_version": "torghut.replay-coverage-diagnostic.v1",
+                "requested_trading_days": ["2026-02-26", "2026-02-27"],
+                "missing_raw_signal_days": ["2026-02-26", "2026-02-27"],
+                "missing_executable_signal_days": ["2026-02-26", "2026-02-27"],
+                "missing_microbar_days": [],
+                "rows_by_trading_day": {},
+            }
+
+            with patch.object(
+                runner.replay_tape_materializer,
+                "_fetch_coverage_diagnostics",
+                return_value=coverage,
+            ):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "latest_complete_replay_window_missing:min_days=2",
+                ):
+                    runner._maybe_materialize_epoch_replay_tape(
+                        args=args,
+                        output_dir=output_dir,
+                        epoch_id="epoch-materialized",
+                    )
+
+            refs = runner._materialized_replay_tape_artifact_refs(output_dir)
+            self.assertEqual(
+                refs["latest_complete_window"]["status"],
+                "missing",
+            )
+            self.assertEqual(
+                refs["latest_complete_window"]["failure_reason"],
+                "latest_complete_replay_window_missing:min_days=2",
+            )
+            self.assertEqual(
+                Path(str(refs["coverage_diagnostic_path"])).name,
+                "replay-tape-coverage-diagnostics.json",
+            )
+            self.assertFalse((output_dir / "replay-tape.jsonl").exists())
 
     def test_materialize_replay_tape_skips_provided_tape_and_fails_closed(
         self,
@@ -4999,7 +5492,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             5.0,
         )
         self.assertAlmostEqual(
-            fast_replay._extract_quote_depth_imbalance(
+            extract_quote_depth_imbalance(
                 SignalEnvelope(
                     event_ts=datetime(2026, 2, 23, 15, 30, tzinfo=timezone.utc),
                     symbol="NVDA",
@@ -5058,8 +5551,8 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 )
             )
         )
-        self.assertIsNone(fast_replay._float_or_none("not-a-number"))
-        self.assertIsNone(fast_replay._float_or_none(float("nan")))
+        self.assertIsNone(float_or_none("not-a-number"))
+        self.assertIsNone(float_or_none(float("nan")))
         self.assertEqual(fast_replay._mapping("not-a-mapping"), {})
 
     def test_candidate_specs_replay_skips_compiler_and_replays_selected_specs(
@@ -10426,7 +10919,33 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     str(Path(tmpdir) / "tape.jsonl"),
                     "--replay-tape-manifest",
                     str(Path(tmpdir) / "tape.manifest.json"),
+                    "--replay-tape-preview-array-backend",
+                    "auto",
+                    "--sleeve-simulation-preview-top-k",
+                    "3",
+                    "--sleeve-simulation-preview-backend",
+                    "numba-cuda",
+                    "--sleeve-simulation-preview-min-returns-per-path",
+                    "4",
+                    "--rapids-tape-feature-panel",
+                    str(Path(tmpdir) / "rapids-panel.json"),
+                    "--rapids-tape-feature-rows",
+                    str(Path(tmpdir) / "rapids-rows.jsonl"),
                     "--materialize-replay-tape",
+                    "--materialize-replay-tape-latest-complete-window-min-days",
+                    "5",
+                    "--clickhouse-query-timeout-seconds",
+                    "11",
+                    "--materialize-replay-tape-min-executable-rows-per-symbol-day",
+                    "18001",
+                    "--materialize-replay-tape-min-quote-valid-ratio",
+                    "0.91",
+                    "--materialize-replay-tape-max-coverage-spread-bps",
+                    "25",
+                    "--materialize-replay-tape-max-executable-gap-seconds",
+                    "60",
+                    "--materialize-replay-tape-quote-carry-forward-max-age-seconds",
+                    "120",
                     "--selection-only",
                     "--no-persist-results",
                 ],
@@ -10469,7 +10988,41 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(
             parsed.replay_tape_manifest, Path(tmpdir) / "tape.manifest.json"
         )
+        self.assertEqual(parsed.replay_tape_preview_array_backend, "auto")
+        self.assertEqual(parsed.sleeve_simulation_preview_top_k, 3)
+        self.assertEqual(parsed.sleeve_simulation_preview_backend, "numba-cuda")
+        self.assertEqual(parsed.sleeve_simulation_preview_min_returns_per_path, 4)
+        self.assertEqual(
+            parsed.rapids_tape_feature_panel,
+            Path(tmpdir) / "rapids-panel.json",
+        )
+        self.assertEqual(
+            parsed.rapids_tape_feature_rows,
+            Path(tmpdir) / "rapids-rows.jsonl",
+        )
         self.assertTrue(parsed.materialize_replay_tape)
+        self.assertEqual(
+            parsed.materialize_replay_tape_latest_complete_window_min_days,
+            5,
+        )
+        self.assertEqual(parsed.clickhouse_query_timeout_seconds, 11)
+        self.assertEqual(
+            parsed.materialize_replay_tape_min_executable_rows_per_symbol_day,
+            18001,
+        )
+        self.assertEqual(parsed.materialize_replay_tape_min_quote_valid_ratio, "0.91")
+        self.assertEqual(
+            parsed.materialize_replay_tape_max_coverage_spread_bps,
+            "25",
+        )
+        self.assertEqual(
+            parsed.materialize_replay_tape_max_executable_gap_seconds,
+            60,
+        )
+        self.assertEqual(
+            parsed.materialize_replay_tape_quote_carry_forward_max_age_seconds,
+            120,
+        )
         self.assertTrue(parsed.selection_only)
         self.assertEqual(parsed.max_worst_day_loss, "999999999")
         self.assertEqual(parsed.max_drawdown, "999999999")
@@ -10549,6 +11102,86 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(payload["source_count"], 1)
         self.assertEqual(manifest["paper_sources"][0]["run_id"], "paper-jsonl-2026")
         self.assertEqual(sources[0]["run_id"], "paper-jsonl-2026")
+
+    def test_rapids_tape_feature_panel_ref_is_attached_to_candidate_selection(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            output_dir = root / "epoch"
+            panel_path = root / "rapids-panel.json"
+            rows_path = root / "rapids-rows.jsonl"
+            panel_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "torghut.rapids-tape-feature-panel.v1",
+                        "promotion_proof": False,
+                        "research_backend": {
+                            "promotion_proof": False,
+                            "selected_backend": "rapids-cudf",
+                        },
+                    },
+                    sort_keys=True,
+                ),
+                encoding="utf-8",
+            )
+            rows_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "torghut.rapids-tape-feature-row.v1",
+                        "symbol": "NVDA",
+                    },
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            args = self._source_jsonl_args(output_dir)
+            args.selection_only = True
+            args.max_candidates = 1
+            args.top_k = 1
+            args.exploration_slots = 0
+            args.portfolio_size_min = 1
+            args.portfolio_size_max = 1
+            args.rapids_tape_feature_panel = panel_path
+            args.rapids_tape_feature_rows = rows_path
+
+            payload = runner.run_whitepaper_autoresearch_profit_target(args)
+            selection = json.loads(
+                (output_dir / "candidate-selection-manifest.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            summary = json.loads(
+                (output_dir / "summary.json").read_text(encoding="utf-8")
+            )
+
+        rapids_ref = selection["rapids_tape_feature_panel"]
+        self.assertEqual(payload["status"], "selection_only")
+        self.assertEqual(
+            rapids_ref["schema_version"],
+            "torghut.rapids-tape-feature-panel-ref.v1",
+        )
+        self.assertEqual(rapids_ref["panel_path"], str(panel_path.resolve()))
+        self.assertEqual(rapids_ref["rows_path"], str(rows_path.resolve()))
+        self.assertFalse(rapids_ref["promotion_proof"])
+        self.assertEqual(
+            rapids_ref["blockers"],
+            [
+                "rapids_research_preview_only",
+                "exact_replay_required",
+                "runtime_ledger_proof_required",
+                "live_paper_parity_required",
+            ],
+        )
+        self.assertEqual(
+            summary["artifacts"]["rapids_tape_feature_panel"],
+            str(panel_path.resolve()),
+        )
+        self.assertEqual(
+            summary["artifacts"]["rapids_tape_feature_rows"],
+            str(rows_path.resolve()),
+        )
 
     def test_candidate_budget_does_not_truncate_compiled_hypothesis_universe(
         self,
