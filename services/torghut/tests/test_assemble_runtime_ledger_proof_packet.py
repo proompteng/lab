@@ -57,8 +57,11 @@ def _status(
             "blocking_reasons": [],
         },
     }
-    if tigerbeetle_ledger is not None:
-        payload["tigerbeetle_ledger"] = tigerbeetle_ledger
+    payload["tigerbeetle_ledger"] = (
+        tigerbeetle_ledger
+        if tigerbeetle_ledger is not None
+        else _tigerbeetle_ledger_status()
+    )
     return payload
 
 
