@@ -9,6 +9,8 @@ const DEFAULT_AGENTRUN_UNTOUCHED_WARN_AFTER_SECONDS = 120
 const DEFAULT_AGENTRUN_IDEMPOTENCY_RETENTION_DAYS = 30
 const DEFAULT_RUNNER_JOB_TTL_SECONDS = 600
 const DEFAULT_RUNNER_LOG_RETENTION_SECONDS = 7 * 24 * 60 * 60
+const DEFAULT_RUNTIME_DEBRIS_ORPHAN_POD_RETENTION_SECONDS = 24 * 60 * 60
+const DEFAULT_RUNTIME_DEBRIS_MAX_DELETES_PER_NAMESPACE = 25
 
 const normalizeNonEmpty = (value: string | undefined | null) => {
   const normalized = value?.trim()
@@ -29,6 +31,12 @@ const parsePositiveInt = (value: string | undefined, fallback: number) => {
   const parsed = Number.parseInt(normalized, 10)
   if (!Number.isFinite(parsed) || parsed < 0) return fallback
   return Math.floor(parsed)
+}
+
+const parseCleanupMode = (value: string | undefined): RuntimeDebrisCleanupMode => {
+  const normalized = normalizeNonEmpty(value)?.toLowerCase()
+  if (normalized === 'audit' || normalized === 'delete') return normalized
+  return 'disabled'
 }
 
 const parseJson = (value: string | undefined) => {
@@ -57,6 +65,14 @@ export type AgentsControllerBehaviorConfig = {
   agentRunRetentionSeconds: number | null
   artifactsMaxEntries: number
   artifactsStrict: boolean
+}
+
+export type RuntimeDebrisCleanupMode = 'disabled' | 'audit' | 'delete'
+
+export type RuntimeDebrisCleanupConfig = {
+  maxDeletesPerNamespace: number
+  mode: RuntimeDebrisCleanupMode
+  orphanPodRetentionSeconds: number
 }
 
 export type AgentsControllerAuthSecretConfig = {
@@ -144,6 +160,24 @@ export const resolveAgentsControllerAuthSecretConfig = (
       DEFAULT_AUTH_SECRET_MOUNT_PATH,
   }
 }
+
+export const resolveRuntimeDebrisCleanupConfig = (env: EnvSource = process.env): RuntimeDebrisCleanupConfig => ({
+  maxDeletesPerNamespace: Math.max(
+    0,
+    parsePositiveInt(
+      readAgentsEnv(env, 'AGENTS_CONTROLLER_RUNTIME_DEBRIS_MAX_DELETES_PER_NAMESPACE'),
+      DEFAULT_RUNTIME_DEBRIS_MAX_DELETES_PER_NAMESPACE,
+    ),
+  ),
+  mode: parseCleanupMode(readAgentsEnv(env, 'AGENTS_CONTROLLER_RUNTIME_DEBRIS_CLEANUP_MODE')),
+  orphanPodRetentionSeconds: Math.max(
+    0,
+    parsePositiveInt(
+      readAgentsEnv(env, 'AGENTS_CONTROLLER_ORPHAN_POD_RETENTION_SECONDS'),
+      DEFAULT_RUNTIME_DEBRIS_ORPHAN_POD_RETENTION_SECONDS,
+    ),
+  ),
+})
 
 export const resolveAgentRunnerDefaultsConfig = (env: EnvSource = process.env): AgentRunnerDefaultsConfig => {
   const nodeSelector = asRecord(parseJson(readAgentsEnv(env, 'AGENTS_AGENT_RUNNER_NODE_SELECTOR')))

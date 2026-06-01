@@ -323,6 +323,13 @@ spec:
               value: {{ .Values.controller.rate.cluster | default 600 | quote }}
             - name: AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
               value: {{ .Values.controller.agentRunRetentionSeconds | default 2592000 | quote }}
+            {{- $runtimeDebrisCleanup := .Values.controller.runtimeDebrisCleanup | default dict }}
+            - name: AGENTS_CONTROLLER_RUNTIME_DEBRIS_CLEANUP_MODE
+              value: {{ $runtimeDebrisCleanup.mode | default "disabled" | quote }}
+            - name: AGENTS_CONTROLLER_ORPHAN_POD_RETENTION_SECONDS
+              value: {{ $runtimeDebrisCleanup.orphanPodRetentionSeconds | default 86400 | quote }}
+            - name: AGENTS_CONTROLLER_RUNTIME_DEBRIS_MAX_DELETES_PER_NAMESPACE
+              value: {{ $runtimeDebrisCleanup.maxDeletesPerNamespace | default 25 | quote }}
             {{- if and .Values.controller.admissionPolicy.labels.required (gt (len .Values.controller.admissionPolicy.labels.required) 0) }}
             - name: AGENTS_CONTROLLER_LABELS_REQUIRED
               value: {{ .Values.controller.admissionPolicy.labels.required | toJson | quote }}
