@@ -161,28 +161,45 @@ class ClickHouseSignalIngestor:
             )
 
         poll_started_at = trading_now(account_label=self.account_label)
-        time_column = self._resolve_time_column()
-        latest_signal_at = self._latest_signal_timestamp(time_column)
-        cursor_at, cursor_seq, cursor_symbol, fast_forwarded = (
-            self._prepare_fetch_cursor(
-                session=session,
-                poll_started_at=poll_started_at,
-                latest_signal_at=latest_signal_at,
+        query_window_start: datetime | None = None
+        try:
+            time_column = self._resolve_time_column()
+            latest_signal_at = self._latest_signal_timestamp(time_column)
+            cursor_at, cursor_seq, cursor_symbol, fast_forwarded = (
+                self._prepare_fetch_cursor(
+                    session=session,
+                    poll_started_at=poll_started_at,
+                    latest_signal_at=latest_signal_at,
+                )
             )
-        )
-        if self.simulation_mode:
-            return self._fetch_simulation_signals(
-                cursor_at=cursor_at,
-                cursor_seq=cursor_seq,
-                cursor_symbol=cursor_symbol,
-                latest_signal_at=latest_signal_at,
-                poll_started_at=poll_started_at,
-                fast_forwarded=fast_forwarded,
+            query_window_start = cursor_at
+            if self.simulation_mode:
+                return self._fetch_simulation_signals(
+                    cursor_at=cursor_at,
+                    cursor_seq=cursor_seq,
+                    cursor_symbol=cursor_symbol,
+                    latest_signal_at=latest_signal_at,
+                    poll_started_at=poll_started_at,
+                    fast_forwarded=fast_forwarded,
+                )
+            overlap_cutoff = self._overlap_cutoff(time_column, cursor_at)
+            query = self._build_query(cursor_at, cursor_seq, cursor_symbol)
+            rows = self._query_clickhouse(query)
+        except TimeoutError as exc:
+            logger.warning(
+                "ClickHouse signal ingestion timed out; returning empty batch account_label=%s error=%s",
+                self.account_label,
+                exc,
             )
-        query_window_start = cursor_at
-        overlap_cutoff = self._overlap_cutoff(time_column, cursor_at)
-        query = self._build_query(cursor_at, cursor_seq, cursor_symbol)
-        rows = self._query_clickhouse(query)
+            return SignalBatch(
+                signals=[],
+                cursor_at=None,
+                cursor_seq=None,
+                cursor_symbol=None,
+                query_start=query_window_start,
+                query_end=poll_started_at,
+                no_signal_reason="clickhouse_signal_query_timeout",
+            )
         signals, max_event_ts, max_seq, max_symbol = self._collect_batch_signals(
             rows,
             overlap_cutoff,
