@@ -949,6 +949,36 @@ class TestRuntimeWindowImport(TestCase):
             payload.get("source_row_counts", {}).get("tigerbeetle_transfer_refs"),
             1,
         )
+        target_tigerbeetle_refs = summary["runtime_materialization_target"].get(
+            "tigerbeetle"
+        )
+        self.assertIsInstance(target_tigerbeetle_refs, dict)
+        self.assertEqual(
+            target_tigerbeetle_refs.get("schema_version"),
+            "torghut.tigerbeetle-runtime-ledger-proof-refs.v1",
+        )
+        self.assertEqual(target_tigerbeetle_refs.get("account_count"), 2)
+        self.assertEqual(target_tigerbeetle_refs.get("transfer_count"), 1)
+        self.assertEqual(
+            target_tigerbeetle_refs.get("account_ids"),
+            tigerbeetle_refs.get("account_ids"),
+        )
+        self.assertEqual(
+            target_tigerbeetle_refs.get("transfer_ids"),
+            tigerbeetle_refs.get("transfer_ids"),
+        )
+        self.assertEqual(
+            target_tigerbeetle_refs.get("runtime_ledger_buckets"),
+            [
+                {
+                    "runtime_ledger_bucket_id": str(ledger_buckets[0].id),
+                    "account_ids": tigerbeetle_refs.get("account_ids"),
+                    "account_keys": tigerbeetle_refs.get("account_keys"),
+                    "transfer_ids": tigerbeetle_refs.get("transfer_ids"),
+                    "missing_account_ids": [],
+                }
+            ],
+        )
         self.assertEqual(datasets[0].candidate_id, "cand-1")
         self.assertEqual(datasets[0].artifact_ref, "torghut-runtime-window-cand-1")
         self.assertEqual(datasets[0].source, "live_runtime_observed")

@@ -1616,6 +1616,83 @@ def _ledger_payload_with_tigerbeetle_refs(
     }
 
 
+def _runtime_ledger_tigerbeetle_proof_refs(
+    rows: Sequence[StrategyRuntimeLedgerBucket],
+) -> dict[str, Any]:
+    if not rows:
+        return {}
+    account_ids: list[str] = []
+    account_keys: list[str] = []
+    transfer_ids: list[str] = []
+    source_refs: list[str] = []
+    missing_account_ids: list[str] = []
+    buckets: list[dict[str, Any]] = []
+    cluster_ids: set[int] = set()
+
+    def extend_unique(target: list[str], values: Sequence[str]) -> None:
+        for value in values:
+            if value not in target:
+                target.append(value)
+
+    for row in rows:
+        payload = _mapping(row.payload_json)
+        refs = _mapping(payload.get("tigerbeetle"))
+        row_account_ids = _string_list(
+            refs.get("account_ids") or payload.get("tigerbeetle_account_ids")
+        )
+        row_account_keys = _string_list(
+            refs.get("account_keys") or payload.get("tigerbeetle_account_keys")
+        )
+        row_transfer_ids = _string_list(
+            refs.get("transfer_ids") or payload.get("tigerbeetle_transfer_ids")
+        )
+        row_missing_account_ids = _string_list(refs.get("missing_account_ids"))
+        row_source_refs = _string_list(payload.get("source_refs"))
+        if not row_account_ids and not row_account_keys and not row_transfer_ids:
+            continue
+        raw_cluster_ids = refs.get("cluster_ids")
+        cluster_items: Sequence[object] = (
+            cast(Sequence[object], raw_cluster_ids)
+            if isinstance(raw_cluster_ids, Sequence)
+            and not isinstance(raw_cluster_ids, (str, bytes, bytearray))
+            else ()
+        )
+        cluster_ids.update(
+            value
+            for value in (_observation_int(item) for item in cluster_items)
+            if value > 0
+        )
+        extend_unique(account_ids, row_account_ids)
+        extend_unique(account_keys, row_account_keys)
+        extend_unique(transfer_ids, row_transfer_ids)
+        extend_unique(missing_account_ids, row_missing_account_ids)
+        extend_unique(source_refs, row_source_refs)
+        buckets.append(
+            {
+                "runtime_ledger_bucket_id": str(row.id),
+                "account_ids": row_account_ids,
+                "account_keys": row_account_keys,
+                "transfer_ids": row_transfer_ids,
+                "missing_account_ids": row_missing_account_ids,
+            }
+        )
+
+    if not account_ids and not account_keys and not transfer_ids:
+        return {}
+    return {
+        "schema_version": "torghut.tigerbeetle-runtime-ledger-proof-refs.v1",
+        "cluster_ids": sorted(cluster_ids),
+        "account_count": len(account_ids),
+        "transfer_count": len(transfer_ids),
+        "account_ids": account_ids,
+        "account_keys": account_keys,
+        "transfer_ids": transfer_ids,
+        "missing_account_ids": missing_account_ids,
+        "source_refs": source_refs,
+        "runtime_ledger_buckets": buckets,
+    }
+
+
 def _journal_tigerbeetle_runtime_ledger_bucket(
     session: Session,
     row: StrategyRuntimeLedgerBucket,
@@ -2337,6 +2414,7 @@ def persist_observed_runtime_windows(
                 }
             )
     proof_status = "blocked" if proof_blockers else "ok"
+    tigerbeetle_proof_refs = _runtime_ledger_tigerbeetle_proof_refs(runtime_ledger_rows)
     runtime_materialization_target.update(
         {
             "proof_status": proof_status,
@@ -2350,6 +2428,11 @@ def persist_observed_runtime_windows(
             "evidence_grade_runtime_ledger_bucket_ids": [
                 str(row.id) for row in evidence_grade_runtime_ledger_rows
             ],
+            **(
+                {"tigerbeetle": tigerbeetle_proof_refs}
+                if tigerbeetle_proof_refs
+                else {}
+            ),
             "replaced_runtime_ledger_bucket_count": (
                 replaced_runtime_ledger_bucket_count
             ),
