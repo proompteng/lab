@@ -131,6 +131,14 @@ PAPER_ROUTE_EVIDENCE_DB_UNAVAILABLE_BLOCKER = "paper_route_evidence_db_unavailab
 PAPER_ROUTE_TARGET_ACCOUNT_AUDIT_UNAVAILABLE_BLOCKER = (
     "paper_route_target_account_audit_unavailable"
 )
+PAPER_ROUTE_ACCOUNT_STATE_DISCARD_BLOCKERS = frozenset(
+    {
+        "paper_route_account_window_start_not_flat",
+        "paper_route_account_window_start_positions_present",
+        "paper_route_account_window_start_target_positions_present",
+        "paper_route_account_window_start_non_target_positions_present",
+    }
+)
 
 
 def _maybe_set_paper_route_audit_statement_timeout(session: Session) -> None:
@@ -716,6 +724,20 @@ def _latest_closed_regular_equities_session_window(
                 start = datetime.combine(candidate_date, US_EQUITIES_OPEN, tzinfo=zone)
                 return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
         candidate_date -= timedelta(days=1)
+
+
+def _following_regular_equities_session_window(
+    after_window_end: datetime,
+) -> tuple[datetime, datetime]:
+    """Return the next regular session after a discarded closed window."""
+
+    zone = ZoneInfo(US_EQUITIES_TIMEZONE)
+    candidate_date = after_window_end.astimezone(zone).date() + timedelta(days=1)
+    while not _regular_equities_session_date(candidate_date):
+        candidate_date += timedelta(days=1)
+    start = datetime.combine(candidate_date, US_EQUITIES_OPEN, tzinfo=zone)
+    end = datetime.combine(candidate_date, US_EQUITIES_CLOSE, tzinfo=zone)
+    return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
 
 
 def _seconds_until(*, generated_at: datetime, target: datetime) -> int:
@@ -2192,9 +2214,7 @@ def _next_paper_route_runtime_window_targets(
             "capital_promotion_allowed": False,
             "final_authority_ok": False,
             "bounded_evidence_collection_authorized": bounded_collection_authorized,
-            "bounded_live_paper_collection_authorized": (
-                bounded_collection_authorized
-            ),
+            "bounded_live_paper_collection_authorized": (bounded_collection_authorized),
             "bounded_evidence_collection_scope": (
                 "paper_route_probe_next_session_only"
             ),
@@ -5976,6 +5996,123 @@ def _target_audits_have_source_backed_runtime_window_import_evidence(
     )
 
 
+def _target_audit_runtime_window_discard_blockers(
+    audit: Mapping[str, object],
+) -> list[str]:
+    evidence_window_contract = _as_mapping(audit.get("evidence_window_contract"))
+    account_contamination = _as_mapping(audit.get("account_contamination"))
+    account_state = _as_mapping(audit.get("account_state"))
+    contract_state = _safe_text(evidence_window_contract.get("state"))
+    contamination_blockers = _unique_text_items(account_contamination.get("blockers"))
+    account_state_discard_blockers = [
+        blocker
+        for blocker in _unique_text_items(account_state.get("blockers"))
+        if blocker in PAPER_ROUTE_ACCOUNT_STATE_DISCARD_BLOCKERS
+    ]
+    blockers = _unique_text_items(
+        [*contamination_blockers, *account_state_discard_blockers]
+    )
+    if contract_state == "contaminated_window_discarded":
+        return blockers or [contract_state]
+    if contamination_blockers or account_state_discard_blockers:
+        return blockers
+    return blockers
+
+
+def _target_audits_have_importable_source_backed_runtime_window_import_evidence(
+    target_audits: Sequence[Mapping[str, object]],
+) -> bool:
+    return _target_audits_have_source_backed_runtime_window_import_evidence(
+        target_audits
+    ) and not _runtime_window_import_candidate_discard_blockers(target_audits)
+
+
+def _runtime_window_import_candidate_discard_blockers(
+    target_audits: Sequence[Mapping[str, object]],
+) -> list[str]:
+    return sorted(
+        {
+            blocker
+            for audit in target_audits
+            for blocker in _target_audit_runtime_window_discard_blockers(audit)
+        }
+    )
+
+
+def _runtime_window_import_candidate_selection(
+    *,
+    latest_closed_targets: Mapping[str, object],
+    latest_closed_target_audits: Sequence[Mapping[str, object]],
+    selected: bool,
+) -> dict[str, object]:
+    source_backed = _target_audits_have_source_backed_runtime_window_import_evidence(
+        latest_closed_target_audits
+    )
+    discard_blockers = _runtime_window_import_candidate_discard_blockers(
+        latest_closed_target_audits
+    )
+    clean_importable = source_backed and not discard_blockers
+    if selected:
+        state = "selected"
+        reason = "latest_closed_window_source_backed_and_clean"
+    elif not latest_closed_target_audits:
+        state = "not_evaluated"
+        reason = "latest_closed_window_not_import_ready"
+    elif discard_blockers:
+        state = "rejected_contaminated_or_unclean"
+        reason = "latest_closed_window_must_be_discarded"
+    elif not source_backed:
+        state = "rejected_source_backed_evidence_missing"
+        reason = "latest_closed_window_has_no_source_backed_runtime_evidence"
+    else:
+        state = "rejected"
+        reason = "latest_closed_window_not_selected"
+    return {
+        "schema_version": "torghut.paper-route-runtime-window-import-selection.v1",
+        "candidate_purpose": _safe_text(latest_closed_targets.get("purpose"))
+        or "latest_closed_session_paper_route_runtime_window_import",
+        "selected": selected,
+        "state": state,
+        "reason": reason,
+        "candidate_target_count": _safe_int(latest_closed_targets.get("target_count")),
+        "evaluated_target_count": len(latest_closed_target_audits),
+        "source_backed_evidence_present": source_backed,
+        "clean_window_importable": clean_importable,
+        "discard_blockers": discard_blockers,
+        "evidence_window_states": sorted(
+            {
+                state
+                for audit in latest_closed_target_audits
+                if (
+                    state := _safe_text(
+                        _as_mapping(audit.get("evidence_window_contract")).get("state")
+                    )
+                )
+            }
+        ),
+        "sample_client_order_ids": _unique_text_items(
+            [
+                client_order_id
+                for audit in latest_closed_target_audits
+                for client_order_id in _as_sequence(
+                    _as_mapping(audit.get("account_contamination")).get(
+                        "sample_client_order_ids"
+                    )
+                )
+            ]
+        )[:10],
+        "sample_order_event_refs": [
+            _as_mapping(ref)
+            for audit in latest_closed_target_audits
+            for ref in _as_sequence(
+                _as_mapping(audit.get("account_contamination")).get(
+                    "sample_order_event_refs"
+                )
+            )
+        ][:10],
+    }
+
+
 def _next_paper_route_target_summaries(
     targets: Sequence[Mapping[str, object]],
 ) -> list[dict[str, object]]:
@@ -6356,9 +6493,17 @@ def build_paper_route_target_plan_payload(
         target_account_audit_available=target_account_audit_available,
     )
     runtime_window_import_plan = next_targets
+    next_clean_after_discard_targets: Mapping[str, Any] = {}
     latest_closed_runtime_window_import_target_audits: (
         list[dict[str, object]] | None
     ) = None
+    latest_closed_runtime_window_import_selection = (
+        _runtime_window_import_candidate_selection(
+            latest_closed_targets=latest_closed_targets,
+            latest_closed_target_audits=[],
+            selected=False,
+        )
+    )
     latest_closed_runtime_window_import_plan = _runtime_window_import_plan_for_audit(
         latest_closed_targets=latest_closed_targets,
         next_targets=next_targets,
@@ -6378,10 +6523,42 @@ def build_paper_route_target_plan_payload(
             )
             for target in _as_mapping_items(latest_closed_targets.get("targets"))
         ]
-        if _target_audits_have_source_backed_runtime_window_import_evidence(
+        latest_closed_importable = (
+            _target_audits_have_importable_source_backed_runtime_window_import_evidence(
+                latest_closed_runtime_window_import_target_audits
+            )
+        )
+        latest_closed_runtime_window_import_selection = (
+            _runtime_window_import_candidate_selection(
+                latest_closed_targets=latest_closed_targets,
+                latest_closed_target_audits=(
+                    latest_closed_runtime_window_import_target_audits
+                ),
+                selected=latest_closed_importable,
+            )
+        )
+        if latest_closed_importable:
+            runtime_window_import_plan = latest_closed_targets
+        elif _runtime_window_import_candidate_discard_blockers(
             latest_closed_runtime_window_import_target_audits
         ):
-            runtime_window_import_plan = latest_closed_targets
+            followup_window_start, followup_window_end = (
+                _following_regular_equities_session_window(closed_window_end)
+            )
+            next_clean_after_discard_targets = _next_paper_route_runtime_window_targets(
+                session=session,
+                targets=targets,
+                probe=probe,
+                live_submission_gate=live_submission_gate,
+                generated_at=resolved_generated_at,
+                window_start=followup_window_start,
+                window_end=followup_window_end,
+                purpose=(
+                    "next_clean_session_paper_route_runtime_window_collection_after_discard"
+                ),
+                target_account_audit_available=target_account_audit_available,
+            )
+            runtime_window_import_plan = next_clean_after_discard_targets
     runtime_import_readiness = _as_mapping(
         runtime_window_import_plan.get("session_readiness")
     )
@@ -6511,6 +6688,12 @@ def build_paper_route_target_plan_payload(
         "paper_route_probe": probe,
         "runtime_window_import_plan": runtime_window_import_plan,
         "runtime_window_import_audit": runtime_window_import_audit,
+        "latest_closed_runtime_window_import_selection": (
+            latest_closed_runtime_window_import_selection
+        ),
+        "next_clean_paper_route_runtime_window_targets_after_discard": (
+            next_clean_after_discard_targets
+        ),
         "source_runtime_window_import_plan": source_targets,
         "latest_closed_paper_route_runtime_window_targets": latest_closed_targets,
         "next_paper_route_runtime_window_targets": next_targets,
@@ -6524,6 +6707,12 @@ def build_paper_route_target_plan_payload(
             ),
             "runtime_window_import_plan_purpose": _safe_text(
                 runtime_window_import_plan.get("purpose")
+            ),
+            "runtime_window_import_selected_latest_closed_window": bool(
+                latest_closed_runtime_window_import_selection.get("selected")
+            ),
+            "latest_closed_runtime_window_import_selection_state": _safe_text(
+                latest_closed_runtime_window_import_selection.get("state")
             ),
             "latest_closed_runtime_window_target_count": _safe_int(
                 latest_closed_targets.get("target_count")
@@ -6635,6 +6824,14 @@ def build_paper_route_evidence_audit(
     ]
     runtime_window_import_plan = next_targets
     runtime_window_import_target_audits = next_target_audits
+    next_clean_after_discard_targets: Mapping[str, Any] = {}
+    latest_closed_runtime_window_import_selection = (
+        _runtime_window_import_candidate_selection(
+            latest_closed_targets=latest_closed_targets,
+            latest_closed_target_audits=[],
+            selected=False,
+        )
+    )
     latest_closed_runtime_window_import_plan = _runtime_window_import_plan_for_audit(
         latest_closed_targets=latest_closed_targets,
         next_targets=next_targets,
@@ -6651,11 +6848,54 @@ def build_paper_route_evidence_audit(
             )
             for target in _as_mapping_items(latest_closed_targets.get("targets"))
         ]
-        if _target_audits_have_source_backed_runtime_window_import_evidence(
-            latest_closed_target_audits
-        ):
+        latest_closed_importable = (
+            _target_audits_have_importable_source_backed_runtime_window_import_evidence(
+                latest_closed_target_audits
+            )
+        )
+        latest_closed_runtime_window_import_selection = (
+            _runtime_window_import_candidate_selection(
+                latest_closed_targets=latest_closed_targets,
+                latest_closed_target_audits=latest_closed_target_audits,
+                selected=latest_closed_importable,
+            )
+        )
+        if latest_closed_importable:
             runtime_window_import_plan = latest_closed_targets
             runtime_window_import_target_audits = latest_closed_target_audits
+        elif _runtime_window_import_candidate_discard_blockers(
+            latest_closed_target_audits
+        ):
+            followup_window_start, followup_window_end = (
+                _following_regular_equities_session_window(closed_window_end)
+            )
+            next_clean_after_discard_targets = _next_paper_route_runtime_window_targets(
+                session=session,
+                targets=targets,
+                probe=probe,
+                live_submission_gate=live_submission_gate,
+                generated_at=resolved_generated_at,
+                window_start=followup_window_start,
+                window_end=followup_window_end,
+                purpose=(
+                    "next_clean_session_paper_route_runtime_window_collection_after_discard"
+                ),
+                target_account_audit_available=target_account_audit_available,
+            )
+            runtime_window_import_plan = next_clean_after_discard_targets
+            runtime_window_import_target_audits = [
+                _target_audit_fail_closed(
+                    session,
+                    raw_target=target,
+                    probe=probe,
+                    generated_at=resolved_generated_at,
+                    lookback_hours=effective_lookback_hours,
+                    error_source="paper_route_runtime_window_import_target_audit",
+                )
+                for target in _as_mapping_items(
+                    runtime_window_import_plan.get("targets")
+                )
+            ]
     runtime_window_import_audit = _runtime_window_import_audit(
         next_targets=runtime_window_import_plan,
         target_audits=target_audits,
@@ -6742,6 +6982,12 @@ def build_paper_route_evidence_audit(
         "next_paper_route_runtime_window_targets": next_targets,
         "latest_closed_paper_route_runtime_window_targets": latest_closed_targets,
         "runtime_window_import_plan": runtime_window_import_plan,
+        "latest_closed_runtime_window_import_selection": (
+            latest_closed_runtime_window_import_selection
+        ),
+        "next_clean_paper_route_runtime_window_targets_after_discard": (
+            next_clean_after_discard_targets
+        ),
         "next_runtime_window_target_audits": next_target_audits,
         "runtime_window_import_target_audits": runtime_window_import_target_audits,
         "runtime_window_import_audit": runtime_window_import_audit,
@@ -6899,6 +7145,12 @@ def build_paper_route_evidence_audit(
             ),
             "runtime_window_import_target_count": _safe_int(
                 runtime_window_import_plan.get("target_count")
+            ),
+            "runtime_window_import_selected_latest_closed_window": bool(
+                latest_closed_runtime_window_import_selection.get("selected")
+            ),
+            "latest_closed_runtime_window_import_selection_state": _safe_text(
+                latest_closed_runtime_window_import_selection.get("state")
             ),
             "runtime_window_import_selected_target_count": len(
                 runtime_window_import_target_audits
