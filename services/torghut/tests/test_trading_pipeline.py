@@ -3911,6 +3911,37 @@ class TestTradingPipeline(TestCase):
         self.assertIsNone(
             SimpleTradingPipeline._trade_decision_from_retry_row(invalid_row)
         )
+        flatten_close_row = TradeDecision(
+            strategy_id=strategy_id,
+            alpaca_account_label="paper",
+            symbol="BITO",
+            timeframe="event",
+            decision_json={
+                "schema_version": "torghut.paper-account-flatten-close-decision.v1",
+                "flatten_lineage_role": "close",
+                "action": "sell",
+                "qty": "1000",
+            },
+            status="submitted",
+        )
+        self.assertIsNone(
+            SimpleTradingPipeline._trade_decision_from_retry_row(flatten_close_row)
+        )
+        flatten_role_only_row = TradeDecision(
+            strategy_id=strategy_id,
+            alpaca_account_label="paper",
+            symbol="BITO",
+            timeframe="event",
+            decision_json={
+                "flatten_lineage_role": "close",
+                "action": "sell",
+                "qty": "1000",
+            },
+            status="submitted",
+        )
+        self.assertIsNone(
+            SimpleTradingPipeline._trade_decision_from_retry_row(flatten_role_only_row)
+        )
 
         event_ts = datetime(2026, 3, 26, 13, 30, tzinfo=timezone.utc)
         decision = StrategyDecision(

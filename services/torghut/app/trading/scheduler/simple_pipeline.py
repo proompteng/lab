@@ -108,6 +108,9 @@ _BOUNDED_SIM_COLLECTION_LINEAGE_BOOL_KEYS = (
     "evidence_collection_ok",
 )
 _BOUNDED_SIM_COLLECTION_LINEAGE_MAPPING_KEYS = ("source_decision_readiness",)
+_FLATTEN_CLOSE_DECISION_SCHEMA_VERSION = (
+    "torghut.paper-account-flatten-close-decision.v1"
+)
 
 
 def _safe_int(value: object) -> int:
@@ -1066,8 +1069,16 @@ class SimpleTradingPipeline(TradingPipeline):
         decision_json = decision_row.decision_json
         if not isinstance(decision_json, Mapping):
             return None
+        decision_payload = cast(Mapping[str, Any], decision_json)
+        if (
+            str(decision_payload.get("schema_version") or "").strip()
+            == _FLATTEN_CLOSE_DECISION_SCHEMA_VERSION
+            or str(decision_payload.get("flatten_lineage_role") or "").strip()
+            == "close"
+        ):
+            return None
         try:
-            return StrategyDecision.model_validate(decision_json)
+            return StrategyDecision.model_validate(decision_payload)
         except Exception:
             logger.warning(
                 "Skipping paper route probe retry with invalid decision payload decision_id=%s",

@@ -220,6 +220,7 @@ _ALPACA_HEALTH_CACHE_LOCK = Lock()
 _ALPACA_HEALTH_STATE: dict[str, object] = {}
 _PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS = 600
 _PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK = Lock()
+_PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL = "TORGHUT_SIM"
 _paper_route_target_plan_success_cache: tuple[dict[str, Any], float] | None = None
 
 
@@ -4692,11 +4693,11 @@ def trading_paper_route_target_plan(
     market_context_status: Mapping[str, Any] | None = None
     hypothesis_payload: Mapping[str, Any] | None = None
 
-    live_submission_gate = (
-        None
-        if settings.trading_mode == "live"
-        else _paper_route_cached_live_submission_gate(scheduler)
+    live_submission_gate = _paper_route_cached_live_submission_gate(
+        scheduler,
+        require_bounded_sim_targets=settings.trading_mode == "live",
     )
+    loaded_full_live_gate = False
     if live_submission_gate is None:
         empirical_jobs = _empirical_jobs_status()
         quant_evidence = load_quant_evidence_status(
@@ -4722,6 +4723,7 @@ def trading_paper_route_target_plan(
             ),
             quant_health_status=quant_evidence,
         )
+        loaded_full_live_gate = True
     live_submission_gate = _merge_external_paper_route_target_plan(
         cast(Mapping[str, Any], live_submission_gate)
     )
@@ -4732,7 +4734,7 @@ def trading_paper_route_target_plan(
         state=scheduler.state,
         session=session,
     )
-    if settings.trading_mode == "live":
+    if settings.trading_mode == "live" and loaded_full_live_gate:
         assert empirical_jobs is not None
         assert quant_evidence is not None
         assert tca_summary is not None
@@ -4821,15 +4823,57 @@ def _paper_route_target_plan_probe_notional(
     return _decimal_to_string(max(positive_values))
 
 
+def _paper_route_target_plan_truthy(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int | float | Decimal):
+        return bool(value)
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _paper_route_target_plan_cache_safe_for_live(
+    plan: Mapping[str, Any],
+) -> bool:
+    targets = _paper_route_target_plan_targets(plan)
+    if not targets:
+        return False
+    for key in (
+        "promotion_allowed",
+        "final_promotion_allowed",
+        "final_promotion_authorized",
+    ):
+        if _paper_route_target_plan_truthy(plan.get(key)):
+            return False
+    for target in targets:
+        target_account = str(
+            target.get("account_label") or target.get("source_account_label") or ""
+        ).strip()
+        if target_account != _PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL:
+            return False
+        for key in (
+            "promotion_allowed",
+            "final_promotion_allowed",
+            "final_promotion_authorized",
+        ):
+            if _paper_route_target_plan_truthy(target.get(key)):
+                return False
+    return True
+
+
 def _paper_route_cached_live_submission_gate(
     scheduler: object,
+    *,
+    require_bounded_sim_targets: bool = False,
 ) -> dict[str, object] | None:
     cached_gate = getattr(scheduler, "_last_live_submission_gate", None)
     if not isinstance(cached_gate, Mapping):
         return None
     gate = dict(cast(Mapping[str, object], cached_gate))
-    if not _paper_route_target_plan_targets(
-        _paper_route_target_plan_from_payload(gate)
+    plan = _paper_route_target_plan_from_payload(gate)
+    if not _paper_route_target_plan_targets(plan):
+        return None
+    if require_bounded_sim_targets and not _paper_route_target_plan_cache_safe_for_live(
+        plan
     ):
         return None
     gate.setdefault("paper_route_target_plan_source", "cached_live_submission_gate")
@@ -4930,9 +4974,11 @@ def _paper_route_probe_book_from_target_plan(
         return None
     market_session_open = cast(bool | None, getattr(state, "market_session_open", None))
     blocking_reasons: list[str] = []
+    if settings.trading_mode != "paper":
+        blocking_reasons.append("not_paper_mode")
     if market_session_open is not True:
         blocking_reasons.append("market_session_closed")
-    active = configured_enabled and market_session_open is True
+    active = configured_enabled and market_session_open is True and not blocking_reasons
     effective_max_notional = next_session_max_notional if active else "0"
     active_symbols = eligible_symbols if active else []
     return {
