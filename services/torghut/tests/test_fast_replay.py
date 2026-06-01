@@ -163,6 +163,14 @@ class TestFastReplayPreview(TestCase):
         )
         self.assertIn("source_backed_adv_missing", row_payload["lineage_blockers"])
         self.assertFalse(row_payload["promotion_proof"])
+        self.assertFalse(row_payload["proof_authority"])
+        self.assertIn("risk_flags", row_payload)
+        self.assertIn("source_backed_adv_missing", row_payload["risk_flags"])
+        self.assertEqual(payload["replay_tape"]["dataset_snapshot_ref"], "snapshot-fast")
+        self.assertIn("feature_schema_hash", payload["replay_tape"])
+        self.assertIn("cost_model_hash", payload["replay_tape"])
+        self.assertIn("strategy_family", payload["replay_tape"])
+        self.assertFalse(payload["proof_authority"])
 
     def test_frontier_selection_caps_exact_replay_with_exploration_slots(self) -> None:
         with TemporaryDirectory() as tmpdir:

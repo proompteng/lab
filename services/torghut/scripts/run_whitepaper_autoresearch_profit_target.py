@@ -92,6 +92,7 @@ from app.trading.runtime_ledger import (
     build_runtime_ledger_buckets,
 )
 from app.trading.discovery.replay_tape import (
+    ReplayTapeManifest,
     build_source_query_digest,
     materialize_signal_tape,
     load_replay_tape,
@@ -140,7 +141,9 @@ _CANDIDATE_BOARD_RUNTIME_SESSION_TZ = ZoneInfo("America/New_York")
 _CANDIDATE_BOARD_RUNTIME_SESSION_OPEN = time(hour=9, minute=30)
 _CANDIDATE_BOARD_RUNTIME_SESSION_CLOSE = time(hour=16, minute=0)
 _DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC = 8
-_DEFAULT_REAL_REPLAY_MAX_PARALLEL_FRONTIER_CANDIDATES = 12
+_DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS = 900
+_DEFAULT_REAL_REPLAY_SHARD_WORKERS = 2
+_DEFAULT_REAL_REPLAY_MAX_PARALLEL_FRONTIER_CANDIDATES = 6
 _DEFAULT_FAST_REPLAY_PREVIEW_TOP_K = 48
 _DEFAULT_FAST_REPLAY_EXACT_CANDIDATE_CAP = 6
 _DEFAULT_FAST_REPLAY_EXPLOITATION_SLOTS = 4
@@ -502,19 +505,19 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--real-replay-shard-timeout-seconds",
         type=int,
-        default=0,
+        default=_DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS,
         help=(
-            "Per-shard timeout for sharded real replay. Defaults to "
-            "--real-replay-timeout-seconds when omitted."
+            "Per-shard timeout for sharded real replay. Defaults to the "
+            f"production-safe {_DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS}s cap."
         ),
     )
     parser.add_argument(
         "--real-replay-shard-workers",
         type=int,
-        default=1,
+        default=_DEFAULT_REAL_REPLAY_SHARD_WORKERS,
         help=(
             "Maximum number of bounded real-replay shards to run concurrently. "
-            "Defaults to 1 for the legacy sequential behavior."
+            f"Defaults to {_DEFAULT_REAL_REPLAY_SHARD_WORKERS}; no Kubernetes fanout is created."
         ),
     )
     parser.add_argument(
@@ -3673,13 +3676,17 @@ def _profitability_next_epoch_plan(
     if real_replay_shard_size > 0:
         flags["--real-replay-shard-size"] = str(real_replay_shard_size)
     real_replay_shard_timeout_seconds = _int_arg(
-        args, "real_replay_shard_timeout_seconds", 0
+        args,
+        "real_replay_shard_timeout_seconds",
+        _DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS,
     )
     if real_replay_shard_timeout_seconds > 0:
         flags["--real-replay-shard-timeout-seconds"] = str(
             real_replay_shard_timeout_seconds
         )
-    real_replay_shard_workers = _int_arg(args, "real_replay_shard_workers", 1)
+    real_replay_shard_workers = _int_arg(
+        args, "real_replay_shard_workers", _DEFAULT_REAL_REPLAY_SHARD_WORKERS
+    )
     if real_replay_shard_workers > 1:
         flags["--real-replay-shard-workers"] = str(real_replay_shard_workers)
     real_replay_failed_spec_retries = _int_arg(
@@ -6564,6 +6571,7 @@ def _apply_fast_replay_preview_narrowing(
         },
         "bounded_sim_target_queue": _bounded_sim_target_queue_metadata(
             preview_rows=[row.to_payload() for row in preview.rows],
+            replay_tape_manifest=tape.manifest,
             exact_replay_candidate_cap=exact_replay_candidate_cap,
             exploitation_slots=exploitation_slots,
             exploration_slots=exploration_slots,
@@ -6619,10 +6627,16 @@ def _fast_replay_preview_proof_semantics() -> dict[str, Any]:
         "schema_version": "torghut.fast-replay-proof-semantics.v1",
         "label": FAST_REPLAY_PROOF_SEMANTICS_LABEL,
         "promotion_proof": False,
+        "proof_authority": False,
+        "promotion_authority": False,
         "authority": "preview_prefilter_only",
         "prefilter_only": True,
         "no_kubernetes_fanout": True,
-        "default_local_worker_cap": 2,
+        "default_local_worker_cap": _DEFAULT_REAL_REPLAY_SHARD_WORKERS,
+        "default_shard_timeout_seconds": _DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS,
+        "default_parallel_frontier_candidate_cap": (
+            _DEFAULT_REAL_REPLAY_MAX_PARALLEL_FRONTIER_CANDIDATES
+        ),
         "safe_exact_replay_candidate_cap": _DEFAULT_FAST_REPLAY_EXACT_CANDIDATE_CAP,
         "final_promotion_requires": [
             "exact_replay_evidence",
@@ -6639,6 +6653,7 @@ def _fast_replay_preview_proof_semantics() -> dict[str, Any]:
 def _bounded_sim_target_queue_metadata(
     *,
     preview_rows: Sequence[Mapping[str, Any]],
+    replay_tape_manifest: ReplayTapeManifest,
     exact_replay_candidate_cap: int,
     exploitation_slots: int,
     exploration_slots: int,
@@ -6662,13 +6677,26 @@ def _bounded_sim_target_queue_metadata(
                 "target_implied_notional_context": row.get(
                     "target_implied_notional_context"
                 ),
+                "reproducibility_metadata": {
+                    "dataset_snapshot_ref": replay_tape_manifest.dataset_snapshot_ref,
+                    "replay_tape_content_sha256": replay_tape_manifest.content_sha256,
+                    "replay_cache_key": replay_tape_manifest.replay_cache_key,
+                    "feature_schema_hash": replay_tape_manifest.feature_schema_hash,
+                    "cost_model_hash": replay_tape_manifest.cost_model_hash,
+                    "strategy_family": replay_tape_manifest.strategy_family,
+                    "preview_score": row.get("preview_score"),
+                    "frontier_bucket": row.get("frontier_bucket"),
+                },
                 "cost_impact_lineage": row.get("cost_impact_lineage"),
                 "adv_capacity_context": row.get("adv_capacity_context"),
                 "lineage_blockers": list(
                     cast(Sequence[Any], row.get("lineage_blockers") or ())
                 ),
+                "risk_flags": list(cast(Sequence[Any], row.get("risk_flags") or ())),
                 "proof_semantics_label": row.get("proof_semantics_label"),
                 "promotion_proof": False,
+                "proof_authority": False,
+                "promotion_authority": False,
                 "promotion_allowed": False,
                 "final_promotion_allowed": False,
             }
@@ -6679,11 +6707,40 @@ def _bounded_sim_target_queue_metadata(
         "authority": "not_promotion_proof",
         "prefilter_only": True,
         "promotion_proof": False,
+        "proof_authority": False,
+        "promotion_authority": False,
         "promotion_allowed": False,
         "final_promotion_allowed": False,
         "proof_semantics": _fast_replay_preview_proof_semantics(),
         "whitepaper_mechanisms": list(FAST_REPLAY_WHITEPAPER_MECHANISMS),
         "queue_policy": "top_exploitation_plus_exploration_exact_replay_cap",
+        "runner_policy": {
+            "default_shard_timeout_seconds": _DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS,
+            "default_worker_cap": _DEFAULT_REAL_REPLAY_SHARD_WORKERS,
+            "default_parallel_frontier_candidate_cap": (
+                _DEFAULT_REAL_REPLAY_MAX_PARALLEL_FRONTIER_CANDIDATES
+            ),
+            "kubernetes_fanout_enabled": False,
+            "handoff_mode": "metadata_only_no_live_submit",
+        },
+        "target_queue": {
+            "sim_account_label": "TORGHUT_SIM",
+            "live_paper_account_label": "TORGHUT_LIVE_PAPER_AFTER_PROBATION",
+            "status": "sim_target_queue_ready_live_paper_blocked",
+            "live_paper_blockers": [
+                "exact_replay_probation_required",
+                "source_backed_runtime_ledger_required",
+                "operator_enablement_required",
+            ],
+        },
+        "replay_tape": {
+            "dataset_snapshot_ref": replay_tape_manifest.dataset_snapshot_ref,
+            "content_sha256": replay_tape_manifest.content_sha256,
+            "replay_cache_key": replay_tape_manifest.replay_cache_key,
+            "feature_schema_hash": replay_tape_manifest.feature_schema_hash,
+            "cost_model_hash": replay_tape_manifest.cost_model_hash,
+            "strategy_family": replay_tape_manifest.strategy_family,
+        },
         "exact_replay_candidate_cap": exact_replay_candidate_cap,
         "exploitation_slots": exploitation_slots,
         "exploration_slots": exploration_slots,
@@ -7348,14 +7405,24 @@ def _run_replay_with_optional_timeout(
     shard_size = max(0, int(getattr(args, "real_replay_shard_size", 0) or 0))
     if shard_size > 0 and len(specs) > shard_size:
         shard_timeout_seconds = max(
-            0, int(getattr(args, "real_replay_shard_timeout_seconds", 0) or 0)
+            0,
+            int(
+                getattr(
+                    args,
+                    "real_replay_shard_timeout_seconds",
+                    _DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS,
+                )
+                or 0
+            ),
         )
         return _run_real_replay_shards(
             args=args,
             output_dir=output_dir,
             specs=specs,
             shard_size=shard_size,
-            shard_timeout_seconds=shard_timeout_seconds or timeout_seconds,
+            shard_timeout_seconds=shard_timeout_seconds
+            or timeout_seconds
+            or _DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS,
         )
 
     return _run_real_replay_once_with_optional_timeout(
@@ -7763,7 +7830,14 @@ def _bounded_real_replay_shard_workers(
         1,
         min(
             len(plans) or 1,
-            int(getattr(args, "real_replay_shard_workers", 1) or 1),
+            int(
+                getattr(
+                    args,
+                    "real_replay_shard_workers",
+                    _DEFAULT_REAL_REPLAY_SHARD_WORKERS,
+                )
+                or _DEFAULT_REAL_REPLAY_SHARD_WORKERS
+            ),
         ),
     )
     max_parallel_frontier_candidates = max(
@@ -12194,10 +12268,20 @@ def run_whitepaper_autoresearch_profit_target(
                 getattr(args, "real_replay_shard_size", 0) or 0
             ),
             "real_replay_shard_timeout_seconds": int(
-                getattr(args, "real_replay_shard_timeout_seconds", 0) or 0
+                getattr(
+                    args,
+                    "real_replay_shard_timeout_seconds",
+                    _DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS,
+                )
+                or _DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS
             ),
             "real_replay_shard_workers": int(
-                getattr(args, "real_replay_shard_workers", 1) or 1
+                getattr(
+                    args,
+                    "real_replay_shard_workers",
+                    _DEFAULT_REAL_REPLAY_SHARD_WORKERS,
+                )
+                or _DEFAULT_REAL_REPLAY_SHARD_WORKERS
             ),
             "real_replay_max_parallel_frontier_candidates": int(
                 getattr(

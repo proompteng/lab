@@ -2182,6 +2182,14 @@ def _exact_replay_ledger_artifact_update(
         "artifact_ref": artifact_ref,
         "artifact_kind": "exact_replay_ledger",
         "candidate_id": candidate_id,
+        "proof_authority": False,
+        "promotion_authority": False,
+        "promotion_proof": False,
+        "authority": "exact_replay_probation_only",
+        "authority_blockers": [
+            "source_backed_runtime_ledger_required",
+            "live_paper_runtime_evidence_required",
+        ],
     }
     if dataset_snapshot_id:
         artifact_payload["dataset_snapshot_id"] = dataset_snapshot_id
@@ -2256,6 +2264,14 @@ def _exact_replay_ledger_artifact_update(
         ),
         "runtime_ledger_pnl_basis": POST_COST_PNL_BASIS,
         "runtime_ledger_pnl_source": "exact_replay_runtime_ledger",
+        "exact_replay_ledger_artifact_proof_authority": False,
+        "runtime_ledger_artifact_proof_authority": False,
+        "promotion_authority": False,
+        "final_promotion_authority": False,
+        "promotion_authority_blockers": [
+            "source_backed_runtime_ledger_required",
+            "live_paper_runtime_evidence_required",
+        ],
     }
     if proof_only_reason:
         update["exact_replay_ledger_artifact_proof_only"] = True
