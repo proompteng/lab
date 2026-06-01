@@ -931,6 +931,12 @@ class TestLiveConfigManifestContract(TestCase):
                 list[Mapping[str, object]], arguments.get("parameters", [])
             )
         }
+        self.assertEqual(parameters["fullWindowStartDate"], "2026-05-18")
+        self.assertEqual(parameters["fullWindowEndDate"], "2026-05-22")
+        self.assertEqual(parameters["expectedLastTradingDay"], "2026-05-22")
+        self.assertEqual(parameters["trainDays"], "3")
+        self.assertEqual(parameters["holdoutDays"], "2")
+        self.assertEqual(parameters["secondOosDays"], "0")
         self.assertEqual(parameters["replayTapePreviewTopK"], "8")
         self.assertEqual(parameters["replayTapePreviewMinRows"], "2")
         self.assertEqual(parameters["maxCandidates"], "16")
