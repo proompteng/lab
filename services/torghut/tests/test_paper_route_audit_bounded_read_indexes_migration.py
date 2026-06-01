@@ -23,6 +23,12 @@ def _load_migration_module() -> ModuleType:
 
 
 class TestPaperRouteAuditBoundedReadIndexesMigration(TestCase):
+    def test_index_names_fit_postgres_identifier_limit(self) -> None:
+        module = _load_migration_module()
+
+        for index_name, _table_name, _columns in module._INDEXES:
+            self.assertLessEqual(len(index_name), 63, index_name)
+
     def test_revision_follows_current_head(self) -> None:
         module = _load_migration_module()
 
@@ -58,7 +64,7 @@ class TestPaperRouteAuditBoundedReadIndexesMigration(TestCase):
             created_names,
         )
         self.assertIn(
-            "ix_strategy_runtime_ledger_buckets_hypothesis_run_candidate_stage_ended",
+            "ix_strategy_runtime_ledger_buckets_hyp_run_cand_stage_ended",
             created_names,
         )
 

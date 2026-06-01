@@ -33,7 +33,7 @@ _INDEXES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
         ("alpaca_account_label", "event_ts", "symbol", "trade_decision_id"),
     ),
     (
-        "ix_strategy_hypothesis_metric_windows_hypothesis_candidate_window",
+        "ix_strategy_hyp_metric_windows_hyp_cand_window",
         "strategy_hypothesis_metric_windows",
         (
             "hypothesis_id",
@@ -44,7 +44,7 @@ _INDEXES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
         ),
     ),
     (
-        "ix_strategy_runtime_ledger_buckets_hypothesis_run_candidate_stage_ended",
+        "ix_strategy_runtime_ledger_buckets_hyp_run_cand_stage_ended",
         "strategy_runtime_ledger_buckets",
         (
             "hypothesis_id",
