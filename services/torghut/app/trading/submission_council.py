@@ -1418,6 +1418,8 @@ _RUNTIME_LEDGER_SOURCE_COLLECTION_SOURCE_KIND = (
     "runtime_ledger_source_collection_candidate"
 )
 _RUNTIME_LEDGER_SOURCE_COLLECTION_SOURCE_DSN_ENV = "SIM_DB_DSN"
+_RUNTIME_LEDGER_SOURCE_COLLECTION_TARGET_DSN_ENV = "SIM_DB_DSN"
+_RUNTIME_LEDGER_PAPER_PROBATION_TARGET_DSN_ENV = "SIM_DB_DSN"
 _RUNTIME_LEDGER_SOURCE_COLLECTION_TRIGGER_REASONS = frozenset(
     {
         RUNTIME_LEDGER_SOURCE_WINDOW_MISSING_BLOCKER,
@@ -1652,6 +1654,11 @@ def _runtime_ledger_paper_probation_import_plan(
             if source_collection
             else _RUNTIME_LEDGER_PAPER_PROBATION_SOURCE_DSN_ENV
         )
+        target_dsn_env = (
+            _RUNTIME_LEDGER_SOURCE_COLLECTION_TARGET_DSN_ENV
+            if source_collection
+            else _RUNTIME_LEDGER_PAPER_PROBATION_TARGET_DSN_ENV
+        )
         final_blockers = list(
             _RUNTIME_LEDGER_SOURCE_COLLECTION_PROMOTION_BLOCKERS
             if source_collection
@@ -1705,7 +1712,9 @@ def _runtime_ledger_paper_probation_import_plan(
             "runtime_strategy_name": strategy_name,
             "strategy_lookup_names": strategy_lookup_names,
             "account_label": account_label,
+            "source_account_label": account_label,
             "source_dsn_env": source_dsn_env,
+            "target_dsn_env": target_dsn_env,
             "dataset_snapshot_ref": dataset_snapshot_ref or "",
             "source_manifest_ref": source_manifest_ref,
             "source_kind": source_kind,
