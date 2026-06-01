@@ -392,3 +392,4 @@ class TestPromotionTruthfulness(TestCase):
                 'source_backed_runtime_ledger_required'
             ]
         )
+        self.assertEqual(readiness['final_authority_contract']['min_closed_trades'], 300)
