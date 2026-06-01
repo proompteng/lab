@@ -1208,7 +1208,7 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("--apply", args)
         self.assertIn("--json", args)
 
-    def test_order_feed_source_window_repair_cronjob_is_bounded_sim_only(
+    def test_order_feed_source_window_repair_cronjob_is_bounded_live_and_sim(
         self,
     ) -> None:
         spec, container = _load_cronjob_container(
@@ -1263,7 +1263,12 @@ class TestLiveConfigManifestContract(TestCase):
             "postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@"
             "$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default",
         )
-        self.assertNotIn("DB_DSN", env)
+        db_dsn = cast(Mapping[str, object], env["DB_DSN"])
+        db_value_from = cast(Mapping[str, object], db_dsn.get("valueFrom", {}))
+        self.assertEqual(
+            db_value_from.get("secretKeyRef"),
+            {"name": "torghut-db-app", "key": "uri"},
+        )
         for name, key in {
             "TORGHUT_SIM_DB_HOST": "host",
             "TORGHUT_SIM_DB_PORT": "port",
@@ -1278,6 +1283,11 @@ class TestLiveConfigManifestContract(TestCase):
 
         args = "\n".join(str(item) for item in container.get("args", []))
         self.assertIn("scripts/repair_order_feed_source_windows.py", args)
+        self.assertIn("--dsn-env DB_DSN", args)
+        self.assertIn("--account-label PA3SX7FYNUTF", args)
+        self.assertIn("--batch-size 1000", args)
+        self.assertIn("--max-batches 5", args)
+        self.assertIn("--backfill-execution-events", args)
         self.assertIn("--dsn-env SIM_DB_DSN", args)
         self.assertIn("--account-label TORGHUT_SIM", args)
         self.assertIn("--batch-size 100", args)

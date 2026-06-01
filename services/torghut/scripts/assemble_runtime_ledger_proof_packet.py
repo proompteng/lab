@@ -2046,7 +2046,9 @@ def build_runtime_ledger_proof_packet(
         or _bool(tigerbeetle_status.get("required"))
         or _bool(tigerbeetle_status.get("journal_enabled"))
         or _bool(tigerbeetle_status.get("reconcile_required"))
-        or _contains_tigerbeetle_claim(runtime_import)
+        # Runtime-import TigerBeetle refs are proof artifacts; require live
+        # reconciliation status only when the status or completion gate claims
+        # TigerBeetle authority.
         or _contains_tigerbeetle_claim(live_scale_gate)
     )
     tigerbeetle_required_for_authority = (

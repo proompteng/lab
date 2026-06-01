@@ -44,6 +44,14 @@ spec:
                   cd /app
                   echo "stage=repair_order_feed_source_windows started_at=$(date -Iseconds)"
                   /opt/venv/bin/python scripts/repair_order_feed_source_windows.py \
+                    --dsn-env DB_DSN \
+                    --account-label PA3SX7FYNUTF \
+                    --batch-size 1000 \
+                    --max-batches 5 \
+                    --backfill-execution-events \
+                    --apply \
+                    --json
+                  /opt/venv/bin/python scripts/repair_order_feed_source_windows.py \
                     --dsn-env SIM_DB_DSN \
                     --account-label TORGHUT_SIM \
                     --batch-size 100 \
@@ -77,5 +85,10 @@ spec:
                       key: password
                 - name: SIM_DB_DSN
                   value: postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default
+                - name: DB_DSN
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: uri
                 - name: PYTHONUNBUFFERED
                   value: "1"
