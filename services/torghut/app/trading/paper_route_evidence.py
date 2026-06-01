@@ -15,7 +15,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -82,6 +82,7 @@ RUNTIME_LEDGER_PROOF_PACKET_OUTPUT_FILE = "artifacts/runtime-ledger-proof-packet
 RUNTIME_WINDOW_IMPORT_OUTPUT_FILE = "artifacts/runtime-window-import.json"
 RUNTIME_LEDGER_PROOF_PACKET_ARTIFACT_PREFIX = "runtime-ledger-proof-packets/{run_id}"
 RUNTIME_LEDGER_SUMMARY_ROW_LIMIT = 50
+PAPER_ROUTE_EVIDENCE_QUERY_TIMEOUT_MS = 750
 US_EQUITIES_TIMEZONE = "America/New_York"
 US_EQUITIES_OPEN = time(hour=9, minute=30)
 US_EQUITIES_CLOSE = time(hour=16, minute=0)
@@ -111,6 +112,21 @@ SOURCE_LINEAGE_HYPOTHESIS_KEYS = (
     "source_hypothesis_ids",
 )
 PAPER_ROUTE_EVIDENCE_DB_UNAVAILABLE_BLOCKER = "paper_route_evidence_db_unavailable"
+
+
+def _maybe_set_paper_route_audit_statement_timeout(session: Session) -> None:
+    get_bind = getattr(session, "get_bind", None)
+    if callable(get_bind):
+        try:
+            bind = get_bind()
+            dialect = getattr(getattr(bind, "dialect", None), "name", "")
+            if dialect != "postgresql":
+                return
+        except Exception:
+            pass
+    session.execute(
+        text(f"SET LOCAL statement_timeout = {PAPER_ROUTE_EVIDENCE_QUERY_TIMEOUT_MS}")
+    )
 
 
 def _as_mapping(value: object) -> dict[str, Any]:
@@ -867,6 +883,7 @@ def _strategy_rows_by_name_for_targets(
                 lookup_names.append(name)
     if not lookup_names:
         return {}
+    _maybe_set_paper_route_audit_statement_timeout(session)
     rows = session.execute(
         select(
             Strategy.id.label("id"),
@@ -906,6 +923,7 @@ def _strategy_universe_symbols(
             if symbols:
                 return symbols
         return []
+    _maybe_set_paper_route_audit_statement_timeout(session)
     rows = session.execute(
         select(Strategy.name, Strategy.universe_symbols).where(
             Strategy.name.in_(list(strategy_lookup_names))
@@ -939,6 +957,7 @@ def _strategy_source_decision_readiness(
     matched: dict[str, object] | None = None
     if lookup_names:
         if strategy_rows_by_name is None:
+            _maybe_set_paper_route_audit_statement_timeout(session)
             rows = [
                 dict(row)
                 for row in session.execute(
@@ -2062,6 +2081,7 @@ def _strategy_source_activity(
             func.upper(TradeDecision.symbol).in_(symbol_filters)
         )
     try:
+        _maybe_set_paper_route_audit_statement_timeout(session)
         decision_rows = list(
             session.execute(
                 decision_stmt.order_by(TradeDecision.created_at.desc()).limit(500)
@@ -2123,6 +2143,7 @@ def _strategy_source_activity(
                 func.upper(Execution.symbol).in_(symbol_filters)
             )
         try:
+            _maybe_set_paper_route_audit_statement_timeout(session)
             execution_rows = list(
                 session.execute(
                     execution_stmt.order_by(execution_activity_ts.desc()).limit(500)
@@ -2165,6 +2186,7 @@ def _strategy_source_activity(
                 func.upper(ExecutionOrderEvent.symbol).in_(symbol_filters)
             )
         try:
+            _maybe_set_paper_route_audit_statement_timeout(session)
             order_event_rows = list(
                 session.execute(
                     order_event_stmt.order_by(order_event_activity_ts.desc()).limit(500)
@@ -2210,6 +2232,7 @@ def _strategy_source_activity(
                 func.upper(ExecutionTCAMetric.symbol).in_(symbol_filters)
             )
         try:
+            _maybe_set_paper_route_audit_statement_timeout(session)
             tca_rows = list(
                 session.execute(
                     tca_stmt.order_by(ExecutionTCAMetric.computed_at.desc()).limit(500)
@@ -2377,6 +2400,7 @@ def _account_contamination_audit(
     )
     if symbol_filters:
         stmt = stmt.where(func.upper(ExecutionOrderEvent.symbol).in_(symbol_filters))
+    _maybe_set_paper_route_audit_statement_timeout(session)
     rows = list(
         session.execute(
             stmt.order_by(order_event_activity_ts.desc()).limit(500)
@@ -2523,6 +2547,7 @@ def _account_window_start_snapshot_audit(
     if not required:
         return base_payload
 
+    _maybe_set_paper_route_audit_statement_timeout(session)
     before_snapshot = session.execute(
         select(PositionSnapshot)
         .where(PositionSnapshot.alpaca_account_label == account_label)
@@ -2532,6 +2557,7 @@ def _account_window_start_snapshot_audit(
     ).scalar_one_or_none()
     after_snapshot = None
     if before_snapshot is None:
+        _maybe_set_paper_route_audit_statement_timeout(session)
         after_snapshot = session.execute(
             select(PositionSnapshot)
             .where(PositionSnapshot.alpaca_account_label == account_label)
@@ -2655,6 +2681,7 @@ def _account_pre_session_snapshot_audit(
             "flat": True,
         }
 
+    _maybe_set_paper_route_audit_statement_timeout(session)
     snapshot = session.execute(
         select(PositionSnapshot)
         .where(PositionSnapshot.alpaca_account_label == account_label)
@@ -2741,6 +2768,7 @@ def _rejected_signal_activity(
         stmt = stmt.where(
             func.upper(RejectedSignalOutcomeEvent.symbol).in_(symbol_filters)
         )
+    _maybe_set_paper_route_audit_statement_timeout(session)
     rows = list(
         session.execute(
             stmt.order_by(
@@ -3070,6 +3098,7 @@ def _runtime_ledger_summary(
         stmt = stmt.where(
             StrategyRuntimeLedgerBucket.strategy_family == strategy_family
         )
+    _maybe_set_paper_route_audit_statement_timeout(session)
     queried_rows = list(
         session.execute(stmt.limit(RUNTIME_LEDGER_SUMMARY_ROW_LIMIT + 1)).scalars()
     )
@@ -3207,6 +3236,7 @@ def _hypothesis_window_summary(
     )
     stmt = stmt.where(StrategyHypothesisMetricWindow.window_started_at <= window_end)
     stmt = stmt.where(StrategyHypothesisMetricWindow.window_ended_at >= window_start)
+    _maybe_set_paper_route_audit_statement_timeout(session)
     rows = list(session.execute(stmt.limit(50)).scalars())
     provenance_counts: dict[str, int] = {}
     maturity_counts: dict[str, int] = {}
@@ -3245,6 +3275,7 @@ def _promotion_decision_summary(
         hypothesis_id=hypothesis_id,
         candidate_id=candidate_id,
     )
+    _maybe_set_paper_route_audit_statement_timeout(session)
     rows = list(session.execute(stmt.limit(20)).scalars())
     latest = rows[0] if rows else None
     return {

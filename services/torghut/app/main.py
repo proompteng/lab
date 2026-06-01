@@ -3952,7 +3952,55 @@ def _daily_runtime_ledger_portfolio_summary(
         stmt = stmt.where(StrategyRuntimeLedgerBucket.observed_stage == stage)
     else:
         stmt = stmt.where(StrategyRuntimeLedgerBucket.observed_stage == "__missing__")
-    rows = list(session.execute(stmt.limit(200)).scalars())
+    try:
+        get_bind = getattr(session, "get_bind", None)
+        if callable(get_bind):
+            try:
+                bind = get_bind()
+                dialect = getattr(getattr(bind, "dialect", None), "name", "")
+                if dialect == "postgresql":
+                    session.execute(text("SET LOCAL statement_timeout = 750"))
+            except SQLAlchemyError:
+                raise
+            except Exception:
+                pass
+        rows = list(session.execute(stmt.limit(200)).scalars())
+    except SQLAlchemyError as exc:
+        logger.warning("Portfolio runtime-ledger daily summary unavailable: %s", exc)
+        rollback = getattr(session, "rollback", None)
+        if callable(rollback):
+            try:
+                rollback()
+            except SQLAlchemyError:
+                logger.warning(
+                    "Failed to roll back portfolio runtime-ledger summary session"
+                )
+        reason_code = (
+            "portfolio_runtime_ledger_summary_query_timeout"
+            if _sqlalchemy_error_indicates_statement_timeout(exc)
+            else "portfolio_runtime_ledger_summary_unavailable"
+        )
+        return {
+            "summary_basis": "runtime_ledger_daily_stage_account_scope",
+            "day_start": day_start.isoformat(),
+            "observed_at": observed.isoformat(),
+            "filters": {
+                "account_label": account,
+                "stage_scope": stage,
+                "observed_stage": stage
+                if stage in {"paper", "live"}
+                else "__missing__",
+            },
+            "bucket_count": 0,
+            "evidence_grade_bucket_count": 0,
+            "post_cost_net_pnl_per_day": "0",
+            "filled_notional": "0",
+            "candidate_ids": [],
+            "db_row_refs": [],
+            "blockers": [reason_code],
+            "read_model_unavailable": True,
+            "query_limit": 200,
+        }
     evidence_rows = [row for row in rows if _runtime_ledger_bucket_evidence_grade(row)]
     net_pnl = sum(
         (row.net_strategy_pnl_after_costs for row in evidence_rows),
@@ -3990,6 +4038,7 @@ def _daily_runtime_ledger_portfolio_summary(
         "candidate_ids": candidate_ids,
         "db_row_refs": [str(row.id) for row in evidence_rows],
         "blockers": blockers,
+        "query_limit": 200,
     }
 
 
@@ -6107,30 +6156,6 @@ def _load_options_catalog_freshness_summary(
     cached_payload = _load_cached_options_catalog_freshness_summary(scoped_symbols)
     if cached_payload is not None:
         return cached_payload
-    if not scoped_symbols:
-        return _store_options_catalog_freshness_summary(
-            scoped_symbols,
-            {
-                "status": "unavailable",
-                "scope": "route_symbols",
-                "bounded": True,
-                "coverage_exact": False,
-                "active_contracts_exact": False,
-                "active_contracts": 0,
-                "newest_last_seen_ts": None,
-                "missing_provider_updated_ts_count": 0,
-                "provider_updated_ts_present": False,
-                "newest_provider_updated_ts": None,
-                "missing_close_price_count": 0,
-                "zero_open_interest_count": 0,
-                "route_symbols": [],
-                "route_symbol_freshness": {},
-                "reason_codes": [
-                    "options_catalog_freshness_route_scope_missing",
-                    "options_catalog_freshness_unbounded_global_scan_skipped",
-                ],
-            },
-        )
     try:
         session.execute(text("SET LOCAL statement_timeout = 500"))
         if scoped_symbols:
@@ -6198,38 +6223,63 @@ GROUP BY underlying_symbol
                 int(row["zero_open_interest_count"] or 0) for row in scoped_rows
             )
         else:
-            row = (
+            global_rows = list(
                 session.execute(
                     text(
                         """
 SELECT
-  COUNT(*) AS active_contracts,
-  MAX(last_seen_ts) AS newest_last_seen_ts,
-  COUNT(*) FILTER (WHERE provider_updated_ts IS NULL) AS missing_provider_updated_ts_count,
-  MAX(provider_updated_ts) AS newest_provider_updated_ts,
-  COUNT(*) FILTER (WHERE close_price IS NULL) AS missing_close_price_count,
-  COUNT(*) FILTER (WHERE COALESCE(open_interest, 0) <= 0) AS zero_open_interest_count
+  underlying_symbol,
+  last_seen_ts,
+  provider_updated_ts,
+  close_price,
+  open_interest
 FROM torghut_options_contract_catalog
 WHERE status = 'active'
+ORDER BY last_seen_ts DESC NULLS LAST
+LIMIT 200
 """
                     )
-                )
-                .mappings()
-                .one()
+                ).mappings()
             )
             scoped_rows = []
-            active_contracts = int(row["active_contracts"] or 0)
-            newest_last_seen_ts = _ensure_utc_datetime(
-                cast(datetime | None, row["newest_last_seen_ts"])
+            active_contracts = len(global_rows)
+            newest_last_seen_values = [
+                value
+                for value in (
+                    _ensure_utc_datetime(cast(datetime | None, row.get("last_seen_ts")))
+                    for row in global_rows
+                )
+                if value is not None
+            ]
+            newest_last_seen_ts = (
+                max(newest_last_seen_values) if newest_last_seen_values else None
             )
-            missing_provider_updated_ts_count = int(
-                row["missing_provider_updated_ts_count"] or 0
+            missing_provider_updated_ts_count = sum(
+                1 for row in global_rows if row.get("provider_updated_ts") is None
             )
-            newest_provider_updated_ts = _ensure_utc_datetime(
-                cast(datetime | None, row["newest_provider_updated_ts"])
+            newest_provider_updated_values = [
+                value
+                for value in (
+                    _ensure_utc_datetime(
+                        cast(datetime | None, row.get("provider_updated_ts"))
+                    )
+                    for row in global_rows
+                )
+                if value is not None
+            ]
+            newest_provider_updated_ts = (
+                max(newest_provider_updated_values)
+                if newest_provider_updated_values
+                else None
             )
-            missing_close_price_count = int(row["missing_close_price_count"] or 0)
-            zero_open_interest_count = int(row["zero_open_interest_count"] or 0)
+            missing_close_price_count = sum(
+                1 for row in global_rows if row.get("close_price") is None
+            )
+            zero_open_interest_count = sum(
+                1
+                for row in global_rows
+                if (_decimal_or_none(row.get("open_interest")) or Decimal("0")) <= 0
+            )
     except SQLAlchemyError as exc:
         logger.warning("Options catalog freshness summary unavailable: %s", exc)
         rollback = getattr(session, "rollback", None)
@@ -6305,6 +6355,9 @@ WHERE status = 'active'
             "status": "current" if active_contracts > 0 else "missing",
             "scope": "route_symbols" if scoped_symbols else "global",
             "active_contracts": active_contracts,
+            "active_contracts_exact": bool(scoped_symbols),
+            "coverage_exact": bool(scoped_symbols),
+            "query_limit": None if scoped_symbols else 200,
             "newest_last_seen_ts": newest_last_seen_ts,
             "missing_provider_updated_ts_count": missing_provider_updated_ts_count,
             "provider_updated_ts_present": missing_provider_updated_ts_count == 0

@@ -108,9 +108,14 @@ _AUTORESEARCH_PORTFOLIO_READY_STATUSES = (
 _RUNTIME_LEDGER_REPAIR_SCAN_LIMIT = 256
 _RUNTIME_LEDGER_REPAIR_CANDIDATE_LIMIT = 8
 _RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_MS = 750
+_RUNTIME_LEDGER_SUMMARY_PER_HYPOTHESIS_LIMIT = 16
 _PROMOTION_TABLE_COUNT_SCAN_LIMIT = 1000
 _PROMOTION_PORTFOLIO_READY_SCAN_LIMIT = 256
 _CERTIFICATE_EVIDENCE_PER_HYPOTHESIS_LIMIT = 8
+_CERTIFICATE_EVIDENCE_WINDOW_LIMIT = _CERTIFICATE_EVIDENCE_PER_HYPOTHESIS_LIMIT
+_CERTIFICATE_EVIDENCE_RUNTIME_LEDGER_LIMIT = 16
+_PROMOTION_SCALAR_COUNT_LIMIT = _PROMOTION_TABLE_COUNT_SCAN_LIMIT
+_PROMOTION_PORTFOLIO_SAMPLE_LIMIT = _PROMOTION_PORTFOLIO_READY_SCAN_LIMIT
 _RUNTIME_WINDOW_IMPORT_CONTINUITY_READY_STATES = frozenset(
     {
         "signals_present",
@@ -153,6 +158,34 @@ def _sqlalchemy_error_indicates_statement_timeout(exc: SQLAlchemyError) -> bool:
     )
 
 
+def _unavailable_certificate_evidence_rows(
+    *,
+    hypothesis_ids: Sequence[str],
+    reason_code: str,
+) -> list[dict[str, object]]:
+    return [
+        {
+            "hypothesis_id": hypothesis_id,
+            "metric_window": None,
+            "promotion_decision": None,
+            "runtime_ledger_bucket": None,
+            "reason_codes": [reason_code],
+            "read_model_unavailable": True,
+        }
+        for hypothesis_id in hypothesis_ids
+    ]
+
+
+def _certificate_evidence_reason_codes(row: Mapping[str, object]) -> list[str]:
+    return _normalize_reason_codes(
+        [
+            str(reason).strip()
+            for reason in cast(Sequence[object], row.get("reason_codes") or [])
+            if str(reason).strip()
+        ]
+    )
+
+
 def _empty_profit_promotion_table_counts(
     *,
     count_errors: Sequence[str] | None = None,
@@ -173,6 +206,10 @@ def _empty_profit_promotion_table_counts(
         "count_limit": _PROMOTION_TABLE_COUNT_SCAN_LIMIT,
         "autoresearch_portfolio_scan_limit": _PROMOTION_PORTFOLIO_READY_SCAN_LIMIT,
         "truncated_counts": [],
+        "read_model_scope": "bounded_promotion_scalar_counts",
+        "promotion_scalar_count_limit": _PROMOTION_SCALAR_COUNT_LIMIT,
+        "autoresearch_portfolio_sample_limit": _PROMOTION_PORTFOLIO_SAMPLE_LIMIT,
+        "promotion_scalar_counts_exact": False,
         "count_errors": sorted(set(count_errors or ())),
     }
 
@@ -184,9 +221,21 @@ def _load_profit_promotion_bounded_row_count(
     model: Any,
     count_errors: list[str],
     truncated_counts: list[str],
+    statement: Any | None = None,
 ) -> int:
+    """Return a bounded diagnostic table count without forcing a full-table scan."""
+
     try:
         _maybe_set_runtime_ledger_status_statement_timeout(session)
+        if statement is not None:
+            bounded_count = session.execute(
+                select(func.count()).select_from(
+                    statement.limit(_PROMOTION_SCALAR_COUNT_LIMIT + 1).subquery()
+                )
+            ).scalar_one()
+            if int(bounded_count or 0) > _PROMOTION_SCALAR_COUNT_LIMIT:
+                truncated_counts.append(table_name)
+            return min(int(bounded_count or 0), _PROMOTION_SCALAR_COUNT_LIMIT)
         rows = list(
             session.execute(
                 select(model.id)
@@ -196,7 +245,7 @@ def _load_profit_promotion_bounded_row_count(
         )
     except SQLAlchemyError as exc:
         logger.warning(
-            "Failed to load bounded profit promotion table rows table=%s error=%s",
+            "Failed to load bounded profit promotion table count table=%s error=%s",
             table_name,
             exc,
         )
@@ -720,14 +769,36 @@ def build_hypothesis_runtime_summary(
         dependency_quorum=dependency_quorum,
     )
     summary["runtime_ledger_read_status"] = {
-        "status": runtime_ledger_summary.get("query_status", "unknown"),
+        "status": runtime_ledger_summary.get("query_status")
+        or (
+            "unavailable"
+            if bool(runtime_ledger_summary.get("read_model_unavailable"))
+            else "ok"
+        ),
         "reason_codes": list(
             cast(
                 Sequence[object],
-                runtime_ledger_summary.get("query_reason_codes") or [],
+                runtime_ledger_summary.get("query_reason_codes")
+                or runtime_ledger_summary.get("reason_codes")
+                or [],
             )
         ),
         "query_limit": runtime_ledger_summary.get("query_limit"),
+        "query_limit_per_hypothesis": runtime_ledger_summary.get(
+            "query_limit_per_hypothesis"
+        ),
+    }
+    summary["runtime_ledger_read_model"] = {
+        "query_scope": runtime_ledger_summary.get("query_scope"),
+        "query_limit_per_hypothesis": runtime_ledger_summary.get(
+            "query_limit_per_hypothesis"
+        ),
+        "reason_codes": runtime_ledger_summary.get("reason_codes")
+        or runtime_ledger_summary.get("query_reason_codes")
+        or [],
+        "read_model_unavailable": bool(
+            runtime_ledger_summary.get("read_model_unavailable")
+        ),
     }
     certificate_reason_codes = sorted(
         {
@@ -735,15 +806,22 @@ def build_hypothesis_runtime_summary(
             for row in evidence
             for reason in cast(
                 Sequence[object],
-                row.get("query_reason_codes") or [],
+                row.get("query_reason_codes") or row.get("reason_codes") or [],
             )
             if str(reason).strip()
         }
     )
+    certificate_unavailable = any(
+        bool(row.get("read_model_unavailable")) for row in evidence
+    )
     summary["certificate_evidence_read_status"] = {
-        "status": "ok" if not certificate_reason_codes else "degraded",
+        "status": "ok"
+        if not certificate_reason_codes and not certificate_unavailable
+        else "degraded",
         "reason_codes": certificate_reason_codes,
-        "per_hypothesis_limit": _CERTIFICATE_EVIDENCE_PER_HYPOTHESIS_LIMIT,
+        "per_hypothesis_limit": _CERTIFICATE_EVIDENCE_WINDOW_LIMIT,
+        "runtime_ledger_query_limit": _CERTIFICATE_EVIDENCE_RUNTIME_LEDGER_LIMIT,
+        "read_model_unavailable": certificate_unavailable,
     }
     summary["items"] = items
     return summary
@@ -1183,43 +1261,50 @@ def _load_latest_runtime_ledger_summary(
         hypothesis_id for hypothesis_id in hypothesis_ids if hypothesis_id
     ]
     by_hypothesis: dict[str, dict[str, object]] = {}
+    retained_rows: list[dict[str, object]] = []
     if not normalized_ids:
         return {
             "by_hypothesis": by_hypothesis,
-            "runtime_ledger_buckets": [],
+            "runtime_ledger_buckets": retained_rows,
             "query_status": "skipped",
             "query_reason_codes": ["runtime_ledger_hypothesis_scope_missing"],
             "query_limit": _RUNTIME_LEDGER_REPAIR_SCAN_LIMIT,
+            "query_scope": "per_hypothesis_latest_runtime_ledger",
+            "query_limit_per_hypothesis": _RUNTIME_LEDGER_SUMMARY_PER_HYPOTHESIS_LIMIT,
+            "reason_codes": ["runtime_ledger_hypothesis_scope_missing"],
         }
 
-    rows_by_hypothesis: dict[str, int] = {}
-    retained_rows: list[dict[str, object]] = []
     try:
-        _maybe_set_runtime_ledger_status_statement_timeout(session)
-        rows = session.execute(
-            select(StrategyRuntimeLedgerBucket)
-            .where(StrategyRuntimeLedgerBucket.hypothesis_id.in_(normalized_ids))
-            .order_by(
-                StrategyRuntimeLedgerBucket.bucket_ended_at.desc(),
-                StrategyRuntimeLedgerBucket.created_at.desc(),
+        for hypothesis_id in normalized_ids:
+            _maybe_set_runtime_ledger_status_statement_timeout(session)
+            rows = list(
+                session.execute(
+                    select(StrategyRuntimeLedgerBucket)
+                    .where(StrategyRuntimeLedgerBucket.hypothesis_id == hypothesis_id)
+                    .order_by(
+                        StrategyRuntimeLedgerBucket.bucket_ended_at.desc(),
+                        StrategyRuntimeLedgerBucket.created_at.desc(),
+                    )
+                    .limit(_RUNTIME_LEDGER_SUMMARY_PER_HYPOTHESIS_LIMIT)
+                ).scalars()
             )
-            .limit(_RUNTIME_LEDGER_REPAIR_SCAN_LIMIT)
-        ).scalars()
-        for row in rows:
-            payload = _runtime_ledger_bucket_payload(row)
-            retained_count = rows_by_hypothesis.get(row.hypothesis_id, 0)
-            if retained_count < 8:
-                retained_rows.append(payload)
-                rows_by_hypothesis[row.hypothesis_id] = retained_count + 1
+            retained_for_hypothesis = 0
+            for row in rows:
+                payload = _runtime_ledger_bucket_payload(row)
+                if retained_for_hypothesis < 8:
+                    retained_rows.append(payload)
+                    retained_for_hypothesis += 1
 
-            current = by_hypothesis.get(row.hypothesis_id)
-            if current is None:
-                by_hypothesis[row.hypothesis_id] = payload
-                continue
-            current_is_live = str(current.get("observed_stage") or "").strip() == "live"
-            row_is_live = str(payload.get("observed_stage") or "").strip() == "live"
-            if row_is_live and not current_is_live:
-                by_hypothesis[row.hypothesis_id] = payload
+                current = by_hypothesis.get(row.hypothesis_id)
+                if current is None:
+                    by_hypothesis[row.hypothesis_id] = payload
+                    continue
+                current_is_live = (
+                    str(current.get("observed_stage") or "").strip() == "live"
+                )
+                row_is_live = str(payload.get("observed_stage") or "").strip() == "live"
+                if row_is_live and not current_is_live:
+                    by_hypothesis[row.hypothesis_id] = payload
     except SQLAlchemyError as exc:
         logger.warning("Runtime ledger latest summary unavailable: %s", exc)
         _rollback_runtime_ledger_status_session(session)
@@ -1229,13 +1314,17 @@ def _load_latest_runtime_ledger_summary(
             else "runtime_ledger_summary_query_unavailable"
         )
         return {
-            "by_hypothesis": by_hypothesis,
+            "by_hypothesis": {},
             "runtime_ledger_buckets": [],
             "query_status": "timeout"
             if reason_code == "runtime_ledger_summary_query_timeout"
             else "unavailable",
             "query_reason_codes": [reason_code],
             "query_limit": _RUNTIME_LEDGER_REPAIR_SCAN_LIMIT,
+            "query_scope": "per_hypothesis_latest_runtime_ledger",
+            "query_limit_per_hypothesis": _RUNTIME_LEDGER_SUMMARY_PER_HYPOTHESIS_LIMIT,
+            "reason_codes": [reason_code],
+            "read_model_unavailable": True,
         }
     return {
         "by_hypothesis": by_hypothesis,
@@ -1243,6 +1332,9 @@ def _load_latest_runtime_ledger_summary(
         "query_status": "ok",
         "query_reason_codes": [],
         "query_limit": _RUNTIME_LEDGER_REPAIR_SCAN_LIMIT,
+        "query_scope": "per_hypothesis_latest_runtime_ledger",
+        "query_limit_per_hypothesis": _RUNTIME_LEDGER_SUMMARY_PER_HYPOTHESIS_LIMIT,
+        "reason_codes": [],
     }
 
 
@@ -2208,205 +2300,140 @@ def _load_latest_certificate_evidence(
     ]
     if not normalized_ids:
         return []
-    total_limit = max(
-        1,
-        len(normalized_ids) * _CERTIFICATE_EVIDENCE_PER_HYPOTHESIS_LIMIT,
-    )
-
-    windows_by_hypothesis: dict[str, list[StrategyHypothesisMetricWindow]] = {}
-    try:
-        _maybe_set_runtime_ledger_status_statement_timeout(session)
-        window_rows = session.execute(
-            select(StrategyHypothesisMetricWindow)
-            .where(StrategyHypothesisMetricWindow.hypothesis_id.in_(normalized_ids))
-            .order_by(
-                StrategyHypothesisMetricWindow.window_ended_at.desc().nullslast(),
-                StrategyHypothesisMetricWindow.created_at.desc(),
-            )
-            .limit(total_limit)
-        ).scalars()
-        for row in window_rows:
-            windows_by_hypothesis.setdefault(row.hypothesis_id, []).append(row)
-    except SQLAlchemyError as exc:
-        logger.warning("Metric-window certificate evidence unavailable: %s", exc)
-        _rollback_runtime_ledger_status_session(session)
-        reason_code = (
-            "certificate_metric_window_query_timeout"
-            if _sqlalchemy_error_indicates_statement_timeout(exc)
-            else "certificate_metric_window_query_unavailable"
-        )
-        return [
-            {
-                "hypothesis_id": hypothesis_id,
-                "metric_window": None,
-                "promotion_decision": None,
-                "runtime_ledger_bucket": None,
-                "query_status": "timeout"
-                if reason_code == "certificate_metric_window_query_timeout"
-                else "unavailable",
-                "query_reason_codes": [reason_code],
-            }
-            for hypothesis_id in normalized_ids
-        ]
-
-    latest_promotions: dict[str, list[StrategyPromotionDecision]] = {}
-    try:
-        _maybe_set_runtime_ledger_status_statement_timeout(session)
-        promotion_rows = session.execute(
-            select(StrategyPromotionDecision)
-            .where(
-                StrategyPromotionDecision.hypothesis_id.in_(normalized_ids),
-            )
-            .order_by(StrategyPromotionDecision.created_at.desc())
-            .limit(total_limit)
-        ).scalars()
-        for row in promotion_rows:
-            latest_promotions.setdefault(row.hypothesis_id, []).append(row)
-    except SQLAlchemyError as exc:
-        logger.warning("Promotion-decision certificate evidence unavailable: %s", exc)
-        _rollback_runtime_ledger_status_session(session)
-        reason_code = (
-            "certificate_promotion_decision_query_timeout"
-            if _sqlalchemy_error_indicates_statement_timeout(exc)
-            else "certificate_promotion_decision_query_unavailable"
-        )
-        return [
-            {
-                "hypothesis_id": hypothesis_id,
-                "metric_window": None,
-                "promotion_decision": None,
-                "runtime_ledger_bucket": None,
-                "query_status": "timeout"
-                if reason_code == "certificate_promotion_decision_query_timeout"
-                else "unavailable",
-                "query_reason_codes": [reason_code],
-            }
-            for hypothesis_id in normalized_ids
-        ]
-
-    latest_runtime_ledgers: dict[str, list[StrategyRuntimeLedgerBucket]] = {}
-    try:
-        _maybe_set_runtime_ledger_status_statement_timeout(session)
-        runtime_ledger_rows = session.execute(
-            select(StrategyRuntimeLedgerBucket)
-            .where(StrategyRuntimeLedgerBucket.hypothesis_id.in_(normalized_ids))
-            .order_by(
-                StrategyRuntimeLedgerBucket.bucket_ended_at.desc(),
-                StrategyRuntimeLedgerBucket.created_at.desc(),
-            )
-            .limit(_RUNTIME_LEDGER_REPAIR_SCAN_LIMIT)
-        ).scalars()
-        for row in runtime_ledger_rows:
-            latest_runtime_ledgers.setdefault(row.hypothesis_id, []).append(row)
-    except SQLAlchemyError as exc:
-        logger.warning("Runtime ledger certificate evidence unavailable: %s", exc)
-        _rollback_runtime_ledger_status_session(session)
-        latest_runtime_ledgers = {}
-        runtime_ledger_reason_code = (
-            "certificate_runtime_ledger_query_timeout"
-            if _sqlalchemy_error_indicates_statement_timeout(exc)
-            else "certificate_runtime_ledger_query_unavailable"
-        )
-    else:
-        runtime_ledger_reason_code = None
 
     evidence: list[dict[str, object]] = []
-    for hypothesis_id in normalized_ids:
-        candidate_rows: list[dict[str, object]] = []
-        for metric_window in windows_by_hypothesis.get(hypothesis_id, []):
-            promotion_decision = None
-            for decision in latest_promotions.get(hypothesis_id, []):
-                if _promotion_decision_matches_metric_window(
-                    decision,
-                    metric_window=metric_window,
-                ):
-                    promotion_decision = decision
-                    break
-            runtime_ledger_bucket = None
-            for ledger in latest_runtime_ledgers.get(hypothesis_id, []):
-                if (
-                    _safe_text(ledger.run_id) != _safe_text(metric_window.run_id)
-                    or _safe_text(ledger.candidate_id)
-                    != _safe_text(metric_window.candidate_id)
-                    or _safe_text(ledger.observed_stage)
-                    != _safe_text(metric_window.observed_stage)
-                    or not _runtime_ledger_bucket_matches_metric_window(
+    try:
+        for hypothesis_id in normalized_ids:
+            _maybe_set_runtime_ledger_status_statement_timeout(session)
+            metric_windows = list(
+                session.execute(
+                    select(StrategyHypothesisMetricWindow)
+                    .where(
+                        StrategyHypothesisMetricWindow.hypothesis_id == hypothesis_id
+                    )
+                    .order_by(
+                        StrategyHypothesisMetricWindow.window_ended_at.desc().nullslast(),
+                        StrategyHypothesisMetricWindow.created_at.desc(),
+                    )
+                    .limit(_CERTIFICATE_EVIDENCE_WINDOW_LIMIT)
+                ).scalars()
+            )
+            candidate_rows: list[dict[str, object]] = []
+            for metric_window in metric_windows:
+                _maybe_set_runtime_ledger_status_statement_timeout(session)
+                promotion_decision = (
+                    session.execute(
+                        select(StrategyPromotionDecision)
+                        .where(StrategyPromotionDecision.hypothesis_id == hypothesis_id)
+                        .where(
+                            StrategyPromotionDecision.run_id == metric_window.run_id,
+                            StrategyPromotionDecision.candidate_id
+                            == metric_window.candidate_id,
+                            StrategyPromotionDecision.promotion_target
+                            == metric_window.observed_stage,
+                        )
+                        .order_by(StrategyPromotionDecision.created_at.desc())
+                        .limit(1)
+                    )
+                    .scalars()
+                    .first()
+                )
+
+                runtime_ledger_bucket = None
+                _maybe_set_runtime_ledger_status_statement_timeout(session)
+                ledger_rows = list(
+                    session.execute(
+                        select(StrategyRuntimeLedgerBucket)
+                        .where(
+                            StrategyRuntimeLedgerBucket.hypothesis_id == hypothesis_id
+                        )
+                        .where(
+                            StrategyRuntimeLedgerBucket.run_id == metric_window.run_id,
+                            StrategyRuntimeLedgerBucket.candidate_id
+                            == metric_window.candidate_id,
+                            StrategyRuntimeLedgerBucket.observed_stage
+                            == metric_window.observed_stage,
+                        )
+                        .order_by(
+                            StrategyRuntimeLedgerBucket.bucket_ended_at.desc(),
+                            StrategyRuntimeLedgerBucket.created_at.desc(),
+                        )
+                        .limit(_CERTIFICATE_EVIDENCE_RUNTIME_LEDGER_LIMIT)
+                    ).scalars()
+                )
+                for ledger in ledger_rows:
+                    if _runtime_ledger_bucket_matches_metric_window(
                         ledger,
                         metric_window=metric_window,
-                    )
-                ):
-                    continue
-                runtime_ledger_bucket = _runtime_ledger_bucket_payload(ledger)
-                break
-            candidate_rows.append(
-                {
-                    "hypothesis_id": hypothesis_id,
-                    "metric_window": metric_window,
-                    "promotion_decision": promotion_decision,
-                    "runtime_ledger_bucket": runtime_ledger_bucket,
-                    "query_status": "ok"
-                    if runtime_ledger_reason_code is None
-                    else "timeout"
-                    if runtime_ledger_reason_code
-                    == "certificate_runtime_ledger_query_timeout"
-                    else "unavailable",
-                    "query_reason_codes": []
-                    if runtime_ledger_reason_code is None
-                    else [runtime_ledger_reason_code],
-                }
-            )
-        if not candidate_rows:
+                    ):
+                        runtime_ledger_bucket = _runtime_ledger_bucket_payload(ledger)
+                        break
+                candidate_rows.append(
+                    {
+                        "hypothesis_id": hypothesis_id,
+                        "metric_window": metric_window,
+                        "promotion_decision": promotion_decision,
+                        "runtime_ledger_bucket": runtime_ledger_bucket,
+                        "query_status": "ok",
+                        "query_reason_codes": [],
+                        "query_scope": "per_hypothesis_certificate_evidence",
+                        "query_limit_per_hypothesis": _CERTIFICATE_EVIDENCE_WINDOW_LIMIT,
+                        "runtime_ledger_query_limit": _CERTIFICATE_EVIDENCE_RUNTIME_LEDGER_LIMIT,
+                        "reason_codes": [],
+                    }
+                )
+            if not candidate_rows:
+                evidence.append(
+                    {
+                        "hypothesis_id": hypothesis_id,
+                        "metric_window": None,
+                        "promotion_decision": None,
+                        "runtime_ledger_bucket": None,
+                        "query_status": "ok",
+                        "query_reason_codes": [],
+                        "query_scope": "per_hypothesis_certificate_evidence",
+                        "query_limit_per_hypothesis": _CERTIFICATE_EVIDENCE_WINDOW_LIMIT,
+                        "runtime_ledger_query_limit": _CERTIFICATE_EVIDENCE_RUNTIME_LEDGER_LIMIT,
+                        "reason_codes": ["hypothesis_window_evidence_missing"],
+                    }
+                )
+                continue
             evidence.append(
-                {
-                    "hypothesis_id": hypothesis_id,
-                    "metric_window": None,
-                    "promotion_decision": None,
-                    "runtime_ledger_bucket": None,
-                    "query_status": "ok"
-                    if runtime_ledger_reason_code is None
-                    else "timeout"
-                    if runtime_ledger_reason_code
-                    == "certificate_runtime_ledger_query_timeout"
-                    else "unavailable",
-                    "query_reason_codes": []
-                    if runtime_ledger_reason_code is None
-                    else [runtime_ledger_reason_code],
-                }
+                max(
+                    candidate_rows,
+                    key=lambda row: _certificate_evidence_selection_key(
+                        row,
+                        now=now,
+                        max_age_seconds=max_age_seconds,
+                    ),
+                )
             )
-            continue
-        evidence.append(
-            max(
-                candidate_rows,
-                key=lambda row: _certificate_evidence_selection_key(
-                    row,
-                    now=now,
-                    max_age_seconds=max_age_seconds,
-                ),
-            )
+    except SQLAlchemyError as exc:
+        logger.warning("Certificate evidence read model unavailable: %s", exc)
+        _rollback_runtime_ledger_status_session(session)
+        reason_code = (
+            "certificate_evidence_query_timeout"
+            if _sqlalchemy_error_indicates_statement_timeout(exc)
+            else "certificate_evidence_unavailable"
         )
+        rows = _unavailable_certificate_evidence_rows(
+            hypothesis_ids=normalized_ids,
+            reason_code=reason_code,
+        )
+        for row in rows:
+            row["query_status"] = (
+                "timeout"
+                if reason_code == "certificate_evidence_query_timeout"
+                else "unavailable"
+            )
+            row["query_reason_codes"] = [reason_code]
+            row["query_scope"] = "per_hypothesis_certificate_evidence"
+            row["query_limit_per_hypothesis"] = _CERTIFICATE_EVIDENCE_WINDOW_LIMIT
+            row["runtime_ledger_query_limit"] = (
+                _CERTIFICATE_EVIDENCE_RUNTIME_LEDGER_LIMIT
+            )
+        return rows
     return evidence
-
-
-def _promotion_decision_matches_metric_window(
-    promotion_decision: StrategyPromotionDecision,
-    *,
-    metric_window: StrategyHypothesisMetricWindow,
-) -> bool:
-    if _safe_text(promotion_decision.run_id) != _safe_text(metric_window.run_id):
-        return False
-    if _safe_text(promotion_decision.hypothesis_id) != _safe_text(
-        metric_window.hypothesis_id
-    ):
-        return False
-    if _safe_text(promotion_decision.candidate_id) != _safe_text(
-        metric_window.candidate_id
-    ):
-        return False
-    if _safe_text(promotion_decision.promotion_target) != _safe_text(
-        metric_window.observed_stage
-    ):
-        return False
-    return True
 
 
 def _window_evidence_issued_at(
@@ -2885,7 +2912,7 @@ def _evaluate_certificate_candidates(
         promotion_decision = cast(
             StrategyPromotionDecision | None, row.get("promotion_decision")
         )
-        reasons: list[str] = []
+        reasons: list[str] = _certificate_evidence_reason_codes(row)
         metric_window_id: str | None = None
         promotion_decision_id: str | None = None
         candidate_id = None
@@ -3239,7 +3266,7 @@ def _load_profit_promotion_table_counts(session: Session) -> dict[str, Any]:
             session.execute(
                 select(AutoresearchPortfolioCandidate)
                 .order_by(AutoresearchPortfolioCandidate.created_at.desc())
-                .limit(_PROMOTION_PORTFOLIO_READY_SCAN_LIMIT + 1)
+                .limit(_PROMOTION_PORTFOLIO_SAMPLE_LIMIT + 1)
             ).scalars()
         )
     except SQLAlchemyError as exc:
@@ -3251,8 +3278,9 @@ def _load_profit_promotion_table_counts(session: Session) -> dict[str, Any]:
         return _empty_profit_promotion_table_counts(
             count_errors=["autoresearch_portfolio_candidates"]
         )
-    if len(portfolio_rows) > _PROMOTION_PORTFOLIO_READY_SCAN_LIMIT:
-        portfolio_rows = portfolio_rows[:_PROMOTION_PORTFOLIO_READY_SCAN_LIMIT]
+    if len(portfolio_rows) > _PROMOTION_PORTFOLIO_SAMPLE_LIMIT:
+        portfolio_rows = portfolio_rows[:_PROMOTION_PORTFOLIO_SAMPLE_LIMIT]
+        truncated_counts.append("autoresearch_portfolio_candidates")
         count_errors.append("autoresearch_portfolio_candidates_bounded_scan_truncated")
 
     current_oracle_ready = 0
@@ -3310,6 +3338,7 @@ def _load_profit_promotion_table_counts(session: Session) -> dict[str, Any]:
         "research_candidates": _load_profit_promotion_bounded_row_count(
             session,
             table_name="research_candidates",
+            statement=select(ResearchCandidate.id),
             count_errors=count_errors,
             truncated_counts=truncated_counts,
             model=ResearchCandidate,
@@ -3317,6 +3346,7 @@ def _load_profit_promotion_table_counts(session: Session) -> dict[str, Any]:
         "research_promotions": _load_profit_promotion_bounded_row_count(
             session,
             table_name="research_promotions",
+            statement=select(ResearchPromotion.id),
             count_errors=count_errors,
             truncated_counts=truncated_counts,
             model=ResearchPromotion,
@@ -3324,6 +3354,7 @@ def _load_profit_promotion_table_counts(session: Session) -> dict[str, Any]:
         "strategy_promotion_decisions": _load_profit_promotion_bounded_row_count(
             session,
             table_name="strategy_promotion_decisions",
+            statement=select(StrategyPromotionDecision.id),
             count_errors=count_errors,
             truncated_counts=truncated_counts,
             model=StrategyPromotionDecision,
@@ -3331,6 +3362,7 @@ def _load_profit_promotion_table_counts(session: Session) -> dict[str, Any]:
         "vnext_promotion_decisions": _load_profit_promotion_bounded_row_count(
             session,
             table_name="vnext_promotion_decisions",
+            statement=select(VNextPromotionDecision.id),
             count_errors=count_errors,
             truncated_counts=truncated_counts,
             model=VNextPromotionDecision,
@@ -3338,6 +3370,7 @@ def _load_profit_promotion_table_counts(session: Session) -> dict[str, Any]:
         "autoresearch_epochs": _load_profit_promotion_bounded_row_count(
             session,
             table_name="autoresearch_epochs",
+            statement=select(AutoresearchEpoch.id),
             count_errors=count_errors,
             truncated_counts=truncated_counts,
             model=AutoresearchEpoch,
@@ -3345,6 +3378,7 @@ def _load_profit_promotion_table_counts(session: Session) -> dict[str, Any]:
         "autoresearch_candidate_specs": _load_profit_promotion_bounded_row_count(
             session,
             table_name="autoresearch_candidate_specs",
+            statement=select(AutoresearchCandidateSpec.id),
             count_errors=count_errors,
             truncated_counts=truncated_counts,
             model=AutoresearchCandidateSpec,
@@ -3352,6 +3386,7 @@ def _load_profit_promotion_table_counts(session: Session) -> dict[str, Any]:
         "autoresearch_proposal_scores": _load_profit_promotion_bounded_row_count(
             session,
             table_name="autoresearch_proposal_scores",
+            statement=select(AutoresearchProposalScore.id),
             count_errors=count_errors,
             truncated_counts=truncated_counts,
             model=AutoresearchProposalScore,
@@ -3359,6 +3394,7 @@ def _load_profit_promotion_table_counts(session: Session) -> dict[str, Any]:
         "autoresearch_portfolio_candidates": _load_profit_promotion_bounded_row_count(
             session,
             table_name="autoresearch_portfolio_candidates",
+            statement=select(AutoresearchPortfolioCandidate.id),
             count_errors=count_errors,
             truncated_counts=truncated_counts,
             model=AutoresearchPortfolioCandidate,
@@ -3370,6 +3406,10 @@ def _load_profit_promotion_table_counts(session: Session) -> dict[str, Any]:
         "count_limit": _PROMOTION_TABLE_COUNT_SCAN_LIMIT,
         "autoresearch_portfolio_scan_limit": _PROMOTION_PORTFOLIO_READY_SCAN_LIMIT,
         "truncated_counts": sorted(set(truncated_counts)),
+        "read_model_scope": "bounded_promotion_scalar_counts",
+        "promotion_scalar_count_limit": _PROMOTION_SCALAR_COUNT_LIMIT,
+        "autoresearch_portfolio_sample_limit": _PROMOTION_PORTFOLIO_SAMPLE_LIMIT,
+        "promotion_scalar_counts_exact": False,
         "count_errors": sorted(set(count_errors)),
     }
 

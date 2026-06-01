@@ -439,7 +439,8 @@ class TestSubmissionCouncil(TestCase):
 
         with session_local() as session:
             empty_summary = _load_latest_runtime_ledger_summary(
-                session, hypothesis_ids=[]
+                session,
+                hypothesis_ids=[],
             )
             self.assertEqual(empty_summary["by_hypothesis"], {})
             self.assertEqual(empty_summary["runtime_ledger_buckets"], [])
@@ -447,6 +448,10 @@ class TestSubmissionCouncil(TestCase):
             self.assertEqual(
                 empty_summary["query_reason_codes"],
                 ["runtime_ledger_hypothesis_scope_missing"],
+            )
+            self.assertEqual(
+                empty_summary["query_scope"],
+                "per_hypothesis_latest_runtime_ledger",
             )
             session.add_all(
                 [
@@ -608,8 +613,12 @@ class TestSubmissionCouncil(TestCase):
         self.assertEqual(summary["by_hypothesis"], {})
         self.assertEqual(summary["runtime_ledger_buckets"], [])
         self.assertEqual(summary["query_status"], "timeout")
+        self.assertTrue(summary["read_model_unavailable"])
         self.assertEqual(
             summary["query_reason_codes"], ["runtime_ledger_summary_query_timeout"]
+        )
+        self.assertEqual(
+            summary["reason_codes"], ["runtime_ledger_summary_query_timeout"]
         )
         self.assertEqual(fake_session.rollback_count, 1)
 
@@ -624,18 +633,17 @@ class TestSubmissionCouncil(TestCase):
         )
 
         self.assertEqual(fake_session.rollback_count, 1)
+        self.assertEqual(evidence[0]["hypothesis_id"], "H-PAIRS-01")
+        self.assertIsNone(evidence[0]["metric_window"])
+        self.assertIsNone(evidence[0]["promotion_decision"])
+        self.assertIsNone(evidence[0]["runtime_ledger_bucket"])
+        self.assertTrue(evidence[0]["read_model_unavailable"])
+        self.assertEqual(evidence[0]["query_status"], "timeout")
         self.assertEqual(
-            evidence,
-            [
-                {
-                    "hypothesis_id": "H-PAIRS-01",
-                    "metric_window": None,
-                    "promotion_decision": None,
-                    "runtime_ledger_bucket": None,
-                    "query_status": "timeout",
-                    "query_reason_codes": ["certificate_metric_window_query_timeout"],
-                }
-            ],
+            evidence[0]["query_reason_codes"], ["certificate_evidence_query_timeout"]
+        )
+        self.assertEqual(
+            evidence[0]["reason_codes"], ["certificate_evidence_query_timeout"]
         )
 
     def test_load_latest_certificate_evidence_fails_closed_on_promotion_timeout(
@@ -698,20 +706,17 @@ class TestSubmissionCouncil(TestCase):
                 )
 
         self.assertEqual(rollback.call_count, 1)
+        self.assertEqual(evidence[0]["hypothesis_id"], "H-PAIRS-01")
+        self.assertIsNone(evidence[0]["metric_window"])
+        self.assertIsNone(evidence[0]["promotion_decision"])
+        self.assertIsNone(evidence[0]["runtime_ledger_bucket"])
+        self.assertTrue(evidence[0]["read_model_unavailable"])
+        self.assertEqual(evidence[0]["query_status"], "timeout")
         self.assertEqual(
-            evidence,
-            [
-                {
-                    "hypothesis_id": "H-PAIRS-01",
-                    "metric_window": None,
-                    "promotion_decision": None,
-                    "runtime_ledger_bucket": None,
-                    "query_status": "timeout",
-                    "query_reason_codes": [
-                        "certificate_promotion_decision_query_timeout"
-                    ],
-                }
-            ],
+            evidence[0]["query_reason_codes"], ["certificate_evidence_query_timeout"]
+        )
+        self.assertEqual(
+            evidence[0]["reason_codes"], ["certificate_evidence_query_timeout"]
         )
 
     def test_load_latest_certificate_evidence_uses_bounded_status_reads(
@@ -751,10 +756,16 @@ class TestSubmissionCouncil(TestCase):
             )
         )
         self.assertTrue(
-            any(
-                "FROM strategy_promotion_decisions" in statement
-                and "LIMIT" in statement
-                for statement in statements
+            all(
+                row["reason_codes"] == ["hypothesis_window_evidence_missing"]
+                for row in evidence
+            )
+        )
+        self.assertTrue(
+            all(
+                row["query_limit_per_hypothesis"]
+                == _CERTIFICATE_EVIDENCE_PER_HYPOTHESIS_LIMIT
+                for row in evidence
             )
         )
         self.assertGreaterEqual(bounded_limit, 1)
@@ -834,8 +845,12 @@ class TestSubmissionCouncil(TestCase):
         self.assertEqual(summary["by_hypothesis"], {})
         self.assertEqual(summary["runtime_ledger_buckets"], [])
         self.assertEqual(summary["query_status"], "timeout")
+        self.assertTrue(summary["read_model_unavailable"])
         self.assertEqual(
             summary["query_reason_codes"], ["runtime_ledger_summary_query_timeout"]
+        )
+        self.assertEqual(
+            summary["reason_codes"], ["runtime_ledger_summary_query_timeout"]
         )
         self.assertEqual(fake_session.rollback_count, 1)
 
@@ -3848,7 +3863,9 @@ class TestSubmissionCouncil(TestCase):
 
         self.assertEqual(counts["autoresearch_epochs"], 1)
         self.assertEqual(counts["truncated_counts"], [])
-        self.assertFalse(any("count(" in statement.lower() for statement in statements))
+        self.assertEqual(counts["read_model_scope"], "bounded_promotion_scalar_counts")
+        self.assertFalse(counts["promotion_scalar_counts_exact"])
+        self.assertTrue(any("count(" in statement.lower() for statement in statements))
         self.assertTrue(
             any(
                 "FROM autoresearch_epochs" in statement and "LIMIT" in statement
@@ -3973,7 +3990,74 @@ class TestSubmissionCouncil(TestCase):
         self.assertEqual(counts["autoresearch_epochs"], 1)
         self.assertEqual(counts["autoresearch_candidate_specs"], 1)
         self.assertEqual(counts["autoresearch_proposal_scores"], 0)
+        self.assertEqual(counts["read_model_scope"], "bounded_promotion_scalar_counts")
+        self.assertFalse(counts["promotion_scalar_counts_exact"])
         self.assertEqual(counts["count_errors"], ["autoresearch_proposal_scores"])
+        self.assertEqual(rollback.call_count, 1)
+
+    def test_latest_runtime_ledger_summary_timeout_is_explicit(self) -> None:
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        with session_local() as session:
+            with (
+                patch.object(
+                    session,
+                    "execute",
+                    side_effect=SQLAlchemyError("statement timeout"),
+                ),
+                patch.object(session, "rollback", wraps=session.rollback) as rollback,
+            ):
+                summary = _load_latest_runtime_ledger_summary(
+                    session,
+                    hypothesis_ids=["H-CONT-01"],
+                )
+
+        self.assertEqual(summary["by_hypothesis"], {})
+        self.assertEqual(summary["runtime_ledger_buckets"], [])
+        self.assertTrue(summary["read_model_unavailable"])
+        self.assertEqual(
+            summary["reason_codes"], ["runtime_ledger_summary_query_timeout"]
+        )
+        self.assertEqual(rollback.call_count, 1)
+
+    def test_certificate_evidence_timeout_is_explicit_and_fail_closed(self) -> None:
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        with session_local() as session:
+            with (
+                patch.object(
+                    session,
+                    "execute",
+                    side_effect=SQLAlchemyError("statement timeout"),
+                ),
+                patch.object(session, "rollback", wraps=session.rollback) as rollback,
+            ):
+                evidence = _load_latest_certificate_evidence(
+                    session,
+                    hypothesis_ids=["H-CONT-01"],
+                    now=datetime.now(timezone.utc),
+                    max_age_seconds=900,
+                )
+
+        self.assertEqual(len(evidence), 1)
+        self.assertIsNone(evidence[0]["metric_window"])
+        self.assertIsNone(evidence[0]["promotion_decision"])
+        self.assertTrue(evidence[0]["read_model_unavailable"])
+        self.assertEqual(
+            evidence[0]["reason_codes"], ["certificate_evidence_query_timeout"]
+        )
         self.assertEqual(rollback.call_count, 1)
 
     def test_load_profit_promotion_counts_fail_closed_for_portfolio_timeout(
