@@ -428,6 +428,8 @@ class HypothesisManifest(BaseModel):
     required_feature_sets: list[str] = Field(default_factory=list)
     required_dependency_capabilities: list[str] = Field(default_factory=list)
     segment_dependencies: list[str] = Field(default_factory=list)
+    evidence_universe_symbols: list[str] = Field(default_factory=list)
+    require_pair_balance: bool = False
     expected_gross_edge_bps: Decimal
     max_allowed_slippage_bps: Decimal
     min_sample_count_for_live_canary: int
@@ -444,6 +446,7 @@ class HypothesisManifest(BaseModel):
         "required_feature_sets",
         "required_dependency_capabilities",
         "segment_dependencies",
+        "evidence_universe_symbols",
         "paper_probation_candidate_ids",
         "rollback_triggers",
         "promotion_gates",
@@ -480,6 +483,19 @@ class HypothesisManifest(BaseModel):
             return None
         normalized = value.strip()
         return normalized or None
+
+    @field_validator("evidence_universe_symbols")
+    @classmethod
+    def _normalize_symbol_universe(cls, value: list[str]) -> list[str]:
+        symbols: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            symbol = item.strip().upper()
+            if not symbol or symbol in seen:
+                continue
+            seen.add(symbol)
+            symbols.append(symbol)
+        return symbols
 
 
 @dataclass(frozen=True)
@@ -775,6 +791,23 @@ def _route_tca_bool(value: object) -> bool | None:
     return _optional_bool(value)
 
 
+def _manifest_pair_contract_blockers(manifest: HypothesisManifest) -> tuple[str, ...]:
+    if "pairs" not in manifest.strategy_family and "pairs" not in manifest.lane_id:
+        return ()
+
+    blockers: list[str] = []
+    symbols = tuple(manifest.evidence_universe_symbols)
+    if not symbols:
+        blockers.append("evidence_universe_symbols_missing")
+    elif len(symbols) < 2:
+        blockers.append("evidence_universe_symbol_count_below_pair_minimum")
+    elif len(symbols) % 2 != 0:
+        blockers.append("pair_universe_unbalanced")
+    if not manifest.require_pair_balance:
+        blockers.append("pair_balance_not_declared")
+    return tuple(blockers)
+
+
 def _route_tca_target_blockers(
     row: Mapping[str, Any],
     *,
@@ -950,6 +983,7 @@ def _resolve_tca_readiness_inputs(
     *,
     max_allowed_slippage_bps: Decimal,
     route_symbol_filter_enabled: bool,
+    target_scope_symbols: Sequence[str] = (),
     hypothesis_id: str | None = None,
     candidate_id: str | None = None,
     strategy_family: str | None = None,
@@ -984,11 +1018,19 @@ def _resolve_tca_readiness_inputs(
         for item in _sequence(tca_summary.get("symbol_breakdown"))
         if isinstance(item, Mapping)
     ]
-    scope_symbols = tuple(
+    summary_scope_symbols = tuple(
         str(item).strip().upper()
         for item in _sequence(tca_summary.get("scope_symbols"))
         if str(item).strip()
     )
+    manifest_scope_symbols = tuple(
+        dict.fromkeys(
+            str(item).strip().upper()
+            for item in target_scope_symbols
+            if str(item).strip()
+        )
+    )
+    scope_symbols = manifest_scope_symbols or summary_scope_symbols
     scope_symbol_set = set(scope_symbols)
     if not rows and not scope_symbols:
         return aggregate
@@ -1012,6 +1054,10 @@ def _resolve_tca_readiness_inputs(
     for row in rows:
         symbol = str(row.get("symbol") or "").strip().upper()
         if not symbol:
+            continue
+        if manifest_scope_symbols and symbol not in scope_symbol_set:
+            excluded_symbol_count += 1
+            route_blockers.append("route_tca_out_of_scope_symbol")
             continue
         seen_symbols.add(symbol)
         order_count = max(0, _optional_int(row.get("order_count")) or 0)
@@ -1854,10 +1900,12 @@ def compile_hypothesis_runtime_statuses(
 
     statuses: list[dict[str, object]] = []
     for manifest in registry.items:
+        pair_contract_blockers = _manifest_pair_contract_blockers(manifest)
         tca_inputs = _resolve_tca_readiness_inputs(
             tca_summary,
             max_allowed_slippage_bps=manifest.max_allowed_slippage_bps,
             route_symbol_filter_enabled=route_symbol_filter_enabled,
+            target_scope_symbols=manifest.evidence_universe_symbols,
             hypothesis_id=manifest.hypothesis_id,
             candidate_id=manifest.candidate_id,
             strategy_family=manifest.strategy_family,
@@ -2018,6 +2066,7 @@ def compile_hypothesis_runtime_statuses(
                 f"dependency_capability_unknown:{capability}"
                 for capability in sorted(unknown_dependency_capabilities)
             )
+        reasons.extend(pair_contract_blockers)
 
         if (
             manifest.initial_state == "blocked"
@@ -2148,6 +2197,10 @@ def compile_hypothesis_runtime_statuses(
             ),
             "tca_age_minutes": tca_age_minutes,
             "market_session_open": market_session_open,
+            "evidence_universe_symbols": list(manifest.evidence_universe_symbols),
+            "evidence_universe_symbol_count": len(manifest.evidence_universe_symbols),
+            "pair_balance_required": manifest.require_pair_balance,
+            "pair_contract_blockers": list(pair_contract_blockers),
             "avg_abs_slippage_bps": _decimal_to_string(tca_inputs.avg_abs_slippage_bps),
             "runtime_ledger_proof_present": runtime_ledger_inputs.proof_present,
             "runtime_ledger_candidate_id": runtime_ledger_inputs.candidate_id,
@@ -2292,6 +2345,20 @@ def compile_hypothesis_runtime_statuses(
                     "strategy_id": manifest.strategy_id or manifest.strategy_family,
                     "lane_id": manifest.lane_id,
                     "strategy_family": manifest.strategy_family,
+                    **(
+                        {
+                            "evidence_universe_symbols": list(
+                                manifest.evidence_universe_symbols
+                            )
+                        }
+                        if manifest.evidence_universe_symbols
+                        else {}
+                    ),
+                    **(
+                        {"require_pair_balance": True}
+                        if manifest.require_pair_balance
+                        else {}
+                    ),
                 },
             }
         )
