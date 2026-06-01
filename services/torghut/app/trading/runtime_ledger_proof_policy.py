@@ -51,6 +51,7 @@ class RuntimeLedgerProofPolicy:
             "evidence_collection_only": targets["evidence_collection_only"],
             "evidence_collection_ok": targets["evidence_collection_ok"],
             "canary_collection_authorized": targets["canary_collection_authorized"],
+            "promotion_allowed": False,
             "capital_promotion_allowed": False,
             "final_promotion_allowed": False,
             "min_runtime_ledger_net_pnl_after_costs": _decimal_text(
