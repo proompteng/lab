@@ -15,7 +15,11 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..models import Execution, ExecutionTCAMetric, TradeDecision
 from .prices import resolve_execution_reference_price
-from .tigerbeetle_journal import TigerBeetleLedgerJournal
+from .tigerbeetle_journal import (
+    TIGERBEETLE_BLOCKER_JOURNAL_ERROR,
+    TIGERBEETLE_BLOCKER_TRANSFER_REF_CONFLICT,
+    TigerBeetleLedgerJournal,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -215,11 +219,23 @@ def _journal_tigerbeetle_execution_cost(
     except Exception as exc:
         if settings.tigerbeetle_required:
             raise
+        blocker = (
+            TIGERBEETLE_BLOCKER_TRANSFER_REF_CONFLICT
+            if TIGERBEETLE_BLOCKER_TRANSFER_REF_CONFLICT in str(exc)
+            else TIGERBEETLE_BLOCKER_JOURNAL_ERROR
+        )
         logger.warning(
-            "TigerBeetle execution/TCA journal failed for execution_id=%s metric_id=%s: %s",
+            "TigerBeetle execution/TCA journal failed for execution_id=%s metric_id=%s blocker=%s: %s",
             execution.id,
             metric.id,
+            blocker,
             exc,
+            extra={
+                "tigerbeetle_execution_cost_journal_status": "blocked",
+                "tigerbeetle_execution_cost_journal_blocker": blocker,
+                "tigerbeetle_execution_id": str(execution.id),
+                "tigerbeetle_execution_tca_metric_id": str(metric.id),
+            },
         )
 
 

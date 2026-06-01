@@ -74,6 +74,47 @@ def test_closed_round_trip_pnl_uses_net_after_explicit_costs() -> None:
     )
 
 
+def test_tigerbeetle_execution_cost_journal_failure_blocks_authority() -> None:
+    bucket = _bucket(
+        [
+            {
+                "executed_at": _ts(1),
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "symbol": "NVDA",
+                "side": "buy",
+                "filled_qty": "10",
+                "avg_fill_price": "100",
+                "cost_amount": "1.00",
+                "cost_basis": "broker_reported_commission_and_fees",
+                "tigerbeetle_execution_cost_journal_status": "blocked",
+                "tigerbeetle_execution_cost_journal_blockers": [
+                    "tigerbeetle_transfer_ref_conflict:amount",
+                    "",
+                ],
+            },
+            {
+                "executed_at": _ts(12),
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "symbol": "NVDA",
+                "side": "sell",
+                "filled_qty": "10",
+                "avg_fill_price": "110",
+                "cost_amount": "2.00",
+                "cost_basis": "broker_reported_commission_and_fees",
+                "tigerbeetle_execution_cost_journal_status": "created",
+            },
+        ]
+    )
+
+    assert "tigerbeetle_execution_cost_journal_failed" in bucket.blockers
+    assert "tigerbeetle_transfer_ref_conflict:amount" in bucket.blockers
+    assert bucket.cost_amount == Decimal("0")
+    assert bucket.net_strategy_pnl_after_costs == Decimal("0")
+    assert bucket.post_cost_expectancy_bps is None
+
+
 def test_partial_unclosed_positions_report_realized_pnl_but_block_expectancy() -> None:
     bucket = _bucket(
         [

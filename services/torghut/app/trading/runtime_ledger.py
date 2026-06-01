@@ -72,6 +72,12 @@ _NON_PROMOTION_SOURCE_MARKERS = frozenset(
         "simulation_source_replay_only",
     }
 )
+_TIGERBEETLE_EXECUTION_COST_JOURNAL_FAILURE_BLOCKER = (
+    "tigerbeetle_execution_cost_journal_failed"
+)
+_TIGERBEETLE_JOURNAL_SUCCESS_STATUSES = frozenset(
+    {"", "pass", "passed", "success", "succeeded", "journaled", "created", "exists"}
+)
 _DIAGNOSTIC_EXPECTANCY_SUPPRESSING_BLOCKERS = frozenset(
     {
         "runtime_fills_missing",
@@ -806,6 +812,7 @@ def _normalize_fill_row(
         blockers.append("tca_shortfall_not_runtime_pnl")
     if _is_non_promotion_runtime_source_row(row):
         blockers.append("runtime_source_not_promotion_authority")
+    blockers.extend(_tigerbeetle_journal_blockers(row))
     if executed_at is None and event_type != "diagnostic":
         blockers.append("executed_at_missing")
     if event_type in _FILL_EVENTS and not lifecycle_only:
@@ -1111,6 +1118,42 @@ def _has_tca_pnl_shortcut(row: RuntimeLedgerFill | Mapping[str, object]) -> bool
         and _row_value(row, "shortfall_notional", "realized_pnl_proxy_notional")
         is not None
     )
+
+
+def _tigerbeetle_journal_blockers(
+    row: RuntimeLedgerFill | Mapping[str, object],
+) -> list[str]:
+    blockers: list[str] = []
+    for key in (
+        "tigerbeetle_journal_blockers",
+        "tigerbeetle_journal_blocker",
+        "tigerbeetle_execution_cost_journal_blockers",
+        "tigerbeetle_execution_cost_journal_blocker",
+    ):
+        value = _row_value(row, key)
+        if isinstance(value, Sequence) and not isinstance(
+            value, (str, bytes, bytearray)
+        ):
+            for item in cast(Sequence[object], value):
+                blocker = str(item).strip()
+                if blocker:
+                    blockers.append(blocker)
+        elif value is not None and str(value).strip():
+            blockers.append(str(value).strip())
+
+    status = _coerce_text(
+        _row_value(
+            row,
+            "tigerbeetle_execution_cost_journal_status",
+            "tigerbeetle_journal_status",
+        )
+    )
+    if (
+        status is not None
+        and status.lower().replace("-", "_") not in _TIGERBEETLE_JOURNAL_SUCCESS_STATUSES
+    ):
+        blockers.append(_TIGERBEETLE_EXECUTION_COST_JOURNAL_FAILURE_BLOCKER)
+    return _dedupe(blockers)
 
 
 def _group_key(row: _NormalizedFill, group_by: Sequence[str]) -> tuple[str | None, ...]:
