@@ -59,6 +59,7 @@ from app.trading.ingest import SignalBatch
 from app.trading.paper_route_target_plan import paper_route_target_plan_from_payload
 from app.trading.reconcile import Reconciler
 from app.trading.runtime_decision_authority import (
+    BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
     ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
     STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE,
 )
@@ -66,6 +67,7 @@ from app.trading.risk import RiskEngine
 from app.trading.scheduler.pipeline import TradingPipeline
 from app.trading.scheduler.simple_pipeline import (
     SimpleTradingPipeline,
+    _bounded_paper_route_collection_entry_metadata,
     _bounded_sim_collection_blockers,
     _bounded_sim_collection_target_with_runtime_account_audit,
     _bounded_sim_collection_metadata_from_decision,
@@ -3563,7 +3565,11 @@ class TestTradingPipeline(TestCase):
                 decision=decision,
                 decision_row=row,
                 strategy=strategy,
-                account={"equity": "100000", "cash": "100000", "buying_power": "100000"},
+                account={
+                    "equity": "100000",
+                    "cash": "100000",
+                    "buying_power": "100000",
+                },
                 positions=[],
             )
             session.refresh(row)
@@ -3575,7 +3581,9 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(row.status, "rejected")
         self.assertEqual(routeability.get("status"), "blocked")
         self.assertEqual(routeability.get("reason"), "missing_executable_quote")
-        self.assertEqual(row_json.get("reject_reason_atomic"), ["missing_executable_quote"])
+        self.assertEqual(
+            row_json.get("reject_reason_atomic"), ["missing_executable_quote"]
+        )
 
     def test_paper_route_target_quote_routeability_blocks_stale_and_wide_quotes(
         self,
@@ -3759,7 +3767,11 @@ class TestTradingPipeline(TestCase):
                 decision=decision,
                 decision_row=row,
                 strategy=strategy,
-                account={"equity": "100000", "cash": "100000", "buying_power": "100000"},
+                account={
+                    "equity": "100000",
+                    "cash": "100000",
+                    "buying_power": "100000",
+                },
                 positions=[],
             )
             session.refresh(row)
@@ -5642,6 +5654,47 @@ class TestTradingPipeline(TestCase):
             },
         )
 
+    def test_bounded_paper_route_collection_entry_metadata_accepts_proof_rows(
+        self,
+    ) -> None:
+        params = {
+            "source_decision_mode": BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
+            "profit_proof_eligible": True,
+            "paper_route_probe": {
+                "mode": "bounded_paper_route_collection",
+                "source_decision_mode": (
+                    BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE
+                ),
+                "profit_proof_eligible": True,
+            },
+        }
+
+        self.assertEqual(
+            _bounded_paper_route_collection_entry_metadata(params),
+            params["paper_route_probe"],
+        )
+        self.assertIsNone(_paper_route_probe_entry_metadata(params))
+        self.assertIsNone(
+            _bounded_paper_route_collection_entry_metadata(
+                {
+                    **params,
+                    "profit_proof_eligible": False,
+                    "paper_route_probe": {
+                        **params["paper_route_probe"],
+                        "profit_proof_eligible": False,
+                    },
+                }
+            )
+        )
+        self.assertIsNone(
+            _bounded_paper_route_collection_entry_metadata(
+                {
+                    **params,
+                    "source_decision_mode": ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
+                }
+            )
+        )
+
     def test_strategy_signal_paper_entry_metadata_rejects_incomplete_payloads(
         self,
     ) -> None:
@@ -6369,7 +6422,7 @@ class TestTradingPipeline(TestCase):
 
         with self.session_local() as session:
             strategy = Strategy(
-                name="paper-route-candidate-v1",
+                name="intraday-tsmom-profit-v3",
                 description="paper route candidate",
                 enabled=True,
                 base_timeframe="1Min",
@@ -6381,19 +6434,19 @@ class TestTradingPipeline(TestCase):
             session.commit()
 
         target = {
-            "candidate_id": "cand-paper-route",
-            "hypothesis_id": "H-PAPER-ROUTE",
+            "candidate_id": "cand-tsmom-liq",
+            "hypothesis_id": "H-TSMOM-LIQ",
             "observed_stage": "paper",
-            "strategy_family": "microbar_pairs",
-            "strategy_name": "paper-route-candidate-v1",
-            "runtime_strategy_name": "paper-route-runtime-name",
+            "strategy_family": "intraday_tsmom",
+            "strategy_name": "intraday-tsmom-profit-v3",
+            "runtime_strategy_name": "intraday-tsmom-profit-v3",
             "strategy_lookup_names": [
-                "paper-route-runtime-name",
-                "paper-route-candidate-v1",
+                "intraday-tsmom-profit-v3",
             ],
-            "account_label": "paper",
+            "account_label": "TORGHUT_SIM",
+            "source_account_label": "TORGHUT_REPLAY",
             "source_kind": "paper_route_probe_runtime_observed",
-            "source_manifest_ref": "config/trading/hypotheses/h-paper-route.json",
+            "source_manifest_ref": "config/trading/hypotheses/h-tsmom-liq.json",
             "paper_route_probe_symbols": ["AAPL"],
             "paper_route_probe_next_session_max_notional": "250",
             "paper_route_probe_window_start": window_start.isoformat(),
@@ -6408,11 +6461,21 @@ class TestTradingPipeline(TestCase):
                 "source_window_evidence_collection_pending"
             ],
             "bounded_evidence_collection_authorized": True,
+            "bounded_live_paper_collection_authorized": True,
+            "canary_collection_authorized": True,
             "bounded_evidence_collection_scope": "paper_route_probe_next_session_only",
             "bounded_evidence_collection_max_notional": "250",
+            "evidence_collection_ok": True,
+            "bounded_evidence_collection_blockers": [],
+            "runtime_window_import_health_gate_blockers": [],
+            "paper_route_account_pre_session_blockers": [],
+            "paper_route_hpairs_symbol_blockers": [],
+            "source_decision_readiness": {"ready": True, "blockers": []},
             "max_notional": "0",
             "promotion_allowed": False,
             "final_promotion_authorized": False,
+            "final_promotion_allowed": False,
+            "capital_promotion_allowed": False,
         }
         proof_floor = {
             "route_state": "repair_only",
@@ -6433,7 +6496,7 @@ class TestTradingPipeline(TestCase):
             reconciler=Reconciler(),
             universe_resolver=UniverseResolver(),
             state=TradingState(),
-            account_label="paper",
+            account_label="TORGHUT_SIM",
             session_factory=self.session_local,
             price_fetcher=FakePriceFetcher(
                 Decimal("100"),
@@ -6492,7 +6555,9 @@ class TestTradingPipeline(TestCase):
             simple_lane_precheck = cast(
                 dict[str, Any], params.get("simple_lane_precheck")
             )
-            execution_policy = cast(dict[str, Any], params.get("execution_policy"))
+            bounded_execution_policy = cast(
+                dict[str, Any], params.get("bounded_paper_route_execution_policy")
+            )
 
             self.assertEqual(decision.status, "submitted")
             self.assertEqual(Decimal(str(decision_json["qty"])), Decimal("2.5"))
@@ -6504,12 +6569,13 @@ class TestTradingPipeline(TestCase):
             self.assertEqual(
                 target_plan["mode"], "paper_route_target_plan_source_decision"
             )
-            self.assertEqual(source_decision["candidate_id"], "cand-paper-route")
-            self.assertEqual(source_decision["hypothesis_id"], "H-PAPER-ROUTE")
+            self.assertEqual(source_decision["candidate_id"], "cand-tsmom-liq")
+            self.assertEqual(source_decision["hypothesis_id"], "H-TSMOM-LIQ")
             self.assertEqual(
-                source_decision["source_decision_mode"], "route_acquisition_probe"
+                source_decision["source_decision_mode"],
+                BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
             )
-            self.assertFalse(source_decision["profit_proof_eligible"])
+            self.assertTrue(source_decision["profit_proof_eligible"])
             self.assertEqual(source_decision["exit_minute_after_open"], 120)
             self.assertTrue(source_decision["source_collection_authorized"])
             self.assertEqual(
@@ -6532,18 +6598,25 @@ class TestTradingPipeline(TestCase):
                 source_decision["paper_route_probe_effective_max_notional"], "250"
             )
             self.assertEqual(params["exit_minute_after_open"], 120)
-            self.assertEqual(params["source_candidate_ids"], ["cand-paper-route"])
-            self.assertEqual(params["source_hypothesis_ids"], ["H-PAPER-ROUTE"])
-            self.assertEqual(params["source_decision_mode"], "route_acquisition_probe")
-            self.assertFalse(params["profit_proof_eligible"])
+            self.assertEqual(params["source_candidate_ids"], ["cand-tsmom-liq"])
+            self.assertEqual(params["source_hypothesis_ids"], ["H-TSMOM-LIQ"])
+            self.assertEqual(
+                params["source_decision_mode"],
+                BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
+            )
+            self.assertTrue(params["profit_proof_eligible"])
             self.assertFalse(params["promotion_allowed"])
             self.assertFalse(params["final_promotion_authorized"])
+            self.assertEqual(
+                paper_route_probe["mode"], "bounded_paper_route_collection"
+            )
             self.assertEqual(paper_route_probe["max_notional"], "250")
             self.assertTrue(paper_route_probe["target_source_authorized"])
             self.assertEqual(
-                paper_route_probe["source_decision_mode"], "route_acquisition_probe"
+                paper_route_probe["source_decision_mode"],
+                BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
             )
-            self.assertFalse(paper_route_probe["profit_proof_eligible"])
+            self.assertTrue(paper_route_probe["profit_proof_eligible"])
             self.assertEqual(paper_route_probe["exit_minute_after_open"], 120)
             self.assertEqual(
                 paper_route_probe["exit_due_at"],
@@ -6556,11 +6629,19 @@ class TestTradingPipeline(TestCase):
             self.assertTrue(paper_route_probe["target_source_notional_sized"])
             self.assertEqual(Decimal(str(simple_lane["final_qty"])), Decimal("2.5"))
             self.assertEqual(Decimal(str(simple_lane["notional"])), Decimal("250"))
-            self.assertTrue(simple_lane["paper_route_probe_cap_applied"])
             self.assertEqual(simple_lane_precheck["requested_qty"], "2.5000")
             self.assertEqual(simple_lane_precheck["final_qty"], "2.5000")
             self.assertEqual(
-                Decimal(str(execution_policy["notional"])), Decimal("250.0")
+                bounded_execution_policy["authority"],
+                "bounded_paper_route_collection_only",
+            )
+            self.assertEqual(
+                bounded_execution_policy["max_notional"],
+                "250",
+            )
+            self.assertEqual(
+                paper_route_probe["bounded_paper_route_execution_policy"]["authority"],
+                "bounded_paper_route_collection_only",
             )
 
     def test_simple_pipeline_signal_cycle_still_generates_target_plan_source_decision(
@@ -9774,8 +9855,9 @@ class TestTradingPipeline(TestCase):
                 params = cast(dict[str, Any], decision_json.get("params"))
                 self.assertEqual(
                     params.get("source_decision_mode"),
-                    ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
+                    BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
                 )
+                self.assertTrue(params.get("profit_proof_eligible"))
                 self.assertEqual(params.get("source_hypothesis_ids"), ["H-PAIRS-01"])
                 target_plan = cast(
                     dict[str, Any],
@@ -9784,6 +9866,11 @@ class TestTradingPipeline(TestCase):
                 self.assertEqual(
                     target_plan.get("candidate_id"), "candidate-pairs-monday"
                 )
+                self.assertEqual(
+                    target_plan.get("source_decision_mode"),
+                    BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
+                )
+                self.assertTrue(target_plan.get("profit_proof_eligible"))
 
     def test_fetch_signal_batch_falls_back_for_legacy_ingestor_signature(self) -> None:
         class LegacyIngestor:
