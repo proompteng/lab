@@ -1472,6 +1472,7 @@ def build_runtime_ledger_proof_packet(
         cast(Decimal, proof_mode_targets["max_symbol_concentration_share"]),
     )
     final_authority_mode = bool(proof_mode_targets["final_authority"])
+    evidence_collection_mode = not final_authority_mode
     mode_authority_blockers = (
         []
         if final_authority_mode
@@ -1487,7 +1488,15 @@ def build_runtime_ledger_proof_packet(
         observed={
             "proof_mode": resolved_proof_mode,
             "final_authority": final_authority_mode,
-            "evidence_collection_only": not final_authority_mode,
+            "evidence_collection_only": evidence_collection_mode,
+            "evidence_collection_ok": bool(
+                proof_mode_targets["evidence_collection_ok"]
+            ),
+            "canary_collection_authorized": bool(
+                proof_mode_targets["canary_collection_authorized"]
+            ),
+            "capital_promotion_allowed": False,
+            "final_promotion_allowed": False,
         },
         expected="explicit proof mode; only authority mode can grant promotion authority",
         blockers=[],
@@ -2268,7 +2277,13 @@ def build_runtime_ledger_proof_packet(
         "verdict": verdict,
         "ok": post_cost_proof_satisfied,
         "final_authority_ok": post_cost_proof_authority_allowed,
-        "evidence_collection_only": not final_authority_mode,
+        "evidence_collection_only": evidence_collection_mode,
+        "evidence_collection_ok": evidence_collection_mode
+        and post_cost_proof_satisfied,
+        "canary_collection_authorized": resolved_proof_mode == "probation"
+        and post_cost_proof_satisfied,
+        "capital_promotion_allowed": capital_promotion_allowed,
+        "final_promotion_allowed": capital_promotion_allowed,
         "post_cost_proof_authority": {
             "allowed": post_cost_proof_authority_allowed,
             "proof_satisfied": post_cost_proof_satisfied,
@@ -2294,7 +2309,15 @@ def build_runtime_ledger_proof_packet(
         "target": {
             "proof_mode": resolved_proof_mode,
             "final_authority": final_authority_mode,
-            "evidence_collection_only": not final_authority_mode,
+            "evidence_collection_only": evidence_collection_mode,
+            "evidence_collection_ok": bool(
+                proof_mode_targets["evidence_collection_ok"]
+            ),
+            "canary_collection_authorized": bool(
+                proof_mode_targets["canary_collection_authorized"]
+            ),
+            "capital_promotion_allowed": False,
+            "final_promotion_allowed": False,
             "min_runtime_ledger_net_pnl_after_costs": _decimal_text(
                 min_runtime_ledger_net_pnl
             ),

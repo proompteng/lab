@@ -1467,6 +1467,11 @@ def _runtime_ledger_paper_probation_candidates(
             **dict(candidate),
             "paper_probation_eligible": True,
             "paper_probation_scope": "evidence_collection_only",
+            "proof_mode": "probation",
+            "evidence_collection_ok": True,
+            "canary_collection_authorized": True,
+            "capital_promotion_allowed": False,
+            "final_promotion_allowed": False,
             "paper_probation_reason_codes": [_RUNTIME_LEDGER_PAPER_PROBATION_REASON],
             "paper_probation_target_capital_stage": "shadow",
             "max_notional": "0",
@@ -1505,6 +1510,11 @@ def _runtime_ledger_source_collection_candidates(
             "source_collection_candidate": True,
             "source_collection_authorized": True,
             "source_collection_scope": "source_window_evidence_collection_only",
+            "proof_mode": "probation",
+            "evidence_collection_ok": True,
+            "canary_collection_authorized": False,
+            "capital_promotion_allowed": False,
+            "final_promotion_allowed": False,
             "source_collection_reason_codes": [
                 reason
                 for reason in _normalize_reason_codes(
@@ -1710,6 +1720,10 @@ def _runtime_ledger_paper_probation_import_plan(
                 if source_collection
                 else []
             ),
+            "proof_mode": "probation",
+            "evidence_collection_ok": True,
+            "canary_collection_authorized": not source_collection,
+            "capital_promotion_allowed": False,
             "evidence_collection_stage": "paper",
             "probation_allowed": not source_collection,
             "probation_reason": (
@@ -1749,6 +1763,12 @@ def _runtime_ledger_paper_probation_import_plan(
         "schema_version": _RUNTIME_LEDGER_PAPER_PROBATION_IMPORT_SCHEMA_VERSION,
         "source": "runtime_ledger_paper_probation_and_source_collection_candidates",
         "purpose": "paper_stage_runtime_ledger_source_evidence_collection",
+        "proof_mode": "probation",
+        "evidence_collection_ok": bool(targets),
+        "canary_collection_authorized": any(
+            bool(target.get("canary_collection_authorized")) for target in targets
+        ),
+        "capital_promotion_allowed": False,
         "promotion_allowed": False,
         "final_promotion_authorized": False,
         "final_promotion_allowed": False,

@@ -766,6 +766,10 @@ class TestRuntimeLedgerProofPacket(TestCase):
             result["verdict"],
             "smoke_proof_satisfied_evidence_collection_only",
         )
+        self.assertTrue(result["evidence_collection_ok"])
+        self.assertFalse(result["canary_collection_authorized"])
+        self.assertFalse(result["capital_promotion_allowed"])
+        self.assertFalse(result["final_promotion_allowed"])
         self.assertFalse(result["promotion_authority"]["allowed"])
         self.assertEqual(
             result["target"]["max_runtime_ledger_drawdown_pct_equity"], "0.08"
@@ -781,6 +785,36 @@ class TestRuntimeLedgerProofPacket(TestCase):
         self.assertIn(
             "rerun_proof_packet_in_authority_mode",
             result["required_actions"],
+        )
+
+    def test_probation_packet_authorizes_canary_evidence_without_final_promotion(
+        self,
+    ) -> None:
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            proof_mode="probation",
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=_runtime_import(),
+            completion_status=_completion(),
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["proof_mode"], "probation")
+        self.assertEqual(
+            result["verdict"],
+            "probation_proof_satisfied_evidence_collection_only",
+        )
+        self.assertTrue(result["evidence_collection_ok"])
+        self.assertTrue(result["canary_collection_authorized"])
+        self.assertFalse(result["final_authority_ok"])
+        self.assertFalse(result["capital_promotion_allowed"])
+        self.assertFalse(result["final_promotion_allowed"])
+        self.assertFalse(result["capital_promotion_authority"]["allowed"])
+        self.assertFalse(result["promotion_authority"]["allowed"])
+        self.assertIn(
+            "runtime_ledger_proof_mode_not_authority",
+            result["promotion_authority"]["blocking_reasons"],
         )
 
     def test_packet_splits_post_cost_proof_from_capital_promotion_gate(self) -> None:
