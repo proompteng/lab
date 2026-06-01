@@ -55,6 +55,7 @@ spec:
                     --wait-flat-seconds 120 \
                     --poll-seconds 10 \
                     --persist-snapshot \
+                    --persist-lineage \
                     --apply \
                     --json
               env:

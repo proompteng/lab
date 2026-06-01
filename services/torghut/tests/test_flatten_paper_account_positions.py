@@ -7,10 +7,14 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from io import StringIO
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest import TestCase
 from unittest.mock import patch
 
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import Session
+
+from app.models import Base, Execution, ExecutionOrderEvent, Strategy, TradeDecision
 from scripts import flatten_paper_account_positions as flatten_script
 from scripts.flatten_paper_account_positions import (
     flatten_paper_account_positions,
@@ -50,6 +54,8 @@ class FakeFlattenClient:
             "type": order_type,
             "time_in_force": time_in_force,
             "limit_price": limit_price,
+            "status": "accepted",
+            "filled_qty": "0",
             "extended_hours": (extra_params or {}).get("extended_hours"),
             "client_order_id": (extra_params or {}).get("client_order_id"),
         }
@@ -82,6 +88,32 @@ class RejectingFlattenClient(FakeFlattenClient):
         raise RuntimeError("simulated close rejection")
 
 
+class MissingOrderIdFlattenClient(FakeFlattenClient):
+    def submit_order(
+        self,
+        symbol: str,
+        side: str,
+        qty: float,
+        order_type: str,
+        time_in_force: str,
+        limit_price: float | None = None,
+        stop_price: float | None = None,
+        extra_params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        order = super().submit_order(
+            symbol,
+            side,
+            qty,
+            order_type,
+            time_in_force,
+            limit_price,
+            stop_price,
+            extra_params,
+        )
+        order.pop("id", None)
+        return order
+
+
 class SequencedFlattenClient(FakeFlattenClient):
     def __init__(self, position_snapshots: list[list[dict[str, Any]]]) -> None:
         super().__init__(position_snapshots[0] if position_snapshots else [])
@@ -99,6 +131,52 @@ class FakeSessionContext:
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
         return None
+
+
+def _memory_session() -> Session:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+    return Session(engine, expire_on_commit=False, future=True)
+
+
+def _source_strategy(session: Session) -> Strategy:
+    strategy = Strategy(
+        name="microbar-cross-sectional-pairs-v1",
+        description="H-PAIRS runtime source strategy",
+        enabled=True,
+        base_timeframe="1Min",
+        universe_type="symbols",
+        universe_symbols=["AMAT"],
+    )
+    session.add(strategy)
+    session.commit()
+    session.refresh(strategy)
+    return strategy
+
+
+def _source_decision(session: Session, strategy: Strategy) -> TradeDecision:
+    decision = TradeDecision(
+        strategy_id=strategy.id,
+        alpaca_account_label="TORGHUT_SIM",
+        symbol="AMAT",
+        timeframe="1Min",
+        decision_json={
+            "action": "buy",
+            "qty": "2",
+            "source_candidate_ids": ["c88421d619759b2cfaa6f4d0"],
+            "source_hypothesis_ids": ["H-PAIRS-01"],
+            "source_strategy_names": ["microbar-cross-sectional-pairs-v1"],
+            "source_decision_mode": "strategy_signal_paper",
+            "profit_proof_eligible": True,
+        },
+        rationale="source runtime paper decision",
+        decision_hash="source-decision-hash",
+        status="submitted",
+    )
+    session.add(decision)
+    session.commit()
+    session.refresh(decision)
+    return decision
 
 
 class TestFlattenPaperAccountPositions(TestCase):
@@ -161,6 +239,346 @@ class TestFlattenPaperAccountPositions(TestCase):
             [("AMAT", "sell", "market"), ("TSM", "buy", "market")],
         )
         self.assertEqual(payload["submitted_order_count"], 2)
+
+    def test_apply_persists_linked_close_decision_and_execution(self) -> None:
+        client = FakeFlattenClient(
+            [{"symbol": "AMAT", "qty": "2", "side": "long", "current_price": "100"}]
+        )
+        with _memory_session() as session:
+            generated_at = datetime(2026, 6, 1, 13, 35, tzinfo=timezone.utc)
+            expected_client_order_id = flatten_script._flatten_client_order_id(
+                generated_at=generated_at,
+                symbol="AMAT",
+            )
+            strategy = _source_strategy(session)
+            source_decision = _source_decision(session, strategy)
+            source_execution = Execution(
+                trade_decision_id=source_decision.id,
+                alpaca_account_label="TORGHUT_SIM",
+                alpaca_order_id="source-order-1",
+                client_order_id="source-decision-hash",
+                symbol="AMAT",
+                side="buy",
+                order_type="market",
+                time_in_force="day",
+                submitted_qty=Decimal("2"),
+                filled_qty=Decimal("2"),
+                status="filled",
+                execution_expected_adapter="alpaca_paper",
+                execution_actual_adapter="alpaca_paper",
+                raw_order={},
+            )
+            session.add(source_execution)
+            pending_order_event = ExecutionOrderEvent(
+                event_fingerprint="pending-flatten-order-event",
+                source_topic="alpaca.orders",
+                alpaca_account_label="TORGHUT_SIM",
+                client_order_id=expected_client_order_id,
+                symbol="AMAT",
+                event_type="new",
+                status="accepted",
+                raw_event={"client_order_id": expected_client_order_id},
+            )
+            session.add(pending_order_event)
+            session.commit()
+
+            payload = flatten_paper_account_positions(
+                client=client,
+                account_label="TORGHUT_SIM",
+                expected_account_label="TORGHUT_SIM",
+                trading_mode="paper",
+                apply=True,
+                max_gross_market_value=Decimal("2500"),
+                max_position_count=10,
+                generated_at=generated_at,
+                persist_lineage=True,
+                lineage_session=session,
+            )
+
+            self.assertEqual(payload["status"], "submitted")
+            self.assertEqual(payload["lineage_result_count"], 1)
+            lineage_result = payload["lineage_results"][0]
+            self.assertEqual(
+                lineage_result["flatten_lineage_status"], "linked_source_lineage"
+            )
+            self.assertEqual(
+                lineage_result["source_candidate_ids"],
+                ["c88421d619759b2cfaa6f4d0"],
+            )
+            self.assertEqual(lineage_result["source_hypothesis_ids"], ["H-PAIRS-01"])
+            self.assertEqual(
+                lineage_result["source_strategy_names"],
+                ["microbar-cross-sectional-pairs-v1"],
+            )
+            self.assertEqual(
+                lineage_result["source_decision_mode"], "strategy_signal_paper"
+            )
+            self.assertTrue(lineage_result["profit_proof_eligible"])
+            self.assertFalse(lineage_result["final_promotion_authorized"])
+
+            client_order_id = client.submitted[0]["client_order_id"]
+            close_decision = session.execute(
+                select(TradeDecision).where(
+                    TradeDecision.decision_hash == client_order_id
+                )
+            ).scalar_one()
+            decision_json = close_decision.decision_json
+            self.assertEqual(
+                decision_json["schema_version"],
+                "torghut.paper-account-flatten-close-decision.v1",
+            )
+            self.assertEqual(
+                decision_json["source_candidate_ids"],
+                ["c88421d619759b2cfaa6f4d0"],
+            )
+            self.assertEqual(decision_json["source_hypothesis_ids"], ["H-PAIRS-01"])
+            self.assertEqual(
+                decision_json["source_strategy_names"],
+                ["microbar-cross-sectional-pairs-v1"],
+            )
+            self.assertTrue(decision_json["profit_proof_eligible"])
+            self.assertFalse(decision_json["final_promotion_authorized"])
+            close_execution = session.execute(
+                select(Execution).where(Execution.client_order_id == client_order_id)
+            ).scalar_one()
+            self.assertEqual(close_execution.trade_decision_id, close_decision.id)
+            self.assertEqual(close_execution.alpaca_order_id, "order-1")
+            session.refresh(pending_order_event)
+            self.assertEqual(pending_order_event.trade_decision_id, close_decision.id)
+            self.assertEqual(pending_order_event.execution_id, close_execution.id)
+
+    def test_apply_persists_unlinked_no_source_lineage_fallback(self) -> None:
+        client = FakeFlattenClient(
+            [{"symbol": "AMAT", "qty": "2", "side": "long", "current_price": "100"}]
+        )
+        with _memory_session() as session:
+            payload = flatten_paper_account_positions(
+                client=client,
+                account_label="TORGHUT_SIM",
+                expected_account_label="TORGHUT_SIM",
+                trading_mode="paper",
+                apply=True,
+                max_gross_market_value=Decimal("2500"),
+                max_position_count=10,
+                generated_at=datetime(2026, 6, 1, 13, 40, tzinfo=timezone.utc),
+                persist_lineage=True,
+                lineage_session=session,
+            )
+
+            self.assertEqual(payload["status"], "submitted")
+            self.assertEqual(payload["lineage_result_count"], 1)
+            lineage_result = payload["lineage_results"][0]
+            self.assertEqual(
+                lineage_result["flatten_lineage_status"], "unlinked_no_source_lineage"
+            )
+            self.assertEqual(lineage_result["source_candidate_ids"], [])
+            self.assertEqual(lineage_result["source_hypothesis_ids"], [])
+            self.assertEqual(lineage_result["source_strategy_names"], [])
+            self.assertIsNone(lineage_result["source_decision_mode"])
+            self.assertFalse(lineage_result["profit_proof_eligible"])
+            self.assertFalse(lineage_result["final_promotion_authorized"])
+
+            client_order_id = client.submitted[0]["client_order_id"]
+            close_decision = session.execute(
+                select(TradeDecision).where(
+                    TradeDecision.decision_hash == client_order_id
+                )
+            ).scalar_one()
+            decision_json = close_decision.decision_json
+            self.assertEqual(
+                decision_json["flatten_lineage_status"], "unlinked_no_source_lineage"
+            )
+            self.assertEqual(decision_json["source_candidate_ids"], [])
+            self.assertFalse(decision_json["profit_proof_eligible"])
+            close_execution = session.execute(
+                select(Execution).where(Execution.client_order_id == client_order_id)
+            ).scalar_one()
+            self.assertEqual(close_execution.trade_decision_id, close_decision.id)
+
+    def test_lineage_helpers_cover_empty_string_and_params_sources(self) -> None:
+        self.assertEqual(flatten_script._lineage_values(" H-PAIRS-01 "), ["H-PAIRS-01"])
+        self.assertEqual(flatten_script._lineage_values(None), [])
+        self.assertEqual(
+            flatten_script._decision_mapping(
+                cast(Any, SimpleNamespace(decision_json=[]))
+            ),
+            {},
+        )
+        payload = {"params": {"source_candidate_ids": ["candidate-from-params"]}}
+        self.assertEqual(
+            flatten_script._decision_params(payload),
+            {"source_candidate_ids": ["candidate-from-params"]},
+        )
+        self.assertIsNone(
+            flatten_script._first_lineage_bool(
+                {"profit_proof_eligible": "unknown"}, {}, "profit_proof_eligible"
+            )
+        )
+        self.assertEqual(
+            flatten_script._lineage_payload(
+                client_order_id="flatten-client-id",
+                lineage_status="lineage_persist_failed",
+                decision=None,
+                execution=None,
+                lineage=None,
+                error=RuntimeError("lineage unavailable"),
+            )["error_type"],
+            "RuntimeError",
+        )
+
+    def test_no_lineage_reuses_cleanup_strategy_and_existing_close_decision(
+        self,
+    ) -> None:
+        client = FakeFlattenClient(
+            [{"symbol": "AMAT", "qty": "2", "side": "long", "current_price": "100"}]
+        )
+        generated_at = datetime(2026, 6, 1, 13, 45, tzinfo=timezone.utc)
+        with _memory_session() as session:
+            first_payload = flatten_paper_account_positions(
+                client=client,
+                account_label="TORGHUT_SIM",
+                expected_account_label="TORGHUT_SIM",
+                trading_mode="paper",
+                apply=True,
+                max_gross_market_value=Decimal("2500"),
+                max_position_count=10,
+                generated_at=generated_at,
+                persist_lineage=True,
+                lineage_session=session,
+            )
+            second_client_order_id = flatten_script._flatten_client_order_id(
+                generated_at=generated_at,
+                symbol="AMAT",
+            )
+            position = flatten_script.FlattenPosition(
+                symbol="AMAT",
+                qty=Decimal("2"),
+                side="long",
+                market_value=Decimal("200"),
+                reference_price=Decimal("100"),
+            )
+            existing_decision, _ = flatten_script._persist_close_decision(
+                session,
+                account_label="TORGHUT_SIM",
+                position=position,
+                client_order_id=second_client_order_id,
+                order_type="market",
+                limit_price=None,
+            )
+            reused_decision, _ = flatten_script._persist_close_decision(
+                session,
+                account_label="TORGHUT_SIM",
+                position=position,
+                client_order_id=second_client_order_id,
+                order_type="market",
+                limit_price=None,
+            )
+
+            self.assertEqual(first_payload["lineage_result_count"], 1)
+            self.assertEqual(existing_decision.id, reused_decision.id)
+            cleanup_strategies = (
+                session.execute(
+                    select(Strategy).where(
+                        Strategy.name == flatten_script.FLATTEN_CLEANUP_STRATEGY_NAME
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            self.assertEqual(len(cleanup_strategies), 1)
+
+    def test_persist_lineage_rejection_marks_close_decision_rejected(self) -> None:
+        client = RejectingFlattenClient(
+            [{"symbol": "AMAT", "qty": "2", "side": "long", "current_price": "100"}]
+        )
+        with _memory_session() as session:
+            strategy = _source_strategy(session)
+            _source_decision(session, strategy)
+            payload = flatten_paper_account_positions(
+                client=client,
+                account_label="TORGHUT_SIM",
+                expected_account_label="TORGHUT_SIM",
+                trading_mode="paper",
+                apply=True,
+                max_gross_market_value=Decimal("2500"),
+                max_position_count=10,
+                generated_at=datetime(2026, 6, 1, 13, 50, tzinfo=timezone.utc),
+                persist_lineage=True,
+                lineage_session=session,
+            )
+
+            self.assertEqual(payload["status"], "failed_close_orders")
+            self.assertEqual(payload["lineage_result_count"], 1)
+            self.assertEqual(
+                payload["lineage_results"][0]["flatten_lineage_status"],
+                "linked_source_lineage",
+            )
+            decision_id = payload["lineage_results"][0]["trade_decision_id"]
+            close_decision = session.get(TradeDecision, decision_id)
+            self.assertIsNotNone(close_decision)
+            self.assertEqual(close_decision.status, "rejected")
+
+    def test_lineage_persist_failure_is_reported_without_blocking_flatten(self) -> None:
+        client = FakeFlattenClient(
+            [{"symbol": "AMAT", "qty": "2", "side": "long", "current_price": "100"}]
+        )
+        with _memory_session() as session:
+            with patch.object(
+                flatten_script,
+                "_persist_close_decision",
+                side_effect=RuntimeError("db unavailable"),
+            ):
+                payload = flatten_paper_account_positions(
+                    client=client,
+                    account_label="TORGHUT_SIM",
+                    expected_account_label="TORGHUT_SIM",
+                    trading_mode="paper",
+                    apply=True,
+                    max_gross_market_value=Decimal("2500"),
+                    max_position_count=10,
+                    generated_at=datetime(2026, 6, 1, 13, 55, tzinfo=timezone.utc),
+                    persist_lineage=True,
+                    lineage_session=session,
+                )
+
+            self.assertEqual(payload["status"], "submitted")
+            self.assertEqual(client.submitted[0]["symbol"], "AMAT")
+            self.assertEqual(
+                payload["lineage_results"][0]["flatten_lineage_status"],
+                "lineage_persist_failed",
+            )
+            self.assertEqual(
+                payload["lineage_results"][0]["error_type"], "RuntimeError"
+            )
+
+    def test_execution_sync_failure_is_reported_without_rejecting_submitted_order(
+        self,
+    ) -> None:
+        client = MissingOrderIdFlattenClient(
+            [{"symbol": "AMAT", "qty": "2", "side": "long", "current_price": "100"}]
+        )
+        with _memory_session() as session:
+            payload = flatten_paper_account_positions(
+                client=client,
+                account_label="TORGHUT_SIM",
+                expected_account_label="TORGHUT_SIM",
+                trading_mode="paper",
+                apply=True,
+                max_gross_market_value=Decimal("2500"),
+                max_position_count=10,
+                generated_at=datetime(2026, 6, 1, 14, 0, tzinfo=timezone.utc),
+                persist_lineage=True,
+                lineage_session=session,
+            )
+
+            self.assertEqual(payload["status"], "submitted")
+            self.assertEqual(payload["submitted_order_count"], 1)
+            self.assertEqual(payload["rejected_close_order_count"], 0)
+            self.assertEqual(
+                payload["lineage_results"][0]["flatten_lineage_status"],
+                "lineage_persist_failed",
+            )
+            self.assertEqual(payload["lineage_results"][0]["error_type"], "ValueError")
 
     def test_extended_hours_limit_orders_use_guarded_reference_prices(self) -> None:
         client = FakeFlattenClient(
@@ -525,6 +943,7 @@ class TestFlattenPaperAccountPositions(TestCase):
             "--poll-seconds",
             "3",
             "--persist-snapshot",
+            "--persist-lineage",
             "--apply",
             "--json",
         ]
@@ -543,6 +962,7 @@ class TestFlattenPaperAccountPositions(TestCase):
         self.assertEqual(args.wait_flat_seconds, 45)
         self.assertEqual(args.poll_seconds, 3)
         self.assertTrue(args.persist_snapshot)
+        self.assertTrue(args.persist_lineage)
         self.assertTrue(args.apply)
         self.assertTrue(args.json)
 
