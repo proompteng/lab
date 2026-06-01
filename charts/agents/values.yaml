@@ -316,6 +316,10 @@ controller:
   logRetentionSeconds: 604800
   jobTtlSeconds: 600
   jobTtlSecondsAfterFinished: 600
+  runtimeDebrisCleanup:
+    mode: disabled
+    orphanPodRetentionSeconds: 86400
+    maxDeletesPerNamespace: 25
   authSecret:
     name: ''
     key: auth.json

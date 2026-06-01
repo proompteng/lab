@@ -8,6 +8,9 @@ export type AgentsMetricsSink = {
   recordAgentRunResyncAdoptions?: (count: number, attributes?: MetricsAttributes) => void
   recordAgentRunUntouchedBacklog?: (count: number, attributes?: MetricsAttributes) => void
   recordAgentRunUntouchedOldestAgeSeconds?: (ageSeconds: number, attributes?: MetricsAttributes) => void
+  recordRuntimeDebrisDeletedPods?: (count: number, attributes?: MetricsAttributes) => void
+  recordRuntimeDebrisDeleteErrors?: (count: number, attributes?: MetricsAttributes) => void
+  recordRuntimeDebrisOrphanPods?: (count: number, attributes?: MetricsAttributes) => void
   recordAgentCommsBatch?: (count: number, durationMs: number, attributes?: MetricsAttributes) => void
   recordAgentCommsError?: (stage: string, attributes?: MetricsAttributes) => void
   recordReconcileDurationMs?: (durationMs: number, attributes?: MetricsAttributes) => void
@@ -64,6 +67,18 @@ const METRICS = {
   agentRunUntouchedOldestAgeSeconds: {
     name: 'agents_agentrun_untouched_oldest_age_seconds',
     help: 'Observed age in seconds of the oldest untouched AgentRun.',
+  },
+  runtimeDebrisDeletedPods: {
+    name: 'agents_runtime_debris_deleted_pods_total',
+    help: 'Count of stale terminal runtime Pods deleted by the Agents controller.',
+  },
+  runtimeDebrisDeleteErrors: {
+    name: 'agents_runtime_debris_delete_errors_total',
+    help: 'Count of stale terminal runtime Pod deletion errors observed by the Agents controller.',
+  },
+  runtimeDebrisOrphanPods: {
+    name: 'agents_runtime_debris_orphan_pods',
+    help: 'Observed count of stale terminal runtime Pods eligible for cleanup.',
   },
   agentCommsInserted: {
     name: 'agents_agent_comms_inserted_total',
@@ -194,6 +209,23 @@ export const recordAgentRunUntouchedBacklog = (count: number, attributes?: Metri
 export const recordAgentRunUntouchedOldestAgeSeconds = (ageSeconds: number, attributes?: MetricsAttributes) => {
   recordHistogram(METRICS.agentRunUntouchedOldestAgeSeconds, ageSeconds, attributes)
   externalMetricsSink.recordAgentRunUntouchedOldestAgeSeconds?.(ageSeconds, attributes)
+}
+
+export const recordRuntimeDebrisDeletedPods = (count: number, attributes?: MetricsAttributes) => {
+  if (count <= 0) return
+  recordCounter(METRICS.runtimeDebrisDeletedPods, count, attributes)
+  externalMetricsSink.recordRuntimeDebrisDeletedPods?.(count, attributes)
+}
+
+export const recordRuntimeDebrisDeleteErrors = (count: number, attributes?: MetricsAttributes) => {
+  if (count <= 0) return
+  recordCounter(METRICS.runtimeDebrisDeleteErrors, count, attributes)
+  externalMetricsSink.recordRuntimeDebrisDeleteErrors?.(count, attributes)
+}
+
+export const recordRuntimeDebrisOrphanPods = (count: number, attributes?: MetricsAttributes) => {
+  recordHistogram(METRICS.runtimeDebrisOrphanPods, count, attributes)
+  externalMetricsSink.recordRuntimeDebrisOrphanPods?.(count, attributes)
 }
 
 export const recordAgentCommsBatch = (count: number, durationMs: number, attributes?: MetricsAttributes) => {

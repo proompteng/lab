@@ -120,6 +120,10 @@ controller:
   agentRunRetentionSeconds: 604800
   jobTtlSeconds: 86400
   jobTtlSecondsAfterFinished: 86400
+  runtimeDebrisCleanup:
+    mode: delete
+    orphanPodRetentionSeconds: 86400
+    maxDeletesPerNamespace: 25
   logRetentionSeconds: 604800
   authSecret:
     name: codex-auth
