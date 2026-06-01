@@ -458,9 +458,7 @@ def _target_probe_symbol_actions(
             elif sell_count < buy_count:
                 action = "sell"
             else:
-                action = (
-                    first_action if balanced_seed_index % 2 == 0 else second_action
-                )
+                action = first_action if balanced_seed_index % 2 == 0 else second_action
                 balanced_seed_index += 1
             actions[symbol] = action
             if action == "buy":
@@ -820,6 +818,13 @@ class SimpleTradingPipeline(TradingPipeline):
                 positions=positions,
                 allowed_symbols=allowed_symbols,
             )
+            self._process_paper_route_target_source_decisions(
+                session=session,
+                strategies=strategies,
+                account=account,
+                positions=positions,
+                allowed_symbols=allowed_symbols,
+            )
             quality_signals = self._quality_gate_signals(
                 signals=batch.signals,
                 strategies=strategies,
@@ -836,13 +841,6 @@ class SimpleTradingPipeline(TradingPipeline):
                 batch=batch,
                 strategies=strategies,
                 account_snapshot=account_snapshot,
-                account=account,
-                positions=positions,
-                allowed_symbols=allowed_symbols,
-            )
-            self._process_paper_route_target_source_decisions(
-                session=session,
-                strategies=strategies,
                 account=account,
                 positions=positions,
                 allowed_symbols=allowed_symbols,
@@ -2585,6 +2583,66 @@ class SimpleTradingPipeline(TradingPipeline):
         )
         return symbols, load_error, targets
 
+    def _active_bounded_paper_route_target_window(
+        self,
+        decision: StrategyDecision,
+    ) -> dict[str, object] | None:
+        if settings.trading_mode != "paper":
+            return None
+        if not settings.trading_simple_paper_route_probe_enabled:
+            return None
+        symbol = decision.symbol.strip().upper()
+        if not symbol:
+            return None
+
+        target_symbols, target_plan_error, targets = (
+            self._external_paper_route_target_probe_symbols_cached()
+        )
+        if target_plan_error or symbol not in target_symbols:
+            return None
+
+        now = trading_now(account_label=self.account_label).astimezone(timezone.utc)
+        active_targets: list[dict[str, Any]] = []
+        active_windows: list[dict[str, str]] = []
+        window_starts: list[datetime] = []
+        window_ends: list[datetime] = []
+        for target in targets:
+            if not _target_requires_bounded_sim_collection_gate(target):
+                continue
+            if symbol not in _target_symbols(target):
+                continue
+            window = _target_probe_window(target)
+            if window is None:
+                continue
+            window_start, window_end = window
+            if now < window_start or now >= window_end:
+                continue
+            active_targets.append(dict(target))
+            window_starts.append(window_start)
+            window_ends.append(window_end)
+            active_windows.append(
+                {
+                    "window_start": window_start.isoformat(),
+                    "window_end": window_end.isoformat(),
+                }
+            )
+        if not active_targets:
+            return None
+        gate: dict[str, object] = {
+            "mode": "paper_route_target_window_submission_gate",
+            "symbol": symbol,
+            "account_label": self.account_label,
+            "target_count": len(active_targets),
+            "target_symbols": sorted(target_symbols),
+            "active_windows": active_windows[:5],
+            "requires_scoped_source_decision": True,
+        }
+        if window_starts and window_ends:
+            gate["window_start"] = min(window_starts).isoformat()
+            gate["window_end"] = max(window_ends).isoformat()
+        gate.update(_target_plan_lineage(active_targets, symbol))
+        return gate
+
     @staticmethod
     def _paper_route_target_strategy(
         target: Mapping[str, Any],
@@ -2644,6 +2702,8 @@ class SimpleTradingPipeline(TradingPipeline):
             "source_decision_mode": ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
             "profit_proof_eligible": False,
             "source_kind": _safe_text(target.get("source_kind")),
+            "account_label": _safe_text(target.get("account_label")),
+            "source_account_label": _safe_text(target.get("source_account_label")),
             "account_stage_runtime_identity": {
                 "account_label": _safe_text(target.get("account_label")),
                 "source_account_label": _safe_text(target.get("source_account_label")),
@@ -2671,10 +2731,11 @@ class SimpleTradingPipeline(TradingPipeline):
                 if str(item).strip()
             ],
             "bounded_evidence_collection_authorized": bounded_collection_authorized,
-            "bounded_live_paper_collection_authorized": (
-                bounded_collection_authorized
-            ),
+            "bounded_live_paper_collection_authorized": (bounded_collection_authorized),
             "canary_collection_authorized": bounded_collection_authorized,
+            "evidence_collection_ok": _target_truthy(
+                target.get("evidence_collection_ok")
+            ),
             "bounded_evidence_collection_scope": (
                 _safe_text(target.get("bounded_evidence_collection_scope"))
                 or "paper_route_probe_next_session_only"
@@ -3688,6 +3749,32 @@ class SimpleTradingPipeline(TradingPipeline):
                 submission_stage="blocked_emergency_stop",
             )
             return False
+        active_target_window = self._active_bounded_paper_route_target_window(decision)
+        if active_target_window is not None:
+            collection_metadata = _bounded_sim_collection_metadata_from_decision(
+                decision,
+                account_label=self.account_label,
+                trading_mode=settings.trading_mode,
+            )
+            exit_metadata = self._paper_route_probe_exit_metadata(decision)
+            if collection_metadata is None and exit_metadata is None:
+                self._block_decision_submission(
+                    session=session,
+                    decision=decision,
+                    decision_row=decision_row,
+                    reason="paper_route_target_window_requires_scoped_source_decision",
+                    submission_stage="blocked_paper_route_target_window_unscoped",
+                    capital_stage="shadow",
+                    extra_metadata={
+                        "paper_route_target_window": active_target_window,
+                        "simple_lane": {
+                            "submit_enabled": settings.trading_simple_submit_enabled,
+                            "bounded_sim_collection_required": True,
+                            "bounded_sim_collection_bypass": False,
+                        },
+                    },
+                )
+                return False
         return True
 
     def _execution_client_for_symbol(
