@@ -435,9 +435,9 @@ class TestRuntimeLedgerProofPacket(TestCase):
             "0.02",
         )
         self.assertEqual(
-            result["checks"]["runtime_ledger_daily_distribution_authority"][
-                "observed"
-            ]["median_daily_net_pnl_after_costs"],
+            result["checks"]["runtime_ledger_daily_distribution_authority"]["observed"][
+                "median_daily_net_pnl_after_costs"
+            ],
             "500",
         )
         self.assertEqual(
@@ -454,7 +454,9 @@ class TestRuntimeLedgerProofPacket(TestCase):
             result["target"]["min_runtime_ledger_median_daily_net_pnl_after_costs"],
             "250",
         )
-        self.assertEqual(result["target"]["max_runtime_ledger_intraday_drawdown"], "1500")
+        self.assertEqual(
+            result["target"]["max_runtime_ledger_intraday_drawdown"], "1500"
+        )
         self.assertEqual(
             result["target"]["target_implied_avg_daily_filled_notional"],
             "384615.3846153846153846153846",
@@ -462,6 +464,75 @@ class TestRuntimeLedgerProofPacket(TestCase):
         self.assertEqual(result["proof_mode"], "authority")
         self.assertTrue(result["final_authority_ok"])
         self.assertFalse(result["evidence_collection_only"])
+
+    def test_packet_prefers_importable_paper_route_plan_over_next_session_plan(
+        self,
+    ) -> None:
+        evidence = _paper_route_evidence()
+        import_plan = cast(
+            dict[str, object],
+            evidence["next_paper_route_runtime_window_targets"],
+        )
+        import_plan["purpose"] = (
+            "latest_closed_session_paper_route_runtime_window_import"
+        )
+        evidence["runtime_window_import_plan"] = import_plan
+        evidence["next_paper_route_runtime_window_targets"] = {
+            "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+            "target_count": 1,
+            "purpose": "next_session_paper_route_runtime_window_evidence_collection",
+            "session_readiness": {
+                "import_ready": False,
+                "import_blockers": ["paper_route_session_window_not_open"],
+            },
+            "runtime_window_import_handoff": {
+                "import_ready": False,
+                "import_blockers": ["paper_route_session_window_not_open"],
+            },
+            "targets": [
+                {
+                    "candidate_id": "future-candidate",
+                    "hypothesis_id": "H-FUTURE",
+                    "observed_stage": "paper",
+                    "strategy_family": "microbar_cross_sectional_pairs",
+                    "strategy_name": "future-paper-route-candidate",
+                    "account_label": "TORGHUT_SIM",
+                    "source_manifest_ref": "config/trading/hypotheses/h-future.json",
+                    "window_start": "2026-05-27T13:30:00+00:00",
+                    "window_end": "2026-05-27T20:00:00+00:00",
+                    "dependency_quorum_decision": "allow",
+                    "continuity_ok": "true",
+                    "drift_ok": "true",
+                    "runtime_window_import_health_gate": {
+                        "dependency_quorum_decision": "allow",
+                        "continuity_ok": "true",
+                        "drift_ok": "true",
+                        "blockers": [],
+                    },
+                }
+            ],
+        }
+
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            paper_route_evidence=evidence,
+            runtime_window_import=_runtime_import(),
+            completion_status=_completion(),
+            min_runtime_ledger_net_pnl=Decimal("500"),
+            min_runtime_ledger_daily_net_pnl=Decimal("500"),
+            min_runtime_ledger_trading_days=1,
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(
+            result["evidence"]["paper_route_target_plan"]["session_window"]["start"],
+            "2026-05-26T13:30:00+00:00",
+        )
+        self.assertEqual(
+            result["candidate"]["candidate_id"],
+            "c88421d619759b2cfaa6f4d0",
+        )
 
     def test_authority_packet_requires_daily_distribution_and_scale(self) -> None:
         result = packet.build_runtime_ledger_proof_packet(
@@ -480,9 +551,9 @@ class TestRuntimeLedgerProofPacket(TestCase):
 
         self.assertFalse(result["ok"])
         self.assertFalse(result["final_authority_ok"])
-        daily_blockers = result["checks"]["runtime_ledger_daily_distribution_authority"][
-            "blockers"
-        ]
+        daily_blockers = result["checks"][
+            "runtime_ledger_daily_distribution_authority"
+        ]["blockers"]
         self.assertIn(
             "runtime_ledger_median_daily_net_pnl_after_costs_below_floor",
             daily_blockers,

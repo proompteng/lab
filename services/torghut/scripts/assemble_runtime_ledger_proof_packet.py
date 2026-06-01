@@ -476,9 +476,14 @@ def _paper_route_target_plan(
     paper_route_evidence: Mapping[str, Any] | None,
 ) -> Mapping[str, Any]:
     evidence = paper_route_evidence or {}
-    plan = _mapping(evidence.get("next_paper_route_runtime_window_targets"))
-    if plan:
-        return plan
+    for key in (
+        "runtime_window_import_plan",
+        "latest_closed_paper_route_runtime_window_targets",
+        "next_paper_route_runtime_window_targets",
+    ):
+        plan = _mapping(evidence.get(key))
+        if _paper_route_targets(plan):
+            return plan
     return _mapping(evidence.get("runtime_window_import_plan"))
 
 
