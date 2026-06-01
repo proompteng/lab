@@ -37,11 +37,15 @@ class TestTigerBeetleStatus(TestCase):
         self._orig_required = settings.tigerbeetle_required
         self._orig_journal_enabled = settings.tigerbeetle_journal_enabled
         self._orig_reconcile_required = settings.tigerbeetle_reconcile_required
+        self._orig_reconcile_max_age_seconds = (
+            settings.tigerbeetle_reconcile_max_age_seconds
+        )
         self._orig_timeout = settings.tigerbeetle_health_timeout_seconds
         settings.tigerbeetle_enabled = False
         settings.tigerbeetle_required = False
         settings.tigerbeetle_journal_enabled = False
         settings.tigerbeetle_reconcile_required = False
+        settings.tigerbeetle_reconcile_max_age_seconds = 3600
         settings.tigerbeetle_health_timeout_seconds = 1.0
 
     def tearDown(self) -> None:
@@ -49,6 +53,9 @@ class TestTigerBeetleStatus(TestCase):
         settings.tigerbeetle_required = self._orig_required
         settings.tigerbeetle_journal_enabled = self._orig_journal_enabled
         settings.tigerbeetle_reconcile_required = self._orig_reconcile_required
+        settings.tigerbeetle_reconcile_max_age_seconds = (
+            self._orig_reconcile_max_age_seconds
+        )
         settings.tigerbeetle_health_timeout_seconds = self._orig_timeout
 
     def test_disabled_tigerbeetle_status_is_non_blocking(self) -> None:
@@ -271,3 +278,45 @@ class TestTigerBeetleStatus(TestCase):
         latest_reconciliation = payload["latest_reconciliation"]
         assert isinstance(latest_reconciliation, dict)
         self.assertEqual(latest_reconciliation["ref_counts"], {"transfer_ref_count": 1})
+
+    def test_stale_reconciliation_is_fail_closed_when_required(self) -> None:
+        settings.tigerbeetle_enabled = True
+        settings.tigerbeetle_reconcile_required = True
+        settings.tigerbeetle_reconcile_max_age_seconds = 60
+        health = TigerBeetleHealth(
+            enabled=True,
+            required=False,
+            ok=True,
+            cluster_id=2001,
+            replica_addresses=["tb:3000"],
+            last_error=None,
+        )
+        stale_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+        with Session(self.engine) as session:
+            session.add(
+                TigerBeetleReconciliationRun(
+                    cluster_id=2001,
+                    started_at=stale_at,
+                    finished_at=stale_at,
+                    status="ok",
+                    checked_transfer_count=1,
+                    missing_transfer_count=0,
+                    mismatched_transfer_count=0,
+                    source_missing_count=0,
+                    payload_json={
+                        "blockers": [],
+                        "ref_counts": {"transfer_ref_count": 1},
+                    },
+                )
+            )
+            session.flush()
+            with patch("app.main.check_tigerbeetle_health", return_value=health):
+                payload = _build_tigerbeetle_ledger_status(session)
+
+        self.assertFalse(payload["ok"])
+        self.assertFalse(payload["reconciliation_ok"])
+        self.assertTrue(payload["reconciliation_stale"])
+        self.assertGreater(payload["reconciliation_age_seconds"], 60)
+        self.assertEqual(payload["reconciliation_max_age_seconds"], 60)
+        self.assertIn("tigerbeetle_reconciliation_stale", payload["blockers"])

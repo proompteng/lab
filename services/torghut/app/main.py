@@ -180,6 +180,7 @@ from .trading.simulation_progress import (
 from .trading.time_source import trading_time_status
 from .trading.tigerbeetle_client import check_tigerbeetle_health
 from .trading.tigerbeetle_reconcile import (
+    BLOCKER_RECONCILIATION_STALE,
     latest_tigerbeetle_reconciliation_payload,
     tigerbeetle_ref_counts,
 )
@@ -547,6 +548,7 @@ def _readiness_dependency_cache_key(include_database_contract: bool) -> str:
             settings.tigerbeetle_enabled,
             settings.tigerbeetle_required,
             settings.tigerbeetle_reconcile_required,
+            settings.tigerbeetle_reconcile_max_age_seconds,
         )
     )
     return f"readyz:{trading_mode}:{cache_mode}:{int(include_database_contract)}:{tigerbeetle_mode}"
@@ -5471,12 +5473,35 @@ def _build_tigerbeetle_ledger_status(session: Session) -> dict[str, object]:
             blockers.append("tigerbeetle_reconciliation_missing")
     else:
         reconciliation_ok = bool(latest_reconciliation.get("ok"))
+        reconciliation_age_seconds = _tigerbeetle_status_int(
+            latest_reconciliation.get("age_seconds")
+        )
+        reconciliation_max_age_seconds = max(
+            1,
+            int(settings.tigerbeetle_reconcile_max_age_seconds),
+        )
+        if reconciliation_age_seconds > reconciliation_max_age_seconds:
+            reconciliation_ok = False
+            blockers.append(BLOCKER_RECONCILIATION_STALE)
         raw_blockers = latest_reconciliation.get("blockers")
         if isinstance(raw_blockers, Sequence) and not isinstance(
             raw_blockers, (str, bytes, bytearray)
         ):
             blocker_items = cast(Sequence[object], raw_blockers)
             blockers.extend(str(item) for item in blocker_items)
+    reconciliation_age_seconds = (
+        _tigerbeetle_status_int(latest_reconciliation.get("age_seconds"))
+        if latest_reconciliation is not None
+        else None
+    )
+    reconciliation_max_age_seconds = max(
+        1,
+        int(settings.tigerbeetle_reconcile_max_age_seconds),
+    )
+    reconciliation_stale = (
+        reconciliation_age_seconds is not None
+        and reconciliation_age_seconds > reconciliation_max_age_seconds
+    )
     if runtime_ledger_missing_signed_ref_count:
         reconciliation_ok = False
         blockers.append("tigerbeetle_runtime_ledger_signed_refs_missing")
@@ -5500,6 +5525,9 @@ def _build_tigerbeetle_ledger_status(session: Session) -> dict[str, object]:
         "ok": protocol_gate_ok and reconcile_gate_ok,
         "protocol_ok": bool(protocol.get("protocol_ok")),
         "reconciliation_ok": reconciliation_ok,
+        "reconciliation_age_seconds": reconciliation_age_seconds,
+        "reconciliation_max_age_seconds": reconciliation_max_age_seconds,
+        "reconciliation_stale": reconciliation_stale,
         "cluster_id": settings.tigerbeetle_cluster_id,
         "replica_addresses": protocol.get("replica_addresses", []),
         "last_error": protocol.get("last_error"),

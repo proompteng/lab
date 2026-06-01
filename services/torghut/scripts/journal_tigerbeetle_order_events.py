@@ -374,6 +374,8 @@ def _payload(
     )
     status = "ok" if failed == 0 and reconciliation_ok else "degraded"
     return {
+        "schema_version": "torghut.tigerbeetle-journal-order-events.v1",
+        "ok": status == "ok",
         "status": status,
         "fail_on_degraded": bool(args.fail_on_degraded),
         "dry_run": bool(args.dry_run),

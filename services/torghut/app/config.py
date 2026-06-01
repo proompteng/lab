@@ -306,6 +306,14 @@ class Settings(BaseSettings):
         alias="TORGHUT_TIGERBEETLE_RECONCILE_REQUIRED",
         description="Fail readiness when TigerBeetle reconciliation has blockers.",
     )
+    tigerbeetle_reconcile_max_age_seconds: int = Field(
+        default=3600,
+        alias="TORGHUT_TIGERBEETLE_RECONCILE_MAX_AGE_SECONDS",
+        description=(
+            "Maximum age of the latest TigerBeetle reconciliation run before "
+            "readiness marks ledger parity stale."
+        ),
+    )
     apca_api_key_id: Optional[str] = Field(default=None, alias="APCA_API_KEY_ID")
     apca_api_secret_key: Optional[str] = Field(
         default=None, alias="APCA_API_SECRET_KEY"
@@ -2660,6 +2668,10 @@ class Settings(BaseSettings):
             raise ValueError("TORGHUT_TIGERBEETLE_CLUSTER_ID must be > 0")
         if self.tigerbeetle_health_timeout_seconds <= 0:
             raise ValueError("TORGHUT_TIGERBEETLE_HEALTH_TIMEOUT_SECONDS must be > 0")
+        if self.tigerbeetle_reconcile_max_age_seconds <= 0:
+            raise ValueError(
+                "TORGHUT_TIGERBEETLE_RECONCILE_MAX_AGE_SECONDS must be > 0"
+            )
         if self.tigerbeetle_enabled and not self.tigerbeetle_replica_addresses:
             raise ValueError(
                 "TORGHUT_TIGERBEETLE_REPLICA_ADDRESSES is required when TigerBeetle is enabled"
