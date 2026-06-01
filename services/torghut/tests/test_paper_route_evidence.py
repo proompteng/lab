@@ -1189,6 +1189,101 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(clean_readiness["clean_target_count"], 1)
         self.assertEqual(clean_readiness["blockers"], [])
 
+    def test_clean_baseline_allows_collection_when_health_gate_blocks_promotion(
+        self,
+    ) -> None:
+        generated_at = datetime(2026, 5, 26, 13, 20, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            session.add(
+                Strategy(
+                    name="paper-route-candidate-v1",
+                    description="clean baseline source strategy",
+                    enabled=True,
+                    base_timeframe="1Sec",
+                    universe_type="static",
+                    universe_symbols=["AAPL", "AMZN"],
+                )
+            )
+            self._add_account_position_snapshot(
+                session,
+                account_label="TORGHUT_SIM",
+                as_of=generated_at - timedelta(seconds=30),
+                positions=[],
+            )
+            session.commit()
+
+            payload = build_paper_route_target_plan_payload(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "paper_route_probe_only",
+                    "blocked_reasons": [],
+                    "promotion_eligible_total": 0,
+                    "dependency_quorum_decision": "allow",
+                    "continuity_ok": "false",
+                    "continuity_reason": "signal_continuity_missing",
+                    "drift_ok": "false",
+                    "drift_reason": "drift_live_promotion_ineligible",
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "target_count": 1,
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-PAIRS-01",
+                                "candidate_id": "candidate-clean-but-not-promotable",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_pairs",
+                                "strategy_name": "paper-route-candidate-v1",
+                                "account_label": "TORGHUT_REPLAY",
+                                "source_kind": "durable_runtime_ledger_bucket",
+                                "source_manifest_ref": "config/trading/hypotheses/h-pairs.json",
+                                "dataset_snapshot_ref": "dataset://paper-route",
+                                "paper_probation_authorized": True,
+                                "promotion_allowed": False,
+                                "final_promotion_authorized": False,
+                                "max_notional": "0",
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "summary": {
+                        "paper_route_probe_eligible_symbols": ["AAPL", "AMZN"],
+                        "paper_route_probe_active_symbols": [],
+                    },
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": False,
+                        "next_session_max_notional": "25",
+                        "eligible_symbol_count": 2,
+                        "eligible_symbols": ["AAPL", "AMZN"],
+                        "blocking_reasons": [],
+                    },
+                },
+                generated_at=generated_at,
+            )
+
+        target = payload["next_paper_route_runtime_window_targets"]["targets"][0]
+        self.assertEqual(
+            target["runtime_window_import_health_gate"]["blockers"],
+            ["evidence_continuity_not_ok"],
+        )
+        self.assertEqual(
+            target["runtime_window_import_promotion_blockers"],
+            ["drift_checks_not_ok"],
+        )
+        self.assertTrue(target["evidence_collection_ok"])
+        self.assertTrue(target["bounded_evidence_collection_authorized"])
+        self.assertIn("evidence_continuity_not_ok", target["candidate_blockers"])
+        self.assertIn(
+            "evidence_continuity_not_ok",
+            target["runtime_ledger_target_metadata_blockers"],
+        )
+        self.assertFalse(target["promotion_allowed"])
+        self.assertFalse(target["final_promotion_allowed"])
+
     def test_missing_clean_baseline_blocks_bounded_collection_readiness(self) -> None:
         generated_at = datetime(2026, 5, 26, 13, 20, tzinfo=timezone.utc)
         with Session(self.engine) as session:

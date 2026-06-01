@@ -1748,7 +1748,6 @@ def _next_paper_route_runtime_window_targets(
         )
         evidence_collection_blockers = _unique_text_items(
             [
-                *health_gate_blockers,
                 *_unique_text_items(source_decision_readiness.get("blockers")),
                 *account_pre_session_blockers,
                 *clean_window_baseline_blockers,
@@ -1908,6 +1907,7 @@ def _next_paper_route_runtime_window_targets(
                     "paper_route_runtime_ledger_import_pending",
                     *_unique_text_items(target.get("candidate_blockers")),
                     *evidence_collection_blockers,
+                    *health_gate_blockers,
                     *health_gate_promotion_blockers,
                 ]
             ),
