@@ -13,6 +13,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.trading.order_feed import (
+    backfill_order_feed_events_from_executions,
     backfill_order_feed_source_windows,
     repair_order_feed_execution_links,
 )
@@ -26,6 +27,14 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--account-label", default=None)
     parser.add_argument("--batch-size", type=int, default=1000)
     parser.add_argument("--max-batches", type=int, default=1)
+    parser.add_argument(
+        "--backfill-execution-events",
+        action="store_true",
+        help=(
+            "Create non-cursor-authoritative execution_order_events/source windows "
+            "from durable executions that predate order-feed persistence."
+        ),
+    )
     parser.add_argument(
         "--apply",
         action="store_true",
@@ -65,12 +74,39 @@ def _payload(
         "execution_link_events_without_execution": sum(
             batch["execution_link_events_without_execution"] for batch in batches
         ),
+        "execution_event_backfill_candidates": sum(
+            batch["execution_event_backfill_candidates"] for batch in batches
+        ),
+        "execution_event_backfill_events_created": sum(
+            batch["execution_event_backfill_events_created"] for batch in batches
+        ),
+        "execution_event_backfill_source_windows_created": sum(
+            batch["execution_event_backfill_source_windows_created"]
+            for batch in batches
+        ),
+        "execution_event_backfill_skipped_existing_event": sum(
+            batch["execution_event_backfill_skipped_existing_event"]
+            for batch in batches
+        ),
+        "execution_event_backfill_skipped_missing_trade_decision": sum(
+            batch["execution_event_backfill_skipped_missing_trade_decision"]
+            for batch in batches
+        ),
+        "execution_event_backfill_skipped_missing_order_identity": sum(
+            batch["execution_event_backfill_skipped_missing_order_identity"]
+            for batch in batches
+        ),
+        "execution_event_backfill_skipped_source_offset_collision": sum(
+            batch["execution_event_backfill_skipped_source_offset_collision"]
+            for batch in batches
+        ),
     }
     return {
         "status": "ok",
         "apply": bool(args.apply),
         "dsn_env": args.dsn_env,
         "account_label": args.account_label,
+        "backfill_execution_events": bool(args.backfill_execution_events),
         "batch_size": max(1, min(int(args.batch_size), 5000)),
         "max_batches": max(1, int(args.max_batches)),
         "started_at": started_at.isoformat(),
@@ -127,6 +163,23 @@ def main() -> int:
                 account_label=args.account_label,
                 limit=batch_size,
             )
+            execution_event_backfill_batch = (
+                backfill_order_feed_events_from_executions(
+                    session,
+                    account_label=args.account_label,
+                    limit=batch_size,
+                )
+                if args.backfill_execution_events
+                else {
+                    "selected": 0,
+                    "events_created": 0,
+                    "source_windows_created": 0,
+                    "skipped_existing_event": 0,
+                    "skipped_missing_trade_decision": 0,
+                    "skipped_missing_order_identity": 0,
+                    "skipped_source_offset_collision": 0,
+                }
+            )
             batch = {
                 **source_window_batch,
                 "execution_link_candidates": execution_link_batch["selected"],
@@ -140,6 +193,27 @@ def main() -> int:
                 "execution_link_events_without_execution": execution_link_batch[
                     "events_without_execution"
                 ],
+                "execution_event_backfill_candidates": execution_event_backfill_batch[
+                    "selected"
+                ],
+                "execution_event_backfill_events_created": execution_event_backfill_batch[
+                    "events_created"
+                ],
+                "execution_event_backfill_source_windows_created": (
+                    execution_event_backfill_batch["source_windows_created"]
+                ),
+                "execution_event_backfill_skipped_existing_event": (
+                    execution_event_backfill_batch["skipped_existing_event"]
+                ),
+                "execution_event_backfill_skipped_missing_trade_decision": (
+                    execution_event_backfill_batch["skipped_missing_trade_decision"]
+                ),
+                "execution_event_backfill_skipped_missing_order_identity": (
+                    execution_event_backfill_batch["skipped_missing_order_identity"]
+                ),
+                "execution_event_backfill_skipped_source_offset_collision": (
+                    execution_event_backfill_batch["skipped_source_offset_collision"]
+                ),
             }
             batches.append(batch)
             if args.apply:
@@ -152,6 +226,8 @@ def main() -> int:
             if (
                 int(source_window_batch.get("selected") or 0) < batch_size
                 and int(execution_link_batch.get("selected") or 0) < batch_size
+                and int(execution_event_backfill_batch.get("selected") or 0)
+                < batch_size
             ):
                 break
 

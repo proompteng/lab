@@ -37,11 +37,13 @@ from app.trading.tigerbeetle_ledger_model import (
     TRANSFER_KIND_FILL_POST,
 )
 from app.trading.order_feed import (
+    EXECUTION_RAW_ORDER_SOURCE_WINDOW_REVISION,
     HISTORICAL_ORDER_EVENT_SOURCE_WINDOW_REVISION,
     ORDER_FEED_SOURCE_REVISION,
     NormalizedOrderEvent,
     OrderFeedIngestor,
     apply_order_event_to_execution,
+    backfill_order_feed_events_from_executions,
     backfill_order_feed_source_windows,
     latest_order_event_for_execution,
     link_order_events_to_execution,
@@ -1455,6 +1457,215 @@ class TestOrderFeed(TestCase):
         self.assertEqual(first_result["events_linked"], 2)
         self.assertEqual(second_result["events_linked"], 2)
         self.assertEqual(linked_count, 4)
+
+    def test_backfill_order_feed_events_from_executions_links_live_account_source(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            execution = self._seed_execution(
+                session,
+                account_label="PA3SX7FYNUTF",
+                order_id="live-order-1",
+                client_order_id="live-client-1",
+            )
+            execution.status = "filled"
+            execution.filled_qty = Decimal("1")
+            execution.avg_fill_price = Decimal("191.25")
+            execution.raw_order = {
+                "id": "live-order-1",
+                "client_order_id": "live-client-1",
+                "status": "filled",
+            }
+            execution_id = execution.id
+            trade_decision_id = execution.trade_decision_id
+            session.add(execution)
+            session.commit()
+
+            result = backfill_order_feed_events_from_executions(
+                session,
+                account_label="PA3SX7FYNUTF",
+                limit=10,
+            )
+            session.commit()
+            event = session.execute(select(ExecutionOrderEvent)).scalar_one()
+            source_window = session.execute(select(OrderFeedSourceWindow)).scalar_one()
+
+        self.assertEqual(
+            result,
+            {
+                "selected": 1,
+                "events_created": 1,
+                "source_windows_created": 1,
+                "skipped_existing_event": 0,
+                "skipped_missing_trade_decision": 0,
+                "skipped_missing_order_identity": 0,
+                "skipped_source_offset_collision": 0,
+            },
+        )
+        self.assertEqual(event.execution_id, execution_id)
+        self.assertEqual(event.trade_decision_id, trade_decision_id)
+        self.assertEqual(event.source_window_id, source_window.id)
+        self.assertEqual(event.alpaca_account_label, "PA3SX7FYNUTF")
+        self.assertEqual(event.event_type, "fill")
+        self.assertEqual(event.status, "filled")
+        self.assertEqual(event.filled_qty, Decimal("1.00000000"))
+        self.assertEqual(event.avg_fill_price, Decimal("191.25000000"))
+        self.assertIsNotNone(event.source_offset)
+        self.assertEqual(
+            source_window.source_revision,
+            EXECUTION_RAW_ORDER_SOURCE_WINDOW_REVISION,
+        )
+        self.assertEqual(source_window.status, "inserted")
+        self.assertEqual(source_window.payload_json["cursor_authority"], False)
+        self.assertEqual(source_window.payload_json["execution_id"], str(execution_id))
+        self.assertEqual(source_window.unlinked_execution_count, 0)
+        self.assertEqual(source_window.unlinked_decision_count, 0)
+
+    def test_execution_event_backfill_filters_existing_order_feed_lifecycle(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            execution = self._seed_execution(session, account_label="PA3SX7FYNUTF")
+            session.add(
+                ExecutionOrderEvent(
+                    event_fingerprint="existing-live-fill",
+                    source_topic="torghut.trade-updates.v2",
+                    source_partition=0,
+                    source_offset=101,
+                    alpaca_account_label="PA3SX7FYNUTF",
+                    event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+                    symbol="AAPL",
+                    alpaca_order_id=execution.alpaca_order_id,
+                    client_order_id=execution.client_order_id,
+                    event_type="fill",
+                    status="filled",
+                    raw_event={"event": "fill"},
+                    execution_id=execution.id,
+                    trade_decision_id=execution.trade_decision_id,
+                )
+            )
+            session.commit()
+
+            result = backfill_order_feed_events_from_executions(
+                session,
+                account_label="PA3SX7FYNUTF",
+                limit=10,
+            )
+            event_count = session.scalar(select(func.count(ExecutionOrderEvent.id)))
+
+        self.assertEqual(result["selected"], 0)
+        self.assertEqual(result["events_created"], 0)
+        self.assertEqual(result["skipped_existing_event"], 0)
+        self.assertEqual(event_count, 1)
+
+    def test_execution_event_backfill_handles_race_and_offset_collision(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            self._seed_execution(
+                session,
+                account_label="PA3SX7FYNUTF",
+                order_id="race-order",
+                client_order_id="race-client",
+            )
+            with patch.object(
+                order_feed_module,
+                "latest_order_event_for_execution",
+                return_value=ExecutionOrderEvent(
+                    event_fingerprint="race-existing",
+                    source_topic="torghut.trade-updates.v2",
+                    alpaca_account_label="PA3SX7FYNUTF",
+                    raw_event={"event": "fill"},
+                ),
+            ):
+                race_result = backfill_order_feed_events_from_executions(
+                    session,
+                    account_label="PA3SX7FYNUTF",
+                    limit=10,
+                )
+
+            session.add(
+                ExecutionOrderEvent(
+                    event_fingerprint="offset-collision",
+                    source_topic=order_feed_module.EXECUTION_RAW_ORDER_SOURCE_TOPIC,
+                    source_partition=order_feed_module.EXECUTION_RAW_ORDER_SOURCE_PARTITION,
+                    source_offset=77,
+                    alpaca_account_label="PA3SX7FYNUTF",
+                    event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+                    symbol="MSFT",
+                    alpaca_order_id="other-order",
+                    client_order_id="other-client",
+                    event_type="fill",
+                    status="filled",
+                    raw_event={"event": "fill"},
+                )
+            )
+            session.commit()
+            with patch.object(
+                order_feed_module,
+                "_stable_execution_source_offset",
+                return_value=77,
+            ):
+                collision_result = backfill_order_feed_events_from_executions(
+                    session,
+                    account_label="PA3SX7FYNUTF",
+                    limit=10,
+                )
+
+        self.assertEqual(race_result["selected"], 1)
+        self.assertEqual(race_result["events_created"], 0)
+        self.assertEqual(race_result["skipped_existing_event"], 1)
+        self.assertEqual(collision_result["selected"], 1)
+        self.assertEqual(collision_result["events_created"], 0)
+        self.assertEqual(collision_result["skipped_source_offset_collision"], 1)
+
+    def test_execution_backfill_helper_edges_are_deterministic(self) -> None:
+        partial_execution = Execution(
+            trade_decision_id=None,
+            alpaca_account_label="PA3SX7FYNUTF",
+            alpaca_order_id="partial-order",
+            client_order_id=None,
+            symbol="AAPL",
+            side="buy",
+            order_type="limit",
+            time_in_force="day",
+            submitted_qty=Decimal("1"),
+            filled_qty=Decimal("0.5"),
+            status="partially_filled",
+        )
+        unknown_execution = Execution(
+            trade_decision_id=None,
+            alpaca_account_label="PA3SX7FYNUTF",
+            alpaca_order_id="unknown-order",
+            client_order_id=None,
+            symbol="AAPL",
+            side="buy",
+            order_type="limit",
+            time_in_force="day",
+            submitted_qty=Decimal("1"),
+            filled_qty=Decimal("0"),
+            status="",
+        )
+
+        self.assertEqual(
+            order_feed_module._execution_backfill_event_type(partial_execution),
+            "partial_fill",
+        )
+        self.assertEqual(
+            order_feed_module._execution_backfill_event_type(unknown_execution),
+            "execution_snapshot",
+        )
+        self.assertEqual(
+            order_feed_module._ensure_aware_utc(
+                datetime(2026, 2, 1, 2, 0, tzinfo=timezone(timedelta(hours=-8)))
+            ),
+            datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+        )
+        self.assertIsNone(order_feed_module._isoformat_datetime(None))
+        self.assertEqual(
+            order_feed_module._stable_execution_source_offset("not-a-uuid"),
+            order_feed_module._stable_execution_source_offset("not-a-uuid"),
+        )
 
     def test_historical_source_window_helpers_handle_missing_and_aware_offsets(
         self,

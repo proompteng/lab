@@ -5,12 +5,13 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Callable, Mapping, cast
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
@@ -37,6 +38,9 @@ HISTORICAL_ORDER_EVENT_SOURCE_WINDOW_REVISION = (
 FILL_QUANTITY_BASIS_CUMULATIVE_TO_DELTA = "cumulative_to_delta"
 FILL_QUANTITY_BASIS_CUMULATIVE_NON_INCREASING = "cumulative_non_increasing"
 _FILL_EVENT_TYPES = frozenset({"fill", "filled", "partial_fill", "partially_filled"})
+EXECUTION_RAW_ORDER_SOURCE_WINDOW_REVISION = "execution_raw_order_snapshot_backfill_v1"
+EXECUTION_RAW_ORDER_SOURCE_TOPIC = "torghut.execution-raw-order.backfill.v1"
+EXECUTION_RAW_ORDER_SOURCE_PARTITION = 0
 
 
 @dataclass(frozen=True)
@@ -1194,6 +1198,88 @@ def backfill_order_feed_source_windows(
     return counters
 
 
+def backfill_order_feed_events_from_executions(
+    session: Session,
+    *,
+    account_label: str | None = None,
+    limit: int = 1000,
+) -> dict[str, int]:
+    """Materialize bounded order-feed lifecycle rows from durable executions.
+
+    This repair exists for live accounts that submitted orders before the
+    order-feed consumer was producing ``execution_order_events`` rows. It is not
+    Kafka cursor authority: generated source windows use a dedicated source
+    topic/revision and never update the consumer cursor. The rows stay
+    account-scoped and execution/trade-decision linked so runtime proof can
+    explain exactly which persisted live execution supplied the lifecycle source.
+    """
+
+    bounded_limit = max(1, min(int(limit), 5000))
+    stmt = (
+        select(Execution)
+        .where(
+            Execution.trade_decision_id.is_not(None),
+            Execution.alpaca_order_id != "",
+            ~_execution_order_event_exists_for_execution_clause(),
+        )
+        .order_by(
+            _execution_activity_timestamp().asc().nullsfirst(),
+            Execution.created_at.asc(),
+            Execution.id.asc(),
+        )
+        .limit(bounded_limit)
+    )
+    if account_label:
+        stmt = stmt.where(Execution.alpaca_account_label == account_label)
+
+    executions = session.execute(stmt).scalars().all()
+    counters = {
+        "selected": len(executions),
+        "events_created": 0,
+        "source_windows_created": 0,
+        "skipped_existing_event": 0,
+        "skipped_missing_trade_decision": 0,
+        "skipped_missing_order_identity": 0,
+        "skipped_source_offset_collision": 0,
+    }
+    for execution in executions:
+        if latest_order_event_for_execution(session, execution) is not None:
+            counters["skipped_existing_event"] += 1
+            continue
+
+        source_offset = _stable_execution_source_offset(execution.id)
+        if _source_offset_in_use(
+            session,
+            source_topic=EXECUTION_RAW_ORDER_SOURCE_TOPIC,
+            source_partition=EXECUTION_RAW_ORDER_SOURCE_PARTITION,
+            source_offset=source_offset,
+        ):
+            counters["skipped_source_offset_collision"] += 1
+            continue
+
+        event_ts = _ensure_aware_utc(
+            _execution_activity_at(execution) or datetime.now(timezone.utc)
+        )
+        source_window = _create_execution_backfill_source_window(
+            session,
+            execution=execution,
+            event_ts=event_ts,
+            source_offset=source_offset,
+        )
+        event = _execution_backfill_order_event(
+            execution=execution,
+            event_ts=event_ts,
+            source_offset=source_offset,
+            source_window_id=source_window.id,
+        )
+        session.add(event)
+        session.flush()
+        _refresh_source_window_linkage_counts(session, event)
+        counters["events_created"] += 1
+        counters["source_windows_created"] += 1
+    return counters
+
+
 def _execution_for_order_event(
     session: Session,
     event: ExecutionOrderEvent,
@@ -1224,6 +1310,42 @@ def _execution_for_order_event(
         )
         .scalars()
         .first()
+    )
+
+
+def _execution_order_event_exists_for_execution_clause() -> ColumnElement[bool]:
+    return exists().where(
+        ExecutionOrderEvent.alpaca_account_label == Execution.alpaca_account_label,
+        or_(
+            ExecutionOrderEvent.execution_id == Execution.id,
+            (
+                (Execution.alpaca_order_id != "")
+                & (ExecutionOrderEvent.alpaca_order_id == Execution.alpaca_order_id)
+            ),
+            (
+                Execution.client_order_id.is_not(None)
+                & (Execution.client_order_id != "")
+                & (ExecutionOrderEvent.client_order_id == Execution.client_order_id)
+            ),
+        ),
+    )
+
+
+def _execution_activity_timestamp() -> Any:
+    return func.coalesce(
+        Execution.order_feed_last_event_ts,
+        Execution.last_update_at,
+        Execution.updated_at,
+        Execution.created_at,
+    )
+
+
+def _execution_activity_at(row: Execution) -> datetime | None:
+    return (
+        row.order_feed_last_event_ts
+        or row.last_update_at
+        or row.updated_at
+        or row.created_at
     )
 
 
@@ -1337,11 +1459,213 @@ def _create_historical_source_window_for_event(
     return source_window
 
 
+def _create_execution_backfill_source_window(
+    session: Session,
+    *,
+    execution: Execution,
+    event_ts: datetime,
+    source_offset: int,
+) -> OrderFeedSourceWindow:
+    source_window = OrderFeedSourceWindow(
+        consumer_group=_order_feed_cursor_consumer_group(),
+        source_topic=EXECUTION_RAW_ORDER_SOURCE_TOPIC,
+        source_partition=EXECUTION_RAW_ORDER_SOURCE_PARTITION,
+        alpaca_account_label=execution.alpaca_account_label,
+        assignment_mode=settings.trading_order_feed_assignment_mode,
+        collector_identity=settings.trading_order_feed_client_id.strip() or None,
+        source_revision=EXECUTION_RAW_ORDER_SOURCE_WINDOW_REVISION,
+        window_started_at=event_ts,
+        window_ended_at=event_ts,
+        start_offset=source_offset,
+        end_offset=source_offset,
+        broker_high_watermark=None,
+        consumed_count=1,
+        inserted_count=1,
+        duplicate_count=0,
+        malformed_count=0,
+        missing_payload_count=0,
+        missing_identity_count=0,
+        out_of_scope_account_count=0,
+        unlinked_execution_count=0,
+        unlinked_decision_count=0,
+        failed_unhandled_count=0,
+        dropped_count=0,
+        gap_count=0,
+        gap_ranges=None,
+        first_event_ts=event_ts,
+        last_event_ts=event_ts,
+        status="inserted",
+        status_reason="execution_raw_order_snapshot_backfill",
+        payload_json={
+            "cursor_authority": False,
+            "source": "executions.raw_order",
+            "execution_id": str(execution.id),
+            "trade_decision_id": (
+                str(execution.trade_decision_id)
+                if execution.trade_decision_id is not None
+                else None
+            ),
+        },
+    )
+    session.add(source_window)
+    session.flush()
+    return source_window
+
+
+def _execution_backfill_order_event(
+    *,
+    execution: Execution,
+    event_ts: datetime,
+    source_offset: int,
+    source_window_id: Any,
+) -> ExecutionOrderEvent:
+    event_type = _execution_backfill_event_type(execution)
+    raw_event = _execution_backfill_raw_event(execution, event_type=event_type)
+    fingerprint_input = {
+        "source_revision": EXECUTION_RAW_ORDER_SOURCE_WINDOW_REVISION,
+        "execution_id": str(execution.id),
+        "trade_decision_id": (
+            str(execution.trade_decision_id)
+            if execution.trade_decision_id is not None
+            else None
+        ),
+        "alpaca_account_label": execution.alpaca_account_label,
+        "alpaca_order_id": execution.alpaca_order_id,
+        "client_order_id": execution.client_order_id,
+        "event_type": event_type,
+        "status": execution.status,
+        "event_ts": event_ts.isoformat(),
+        "filled_qty": str(execution.filled_qty),
+        "avg_fill_price": (
+            str(execution.avg_fill_price)
+            if execution.avg_fill_price is not None
+            else None
+        ),
+    }
+    fingerprint = hashlib.sha256(
+        json.dumps(fingerprint_input, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    return ExecutionOrderEvent(
+        event_fingerprint=fingerprint,
+        source_topic=EXECUTION_RAW_ORDER_SOURCE_TOPIC,
+        source_partition=EXECUTION_RAW_ORDER_SOURCE_PARTITION,
+        source_offset=source_offset,
+        alpaca_account_label=execution.alpaca_account_label,
+        feed_seq=None,
+        event_ts=event_ts,
+        symbol=execution.symbol,
+        alpaca_order_id=execution.alpaca_order_id,
+        client_order_id=execution.client_order_id,
+        event_type=event_type,
+        status=execution.status,
+        qty=execution.submitted_qty,
+        filled_qty=execution.filled_qty,
+        avg_fill_price=execution.avg_fill_price,
+        raw_event=raw_event,
+        execution_id=execution.id,
+        trade_decision_id=execution.trade_decision_id,
+        source_window_id=source_window_id,
+    )
+
+
+def _execution_backfill_event_type(execution: Execution) -> str:
+    status = (execution.status or "").strip().lower()
+    if status == "filled":
+        return "fill"
+    if status == "partially_filled":
+        return "partial_fill"
+    return status or "execution_snapshot"
+
+
+def _execution_backfill_raw_event(
+    execution: Execution,
+    *,
+    event_type: str,
+) -> dict[str, Any]:
+    raw_order = coerce_json_payload(execution.raw_order)
+    return coerce_json_payload(
+        {
+            "channel": "trade_updates",
+            "source": "execution_raw_order_snapshot_backfill",
+            "account_label": execution.alpaca_account_label,
+            "payload": {
+                "event": event_type,
+                "timestamp": _isoformat_datetime(_execution_activity_at(execution)),
+                "account_label": execution.alpaca_account_label,
+                "order": {
+                    "id": execution.alpaca_order_id,
+                    "client_order_id": execution.client_order_id,
+                    "symbol": execution.symbol,
+                    "status": execution.status,
+                    "side": execution.side,
+                    "type": execution.order_type,
+                    "time_in_force": execution.time_in_force,
+                    "qty": str(execution.submitted_qty),
+                    "filled_qty": str(execution.filled_qty),
+                    "filled_avg_price": (
+                        str(execution.avg_fill_price)
+                        if execution.avg_fill_price is not None
+                        else None
+                    ),
+                    "alpaca_account_label": execution.alpaca_account_label,
+                },
+            },
+            "execution_id": str(execution.id),
+            "trade_decision_id": (
+                str(execution.trade_decision_id)
+                if execution.trade_decision_id is not None
+                else None
+            ),
+            "raw_order": raw_order,
+        }
+    )
+
+
+def _source_offset_in_use(
+    session: Session,
+    *,
+    source_topic: str,
+    source_partition: int,
+    source_offset: int,
+) -> bool:
+    existing = session.scalar(
+        select(func.count(ExecutionOrderEvent.id)).where(
+            ExecutionOrderEvent.source_topic == source_topic,
+            ExecutionOrderEvent.source_partition == source_partition,
+            ExecutionOrderEvent.source_offset == source_offset,
+        )
+    )
+    return int(existing or 0) > 0
+
+
+def _stable_execution_source_offset(value: object) -> int:
+    try:
+        raw_int = uuid.UUID(str(value)).int
+    except (ValueError, TypeError, AttributeError):
+        raw_int = int.from_bytes(
+            hashlib.sha256(str(value).encode("utf-8")).digest()[:8],
+            "big",
+        )
+    return raw_int % ((2**63) - 1) or 1
+
+
 def _event_timestamp_for_source_window(event: ExecutionOrderEvent) -> datetime:
     event_ts = event.event_ts or event.created_at or datetime.now(timezone.utc)
     if event_ts.tzinfo is None:
         return event_ts.replace(tzinfo=timezone.utc)
     return event_ts.astimezone(timezone.utc)
+
+
+def _ensure_aware_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _isoformat_datetime(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    return _ensure_aware_utc(value).isoformat()
 
 
 def _refresh_source_window_linkage_counts(
@@ -1689,11 +2013,13 @@ __all__ = [
     "NormalizedOrderEvent",
     "NormalizationResult",
     "OrderFeedIngestor",
+    "EXECUTION_RAW_ORDER_SOURCE_WINDOW_REVISION",
     "HISTORICAL_ORDER_EVENT_SOURCE_WINDOW_REVISION",
     "ORDER_FEED_SOURCE_REVISION",
     "normalize_order_feed_record",
     "persist_order_event",
     "apply_order_event_to_execution",
+    "backfill_order_feed_events_from_executions",
     "backfill_order_feed_source_windows",
     "link_order_events_to_execution",
     "repair_order_feed_execution_links",
