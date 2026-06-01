@@ -13,6 +13,7 @@ from app.config import settings
 from app.main import (
     _build_tigerbeetle_ledger_status,
     _check_tigerbeetle_protocol_health,
+    _tigerbeetle_status_int,
 )
 from app.models import (
     Base,
@@ -59,6 +60,13 @@ class TestTigerBeetleStatus(TestCase):
         self.assertTrue(payload["protocol_ok"])
         self.assertEqual(payload["blockers"], [])
         self.assertEqual(payload["ref_counts"]["transfer_ref_count"], 0)
+
+    def test_tigerbeetle_status_int_normalizes_bool_strings_and_bad_values(self) -> None:
+        self.assertEqual(_tigerbeetle_status_int(True), 1)
+        self.assertEqual(_tigerbeetle_status_int(False), 0)
+        self.assertEqual(_tigerbeetle_status_int("7"), 7)
+        self.assertEqual(_tigerbeetle_status_int("not-an-int"), 0)
+        self.assertEqual(_tigerbeetle_status_int(None), 0)
 
     def test_required_protocol_failure_blocks_readiness_dependency(self) -> None:
         settings.tigerbeetle_enabled = True

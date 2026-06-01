@@ -57,6 +57,8 @@ from app.trading.tigerbeetle_reconcile import (
     _expected_source_amount_micros,
     _execution_amount_micros,
     _payload_int,
+    _payload_string_list,
+    _runtime_ledger_payload_account_ids,
     _runtime_ledger_amount_micros,
     _usd_to_micros,
     _uuid_or_none,
@@ -355,6 +357,34 @@ class TestTigerBeetleReconcile(TestCase):
             self.assertIn(BLOCKER_SOURCE_ROW_MISSING, payload["blockers"])
             self.assertEqual(payload["source_row_missing_count"], 1)
             self.assertEqual(payload["source_missing_count"], 1)
+
+    def test_runtime_payload_account_ids_normalize_sequence_scalar_and_missing_values(
+        self,
+    ) -> None:
+        self.assertEqual(
+            _payload_string_list({"account_ids": ["11", None, 12]}, "account_ids"),
+            ["11", "12"],
+        )
+        self.assertEqual(_payload_string_list({"account_ids": "11"}, "account_ids"), ["11"])
+
+        ref = TigerBeetleTransferRef(
+            cluster_id=2001,
+            transfer_id="runtime-account-ref",
+            transfer_kind=TRANSFER_KIND_RUNTIME_NET_PNL,
+            ledger=LEDGER_USD_MICRO,
+            code=TRANSFER_CODE_RUNTIME_NET_PNL,
+            amount=Decimal("2500000"),
+            status="created",
+            source_type=SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+            source_id="runtime-source",
+            payload_json={
+                "account_ids": ["11"],
+                "debit_account_id": None,
+                "credit_account_id": "12",
+            },
+        )
+
+        self.assertEqual(_runtime_ledger_payload_account_ids(ref), ["11", "12"])
 
     def test_reconciliation_accepts_signed_runtime_ledger_profit_and_loss_refs(
         self,
