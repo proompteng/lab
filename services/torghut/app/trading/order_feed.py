@@ -348,6 +348,13 @@ class OrderFeedIngestor:
                     account_label_alias=account_alias_payload,
                 )
             if duplicate:
+                if _order_event_has_failed_unhandled_source_window(session, persisted):
+                    _retry_failed_duplicate_order_event_application(
+                        session=session,
+                        event=persisted,
+                        counters=counters,
+                        source_window=source_window,
+                    )
                 cursor_updated = _upsert_cursor_and_count(
                     session=session,
                     event=event,
@@ -2109,6 +2116,63 @@ def _refresh_source_window_linkage_counts(
         int(source_window.inserted_count or 0), event_count
     )
     session.add(source_window)
+
+
+def _order_event_has_failed_unhandled_source_window(
+    session: Session, event: ExecutionOrderEvent
+) -> bool:
+    if event.source_window_id is None:
+        return False
+    source_window = session.get(OrderFeedSourceWindow, event.source_window_id)
+    return source_window is not None and source_window.status == "failed_unhandled"
+
+
+def _retry_failed_duplicate_order_event_application(
+    *,
+    session: Session,
+    event: ExecutionOrderEvent,
+    counters: dict[str, int],
+    source_window: OrderFeedSourceWindow | None,
+) -> None:
+    """Replay execution-side effects before advancing a previously failed offset.
+
+    A prior ``failed_unhandled`` ingest may have durably inserted the
+    ``ExecutionOrderEvent`` row but intentionally skipped the consumer cursor. On
+    Kafka redelivery that row looks like a duplicate. Treating it as an ordinary
+    duplicate would advance the source cursor without proving the execution
+    lifecycle mutation that failed earlier, so retry the idempotent execution
+    application first.
+    """
+
+    if event.execution_id is None:
+        raise RuntimeError("failed_unhandled_order_event_missing_execution_link")
+    execution = session.get(Execution, event.execution_id)
+    if execution is None:
+        raise RuntimeError("failed_unhandled_order_event_execution_not_found")
+
+    updated, out_of_order = apply_order_event_to_execution(execution, event)
+    if out_of_order:
+        counters["out_of_order_total"] += 1
+    if updated:
+        counters["apply_updates_total"] += 1
+        if execution.trade_decision_id is not None:
+            _update_trade_decision_from_execution(session, execution)
+        upsert_execution_tca_metric(session, execution)
+        session.add(execution)
+    if source_window is not None:
+        payload = coerce_json_payload(source_window.payload_json)
+        if isinstance(payload, Mapping):
+            payload_dict = {
+                str(key): value
+                for key, value in cast(Mapping[object, Any], payload).items()
+            }
+        else:
+            payload_dict = {}
+        payload_dict["reprocessed_failed_unhandled_source_window_id"] = str(
+            event.source_window_id
+        )
+        source_window.status_reason = "duplicate_after_failed_unhandled_reprocessed"
+        source_window.payload_json = coerce_json_payload(payload_dict)
 
 
 def _extract_trade_update_payload(payload: Any) -> Mapping[str, Any] | None:

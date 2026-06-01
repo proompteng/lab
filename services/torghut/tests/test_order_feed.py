@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -1022,9 +1023,7 @@ class TestOrderFeed(TestCase):
             settings.trading_order_feed_client_id = original_client_id
             settings.trading_order_feed_assignment_mode = original_assignment_mode
 
-        self.assertEqual(
-            captured_kwargs.get("topics"), ["torghut.trade-updates.v1"]
-        )
+        self.assertEqual(captured_kwargs.get("topics"), ["torghut.trade-updates.v1"])
         self.assertEqual(captured_kwargs.get("group_id"), "paper-route-client")
 
     def test_build_consumer_disables_group_subscription_for_manual_assignment(
@@ -2140,7 +2139,9 @@ class TestOrderFeed(TestCase):
         self.assertEqual(source_window.dropped_count, 1)
 
     def test_missing_trade_update_payload_is_durably_classified(self) -> None:
-        record = FakeRecord(value=b'{"channel":"orders","payload":{"event":"fill"}}', offset=18)
+        record = FakeRecord(
+            value=b'{"channel":"orders","payload":{"event":"fill"}}', offset=18
+        )
         consumer = FakeConsumer([record])
         ingestor = OrderFeedIngestor(consumer_factory=lambda: consumer)
 
@@ -2316,6 +2317,220 @@ class TestOrderFeed(TestCase):
         self.assertEqual(event_count, 1)
         self.assertEqual(source_window.status, "failed_unhandled")
         self.assertEqual(source_window.failed_unhandled_count, 1)
+
+    def test_redelivered_failed_apply_duplicate_retries_before_cursor_advance(
+        self,
+    ) -> None:
+        record = FakeRecord(
+            value=(
+                b'{"channel":"trade_updates","payload":{"event":"fill","timestamp":"2026-02-01T10:00:00Z",'
+                b'"order":{"id":"order-1","client_order_id":"client-1","symbol":"AAPL","status":"filled",'
+                b'"qty":"1","filled_qty":"1","filled_avg_price":"190.2"}},"seq":10}'
+            ),
+            offset=21,
+        )
+
+        with Session(self.engine) as session:
+            execution = self._seed_execution(session)
+            first_consumer = FakeConsumer([record])
+            first_ingestor = OrderFeedIngestor(consumer_factory=lambda: first_consumer)
+            with patch(
+                "app.trading.order_feed.apply_order_event_to_execution",
+                side_effect=RuntimeError("apply failed"),
+            ):
+                first_counters = first_ingestor.ingest_once(session)
+            failed_source_window = session.execute(
+                select(OrderFeedSourceWindow)
+            ).scalar_one()
+            session.refresh(execution)
+
+            second_consumer = FakeConsumer([record])
+            second_ingestor = OrderFeedIngestor(
+                consumer_factory=lambda: second_consumer
+            )
+            second_counters = second_ingestor.ingest_once(session)
+            session.refresh(execution)
+            cursor = session.execute(select(OrderFeedConsumerCursor)).scalar_one()
+            source_windows = (
+                session.execute(select(OrderFeedSourceWindow)).scalars().all()
+            )
+            duplicate_window = session.execute(
+                select(OrderFeedSourceWindow).where(
+                    OrderFeedSourceWindow.status == "duplicate"
+                )
+            ).scalar_one()
+
+        self.assertEqual(first_counters["failed_unhandled_total"], 1)
+        self.assertEqual(first_counters["cursor_updates_total"], 0)
+        self.assertEqual(first_consumer.commit_calls, 0)
+        self.assertEqual(failed_source_window.status, "failed_unhandled")
+        self.assertEqual(execution.status, "filled")
+        self.assertEqual(execution.filled_qty, Decimal("1.00000000"))
+        self.assertEqual(execution.avg_fill_price, Decimal("190.20000000"))
+        self.assertEqual(second_counters["duplicates_total"], 1)
+        self.assertEqual(second_counters["apply_updates_total"], 1)
+        self.assertEqual(second_counters["cursor_updates_total"], 1)
+        self.assertEqual(second_consumer.commit_calls, 1)
+        self.assertEqual(cursor.high_watermark_offset, 21)
+        self.assertEqual(
+            {window.status for window in source_windows},
+            {"failed_unhandled", "duplicate"},
+        )
+        self.assertEqual(
+            duplicate_window.status_reason,
+            "duplicate_after_failed_unhandled_reprocessed",
+        )
+        self.assertEqual(
+            duplicate_window.payload_json[
+                "reprocessed_failed_unhandled_source_window_id"
+            ],
+            str(failed_source_window.id),
+        )
+
+    def test_failed_duplicate_source_window_helper_handles_unlinked_event(
+        self,
+    ) -> None:
+        event = ExecutionOrderEvent(
+            event_fingerprint="no-window",
+            source_topic="torghut.trade-updates.v1",
+            source_partition=0,
+            source_offset=1,
+            alpaca_account_label="paper",
+            raw_event={},
+        )
+
+        with Session(self.engine) as session:
+            has_failed_source_window = (
+                order_feed_module._order_event_has_failed_unhandled_source_window(
+                    session,
+                    event,
+                )
+            )
+
+        self.assertFalse(has_failed_source_window)
+
+    def test_retry_failed_duplicate_requires_execution_link(self) -> None:
+        event = ExecutionOrderEvent(
+            event_fingerprint="failed-without-execution-link",
+            source_topic="torghut.trade-updates.v1",
+            source_partition=0,
+            source_offset=1,
+            alpaca_account_label="paper",
+            raw_event={},
+        )
+
+        with Session(self.engine) as session:
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "failed_unhandled_order_event_missing_execution_link",
+            ):
+                order_feed_module._retry_failed_duplicate_order_event_application(
+                    session=session,
+                    event=event,
+                    counters={"out_of_order_total": 0, "apply_updates_total": 0},
+                    source_window=None,
+                )
+
+    def test_retry_failed_duplicate_requires_existing_execution(self) -> None:
+        event = ExecutionOrderEvent(
+            event_fingerprint="failed-missing-execution",
+            source_topic="torghut.trade-updates.v1",
+            source_partition=0,
+            source_offset=1,
+            alpaca_account_label="paper",
+            raw_event={},
+            execution_id=uuid.uuid4(),
+        )
+
+        with Session(self.engine) as session:
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "failed_unhandled_order_event_execution_not_found",
+            ):
+                order_feed_module._retry_failed_duplicate_order_event_application(
+                    session=session,
+                    event=event,
+                    counters={"out_of_order_total": 0, "apply_updates_total": 0},
+                    source_window=None,
+                )
+
+    def test_retry_failed_duplicate_records_out_of_order_retry_lineage(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            execution = self._seed_execution(session)
+            execution.order_feed_last_seq = 99
+            failed_source_window = OrderFeedSourceWindow(
+                consumer_group="torghut-order-feed-v1",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                alpaca_account_label="paper",
+                assignment_mode="group",
+                source_revision=ORDER_FEED_SOURCE_REVISION,
+                window_started_at=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+                window_ended_at=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+                start_offset=30,
+                end_offset=30,
+                consumed_count=1,
+                status="failed_unhandled",
+            )
+            retry_source_window = OrderFeedSourceWindow(
+                consumer_group="torghut-order-feed-v1",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                alpaca_account_label="paper",
+                assignment_mode="group",
+                source_revision=ORDER_FEED_SOURCE_REVISION,
+                window_started_at=datetime(2026, 2, 1, 10, 1, tzinfo=timezone.utc),
+                window_ended_at=datetime(2026, 2, 1, 10, 1, tzinfo=timezone.utc),
+                start_offset=30,
+                end_offset=30,
+                consumed_count=1,
+                status="duplicate",
+            )
+            session.add_all([execution, failed_source_window, retry_source_window])
+            session.flush()
+            event = ExecutionOrderEvent(
+                event_fingerprint="failed-out-of-order-retry",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=30,
+                alpaca_account_label="paper",
+                feed_seq=10,
+                event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+                symbol="AAPL",
+                alpaca_order_id="order-1",
+                client_order_id="client-1",
+                event_type="fill",
+                status="filled",
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("190.2"),
+                raw_event={},
+                execution_id=execution.id,
+                trade_decision_id=execution.trade_decision_id,
+                source_window_id=failed_source_window.id,
+            )
+            counters = {"out_of_order_total": 0, "apply_updates_total": 0}
+
+            order_feed_module._retry_failed_duplicate_order_event_application(
+                session=session,
+                event=event,
+                counters=counters,
+                source_window=retry_source_window,
+            )
+
+        self.assertEqual(counters["out_of_order_total"], 1)
+        self.assertEqual(counters["apply_updates_total"], 0)
+        self.assertEqual(
+            retry_source_window.status_reason,
+            "duplicate_after_failed_unhandled_reprocessed",
+        )
+        self.assertEqual(
+            retry_source_window.payload_json[
+                "reprocessed_failed_unhandled_source_window_id"
+            ],
+            str(failed_source_window.id),
+        )
 
     def test_unhandled_failure_stops_batch_before_later_offsets(self) -> None:
         failed = FakeRecord(
