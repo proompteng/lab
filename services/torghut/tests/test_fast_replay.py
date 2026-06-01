@@ -6,6 +6,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
 
+from app.trading.discovery import fast_replay
 from app.trading.discovery.candidate_specs import (
     CANDIDATE_SPEC_SCHEMA_VERSION,
     CandidateSpec,
@@ -259,6 +260,79 @@ class TestFastReplayPreview(TestCase):
             "target_implied_notional_blocked_non_positive_expectancy",
             negative["lineage_blockers"],
         )
+
+    def test_fast_preview_ranking_uses_combined_preview_score_before_raw_prefilter(
+        self,
+    ) -> None:
+        def row(
+            candidate_spec_id: str,
+            *,
+            preview_score: str,
+            prefilter_score: str,
+            exploration_score: str = "0",
+            is_hpairs_candidate: bool = True,
+        ) -> fast_replay.FastReplayPreviewRow:
+            return fast_replay.FastReplayPreviewRow(
+                candidate_spec_id=candidate_spec_id,
+                rank=0,
+                preview_score=Decimal(preview_score),
+                selected=False,
+                selection_reason="fast_replay_preview_ranked",
+                matched_row_count=10,
+                matched_symbol_count=1,
+                requested_symbol_count=1,
+                trading_day_count=1,
+                signed_return_bps=Decimal("0"),
+                avg_abs_return_bps=Decimal("0"),
+                median_spread_bps=Decimal("0"),
+                activity_score=Decimal("0"),
+                coverage_score=Decimal("1"),
+                ofi_pressure_score=Decimal("0"),
+                microprice_bias_bps=Decimal("0"),
+                spread_tail_bps=Decimal("0"),
+                return_tail_abs_bps=Decimal("0"),
+                impact_liquidity_penalty_bps=Decimal("0"),
+                cluster_lob_activity_score=Decimal("0"),
+                ofi_decay_alignment_score=Decimal("0"),
+                liquidity_regime_score=Decimal("0"),
+                macro_stress_veto_score=Decimal("0"),
+                conformal_tail_risk_penalty_bps=Decimal("0"),
+                square_root_impact_capacity_penalty_bps=Decimal("0"),
+                exploration_score=Decimal(exploration_score),
+                frontier_bucket="not_selected",
+                microstructure_prefilter={
+                    "prefilter_score": prefilter_score,
+                    "is_hpairs_candidate": is_hpairs_candidate,
+                    "proof_source": "prefilter_only",
+                    "proof_authority": False,
+                    "promotion_allowed": False,
+                    "final_promotion_allowed": False,
+                },
+            )
+
+        ranked = sorted(
+            (
+                row("raw-prefilter-winner", preview_score="1", prefilter_score="999"),
+                row("combined-preview-winner", preview_score="50", prefilter_score="0"),
+                row(
+                    "explicit-non-hpairs",
+                    preview_score="100",
+                    prefilter_score="1000",
+                    is_hpairs_candidate=False,
+                ),
+            ),
+            key=fast_replay._preview_rank_key,
+        )
+        selected = fast_replay._select_frontier_buckets(
+            ranked_rows=ranked,
+            exploitation_count=1,
+            exploration_count=1,
+            exact_replay_candidate_cap=2,
+        )
+
+        self.assertEqual(ranked[0].candidate_spec_id, "combined-preview-winner")
+        self.assertEqual(selected["combined-preview-winner"], "exploitation")
+        self.assertNotIn("explicit-non-hpairs", selected)
 
     def test_frontier_selection_caps_exact_replay_with_exploration_slots(self) -> None:
         with TemporaryDirectory() as tmpdir:

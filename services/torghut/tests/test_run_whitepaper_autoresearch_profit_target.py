@@ -4637,6 +4637,16 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertIn("fast_replay_preview_ofi_pressure_score", nvda_row)
         self.assertIn("fast_replay_preview_microprice_bias_bps", nvda_row)
         self.assertIn("fast_replay_preview_impact_liquidity_penalty_bps", nvda_row)
+        self.assertIn("fast_replay_preview_required_daily_notional", nvda_row)
+        self.assertIn("fast_replay_target_implied_notional_context", nvda_row)
+        self.assertIn("fast_replay_cost_impact_lineage", nvda_row)
+        self.assertIn("fast_replay_adv_capacity_context", nvda_row)
+        self.assertIn("fast_replay_lineage_blockers", nvda_row)
+        self.assertIn("fast_replay_risk_flags", nvda_row)
+        self.assertTrue(nvda_row["fast_replay_prefilter_only"])
+        self.assertFalse(nvda_row["fast_replay_proof_authority"])
+        self.assertFalse(nvda_row["fast_replay_promotion_allowed"])
+        self.assertFalse(nvda_row["fast_replay_final_promotion_allowed"])
         aapl_row = next(
             row
             for row in selection["rows"]
@@ -4725,6 +4735,16 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(
             updated_selection["budget"]["fast_replay_exact_replay_candidate_cap"], 6
         )
+        preview_validation = updated_selection["replay_tape_preview"]["validation"]
+        self.assertEqual(preview_validation["source_query_digest"], source_query_digest)
+        self.assertEqual(
+            preview_validation["feature_schema_hash"], "feature-schema-frontier"
+        )
+        self.assertEqual(preview_validation["cost_model_hash"], "cost-model-frontier")
+        self.assertEqual(
+            preview_validation["strategy_family"], "hpairs-frontier-family"
+        )
+        self.assertEqual(preview_validation["cache_identity"]["status"], "complete")
         queue_payload = updated_selection["bounded_sim_target_queue"]
         self.assertEqual(queue_payload["exact_replay_candidate_count"], 6)
         self.assertFalse(queue_payload["promotion_proof"])
