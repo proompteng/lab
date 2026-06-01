@@ -367,7 +367,9 @@ def _bounded_sim_collection_target_with_runtime_account_audit(
         "candidate_blockers",
     ):
         if key in normalized:
-            normalized[key] = _without_lineage_text_values(normalized.get(key), unavailable)
+            normalized[key] = _without_lineage_text_values(
+                normalized.get(key), unavailable
+            )
 
     evidence_blockers: list[str] = []
     for key in _BOUNDED_SIM_COLLECTION_BLOCKER_FIELDS:
@@ -388,8 +390,13 @@ def _bounded_sim_collection_target_with_runtime_account_audit(
             evidence_blockers.append("bounded_sim_collection_source_decision_not_ready")
         evidence_blockers.extend(_lineage_text_values(typed_readiness.get("blockers")))
     else:
-        evidence_blockers.append("bounded_sim_collection_source_decision_readiness_missing")
-    if _safe_text(normalized.get("paper_route_probe_pair_balance_state")) == "imbalanced":
+        evidence_blockers.append(
+            "bounded_sim_collection_source_decision_readiness_missing"
+        )
+    if (
+        _safe_text(normalized.get("paper_route_probe_pair_balance_state"))
+        == "imbalanced"
+    ):
         evidence_blockers.append("paper_route_probe_pair_imbalanced")
 
     if not list(dict.fromkeys(evidence_blockers)):
@@ -714,7 +721,7 @@ def _merge_unique_texts(target: list[str], values: Sequence[str]) -> None:
 
 def _paper_route_probe_lineage_from_params(params: Mapping[str, Any]) -> dict[str, Any]:
     payloads: list[Mapping[str, Any]] = [params]
-    for key in ("paper_route_probe", "paper_route_probe_exit"):
+    for key in ("paper_route_probe", "paper_route_probe_exit", "strategy_signal_paper"):
         value = params.get(key)
         if isinstance(value, Mapping):
             payloads.append(cast(Mapping[str, Any], value))
@@ -840,6 +847,31 @@ def _paper_route_probe_entry_metadata(
     if _target_bool(probe_metadata.get("profit_proof_eligible")) is True:
         return None
     return probe_metadata
+
+
+def _strategy_signal_paper_entry_metadata(
+    params: Mapping[str, Any],
+) -> Mapping[str, Any] | None:
+    source_decision_mode = normalize_source_decision_mode(
+        params.get("source_decision_mode")
+    )
+    if source_decision_mode != STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE:
+        return None
+    if _target_bool(params.get("profit_proof_eligible")) is not True:
+        return None
+
+    metadata = params.get("strategy_signal_paper")
+    if not isinstance(metadata, Mapping):
+        return None
+    metadata_mapping = cast(Mapping[str, Any], metadata)
+    metadata_mode = normalize_source_decision_mode(
+        metadata_mapping.get("source_decision_mode") or metadata_mapping.get("mode")
+    )
+    if metadata_mode not in {None, STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE}:
+        return None
+    if _target_bool(metadata_mapping.get("profit_proof_eligible")) is False:
+        return None
+    return metadata_mapping
 
 
 def _lineage_target_from_mapping(raw_target: Mapping[str, object]) -> dict[str, str]:
@@ -1675,7 +1707,14 @@ class SimpleTradingPipeline(TradingPipeline):
             if not isinstance(decision_json, Mapping):
                 continue
             params = decision.params
-            is_entry = _paper_route_probe_entry_metadata(params) is not None
+            probe_entry_metadata = _paper_route_probe_entry_metadata(params)
+            strategy_signal_entry_metadata = _strategy_signal_paper_entry_metadata(
+                params
+            )
+            is_entry = (
+                probe_entry_metadata is not None
+                or strategy_signal_entry_metadata is not None
+            )
             is_exit = isinstance(params.get("paper_route_probe_exit"), Mapping)
             if not is_entry and not is_exit:
                 continue
@@ -1715,9 +1754,16 @@ class SimpleTradingPipeline(TradingPipeline):
                     "sell_notional": Decimal("0"),
                     "latest_entry_at": None,
                     "exit_minute_after_open": None,
+                    "exit_source": None,
                     "paper_route_probe_lineage": {},
                 },
             )
+            if strategy_signal_entry_metadata is not None:
+                exposure["exit_source"] = "filled_strategy_signal_paper_executions"
+            elif (
+                probe_entry_metadata is not None and exposure.get("exit_source") is None
+            ):
+                exposure["exit_source"] = "filled_paper_route_probe_executions"
             lineage = _paper_route_probe_lineage_from_params(params)
             if lineage:
                 exposure_lineage = cast(
@@ -1804,10 +1850,14 @@ class SimpleTradingPipeline(TradingPipeline):
                 avg_entry_price = buy_notional / buy_qty
             elif net_qty < 0 and sell_qty > 0:
                 avg_entry_price = sell_notional / sell_qty
+            exit_source = (
+                _safe_text(exposure.get("exit_source"))
+                or "filled_paper_route_probe_executions"
+            )
             params: dict[str, Any] = {
                 "paper_route_probe_exit": {
                     "mode": "paper_route_exit",
-                    "source": "filled_paper_route_probe_executions",
+                    "source": exit_source,
                     "symbol": symbol,
                     "strategy_id": str(strategy.id),
                     "db_open_qty": str(exit_qty),
