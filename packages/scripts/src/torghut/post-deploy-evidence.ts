@@ -155,12 +155,13 @@ type PaperRouteTargetEnvelope = {
   identity: string
   probeSymbols: string[]
   maxNotional: string
+  scopeAuthority: string
+  strategyScopeApplied: boolean
 }
 
 const uniqueSortedSymbols = (value: unknown, label: string): string[] => {
-  const symbols = requireArray(value, label)
-    .map((symbol) => formatScalar(symbol, '').trim().toUpperCase())
-    .filter(Boolean)
+  const values = typeof value === 'string' ? value.split(',') : requireArray(value, label)
+  const symbols = values.map((symbol) => formatScalar(symbol, '').trim().toUpperCase()).filter(Boolean)
   return [...new Set(symbols)].sort()
 }
 
@@ -184,6 +185,8 @@ const targetEnvelope = (target: unknown, label: string): PaperRouteTargetEnvelop
     identity,
     probeSymbols,
     maxNotional: formatScalar(targetObject.paper_route_probe_next_session_max_notional, '0'),
+    scopeAuthority: formatScalar(targetObject.paper_route_probe_scope_authority, '').trim().toLowerCase(),
+    strategyScopeApplied: targetObject.paper_route_probe_strategy_scope_applied === true,
   }
 }
 
@@ -314,10 +317,25 @@ const requireSameList = (left: string[], right: string[], label: string) => {
   }
 }
 
+const missingFrom = (expected: string[], actual: string[]): string[] => {
+  const actualValues = new Set(actual)
+  return expected.filter((value) => !actualValues.has(value))
+}
+
+const extraIn = (actual: string[], expected: string[]): string[] => {
+  const expectedValues = new Set(expected)
+  return actual.filter((value) => !expectedValues.has(value))
+}
+
 const validatePaperRouteMirror = (
   paperRouteEvidence: unknown,
   simPaperRouteEvidence: unknown,
-): { liveTargetCount: number; simTargetCount: number } => {
+): {
+  liveTargetCount: number
+  simTargetCount: number
+  constrainedTargetCount: number
+  constrainedTargets: string[]
+} => {
   const liveTargets = parsePaperRouteTargets(paperRouteEvidence, 'torghut paper-route evidence')
   const simTargets = parsePaperRouteTargets(simPaperRouteEvidence, 'torghut-sim paper-route evidence')
   if (liveTargets.targetCount > 0 && simTargets.targetCount === 0) {
@@ -332,18 +350,41 @@ const validatePaperRouteMirror = (
   for (const [identity, liveEnvelope] of liveTargets.targetsByIdentity) {
     const simEnvelope = simTargets.targetsByIdentity.get(identity)
     if (!simEnvelope) continue
-    requireSameList(
-      liveEnvelope.probeSymbols,
-      simEnvelope.probeSymbols,
-      `torghut-sim paper-route target symbols differ from live target ${identity}`,
-    )
+    const unexpectedSimSymbols = extraIn(simEnvelope.probeSymbols, liveEnvelope.probeSymbols)
+    if (unexpectedSimSymbols.length > 0) {
+      throw new Error(
+        `torghut-sim paper-route target symbols differ from live target ${identity}: unexpected ${unexpectedSimSymbols.join(',')}`,
+      )
+    }
+    const missingLiveSymbols = missingFrom(liveEnvelope.probeSymbols, simEnvelope.probeSymbols)
+    if (missingLiveSymbols.length > 0) {
+      const explicitlyScoped = simEnvelope.strategyScopeApplied && simEnvelope.scopeAuthority === 'strategy_universe'
+      if (!explicitlyScoped) {
+        requireSameList(
+          liveEnvelope.probeSymbols,
+          simEnvelope.probeSymbols,
+          `torghut-sim paper-route target symbols differ from live target ${identity}`,
+        )
+      }
+    }
     if (simEnvelope.maxNotional !== liveEnvelope.maxNotional) {
       throw new Error(
         `torghut-sim paper-route target notional differs from live target ${identity}: expected ${liveEnvelope.maxNotional}, got ${simEnvelope.maxNotional}`,
       )
     }
   }
-  return { liveTargetCount: liveTargets.targetCount, simTargetCount: simTargets.targetCount }
+  const constrainedTargets = [...liveTargets.targetsByIdentity.entries()]
+    .filter(([identity, liveEnvelope]) => {
+      const simEnvelope = simTargets.targetsByIdentity.get(identity)
+      return Boolean(simEnvelope && missingFrom(liveEnvelope.probeSymbols, simEnvelope.probeSymbols).length > 0)
+    })
+    .map(([identity]) => identity)
+  return {
+    liveTargetCount: liveTargets.targetCount,
+    simTargetCount: simTargets.targetCount,
+    constrainedTargetCount: constrainedTargets.length,
+    constrainedTargets,
+  }
 }
 
 export const validatePostDeployEvidence = (input: PostDeployEvidenceInput): PostDeployEvidenceResult => {
@@ -468,7 +509,11 @@ export const validatePostDeployEvidence = (input: PostDeployEvidenceInput): Post
       '',
       `- Live target count: \`${mirror.liveTargetCount}\``,
       `- Sim target count: \`${mirror.simTargetCount}\``,
+      `- Sim constrained target count: \`${mirror.constrainedTargetCount}\``,
     )
+    if (mirror.constrainedTargets.length > 0) {
+      lines.push(`- Sim constrained targets: ${mirror.constrainedTargets.map((target) => `\`${target}\``).join(', ')}`)
+    }
   }
 
   return { readyzAcceptedReason, readyzStatusCode, summaryLines: lines }
