@@ -1836,11 +1836,15 @@ class TestRuntimeWindowImport(TestCase):
 
         summary = _runtime_ledger_daily_summary_from_observed_buckets(buckets)
 
+        self.assertEqual(summary["runtime_ledger_observed_trading_day_count"], 2)
         self.assertEqual(
             summary["runtime_ledger_net_pnl_by_trading_day"]["2026-03-06"], "-30"
         )
         self.assertEqual(
             summary["runtime_ledger_mean_daily_net_pnl_after_costs"], "-10"
+        )
+        self.assertEqual(
+            summary["runtime_ledger_median_daily_net_pnl_after_costs"], "-10"
         )
         self.assertEqual(summary["runtime_ledger_p10_daily_net_pnl_after_costs"], "-30")
         self.assertEqual(summary["runtime_ledger_max_intraday_drawdown"], "130")

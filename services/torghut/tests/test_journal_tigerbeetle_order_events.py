@@ -267,6 +267,99 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
         self.assertEqual(payload["failed"], 0)
         self.assertTrue(payload["fail_on_degraded"])
 
+    def test_process_rows_attaches_runtime_bucket_journal_payload(self) -> None:
+        settings_obj = Settings(TORGHUT_TIGERBEETLE_ENABLED=True)
+        observed_at = datetime.now(timezone.utc)
+        with Session(self.engine) as session:
+            bucket = StrategyRuntimeLedgerBucket(
+                run_id="runtime-run-journal-attach",
+                candidate_id="candidate",
+                hypothesis_id="hypothesis",
+                observed_stage="paper",
+                bucket_started_at=observed_at,
+                bucket_ended_at=observed_at,
+                account_label="paper",
+                runtime_strategy_name="demo-runtime",
+                strategy_family="demo",
+                fill_count=1,
+                decision_count=1,
+                submitted_order_count=1,
+                cancelled_order_count=0,
+                rejected_order_count=0,
+                unfilled_order_count=0,
+                closed_trade_count=1,
+                open_position_count=0,
+                filled_notional=Decimal("190.25"),
+                gross_strategy_pnl=Decimal("3.00"),
+                cost_amount=Decimal("0.50"),
+                net_strategy_pnl_after_costs=Decimal("2.50"),
+                post_cost_expectancy_bps=Decimal("12.50"),
+                ledger_schema_version="torghut.runtime-ledger.v1",
+                pnl_basis="post_cost",
+                payload_json={
+                    "source_refs": ["postgres:execution_order_events:event-1"],
+                    "source_row_counts": {"execution_order_events": 1},
+                    "source_window_refs": ["kafka:torghut.trade-updates.v1:0:1-2"],
+                },
+            )
+            session.add(bucket)
+            session.flush()
+            ref = TigerBeetleTransferRef(
+                cluster_id=settings_obj.tigerbeetle_cluster_id,
+                transfer_id="340282366920938463463374607431768211",
+                transfer_kind=TRANSFER_KIND_RUNTIME_NET_PNL,
+                ledger=LEDGER_USD_MICRO,
+                code=TRANSFER_CODE_FILL_POST,
+                amount=Decimal("2500000"),
+                status="created",
+                runtime_ledger_bucket_id=bucket.id,
+                source_type=script.SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                source_id=str(bucket.id),
+                payload_json={
+                    "debit_account_id": "100100100100100100100100100100100101",
+                    "credit_account_id": "100100100100100100100100100100100102",
+                },
+            )
+            session.add(ref)
+            session.flush()
+
+            batch = script._journal_source_batch(
+                session,
+                args=argparse.Namespace(dry_run=False),
+                source=script.SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                rows=[bucket],
+                journal_one=lambda row: ref,
+            )
+
+        self.assertEqual(batch["journaled"], 1)
+        self.assertEqual(batch["failed"], 0)
+        payload = bucket.payload_json
+        self.assertIsInstance(payload, dict)
+        self.assertIn("postgres:execution_order_events:event-1", payload["source_refs"])
+        self.assertIn(
+            f"postgres:strategy_runtime_ledger_buckets:{bucket.id}",
+            payload["source_refs"],
+        )
+        self.assertIn(
+            f"postgres:tigerbeetle_transfer_refs:{ref.id}",
+            payload["source_refs"],
+        )
+        self.assertEqual(
+            payload["source_row_counts"]["tigerbeetle_transfer_refs"],
+            1,
+        )
+        self.assertEqual(
+            payload["tigerbeetle_transfer_ids"],
+            ["340282366920938463463374607431768211"],
+        )
+        self.assertEqual(
+            payload["tigerbeetle_journal_parity"]["status"],
+            "pass",
+        )
+        self.assertFalse(
+            payload["tigerbeetle_journal_parity"]["promotion_authority"],
+        )
+
     def test_select_unlinked_events_filters_to_journalable_account_rows(self) -> None:
         settings_obj = Settings(TORGHUT_TIGERBEETLE_ENABLED=True)
         with Session(self.engine) as session:

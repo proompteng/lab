@@ -37,6 +37,7 @@ from app.trading.tigerbeetle_journal import (
     _lookup_payload_decimal,
     _order_event_precedes,
     _persist_account_refs,
+    _positive_payload_count,
     _result_status,
     _transfer_attr,
     _transfer_flag,
@@ -575,6 +576,70 @@ class TestTigerBeetleLedgerJournal(TestCase):
         self.assertIn(
             TIGERBEETLE_AUTHORITY_BLOCKER_RUNTIME_LEDGER_SOURCE_WINDOW_REFS_MISSING,
             parity["authority_blockers"],
+        )
+
+    def test_source_authority_count_parser_rejects_invalid_values(self) -> None:
+        self.assertFalse(_positive_payload_count("not-a-number"))
+
+    def test_runtime_bucket_journal_payload_merges_transfer_account_refs(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            bucket = _runtime_bucket()
+            session.add(bucket)
+            session.flush()
+            ref = TigerBeetleTransferRef(
+                cluster_id=2001,
+                transfer_id="340282366920938463463374607431768210",
+                transfer_kind=TRANSFER_KIND_RUNTIME_NET_PNL,
+                ledger=LEDGER_USD_MICRO,
+                code=2001,
+                amount=Decimal("2500000"),
+                status="created",
+                runtime_ledger_bucket_id=bucket.id,
+                payload_json={
+                    "debit_account_id": "100100100100100100100100100100100101",
+                    "credit_account_id": "100100100100100100100100100100100102",
+                },
+            )
+            duplicate_cash_ref = TigerBeetleAccountRef(
+                cluster_id=2001,
+                account_id="100100100100100100100100100100100101",
+                account_key="TORGHUT_SIM:cash",
+                ledger=840001,
+                code=1001,
+                account_label="paper",
+            )
+            missing_fee_ref = TigerBeetleAccountRef(
+                cluster_id=2002,
+                account_id="100100100100100100100100100100100103",
+                account_key="TORGHUT_SIM:fees",
+                ledger=840001,
+                code=1003,
+                account_label="paper",
+            )
+            session.add_all([ref, duplicate_cash_ref, missing_fee_ref])
+            session.flush()
+
+            parity = tigerbeetle_runtime_ledger_journal_payload(
+                bucket=bucket,
+                ref=ref,
+                status=TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_STATUS_PASS,
+                account_refs=[duplicate_cash_ref, missing_fee_ref],
+            )
+
+        self.assertEqual(parity["cluster_ids"], [2001, 2002])
+        self.assertEqual(
+            parity["account_ids"],
+            [
+                "100100100100100100100100100100100101",
+                "100100100100100100100100100100100102",
+                "100100100100100100100100100100100103",
+            ],
+        )
+        self.assertEqual(
+            parity["account_keys"],
+            ["TORGHUT_SIM:cash", "TORGHUT_SIM:fees"],
         )
 
     def test_negative_runtime_bucket_reverses_transfer_direction(self) -> None:
