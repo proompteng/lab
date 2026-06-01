@@ -407,6 +407,33 @@ class TestPaperRouteEvidenceAudit(TestCase):
             1,
         )
 
+    def test_target_plan_auto_runs_full_runtime_window_audit_when_import_ready(
+        self,
+    ) -> None:
+        generated_at = datetime(2026, 5, 26, 22, 30, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            payload = self._build_basic_paper_route_target_plan(
+                session,
+                generated_at=generated_at,
+                include_runtime_window_import_audit=None,
+            )
+
+        self.assertEqual(payload["runtime_window_import_audit_mode"], "full")
+        import_audit = payload["runtime_window_import_audit"]
+        self.assertNotIn(
+            "runtime_window_import_audit_deferred_until_import_ready",
+            import_audit["blockers"],
+        )
+        self.assertEqual(import_audit["import_ready"], True)
+        self.assertEqual(
+            import_audit["diagnostics"]["source_activity_missing_reasons"],
+            [
+                "source_decisions_missing",
+                "source_executions_missing",
+                "source_tca_missing",
+            ],
+        )
+
     def test_evidence_audit_records_target_db_timeout_as_fail_closed_blocker(
         self,
     ) -> None:
