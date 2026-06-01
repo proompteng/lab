@@ -284,6 +284,38 @@ def _runtime_import(
             ]
             if authoritative
             else [],
+            "runtime_ledger_profit_distance_readback": {
+                "schema_version": "torghut.runtime-ledger-profit-distance-readback.v1",
+                "required_daily_net_pnl": "500",
+                "observed_mean_daily_net_pnl": "650" if authoritative else "0",
+                "observed_median_daily_net_pnl": "650" if authoritative else "0",
+                "observed_p10_daily_net_pnl": "650" if authoritative else "0",
+                "observed_worst_day_net_pnl": "650" if authoritative else "0",
+                "daily_post_cost_distribution": {
+                    "2026-05-26": "650" if authoritative else "0"
+                },
+                "max_drawdown": {"absolute": "0"},
+                "best_day_share": "1" if authoritative else None,
+                "symbol_concentration": {"share": None, "basis": None},
+                "pair_concentration": {"share": None, "basis": None},
+                "filled_notional": {
+                    "total": "50000" if authoritative else "0",
+                    "average_daily": "50000" if authoritative else "0",
+                    "by_trading_day": {"2026-05-26": "50000" if authoritative else "0"},
+                },
+                "closed_trade_count": 1 if authoritative else 0,
+                "open_position_count": 0,
+                "source_authority": {
+                    "bucket_count": 1 if authoritative else 0,
+                    "evidence_grade_bucket_count": 1 if authoritative else 0,
+                    "source_backed_bucket_count": 1 if authoritative else 0,
+                    "blocked_bucket_count": 0,
+                    "blockers": [],
+                },
+                "blockers": [],
+                "missing_to_target": {"daily_net_pnl": "0" if authoritative else "500"},
+                "next_blocking_reason": None,
+            },
         }
     if authoritative:
         target_payload["tigerbeetle"] = {
@@ -2099,6 +2131,12 @@ class TestRuntimeLedgerProofPacket(TestCase):
                 "postgres:execution_order_events",
                 "postgres:order_feed_source_windows",
             ],
+        )
+        self.assertEqual(
+            materialization["materialized_targets"][0][
+                "runtime_ledger_profit_distance_readback"
+            ]["observed_mean_daily_net_pnl"],
+            "650",
         )
 
     def test_packet_blocks_authority_when_runtime_import_readback_missing(self) -> None:

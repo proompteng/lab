@@ -1,3 +1,4 @@
+# fmt: off
 """Traceability helpers for doc 29 completion gates."""
 
 from __future__ import annotations
@@ -28,7 +29,10 @@ from .runtime_cost_authority import (
     is_non_promotion_grade_runtime_cost_basis,
 )
 from .runtime_ledger import POST_COST_PNL_BASIS
-from .runtime_ledger_source_authority import runtime_ledger_promotion_source_authority_blockers
+from .runtime_ledger_source_authority import (
+    build_runtime_ledger_profit_distance_readback,
+    runtime_ledger_promotion_source_authority_blockers,
+)
 
 
 def _runtime_matrix_path() -> Path:
@@ -751,27 +755,33 @@ def _runtime_ledger_bucket_summary(
     total_cost_amount = sum((row.cost_amount for row in rows), Decimal('0'))
     cost_basis_counts: dict[str, int] = {}
     source_authority_blockers: list[str] = []
+    source_authority_bucket_count = 0
     for row in rows:
         payload = _runtime_ledger_bucket_promotion_payload(row)
+        row_source_authority_blockers = runtime_ledger_promotion_source_authority_blockers(payload)
+        if not row_source_authority_blockers:
+            source_authority_bucket_count += 1
         for cost_basis, count in _as_dict(payload.get('cost_basis_counts')).items():
             key = _as_text(cost_basis)
             if key is None:
                 continue
             cost_basis_counts[key] = cost_basis_counts.get(key, 0) + _safe_int(count)
-        for blocker in runtime_ledger_promotion_source_authority_blockers(payload):
+        for blocker in row_source_authority_blockers:
             if blocker not in source_authority_blockers:
                 source_authority_blockers.append(blocker)
     expectancy_bps = (
         float((total_net_pnl / total_filled_notional) * Decimal('10000')) if total_filled_notional > 0 else 0.0
     )
     daily_summary = _runtime_ledger_daily_summary(rows)
+    closed_trade_count = sum(max(0, _safe_int(row.closed_trade_count)) for row in rows)
+    open_position_count = sum(max(0, _safe_int(row.open_position_count)) for row in rows)
     return {
         'runtime_ledger_bucket_count': len(rows),
         'runtime_ledger_fill_count': sum(max(0, _safe_int(row.fill_count)) for row in rows),
         'runtime_ledger_submitted_order_count': sum(max(0, _safe_int(row.submitted_order_count)) for row in rows),
-        'runtime_ledger_closed_trade_count': sum(max(0, _safe_int(row.closed_trade_count)) for row in rows),
-        'runtime_ledger_closed_round_trip_count': sum(max(0, _safe_int(row.closed_trade_count)) for row in rows),
-        'runtime_ledger_open_position_count': sum(max(0, _safe_int(row.open_position_count)) for row in rows),
+        'runtime_ledger_closed_trade_count': closed_trade_count,
+        'runtime_ledger_closed_round_trip_count': closed_trade_count,
+        'runtime_ledger_open_position_count': open_position_count,
         'runtime_ledger_filled_notional': float(total_filled_notional),
         'runtime_ledger_cost_amount': float(total_cost_amount),
         'runtime_ledger_cost_basis_counts': cost_basis_counts,
@@ -787,11 +797,26 @@ def _runtime_ledger_bucket_summary(
                 if (schema_version := _as_text(row.ledger_schema_version)) is not None
             }
         ),
-        'runtime_ledger_source_authority_bucket_count': len(rows)
-        if not source_authority_blockers
-        else 0,
+        'runtime_ledger_source_authority_bucket_count': source_authority_bucket_count,
         'runtime_ledger_source_authority_blockers': source_authority_blockers,
         'runtime_ledger_authority_blockers': [],
+        'runtime_ledger_profit_distance_readback': build_runtime_ledger_profit_distance_readback(
+            summary={
+                **daily_summary,
+                'runtime_ledger_filled_notional': str(total_filled_notional),
+            },
+            candidate_id=_as_text(rows[0].candidate_id) if rows else None,
+            observed_stage=_as_text(rows[0].observed_stage) if rows else None,
+            runtime_ledger_bucket_count=len(rows),
+            evidence_grade_runtime_ledger_bucket_count=sum(
+                1 for row in rows if _runtime_ledger_bucket_is_promotion_grade(row)
+            ),
+            source_authority_bucket_count=source_authority_bucket_count,
+            source_authority_blockers=source_authority_blockers,
+            total_filled_notional=total_filled_notional,
+            total_closed_trade_count=closed_trade_count,
+            open_position_count=open_position_count,
+        ),
         **daily_summary,
         'db_row_refs': [str(row.id) for row in rows],
     }
@@ -842,6 +867,9 @@ def _runtime_ledger_daily_summary(
         ),
         'runtime_ledger_max_intraday_drawdown': str(max_intraday_drawdown),
         'runtime_ledger_avg_daily_filled_notional': str(avg_daily_filled_notional),
+        'runtime_ledger_filled_notional_by_trading_day': {
+            day: str(filled_notional_by_day[day]) for day in trading_days
+        },
         'runtime_ledger_closed_trade_count_by_day': {day: closed_trade_count_by_day[day] for day in trading_days},
     }
 

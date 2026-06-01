@@ -1,3 +1,4 @@
+# fmt: off
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -27,6 +28,7 @@ from app.trading.completion import (
     _p10_decimal,
     _runtime_ledger_bucket_matches_window,
     _runtime_ledger_bucket_refs_for_windows,
+    _runtime_ledger_bucket_summary,
     _runtime_ledger_daily_summary,
     _runtime_ledger_trading_day_key,
     build_completion_trace,
@@ -765,9 +767,109 @@ class TestCompletionTrace(TestCase):
         self.assertEqual(summary['runtime_ledger_max_intraday_drawdown'], '130')
         self.assertEqual(summary['runtime_ledger_avg_daily_filled_notional'], '800')
         self.assertEqual(
+            summary['runtime_ledger_filled_notional_by_trading_day'],
+            {'2026-03-06': '1500', '2026-03-09': '100'},
+        )
+        self.assertEqual(
             summary['runtime_ledger_closed_trade_count_by_day'],
             {'2026-03-06': 2, '2026-03-09': 0},
         )
+
+    def test_runtime_ledger_bucket_summary_readback_blocks_empty_rows(self) -> None:
+        summary = _runtime_ledger_bucket_summary([])
+
+        readback = summary['runtime_ledger_profit_distance_readback']
+        self.assertEqual(readback['required_daily_net_pnl'], '500')
+        self.assertEqual(readback['observed_mean_daily_net_pnl'], '0')
+        self.assertEqual(readback['source_authority']['bucket_count'], 0)
+        self.assertIn('runtime_ledger_rows_missing', readback['blockers'])
+        self.assertEqual(readback['authority_readback_state'], 'blocked')
+
+    def test_runtime_ledger_bucket_summary_readback_blocks_aggregate_only_rows(
+        self,
+    ) -> None:
+        row = _runtime_ledger_bucket(
+            run_id='aggregate-only',
+            bucket_started_at=datetime(2026, 3, 6, 14, 30),
+            bucket_ended_at=datetime(2026, 3, 6, 15, 0),
+            payload_json={'source': 'aggregate-window-import'},
+        )
+        row.net_strategy_pnl_after_costs = Decimal('800')
+
+        summary = _runtime_ledger_bucket_summary([row])
+
+        readback = summary['runtime_ledger_profit_distance_readback']
+        self.assertEqual(readback['observed_mean_daily_net_pnl'], '800')
+        self.assertEqual(readback['source_authority']['source_backed_bucket_count'], 0)
+        self.assertEqual(readback['missing_to_target']['daily_net_pnl'], '0')
+        self.assertEqual(
+            readback['missing_to_target']['source_authority_bucket_count'],
+            1,
+        )
+        self.assertIn('runtime_ledger_source_authority_blocked', readback['blockers'])
+        self.assertEqual(readback['authority_readback_state'], 'blocked')
+
+    def test_runtime_ledger_bucket_summary_readback_reports_pnl_distance(
+        self,
+    ) -> None:
+        row = _runtime_ledger_bucket(
+            run_id='source-backed-insufficient',
+            bucket_started_at=datetime(2026, 3, 6, 14, 30),
+            bucket_ended_at=datetime(2026, 3, 6, 15, 0),
+        )
+        row.net_strategy_pnl_after_costs = Decimal('120')
+
+        summary = _runtime_ledger_bucket_summary([row])
+
+        readback = summary['runtime_ledger_profit_distance_readback']
+        self.assertEqual(readback['source_authority']['source_backed_bucket_count'], 1)
+        self.assertEqual(readback['observed_mean_daily_net_pnl'], '120')
+        self.assertEqual(readback['missing_to_target']['daily_net_pnl'], '380')
+        self.assertEqual(
+            readback['next_blocking_reason'],
+            'runtime_ledger_mean_daily_net_pnl_after_costs_below_target',
+        )
+
+    def test_runtime_ledger_bucket_summary_readback_reports_close_to_target(
+        self,
+    ) -> None:
+        row = _runtime_ledger_bucket(
+            run_id='source-backed-close',
+            bucket_started_at=datetime(2026, 3, 6, 14, 30),
+            bucket_ended_at=datetime(2026, 3, 6, 15, 0),
+        )
+        row.net_strategy_pnl_after_costs = Decimal('499.99')
+
+        summary = _runtime_ledger_bucket_summary([row])
+
+        readback = summary['runtime_ledger_profit_distance_readback']
+        self.assertEqual(readback['observed_mean_daily_net_pnl'], '499.99')
+        self.assertEqual(readback['missing_to_target']['daily_net_pnl'], '0.01')
+        self.assertEqual(readback['authority_readback_state'], 'blocked')
+
+    def test_runtime_ledger_bucket_summary_readback_satisfies_distance_when_source_backed(
+        self,
+    ) -> None:
+        row = _runtime_ledger_bucket(
+            run_id='source-backed-passing',
+            bucket_started_at=datetime(2026, 3, 6, 14, 30),
+            bucket_ended_at=datetime(2026, 3, 6, 15, 0),
+        )
+        row.net_strategy_pnl_after_costs = Decimal('620')
+        row.filled_notional = Decimal('125000')
+        row.closed_trade_count = 7
+
+        summary = _runtime_ledger_bucket_summary([row])
+
+        readback = summary['runtime_ledger_profit_distance_readback']
+        self.assertEqual(readback['observed_mean_daily_net_pnl'], '620')
+        self.assertEqual(readback['missing_to_target']['daily_net_pnl'], '0')
+        self.assertEqual(readback['filled_notional']['total'], '125000')
+        self.assertEqual(readback['closed_trade_count'], 7)
+        self.assertEqual(readback['open_position_count'], 0)
+        self.assertEqual(readback['source_authority']['source_backed_bucket_count'], 1)
+        self.assertEqual(readback['blockers'], [])
+        self.assertEqual(readback['authority_readback_state'], 'distance_satisfied')
 
     def test_runtime_ledger_bucket_match_requires_full_event_time_containment(
         self,

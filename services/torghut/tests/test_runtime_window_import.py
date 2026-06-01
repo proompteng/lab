@@ -1926,10 +1926,30 @@ class TestRuntimeWindowImport(TestCase):
         self.assertEqual(summary["runtime_ledger_p10_daily_net_pnl_after_costs"], "0")
         self.assertEqual(summary["runtime_ledger_worst_day_net_pnl_after_costs"], "0")
         self.assertEqual(summary["runtime_ledger_avg_daily_filled_notional"], "5000")
+        self.assertEqual(
+            summary["runtime_ledger_filled_notional_by_trading_day"],
+            {"2026-03-06": "10000", "2026-03-09": "0"},
+        )
+        readback = summary["runtime_ledger_profit_distance_readback"]
+        self.assertEqual(readback["required_daily_net_pnl"], "500")
+        self.assertEqual(readback["observed_mean_daily_net_pnl"], "300")
+        self.assertEqual(readback["missing_to_target"]["daily_net_pnl"], "200")
+        self.assertEqual(
+            readback["daily_post_cost_distribution"],
+            {"2026-03-06": "600", "2026-03-09": "0"},
+        )
+        self.assertEqual(readback["filled_notional"]["average_daily"], "5000")
+        self.assertEqual(readback["source_authority"]["source_backed_bucket_count"], 1)
         assert decision.payload_json is not None
         self.assertEqual(
             decision.payload_json["runtime_ledger_mean_daily_net_pnl_after_costs"],
             "300",
+        )
+        self.assertEqual(
+            decision.payload_json["runtime_ledger_profit_distance_readback"][
+                "missing_to_target"
+            ]["daily_net_pnl"],
+            "200",
         )
         assert ledger_bucket.payload_json is not None
         self.assertEqual(

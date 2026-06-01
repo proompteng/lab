@@ -4,6 +4,7 @@ from datetime import datetime
 from unittest import TestCase
 
 from app.trading.runtime_ledger_source_authority import (
+    build_runtime_ledger_profit_distance_readback,
     runtime_ledger_promotion_source_authority_blockers,
     runtime_ledger_promotion_source_authority_present,
     runtime_ledger_source_authority_blockers,
@@ -108,6 +109,53 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
                 "runtime_ledger_source_window_missing",
                 "runtime_ledger_source_refs_missing",
             ],
+        )
+
+    def test_profit_distance_readback_normalizes_optional_fields(self) -> None:
+        readback = build_runtime_ledger_profit_distance_readback(
+            summary={
+                "runtime_ledger_mean_daily_net_pnl_after_costs": "not-a-decimal",
+                "runtime_ledger_median_daily_net_pnl_after_costs": "501",
+                "runtime_ledger_p10_daily_net_pnl_after_costs": "450",
+                "runtime_ledger_worst_day_net_pnl_after_costs": "400",
+                "runtime_ledger_max_intraday_drawdown": "25",
+                "runtime_ledger_avg_daily_filled_notional": "1000",
+                "runtime_ledger_net_pnl_by_trading_day": {"2026-05-29": "501"},
+                "runtime_ledger_filled_notional_by_trading_day": {"2026-05-29": "1000"},
+                "runtime_ledger_closed_trade_count_by_day": "missing",
+                "runtime_ledger_drawdown_pct_equity": "0.025",
+                "runtime_ledger_drawdown_pct_equity_source": "runtime_equity_snapshots",
+            },
+            runtime_ledger_bucket_count=1,
+            evidence_grade_runtime_ledger_bucket_count=1,
+            source_authority_bucket_count=1,
+            source_authority_blockers="not-a-sequence",
+            total_filled_notional=None,
+            total_closed_trade_count=3,
+            open_position_count=0,
+        )
+
+        self.assertEqual(readback["observed_mean_daily_net_pnl"], "0")
+        self.assertEqual(readback["filled_notional"]["total"], "0")
+        self.assertEqual(readback["closed_trade_count_by_day"], {})
+        self.assertEqual(readback["max_drawdown"]["percent_equity"], "0.025")
+        self.assertEqual(readback["source_authority"]["blockers"], [])
+        self.assertEqual(
+            readback["next_blocking_reason"],
+            "runtime_ledger_mean_daily_net_pnl_after_costs_below_target",
+        )
+
+    def test_promotion_source_authority_accepts_scalar_cost_basis_authority(
+        self,
+    ) -> None:
+        self.assertEqual(
+            runtime_ledger_promotion_source_authority_blockers(
+                _source_backed_payload(
+                    cost_basis="alpaca_2026_equity_fee_schedule",
+                    cost_basis_counts={},
+                )
+            ),
+            [],
         )
 
     def test_promotion_source_authority_requires_row_level_runtime_lineage(
@@ -658,7 +706,10 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
         }
 
         range_blockers = runtime_ledger_promotion_source_authority_blockers(
-            {**base, "source_window_gap_ranges": [{"start_offset": 41, "end_offset": 41}]}
+            {
+                **base,
+                "source_window_gap_ranges": [{"start_offset": 41, "end_offset": 41}],
+            }
         )
         mapping_blockers = runtime_ledger_promotion_source_authority_blockers(
             {
@@ -744,7 +795,9 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
             runtime_ledger_filled_notional="1000",
         )
 
-        self.assertEqual(runtime_ledger_promotion_source_authority_blockers(payload), [])
+        self.assertEqual(
+            runtime_ledger_promotion_source_authority_blockers(payload), []
+        )
 
     def test_promotion_source_authority_rejects_non_promotion_cost_basis_inputs(
         self,
@@ -777,4 +830,6 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
             cost_model_hash="broker-cost-v1",
         )
 
-        self.assertEqual(runtime_ledger_promotion_source_authority_blockers(payload), [])
+        self.assertEqual(
+            runtime_ledger_promotion_source_authority_blockers(payload), []
+        )
