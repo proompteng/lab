@@ -6702,6 +6702,9 @@ def _bounded_sim_target_queue_metadata(
                     "feature_schema_hash": replay_tape_manifest.feature_schema_hash,
                     "cost_model_hash": replay_tape_manifest.cost_model_hash,
                     "strategy_family": replay_tape_manifest.strategy_family,
+                    "cache_identity": (
+                        replay_tape_manifest.cache_identity_diagnostics()
+                    ),
                     "preview_score": row.get("preview_score"),
                     "frontier_bucket": row.get("frontier_bucket"),
                 },
@@ -6762,6 +6765,7 @@ def _bounded_sim_target_queue_metadata(
             "feature_schema_hash": replay_tape_manifest.feature_schema_hash,
             "cost_model_hash": replay_tape_manifest.cost_model_hash,
             "strategy_family": replay_tape_manifest.strategy_family,
+            "cache_identity": replay_tape_manifest.cache_identity_diagnostics(),
         },
         "exact_replay_candidate_cap": exact_replay_candidate_cap,
         "exploitation_slots": exploitation_slots,
@@ -6844,6 +6848,7 @@ def _maybe_materialize_epoch_replay_tape(
         "feature_schema_hash": manifest.feature_schema_hash,
         "cost_model_hash": manifest.cost_model_hash,
         "strategy_family": manifest.strategy_family,
+        "cache_identity": manifest.cache_identity_diagnostics(),
     }
     _write_json(receipt_path, receipt)
     updated_args = argparse.Namespace(

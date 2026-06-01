@@ -239,6 +239,9 @@ class FastReplayPreviewResult:
                 "feature_schema_hash": self.replay_tape_manifest.feature_schema_hash,
                 "cost_model_hash": self.replay_tape_manifest.cost_model_hash,
                 "strategy_family": self.replay_tape_manifest.strategy_family,
+                "cache_identity": (
+                    self.replay_tape_manifest.cache_identity_diagnostics()
+                ),
                 "row_count": self.replay_tape_manifest.row_count,
                 "trading_day_count": self.replay_tape_manifest.trading_day_count,
                 "start_date": self.replay_tape_manifest.start_date.isoformat(),
@@ -310,15 +313,13 @@ def build_fast_replay_preview(
         if exploration_count is None
         else int(exploration_count)
     )
-    bounded_exploitation_count = (
-        max(
-            0,
-            min(
-                bounded_top_k,
-                FAST_REPLAY_DEFAULT_EXPLOITATION_COUNT,
-                requested_exploitation_count,
-            ),
-        )
+    bounded_exploitation_count = max(
+        0,
+        min(
+            bounded_top_k,
+            FAST_REPLAY_DEFAULT_EXPLOITATION_COUNT,
+            requested_exploitation_count,
+        ),
     )
     bounded_exploration_count = max(
         0,

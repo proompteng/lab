@@ -16,6 +16,7 @@ from app.trading.discovery.replay_tape import (
     REPLAY_TAPE_MANIFEST_SCHEMA_VERSION,
     ReplayTapeCoverageError,
     ReplayTapeManifest,
+    build_replay_tape_cache_identity_diagnostics,
     build_replay_tape_cache_key,
     build_source_query_digest,
     default_manifest_path,
@@ -348,6 +349,44 @@ class TestReplayTape(TestCase):
         )
         self.assertEqual(manifest.to_payload()["cost_model_hash"], "cost-model-v1")
         self.assertEqual(manifest.to_payload()["strategy_family"], "hpairs-v1")
+
+    def test_replay_tape_cache_identity_reports_missing_components(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            manifest = materialize_signal_tape(
+                rows=[self._signal(day=27, seq=1, symbol="NVDA")],
+                tape_path=Path(tmpdir) / "tape.jsonl",
+                dataset_snapshot_ref="snapshot-missing-identity",
+                symbols=(),
+                start_date=date(2026, 3, 27),
+                end_date=date(2026, 3, 27),
+                source_query_digest=build_source_query_digest({"window": "identity"}),
+            )
+
+        diagnostics = manifest.cache_identity_diagnostics()
+        self.assertEqual(diagnostics["status"], "incomplete")
+        self.assertIn("symbol_universe", diagnostics["missing_components"])
+        self.assertIn("feature_schema_hash", diagnostics["missing_components"])
+        self.assertIn("cost_model_hash", diagnostics["missing_components"])
+        self.assertIn("strategy_family", diagnostics["missing_components"])
+        self.assertIn(
+            "replay_tape_cache_identity_missing_feature_schema_hash",
+            diagnostics["blockers"],
+        )
+        self.assertEqual(manifest.to_payload()["cache_identity"], diagnostics)
+
+        complete = build_replay_tape_cache_identity_diagnostics(
+            dataset_snapshot_ref="snapshot-complete",
+            symbols=("nvda", "AAPL"),
+            start_date=date(2026, 3, 27),
+            end_date=date(2026, 3, 28),
+            source_query_digest=build_source_query_digest({"window": "identity"}),
+            feature_schema_hash="feature-schema-v1",
+            cost_model_hash="cost-model-v1",
+            strategy_family="hpairs-v1",
+        )
+        self.assertEqual(complete["status"], "complete")
+        self.assertEqual(complete["missing_components"], [])
+        self.assertEqual(complete["components"]["symbol_universe"], ["AAPL", "NVDA"])
 
     def test_materialize_manifest_session_window_follows_new_york_dst(self) -> None:
         with TemporaryDirectory() as tmpdir:

@@ -4760,6 +4760,12 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             queue_payload["replay_tape"]["strategy_family"], "hpairs-frontier-family"
         )
         self.assertEqual(
+            queue_payload["replay_tape"]["cache_identity"]["status"], "complete"
+        )
+        self.assertFalse(
+            queue_payload["replay_tape"]["cache_identity"]["missing_components"]
+        )
+        self.assertEqual(
             [entry["frontier_bucket"] for entry in queue_payload["entries"]],
             [
                 "exploitation",
@@ -4782,6 +4788,10 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(
             first_entry["reproducibility_metadata"]["feature_schema_hash"],
             "feature-schema-frontier",
+        )
+        self.assertEqual(
+            first_entry["reproducibility_metadata"]["cache_identity"]["status"],
+            "complete",
         )
         self.assertEqual(
             first_entry["reproducibility_metadata"]["preview_score"],
