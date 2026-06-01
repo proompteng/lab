@@ -239,6 +239,31 @@ class TestSearchProfitabilityFrontier(TestCase):
     ) -> None:
         self.assertEqual(iter_parameter_candidates({}), [{}])
 
+    def test_frontier_ranking_helpers_cover_sparse_and_invalid_payloads(self) -> None:
+        self.assertEqual(frontier._daily_decimal_mapping({}, field="net_pnl"), {})
+        self.assertEqual(
+            frontier._daily_decimal_mapping(
+                {"daily": {"2026-03-21": "not-a-mapping"}}, field="net_pnl"
+            ),
+            {},
+        )
+        self.assertEqual(
+            frontier._total_filled_notional(
+                holdout_payload={"filled_notional": "999"},
+                daily_filled_notional={"2026-03-21": Decimal("250")},
+            ),
+            Decimal("250"),
+        )
+        self.assertEqual(frontier._median_decimal([]), Decimal("0"))
+        self.assertEqual(
+            frontier._median_decimal([Decimal("10"), Decimal("20")]), Decimal("15")
+        )
+        self.assertEqual(frontier._quantile_floor([], Decimal("0.10")), Decimal("0"))
+        self.assertEqual(
+            frontier._best_day_share({"2026-03-21": Decimal("-1")}), Decimal("1")
+        )
+        self.assertEqual(frontier._decimal_or_zero("not-a-decimal"), Decimal("0"))
+
     def test_apply_candidate_to_configmap_updates_target_and_disables_others(
         self,
     ) -> None:
