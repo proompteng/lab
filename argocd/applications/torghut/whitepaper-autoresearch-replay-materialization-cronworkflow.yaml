@@ -20,28 +20,28 @@ spec:
     arguments:
       parameters:
         - name: replayTapePreviewTopK
-          value: "16"
+          value: "8"
         - name: replayTapePreviewMinRows
           value: "2"
         - name: maxCandidates
-          value: "64"
+          value: "16"
         - name: topK
-          value: "24"
+          value: "8"
         - name: explorationSlots
-          value: "16"
+          value: "2"
         - name: feedbackBlockReauditSlots
-          value: "16"
+          value: "2"
         - name: maxFrontierCandidatesPerSpec
           value: "1"
         - name: maxTotalFrontierCandidates
-          value: "32"
+          value: "6"
         - name: realReplayTimeoutSeconds
-          value: "5400"
+          value: "1800"
         - name: realReplayShardSize
           value: "1"
         - name: realReplayShardTimeoutSeconds
           value: "900"
         - name: realReplayShardWorkers
-          value: "4"
+          value: "2"
         - name: persistResults
           value: "true"

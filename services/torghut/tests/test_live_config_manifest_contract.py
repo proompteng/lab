@@ -930,12 +930,15 @@ class TestLiveConfigManifestContract(TestCase):
                 list[Mapping[str, object]], arguments.get("parameters", [])
             )
         }
-        self.assertEqual(parameters["replayTapePreviewTopK"], "16")
+        self.assertEqual(parameters["replayTapePreviewTopK"], "8")
         self.assertEqual(parameters["replayTapePreviewMinRows"], "2")
-        self.assertEqual(parameters["maxCandidates"], "64")
-        self.assertEqual(parameters["topK"], "24")
-        self.assertEqual(parameters["maxTotalFrontierCandidates"], "32")
-        self.assertEqual(parameters["realReplayTimeoutSeconds"], "5400")
+        self.assertEqual(parameters["maxCandidates"], "16")
+        self.assertEqual(parameters["topK"], "8")
+        self.assertEqual(parameters["explorationSlots"], "2")
+        self.assertEqual(parameters["feedbackBlockReauditSlots"], "2")
+        self.assertEqual(parameters["maxTotalFrontierCandidates"], "6")
+        self.assertEqual(parameters["realReplayTimeoutSeconds"], "1800")
+        self.assertEqual(parameters["realReplayShardWorkers"], "2")
         self.assertEqual(parameters["persistResults"], "true")
 
     def test_torghut_knative_manifests_enable_tigerbeetle_journal(self) -> None:
