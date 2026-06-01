@@ -7,6 +7,7 @@ of mutating any live submission gate.
 
 from __future__ import annotations
 
+import logging
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from datetime import date, datetime, time, timedelta, timezone
@@ -15,6 +16,7 @@ from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from ..models import (
@@ -46,6 +48,9 @@ from .runtime_strategy_resolution import (
     runtime_strategy_name_from_strategy_id,
     strategy_names_from_strategy_id,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 PAPER_ROUTE_EVIDENCE_SCHEMA_VERSION = "torghut.paper-route-evidence.v1"
@@ -103,6 +108,7 @@ SOURCE_LINEAGE_HYPOTHESIS_KEYS = (
     "source_hypothesis_id",
     "source_hypothesis_ids",
 )
+PAPER_ROUTE_EVIDENCE_DB_UNAVAILABLE_BLOCKER = "paper_route_evidence_db_unavailable"
 
 
 def _as_mapping(value: object) -> dict[str, Any]:
@@ -363,6 +369,31 @@ def _isoformat(value: datetime | None) -> str | None:
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc).isoformat()
+
+
+def _paper_route_audit_error_source_blocker(error_source: str) -> str:
+    normalized = error_source.strip().lower().replace("-", "_") or "target_audit"
+    return f"{normalized}_db_unavailable"
+
+
+def _paper_route_audit_error_payload(
+    *,
+    error_source: str,
+    error: BaseException,
+) -> dict[str, object]:
+    return {
+        "source": error_source,
+        "blocker": _paper_route_audit_error_source_blocker(error_source),
+        "error_type": type(error).__name__,
+        "error": str(error),
+    }
+
+
+def _rollback_paper_route_audit_session(session: Session) -> None:
+    try:
+        session.rollback()
+    except SQLAlchemyError:
+        logger.warning("Failed to roll back paper-route evidence session")
 
 
 def _execution_activity_timestamp() -> Any:
@@ -3159,6 +3190,218 @@ def _target_audit(
     }
 
 
+def _database_unavailable_target_audit(
+    *,
+    raw_target: Mapping[str, Any],
+    probe: Mapping[str, object],
+    generated_at: datetime,
+    lookback_hours: int,
+    error_source: str,
+    error: BaseException,
+) -> dict[str, object]:
+    target = _target_identity(raw_target, probe=probe)
+    window_start, window_end = _target_window(
+        target,
+        generated_at=generated_at,
+        lookback_hours=lookback_hours,
+    )
+    source_blocker = _paper_route_audit_error_source_blocker(error_source)
+    blockers = _unique_text_items(
+        [
+            PAPER_ROUTE_EVIDENCE_DB_UNAVAILABLE_BLOCKER,
+            source_blocker,
+            "source_decisions_missing",
+            "source_executions_missing",
+            "source_tca_missing",
+            "runtime_ledger_bucket_missing",
+            "runtime_ledger_evidence_grade_bucket_missing",
+            "hypothesis_window_missing",
+            "promotion_decision_missing",
+        ]
+    )
+    error_payload = _paper_route_audit_error_payload(
+        error_source=error_source,
+        error=error,
+    )
+    source_activity = {
+        "strategy_name": _safe_text(target.get("strategy_name")),
+        "strategy_lookup_names": [
+            str(item)
+            for item in _as_sequence(target.get("strategy_lookup_names"))
+            if str(item).strip()
+        ],
+        "account_label": _safe_text(target.get("account_label")),
+        "symbols": _target_probe_symbols(target, probe),
+        "lineage_required": _target_requires_source_lineage(target),
+        "expected_candidate_id": _safe_text(target.get("candidate_id")),
+        "expected_hypothesis_id": _safe_text(target.get("hypothesis_id")),
+        "raw_decision_count": 0,
+        "lineage_matched_decision_count": 0,
+        "lineage_blockers": [source_blocker],
+        "decision_count": 0,
+        "execution_count": 0,
+        "filled_execution_count": 0,
+        "order_event_count": 0,
+        "fill_order_event_count": 0,
+        "complete_fill_order_event_count": 0,
+        "tca_sample_count": 0,
+        "last_decision_at": None,
+        "last_execution_at": None,
+        "last_order_event_at": None,
+        "last_tca_at": None,
+        "missing": True,
+        "missing_reasons": [
+            PAPER_ROUTE_EVIDENCE_DB_UNAVAILABLE_BLOCKER,
+            source_blocker,
+            "source_decisions_missing",
+            "source_executions_missing",
+            "source_tca_missing",
+        ],
+        "db_load_error": error_payload,
+    }
+    account_contamination = {
+        "schema_version": "torghut.paper-route-account-contamination-audit.v1",
+        "scope": "target_window_account_symbol_order_events",
+        "account_label": _safe_text(target.get("account_label")),
+        "symbols": _target_probe_symbols(target, probe),
+        "window_start": _isoformat(window_start),
+        "window_end": _isoformat(window_end),
+        "contaminated": False,
+        "unlinked_order_event_count": 0,
+        "client_order_id_count": 0,
+        "sample_client_order_ids": [],
+        "symbol_counts": {},
+        "event_type_counts": {},
+        "status_counts": {},
+        "last_event_at": None,
+        "blockers": [PAPER_ROUTE_EVIDENCE_DB_UNAVAILABLE_BLOCKER, source_blocker],
+        "db_load_error": error_payload,
+    }
+    account_state = {
+        "schema_version": "torghut.paper-route-account-window-start-snapshot-audit.v1",
+        "scope": "account_position_snapshot_at_runtime_window_start",
+        "account_label": _safe_text(target.get("account_label")),
+        "symbols": _target_probe_symbols(target, probe),
+        "generated_at": _isoformat(generated_at),
+        "window_start": _isoformat(window_start),
+        "required": False,
+        "snapshot_id": None,
+        "snapshot_as_of": None,
+        "snapshot_offset_seconds": None,
+        "snapshot_source": None,
+        "flat": None,
+        "position_count": 0,
+        "target_symbol_position_count": 0,
+        "non_target_symbol_position_count": 0,
+        "gross_position_market_value": "0",
+        "sample_positions": [],
+        "blockers": [PAPER_ROUTE_EVIDENCE_DB_UNAVAILABLE_BLOCKER, source_blocker],
+        "state": "database_unavailable",
+        "db_load_error": error_payload,
+    }
+    return {
+        "target": target,
+        "window": {
+            "start": _isoformat(window_start),
+            "end": _isoformat(window_end),
+        },
+        "source_activity": source_activity,
+        "account_contamination": account_contamination,
+        "account_state": account_state,
+        "rejected_signal_activity": {
+            "event_count": 0,
+            "blocking_reasons": [PAPER_ROUTE_EVIDENCE_DB_UNAVAILABLE_BLOCKER],
+            "db_load_error": error_payload,
+        },
+        "runtime_ledger": {
+            "bucket_count": 0,
+            "evidence_grade_bucket_count": 0,
+            "non_evidence_grade_bucket_count": 0,
+            "returned_bucket_count": 0,
+            "query_limit": RUNTIME_LEDGER_SUMMARY_ROW_LIMIT,
+            "filled_notional": "0",
+            "net_strategy_pnl_after_costs": "0",
+            "closed_trade_count": 0,
+            "open_position_count": 0,
+            "blockers": [PAPER_ROUTE_EVIDENCE_DB_UNAVAILABLE_BLOCKER, source_blocker],
+            "db_load_error": error_payload,
+        },
+        "hypothesis_windows": {
+            "window_count": 0,
+            "decision_count": 0,
+            "trade_count": 0,
+            "order_count": 0,
+            "market_session_count": 0,
+            "latest_window_ended_at": None,
+            "evidence_provenance_counts": {},
+            "evidence_maturity_counts": {},
+            "db_row_refs": [],
+            "blockers": [PAPER_ROUTE_EVIDENCE_DB_UNAVAILABLE_BLOCKER, source_blocker],
+            "db_load_error": error_payload,
+        },
+        "promotion_decisions": {
+            "decision_count": 0,
+            "allowed_count": 0,
+            "latest": None,
+            "db_row_refs": [],
+            "blockers": [PAPER_ROUTE_EVIDENCE_DB_UNAVAILABLE_BLOCKER, source_blocker],
+            "db_load_error": error_payload,
+        },
+        "readiness": {
+            "state": "evidence_collection_blocked",
+            "promotion_allowed": bool(target.get("promotion_allowed")),
+            "final_promotion_allowed": bool(target.get("final_promotion_allowed")),
+            "blockers": blockers,
+            "evidence_collection_blockers": blockers,
+            "promotion_authority": {
+                "allowed": False,
+                "reason": "paper_route_evidence_audit_observability_only",
+                "source_promotion_allowed": bool(
+                    target.get("source_promotion_allowed")
+                ),
+                "source_final_promotion_allowed": bool(
+                    target.get("source_final_promotion_allowed")
+                ),
+            },
+        },
+        "db_load_error": error_payload,
+    }
+
+
+def _target_audit_fail_closed(
+    session: Session,
+    *,
+    raw_target: Mapping[str, Any],
+    probe: Mapping[str, object],
+    generated_at: datetime,
+    lookback_hours: int,
+    error_source: str,
+) -> dict[str, object]:
+    try:
+        return _target_audit(
+            session,
+            raw_target=raw_target,
+            probe=probe,
+            generated_at=generated_at,
+            lookback_hours=lookback_hours,
+        )
+    except SQLAlchemyError as exc:
+        logger.warning(
+            "Paper-route evidence audit degraded source=%s error=%s",
+            error_source,
+            exc,
+        )
+        _rollback_paper_route_audit_session(session)
+        return _database_unavailable_target_audit(
+            raw_target=raw_target,
+            probe=probe,
+            generated_at=generated_at,
+            lookback_hours=lookback_hours,
+            error_source=error_source,
+            error=exc,
+        )
+
+
 def _runtime_window_import_audit(
     *,
     next_targets: Mapping[str, object],
@@ -3898,22 +4141,24 @@ def build_paper_route_target_plan_payload(
     )
     if run_full_runtime_import_audit:
         source_target_audits = [
-            _target_audit(
+            _target_audit_fail_closed(
                 session,
                 raw_target=target,
                 probe=probe,
                 generated_at=resolved_generated_at,
                 lookback_hours=DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
+                error_source="target_plan_source_target_audit",
             )
             for target in targets
         ]
         runtime_window_import_target_audits = [
-            _target_audit(
+            _target_audit_fail_closed(
                 session,
                 raw_target=target,
                 probe=probe,
                 generated_at=resolved_generated_at,
                 lookback_hours=DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
+                error_source="target_plan_runtime_window_target_audit",
             )
             for target in _as_mapping_items(runtime_window_import_plan.get("targets"))
         ]
@@ -4060,12 +4305,13 @@ def build_paper_route_evidence_audit(
         ),
     )
     target_audits = [
-        _target_audit(
+        _target_audit_fail_closed(
             session,
             raw_target=target,
             probe=probe,
             generated_at=resolved_generated_at,
             lookback_hours=lookback_hours,
+            error_source="paper_route_source_target_audit",
         )
         for target in targets
     ]
@@ -4077,12 +4323,13 @@ def build_paper_route_evidence_audit(
         generated_at=resolved_generated_at,
     )
     next_target_audits = [
-        _target_audit(
+        _target_audit_fail_closed(
             session,
             raw_target=target,
             probe=probe,
             generated_at=resolved_generated_at,
             lookback_hours=lookback_hours,
+            error_source="paper_route_next_target_audit",
         )
         for target in _as_mapping_items(next_targets.get("targets"))
     ]

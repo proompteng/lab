@@ -6,6 +6,7 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from sqlalchemy import create_engine
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -226,6 +227,84 @@ class TestPaperRouteEvidenceAudit(TestCase):
             import_audit["counts"]["selected_target_count"],
             1,
         )
+
+    def test_evidence_audit_records_target_db_timeout_as_fail_closed_blocker(
+        self,
+    ) -> None:
+        generated_at = datetime(2026, 5, 26, 12, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            with patch(
+                "app.trading.paper_route_evidence._strategy_source_activity",
+                side_effect=SQLAlchemyError("statement timeout"),
+            ):
+                payload = build_paper_route_evidence_audit(
+                    session,
+                    live_submission_gate={
+                        "allowed": False,
+                        "reason": "paper_route_probe_only",
+                        "blocked_reasons": [],
+                        "promotion_eligible_total": 0,
+                        "dependency_quorum_decision": "allow",
+                        "continuity_ok": True,
+                        "continuity_reason": "signal_continuity_nominal",
+                        "drift_ok": True,
+                        "drift_reason": "drift_live_promotion_eligible",
+                        "runtime_ledger_paper_probation_import_plan": {
+                            "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                            "target_count": 1,
+                            "targets": [
+                                {
+                                    "hypothesis_id": "H-PAIRS-01",
+                                    "candidate_id": "candidate-pre-session",
+                                    "observed_stage": "paper",
+                                    "strategy_family": "microbar_pairs",
+                                    "strategy_name": "paper-route-candidate-v1",
+                                    "account_label": "TORGHUT_REPLAY",
+                                    "source_kind": "durable_runtime_ledger_bucket",
+                                    "source_manifest_ref": "config/trading/hypotheses/h-pairs.json",
+                                    "dataset_snapshot_ref": "dataset://paper-route",
+                                    "paper_probation_authorized": True,
+                                    "promotion_allowed": False,
+                                    "final_promotion_authorized": False,
+                                    "max_notional": "0",
+                                }
+                            ],
+                        },
+                    },
+                    route_reacquisition_book={
+                        "schema_version": "torghut.route-reacquisition-book.v1",
+                        "state": "repair_only",
+                        "summary": {
+                            "paper_route_probe_eligible_symbols": ["AAPL", "AMZN"],
+                            "paper_route_probe_active_symbols": [],
+                        },
+                        "paper_route_probe": {
+                            "configured_enabled": True,
+                            "active": False,
+                            "next_session_max_notional": "25",
+                            "eligible_symbol_count": 2,
+                            "eligible_symbols": ["AAPL", "AMZN"],
+                            "blocking_reasons": ["market_session_closed"],
+                        },
+                    },
+                    generated_at=generated_at,
+                )
+
+        self.assertEqual(payload["schema_version"], "torghut.paper-route-evidence.v1")
+        source_audit = payload["targets"][0]
+        source_blockers = set(source_audit["readiness"]["blockers"])
+        self.assertIn("paper_route_evidence_db_unavailable", source_blockers)
+        self.assertIn("paper_route_source_target_audit_db_unavailable", source_blockers)
+        self.assertFalse(source_audit["readiness"]["promotion_authority"]["allowed"])
+        self.assertEqual(
+            source_audit["source_activity"]["db_load_error"]["error_type"],
+            "SQLAlchemyError",
+        )
+        next_audit = payload["next_runtime_window_target_audits"][0]
+        next_blockers = set(next_audit["readiness"]["blockers"])
+        self.assertIn("paper_route_evidence_db_unavailable", next_blockers)
+        self.assertIn("paper_route_next_target_audit_db_unavailable", next_blockers)
+        self.assertFalse(payload["summary"]["promotion_authority"]["allowed"])
 
     def test_normalized_open_positions_handles_flat_short_and_implicit_market_value(
         self,
