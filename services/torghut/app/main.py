@@ -5800,6 +5800,15 @@ def _decimal_or_none(value: object) -> Decimal | None:
         return None
 
 
+def _sqlalchemy_error_indicates_statement_timeout(exc: SQLAlchemyError) -> bool:
+    message = str(exc).lower()
+    return (
+        "statement timeout" in message
+        or "querycanceled" in message
+        or "query canceled" in message
+    )
+
+
 def _load_bounded_options_catalog_freshness_summary(
     session: Session,
     scoped_symbols: tuple[str, ...],
@@ -5824,6 +5833,7 @@ LIMIT 1
 """
     )
     try:
+        session.execute(text("SET LOCAL statement_timeout = 500"))
         for symbol in scoped_symbols:
             row = (
                 session.execute(
@@ -6042,6 +6052,18 @@ WHERE status = 'active'
                 rollback()
             except SQLAlchemyError:
                 logger.warning("Failed to roll back options catalog freshness session")
+        reason_codes = ["options_catalog_freshness_summary_unavailable"]
+        if _sqlalchemy_error_indicates_statement_timeout(exc):
+            reason_codes.append("options_catalog_freshness_query_timeout")
+            return _store_options_catalog_freshness_summary(
+                scoped_symbols,
+                {
+                    "status": "unavailable",
+                    "scope": "route_symbols" if scoped_symbols else "global",
+                    "route_symbols": list(scoped_symbols),
+                    "reason_codes": reason_codes,
+                },
+            )
         bounded_payload = _load_bounded_options_catalog_freshness_summary(
             session,
             scoped_symbols,
@@ -6058,7 +6080,7 @@ WHERE status = 'active'
                 "status": "unavailable",
                 "scope": "route_symbols" if scoped_symbols else "global",
                 "route_symbols": list(scoped_symbols),
-                "reason_codes": ["options_catalog_freshness_summary_unavailable"],
+                "reason_codes": reason_codes,
             },
         )
 

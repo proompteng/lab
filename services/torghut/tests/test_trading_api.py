@@ -257,6 +257,38 @@ class _FailingOptionsFreshnessSession:
         raise SQLAlchemyError("statement timeout")
 
 
+class _TimedOutAggregateOptionsFreshnessSession:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, object | None]] = []
+
+    def execute(
+        self, statement: object, params: object | None = None
+    ) -> _ExecuteResult:
+        statement_text = str(statement)
+        self.calls.append((statement_text, params))
+        if statement_text.startswith("SET LOCAL"):
+            return _ExecuteResult([])
+        if "GROUP BY underlying_symbol" in statement_text:
+            raise SQLAlchemyError(
+                "QueryCanceled: canceling statement due to statement timeout"
+            )
+        if "LIMIT 1" in statement_text:
+            return _ExecuteResult(
+                [
+                    {
+                        "underlying_symbol": "AAPL",
+                        "last_seen_ts": datetime(2026, 5, 12, tzinfo=timezone.utc),
+                        "provider_updated_ts": datetime(
+                            2026, 5, 12, tzinfo=timezone.utc
+                        ),
+                        "close_price": Decimal("182.10"),
+                        "open_interest": Decimal("100"),
+                    }
+                ]
+            )
+        return _ExecuteResult([])
+
+
 class _FallbackOptionsFreshnessSession:
     def __init__(self) -> None:
         self.calls: list[tuple[str, object | None]] = []
@@ -269,7 +301,7 @@ class _FallbackOptionsFreshnessSession:
         if statement_text.startswith("SET LOCAL"):
             return _ExecuteResult([])
         if "GROUP BY underlying_symbol" in statement_text:
-            raise SQLAlchemyError("statement timeout")
+            raise SQLAlchemyError("catalog aggregate unavailable")
         if "LIMIT 1" in statement_text:
             symbol = None
             if isinstance(params, dict):
@@ -307,7 +339,7 @@ class _FallbackOptionsFreshnessRequiresRollbackSession:
             return _ExecuteResult([])
         if "GROUP BY underlying_symbol" in statement_text:
             self._transaction_failed = True
-            raise SQLAlchemyError("statement timeout")
+            raise SQLAlchemyError("catalog aggregate unavailable")
         if "LIMIT 1" in statement_text:
             if self._transaction_failed:
                 raise SQLAlchemyError("current transaction is aborted")
@@ -344,7 +376,7 @@ class _FallbackOptionsFreshnessBlankSymbolSession:
         if statement_text.startswith("SET LOCAL"):
             return _ExecuteResult([])
         if "GROUP BY underlying_symbol" in statement_text:
-            raise SQLAlchemyError("statement timeout")
+            raise SQLAlchemyError("catalog aggregate unavailable")
         if "LIMIT 1" in statement_text:
             symbol = None
             if isinstance(params, dict):
@@ -654,7 +686,11 @@ class TestTradingApi(TestCase):
         self.assertEqual(second["status"], "unavailable")
         self.assertEqual(first["route_symbols"], ["AAPL"])
         self.assertEqual(second["route_symbols"], ["AAPL"])
-        self.assertEqual(len(fake_session.calls), 2)
+        self.assertEqual(len(fake_session.calls), 1)
+        self.assertIn(
+            "options_catalog_freshness_query_timeout",
+            first["reason_codes"],
+        )
         first_cache = first.get("cache")
         second_cache = second.get("cache")
         self.assertIsInstance(first_cache, dict)
@@ -663,6 +699,32 @@ class TestTradingApi(TestCase):
         assert isinstance(second_cache, dict)
         self.assertEqual(first_cache["hit"], False)
         self.assertEqual(second_cache["hit"], True)
+
+    def test_options_catalog_freshness_summary_skips_bounded_fallback_on_timeout(
+        self,
+    ) -> None:
+        fake_session = _TimedOutAggregateOptionsFreshnessSession()
+
+        payload = _load_options_catalog_freshness_summary(
+            fake_session,  # type: ignore[arg-type]
+            route_symbols=["AAPL", "MSFT"],
+        )
+
+        self.assertEqual(payload["status"], "unavailable")
+        self.assertEqual(payload["scope"], "route_symbols")
+        self.assertEqual(payload["route_symbols"], ["AAPL", "MSFT"])
+        self.assertIn(
+            "options_catalog_freshness_summary_unavailable",
+            payload["reason_codes"],
+        )
+        self.assertIn(
+            "options_catalog_freshness_query_timeout",
+            payload["reason_codes"],
+        )
+        self.assertEqual(
+            sum("LIMIT 1" in sql for sql, _params in fake_session.calls),
+            0,
+        )
 
     def test_options_catalog_freshness_summary_expires_cached_route_scope(
         self,
