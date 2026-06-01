@@ -53,6 +53,13 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).not.toContain('Torghut /readyz returned HTTP')
   })
 
+  it('retries transient readyz 503 payloads until they match the repair-only contract', () => {
+    expect(workflow).toContain('fetch_readyz_json()')
+    expect(workflow).toContain('payload.get("status") == "degraded"')
+    expect(workflow).toContain('without an acceptable readyz contract; retrying')
+    expect(workflow).toContain('fetch_readyz_json \\')
+  })
+
   it('retries Knative service JSON evidence capture before invoking the validator', () => {
     expect(workflow).toContain('fetch_json()')
     expect(workflow).toContain('python3 -m json.tool "${output_path}"')
