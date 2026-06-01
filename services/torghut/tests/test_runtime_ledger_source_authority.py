@@ -442,3 +442,139 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
                 }
             )
         )
+
+    def test_promotion_source_authority_rejects_source_window_gaps(self) -> None:
+        blockers = runtime_ledger_promotion_source_authority_blockers(
+            {
+                "source_window_start": "2026-05-29T14:30:00+00:00",
+                "source_window_end": "2026-05-29T15:00:00+00:00",
+                "source_refs": [
+                    "postgres:trade_decisions",
+                    "postgres:executions",
+                    "postgres:execution_order_events",
+                    "postgres:order_feed_source_windows",
+                ],
+                "source_row_counts": {
+                    "trade_decisions": 1,
+                    "executions": 1,
+                    "execution_order_events": 1,
+                    "order_feed_source_windows": 1,
+                },
+                "trade_decision_id": "decision-1",
+                "execution_id": "execution-1",
+                "execution_order_event_id": "event-1",
+                "source_window_id": "source-window-1",
+                "source_offsets": [
+                    {"topic": "alpaca.trade_updates", "partition": 0, "offset": 42}
+                ],
+                "source_materialization": "execution_order_events",
+                "authority_class": "runtime_order_feed_execution_source",
+                "source_window_gap_count": 1,
+            }
+        )
+
+        self.assertIn("order_feed_source_window_gap", blockers)
+
+    def test_promotion_source_authority_rejects_source_window_gap_ranges_and_counts(
+        self,
+    ) -> None:
+        base = {
+            "source_window_start": "2026-05-29T14:30:00+00:00",
+            "source_window_end": "2026-05-29T15:00:00+00:00",
+            "source_refs": [
+                "postgres:trade_decisions",
+                "postgres:executions",
+                "postgres:execution_order_events",
+                "postgres:order_feed_source_windows",
+            ],
+            "source_row_counts": {
+                "trade_decisions": 1,
+                "executions": 1,
+                "execution_order_events": 1,
+                "order_feed_source_windows": 1,
+            },
+            "trade_decision_id": "decision-1",
+            "execution_id": "execution-1",
+            "execution_order_event_id": "event-1",
+            "source_window_id": "source-window-1",
+            "source_offsets": [
+                {"topic": "alpaca.trade_updates", "partition": 0, "offset": 42}
+            ],
+            "source_materialization": "execution_order_events",
+            "authority_class": "runtime_order_feed_execution_source",
+        }
+
+        range_blockers = runtime_ledger_promotion_source_authority_blockers(
+            {**base, "source_window_gap_ranges": [{"start_offset": 41, "end_offset": 41}]}
+        )
+        mapping_blockers = runtime_ledger_promotion_source_authority_blockers(
+            {
+                **base,
+                "source_window_gap_counts": {
+                    "window-ok": 0,
+                    "window-bad": 2,
+                    "window-invalid": "not-a-number",
+                },
+            }
+        )
+
+        self.assertIn("order_feed_source_window_gap", range_blockers)
+        self.assertIn("order_feed_source_window_gap", mapping_blockers)
+
+    def test_promotion_source_authority_distinguishes_lifecycle_and_economics(
+        self,
+    ) -> None:
+        source_backed = {
+            "source_window_start": "2026-05-29T14:30:00+00:00",
+            "source_window_end": "2026-05-29T15:00:00+00:00",
+            "source_refs": [
+                "postgres:trade_decisions",
+                "postgres:executions",
+                "postgres:execution_order_events",
+                "postgres:order_feed_source_windows",
+            ],
+            "source_row_counts": {
+                "trade_decisions": 1,
+                "executions": 1,
+                "execution_order_events": 1,
+                "order_feed_source_windows": 1,
+            },
+            "trade_decision_id": "decision-1",
+            "execution_id": "execution-1",
+            "execution_order_event_id": "event-1",
+            "source_window_id": "source-window-1",
+            "source_offsets": [
+                {"topic": "alpaca.trade_updates", "partition": 0, "offset": 42}
+            ],
+            "source_materialization": "source_execution_lifecycle",
+            "authority_class": "source_execution_lifecycle_materialized_runtime_ledger",
+        }
+
+        lifecycle_blockers = runtime_ledger_promotion_source_authority_blockers(
+            {
+                **source_backed,
+                "order_feed_lifecycle_complete": False,
+                "execution_economics_complete": True,
+            }
+        )
+        economics_blockers = runtime_ledger_promotion_source_authority_blockers(
+            {
+                **source_backed,
+                "order_feed_lifecycle_complete": "yes",
+                "execution_economics_complete": "no",
+            }
+        )
+        unknown_flag_blockers = runtime_ledger_promotion_source_authority_blockers(
+            {
+                **source_backed,
+                "order_feed_lifecycle_complete": "unknown",
+                "execution_economics_complete": "unknown",
+            }
+        )
+
+        self.assertIn("order_feed_lifecycle_missing", lifecycle_blockers)
+        self.assertNotIn("execution_economics_missing", lifecycle_blockers)
+        self.assertIn("execution_economics_missing", economics_blockers)
+        self.assertNotIn("order_feed_lifecycle_missing", economics_blockers)
+        self.assertNotIn("order_feed_lifecycle_missing", unknown_flag_blockers)
+        self.assertNotIn("execution_economics_missing", unknown_flag_blockers)

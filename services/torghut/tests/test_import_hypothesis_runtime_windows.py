@@ -66,10 +66,16 @@ from scripts.import_hypothesis_runtime_windows import (
     _source_decision_rows_profit_proof_eligible,
     _source_order_feed_payload_delta_fill,
     _required_order_lifecycle_source_row_count,
+    _source_window_classification_counts,
+    _source_window_gap_count,
+    _source_window_gap_ranges,
+    _source_window_query_context,
+    _source_window_status_counts,
     _stable_payload_digest,
     _strategy_name_candidates,
     _sqlalchemy_dsn,
     _target_persistence_dsn,
+    _with_runtime_ledger_source_authority_context,
     main,
 )
 
@@ -805,6 +811,137 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertIn("runtime_ledger_source_materialization_missing", blockers)
         self.assertIn("runtime_ledger_authority_class_missing", blockers)
         self.assertFalse(_runtime_ledger_bucket_profit_proof_present(aggregate_only))
+
+    def test_runtime_ledger_source_context_threads_source_window_classification(
+        self,
+    ) -> None:
+        bucket = _with_runtime_ledger_source_authority_context(
+            _complete_runtime_ledger_bucket(),
+            source_window_start=datetime(2026, 5, 29, 14, 30, tzinfo=timezone.utc),
+            source_window_end=datetime(2026, 5, 29, 15, 0, tzinfo=timezone.utc),
+            source_refs=[
+                "postgres:trade_decisions",
+                "postgres:executions",
+                "postgres:execution_order_events",
+                "postgres:order_feed_source_windows",
+            ],
+            source_row_counts={
+                "trade_decisions": 1,
+                "executions": 1,
+                "execution_order_events": 1,
+                "order_feed_source_windows": 1,
+            },
+            trade_decision_ids=["decision-1"],
+            execution_ids=["execution-1"],
+            execution_order_event_ids=["event-1"],
+            source_window_ids=["window-1"],
+            source_offsets=[
+                {"topic": "alpaca.trade_updates", "partition": 0, "offset": 42}
+            ],
+            source_window_status_counts={"inserted": 1},
+            source_window_classification_counts={"inserted": 1},
+            order_feed_lifecycle_complete=True,
+            execution_economics_complete=True,
+            source_materialization="execution_order_events",
+            authority_class="runtime_order_feed_execution_source",
+        )
+
+        self.assertEqual(bucket["source_window_status_counts"], {"inserted": 1})
+        self.assertEqual(
+            bucket["source_window_classification_counts"], {"inserted": 1}
+        )
+        self.assertTrue(bucket["order_feed_lifecycle_complete"])
+        self.assertTrue(bucket["execution_economics_complete"])
+        self.assertEqual(_runtime_ledger_bucket_profit_proof_blockers(bucket), [])
+
+    def test_runtime_ledger_source_context_merges_gap_metadata(self) -> None:
+        bucket = _with_runtime_ledger_source_authority_context(
+            {
+                **_complete_runtime_ledger_bucket(),
+                "source_window_gap_count": 1,
+                "source_window_gap_ranges": [{"start_offset": 10, "end_offset": 10}],
+            },
+            source_window_start=datetime(2026, 5, 29, 14, 30, tzinfo=timezone.utc),
+            source_window_end=datetime(2026, 5, 29, 15, 0, tzinfo=timezone.utc),
+            source_refs=[],
+            source_row_counts={},
+            source_window_gap_count=2,
+            source_window_gap_ranges=[{"start_offset": 20, "end_offset": 21}],
+        )
+
+        self.assertEqual(bucket["source_window_gap_count"], 2)
+        self.assertEqual(
+            bucket["source_window_gap_ranges"],
+            [
+                {"start_offset": 10, "end_offset": 10},
+                {"start_offset": 20, "end_offset": 21},
+            ],
+        )
+
+    def test_source_window_metadata_helpers_skip_unusable_rows(self) -> None:
+        rows = [
+            {"source_window_status": "inserted"},
+            {
+                "source_window_id": "window-1",
+                "source_window_status": "inserted",
+                "source_window_inserted_count": 1,
+                "source_window_gap_count": 1,
+                "source_window_gap_ranges": [{"start_offset": 4, "end_offset": 4}],
+            },
+            {
+                "source_window_id": "window-1",
+                "source_window_status": "inserted",
+                "source_window_inserted_count": 1,
+                "source_window_gap_count": 1,
+            },
+            {
+                "source_window_id": "window-2",
+                "source_window_malformed_count": 1,
+                "source_window_gap_ranges": "not-a-list",
+            },
+            {
+                "source_window_id": "window-3",
+                "source_window_status": None,
+                "source_window_gap_ranges": ["not-a-mapping"],
+            },
+        ]
+
+        self.assertEqual(_source_window_status_counts(rows), {"inserted": 1})
+        self.assertEqual(
+            _source_window_classification_counts(rows),
+            {"inserted": 1, "malformed_json": 1},
+        )
+        self.assertEqual(_source_window_gap_count(rows), 1)
+        self.assertEqual(
+            _source_window_gap_ranges(rows),
+            [{"start_offset": 4, "end_offset": 4}],
+        )
+
+    def test_source_window_query_context_rejects_short_rows(self) -> None:
+        self.assertEqual(_source_window_query_context([1, 2, 3], start_index=0), {})
+        self.assertEqual(
+            _source_window_query_context(
+                [
+                    "inserted",
+                    "ok",
+                    1,
+                    1,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    [],
+                ],
+                start_index=0,
+            )["source_window_status"],
+            "inserted",
+        )
 
     def test_runtime_ledger_materialization_metadata_counts_only_source_backed_authority(
         self,
