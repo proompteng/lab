@@ -8,7 +8,7 @@ from decimal import Decimal
 from typing import Any, cast
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.config import Settings, settings
@@ -122,6 +122,62 @@ def _ref_matches_expected_event(
         and ref.code == expected.code
         and _payload_value(ref, "debit_account_id") == str(expected.debit_account_id)
         and _payload_value(ref, "credit_account_id") == str(expected.credit_account_id)
+    )
+
+
+def _order_event_ref_exists(
+    session: Session,
+    event: ExecutionOrderEvent,
+    *,
+    settings_obj: Settings,
+) -> bool:
+    clauses = [
+        TigerBeetleTransferRef.execution_order_event_id == event.id,
+        (
+            (TigerBeetleTransferRef.source_type == SOURCE_TYPE_EXECUTION_ORDER_EVENT)
+            & (TigerBeetleTransferRef.source_id == str(event.id))
+        ),
+    ]
+    if event.event_fingerprint:
+        clauses.append(
+            (TigerBeetleTransferRef.source_type == SOURCE_TYPE_EXECUTION_ORDER_EVENT)
+            & (TigerBeetleTransferRef.event_fingerprint == event.event_fingerprint)
+        )
+    return (
+        session.scalar(
+            select(TigerBeetleTransferRef.id)
+            .where(
+                TigerBeetleTransferRef.cluster_id
+                == settings_obj.tigerbeetle_cluster_id,
+                or_(*clauses),
+            )
+            .limit(1)
+        )
+        is not None
+    )
+
+
+def _source_ref_exists(
+    session: Session,
+    *,
+    settings_obj: Settings,
+    source_type: str,
+    source_id: str,
+    transfer_kind: str,
+) -> bool:
+    return (
+        session.scalar(
+            select(TigerBeetleTransferRef.id)
+            .where(
+                TigerBeetleTransferRef.cluster_id
+                == settings_obj.tigerbeetle_cluster_id,
+                TigerBeetleTransferRef.source_type == source_type,
+                TigerBeetleTransferRef.source_id == source_id,
+                TigerBeetleTransferRef.transfer_kind == transfer_kind,
+            )
+            .limit(1)
+        )
+        is not None
     )
 
 
@@ -461,17 +517,6 @@ def reconcile_tigerbeetle_transfers(
                     mismatched_transfer_count += 1
                     blockers.append(BLOCKER_RUNTIME_LEDGER_METADATA_MISMATCH)
 
-    event_ids_with_refs = {
-        item
-        for item in session.execute(
-            select(TigerBeetleTransferRef.execution_order_event_id).where(
-                TigerBeetleTransferRef.cluster_id
-                == settings_obj.tigerbeetle_cluster_id,
-                TigerBeetleTransferRef.execution_order_event_id.is_not(None),
-            )
-        ).scalars()
-        if item is not None
-    }
     recent_events = (
         session.execute(
             select(ExecutionOrderEvent)
@@ -484,7 +529,7 @@ def reconcile_tigerbeetle_transfers(
     unlinked_event_count = sum(
         1
         for event in recent_events
-        if event.id not in event_ids_with_refs
+        if not _order_event_ref_exists(session, event, settings_obj=settings_obj)
         and build_order_event_transfer_plan(
             session,
             event,
@@ -495,19 +540,6 @@ def reconcile_tigerbeetle_transfers(
     if unlinked_event_count:
         blockers.append(BLOCKER_UNLINKED_EVENT)
 
-    execution_ids_with_refs = {
-        str(item)
-        for item in session.execute(
-            select(TigerBeetleTransferRef.source_id).where(
-                TigerBeetleTransferRef.cluster_id
-                == settings_obj.tigerbeetle_cluster_id,
-                TigerBeetleTransferRef.source_type == SOURCE_TYPE_EXECUTION,
-                TigerBeetleTransferRef.transfer_kind == TRANSFER_KIND_EXECUTION_FILL,
-                TigerBeetleTransferRef.source_id.is_not(None),
-            )
-        ).scalars()
-        if item is not None
-    }
     recent_executions = (
         session.execute(
             select(Execution)
@@ -524,24 +556,17 @@ def reconcile_tigerbeetle_transfers(
     unlinked_execution_count = sum(
         1
         for execution in recent_executions
-        if str(execution.id) not in execution_ids_with_refs
+        if not _source_ref_exists(
+            session,
+            settings_obj=settings_obj,
+            source_type=SOURCE_TYPE_EXECUTION,
+            source_id=str(execution.id),
+            transfer_kind=TRANSFER_KIND_EXECUTION_FILL,
+        )
     )
     if unlinked_execution_count:
         blockers.append(BLOCKER_UNLINKED_EXECUTION)
 
-    cost_ids_with_refs = {
-        str(item)
-        for item in session.execute(
-            select(TigerBeetleTransferRef.source_id).where(
-                TigerBeetleTransferRef.cluster_id
-                == settings_obj.tigerbeetle_cluster_id,
-                TigerBeetleTransferRef.source_type == SOURCE_TYPE_EXECUTION_TCA_METRIC,
-                TigerBeetleTransferRef.transfer_kind == TRANSFER_KIND_EXECUTION_COST,
-                TigerBeetleTransferRef.source_id.is_not(None),
-            )
-        ).scalars()
-        if item is not None
-    }
     recent_cost_metrics = (
         session.execute(
             select(ExecutionTCAMetric)
@@ -556,24 +581,19 @@ def reconcile_tigerbeetle_transfers(
         .all()
     )
     unlinked_cost_count = sum(
-        1 for metric in recent_cost_metrics if str(metric.id) not in cost_ids_with_refs
+        1
+        for metric in recent_cost_metrics
+        if not _source_ref_exists(
+            session,
+            settings_obj=settings_obj,
+            source_type=SOURCE_TYPE_EXECUTION_TCA_METRIC,
+            source_id=str(metric.id),
+            transfer_kind=TRANSFER_KIND_EXECUTION_COST,
+        )
     )
     if unlinked_cost_count:
         blockers.append(BLOCKER_UNLINKED_COST)
 
-    runtime_ids_with_refs = {
-        str(item)
-        for item in session.execute(
-            select(TigerBeetleTransferRef.source_id).where(
-                TigerBeetleTransferRef.cluster_id
-                == settings_obj.tigerbeetle_cluster_id,
-                TigerBeetleTransferRef.source_type == SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
-                TigerBeetleTransferRef.transfer_kind == TRANSFER_KIND_RUNTIME_NET_PNL,
-                TigerBeetleTransferRef.source_id.is_not(None),
-            )
-        ).scalars()
-        if item is not None
-    }
     recent_runtime_buckets = (
         session.execute(
             select(StrategyRuntimeLedgerBucket)
@@ -590,7 +610,13 @@ def reconcile_tigerbeetle_transfers(
     unlinked_runtime_ledger_count = sum(
         1
         for bucket in recent_runtime_buckets
-        if str(bucket.id) not in runtime_ids_with_refs
+        if not _source_ref_exists(
+            session,
+            settings_obj=settings_obj,
+            source_type=SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+            source_id=str(bucket.id),
+            transfer_kind=TRANSFER_KIND_RUNTIME_NET_PNL,
+        )
     )
     if unlinked_runtime_ledger_count:
         blockers.append(BLOCKER_UNLINKED_RUNTIME_LEDGER)

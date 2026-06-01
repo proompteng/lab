@@ -46,7 +46,9 @@ def _payload(
         "source_windows_created": sum(
             batch["source_windows_created"] for batch in batches
         ),
-        "source_windows_reused": sum(batch["source_windows_reused"] for batch in batches),
+        "source_windows_reused": sum(
+            batch["source_windows_reused"] for batch in batches
+        ),
         "events_linked": sum(batch["events_linked"] for batch in batches),
         "execution_link_candidates": sum(
             batch["execution_link_candidates"] for batch in batches
@@ -87,6 +89,12 @@ def _sqlalchemy_dsn(dsn: str) -> str:
     if text.startswith("postgresql://"):
         return text.replace("postgresql://", "postgresql+psycopg://", 1)
     return text
+
+
+def _reset_session_identity_map(session: Any) -> None:
+    expunge_all = getattr(session, "expunge_all", None)
+    if callable(expunge_all):
+        expunge_all()
 
 
 def main() -> int:
@@ -136,8 +144,10 @@ def main() -> int:
             batches.append(batch)
             if args.apply:
                 session.commit()
+                _reset_session_identity_map(session)
             else:
                 session.rollback()
+                _reset_session_identity_map(session)
                 break
             if (
                 int(source_window_batch.get("selected") or 0) < batch_size
