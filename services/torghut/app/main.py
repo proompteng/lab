@@ -5256,6 +5256,15 @@ def _merge_external_paper_route_target_plan(
     if load_error:
         gate["paper_route_target_plan_error"] = load_error
         if settings.trading_paper_route_target_plan_url:
+            if _paper_route_target_plan_cache_safe_for_live(local_plan):
+                gate.setdefault(
+                    "paper_route_target_plan_source",
+                    "local_runtime_ledger_paper_probation_import_plan",
+                )
+                gate["paper_route_target_plan_external_source"] = (
+                    "external_target_plan_url"
+                )
+                return gate
             gate["runtime_ledger_paper_probation_import_plan"] = {
                 "schema_version": local_plan.get("schema_version")
                 or "torghut.runtime-ledger-paper-probation-import-plan.v1",
