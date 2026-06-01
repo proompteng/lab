@@ -640,6 +640,7 @@ describe('synthesis autonomous trader provider', () => {
     )
     expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_TARGET_EQUITY_USD')).toBe('{{parameters.targetEquityUsd}}')
     expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_ACCOUNT_TYPE')).toBe('{{parameters.accountType}}')
+    expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED')).toBe('false')
     expect(overallTimeoutSeconds).toBeGreaterThanOrEqual(32400)
   })
 
@@ -1029,13 +1030,20 @@ describe('synthesis autonomous trader provider', () => {
     expect(objectAt(objectAt(alpaca, 'env'), 'ALPACA_API_KEY')).toBe('{{ env.ALPACA_API_KEY }}')
     expect(objectAt(objectAt(alpaca, 'env'), 'ALPACA_SECRET_KEY')).toBe('{{ env.ALPACA_SECRET_KEY }}')
     expect(objectAt(objectAt(alpaca, 'env'), 'ALPACA_PAPER_TRADE')).toBe('{{ env.ALPACA_PAPER_TRADE }}')
+    expect(objectAt(objectAt(alpaca, 'env'), 'AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED')).toBe(
+      '{{ env.AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED }}',
+    )
     expect(objectAt(codexConfig, 'content')).toContain('command = "/usr/bin/python3"')
     expect(objectAt(codexConfig, 'content')).toContain('args = ["-u", "/root/alpaca-mcp-stdio-bridge.py"]')
     expect(objectAt(codexConfig, 'content')).toContain('startup_timeout_sec = 60.0')
+    expect(objectAt(codexConfig, 'content')).toContain('AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED = "false"')
     expect(objectAt(bridge, 'content')).toContain('Content-Length:')
     expect(objectAt(bridge, 'content')).toContain('/usr/local/bin/alpaca-mcp-server')
     expect(objectAt(bridge, 'content')).toContain('--transport')
     expect(objectAt(bridge, 'content')).toContain('stdio')
+    expect(objectAt(bridge, 'content')).toContain('MUTATION_TOOL_PREFIXES')
+    expect(objectAt(bridge, 'content')).toContain('should_block_client_message')
+    expect(objectAt(bridge, 'content')).toContain('blocked_shared_torghut_proof_account')
   })
 })
 
