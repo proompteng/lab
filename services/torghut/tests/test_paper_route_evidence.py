@@ -31,6 +31,7 @@ from app.trading.paper_route_evidence import (
     _runtime_ledger_bucket_evidence_grade,
     _runtime_ledger_non_evidence_diagnostic_summary,
     _runtime_ledger_row_diagnostic_expectancy_bps,
+    _strategy_source_decision_readiness,
     build_paper_route_evidence_audit,
     build_paper_route_target_plan_payload,
 )
@@ -1470,6 +1471,49 @@ class TestPaperRouteEvidenceAudit(TestCase):
             summary_target["source_decision_mode"], "route_acquisition_probe"
         )
         self.assertFalse(summary_target["profit_proof_eligible"])
+
+    def test_strategy_source_decision_readiness_queries_session_without_prefetch(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            strategy = Strategy(
+                name="session-source-strategy",
+                description="source decision session lookup fixture",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL", "MSFT"],
+                max_notional_per_trade=Decimal("25000"),
+            )
+            session.add(strategy)
+            session.commit()
+            strategy_id = str(strategy.id)
+
+            readiness = _strategy_source_decision_readiness(
+                session,
+                strategy_lookup_names=["session-source-strategy"],
+                raw_probe_symbols=["AAPL", "GOOG"],
+                scoped_probe_symbols=["AAPL"],
+            )
+
+        self.assertTrue(readiness["ready"])
+        self.assertEqual(readiness["blockers"], [])
+        self.assertEqual(
+            readiness["matched_strategy"],
+            {
+                "strategy_id": strategy_id,
+                "strategy_name": "session-source-strategy",
+                "enabled": True,
+                "base_timeframe": "1Min",
+                "universe_symbols": ["AAPL", "MSFT"],
+                "max_notional_per_trade": "25000",
+            },
+        )
+        self.assertEqual(
+            readiness["strategy_lookup_names"], ["session-source-strategy"]
+        )
+        self.assertEqual(readiness["raw_probe_symbols"], ["AAPL", "GOOG"])
+        self.assertEqual(readiness["scoped_probe_symbols"], ["AAPL"])
 
     def test_next_paper_route_targets_use_family_runtime_harness_from_strategy_id(
         self,

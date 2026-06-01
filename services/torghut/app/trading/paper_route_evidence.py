@@ -790,12 +790,75 @@ def _target_allows_strategy_universe_probe_fallback(
     )
 
 
+def _strategy_lookup_names_for_target(target: Mapping[str, Any]) -> list[str]:
+    strategy_name = _safe_text(target.get("strategy_name"))
+    strategy_id = _safe_text(target.get("strategy_id"))
+    runtime_strategy_name = (
+        explicit_runtime_strategy_name_or_family_harness(
+            runtime_strategy_name=target.get("runtime_strategy_name"),
+            strategy_name=strategy_name,
+            strategy_id=strategy_id,
+        )
+        or strategy_name
+    )
+    return _strategy_lookup_names(
+        target.get("strategy_lookup_names"),
+        runtime_strategy_name,
+        strategy_name,
+        strategy_names_from_strategy_id(strategy_id),
+        derived_strategy_name_from_strategy_id(strategy_id),
+    )
+
+
+def _strategy_rows_by_name_for_targets(
+    session: Session,
+    targets: Sequence[Mapping[str, Any]],
+) -> dict[str, dict[str, object]]:
+    lookup_names: list[str] = []
+    for target in targets:
+        for name in _strategy_lookup_names_for_target(target):
+            if name and name not in lookup_names:
+                lookup_names.append(name)
+    if not lookup_names:
+        return {}
+    rows = session.execute(
+        select(
+            Strategy.id.label("id"),
+            Strategy.name.label("name"),
+            Strategy.enabled.label("enabled"),
+            Strategy.base_timeframe.label("base_timeframe"),
+            Strategy.universe_symbols.label("universe_symbols"),
+            Strategy.max_notional_per_trade.label("max_notional_per_trade"),
+        ).where(Strategy.name.in_(lookup_names))
+    ).mappings()
+    return {str(row.get("name")): dict(row) for row in rows if row.get("name")}
+
+
+def _strategy_universe_symbols_from_row(row: Mapping[str, object]) -> list[str]:
+    symbols: list[str] = []
+    for item in _as_sequence(row.get("universe_symbols")):
+        symbol = str(item).strip().upper()
+        if symbol and symbol not in symbols:
+            symbols.append(symbol)
+    return symbols
+
+
 def _strategy_universe_symbols(
     session: Session,
     *,
     strategy_lookup_names: Sequence[str],
+    strategy_rows_by_name: Mapping[str, Mapping[str, object]] | None = None,
 ) -> list[str]:
     if not strategy_lookup_names:
+        return []
+    if strategy_rows_by_name is not None:
+        for strategy_name in strategy_lookup_names:
+            row = strategy_rows_by_name.get(strategy_name)
+            if row is None:
+                continue
+            symbols = _strategy_universe_symbols_from_row(row)
+            if symbols:
+                return symbols
         return []
     rows = session.execute(
         select(Strategy.name, Strategy.universe_symbols).where(
@@ -823,26 +886,34 @@ def _strategy_source_decision_readiness(
     strategy_lookup_names: Sequence[str],
     raw_probe_symbols: Sequence[str],
     scoped_probe_symbols: Sequence[str],
+    strategy_rows_by_name: Mapping[str, Mapping[str, object]] | None = None,
 ) -> dict[str, object]:
     lookup_names = [name for name in strategy_lookup_names if name]
     blockers: list[str] = []
     matched: dict[str, object] | None = None
     if lookup_names:
-        rows = [
-            dict(row)
-            for row in session.execute(
-                select(
-                    Strategy.id.label("id"),
-                    Strategy.name.label("name"),
-                    Strategy.enabled.label("enabled"),
-                    Strategy.base_timeframe.label("base_timeframe"),
-                    Strategy.universe_symbols.label("universe_symbols"),
-                    Strategy.max_notional_per_trade.label("max_notional_per_trade"),
-                ).where(Strategy.name.in_(lookup_names))
-            )
-            .mappings()
-            .all()
-        ]
+        if strategy_rows_by_name is None:
+            rows = [
+                dict(row)
+                for row in session.execute(
+                    select(
+                        Strategy.id.label("id"),
+                        Strategy.name.label("name"),
+                        Strategy.enabled.label("enabled"),
+                        Strategy.base_timeframe.label("base_timeframe"),
+                        Strategy.universe_symbols.label("universe_symbols"),
+                        Strategy.max_notional_per_trade.label("max_notional_per_trade"),
+                    ).where(Strategy.name.in_(lookup_names))
+                )
+                .mappings()
+                .all()
+            ]
+        else:
+            rows = [
+                dict(row)
+                for name in lookup_names
+                if (row := strategy_rows_by_name.get(name)) is not None
+            ]
         rows_by_name = {str(row.get("name")): row for row in rows if row.get("name")}
         for lookup_name in lookup_names:
             row = rows_by_name.get(lookup_name)
@@ -1231,6 +1302,7 @@ def _next_paper_route_runtime_window_targets(
         "final_promotion_authorized": False,
         "promotion_gate": "runtime_ledger_live_or_live_paper_required",
     }
+    strategy_rows_by_name = _strategy_rows_by_name_for_targets(session, targets)
     planned_targets: list[dict[str, object]] = []
     skipped_targets: list[dict[str, object]] = []
     planned_keys: set[tuple[object, ...]] = set()
@@ -1263,6 +1335,7 @@ def _next_paper_route_runtime_window_targets(
         strategy_universe_symbols = _strategy_universe_symbols(
             session,
             strategy_lookup_names=strategy_lookup_names,
+            strategy_rows_by_name=strategy_rows_by_name,
         )
         target_probe_symbols = raw_target_probe_symbols
         source_readiness_raw_probe_symbols = raw_target_probe_symbols
@@ -1290,6 +1363,7 @@ def _next_paper_route_runtime_window_targets(
             strategy_lookup_names=strategy_lookup_names,
             raw_probe_symbols=source_readiness_raw_probe_symbols,
             scoped_probe_symbols=target_probe_symbols,
+            strategy_rows_by_name=strategy_rows_by_name,
         )
         matched_strategy = _as_mapping(
             source_decision_readiness.get("matched_strategy")
