@@ -36,6 +36,7 @@ from app.trading.tigerbeetle_journal import (
     build_execution_tca_metric_transfer_plan,
     build_execution_transfer_plan,
     build_runtime_ledger_bucket_transfer_plan,
+    execution_tca_metric_source_id,
 )
 from app.trading.tigerbeetle_ledger_model import (
     TRANSFER_KIND_EXECUTION_COST,
@@ -188,7 +189,7 @@ def _select_sources(
             _ParitySource(
                 family=TRANSFER_KIND_EXECUTION_COST,
                 source_type=SOURCE_TYPE_EXECUTION_TCA_METRIC,
-                source_id=str(metric.id),
+                source_id=execution_tca_metric_source_id(metric),
                 account_label=metric.alpaca_account_label,
                 candidate_id=None,
                 plan=plan,

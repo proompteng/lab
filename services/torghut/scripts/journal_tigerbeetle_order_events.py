@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, cast
 
-from sqlalchemy import String, create_engine, select
+from sqlalchemy import String, create_engine, or_, select
 from sqlalchemy.orm import sessionmaker
 
 from app.config import Settings
@@ -147,7 +147,10 @@ def _source_ref_exists(
         .where(
             TigerBeetleTransferRef.cluster_id == settings_obj.tigerbeetle_cluster_id,
             TigerBeetleTransferRef.source_type == source_type,
-            TigerBeetleTransferRef.source_id == source_id_column,
+            or_(
+                TigerBeetleTransferRef.source_id == source_id_column,
+                TigerBeetleTransferRef.source_id.like(source_id_column + ":%"),
+            ),
             TigerBeetleTransferRef.transfer_kind == transfer_kind,
         )
         .exists()

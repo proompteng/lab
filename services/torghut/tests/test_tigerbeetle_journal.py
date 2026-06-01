@@ -44,10 +44,13 @@ from app.trading.tigerbeetle_journal import (
     _transfer_ref_mismatches,
     _transfer_spec,
     build_order_event_transfer_plan,
+    execution_economic_event_key,
     submitted_pending_transfer_id,
     event_transfer_id,
     execution_cost_transfer_id,
     execution_transfer_id,
+    execution_tca_metric_economic_event_key,
+    execution_tca_metric_source_id,
     runtime_ledger_transfer_id,
     tigerbeetle_runtime_ledger_journal_payload,
 )
@@ -453,6 +456,11 @@ class TestTigerBeetleLedgerJournal(TestCase):
             self.assertEqual(ref.transfer_kind, TRANSFER_KIND_EXECUTION_FILL)
             self.assertEqual(ref.transfer_id, str(execution_transfer_id(execution)))
             self.assertEqual(ref.amount, Decimal("190250000"))
+            self.assertEqual(ref.payload_json["source_row_id"], str(execution.id))
+            self.assertEqual(
+                ref.payload_json["economic_event_key"],
+                execution_economic_event_key(execution),
+            )
             self.assertIn(int(ref.transfer_id), client.transfers)
 
     def test_cost_source_writes_real_tca_metric_ref(self) -> None:
@@ -485,7 +493,7 @@ class TestTigerBeetleLedgerJournal(TestCase):
             self.assertIsNotNone(ref)
             assert ref is not None
             self.assertEqual(ref.source_type, "execution_tca_metric")
-            self.assertEqual(ref.source_id, str(metric.id))
+            self.assertEqual(ref.source_id, execution_tca_metric_source_id(metric))
             self.assertEqual(ref.execution_tca_metric_id, metric.id)
             self.assertEqual(ref.transfer_kind, TRANSFER_KIND_EXECUTION_COST)
             self.assertEqual(ref.transfer_id, str(execution_cost_transfer_id(metric)))
@@ -499,8 +507,9 @@ class TestTigerBeetleLedgerJournal(TestCase):
             )
             self.assertEqual(
                 ref.payload_json["economic_event_key"],
-                f"execution:{metric.execution_id}:tca_metric:{metric.id}:execution_cost",
+                execution_tca_metric_economic_event_key(metric),
             )
+            self.assertEqual(ref.payload_json["source_row_id"], str(metric.id))
             self.assertEqual(ref.payload_json["amount_source"], "0.25")
             self.assertEqual(ref.payload_json["ledger"], LEDGER_USD_MICRO)
             self.assertEqual(ref.payload_json["code"], 2011)
@@ -540,6 +549,65 @@ class TestTigerBeetleLedgerJournal(TestCase):
             refs = session.execute(select(TigerBeetleTransferRef)).scalars().all()
             self.assertEqual(len(refs), 1)
             self.assertEqual(len(client.transfers), 1)
+
+    def test_cost_source_changed_economics_create_distinct_revision_ref(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            event = _create_fill_event(
+                session, fingerprint="fingerprint-cost-revision"
+            )
+            metric = ExecutionTCAMetric(
+                execution_id=event.execution_id,
+                trade_decision_id=event.trade_decision_id,
+                strategy_id=event.trade_decision.strategy_id
+                if event.trade_decision
+                else None,
+                alpaca_account_label="paper",
+                symbol="AAPL",
+                side="buy",
+                filled_qty=Decimal("1"),
+                signed_qty=Decimal("1"),
+                shortfall_notional=Decimal("0.25"),
+                realized_shortfall_bps=Decimal("1.3"),
+                computed_at=datetime.now(timezone.utc),
+            )
+            session.add(metric)
+            session.flush()
+            client = FakeTigerBeetleClient()
+            journal = TigerBeetleLedgerJournal(
+                settings_obj=_settings(),
+                client=client,
+            )
+
+            first = journal.journal_execution_tca_metric(session, metric)
+            self.assertIsNotNone(first)
+            assert first is not None
+            first_transfer_id = first.transfer_id
+            first_source_id = first.source_id
+            metric.shortfall_notional = Decimal("0.40")
+            metric.realized_shortfall_bps = Decimal("2.1")
+            session.add(metric)
+            session.flush()
+            second = journal.journal_execution_tca_metric(session, metric)
+
+            self.assertIsNotNone(second)
+            assert second is not None
+            self.assertNotEqual(second.transfer_id, first_transfer_id)
+            self.assertNotEqual(second.source_id, first_source_id)
+            self.assertEqual(second.amount, Decimal("400000"))
+            refs = (
+                session.execute(
+                    select(TigerBeetleTransferRef).where(
+                        TigerBeetleTransferRef.source_type
+                        == "execution_tca_metric"
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            self.assertEqual(len(refs), 2)
+            self.assertEqual(len(client.transfers), 2)
 
     def test_cost_source_same_ref_different_payload_is_blocked(self) -> None:
         with Session(self.engine) as session:
