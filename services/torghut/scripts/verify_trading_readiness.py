@@ -697,11 +697,15 @@ def _add_runtime_ledger_proof_packet_check(
     authority = _mapping(packet.get("promotion_authority"))
     capital_authority = _mapping(packet.get("capital_promotion_authority"))
     schema_version = _text(packet.get("schema_version"))
+    proof_mode = _text(packet.get("proof_mode"))
     allowed = authority.get("allowed") is True
     packet_ok = (
         packet.get("ok") is True
+        and proof_mode == "authority"
         and packet.get("final_authority_ok") is True
+        and packet.get("promotion_allowed") is True
         and packet.get("capital_promotion_allowed") is True
+        and packet.get("final_promotion_allowed") is True
         and allowed
     )
     expected_schema = schema_version == RUNTIME_LEDGER_PROOF_PACKET_SCHEMA_VERSION
@@ -712,9 +716,11 @@ def _add_runtime_ledger_proof_packet_check(
         observed={
             "present": bool(packet),
             "schema_version": schema_version,
-            "proof_mode": _text(packet.get("proof_mode")),
+            "proof_mode": proof_mode,
             "final_authority_ok": packet.get("final_authority_ok"),
+            "promotion_allowed": packet.get("promotion_allowed"),
             "capital_promotion_allowed": packet.get("capital_promotion_allowed"),
+            "final_promotion_allowed": packet.get("final_promotion_allowed"),
             "evidence_collection_ok": packet.get("evidence_collection_ok"),
             "ok": packet.get("ok"),
             "verdict": _text(packet.get("verdict")),
@@ -738,7 +744,9 @@ def _add_runtime_ledger_proof_packet_check(
             "ok": True,
             "proof_mode": "authority",
             "final_authority_ok": True,
+            "promotion_allowed": True,
             "capital_promotion_allowed": True,
+            "final_promotion_allowed": True,
             "promotion_authority.allowed": True,
         },
     )

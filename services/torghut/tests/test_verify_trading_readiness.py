@@ -273,7 +273,9 @@ def _runtime_ledger_proof_packet(
         "proof_mode": "authority",
         "ok": allowed,
         "final_authority_ok": allowed,
+        "promotion_allowed": allowed,
         "capital_promotion_allowed": allowed,
+        "final_promotion_allowed": allowed,
         "evidence_collection_ok": False,
         "next_action": "none"
         if allowed
@@ -476,6 +478,28 @@ class TestVerifyTradingReadiness(TestCase):
         self.assertEqual(observed["proof_mode"], "smoke")
         self.assertFalse(observed["authority_allowed"])
         self.assertEqual(result["next_action"], "rerun_proof_packet_in_authority_mode")
+
+    def test_runtime_ledger_proof_packet_rejects_mislabeled_smoke_authority(
+        self,
+    ) -> None:
+        packet = _runtime_ledger_proof_packet(allowed=True)
+        packet["proof_mode"] = "smoke"
+
+        result = evaluate_trading_readiness(
+            _ready_status(),
+            runtime_ledger_proof_packet=packet,
+            require_runtime_ledger_proof_packet=True,
+        )
+
+        self.assertFalse(result["ok"])
+        observed = result["checks"]["runtime_ledger_proof_packet_authority"]["observed"]
+        self.assertEqual(observed["proof_mode"], "smoke")
+        self.assertTrue(observed["promotion_allowed"])
+        self.assertTrue(observed["final_promotion_allowed"])
+        self.assertIn(
+            "runtime_ledger_proof_packet_authority",
+            result["failed_checks"],
+        )
 
     def test_runtime_ledger_blockers_map_to_concrete_next_actions(self) -> None:
         cases = [

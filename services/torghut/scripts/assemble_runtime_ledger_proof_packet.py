@@ -1507,6 +1507,7 @@ def build_runtime_ledger_proof_packet(
             "canary_collection_authorized": bool(
                 proof_mode_targets["canary_collection_authorized"]
             ),
+            "promotion_allowed": False,
             "capital_promotion_allowed": False,
             "final_promotion_allowed": False,
         },
@@ -2424,8 +2425,10 @@ def build_runtime_ledger_proof_packet(
         and post_cost_proof_satisfied,
         "canary_collection_authorized": resolved_proof_mode == "probation"
         and post_cost_proof_satisfied,
+        "promotion_allowed": capital_promotion_allowed,
         "capital_promotion_allowed": capital_promotion_allowed,
         "final_promotion_allowed": capital_promotion_allowed,
+        "authority_blockers": authority_blockers,
         "blockers": promotion_blockers,
         "next_action": required_actions[0] if required_actions else "none",
         "post_cost_proof_authority": {
@@ -2460,6 +2463,7 @@ def build_runtime_ledger_proof_packet(
             "canary_collection_authorized": bool(
                 proof_mode_targets["canary_collection_authorized"]
             ),
+            "promotion_allowed": False,
             "capital_promotion_allowed": False,
             "final_promotion_allowed": False,
             "min_runtime_ledger_net_pnl_after_costs": _decimal_text(
