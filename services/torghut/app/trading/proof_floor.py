@@ -8,6 +8,11 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, cast
 
+from .discovery.promotion_contract import (
+    final_authority_parameter_contract,
+    probation_evidence_collection_contract,
+)
+from .risk import target_sizing_payload
 from .route_reacquisition import build_route_reacquisition_book
 
 
@@ -118,6 +123,122 @@ def _truthy(value: object) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes", "on", "pass", "ready"}
     return bool(value)
+
+
+def _first_decimal_from(
+    source: Mapping[str, Any], keys: Sequence[str]
+) -> Decimal | None:
+    for key in keys:
+        value = _decimal(source.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _target_sizing_source_for_item(
+    item: Mapping[str, Any],
+    simple_lane_status: Mapping[str, Any] | None,
+) -> dict[str, object]:
+    contract = _mapping(item.get("promotion_contract"))
+    sizing = _mapping(item.get("target_sizing"))
+    simple = _mapping(simple_lane_status)
+    expectancy = _first_decimal_from(
+        sizing,
+        (
+            "observed_post_cost_expectancy_bps",
+            "post_cost_expectancy_bps",
+            "expectancy_bps",
+        ),
+    )
+    if expectancy is None:
+        expectancy = _first_decimal_from(
+            item,
+            (
+                "observed_post_cost_expectancy_bps",
+                "post_cost_expectancy_bps",
+                "expectancy_bps",
+            ),
+        )
+    if expectancy is None:
+        expectancy = _first_decimal_from(
+            contract,
+            (
+                "observed_post_cost_expectancy_bps",
+                "post_cost_expectancy_bps",
+                "expectancy_bps",
+            ),
+        )
+    return {
+        "target_daily_net_pnl": sizing.get("target_daily_net_pnl")
+        or item.get("target_daily_net_pnl")
+        or contract.get("target_daily_net_pnl")
+        or "500",
+        "observed_post_cost_expectancy_bps": _decimal_text(expectancy),
+        "capacity_daily_notional": sizing.get("capacity_daily_notional")
+        or item.get("capacity_daily_notional")
+        or contract.get("capacity_daily_notional")
+        or simple.get("capacity_daily_notional"),
+        "drawdown_budget": sizing.get("drawdown_budget")
+        or item.get("drawdown_budget")
+        or contract.get("drawdown_budget")
+        or simple.get("drawdown_budget"),
+        "allocated_sleeve_equity": sizing.get("allocated_sleeve_equity")
+        or item.get("allocated_sleeve_equity")
+        or contract.get("allocated_sleeve_equity")
+        or simple.get("allocated_sleeve_equity"),
+    }
+
+
+def _target_notional_parameter_summary(
+    hypothesis_payload: Mapping[str, Any],
+    simple_lane_status: Mapping[str, Any] | None,
+) -> dict[str, object]:
+    candidate_payloads: list[dict[str, object]] = []
+    blockers: set[str] = set()
+    for item in _hypothesis_items(hypothesis_payload):
+        candidate_id = _text(item.get("candidate_id"))
+        lineage = _mapping(item.get("lineage_ref"))
+        if not candidate_id:
+            candidate_id = _text(lineage.get("candidate_id"))
+        hypothesis_id = _text(item.get("hypothesis_id"), _text(item.get("id")))
+        source = _target_sizing_source_for_item(item, simple_lane_status)
+        sizing = target_sizing_payload(source)
+        item_blockers = _strings(sizing.get("blocking_reasons"))
+        blockers.update(item_blockers)
+        candidate_payloads.append(
+            {
+                "candidate_id": candidate_id or hypothesis_id,
+                "hypothesis_id": hypothesis_id,
+                "status": sizing["status"],
+                "target_daily_net_pnl": sizing["target_daily_net_pnl"],
+                "observed_post_cost_expectancy_bps": sizing[
+                    "observed_post_cost_expectancy_bps"
+                ],
+                "required_daily_notional": sizing["required_daily_notional"],
+                "capacity_daily_notional": sizing["capacity_daily_notional"],
+                "drawdown_budget": sizing["drawdown_budget"],
+                "drawdown_cap": sizing["drawdown_cap"],
+                "blocking_reasons": item_blockers,
+                "authority": "ranking_metadata_only",
+            }
+        )
+    if not candidate_payloads:
+        blockers.add("target_notional_candidate_missing")
+    feasible_count = sum(
+        1 for item in candidate_payloads if item["status"] == "feasible"
+    )
+    return {
+        "state": "pass" if feasible_count > 0 and not blockers else "fail",
+        "reason": "target_notional_parameters_feasible"
+        if feasible_count > 0 and not blockers
+        else sorted(blockers)[0],
+        "candidate_count": len(candidate_payloads),
+        "feasible_candidate_count": feasible_count,
+        "blocking_reasons": sorted(blockers),
+        "candidates": candidate_payloads,
+        "final_authority_contract": final_authority_parameter_contract(),
+        "probation_evidence_collection": probation_evidence_collection_contract(),
+    }
 
 
 def _hypothesis_repair_target_summary(
@@ -437,6 +558,42 @@ def build_profitability_proof_floor_receipt(
                 **alpha_repair_target_summary,
             },
         )
+
+    target_notional_summary = _target_notional_parameter_summary(
+        hypothesis_payload, simple_lane_status
+    )
+    target_notional_raw_state = _text(target_notional_summary.get("state"), "fail")
+    target_notional_state = (
+        target_notional_raw_state
+        if promotion_eligible_total > 0 or target_notional_raw_state == "pass"
+        else "informational"
+    )
+    target_notional_reason = _text(
+        target_notional_summary.get("reason"), "target_notional_parameters_missing"
+    )
+    if target_notional_state == "fail":
+        _add_repair(
+            repairs,
+            code="repair_target_notional_parameters",
+            dimension="target_notional_sizing",
+            action="collect_positive_post_cost_expectancy_drawdown_and_capacity_evidence",
+            reason=target_notional_reason,
+            priority=68,
+        )
+    add_dimension(
+        dimension="target_notional_sizing",
+        state=target_notional_state,
+        reason=target_notional_reason,
+        capital_effect="none"
+        if target_notional_state in {"informational", "pass"}
+        else "paper_hold"
+        if not live_mode
+        else "live_hold",
+        source_ref={
+            **target_notional_summary,
+            "raw_state": target_notional_raw_state,
+        },
+    )
 
     empirical_ready = _bool(empirical_jobs_status.get("ready"))
     empirical_status = _text(empirical_jobs_status.get("status"), "unknown")
@@ -922,6 +1079,11 @@ def build_profitability_proof_floor_receipt(
         "proof_dimensions": dimensions,
         "repair_ladder": ordered_repairs,
         "fresh_until": None if blocking_dimensions else generated_at.isoformat(),
+        "target_notional_parameters": target_notional_summary,
+        "promotion_authority_parameters": {
+            "final_authority": final_authority_parameter_contract(),
+            "probation_evidence_collection": probation_evidence_collection_contract(),
+        },
         "rollback_target": {
             "capital_state": "zero_notional",
             "live_submit_enabled": False,

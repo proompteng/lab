@@ -2621,6 +2621,10 @@ class TestTradingPipeline(TestCase):
                         "hypothesis_id": "H-CONT-01",
                         "promotion_contract": {
                             "max_avg_abs_slippage_bps": "12",
+                            "observed_post_cost_expectancy_bps": "8",
+                            "capacity_daily_notional": "1000000",
+                            "drawdown_budget": "500",
+                            "allocated_sleeve_equity": "100000",
                         },
                     }
                 ],
@@ -2686,6 +2690,7 @@ class TestTradingPipeline(TestCase):
         proof_dimensions = cast(list[dict[str, object]], receipt["proof_dimensions"])
         dimensions = {cast(str, item["dimension"]): item for item in proof_dimensions}
         self.assertEqual(dimensions["market_context"]["state"], "pass")
+        self.assertEqual(dimensions["target_notional_sizing"]["state"], "pass")
 
     def test_simple_pipeline_refreshes_market_context_during_prepare_run_once(
         self,

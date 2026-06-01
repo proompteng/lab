@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, cast
 
 from .models import StrategyDecision
 from .prices import resolve_execution_reference_price
@@ -15,6 +16,7 @@ from .quantity_rules import (
     qty_has_valid_increment,
     resolve_quantity_resolution,
 )
+from .risk import target_sizing_payload
 
 
 @dataclass(frozen=True)
@@ -132,6 +134,22 @@ def prepare_simple_decision(
         )
 
     diagnostics["price"] = str(price)
+    raw_target_sizing = decision.params.get("target_sizing")
+    if isinstance(raw_target_sizing, Mapping):
+        target_sizing = target_sizing_payload(
+            cast(Mapping[str, Any], raw_target_sizing)
+        )
+        diagnostics["target_sizing"] = target_sizing
+        if target_sizing["blocking_reasons"]:
+            return SimpleRiskPreparation(
+                approved=False,
+                decision=decision,
+                quantity_resolution=resolution,
+                notional=price * quantized_qty if quantized_qty > 0 else Decimal("0"),
+                reject_reason="target_sizing_blocked",
+                diagnostics=diagnostics,
+            )
+
     if quantized_qty <= 0 or quantized_qty < min_qty:
         return SimpleRiskPreparation(
             approved=False,

@@ -22,7 +22,13 @@ def _healthy_hypothesis_payload() -> dict[str, object]:
             {
                 "hypothesis_id": "chip-paper-microbar-composite",
                 "reasons": [],
-                "promotion_contract": {"max_avg_abs_slippage_bps": "20"},
+                "promotion_contract": {
+                    "max_avg_abs_slippage_bps": "20",
+                    "observed_post_cost_expectancy_bps": "8",
+                    "capacity_daily_notional": "1000000",
+                    "drawdown_budget": "1200",
+                    "allocated_sleeve_equity": "100000",
+                },
             }
         ],
     }
@@ -82,6 +88,9 @@ def _simple_lane_status() -> dict[str, object]:
         "route_symbol_filter_enabled": True,
         "max_notional_per_order": "250",
         "max_notional_per_symbol": "750",
+        "capacity_daily_notional": "1000000",
+        "drawdown_budget": "1200",
+        "allocated_sleeve_equity": "100000",
     }
 
 
@@ -225,7 +234,13 @@ def test_alpha_repair_targets_flow_to_route_reacquisition_records() -> None:
                     "state": "shadow",
                     "promotion_eligible": False,
                     "reasons": ["post_cost_expectancy_non_positive"],
-                    "promotion_contract": {"max_avg_abs_slippage_bps": "12"},
+                    "promotion_contract": {
+                        "max_avg_abs_slippage_bps": "12",
+                        "observed_post_cost_expectancy_bps": "8",
+                        "capacity_daily_notional": "1000000",
+                        "drawdown_budget": "1200",
+                        "allocated_sleeve_equity": "100000",
+                    },
                     "lineage_ref": {
                         "candidate_id": "chip-paper-microbar-composite@execution-proof",
                         "strategy_id": "intraday_tsmom_v1@paper",
@@ -841,12 +856,24 @@ def test_execution_tca_route_universe_uses_widest_hypothesis_guardrail() -> None
                 {
                     "hypothesis_id": "microstructure-breakout",
                     "reasons": [],
-                    "promotion_contract": {"max_avg_abs_slippage_bps": "8"},
+                    "promotion_contract": {
+                        "max_avg_abs_slippage_bps": "8",
+                        "observed_post_cost_expectancy_bps": "8",
+                        "capacity_daily_notional": "1000000",
+                        "drawdown_budget": "1200",
+                        "allocated_sleeve_equity": "100000",
+                    },
                 },
                 {
                     "hypothesis_id": "event-reversion",
                     "reasons": [],
-                    "promotion_contract": {"max_avg_abs_slippage_bps": "12"},
+                    "promotion_contract": {
+                        "max_avg_abs_slippage_bps": "12",
+                        "observed_post_cost_expectancy_bps": "8",
+                        "capacity_daily_notional": "1000000",
+                        "drawdown_budget": "1200",
+                        "allocated_sleeve_equity": "100000",
+                    },
                 },
             ],
         },
@@ -933,12 +960,24 @@ def test_execution_tca_route_universe_uses_adverse_signed_shortfall() -> None:
                 {
                     "hypothesis_id": "H-PAIRS-01",
                     "reasons": [],
-                    "promotion_contract": {"max_avg_abs_slippage_bps": "8"},
+                    "promotion_contract": {
+                        "max_avg_abs_slippage_bps": "8",
+                        "observed_post_cost_expectancy_bps": "8",
+                        "capacity_daily_notional": "1000000",
+                        "drawdown_budget": "1200",
+                        "allocated_sleeve_equity": "100000",
+                    },
                 },
                 {
                     "hypothesis_id": "H-CONT-01",
                     "reasons": [],
-                    "promotion_contract": {"max_avg_abs_slippage_bps": "12"},
+                    "promotion_contract": {
+                        "max_avg_abs_slippage_bps": "12",
+                        "observed_post_cost_expectancy_bps": "8",
+                        "capacity_daily_notional": "1000000",
+                        "drawdown_budget": "1200",
+                        "allocated_sleeve_equity": "100000",
+                    },
                 },
             ],
         },
@@ -1377,3 +1416,81 @@ def test_unsettled_execution_after_old_tca_stays_stale() -> None:
     assert receipt["route_state"] == "repair_only"
     assert receipt["capital_state"] == "zero_notional"
     assert receipt["blocking_reasons"] == ["execution_tca_stale"]
+
+
+def test_target_notional_parameters_fail_closed_on_capacity_shortfall() -> None:
+    hypothesis = _healthy_hypothesis_payload()
+    item = cast(list[dict[str, Any]], hypothesis["items"])[0]
+    contract = cast(dict[str, object], item["promotion_contract"])
+    contract["observed_post_cost_expectancy_bps"] = "5"
+    contract["capacity_daily_notional"] = "999999"
+
+    receipt = build_profitability_proof_floor_receipt(
+        account_label="TORGHUT_SIM",
+        torghut_revision="torghut-sim-target-sizing",
+        trading_mode="paper",
+        market_session_open=True,
+        live_submission_gate={
+            "allowed": True,
+            "reason": "non_live_mode",
+            "blocked_reasons": [],
+            "capital_stage": "paper",
+        },
+        hypothesis_payload=hypothesis,
+        empirical_jobs_status=_healthy_empirical_jobs(),
+        quant_evidence=_healthy_quant_evidence(),
+        market_context_status=_healthy_market_context(),
+        tca_summary=_fresh_tca_summary(),
+        simple_lane_status=_simple_lane_status(),
+        now=NOW,
+    )
+
+    sizing_dimension = next(
+        item
+        for item in receipt["proof_dimensions"]
+        if item["dimension"] == "target_notional_sizing"
+    )
+
+    assert receipt["capital_state"] == "zero_notional"
+    assert "target_notional_capacity_below_required" in receipt["blocking_reasons"]
+    assert sizing_dimension["state"] == "fail"
+    assert (
+        receipt["target_notional_parameters"]["candidates"][0][
+            "required_daily_notional"
+        ]
+        == "1000000"
+    )
+
+
+def test_target_notional_parameters_fail_closed_on_drawdown_budget() -> None:
+    hypothesis = _healthy_hypothesis_payload()
+    item = cast(list[dict[str, Any]], hypothesis["items"])[0]
+    contract = cast(dict[str, object], item["promotion_contract"])
+    contract["drawdown_budget"] = "3500"
+    contract["allocated_sleeve_equity"] = "100000"
+
+    receipt = build_profitability_proof_floor_receipt(
+        account_label="TORGHUT_SIM",
+        torghut_revision="torghut-sim-target-sizing",
+        trading_mode="paper",
+        market_session_open=True,
+        live_submission_gate={
+            "allowed": True,
+            "reason": "non_live_mode",
+            "blocked_reasons": [],
+            "capital_stage": "paper",
+        },
+        hypothesis_payload=hypothesis,
+        empirical_jobs_status=_healthy_empirical_jobs(),
+        quant_evidence=_healthy_quant_evidence(),
+        market_context_status=_healthy_market_context(),
+        tca_summary=_fresh_tca_summary(),
+        simple_lane_status=_simple_lane_status(),
+        now=NOW,
+    )
+
+    assert receipt["capital_state"] == "zero_notional"
+    assert "target_drawdown_budget_exceeds_cap" in receipt["blocking_reasons"]
+    assert (
+        receipt["target_notional_parameters"]["candidates"][0]["drawdown_cap"] == "3000"
+    )

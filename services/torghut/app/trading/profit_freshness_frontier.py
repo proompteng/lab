@@ -983,6 +983,66 @@ def _expected_daily_net_pnl_unlock(
     return best_value, _unique(best_refs)
 
 
+def _target_notional_rankings(
+    *,
+    dimension_name: str,
+    quality_adjusted_profit_frontier: Mapping[str, Any],
+    blocking_hypotheses: Sequence[str],
+    candidate_ids: Sequence[str],
+    symbol_set: Sequence[str],
+) -> list[dict[str, object]]:
+    targets = set(blocking_hypotheses) | set(candidate_ids)
+    symbols = {symbol.upper() for symbol in symbol_set if symbol}
+    rankings: list[dict[str, object]] = []
+    for raw_packet in _sequence(quality_adjusted_profit_frontier.get("packets")):
+        packet = _mapping(raw_packet)
+        if _packet_dimension(packet) != dimension_name:
+            continue
+        packet_refs = _packet_hypothesis_refs(packet)
+        if (
+            targets
+            and packet_refs
+            and "global" not in packet_refs
+            and targets.isdisjoint(packet_refs)
+        ):
+            continue
+        packet_symbols = _packet_symbols(packet)
+        if symbols and packet_symbols and symbols.isdisjoint(packet_symbols):
+            continue
+        ranking = _mapping(packet.get("target_notional_ranking"))
+        if not ranking:
+            continue
+        rankings.append(
+            {
+                "packet_ref": _text(
+                    packet.get("packet_id")
+                    or packet.get("receipt_id")
+                    or packet.get("evidence_ref"),
+                    "quality_adjusted_profit_frontier",
+                ),
+                "status": _text(ranking.get("status"), "blocked"),
+                "target_daily_net_pnl": ranking.get("target_daily_net_pnl"),
+                "observed_post_cost_expectancy_bps": ranking.get(
+                    "observed_post_cost_expectancy_bps"
+                ),
+                "required_daily_notional": ranking.get("required_daily_notional"),
+                "capacity_daily_notional": ranking.get("capacity_daily_notional"),
+                "drawdown_budget": ranking.get("drawdown_budget"),
+                "blocking_reasons": _strings(ranking.get("blocking_reasons")),
+                "authority": "ranking_metadata_only",
+            }
+        )
+    rankings.sort(
+        key=lambda item: (
+            0 if _text(item.get("status")) == "feasible" else 1,
+            _float(item.get("required_daily_notional")) or 0.0,
+            -(_float(item.get("observed_post_cost_expectancy_bps")) or 0.0),
+            _text(item.get("packet_ref")),
+        )
+    )
+    return rankings[:3]
+
+
 def _repair_lot(
     *,
     dimension: Mapping[str, Any],
@@ -1022,6 +1082,13 @@ def _repair_lot(
         candidate_ids=candidate_ids if dimension_name == "empirical_proof" else (),
         symbol_set=symbol_set,
     )
+    target_rankings = _target_notional_rankings(
+        dimension_name=dimension_name,
+        quality_adjusted_profit_frontier=quality_adjusted_profit_frontier,
+        blocking_hypotheses=blocking_hypotheses,
+        candidate_ids=candidate_ids if dimension_name == "empirical_proof" else (),
+        symbol_set=symbol_set,
+    )
     expected_profit = expected_daily_net_pnl_unlock or expected_bps
     repair_priority = (
         expected_profit
@@ -1055,6 +1122,8 @@ def _repair_lot(
         "expected_profit_unlock_bps": float(expected_bps),
         "expected_daily_net_pnl_unlock": _decimal_text(expected_daily_net_pnl_unlock),
         "profit_unlock_refs": profit_unlock_refs,
+        "target_notional_rankings": target_rankings,
+        "target_notional_ranking_basis": "non_authoritative_candidate_comparison",
         "repair_priority": round(float(repair_priority), 4),
         "priority_adjustments": priority_adjustments,
         "repair_priority_basis": (
@@ -1284,6 +1353,9 @@ def build_profit_freshness_frontier(
             ),
             "quality_frontier_packet_count": len(
                 _sequence(quality_adjusted_profit_frontier.get("packets"))
+            ),
+            "target_notional_ranked_repair_count": sum(
+                1 for repair in active_lots if repair.get("target_notional_rankings")
             ),
         },
         "rollback_target": {
