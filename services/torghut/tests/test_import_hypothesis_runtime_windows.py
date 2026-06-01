@@ -63,6 +63,7 @@ from scripts.import_hypothesis_runtime_windows import (
     _source_decision_mode,
     _source_decision_mode_counts,
     _source_decision_rows_profit_proof_eligible,
+    _source_order_feed_payload_delta_fill,
     _stable_payload_digest,
     _strategy_name_candidates,
     _sqlalchemy_dsn,
@@ -3899,6 +3900,140 @@ class TestImportHypothesisRuntimeWindows(TestCase):
 
         self.assertIsNone(ledger_row)
 
+    def test_source_authority_order_event_lifecycle_uses_alpaca_payload_delta(
+        self,
+    ) -> None:
+        row = {
+            "execution_order_event_id": "event-sell",
+            "source_window_id": "source-window-sell",
+            "source_offset": 22007,
+            "event_ts": datetime(2026, 3, 6, 14, 35, 1, tzinfo=timezone.utc),
+            "event_type": "partial_fill",
+            "symbol": "AMZN",
+            "account_label": "TORGHUT_SIM",
+            "strategy_id": "microbar-cross-sectional-pairs-v1",
+            "decision_hash": "decision-sell",
+            "alpaca_order_id": "order-sell",
+            "source_topic": "torghut.trade-updates.v1",
+            "qty": Decimal("41"),
+            "filled_qty": Decimal("25"),
+            "avg_fill_price": Decimal("271.75"),
+            "raw_event": {
+                "channel": "trade_updates",
+                "payload": {
+                    "event": "partial_fill",
+                    "qty": "25",
+                    "price": "271.75",
+                    "order": {
+                        "id": "order-sell",
+                        "asset_class": "us_equity",
+                        "side": "sell",
+                        "symbol": "AMZN",
+                        "status": "partially_filled",
+                        "filled_qty": "25",
+                        "filled_avg_price": "271.75",
+                    },
+                },
+            },
+            "execution_audit_json": {
+                "execution_policy_hash": "policy-sha",
+                "lineage_hash": "lineage-sha",
+            },
+        }
+
+        ledger_row = _runtime_lifecycle_ledger_row(
+            row,
+            event_type="partial_fill",
+            require_complete_fill=True,
+        )
+
+        self.assertEqual(_order_feed_fill_delta_blockers(row), [])
+        self.assertIsNotNone(ledger_row)
+        assert ledger_row is not None
+        self.assertEqual(ledger_row["side"], "sell")
+        self.assertEqual(ledger_row["filled_qty"], Decimal("25"))
+        self.assertEqual(ledger_row["filled_qty_delta"], Decimal("25"))
+        self.assertEqual(ledger_row["avg_fill_price"], Decimal("271.75"))
+        self.assertEqual(ledger_row["filled_notional"], Decimal("6793.75"))
+        self.assertEqual(ledger_row["filled_notional_delta"], Decimal("6793.75"))
+        self.assertEqual(ledger_row["fill_quantity_basis"], "delta")
+        self.assertEqual(ledger_row["cost_amount"], Decimal("0.15"))
+        self.assertEqual(
+            ledger_row["cost_basis"],
+            "alpaca_2026_equity_sec_taf_cat_fee_schedule",
+        )
+        self.assertEqual(
+            ledger_row["cost_model_hash"],
+            _alpaca_2026_equity_fee_schedule_hash(),
+        )
+
+    def test_source_order_feed_payload_delta_fill_rejects_non_delta_payloads(
+        self,
+    ) -> None:
+        self.assertIsNone(
+            _source_order_feed_payload_delta_fill(
+                {
+                    "raw_event": {
+                        "payload": {
+                            "event": "fill",
+                            "qty": "2",
+                            "price": "101.25",
+                            "order": {"side": "buy"},
+                        }
+                    }
+                },
+                event_type="new",
+            )
+        )
+        self.assertIsNone(
+            _source_order_feed_payload_delta_fill(
+                {
+                    "raw_event": {
+                        "payload": {
+                            "event": "new",
+                            "qty": "2",
+                            "price": "101.25",
+                            "order": {"side": "buy"},
+                        }
+                    }
+                },
+                event_type="fill",
+            )
+        )
+        self.assertIsNone(
+            _source_order_feed_payload_delta_fill(
+                {
+                    "raw_event": {
+                        "payload": {
+                            "event": "fill",
+                            "qty": "0",
+                            "price": "101.25",
+                            "order": {"side": "buy"},
+                        }
+                    }
+                },
+                event_type="fill",
+            )
+        )
+
+    def test_source_order_feed_payload_delta_fill_accepts_top_level_order_payload(
+        self,
+    ) -> None:
+        self.assertEqual(
+            _source_order_feed_payload_delta_fill(
+                {
+                    "raw_event": {
+                        "event": "fill",
+                        "qty": "2",
+                        "price": "101.25",
+                        "order": {"side": "buy"},
+                    }
+                },
+                event_type="fill",
+            ),
+            (Decimal("2"), Decimal("101.25"), "buy"),
+        )
+
     def test_source_authority_order_event_lifecycle_uses_fill_delta(
         self,
     ) -> None:
@@ -4256,6 +4391,185 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 "postgres:order_feed_source_windows",
             ],
         )
+        self.assertEqual(bucket["source_materialization"], "execution_order_events")
+
+    def test_source_backed_round_trip_materializes_alpaca_payload_delta_when_columns_missing(
+        self,
+    ) -> None:
+        common = {
+            "account_label": "TORGHUT_SIM",
+            "strategy_id": "microbar-cross-sectional-pairs-v1",
+            "symbol": "AAPL",
+            "lineage_hash": "lineage-sha",
+            "source_topic": "torghut.trade-updates.v1",
+            "source_partition": 0,
+            "source_window_id": "source-window",
+            "source_decision_mode": "strategy_signal_paper",
+            "profit_proof_eligible": True,
+            "execution_policy_hash": "policy-sha",
+        }
+
+        def order_row(
+            *,
+            event_id: str,
+            decision_id: str,
+            order_id: str,
+            event_ts: datetime,
+            event_type: str,
+            side: str,
+            payload_qty: str | None,
+            payload_price: str | None,
+            source_offset: int,
+        ) -> dict[str, object]:
+            raw_event_payload: dict[str, object] = {
+                "event": event_type,
+                "order": {
+                    "id": order_id,
+                    "asset_class": "us_equity",
+                    "status": "filled" if payload_qty is not None else "new",
+                    "side": side,
+                    "symbol": "AAPL",
+                },
+            }
+            if payload_qty is not None and payload_price is not None:
+                raw_event_payload.update({"qty": payload_qty, "price": payload_price})
+                cast(dict[str, object], raw_event_payload["order"]).update(
+                    {
+                        "filled_qty": payload_qty,
+                        "filled_avg_price": payload_price,
+                    }
+                )
+            return {
+                **common,
+                "execution_order_event_id": event_id,
+                "trade_decision_id": decision_id,
+                "decision_hash": decision_id,
+                "event_ts": event_ts,
+                "event_type": event_type,
+                "alpaca_order_id": order_id,
+                "source_offset": source_offset,
+                "qty": Decimal("2"),
+                "filled_qty": Decimal(payload_qty or "0"),
+                "avg_fill_price": Decimal(payload_price or "0"),
+                "raw_event": {
+                    "channel": "trade_updates",
+                    "payload": raw_event_payload,
+                },
+            }
+
+        rows = _build_realized_strategy_pnl_rows(
+            [
+                {
+                    **common,
+                    "execution_id": "execution-buy",
+                    "trade_decision_id": "decision-buy",
+                    "computed_at": datetime(2026, 3, 6, 14, 35, 2, tzinfo=timezone.utc),
+                    "execution_event_at": datetime(
+                        2026, 3, 6, 14, 35, 2, tzinfo=timezone.utc
+                    ),
+                    "side": "buy",
+                    "filled_qty": Decimal("0"),
+                    "avg_fill_price": Decimal("0"),
+                    "alpaca_order_id": "order-buy",
+                    "raw_order": {
+                        "side": "buy",
+                        "filled_qty": "1",
+                        "filled_avg_price": "100",
+                    },
+                },
+                {
+                    **common,
+                    "execution_id": "execution-sell",
+                    "trade_decision_id": "decision-sell",
+                    "computed_at": datetime(2026, 3, 6, 14, 40, 2, tzinfo=timezone.utc),
+                    "execution_event_at": datetime(
+                        2026, 3, 6, 14, 40, 2, tzinfo=timezone.utc
+                    ),
+                    "side": "sell",
+                    "filled_qty": Decimal("0"),
+                    "avg_fill_price": Decimal("0"),
+                    "alpaca_order_id": "order-sell",
+                    "raw_order": {
+                        "side": "sell",
+                        "filled_qty": "1",
+                        "filled_avg_price": "101",
+                    },
+                },
+            ],
+            decision_lifecycle_rows=[
+                {
+                    **common,
+                    "trade_decision_id": "decision-buy",
+                    "decision_hash": "decision-buy",
+                    "event_type": "decision",
+                    "computed_at": datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc),
+                },
+                {
+                    **common,
+                    "trade_decision_id": "decision-sell",
+                    "decision_hash": "decision-sell",
+                    "event_type": "decision",
+                    "computed_at": datetime(2026, 3, 6, 14, 40, tzinfo=timezone.utc),
+                },
+            ],
+            order_lifecycle_rows=[
+                order_row(
+                    event_id="event-new-buy",
+                    decision_id="decision-buy",
+                    order_id="order-buy",
+                    event_ts=datetime(2026, 3, 6, 14, 35, 1, tzinfo=timezone.utc),
+                    event_type="new",
+                    side="buy",
+                    payload_qty=None,
+                    payload_price=None,
+                    source_offset=1,
+                ),
+                order_row(
+                    event_id="event-fill-buy",
+                    decision_id="decision-buy",
+                    order_id="order-buy",
+                    event_ts=datetime(2026, 3, 6, 14, 35, 2, tzinfo=timezone.utc),
+                    event_type="filled",
+                    side="buy",
+                    payload_qty="1",
+                    payload_price="100",
+                    source_offset=2,
+                ),
+                order_row(
+                    event_id="event-new-sell",
+                    decision_id="decision-sell",
+                    order_id="order-sell",
+                    event_ts=datetime(2026, 3, 6, 14, 40, 1, tzinfo=timezone.utc),
+                    event_type="new",
+                    side="sell",
+                    payload_qty=None,
+                    payload_price=None,
+                    source_offset=3,
+                ),
+                order_row(
+                    event_id="event-fill-sell",
+                    decision_id="decision-sell",
+                    order_id="order-sell",
+                    event_ts=datetime(2026, 3, 6, 14, 40, 2, tzinfo=timezone.utc),
+                    event_type="filled",
+                    side="sell",
+                    payload_qty="1",
+                    payload_price="101",
+                    source_offset=4,
+                ),
+            ],
+            allow_authoritative_runtime_ledger_materialization=True,
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0]["authoritative"])
+        bucket = rows[0]["runtime_ledger_bucket"]
+        self.assertIsInstance(bucket, dict)
+        assert isinstance(bucket, dict)
+        self.assertEqual(bucket["blockers"], [])
+        self.assertEqual(bucket["filled_notional"], "201")
+        self.assertEqual(bucket["open_position_count"], 0)
+        self.assertEqual(bucket["closed_trade_count"], 1)
         self.assertEqual(bucket["source_materialization"], "execution_order_events")
 
     def test_build_realized_strategy_pnl_rows_does_not_use_idempotency_key_as_policy_hash(

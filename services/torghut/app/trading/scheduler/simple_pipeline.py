@@ -2893,6 +2893,8 @@ class SimpleTradingPipeline(TradingPipeline):
             and bool(target_plan_symbols)
             and symbol in target_plan_symbols
         )
+        if target_plan_symbols and not target_source_authorized:
+            return None
         symbol_route_probe_reasons = self._proof_floor_symbol_route_probe_reasons(
             proof_floor,
             symbol,

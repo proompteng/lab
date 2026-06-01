@@ -6846,9 +6846,30 @@ class TestTradingPipeline(TestCase):
                     decision=decision,
                 )
             )
+            self.assertIsNone(
+                pipeline._paper_route_probe_context(
+                    proof_floor=proof_floor,
+                    decision=decision.model_copy(update={"symbol": "AAPL"}),
+                )
+            )
+            target_source_metadata = {
+                "mode": "paper_route_target_plan_source_decision",
+                "paper_route_probe_next_session_max_notional": "25",
+            }
             scoped_context = pipeline._paper_route_probe_context(
                 proof_floor=proof_floor,
-                decision=decision.model_copy(update={"symbol": "AAPL"}),
+                decision=decision.model_copy(
+                    update={
+                        "symbol": "AAPL",
+                        "params": {
+                            "price": "100",
+                            "paper_route_target_plan": target_source_metadata,
+                            "paper_route_target_plan_source_decision": (
+                                target_source_metadata
+                            ),
+                        },
+                    }
+                ),
             )
 
         self.assertIsNotNone(scoped_context)
