@@ -2896,15 +2896,100 @@ class TestRuntimeLedgerProofPacket(TestCase):
             )
             self.assertFalse(payload["promotion_allowed"])
             self.assertFalse(payload["final_promotion_allowed"])
+            self.assertFalse(payload["final_authority_ok"])
+            self.assertTrue(payload["evidence_collection_ok"])
+            self.assertFalse(payload["promotion_authority"]["allowed"])
+            self.assertEqual(
+                payload["promotion_authority"]["reason"],
+                "runtime_ledger_proof_mode_not_authority",
+            )
             self.assertEqual(
                 payload["authority_blockers"],
                 ["runtime_ledger_proof_mode_not_authority"],
+            )
+            self.assertEqual(
+                payload["next_action"], "rerun_proof_packet_in_authority_mode"
             )
             self.assertEqual(
                 payload["checks"]["runtime_ledger_proof_mode_contract"]["observed"][
                     "promotion_allowed"
                 ],
                 False,
+            )
+
+    def test_cli_authority_mode_ignores_lower_runtime_floor_overrides(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            status_path = tmp_path / "status.json"
+            paper_path = tmp_path / "paper.json"
+            import_path = tmp_path / "import.json"
+            completion_path = tmp_path / "completion.json"
+            output_path = tmp_path / "packet.json"
+            status_path.write_text(json.dumps(_status()), encoding="utf-8")
+            paper_path.write_text(json.dumps(_paper_route_evidence()), encoding="utf-8")
+            import_path.write_text(json.dumps(_runtime_import()), encoding="utf-8")
+            completion_path.write_text(json.dumps(_completion()), encoding="utf-8")
+
+            exit_code = packet.main(
+                [
+                    "--status-file",
+                    str(status_path),
+                    "--paper-route-evidence-file",
+                    str(paper_path),
+                    "--runtime-window-import-file",
+                    str(import_path),
+                    "--completion-file",
+                    str(completion_path),
+                    "--proof-mode",
+                    "authority",
+                    "--min-runtime-ledger-net-pnl",
+                    "1",
+                    "--min-runtime-ledger-daily-net-pnl",
+                    "1",
+                    "--min-runtime-ledger-trading-days",
+                    "1",
+                    "--max-runtime-ledger-drawdown-pct-equity",
+                    "1",
+                    "--max-runtime-ledger-best-day-share",
+                    "1",
+                    "--max-runtime-ledger-symbol-concentration-share",
+                    "1",
+                    "--output-file",
+                    str(output_path),
+                ]
+            )
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(output_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["verdict"], "promotion_authority_allowed")
+            self.assertEqual(
+                payload["target"]["min_runtime_ledger_net_pnl_after_costs"],
+                "10000",
+            )
+            self.assertEqual(
+                payload["target"]["min_runtime_ledger_daily_net_pnl_after_costs"],
+                "500",
+            )
+            self.assertEqual(payload["target"]["min_runtime_ledger_trading_days"], 20)
+            self.assertEqual(
+                payload["target"]["min_runtime_ledger_closed_round_trips"],
+                300,
+            )
+            self.assertEqual(
+                payload["target"]["min_runtime_ledger_filled_notional"],
+                "10000000",
+            )
+            self.assertEqual(
+                payload["target"]["max_runtime_ledger_drawdown_pct_equity"],
+                "0.03",
+            )
+            self.assertEqual(
+                payload["target"]["max_runtime_ledger_best_day_share"],
+                "0.25",
+            )
+            self.assertEqual(
+                payload["target"]["max_runtime_ledger_symbol_concentration_share"],
+                "0.35",
             )
 
     def test_cli_can_write_blocked_packet_without_failing_scheduled_collection(

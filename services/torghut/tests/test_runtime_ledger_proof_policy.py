@@ -42,6 +42,31 @@ class TestRuntimeLedgerProofPolicy(TestCase):
             ],
             "0.03",
         )
+        self.assertEqual(
+            DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.target_payload("authority"),
+            {
+                "proof_mode": "authority",
+                "final_authority": True,
+                "evidence_collection_only": False,
+                "evidence_collection_ok": False,
+                "canary_collection_authorized": False,
+                "promotion_allowed": False,
+                "capital_promotion_allowed": False,
+                "final_promotion_allowed": False,
+                "min_runtime_ledger_net_pnl_after_costs": "10000",
+                "min_runtime_ledger_daily_net_pnl_after_costs": "500",
+                "min_runtime_ledger_trading_days": 20,
+                "max_runtime_ledger_drawdown_pct_equity": "0.03",
+                "max_runtime_ledger_best_day_share": "0.25",
+                "max_runtime_ledger_symbol_concentration_share": "0.35",
+                "min_runtime_ledger_closed_round_trips": 300,
+                "min_runtime_ledger_filled_notional": "10000000",
+                "min_runtime_ledger_median_daily_net_pnl_after_costs": "250",
+                "min_runtime_ledger_p10_daily_net_pnl_after_costs": "-250",
+                "min_runtime_ledger_worst_day_net_pnl_after_costs": "-750",
+                "max_runtime_ledger_intraday_drawdown": "1500",
+            },
+        )
 
     def test_policy_can_be_overridden_without_touching_call_sites(self) -> None:
         policy = runtime_ledger_proof_policy_from_env(
@@ -53,7 +78,9 @@ class TestRuntimeLedgerProofPolicy(TestCase):
                 "TORGHUT_RUNTIME_LEDGER_PROOF_PROBATION_MIN_TRADING_DAYS": "6",
                 "TORGHUT_RUNTIME_LEDGER_PROOF_MAX_DRAWDOWN_PCT_EQUITY": "0.12",
                 "TORGHUT_RUNTIME_LEDGER_AUTHORITY_MAX_DRAWDOWN_PCT_EQUITY": "0.025",
-                "TORGHUT_RUNTIME_LEDGER_AUTHORITY_MIN_TRADING_DAYS": "10",
+                "TORGHUT_RUNTIME_LEDGER_AUTHORITY_MIN_TRADING_DAYS": "25",
+                "TORGHUT_RUNTIME_LEDGER_AUTHORITY_MIN_CLOSED_ROUND_TRIPS": "400",
+                "TORGHUT_RUNTIME_LEDGER_AUTHORITY_MIN_FILLED_NOTIONAL": "12500000",
                 "TORGHUT_RUNTIME_LEDGER_AUTHORITY_MAX_SYMBOL_CONCENTRATION_SHARE": "0.30",
             }
         )
@@ -64,7 +91,7 @@ class TestRuntimeLedgerProofPolicy(TestCase):
         self.assertEqual(policy.proof_mode, "probation")
         self.assertEqual(policy.probation_min_trading_days, 6)
         self.assertEqual(policy.max_drawdown_pct_equity, Decimal("0.12"))
-        self.assertEqual(policy.authority_min_trading_days, 10)
+        self.assertEqual(policy.authority_min_trading_days, 25)
         self.assertEqual(policy.authority_max_drawdown_pct_equity, Decimal("0.025"))
         self.assertEqual(
             policy.authority_max_symbol_concentration_share,
@@ -102,16 +129,54 @@ class TestRuntimeLedgerProofPolicy(TestCase):
                 "promotion_allowed": False,
                 "capital_promotion_allowed": False,
                 "final_promotion_allowed": False,
-                "min_runtime_ledger_net_pnl_after_costs": "6250",
+                "min_runtime_ledger_net_pnl_after_costs": "15625",
                 "min_runtime_ledger_daily_net_pnl_after_costs": "625",
-                "min_runtime_ledger_trading_days": 10,
+                "min_runtime_ledger_trading_days": 25,
                 "max_runtime_ledger_drawdown_pct_equity": "0.025",
                 "max_runtime_ledger_best_day_share": "0.25",
                 "max_runtime_ledger_symbol_concentration_share": "0.3",
-                "min_runtime_ledger_closed_round_trips": 300,
-                "min_runtime_ledger_filled_notional": "10000000",
+                "min_runtime_ledger_closed_round_trips": 400,
+                "min_runtime_ledger_filled_notional": "12500000",
+                "min_runtime_ledger_median_daily_net_pnl_after_costs": "250",
+                "min_runtime_ledger_p10_daily_net_pnl_after_costs": "-250",
+                "min_runtime_ledger_worst_day_net_pnl_after_costs": "-750",
+                "max_runtime_ledger_intraday_drawdown": "1500",
             },
         )
+
+    def test_authority_env_overrides_cannot_weaken_promotion_floors(self) -> None:
+        weak_overrides = [
+            ("TORGHUT_RUNTIME_LEDGER_AUTHORITY_MIN_TRADING_DAYS", "19"),
+            (
+                "TORGHUT_RUNTIME_LEDGER_AUTHORITY_MIN_MEAN_DAILY_NET_PNL_AFTER_COSTS",
+                "499",
+            ),
+            (
+                "TORGHUT_RUNTIME_LEDGER_AUTHORITY_MIN_MEDIAN_DAILY_NET_PNL_AFTER_COSTS",
+                "249",
+            ),
+            (
+                "TORGHUT_RUNTIME_LEDGER_AUTHORITY_MIN_P10_DAILY_NET_PNL_AFTER_COSTS",
+                "-251",
+            ),
+            (
+                "TORGHUT_RUNTIME_LEDGER_AUTHORITY_MIN_WORST_DAY_NET_PNL_AFTER_COSTS",
+                "-751",
+            ),
+            ("TORGHUT_RUNTIME_LEDGER_AUTHORITY_MIN_CLOSED_ROUND_TRIPS", "299"),
+            ("TORGHUT_RUNTIME_LEDGER_AUTHORITY_MIN_FILLED_NOTIONAL", "9999999"),
+            ("TORGHUT_RUNTIME_LEDGER_AUTHORITY_MAX_INTRADAY_DRAWDOWN", "1500.01"),
+            ("TORGHUT_RUNTIME_LEDGER_AUTHORITY_MAX_DRAWDOWN_PCT_EQUITY", "0.031"),
+            ("TORGHUT_RUNTIME_LEDGER_AUTHORITY_MAX_BEST_DAY_SHARE", "0.251"),
+            (
+                "TORGHUT_RUNTIME_LEDGER_AUTHORITY_MAX_SYMBOL_CONCENTRATION_SHARE",
+                "0.351",
+            ),
+        ]
+        for env_name, value in weak_overrides:
+            with self.subTest(env_name=env_name):
+                with self.assertRaisesRegex(ValueError, "cannot weaken authority"):
+                    runtime_ledger_proof_policy_from_env({env_name: value})
 
     def test_invalid_policy_env_fails_closed(self) -> None:
         with self.assertRaisesRegex(ValueError, "must be a decimal"):
