@@ -460,6 +460,102 @@ class RuntimeWindowImportTarget:
     target_dsn_env: str = ""
 
 
+def _runtime_window_target_plan_import_blocked_result(
+    *,
+    target: RuntimeWindowImportTarget,
+    candidate_id: str,
+    manifest_path: Path,
+    window_start: datetime,
+    window_end: datetime,
+    window_selection: str,
+) -> dict[str, Any] | None:
+    target_metadata = _as_dict(target.target_metadata)
+    state = _as_text(target_metadata.get("runtime_window_import_audit_state"))
+    if state not in RUNTIME_WINDOW_TARGET_PLAN_IMPORT_BLOCKED_STATES:
+        return None
+    if not _runtime_window_target_is_paper_route_collection(
+        target=target, target_metadata=target_metadata
+    ):
+        return None
+
+    blockers = [state]
+    for key in (
+        "runtime_window_import_audit_blockers",
+        "runtime_window_import_audit_target_blockers",
+        "runtime_ledger_target_metadata_blockers",
+        "runtime_window_import_health_gate_blockers",
+        "candidate_blockers",
+    ):
+        blockers.extend(_as_text_list(target_metadata.get(key)))
+    blocker_codes = list(dict.fromkeys(blockers))
+    remediation_by_state = {
+        "import_due_account_contamination_detected": (
+            "Discard this paper window for proof, isolate the paper account, and "
+            "collect a fresh clean session before runtime-ledger import."
+        ),
+        "import_due_account_state_not_clean": (
+            "Reset or flatten the paper account, persist a clean pre-session "
+            "snapshot, and collect a fresh clean session before runtime-ledger import."
+        ),
+        "import_due_source_activity_missing": (
+            "Repair target-plan/source activity collection and collect a fresh "
+            "source-backed session before runtime-ledger import."
+        ),
+    }
+    remediation = remediation_by_state.get(
+        state,
+        "Repair the target-plan import audit blockers before runtime-ledger import.",
+    )
+    proof_blockers = [
+        {
+            "blocker": blocker,
+            "hypothesis_id": target.hypothesis_id,
+            "candidate_id": candidate_id,
+            "observed_stage": target.observed_stage,
+            "window_start": _utc_iso(window_start),
+            "window_end": _utc_iso(window_end),
+            "runtime_window_import_audit_state": state,
+            "remediation": remediation,
+        }
+        for blocker in blocker_codes
+    ]
+    return {
+        "status": "blocked",
+        "reason": f"runtime_window_target_plan_import_blocked:{state}",
+        "window_start": _utc_iso(window_start),
+        "window_end": _utc_iso(window_end),
+        "window_selection": window_selection,
+        "hypothesis_id": target.hypothesis_id,
+        "candidate_id": candidate_id,
+        "strategy_name": target.strategy_name,
+        "account_label": target.account_label,
+        "source_account_label": target.source_account_label or target.account_label,
+        "source_dsn_env": target.source_dsn_env,
+        "target_dsn_env": target.target_dsn_env,
+        "source_kind": target.source_kind,
+        "artifact_refs": [str(manifest_path), *target.artifact_refs],
+        "target_metadata": target_metadata,
+        "proof_status": "blocked",
+        "proof_blockers": proof_blockers,
+        "summary": None,
+    }
+
+
+def _runtime_window_target_is_paper_route_collection(
+    *,
+    target: RuntimeWindowImportTarget,
+    target_metadata: Mapping[str, Any],
+) -> bool:
+    source_kind = target.source_kind.strip().lower().replace("-", "_")
+    handoff = str(target_metadata.get("handoff") or "").strip()
+    return (
+        source_kind.startswith("paper_route")
+        or handoff == "next_paper_route_runtime_window_import"
+        or bool(target_metadata.get("paper_probation_authorized"))
+        or bool(_as_text_list(target_metadata.get("paper_route_probe_symbols")))
+    )
+
+
 def _parse_runtime_window_target_spec(spec: str) -> dict[str, str]:
     text = spec.strip()
     if not text:
@@ -2347,6 +2443,16 @@ def _run_runtime_window_import_target(
             "proof_blockers": proof_blockers,
             "summary": None,
         }
+    blocked_result = _runtime_window_target_plan_import_blocked_result(
+        target=target,
+        candidate_id=candidate_id,
+        manifest_path=manifest_path,
+        window_start=window_start,
+        window_end=window_end,
+        window_selection=window_selection,
+    )
+    if blocked_result is not None:
+        return blocked_result
     delay_depth_report_ref = _runtime_manifest_delay_depth_stress_report_ref(
         target=target,
         runtime_manifest=runtime_manifest,
