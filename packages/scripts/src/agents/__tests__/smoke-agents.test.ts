@@ -595,22 +595,39 @@ describe('scheduled AgentRun templates', () => {
 })
 
 describe('synthesis autonomous trader provider', () => {
-  it('removes the market-open trader template while recurring broker mutation is disabled', () => {
+  it('enables the market-open trader template for scheduled paper trading', () => {
     const kustomization = readYamlObjects('argocd/applications/synthesis/agents-domain/kustomization.yaml')[0]
     const resources = objectAt(kustomization, 'resources') as string[] | undefined
     const provider = readYamlObjects(
       'argocd/applications/synthesis/agents-domain/autonomous-trader-agentprovider.yaml',
     ).find((manifest) => objectAt(manifest, 'kind') === 'AgentProvider')
+    const schedule = readYamlObjects(
+      'argocd/applications/synthesis/agents-domain/autonomous-trader-schedule.yaml',
+    ).find((manifest) => objectAt(manifest, 'kind') === 'Schedule')
+    const template = readYamlObjects(
+      'argocd/applications/synthesis/agents-domain/autonomous-trader-agentrun-template.yaml',
+    ).find((manifest) => objectAt(manifest, 'kind') === 'AgentRun')
     const envTemplate = objectAt(objectAt(provider, 'spec'), 'envTemplate')
+    const scheduleSpec = objectAt(schedule, 'spec')
+    const templateSpec = objectAt(template, 'spec')
+    const parameters = objectAt(templateSpec, 'parameters')
     const overallTimeoutSeconds = Number(objectAt(envTemplate, 'CODEX_MARKET_CONTEXT_OVERALL_TIMEOUT_SECONDS'))
 
-    expect(resources).not.toContain('autonomous-trader-schedule.yaml')
-    expect(resources).not.toContain('autonomous-trader-agentrun-template.yaml')
+    expect(resources).toContain('autonomous-trader-schedule.yaml')
+    expect(resources).toContain('autonomous-trader-agentrun-template.yaml')
     expect(
       existsSync(
         resolve(process.cwd(), 'argocd/applications/synthesis/agents-domain/autonomous-trader-agentrun-template.yaml'),
       ),
-    ).toBe(false)
+    ).toBe(true)
+    expect(objectAt(scheduleSpec, 'cron')).toBe('15 9 * * 1-5')
+    expect(objectAt(scheduleSpec, 'timezone')).toBe('America/New_York')
+    expect(objectAt(objectAt(scheduleSpec, 'targetRef'), 'name')).toBe('autonomous-trader-template')
+    expect(objectAt(objectAt(templateSpec, 'goal'), 'objective')).toContain('Reach 500000 USD account equity')
+    expect(objectAt(parameters, 'mode')).toBe('market-open')
+    expect(objectAt(parameters, 'synthesisSessionMode')).toBe('market_open')
+    expect(objectAt(parameters, 'accountType')).toBe('paper')
+    expect(objectAt(parameters, 'targetEquityUsd')).toBe('500000')
     expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_MODE')).toBe('{{parameters.mode}}')
     expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_SYNTHESIS_SESSION_MODE')).toBe(
       '{{parameters.synthesisSessionMode}}',
