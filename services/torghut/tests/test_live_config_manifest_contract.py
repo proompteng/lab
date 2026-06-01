@@ -1597,11 +1597,11 @@ class TestLiveConfigManifestContract(TestCase):
             "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-evidence",
             args,
         )
-        self.assertNotIn("--runtime-window-target-plan-exclusive", args)
+        self.assertIn("--runtime-window-target-plan-exclusive", args)
         self.assertIn("--runtime-window-target-plan-required", args)
         self.assertIn("--runtime-window-target-plan-settlement-seconds 3600", args)
-        self.assertIn("--runtime-window-targets-from-latest-autoresearch", args)
-        self.assertIn("--runtime-window-targets-from-registry", args)
+        self.assertNotIn("--runtime-window-targets-from-latest-autoresearch", args)
+        self.assertNotIn("--runtime-window-targets-from-registry", args)
         self.assertIn(
             "--strategy-spec-ref microbar_cross_sectional_pairs_v1@research", args
         )
