@@ -173,6 +173,21 @@ def _mapping(value: object) -> Mapping[str, Any]:
     return {}
 
 
+def _contains_tigerbeetle_claim(value: object) -> bool:
+    if isinstance(value, Mapping):
+        for raw_key, raw_value in cast(Mapping[object, object], value).items():
+            key = str(raw_key).lower()
+            if key == "tigerbeetle" and _mapping(raw_value):
+                return True
+            if key.startswith("tigerbeetle_") and bool(raw_value):
+                return True
+            if _contains_tigerbeetle_claim(raw_value):
+                return True
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return any(_contains_tigerbeetle_claim(item) for item in value)
+    return False
+
+
 def _sequence(value: object) -> Sequence[object]:
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         return cast(Sequence[object], value)
@@ -1936,6 +1951,93 @@ def build_runtime_ledger_proof_packet(
         status=None if runtime_import_due else deferred_until_runtime_import_due,
     )
     _extend_unique(blockers, risk_blockers)
+
+    tigerbeetle_status = _mapping(
+        status.get("tigerbeetle_ledger") or status.get("tigerbeetle")
+    )
+    latest_tigerbeetle_reconciliation = _mapping(
+        tigerbeetle_status.get("latest_reconciliation")
+    )
+    tigerbeetle_ref_counts = _mapping(
+        tigerbeetle_status.get("ref_counts")
+        or latest_tigerbeetle_reconciliation.get("ref_counts")
+    )
+    tigerbeetle_claimed = (
+        _bool(tigerbeetle_status.get("enabled"))
+        or _bool(tigerbeetle_status.get("required"))
+        or _bool(tigerbeetle_status.get("journal_enabled"))
+        or _bool(tigerbeetle_status.get("reconcile_required"))
+        or _contains_tigerbeetle_claim(runtime_import)
+        or _contains_tigerbeetle_claim(live_scale_gate)
+    )
+    tigerbeetle_required_for_authority = (
+        final_authority_mode and tigerbeetle_claimed and runtime_import_due
+    )
+    tigerbeetle_blockers = _text_list(tigerbeetle_status.get("blockers"))
+    if tigerbeetle_required_for_authority:
+        if not latest_tigerbeetle_reconciliation:
+            _extend_unique(tigerbeetle_blockers, ["tigerbeetle_reconciliation_missing"])
+        elif not _bool(latest_tigerbeetle_reconciliation.get("ok")):
+            _extend_unique(tigerbeetle_blockers, ["tigerbeetle_reconciliation_not_ok"])
+        _extend_unique(
+            tigerbeetle_blockers,
+            _text_list(latest_tigerbeetle_reconciliation.get("blockers")),
+        )
+        required_runtime_ref_count = max(1, len(ledger_refs))
+        runtime_ref_count = _int(tigerbeetle_ref_counts.get("runtime_ledger_ref_count"))
+        signed_ref_count = _int(
+            latest_tigerbeetle_reconciliation.get(
+                "runtime_ledger_signed_transfer_count"
+            )
+        )
+        if runtime_ref_count < required_runtime_ref_count:
+            _extend_unique(
+                tigerbeetle_blockers, ["tigerbeetle_runtime_ledger_refs_missing"]
+            )
+        if signed_ref_count < required_runtime_ref_count:
+            _extend_unique(
+                tigerbeetle_blockers,
+                ["tigerbeetle_runtime_ledger_signed_refs_missing"],
+            )
+    else:
+        required_runtime_ref_count = 0
+        runtime_ref_count = _int(tigerbeetle_ref_counts.get("runtime_ledger_ref_count"))
+        signed_ref_count = _int(
+            latest_tigerbeetle_reconciliation.get(
+                "runtime_ledger_signed_transfer_count"
+            )
+        )
+    _check(
+        checks,
+        "tigerbeetle_runtime_pnl_authority_refs",
+        passed=not tigerbeetle_required_for_authority or not tigerbeetle_blockers,
+        observed={
+            "claimed": tigerbeetle_claimed,
+            "required_for_authority": tigerbeetle_required_for_authority,
+            "runtime_import_due": runtime_import_due,
+            "enabled": tigerbeetle_status.get("enabled"),
+            "required": tigerbeetle_status.get("required"),
+            "journal_enabled": tigerbeetle_status.get("journal_enabled"),
+            "reconcile_required": tigerbeetle_status.get("reconcile_required"),
+            "status_ok": tigerbeetle_status.get("ok"),
+            "reconciliation_ok": tigerbeetle_status.get("reconciliation_ok"),
+            "required_runtime_ledger_ref_count": required_runtime_ref_count,
+            "runtime_ledger_ref_count": runtime_ref_count,
+            "runtime_ledger_signed_transfer_count": signed_ref_count,
+            "latest_reconciliation": dict(latest_tigerbeetle_reconciliation),
+            "blockers": tigerbeetle_blockers,
+        },
+        expected=(
+            "authority packets require reconciled signed TigerBeetle runtime-ledger "
+            "PnL refs when TigerBeetle is enabled or claimed"
+        ),
+        blockers=tigerbeetle_blockers,
+        status=None
+        if tigerbeetle_required_for_authority
+        else "not_claimed_not_due_or_not_authority_mode",
+    )
+    if tigerbeetle_required_for_authority:
+        _extend_unique(blockers, tigerbeetle_blockers)
 
     failed_checks = [key for key, value in checks.items() if not value["passed"]]
     post_cost_proof_satisfied = not failed_checks

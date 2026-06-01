@@ -19,6 +19,9 @@ from app.models import (
     TigerBeetleTransferRef,
 )
 from app.trading.tigerbeetle_client import FakeTigerBeetleClient
+from app.trading.tigerbeetle_journal import (
+    build_runtime_ledger_bucket_transfer_plan,
+)
 from app.trading.tigerbeetle_ledger_model import (
     LEDGER_USD_MICRO,
     TRANSFER_CODE_EXECUTION_FILL,
@@ -33,6 +36,8 @@ from app.trading.tigerbeetle_reconcile import (
     BLOCKER_DEBIT_ACCOUNT_MISMATCH,
     BLOCKER_LEDGER_MISMATCH,
     BLOCKER_POSTGRES_REF_MISMATCH,
+    BLOCKER_RUNTIME_LEDGER_DIRECTION_MISMATCH,
+    BLOCKER_RUNTIME_LEDGER_METADATA_MISMATCH,
     BLOCKER_SOURCE_ROW_MISSING,
     BLOCKER_UNLINKED_COST,
     BLOCKER_UNLINKED_EXECUTION,
@@ -107,6 +112,39 @@ def _transfer(
         amount=amount,
         ledger=LEDGER_USD_MICRO,
         code=TRANSFER_CODE_FILL_POST,
+    )
+
+
+def _runtime_bucket(
+    *, net_pnl: Decimal = Decimal("2.50")
+) -> StrategyRuntimeLedgerBucket:
+    observed_at = datetime.now(timezone.utc)
+    return StrategyRuntimeLedgerBucket(
+        run_id=f"runtime-run-{net_pnl}",
+        candidate_id="candidate",
+        hypothesis_id="hypothesis",
+        observed_stage="paper",
+        bucket_started_at=observed_at,
+        bucket_ended_at=observed_at,
+        account_label="paper",
+        runtime_strategy_name="demo",
+        strategy_family="demo",
+        fill_count=1,
+        decision_count=1,
+        submitted_order_count=1,
+        cancelled_order_count=0,
+        rejected_order_count=0,
+        unfilled_order_count=0,
+        closed_trade_count=1,
+        open_position_count=0,
+        filled_notional=Decimal("190.25"),
+        gross_strategy_pnl=net_pnl + Decimal("0.50"),
+        cost_amount=Decimal("0.50"),
+        net_strategy_pnl_after_costs=net_pnl,
+        post_cost_expectancy_bps=Decimal("12.50"),
+        ledger_schema_version="torghut.runtime-ledger.v1",
+        pnl_basis="post_cost",
+        payload_json={"source": "representative-runtime-ledger"},
     )
 
 
@@ -280,6 +318,130 @@ class TestTigerBeetleReconcile(TestCase):
             self.assertIn(BLOCKER_SOURCE_ROW_MISSING, payload["blockers"])
             self.assertEqual(payload["source_row_missing_count"], 1)
             self.assertEqual(payload["source_missing_count"], 1)
+
+    def test_reconciliation_accepts_signed_runtime_ledger_profit_and_loss_refs(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            profit_bucket = _runtime_bucket(net_pnl=Decimal("2.50"))
+            loss_bucket = _runtime_bucket(net_pnl=Decimal("-3.50"))
+            session.add_all([profit_bucket, loss_bucket])
+            session.flush()
+            client = FakeTigerBeetleClient()
+            for bucket in (profit_bucket, loss_bucket):
+                plan = build_runtime_ledger_bucket_transfer_plan(bucket)
+                self.assertIsNotNone(plan)
+                assert plan is not None
+                transfer = plan.transfer_spec
+                session.add(
+                    TigerBeetleTransferRef(
+                        cluster_id=2001,
+                        transfer_id=str(transfer.transfer_id),
+                        transfer_kind=transfer.transfer_kind,
+                        ledger=transfer.ledger,
+                        code=transfer.code,
+                        amount=Decimal(transfer.amount),
+                        status="created",
+                        runtime_ledger_bucket_id=bucket.id,
+                        source_type="strategy_runtime_ledger_bucket",
+                        source_id=str(bucket.id),
+                        payload_json={
+                            "source": "strategy_runtime_ledger_bucket",
+                            "run_id": bucket.run_id,
+                            "candidate_id": bucket.candidate_id,
+                            "hypothesis_id": bucket.hypothesis_id,
+                            "observed_stage": bucket.observed_stage,
+                            "pnl_basis": bucket.pnl_basis,
+                            "ledger_schema_version": bucket.ledger_schema_version,
+                            "amount_source": str(plan.amount_source),
+                            "signed_amount_micros": plan.signed_amount_micros,
+                            "pnl_direction": plan.pnl_direction,
+                            "runtime_key": plan.runtime_key,
+                            "debit_account_id": str(transfer.debit_account_id),
+                            "credit_account_id": str(transfer.credit_account_id),
+                        },
+                    )
+                )
+                client.transfers[transfer.transfer_id] = transfer
+            session.flush()
+
+            payload = reconcile_tigerbeetle_transfers(
+                session,
+                settings_obj=_settings(),
+                client=client,
+            )
+
+            self.assertTrue(payload["ok"], payload)
+            self.assertEqual(payload["runtime_ledger_checked_transfer_count"], 2)
+            self.assertEqual(payload["runtime_ledger_signed_transfer_count"], 2)
+
+    def test_reconciliation_blocks_runtime_ledger_signed_direction_mismatch(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            bucket = _runtime_bucket(net_pnl=Decimal("-3.50"))
+            session.add(bucket)
+            session.flush()
+            plan = build_runtime_ledger_bucket_transfer_plan(bucket)
+            self.assertIsNotNone(plan)
+            assert plan is not None
+            expected = plan.transfer_spec
+            wrong_transfer = TigerBeetleTransferSpec(
+                transfer_id=expected.transfer_id,
+                transfer_kind=expected.transfer_kind,
+                debit_account_id=expected.credit_account_id,
+                credit_account_id=expected.debit_account_id,
+                amount=expected.amount,
+                ledger=expected.ledger,
+                code=expected.code,
+            )
+            session.add(
+                TigerBeetleTransferRef(
+                    cluster_id=2001,
+                    transfer_id=str(expected.transfer_id),
+                    transfer_kind=expected.transfer_kind,
+                    ledger=expected.ledger,
+                    code=expected.code,
+                    amount=Decimal(expected.amount),
+                    status="created",
+                    runtime_ledger_bucket_id=bucket.id,
+                    source_type="strategy_runtime_ledger_bucket",
+                    source_id=str(bucket.id),
+                    payload_json={
+                        "source": "strategy_runtime_ledger_bucket",
+                        "run_id": bucket.run_id,
+                        "candidate_id": "wrong-candidate",
+                        "hypothesis_id": bucket.hypothesis_id,
+                        "observed_stage": bucket.observed_stage,
+                        "pnl_basis": bucket.pnl_basis,
+                        "ledger_schema_version": bucket.ledger_schema_version,
+                        "amount_source": str(plan.amount_source),
+                        "signed_amount_micros": abs(plan.signed_amount_micros),
+                        "pnl_direction": "profit",
+                        "runtime_key": plan.runtime_key,
+                        "debit_account_id": str(wrong_transfer.debit_account_id),
+                        "credit_account_id": str(wrong_transfer.credit_account_id),
+                    },
+                )
+            )
+            session.flush()
+            client = FakeTigerBeetleClient()
+            client.transfers[expected.transfer_id] = wrong_transfer
+
+            payload = reconcile_tigerbeetle_transfers(
+                session,
+                settings_obj=_settings(),
+                client=client,
+            )
+
+            self.assertFalse(payload["ok"])
+            self.assertIn(
+                BLOCKER_RUNTIME_LEDGER_DIRECTION_MISMATCH, payload["blockers"]
+            )
+            self.assertIn(BLOCKER_RUNTIME_LEDGER_METADATA_MISMATCH, payload["blockers"])
+            self.assertEqual(payload["runtime_ledger_signed_transfer_count"], 0)
+            self.assertEqual(payload["runtime_ledger_direction_mismatch_count"], 1)
+            self.assertEqual(payload["runtime_ledger_metadata_mismatch_count"], 1)
 
     def test_reconciliation_blocks_code_and_ledger_mismatch(self) -> None:
         with Session(self.engine) as session:

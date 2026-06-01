@@ -37,6 +37,8 @@ from app.trading.tigerbeetle_ledger_model import (
     ACCOUNT_CODE_REALIZED_PNL,
     ACCOUNT_CODE_RUNTIME_LEDGER_EVIDENCE,
     LEDGER_USD_MICRO,
+    PNL_DIRECTION_LOSS,
+    PNL_DIRECTION_PROFIT,
     TRANSFER_KIND_CANCEL_VOID,
     TRANSFER_KIND_EXECUTION_COST,
     TRANSFER_KIND_EXECUTION_FILL,
@@ -276,6 +278,16 @@ class TigerBeetleOrderEventTransferPlan:
     pending_mode: str
 
 
+@dataclass(frozen=True)
+class TigerBeetleRuntimeLedgerTransferPlan:
+    account_specs: tuple[TigerBeetleAccountSpec, ...]
+    transfer_spec: TigerBeetleTransferSpec
+    amount_source: Decimal
+    signed_amount_micros: int
+    pnl_direction: str
+    runtime_key: str
+
+
 def _submitted_pending_key(event: ExecutionOrderEvent) -> str:
     source_id = (
         str(event.execution_id)
@@ -311,6 +323,14 @@ def execution_cost_transfer_id(metric: ExecutionTCAMetric) -> int:
 
 def runtime_ledger_transfer_id(bucket: StrategyRuntimeLedgerBucket) -> int:
     return stable_u128("torghut.tigerbeetle.runtime_ledger", str(bucket.id))
+
+
+def runtime_ledger_amount_source(bucket: StrategyRuntimeLedgerBucket) -> Decimal:
+    if bucket.net_strategy_pnl_after_costs != Decimal("0"):
+        return Decimal(str(bucket.net_strategy_pnl_after_costs))
+    if bucket.cost_amount != Decimal("0"):
+        return -abs(Decimal(str(bucket.cost_amount)))
+    return Decimal("0")
 
 
 def _account_specs(event: ExecutionOrderEvent) -> list[TigerBeetleAccountSpec]:
@@ -720,6 +740,47 @@ def _amount_to_micros(value: Decimal | None) -> int | None:
     return amount if amount > 0 else None
 
 
+def build_runtime_ledger_bucket_transfer_plan(
+    bucket: StrategyRuntimeLedgerBucket,
+) -> TigerBeetleRuntimeLedgerTransferPlan | None:
+    amount_source = runtime_ledger_amount_source(bucket)
+    amount = _amount_to_micros(amount_source)
+    if amount is None:
+        return None
+    runtime_key = (
+        f"{bucket.hypothesis_id}:{bucket.run_id}:{bucket.bucket_started_at.isoformat()}"
+    )
+    account_specs = tuple(
+        _evidence_account_specs(
+            account_label=bucket.account_label,
+            symbol=None,
+            strategy_id=bucket.hypothesis_id,
+            runtime_key=runtime_key,
+        )
+    )
+    account_label = bucket.account_label or "unknown"
+    accounts = {spec.account_key: spec for spec in account_specs}
+    control = accounts[f"evidence_control:{account_label}:usd"]
+    runtime_account = accounts[f"runtime_ledger:{account_label}:{runtime_key}"]
+    pnl_direction = PNL_DIRECTION_PROFIT if amount_source > 0 else PNL_DIRECTION_LOSS
+    debit = control if pnl_direction == PNL_DIRECTION_PROFIT else runtime_account
+    credit = runtime_account if pnl_direction == PNL_DIRECTION_PROFIT else control
+    return TigerBeetleRuntimeLedgerTransferPlan(
+        account_specs=account_specs,
+        transfer_spec=_source_transfer_spec(
+            transfer_id=runtime_ledger_transfer_id(bucket),
+            transfer_kind=TRANSFER_KIND_RUNTIME_NET_PNL,
+            amount=amount,
+            debit=debit,
+            credit=credit,
+        ),
+        amount_source=amount_source,
+        signed_amount_micros=amount if amount_source > 0 else -amount,
+        pnl_direction=pnl_direction,
+        runtime_key=runtime_key,
+    )
+
+
 class TigerBeetleLedgerJournal:
     def __init__(
         self,
@@ -1027,35 +1088,13 @@ class TigerBeetleLedgerJournal:
             or not self._settings.tigerbeetle_journal_enabled
         ):
             return None
-        amount_source = (
-            bucket.net_strategy_pnl_after_costs
-            if bucket.net_strategy_pnl_after_costs != Decimal("0")
-            else bucket.cost_amount
-        )
-        amount = _amount_to_micros(amount_source)
-        if amount is None:
+        plan = build_runtime_ledger_bucket_transfer_plan(bucket)
+        if plan is None:
             return None
-        runtime_key = f"{bucket.hypothesis_id}:{bucket.run_id}:{bucket.bucket_started_at.isoformat()}"
-        account_specs = _evidence_account_specs(
-            account_label=bucket.account_label,
-            symbol=None,
-            strategy_id=bucket.hypothesis_id,
-            runtime_key=runtime_key,
-        )
-        account_label = bucket.account_label or "unknown"
-        accounts = {spec.account_key: spec for spec in account_specs}
-        control = accounts[f"evidence_control:{account_label}:usd"]
-        runtime_account = accounts[f"runtime_ledger:{account_label}:{runtime_key}"]
-        transfer_spec = _source_transfer_spec(
-            transfer_id=runtime_ledger_transfer_id(bucket),
-            transfer_kind=TRANSFER_KIND_RUNTIME_NET_PNL,
-            amount=amount,
-            debit=control,
-            credit=runtime_account,
-        )
+        transfer_spec = plan.transfer_spec
         return self._persist_transfer(
             session,
-            account_specs=account_specs,
+            account_specs=plan.account_specs,
             transfer_spec=transfer_spec,
             runtime_ledger_bucket_id=bucket.id,
             source_type=SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
@@ -1074,8 +1113,11 @@ class TigerBeetleLedgerJournal:
                 "net_strategy_pnl_after_costs": str(
                     bucket.net_strategy_pnl_after_costs
                 ),
-                "amount_source": str(amount_source),
-                "amount_micros": amount,
+                "amount_source": str(plan.amount_source),
+                "amount_micros": transfer_spec.amount,
+                "signed_amount_micros": plan.signed_amount_micros,
+                "pnl_direction": plan.pnl_direction,
+                "runtime_key": plan.runtime_key,
                 "debit_account_id": u128_decimal(transfer_spec.debit_account_id),
                 "credit_account_id": u128_decimal(transfer_spec.credit_account_id),
             },

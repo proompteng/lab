@@ -504,6 +504,58 @@ class TestTigerBeetleLedgerJournal(TestCase):
             self.assertEqual(ref.transfer_kind, TRANSFER_KIND_RUNTIME_NET_PNL)
             self.assertEqual(ref.transfer_id, str(runtime_ledger_transfer_id(bucket)))
             self.assertEqual(ref.amount, Decimal("2500000"))
+            self.assertEqual(ref.payload_json["pnl_direction"], "profit")
+            self.assertEqual(ref.payload_json["signed_amount_micros"], 2500000)
+            transfer = client.transfers[int(ref.transfer_id)]
+            self.assertEqual(
+                ref.payload_json["debit_account_id"],
+                str(getattr(transfer, "debit_account_id")),
+            )
+            self.assertEqual(
+                ref.payload_json["credit_account_id"],
+                str(getattr(transfer, "credit_account_id")),
+            )
+
+    def test_negative_runtime_bucket_reverses_transfer_direction(self) -> None:
+        with Session(self.engine) as session:
+            winning_bucket = _runtime_bucket()
+            losing_bucket = _runtime_bucket()
+            losing_bucket.run_id = "runtime-run-loss"
+            losing_bucket.gross_strategy_pnl = Decimal("-3.00")
+            losing_bucket.cost_amount = Decimal("0.50")
+            losing_bucket.net_strategy_pnl_after_costs = Decimal("-3.50")
+            session.add_all([winning_bucket, losing_bucket])
+            session.flush()
+            client = FakeTigerBeetleClient()
+            journal = TigerBeetleLedgerJournal(
+                settings_obj=_settings(),
+                client=client,
+            )
+
+            winning_ref = journal.journal_runtime_ledger_bucket(session, winning_bucket)
+            losing_ref = journal.journal_runtime_ledger_bucket(session, losing_bucket)
+
+            self.assertIsNotNone(winning_ref)
+            self.assertIsNotNone(losing_ref)
+            assert winning_ref is not None
+            assert losing_ref is not None
+            self.assertEqual(winning_ref.payload_json["pnl_direction"], "profit")
+            self.assertEqual(losing_ref.payload_json["pnl_direction"], "loss")
+            self.assertEqual(losing_ref.payload_json["signed_amount_micros"], -3500000)
+            winning_transfer = client.transfers[int(winning_ref.transfer_id)]
+            losing_transfer = client.transfers[int(losing_ref.transfer_id)]
+            self.assertEqual(
+                getattr(winning_transfer, "debit_account_id"),
+                getattr(losing_transfer, "credit_account_id"),
+            )
+            self.assertNotEqual(
+                getattr(losing_transfer, "debit_account_id"),
+                getattr(losing_transfer, "credit_account_id"),
+            )
+            self.assertNotEqual(
+                getattr(winning_transfer, "debit_account_id"),
+                getattr(losing_transfer, "debit_account_id"),
+            )
 
     def test_source_journals_noop_when_disabled_or_amount_missing(self) -> None:
         with Session(self.engine) as session:
