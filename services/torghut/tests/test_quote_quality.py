@@ -384,3 +384,107 @@ class TestQuoteQuality(TestCase):
             status.to_readback()["repair_action"],
             "collect_bid_quote_before_routeability_claim",
         )
+
+    def test_assess_signal_quote_quality_rejects_non_positive_snapshot_price(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 17, 30, 24, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Sec",
+            seq=21,
+            payload={
+                "price": Decimal("0"),
+                "bid": Decimal("190.00"),
+                "ask": Decimal("190.02"),
+                "quote_source": "top_level_quote",
+            },
+        )
+
+        status = assess_signal_quote_quality(signal=signal, previous_price=None)
+
+        self.assertFalse(status.valid)
+        self.assertEqual(status.reason, "non_positive_price")
+        self.assertEqual(status.source, "top_level_quote")
+        self.assertEqual(
+            status.repair_action, "collect_positive_executable_reference_price"
+        )
+
+    def test_assess_signal_quote_quality_rejects_non_positive_ask(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 17, 30, 24, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Sec",
+            seq=22,
+            payload={
+                "price": Decimal("190.00"),
+                "bid": Decimal("190.00"),
+                "ask": Decimal("0"),
+            },
+        )
+
+        status = assess_signal_quote_quality(signal=signal, previous_price=None)
+
+        self.assertFalse(status.valid)
+        self.assertEqual(status.reason, "non_positive_ask")
+        self.assertEqual(
+            status.repair_action, "refresh_ask_quote_before_routeability_claim"
+        )
+
+    def test_assess_signal_quote_quality_accepts_bid_ask_aliases(
+        self,
+    ) -> None:
+        top_level = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 17, 30, 24, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Sec",
+            seq=23,
+            payload={
+                "price": Decimal("190.01"),
+                "bid": Decimal("190.00"),
+                "ask": Decimal("190.02"),
+            },
+        )
+        px_aliases = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 17, 30, 24, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Sec",
+            seq=24,
+            payload={
+                "price": Decimal("190.01"),
+                "bid_px": Decimal("190.00"),
+                "ask_px": Decimal("190.02"),
+            },
+        )
+
+        self.assertTrue(
+            assess_signal_quote_quality(signal=top_level, previous_price=None).valid
+        )
+        self.assertTrue(
+            assess_signal_quote_quality(signal=px_aliases, previous_price=None).valid
+        )
+
+    def test_assess_signal_quote_quality_uses_executable_quote_midpoint(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 17, 30, 24, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Sec",
+            seq=25,
+            payload={
+                "executable_quote": {
+                    "bid_px": Decimal("190.00"),
+                    "ask_px": Decimal("190.02"),
+                    "source": "sim_quote_receipt",
+                },
+            },
+        )
+
+        status = assess_signal_quote_quality(signal=signal, previous_price=None)
+
+        self.assertTrue(status.valid)
+        self.assertEqual(status.price, Decimal("190.01"))
+        self.assertEqual(status.source, "sim_quote_receipt")

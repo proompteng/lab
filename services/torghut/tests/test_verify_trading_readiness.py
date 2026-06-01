@@ -1477,13 +1477,93 @@ class TestVerifyTradingReadiness(TestCase):
             "refresh_ask_quote_before_routeability_claim",
         )
 
-    def test_readiness_next_action_prioritizes_quote_fillability_failed_check(
+    def test_quote_fillability_summary_reads_routeability_and_audit_shapes(
+        self,
+    ) -> None:
+        evidence = _paper_route_evidence(import_ready=True)
+        target_plan = evidence["next_paper_route_runtime_window_targets"]
+        assert isinstance(target_plan, dict)
+        targets = target_plan["targets"]
+        assert isinstance(targets, list)
+        target = targets[0]
+        assert isinstance(target, dict)
+        target["paper_route_quote_routeability"] = {
+            "status": "blocked",
+            "symbol": "AAPL",
+            "reason": "stale_quote",
+            "blocking_reasons": ["routeability_spread_guardrail_exceeded"],
+            "quote_age_seconds": "61",
+            "spread_bps": "75",
+            "source": "paper_route_h_pairs_quote",
+        }
+        runtime_window_audit = evidence["runtime_window_import_audit"]
+        assert isinstance(runtime_window_audit, dict)
+        runtime_window_audit["blockers"] = ["fillability_receipt_missing"]
+        runtime_window_audit["target_blockers"] = [
+            {
+                "hypothesis_id": "H-PAIRS-01",
+                "blockers": ["source_reject_missing_ask"],
+            }
+        ]
+        evidence["target_audits"] = [
+            {
+                "target": target,
+                "rejected_signal_activity": {
+                    "blocking_reasons": ["source_signal_rejected_by_quote_quality"],
+                    "reason_counts": [{"reason": "spread_bps_exceeded", "count": 2}],
+                    "max_spread_bps": "90",
+                },
+            }
+        ]
+
+        result = evaluate_trading_readiness(
+            _ready_status(),
+            paper_route_evidence=evidence,
+            require_paper_route_target_plan=True,
+            require_paper_route_import_ready=True,
+        )
+
+        self.assertFalse(result["ok"])
+        quote_fillability = result["paper_route_target_plan"]["quote_fillability"]
+        self.assertTrue(quote_fillability["present"])
+        self.assertTrue(quote_fillability["blocked"])
+        self.assertIn("stale_quote", quote_fillability["blocking_reasons"])
+        self.assertIn(
+            "routeability_spread_guardrail_exceeded",
+            quote_fillability["blocking_reasons"],
+        )
+        self.assertIn(
+            "source_signal_rejected_by_quote_quality",
+            quote_fillability["blocking_reasons"],
+        )
+        self.assertEqual(quote_fillability["targets"][0]["symbol"], "AAPL")
+        self.assertEqual(
+            quote_fillability["targets"][0]["repair_action"],
+            "refresh_quote_snapshot_and_recompute_route_fillability",
+        )
+        self.assertEqual(
+            quote_fillability["targets"][1]["source"], "rejected_signal_activity"
+        )
+
+    def test_quote_fillability_helpers_keep_generic_repair_fallback(
         self,
     ) -> None:
         self.assertEqual(
+            verifier._quote_fillability_reason("routeability_depth_missing"),
+            "routeability_depth_missing",
+        )
+        self.assertEqual(
+            verifier._quote_fillability_repair_action(["routeability_depth_missing"]),
+            "repair_quote_quality_or_fillability_before_runtime_ledger_collection",
+        )
+        self.assertEqual(
             verifier._readiness_next_action(
                 failed_checks=["paper_route_target_plan_quote_fillability"],
-                checks={},
+                checks={
+                    "paper_route_target_plan_quote_fillability": {
+                        "observed": {"blocking_reasons": []}
+                    }
+                },
                 runtime_ledger_proof_packet=None,
             ),
             "repair_quote_quality_or_fillability_before_runtime_ledger_collection",
