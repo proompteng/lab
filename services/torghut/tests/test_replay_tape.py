@@ -16,6 +16,7 @@ from app.trading.discovery.replay_tape import (
     REPLAY_TAPE_MANIFEST_SCHEMA_VERSION,
     ReplayTapeCoverageError,
     ReplayTapeManifest,
+    build_replay_tape_cache_key,
     build_source_query_digest,
     default_manifest_path,
     load_replay_tape,
@@ -181,6 +182,51 @@ class TestReplayTape(TestCase):
         self.assertNotEqual(
             first_manifest.content_sha256, second_manifest.content_sha256
         )
+
+    def test_replay_tape_cache_key_is_stable_for_same_query_inputs(self) -> None:
+        first_digest = build_source_query_digest({"window": "a", "symbols": ["NVDA"]})
+        first_key = build_replay_tape_cache_key(
+            dataset_snapshot_ref="snapshot-a",
+            symbols=("NVDA", "AAPL"),
+            start_date=date(2026, 3, 27),
+            end_date=date(2026, 3, 27),
+            source_query_digest=first_digest,
+            source_table_versions={"signals": "v1"},
+        )
+        reordered_key = build_replay_tape_cache_key(
+            dataset_snapshot_ref="snapshot-a",
+            symbols=("aapl", "nvda"),
+            start_date=date(2026, 3, 27),
+            end_date=date(2026, 3, 27),
+            source_query_digest=first_digest,
+            source_table_versions={"signals": "v1"},
+        )
+        changed_key = build_replay_tape_cache_key(
+            dataset_snapshot_ref="snapshot-a",
+            symbols=("AAPL", "NVDA"),
+            start_date=date(2026, 3, 28),
+            end_date=date(2026, 3, 28),
+            source_query_digest=first_digest,
+            source_table_versions={"signals": "v1"},
+        )
+
+        self.assertEqual(first_key, reordered_key)
+        self.assertNotEqual(first_key, changed_key)
+
+        with TemporaryDirectory() as tmpdir:
+            manifest = materialize_signal_tape(
+                rows=[self._signal(day=27, seq=1, symbol="NVDA")],
+                tape_path=Path(tmpdir) / "tape.jsonl",
+                dataset_snapshot_ref="snapshot-a",
+                symbols=("NVDA", "AAPL"),
+                start_date=date(2026, 3, 27),
+                end_date=date(2026, 3, 27),
+                source_query_digest=first_digest,
+                source_table_versions={"signals": "v1"},
+            )
+
+        self.assertEqual(manifest.replay_cache_key, first_key)
+        self.assertEqual(manifest.to_payload()["replay_cache_key"], first_key)
 
     def test_materialize_manifest_session_window_follows_new_york_dst(self) -> None:
         with TemporaryDirectory() as tmpdir:

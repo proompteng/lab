@@ -58,6 +58,7 @@ class ReplayTapeManifest:
     artifact_refs: Mapping[str, str]
     source_table_versions: Mapping[str, str]
     created_at: datetime
+    replay_cache_key: str = ""
     requested_trading_days: tuple[date, ...] = ()
     observed_trading_days: tuple[date, ...] = ()
     missing_trading_days: tuple[date, ...] = ()
@@ -89,6 +90,7 @@ class ReplayTapeManifest:
             "row_count": self.row_count,
             "source_query_digest": self.source_query_digest,
             "content_sha256": self.content_sha256,
+            "replay_cache_key": self.replay_cache_key,
             "artifact_refs": dict(self.artifact_refs),
             "source_table_versions": dict(self.source_table_versions),
             "created_at": self.created_at.isoformat(),
@@ -141,6 +143,7 @@ class ReplayTapeManifest:
             row_count=int(payload.get("row_count") or 0),
             source_query_digest=str(payload.get("source_query_digest") or ""),
             content_sha256=str(payload.get("content_sha256") or ""),
+            replay_cache_key=str(payload.get("replay_cache_key") or ""),
             artifact_refs=_string_mapping(payload.get("artifact_refs")),
             source_table_versions=_string_mapping(payload.get("source_table_versions")),
             created_at=_parse_datetime(str(payload["created_at"])),
@@ -176,6 +179,30 @@ def build_source_query_digest(payload: Mapping[str, Any]) -> str:
         separators=(",", ":"),
     )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def build_replay_tape_cache_key(
+    *,
+    dataset_snapshot_ref: str,
+    symbols: Sequence[str],
+    start_date: date,
+    end_date: date,
+    source_query_digest: str,
+    source_table_versions: Mapping[str, str] | None = None,
+) -> str:
+    """Build a stable cache key for a manifest-verified replay tape input set."""
+
+    return build_source_query_digest(
+        {
+            "schema_version": "torghut.replay-tape-cache-key.v1",
+            "dataset_snapshot_ref": dataset_snapshot_ref,
+            "symbols": _normalize_symbols(symbols),
+            "start_date": start_date,
+            "end_date": end_date,
+            "source_query_digest": source_query_digest,
+            "source_table_versions": dict(source_table_versions or {}),
+        }
+    )
 
 
 def materialize_signal_tape(
@@ -250,6 +277,14 @@ def materialize_signal_tape(
         "tape_path": str(tape_path),
         **dict(artifact_refs or {}),
     }
+    replay_cache_key = build_replay_tape_cache_key(
+        dataset_snapshot_ref=dataset_snapshot_ref,
+        symbols=normalized_symbols,
+        start_date=start_date,
+        end_date=end_date,
+        source_query_digest=source_query_digest,
+        source_table_versions=source_table_versions,
+    )
     manifest = ReplayTapeManifest(
         schema_version=REPLAY_TAPE_MANIFEST_SCHEMA_VERSION,
         dataset_snapshot_ref=dataset_snapshot_ref,
@@ -265,6 +300,7 @@ def materialize_signal_tape(
         row_count=len(ordered_rows),
         source_query_digest=source_query_digest,
         content_sha256=content_hash.hexdigest(),
+        replay_cache_key=replay_cache_key,
         artifact_refs=resolved_artifact_refs,
         source_table_versions=dict(source_table_versions or {}),
         created_at=created_at or datetime.now(timezone.utc),
@@ -737,6 +773,7 @@ __all__ = [
     "ReplayTape",
     "ReplayTapeCoverageError",
     "ReplayTapeManifest",
+    "build_replay_tape_cache_key",
     "build_source_query_digest",
     "default_manifest_path",
     "load_replay_tape",
