@@ -512,6 +512,120 @@ def _read_runtime_window_target_plan(ref: str) -> dict[str, Any]:
     return plan
 
 
+def _runtime_window_plan_target_items(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
+    targets = plan.get("targets")
+    if not isinstance(targets, Sequence) or isinstance(
+        targets, (str, bytes, bytearray)
+    ):
+        return []
+    return [_as_dict(item) for item in targets if _as_dict(item)]
+
+
+def _runtime_window_target_plan_target_key(
+    target: Mapping[str, Any],
+) -> tuple[str, str, str, str, str, str, str, str]:
+    return (
+        str(target.get("hypothesis_id") or "").strip(),
+        str(target.get("candidate_id") or "").strip(),
+        str(
+            target.get("strategy_name")
+            or target.get("runtime_strategy_name")
+            or target.get("strategy_id")
+            or ""
+        ).strip(),
+        str(target.get("account_label") or "").strip(),
+        str(target.get("source_account_label") or "").strip(),
+        str(target.get("source_kind") or "").strip(),
+        str(target.get("window_start") or "").strip(),
+        str(target.get("window_end") or "").strip(),
+    )
+
+
+def _runtime_window_target_plan_target_truthy(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes"}
+
+
+def _runtime_window_target_plan_source_collection_targets(
+    gate_plan: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    targets = []
+    for target in _runtime_window_plan_target_items(gate_plan):
+        source_kind = str(target.get("source_kind") or "").strip()
+        handoff = str(target.get("handoff") or "").strip()
+        selected_by = str(target.get("selected_by") or "").strip()
+        if (
+            _runtime_window_target_plan_target_truthy(
+                target.get("source_collection_authorized")
+            )
+            or source_kind == "runtime_ledger_source_collection_candidate"
+            or handoff == "runtime_ledger_source_collection_import"
+            or selected_by == "runtime_ledger_source_collection"
+        ):
+            targets.append(target)
+    return targets
+
+
+def _runtime_window_target_plan_with_live_gate_source_collection(
+    *,
+    payload: Mapping[str, Any],
+    plan: Mapping[str, Any],
+) -> dict[str, Any]:
+    merged_plan = dict(plan)
+    gate = _as_dict(payload.get("live_submission_gate"))
+    gate_plan = _as_dict(gate.get("runtime_ledger_paper_probation_import_plan"))
+    source_collection_targets = _runtime_window_target_plan_source_collection_targets(
+        gate_plan
+    )
+    if not source_collection_targets:
+        return merged_plan
+
+    blocked_reasons = {
+        str(reason or "").strip()
+        for reason in _as_sequence(gate.get("blocked_reasons"))
+        if str(reason or "").strip()
+    }
+    if "runtime_ledger_source_collection_pending" not in blocked_reasons:
+        return merged_plan
+
+    existing_targets = _runtime_window_plan_target_items(merged_plan)
+    existing_keys = {
+        _runtime_window_target_plan_target_key(target) for target in existing_targets
+    }
+    prepended_targets: list[dict[str, Any]] = []
+    for target in source_collection_targets:
+        key = _runtime_window_target_plan_target_key(target)
+        if key in existing_keys:
+            continue
+        existing_keys.add(key)
+        enriched_target = dict(target)
+        enriched_target.setdefault(
+            "source_collection_authorization_scope",
+            "source_window_evidence_collection_only",
+        )
+        prepended_targets.append(enriched_target)
+    if not prepended_targets:
+        return merged_plan
+
+    merged_targets = [*prepended_targets, *existing_targets]
+    try:
+        existing_source_collection_count = int(
+            merged_plan.get("source_collection_target_count") or 0
+        )
+    except (TypeError, ValueError):
+        existing_source_collection_count = 0
+    merged_plan["targets"] = merged_targets
+    merged_plan["target_count"] = len(merged_targets)
+    merged_plan["source_collection_target_count"] = (
+        len(prepended_targets) + existing_source_collection_count
+    )
+    merged_plan["paper_route_target_count"] = len(existing_targets)
+    merged_plan["merged_live_submission_gate_source_collection"] = True
+    merged_plan["source"] = "paper_route_target_plan_with_live_gate_source_collection"
+    return merged_plan
+
+
 def _runtime_window_target_plan_from_payload(
     payload: Mapping[str, Any],
 ) -> dict[str, Any]:
@@ -543,6 +657,10 @@ def _runtime_window_target_plan_from_payload(
                     plan = paper_route_plan
                 else:
                     plan = _as_dict(payload)
+    plan = _runtime_window_target_plan_with_live_gate_source_collection(
+        payload=payload,
+        plan=plan,
+    )
     plan = _runtime_window_target_plan_with_import_audit_blockers(
         payload=payload,
         plan=plan,

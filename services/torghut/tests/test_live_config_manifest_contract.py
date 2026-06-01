@@ -1496,6 +1496,11 @@ class TestLiveConfigManifestContract(TestCase):
             "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
             args,
         )
+        self.assertIn(
+            "--runtime-window-target-plan-url "
+            "http://torghut.torghut.svc.cluster.local/trading/status",
+            args,
+        )
         self.assertIn("--runtime-window-target-plan-url-timeout-seconds 45", args)
         self.assertIn("--runtime-window-target-plan-url-attempts 3", args)
         self.assertIn(
