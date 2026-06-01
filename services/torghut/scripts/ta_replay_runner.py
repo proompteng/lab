@@ -37,8 +37,8 @@ DEFAULT_KAFKA_RETENTION_TOPICS: Mapping[str, str] = {
 RAW_REPLAY_SOURCE_TOPIC_ROLES = frozenset({"trades", "quotes", "bars1m"})
 DERIVED_TA_TOPIC_ROLES = frozenset({"ta_microbars", "ta_signals"})
 CLICKHOUSE_TA_TTL_DAYS: Mapping[str, int] = {
-    "ta_microbars": 30,
-    "ta_signals": 14,
+    "ta_microbars": 35,
+    "ta_signals": 35,
 }
 
 

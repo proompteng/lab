@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -104,9 +105,50 @@ def _stable_hash(payload: Mapping[str, Any]) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+class _TorchArrayBackend:
+    float32: Any
+
+    def __init__(self, torch_module: Any, *, device: str) -> None:
+        self._torch = torch_module
+        self._device = device
+        self.float32 = torch_module.float32
+
+    def array(self, value: Any, *, dtype: Any | None = None) -> Any:
+        return self._torch.tensor(value, dtype=dtype, device=self._device)
+
+    def zeros(self, shape: Any, *, dtype: Any | None = None) -> Any:
+        return self._torch.zeros(shape, dtype=dtype, device=self._device)
+
+
+def _import_torch_array_backend(preference: str) -> tuple[str, Any] | None:
+    try:
+        torch_module = importlib.import_module("torch")
+    except ModuleNotFoundError:
+        return None
+    cuda = getattr(torch_module, "cuda", None)
+    cuda_available_fn = getattr(cuda, "is_available", None)
+    cuda_available = bool(callable(cuda_available_fn) and cuda_available_fn())
+    if preference in {"cuda", "torch-cuda"}:
+        if not cuda_available:
+            return None
+        return "torch-cuda", _TorchArrayBackend(torch_module, device="cuda")
+    if preference == "torch":
+        device = "cuda" if cuda_available else "cpu"
+        backend = "torch-cuda" if cuda_available else "torch"
+        return backend, _TorchArrayBackend(torch_module, device=device)
+    return None
+
+
 def _import_array_backend(preference: str) -> tuple[str, Any]:
     normalized = preference.strip().lower()
     if normalized in {"numpy", "numpy-fallback"}:
+        import numpy as np
+
+        return "numpy-fallback", np
+    if normalized in {"cuda", "torch", "torch-cuda"}:
+        torch_backend = _import_torch_array_backend(normalized)
+        if torch_backend is not None:
+            return torch_backend
         import numpy as np
 
         return "numpy-fallback", np

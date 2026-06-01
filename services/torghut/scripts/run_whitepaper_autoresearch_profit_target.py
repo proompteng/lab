@@ -6,10 +6,13 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import multiprocessing
 import os
+import queue
 import signal
 import socket
 import subprocess
+import time as monotonic_time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time, timedelta
@@ -116,6 +119,15 @@ import scripts.local_intraday_tsmom_replay as replay_mod
 
 _DEFAULT_CHIP_UNIVERSE_CSV = ",".join(LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE)
 _DEFAULT_DAILY_PROFIT_TARGET = "500"
+_DEFAULT_RANKER_BACKEND_PREFERENCE = "mlx"
+_RANKER_BACKEND_CHOICES = (
+    "mlx",
+    "numpy",
+    "numpy-fallback",
+    "torch",
+    "torch-cuda",
+    "cuda",
+)
 _DEFAULT_PORTFOLIO_PROFIT_PROGRAM = Path(
     "config/trading/research-programs/portfolio-profit-autoresearch-500-v1.yaml"
 )
@@ -249,6 +261,22 @@ def _default_clickhouse_http_url() -> str:
     )
 
 
+def _ranker_backend_preference(args: argparse.Namespace) -> str:
+    requested = (
+        str(
+            getattr(
+                args, "ranker_backend_preference", _DEFAULT_RANKER_BACKEND_PREFERENCE
+            )
+            or _DEFAULT_RANKER_BACKEND_PREFERENCE
+        )
+        .strip()
+        .lower()
+    )
+    if requested in _RANKER_BACKEND_CHOICES:
+        return requested
+    return _DEFAULT_RANKER_BACKEND_PREFERENCE
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run whitepaper autoresearch and assemble a portfolio candidate for a profit target.",
@@ -315,6 +343,15 @@ def _parse_args() -> argparse.Namespace:
             "Stop after source, hypothesis, candidate-spec, feedback, MLX "
             "pre-replay ranking, and candidate-selection artifacts are written. "
             "No replay, portfolio optimization, persistence, or promotion proof is run."
+        ),
+    )
+    parser.add_argument(
+        "--ranker-backend-preference",
+        default=_DEFAULT_RANKER_BACKEND_PREFERENCE,
+        choices=_RANKER_BACKEND_CHOICES,
+        help=(
+            "Array backend for advisory ranker training. CUDA choices only "
+            "accelerate research ranking and do not change promotion gates."
         ),
     )
     parser.add_argument("--portfolio-size-min", type=int, default=2)
@@ -2154,12 +2191,15 @@ def _proposal_model_and_rows(
     *,
     specs: Sequence[CandidateSpec],
     evidence_bundles: Sequence[CandidateEvidenceBundle],
+    ranker_backend_preference: str = _DEFAULT_RANKER_BACKEND_PREFERENCE,
     replay_selection_by_spec: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> tuple[Mapping[str, Any], list[dict[str, Any]]]:
     training_rows = build_mlx_training_rows(
         candidate_specs=specs, evidence_bundles=evidence_bundles
     )
-    model = train_mlx_ranker(training_rows, backend_preference="mlx")
+    model = train_mlx_ranker(
+        training_rows, backend_preference=ranker_backend_preference
+    )
     feature_by_spec = {
         row.candidate_spec_id: row.to_payload()["features"] for row in training_rows
     }
@@ -4744,6 +4784,7 @@ def _pre_replay_proposal_model_and_rows(
     specs: Sequence[CandidateSpec],
     feedback_evidence_bundles: Sequence[CandidateEvidenceBundle] = (),
     oracle_policy: ProfitTargetOraclePolicy | None = None,
+    ranker_backend_preference: str = _DEFAULT_RANKER_BACKEND_PREFERENCE,
 ) -> tuple[Mapping[str, Any], list[dict[str, Any]]]:
     policy = oracle_policy or ProfitTargetOraclePolicy()
     spec_by_id = {spec.candidate_spec_id: spec for spec in specs}
@@ -4923,7 +4964,9 @@ def _pre_replay_proposal_model_and_rows(
     training_rows = build_mlx_training_rows(
         candidate_specs=specs, evidence_bundles=training_bundles
     )
-    model = train_mlx_ranker(training_rows, backend_preference="mlx")
+    model = train_mlx_ranker(
+        training_rows, backend_preference=ranker_backend_preference
+    )
     ranked_rows = rank_training_rows(model=model, rows=training_rows)
     feature_by_spec = {
         row.candidate_spec_id: row.to_payload()["features"] for row in training_rows
@@ -6951,6 +6994,15 @@ def _run_real_replay_once_with_optional_timeout(
 ) -> EpochReplayResult:
     if timeout_seconds <= 0:
         return _run_real_replay(args, output_dir=output_dir, specs=specs)
+    if not all(
+        hasattr(signal, attr) for attr in ("SIGALRM", "alarm", "getsignal", "signal")
+    ):
+        return _run_real_replay_once_in_child_process(
+            args=args,
+            output_dir=output_dir,
+            specs=specs,
+            timeout_seconds=timeout_seconds,
+        )
 
     previous_handler = signal.getsignal(signal.SIGALRM)
 
@@ -6964,6 +7016,80 @@ def _run_real_replay_once_with_optional_timeout(
     finally:
         signal.alarm(0)
         signal.signal(signal.SIGALRM, previous_handler)
+
+
+def _real_replay_worker(
+    result_queue: Any,
+    args: argparse.Namespace,
+    output_dir: str,
+    specs: tuple[CandidateSpec, ...],
+) -> None:
+    try:
+        result_queue.put(
+            ("ok", _run_real_replay(args, output_dir=Path(output_dir), specs=specs))
+        )
+    except BaseException as exc:
+        try:
+            result_queue.put(("error", exc))
+        except Exception:
+            result_queue.put(("error_payload", (type(exc).__name__, str(exc))))
+
+
+def _terminate_process(process: Any) -> None:
+    if not process.is_alive():
+        return
+    process.terminate()
+    process.join(timeout=5)
+    if process.is_alive():
+        kill = getattr(process, "kill", None)
+        if callable(kill):
+            kill()
+            process.join(timeout=5)
+
+
+def _run_real_replay_once_in_child_process(
+    *,
+    args: argparse.Namespace,
+    output_dir: Path,
+    specs: Sequence[CandidateSpec],
+    timeout_seconds: int,
+) -> EpochReplayResult:
+    context = multiprocessing.get_context("spawn")
+    result_queue = context.Queue(maxsize=1)
+    process = context.Process(
+        target=_real_replay_worker,
+        args=(result_queue, args, str(output_dir), tuple(specs)),
+    )
+    process.start()
+    deadline = monotonic_time.monotonic() + timeout_seconds
+    try:
+        while True:
+            remaining = deadline - monotonic_time.monotonic()
+            if remaining <= 0:
+                _terminate_process(process)
+                raise TimeoutError(f"real_replay_timeout_seconds:{timeout_seconds}")
+            try:
+                status, payload = result_queue.get(timeout=min(remaining, 0.5))
+                break
+            except queue.Empty:
+                if process.exitcode is not None:
+                    raise RuntimeError("real_replay_worker_exited_without_result")
+        process.join(timeout=5)
+        if process.is_alive():
+            _terminate_process(process)
+        if status == "ok":
+            return cast(EpochReplayResult, payload)
+        if status == "error":
+            raise cast(BaseException, payload)
+        error_type, message = cast(tuple[str, str], payload)
+        raise RuntimeError(f"{error_type}:{message}")
+    finally:
+        close = getattr(result_queue, "close", None)
+        if callable(close):
+            close()
+        join_thread = getattr(result_queue, "join_thread", None)
+        if callable(join_thread):
+            join_thread()
 
 
 def _build_real_replay_shards(
@@ -10840,6 +10966,7 @@ def run_whitepaper_autoresearch_profit_target(
     target = _decimal(args.target_net_pnl_per_day, default=_DEFAULT_DAILY_PROFIT_TARGET)
     oracle_policy = _oracle_policy_from_args(args)
     selection_only = bool(getattr(args, "selection_only", False))
+    ranker_backend_preference = _ranker_backend_preference(args)
     if direct_candidate_specs_replay:
         sources: list[WhitepaperResearchSource] = []
         hypothesis_cards: list[HypothesisCard] = []
@@ -10983,6 +11110,7 @@ def run_whitepaper_autoresearch_profit_target(
         specs=candidate_specs,
         feedback_evidence_bundles=feedback_evidence_bundles,
         oracle_policy=oracle_policy,
+        ranker_backend_preference=ranker_backend_preference,
     )
     _write_json(output_dir / "pre-replay-mlx-ranker-model.json", pre_replay_model)
     _write_jsonl(
@@ -11305,6 +11433,7 @@ def run_whitepaper_autoresearch_profit_target(
     proposal_model, proposal_rows = _proposal_model_and_rows(
         specs=candidate_specs,
         evidence_bundles=replay_result.evidence_bundles,
+        ranker_backend_preference=ranker_backend_preference,
         replay_selection_by_spec=selection_by_spec,
     )
     _write_json(output_dir / "mlx-ranker-model.json", proposal_model)
