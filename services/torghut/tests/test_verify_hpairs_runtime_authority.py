@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import cast
 from unittest.mock import patch
 
@@ -22,6 +22,7 @@ from app.trading.runtime_authority_verifier import (
     AUTHORITY_LEDGER_SCHEMA_BLOCKER,
     AUTHORITY_LINEAGE_HASH_BLOCKER,
     AUTHORITY_MEAN_PNL_BLOCKER,
+    AUTHORITY_ORDER_LIFECYCLE_MISSING_BLOCKER,
     AUTHORITY_OPEN_POSITIONS_BLOCKER,
     AUTHORITY_P10_PNL_BLOCKER,
     AUTHORITY_PNL_BASIS_BLOCKER,
@@ -118,6 +119,44 @@ def _row(day_index: int, *, pnl: str = '600', open_positions: int = 0, source_ba
     }
 
 
+def _bucket(day_index: int) -> SimpleNamespace:
+    row = _row(day_index)
+    return SimpleNamespace(
+        id=row['id'],
+        run_id=row['run_id'],
+        candidate_id=row['candidate_id'],
+        hypothesis_id=row['hypothesis_id'],
+        observed_stage=row['observed_stage'],
+        bucket_started_at=row['bucket_started_at'],
+        bucket_ended_at=row['bucket_ended_at'],
+        account_label=row['account_label'],
+        runtime_strategy_name=row['runtime_strategy_name'],
+        strategy_family=row['strategy_family'],
+        fill_count=row['fill_count'],
+        decision_count=row['decision_count'],
+        submitted_order_count=row['submitted_order_count'],
+        cancelled_order_count=row['cancelled_order_count'],
+        rejected_order_count=row['rejected_order_count'],
+        unfilled_order_count=row['unfilled_order_count'],
+        closed_trade_count=row['closed_trade_count'],
+        open_position_count=row['open_position_count'],
+        filled_notional=row['filled_notional'],
+        gross_strategy_pnl=row['gross_strategy_pnl'],
+        cost_amount=row['cost_amount'],
+        net_strategy_pnl_after_costs=row['net_strategy_pnl_after_costs'],
+        post_cost_expectancy_bps=row['post_cost_expectancy_bps'],
+        ledger_schema_version=row['ledger_schema_version'],
+        pnl_basis=row['pnl_basis'],
+        execution_policy_hash_counts=row['execution_policy_hash_counts'],
+        cost_model_hash_counts=row['cost_model_hash_counts'],
+        lineage_hash_counts=row['lineage_hash_counts'],
+        blockers_json=row['blockers'],
+        payload_json=row['payload'],
+        created_at=row['bucket_started_at'],
+        updated_at=row['bucket_ended_at'],
+    )
+
+
 def test_empty_evidence_is_blocked() -> None:
     report = build_runtime_authority_report([])
 
@@ -137,6 +176,171 @@ def test_aggregate_only_bucket_is_blocked() -> None:
     assert RUNTIME_LEDGER_EXECUTION_ORDER_EVENT_REFS_MISSING_BLOCKER in blockers
     assert RUNTIME_LEDGER_SOURCE_WINDOW_IDS_MISSING_BLOCKER in blockers
     assert RUNTIME_LEDGER_SOURCE_OFFSETS_MISSING_BLOCKER in blockers
+
+
+def test_bucket_loader_applies_identity_and_window_filters() -> None:
+    class FakeScalars:
+        def all(self) -> list[SimpleNamespace]:
+            return [_bucket(0)]
+
+    class FakeSession:
+        statement = None
+
+        def scalars(self, statement):  # type: ignore[no-untyped-def]
+            self.statement = statement
+            return FakeScalars()
+
+    session = FakeSession()
+    rows = load_runtime_authority_rows(
+        session,  # type: ignore[arg-type]
+        observed_stage='paper',
+        started_at=datetime(2026, 5, 1, 12, 0),
+        ended_at=datetime(2026, 5, 2, 12, 0, tzinfo=timezone.utc),
+    )
+
+    assert len(rows) == 1
+    assert rows[0].row_id == 'row-00'
+    assert rows[0].bucket_started_at.tzinfo is timezone.utc
+    assert session.statement is not None
+
+
+def test_runtime_authority_row_instances_are_accepted() -> None:
+    dict_report = build_runtime_authority_report([_row(0)])
+    row_payload = dict_report['trading_days'][0]
+    assert row_payload['row_refs'] == ['row-00']
+
+    row_data = _row(0)
+    row = RuntimeAuthorityEvidenceRow(
+        row_id=str(row_data['id']),
+        run_id=str(row_data['run_id']),
+        candidate_id=str(row_data['candidate_id']),
+        hypothesis_id=str(row_data['hypothesis_id']),
+        observed_stage=str(row_data['observed_stage']),
+        bucket_started_at=row_data['bucket_started_at'],  # type: ignore[arg-type]
+        bucket_ended_at=row_data['bucket_ended_at'],  # type: ignore[arg-type]
+        account_label=str(row_data['account_label']),
+        runtime_strategy_name=str(row_data['runtime_strategy_name']),
+        strategy_family=str(row_data['strategy_family']),
+        fill_count=20,
+        decision_count=20,
+        submitted_order_count=20,
+        cancelled_order_count=0,
+        rejected_order_count=0,
+        unfilled_order_count=0,
+        closed_trade_count=20,
+        open_position_count=0,
+        filled_notional=Decimal('600000'),
+        gross_strategy_pnl=Decimal('610'),
+        cost_amount=Decimal('10'),
+        net_strategy_pnl_after_costs=Decimal('600'),
+        post_cost_expectancy_bps=Decimal('10'),
+        ledger_schema_version=EXACT_REPLAY_LEDGER_SCHEMA_VERSION,
+        pnl_basis=POST_COST_PNL_BASIS,
+        execution_policy_hash_counts={'policy-hash': 20},
+        cost_model_hash_counts={'cost-hash': 20},
+        lineage_hash_counts={'lineage-hash': 20},
+        blockers=(),
+        payload=row_data['payload'],  # type: ignore[arg-type]
+    )
+    object_report = build_runtime_authority_report([row])
+
+    assert object_report['trading_days'][0]['row_refs'] == ['row-00']
+
+
+def test_bad_runtime_bucket_surfaces_all_row_level_blockers() -> None:
+    bad_row = _row(0)
+    bad_row.update(
+        {
+            'fill_count': 0,
+            'decision_count': 0,
+            'submitted_order_count': 0,
+            'closed_trade_count': 0,
+            'filled_notional': Decimal('0'),
+            'ledger_schema_version': 'synthetic-schema',
+            'pnl_basis': 'gross_only',
+            'execution_policy_hash_counts': {},
+            'cost_model_hash_counts': {},
+            'lineage_hash_counts': {'lineage-hash': 0},
+            'blockers': ['source_bucket_has_prior_blocker'],
+            'payload': {
+                **_source_payload(0),
+                'cost_basis': 'execution_reconstructed_non_promotion_grade',
+            },
+        }
+    )
+
+    report = build_runtime_authority_report([bad_row])
+    blockers = set(report['blockers'])
+
+    assert AUTHORITY_BUCKET_BLOCKERS_PRESENT in blockers
+    assert AUTHORITY_LEDGER_SCHEMA_BLOCKER in blockers
+    assert AUTHORITY_PNL_BASIS_BLOCKER in blockers
+    assert AUTHORITY_RUNTIME_FILLS_MISSING_BLOCKER in blockers
+    assert AUTHORITY_RUNTIME_DECISIONS_MISSING_BLOCKER in blockers
+    assert AUTHORITY_ORDER_LIFECYCLE_MISSING_BLOCKER in blockers
+    assert AUTHORITY_CLOSED_ROUND_TRIP_MISSING_BLOCKER in blockers
+    assert AUTHORITY_FILLED_NOTIONAL_MISSING_BLOCKER in blockers
+    assert AUTHORITY_EXPLICIT_COSTS_BLOCKER in blockers
+    assert AUTHORITY_POLICY_HASH_BLOCKER in blockers
+    assert AUTHORITY_COST_MODEL_HASH_BLOCKER in blockers
+    assert AUTHORITY_LINEAGE_HASH_BLOCKER in blockers
+
+
+def test_source_refs_accept_mapping_and_scalar_offset_forms() -> None:
+    row = _row(0)
+    row['payload'] = {
+        **_source_payload(0),
+        'source_refs': {'trade_decisions': True, 'ignored': False, 'executions': 'custom-exec-ref'},
+        'source_window_ids': {'primary': True, 'secondary': 'window-explicit'},
+        'trade_decision_ids': {'one': 'decision-explicit'},
+        'execution_ids': {'execution-explicit': True},
+        'execution_order_event_ids': {'event': None, 'event-explicit': True},
+        'source_offsets': {'topic': 'alpaca.trade_updates', 'partition': 0, 'offset': 123},
+    }
+    scalar_offset_row = _row(1)
+    scalar_offset_payload = _source_payload(1)
+    scalar_offset_payload.pop('source_offsets')
+    scalar_offset_payload.update({'source_topic': 'alpaca.trade_updates', 'source_partition': 0, 'source_offset': 456})
+    scalar_offset_row['payload'] = scalar_offset_payload
+
+    report = build_runtime_authority_report([row, scalar_offset_row])
+    daily = report['trading_days'][0]
+    scalar_daily = report['trading_days'][1]
+
+    assert daily['source_ref_count'] == 2
+    assert daily['source_window_id_count'] == 2
+    assert daily['trade_decision_ref_count'] == 1
+    assert daily['execution_ref_count'] == 1
+    assert daily['execution_order_event_ref_count'] == 1
+    assert daily['source_offset_count'] == 1
+    assert scalar_daily['source_offset_count'] == 1
+
+
+def test_invalid_normalized_values_fail_closed() -> None:
+    row = _row(0)
+    row.update(
+        {
+            'bucket_started_at': 'not-a-date',
+            'bucket_ended_at': '2026-05-01T21:00:00Z',
+        }
+    )
+
+    with pytest.raises(ValueError, match='bucket_started_at_invalid'):
+        build_runtime_authority_report([row])
+
+    invalid_number_row = _row(0)
+    invalid_number_row.update(
+        {
+            'fill_count': 'not-an-int',
+            'net_strategy_pnl_after_costs': 'not-a-decimal',
+            'post_cost_expectancy_bps': 'not-a-decimal',
+        }
+    )
+
+    report = build_runtime_authority_report([invalid_number_row])
+
+    assert report['aggregate']['mean_daily_net_pnl_after_costs'] == '0'
+    assert AUTHORITY_RUNTIME_FILLS_MISSING_BLOCKER in report['blockers']
 
 
 def test_source_backed_too_few_days_is_blocked() -> None:
@@ -449,3 +653,51 @@ def test_cli_emits_read_only_report_from_session_fixture(capsys) -> None:  # typ
     load_rows.assert_called_once()
     payload = json.loads(capsys.readouterr().out)
     assert payload['final_authority_ok'] is True
+
+
+def test_cli_parses_window_arguments_and_fails_on_blockers(capsys) -> None:  # type: ignore[no-untyped-def]
+    class FakeSession:
+        def __enter__(self) -> 'FakeSession':
+            return self
+
+        def __exit__(self, exc_type, exc, traceback) -> None:  # type: ignore[no-untyped-def]
+            return None
+
+    with (
+        patch.object(cli, 'SessionLocal', return_value=FakeSession()),
+        patch.object(cli, 'load_runtime_authority_rows', return_value=[]),
+    ):
+        exit_code = cli.main(
+            [
+                '--observed-stage',
+                'paper',
+                '--start',
+                '2026-05-01T09:30:00',
+                '--end',
+                '2026-05-02T16:00:00Z',
+                '--fail-on-blockers',
+            ]
+        )
+
+    assert exit_code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['identity']['observed_stage'] == 'paper'
+    assert payload['window']['started_at'] == '2026-05-01T09:30:00Z'
+    assert payload['window']['ended_at'] == '2026-05-02T16:00:00Z'
+
+
+def test_cli_reports_read_error_as_blocker(capsys) -> None:  # type: ignore[no-untyped-def]
+    class FakeSession:
+        def __enter__(self) -> 'FakeSession':
+            raise SQLAlchemyError('database unavailable')
+
+        def __exit__(self, exc_type, exc, traceback) -> None:  # type: ignore[no-untyped-def]
+            return None
+
+    with patch.object(cli, 'SessionLocal', return_value=FakeSession()):
+        exit_code = cli.main([])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert AUTHORITY_READ_ERROR_BLOCKER in payload['blockers']
+    assert payload['evidence_read_error'] == 'database unavailable'

@@ -86,5 +86,5 @@ def main(argv: list[str] | None = None) -> int:
     return 1 if args.fail_on_blockers and report.get('final_authority_ok') is not True else 0
 
 
-if __name__ == '__main__':
+if __name__ == '__main__':  # pragma: no cover
     raise SystemExit(main())
