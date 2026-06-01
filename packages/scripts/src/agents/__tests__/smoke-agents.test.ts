@@ -595,7 +595,7 @@ describe('scheduled AgentRun templates', () => {
 })
 
 describe('synthesis autonomous trader provider', () => {
-  it('keeps the market-open trader schedule read-only while the paper account is shared', () => {
+  it('keeps the market-open trader schedule suspended while the paper account is shared', () => {
     const kustomization = readYamlObjects('argocd/applications/synthesis/agents-domain/kustomization.yaml')[0]
     const resources = objectAt(kustomization, 'resources') as string[] | undefined
     const provider = readYamlObjects(
@@ -611,6 +611,7 @@ describe('synthesis autonomous trader provider', () => {
     const scheduleSpec = objectAt(schedule, 'spec')
     const templateSpec = objectAt(template, 'spec')
     const parameters = objectAt(templateSpec, 'parameters')
+    const annotations = objectAt(objectAt(schedule, 'metadata'), 'annotations')
     const overallTimeoutSeconds = Number(objectAt(envTemplate, 'CODEX_MARKET_CONTEXT_OVERALL_TIMEOUT_SECONDS'))
 
     expect(resources).toContain('autonomous-trader-schedule.yaml')
@@ -621,9 +622,13 @@ describe('synthesis autonomous trader provider', () => {
       ),
     ).toBe(true)
     expect(objectAt(scheduleSpec, 'cron')).toBe('15 9 * * 1-5')
+    expect(objectAt(scheduleSpec, 'suspend')).toBe(true)
     expect(objectAt(scheduleSpec, 'timezone')).toBe('America/New_York')
     expect(objectAt(objectAt(scheduleSpec, 'targetRef'), 'name')).toBe('autonomous-trader-template')
-    expect(objectAt(objectAt(templateSpec, 'goal'), 'objective')).toContain('read-only autonomous-trader dry run')
+    expect(objectAt(annotations, 'proompteng.ai/account-isolation-mode')).toBe(
+      'suspended-until-dedicated-paper-account',
+    )
+    expect(objectAt(objectAt(templateSpec, 'goal'), 'objective')).toContain('market-open autonomous trader suspended')
     expect(objectAt(objectAt(templateSpec, 'goal'), 'objective')).toContain('do not mutate broker state')
     expect(objectAt(parameters, 'mode')).toBe('dry-run')
     expect(objectAt(parameters, 'synthesisSessionMode')).toBe('dry_run')

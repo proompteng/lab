@@ -19,6 +19,7 @@ type Schedule struct {
 type ScheduleSpec struct {
 	Cron      string    `json:"cron"`
 	Timezone  string    `json:"timezone,omitempty"`
+	Suspend   bool      `json:"suspend,omitempty"`
 	TargetRef TargetRef `json:"targetRef"`
 }
 

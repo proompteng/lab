@@ -2616,6 +2616,9 @@ export const controlPlanePrimitiveRegistry = [
             cron: {
               type: 'string',
             },
+            suspend: {
+              type: 'boolean',
+            },
             targetRef: {
               properties: {
                 apiVersion: {

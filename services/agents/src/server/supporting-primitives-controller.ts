@@ -669,8 +669,23 @@ const reconcileSchedule = async (
   const spec = asRecord(schedule.spec) ?? {}
   const cron = asString(spec.cron)
   const timezone = asString(spec.timezone)
+  const suspend = spec.suspend === true
   const status = asRecord(schedule.status) ?? {}
   const scheduleName = asString(readNested(schedule, ['metadata', 'name'])) ?? 'schedule'
+  if (suspend) {
+    await deleteScheduleRunnerResources(kube, scheduleName, namespace)
+    const conditions = upsertCondition(
+      normalizeConditions(status.conditions),
+      buildReadyCondition(true, 'Suspended', 'schedule suspended'),
+    )
+    await setStatus(kube, schedule, {
+      observedGeneration: asRecord(schedule.metadata)?.generation ?? 0,
+      phase: 'Suspended',
+      conditions,
+    })
+    return
+  }
+
   if (!cron) {
     await deleteScheduleRunnerResources(kube, scheduleName, namespace)
     const conditions = upsertCondition(

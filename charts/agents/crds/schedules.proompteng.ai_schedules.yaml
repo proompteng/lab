@@ -47,6 +47,8 @@ spec:
             properties:
               cron:
                 type: string
+              suspend:
+                type: boolean
               targetRef:
                 properties:
                   apiVersion:
