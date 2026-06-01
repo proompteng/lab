@@ -61,7 +61,26 @@ def _ready_status() -> dict[str, object]:
                             ],
                             "blocked_symbols": [],
                             "missing_symbols": [],
-                        }
+                        },
+                        "runtime_ledger_lineage": {
+                            "schema_version": "torghut.execution-tca-cost-lineage.v1",
+                            "status": "source_backed",
+                            "promotion_authority": False,
+                            "promotion_authority_reason": (
+                                "lineage_dimension_only_not_promotion_authority"
+                            ),
+                            "execution_count": 2,
+                            "source_backed_count": 2,
+                            "blocked_count": 0,
+                            "filled_notional_count": 2,
+                            "explicit_cost_count": 2,
+                            "execution_policy_hash_count": 2,
+                            "cost_model_hash_count": 2,
+                            "post_cost_pnl_basis_count": 2,
+                            "blockers": [],
+                            "blocker_counts": {},
+                            "sample_blockers": [],
+                        },
                     },
                 },
             ],
@@ -439,6 +458,75 @@ class TestVerifyTradingReadiness(TestCase):
             "runtime_ledger_post_cost_expectancy_positive",
         ):
             self.assertIn(check_name, weak["failed_checks"])
+
+    def test_runtime_ledger_profit_proof_requires_tca_cost_lineage_readback(
+        self,
+    ) -> None:
+        status = _ready_status()
+        proof_floor = status["proof_floor"]
+        assert isinstance(proof_floor, dict)
+        dimensions = proof_floor["proof_dimensions"]
+        assert isinstance(dimensions, list)
+        for dimension in dimensions:
+            if (
+                isinstance(dimension, dict)
+                and dimension.get("dimension") == "execution_tca"
+            ):
+                source_ref = dimension["source_ref"]
+                assert isinstance(source_ref, dict)
+                source_ref["runtime_ledger_lineage"] = {
+                    "schema_version": "torghut.execution-tca-cost-lineage.v1",
+                    "status": "blocked",
+                    "promotion_authority": False,
+                    "execution_count": 1,
+                    "source_backed_count": 0,
+                    "blocked_count": 1,
+                    "filled_notional_count": 1,
+                    "explicit_cost_count": 0,
+                    "execution_policy_hash_count": 1,
+                    "cost_model_hash_count": 1,
+                    "post_cost_pnl_basis_count": 1,
+                    "blockers": ["explicit_cost_missing"],
+                    "blocker_counts": {"explicit_cost_missing": 1},
+                    "sample_blockers": [
+                        {
+                            "execution_id": "exec-1",
+                            "blockers": ["explicit_cost_missing"],
+                        }
+                    ],
+                }
+
+        result = evaluate_trading_readiness(
+            status,
+            completion_status=_completion_status(),
+            require_runtime_ledger_profit_proof=True,
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertIn(
+            "execution_tca_cost_lineage_source_backed",
+            result["failed_checks"],
+        )
+        self.assertEqual(
+            result["execution_tca_lineage"]["blockers"],
+            ["explicit_cost_missing"],
+        )
+
+    def test_tca_cost_lineage_readback_does_not_replace_runtime_authority(
+        self,
+    ) -> None:
+        result = evaluate_trading_readiness(
+            _ready_status(),
+            min_runtime_ledger_net_pnl=Decimal("500"),
+            require_runtime_ledger_profit_proof=True,
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertIn("completion_status_present", result["failed_checks"])
+        self.assertNotIn(
+            "execution_tca_cost_lineage_source_backed",
+            result["failed_checks"],
+        )
 
     def test_runtime_ledger_proof_packet_can_be_required_as_final_authority(
         self,
