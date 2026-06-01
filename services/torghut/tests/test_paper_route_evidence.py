@@ -1143,6 +1143,134 @@ class TestPaperRouteEvidenceAudit(TestCase):
             target_state["blockers"],
         )
 
+    def test_flat_clean_baseline_allows_bounded_collection_readiness(self) -> None:
+        generated_at = datetime(2026, 5, 26, 13, 20, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            session.add(
+                Strategy(
+                    name="paper-route-candidate-v1",
+                    description="clean baseline source strategy",
+                    enabled=True,
+                    base_timeframe="1Sec",
+                    universe_type="static",
+                    universe_symbols=["AAPL", "AMZN"],
+                )
+            )
+            self._add_account_position_snapshot(
+                session,
+                account_label="TORGHUT_SIM",
+                as_of=generated_at - timedelta(seconds=30),
+                positions=[],
+            )
+            session.commit()
+
+            payload = self._build_basic_paper_route_target_plan(
+                session,
+                generated_at=generated_at,
+            )
+
+        plan = payload["next_paper_route_runtime_window_targets"]
+        self.assertEqual(plan["target_count"], 1)
+        target = plan["targets"][0]
+        self.assertEqual(
+            target["paper_route_clean_window_state"], "clean_window_collection_ready"
+        )
+        self.assertEqual(
+            target["paper_route_clean_window_baseline_state"]["state"],
+            "clean",
+        )
+        self.assertEqual(target["paper_route_clean_window_baseline_blockers"], [])
+        self.assertTrue(target["evidence_collection_ok"])
+        self.assertTrue(target["bounded_evidence_collection_authorized"])
+        self.assertFalse(target["promotion_allowed"])
+        self.assertFalse(target["final_promotion_allowed"])
+        clean_readiness = plan["clean_window_baseline_readiness"]
+        self.assertEqual(clean_readiness["state"], "clean")
+        self.assertEqual(clean_readiness["clean_target_count"], 1)
+        self.assertEqual(clean_readiness["blockers"], [])
+
+    def test_missing_clean_baseline_blocks_bounded_collection_readiness(self) -> None:
+        generated_at = datetime(2026, 5, 26, 13, 20, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            session.add(
+                Strategy(
+                    name="paper-route-candidate-v1",
+                    description="missing baseline source strategy",
+                    enabled=True,
+                    base_timeframe="1Sec",
+                    universe_type="static",
+                    universe_symbols=["AAPL", "AMZN"],
+                )
+            )
+            session.commit()
+
+            payload = self._build_basic_paper_route_target_plan(
+                session,
+                generated_at=generated_at,
+            )
+
+        next_plan = payload["next_paper_route_runtime_window_targets"]
+        self.assertEqual(next_plan["target_count"], 0)
+        self.assertEqual(next_plan["skipped_target_count"], 1)
+        source_plan = payload["source_runtime_window_import_plan"]
+        target = source_plan["targets"][0]
+        self.assertEqual(
+            target["paper_route_clean_window_state"], "clean_window_required"
+        )
+        self.assertFalse(target["evidence_collection_ok"])
+        self.assertFalse(target["bounded_evidence_collection_authorized"])
+        self.assertIn(
+            "paper_route_account_pre_session_snapshot_missing",
+            target["paper_route_clean_window_baseline_blockers"],
+        )
+
+    def test_non_target_clean_baseline_position_blocks_collection_readiness(
+        self,
+    ) -> None:
+        generated_at = datetime(2026, 5, 26, 13, 20, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            session.add(
+                Strategy(
+                    name="paper-route-candidate-v1",
+                    description="non-target baseline source strategy",
+                    enabled=True,
+                    base_timeframe="1Sec",
+                    universe_type="static",
+                    universe_symbols=["AAPL", "AMZN"],
+                )
+            )
+            self._add_account_position_snapshot(
+                session,
+                account_label="TORGHUT_SIM",
+                as_of=generated_at - timedelta(seconds=30),
+                positions=[
+                    {
+                        "symbol": "MSFT",
+                        "qty": "1",
+                        "side": "long",
+                        "market_value": "300",
+                    }
+                ],
+            )
+            session.commit()
+
+            payload = self._build_basic_paper_route_target_plan(
+                session,
+                generated_at=generated_at,
+            )
+
+        source_plan = payload["source_runtime_window_import_plan"]
+        target = source_plan["targets"][0]
+        self.assertEqual(
+            target["paper_route_clean_window_state"], "clean_window_required"
+        )
+        self.assertFalse(target["evidence_collection_ok"])
+        self.assertFalse(target["bounded_evidence_collection_authorized"])
+        self.assertIn(
+            "paper_route_account_pre_session_non_target_positions_present",
+            target["paper_route_clean_window_baseline_blockers"],
+        )
+
     def test_pre_session_after_open_snapshot_does_not_satisfy_readiness(
         self,
     ) -> None:
@@ -1866,6 +1994,12 @@ class TestPaperRouteEvidenceAudit(TestCase):
             "2026-05-26T13:15:00+00:00",
         )
         self.assertEqual(account_pre_session["blockers"], [])
+        clean_window = plan["clean_window_baseline_readiness"]
+        self.assertEqual(clean_window["state"], "clean_window_required")
+        self.assertEqual(
+            clean_window["blockers"],
+            ["paper_route_clean_window_baseline_snapshot_pending"],
+        )
         self.assertEqual(
             plan["session_readiness"]["import_blockers"],
             ["paper_route_session_window_not_open"],
@@ -2018,7 +2152,10 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertFalse(summary_target["bounded_evidence_collection_authorized"])
         self.assertEqual(
             summary_target["bounded_evidence_collection_blockers"],
-            ["source_strategy_missing"],
+            [
+                "source_strategy_missing",
+                "paper_route_clean_window_baseline_snapshot_pending",
+            ],
         )
         self.assertEqual(
             import_audit["diagnostics"]["target_blockers_effective_when"],
@@ -2159,6 +2296,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
                 "paper_route_runtime_ledger_import_pending",
                 "custom_runtime_blocker",
                 "source_strategy_missing",
+                "paper_route_clean_window_baseline_snapshot_pending",
             ],
         )
         self.assertIn(
@@ -2169,7 +2307,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
     def test_next_paper_route_targets_surface_source_decision_readiness(
         self,
     ) -> None:
-        generated_at = datetime(2026, 5, 24, 12, tzinfo=timezone.utc)
+        generated_at = datetime(2026, 5, 26, 13, 20, tzinfo=timezone.utc)
         with Session(self.engine) as session:
             session.add(
                 Strategy(
@@ -2181,6 +2319,12 @@ class TestPaperRouteEvidenceAudit(TestCase):
                     universe_symbols=["AAPL", "AMZN"],
                     max_notional_per_trade=Decimal("31590"),
                 )
+            )
+            self._add_account_position_snapshot(
+                session,
+                account_label="TORGHUT_SIM",
+                as_of=generated_at - timedelta(seconds=30),
+                positions=[],
             )
             session.commit()
             payload = build_paper_route_evidence_audit(
@@ -2260,6 +2404,12 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(plan["source_decision_readiness"]["blocked_target_count"], 0)
         self.assertEqual(plan["source_decision_readiness"]["blockers"], [])
         target = plan["targets"][0]
+        self.assertEqual(
+            target["paper_route_clean_window_state"], "clean_window_collection_ready"
+        )
+        self.assertEqual(
+            target["paper_route_clean_window_baseline_state"]["state"], "clean"
+        )
         readiness = target["source_decision_readiness"]
         self.assertTrue(readiness["ready"])
         self.assertEqual(readiness["blockers"], [])
@@ -5686,10 +5836,19 @@ class TestPaperRouteEvidenceAudit(TestCase):
             "paper_route_account_contamination_detected",
             audit["readiness"]["blockers"],
         )
+        contract = audit["evidence_window_contract"]
+        self.assertEqual(contract["state"], "contaminated_window_discarded")
+        self.assertFalse(contract["proof_allowed"])
+        self.assertFalse(contract["promotion_allowed"])
+        self.assertFalse(contract["final_promotion_allowed"])
         import_audit = payload["runtime_window_import_audit"]
         self.assertEqual(
             import_audit["state"], "import_due_account_contamination_detected"
         )
+        self.assertEqual(
+            import_audit["evidence_window_state"], "contaminated_window_discarded"
+        )
+        self.assertFalse(import_audit["proof_allowed"])
         self.assertEqual(
             import_audit["next_action"],
             "isolate_paper_account_or_discard_contaminated_window",
@@ -5709,6 +5868,10 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertIn(
             "unlinked_order_events_present",
             target_plan_payload["summary"]["runtime_window_import_audit_blockers"],
+        )
+        self.assertEqual(
+            target_plan_import_audit["evidence_window_state"],
+            "contaminated_window_discarded",
         )
 
     def test_account_window_start_positions_block_runtime_window_import(
@@ -5886,8 +6049,15 @@ class TestPaperRouteEvidenceAudit(TestCase):
             "paper_route_account_window_start_non_target_positions_present",
             audit["readiness"]["blockers"],
         )
+        contract = audit["evidence_window_contract"]
+        self.assertEqual(contract["state"], "clean_window_required")
+        self.assertFalse(contract["proof_allowed"])
+        self.assertFalse(contract["promotion_allowed"])
+        self.assertFalse(contract["final_promotion_allowed"])
         import_audit = payload["runtime_window_import_audit"]
         self.assertEqual(import_audit["state"], "import_due_account_state_not_clean")
+        self.assertEqual(import_audit["evidence_window_state"], "clean_window_required")
+        self.assertFalse(import_audit["proof_allowed"])
         self.assertEqual(
             import_audit["next_action"],
             "reset_paper_account_or_discard_contaminated_window",

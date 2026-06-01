@@ -96,6 +96,7 @@ PROMOTION_ONLY_READINESS_BLOCKERS = frozenset(
         "live_runtime_ledger_required",
     }
 )
+CLEAN_WINDOW_BASELINE_SCHEMA_VERSION = "torghut.paper-route-clean-window-baseline.v1"
 SOURCE_LINEAGE_CANDIDATE_KEYS = (
     "candidate_id",
     "candidate_ids",
@@ -1639,6 +1640,17 @@ def _next_paper_route_runtime_window_targets(
         account_pre_session_blockers = _unique_text_items(
             account_pre_session_state.get("blockers")
         )
+        clean_window_baseline_state = _account_clean_window_baseline_snapshot_audit(
+            session,
+            account_label=PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
+            symbols=target_probe_symbols,
+            generated_at=generated_at,
+            window_start=window_start,
+            window_end=window_end,
+        )
+        clean_window_baseline_blockers = _unique_text_items(
+            clean_window_baseline_state.get("blockers")
+        )
         if account_pre_session_blockers and require_clean_pre_session:
             skipped_targets.append(
                 {
@@ -1739,6 +1751,7 @@ def _next_paper_route_runtime_window_targets(
                 *health_gate_blockers,
                 *_unique_text_items(source_decision_readiness.get("blockers")),
                 *account_pre_session_blockers,
+                *clean_window_baseline_blockers,
                 *(
                     ["paper_route_probe_pair_imbalanced"]
                     if pair_balance_state == "imbalanced"
@@ -1817,6 +1830,15 @@ def _next_paper_route_runtime_window_targets(
             or "",
             "paper_route_account_pre_session_state": account_pre_session_state,
             "paper_route_account_pre_session_blockers": (account_pre_session_blockers),
+            "paper_route_clean_window_baseline_state": clean_window_baseline_state,
+            "paper_route_clean_window_baseline_blockers": (
+                clean_window_baseline_blockers
+            ),
+            "paper_route_clean_window_state": (
+                "clean_window_collection_ready"
+                if not clean_window_baseline_blockers
+                else "clean_window_required"
+            ),
             "paper_route_execution_source_key": {
                 "strategy_family": strategy_family or "",
                 "strategy": execution_source_key[1],
@@ -1980,6 +2002,36 @@ def _next_paper_route_runtime_window_targets(
         account_pre_session_summary_state = "clean"
     else:
         account_pre_session_summary_state = "unknown"
+    clean_window_baseline_items = [
+        item
+        for target in planned_targets
+        if (item := _as_mapping(target.get("paper_route_clean_window_baseline_state")))
+    ]
+    clean_window_baseline_blockers = sorted(
+        {
+            blocker
+            for item in clean_window_baseline_items
+            for blocker in _unique_text_items(item.get("blockers"))
+        }
+    )
+    clean_window_baseline_clean_count = sum(
+        1
+        for item in clean_window_baseline_items
+        if item.get("state") == "clean" and not _unique_text_items(item.get("blockers"))
+    )
+    clean_window_baseline_blocked_count = sum(
+        1
+        for item in clean_window_baseline_items
+        if item.get("state") == "blocked" or _unique_text_items(item.get("blockers"))
+    )
+    if not clean_window_baseline_items:
+        clean_window_baseline_summary_state = "no_targets"
+    elif clean_window_baseline_blocked_count:
+        clean_window_baseline_summary_state = "clean_window_required"
+    elif clean_window_baseline_clean_count == len(clean_window_baseline_items):
+        clean_window_baseline_summary_state = "clean"
+    else:
+        clean_window_baseline_summary_state = "unknown"
     return {
         "schema_version": NEXT_PAPER_ROUTE_RUNTIME_WINDOW_TARGETS_SCHEMA_VERSION,
         "source": "paper_route_evidence_audit",
@@ -2037,6 +2089,14 @@ def _next_paper_route_runtime_window_targets(
                 else None
             ),
             "blockers": account_pre_session_blockers,
+        },
+        "clean_window_baseline_readiness": {
+            "schema_version": "torghut.paper-route-clean-window-baseline-readiness-summary.v1",
+            "state": clean_window_baseline_summary_state,
+            "target_count": len(clean_window_baseline_items),
+            "clean_target_count": clean_window_baseline_clean_count,
+            "blocked_target_count": clean_window_baseline_blocked_count,
+            "blockers": clean_window_baseline_blockers,
         },
         "paper_route_probe": {
             "configured_enabled": bool(probe.get("configured_enabled")),
@@ -3074,6 +3134,113 @@ def _account_pre_session_snapshot_audit(
     }
 
 
+def _account_clean_window_baseline_snapshot_audit(
+    session: Session,
+    *,
+    account_label: str | None,
+    symbols: Sequence[str],
+    generated_at: datetime,
+    window_start: datetime,
+    window_end: datetime,
+) -> dict[str, object]:
+    """Return the flat, source-auditable baseline required for collection.
+
+    Bounded H-PAIRS SIM collection is allowed to start only after the target
+    account has an auditable flat baseline immediately before, or at, the
+    window start.  Before the pre-session readiness window we surface an
+    explicit pending blocker instead of marking collection ready.
+    """
+
+    required_after = window_start - timedelta(
+        seconds=PAPER_ROUTE_ACCOUNT_PRE_SESSION_READINESS_SECONDS
+    )
+    if generated_at < required_after:
+        return {
+            "schema_version": CLEAN_WINDOW_BASELINE_SCHEMA_VERSION,
+            "scope": "flat_account_baseline_for_bounded_paper_route_collection",
+            "state": "pending_until_clean_window_baseline",
+            "account_label": account_label,
+            "symbols": [
+                str(item).strip().upper() for item in symbols if str(item).strip()
+            ],
+            "generated_at": _isoformat(generated_at),
+            "window_start": _isoformat(window_start),
+            "window_end": _isoformat(window_end),
+            "required_after": _isoformat(required_after),
+            "source": "pre_session_or_window_start_position_snapshot",
+            "snapshot_id": None,
+            "snapshot_as_of": None,
+            "snapshot_source": None,
+            "flat": None,
+            "source_auditable": False,
+            "position_count": 0,
+            "target_symbol_position_count": 0,
+            "non_target_symbol_position_count": 0,
+            "sample_positions": [],
+            "blockers": ["paper_route_clean_window_baseline_snapshot_pending"],
+        }
+
+    if generated_at < window_start:
+        baseline = _account_pre_session_snapshot_audit(
+            session,
+            account_label=account_label,
+            symbols=symbols,
+            generated_at=generated_at,
+            window_start=window_start,
+            window_end=window_end,
+        )
+    else:
+        baseline = _account_window_start_snapshot_audit(
+            session,
+            account_label=account_label,
+            symbols=symbols,
+            window_start=window_start,
+            generated_at=generated_at,
+        )
+    blockers = _unique_text_items(baseline.get("blockers"))
+    source_auditable = bool(baseline.get("flat")) and bool(
+        _safe_text(baseline.get("snapshot_id")) or account_label is None
+    )
+    if not source_auditable and not blockers:
+        blockers.append("paper_route_clean_window_baseline_snapshot_missing")
+    return {
+        "schema_version": CLEAN_WINDOW_BASELINE_SCHEMA_VERSION,
+        "scope": "flat_account_baseline_for_bounded_paper_route_collection",
+        "state": "clean" if source_auditable and not blockers else "blocked",
+        "account_label": account_label,
+        "symbols": [str(item).strip().upper() for item in symbols if str(item).strip()],
+        "generated_at": _isoformat(generated_at),
+        "window_start": _isoformat(window_start),
+        "window_end": _isoformat(window_end),
+        "required_after": _isoformat(required_after),
+        "source": _safe_text(baseline.get("scope")),
+        "snapshot_id": _safe_text(baseline.get("snapshot_id")),
+        "snapshot_as_of": _safe_text(baseline.get("snapshot_as_of")),
+        "snapshot_source": _safe_text(baseline.get("snapshot_source")),
+        "snapshot_offset_seconds": baseline.get("snapshot_offset_seconds"),
+        "flat": (
+            baseline.get("flat") if isinstance(baseline.get("flat"), bool) else None
+        ),
+        "source_auditable": source_auditable,
+        "position_count": _safe_int(baseline.get("position_count")),
+        "target_symbol_position_count": _safe_int(
+            baseline.get("target_symbol_position_count")
+        ),
+        "non_target_symbol_position_count": _safe_int(
+            baseline.get("non_target_symbol_position_count")
+        ),
+        "gross_position_market_value": _safe_text(
+            baseline.get("gross_position_market_value")
+        )
+        or "0",
+        "sample_positions": [
+            _as_mapping(item) for item in _as_sequence(baseline.get("sample_positions"))
+        ],
+        "blockers": blockers,
+        "source_audit": baseline,
+    }
+
+
 def _account_window_close_snapshot_audit(
     session: Session,
     *,
@@ -3919,6 +4086,58 @@ def _source_backed_import_ready_metadata(
     }
 
 
+def _evidence_window_contract(
+    *,
+    target: Mapping[str, object],
+    account_contamination: Mapping[str, object],
+    account_state: Mapping[str, object],
+) -> dict[str, object]:
+    contamination_blockers = _unique_text_items(account_contamination.get("blockers"))
+    account_state_blockers = _unique_text_items(account_state.get("blockers"))
+    if contamination_blockers:
+        state = "contaminated_window_discarded"
+        reason = "unlinked_account_order_events_present"
+    elif account_state_blockers:
+        state = "clean_window_required"
+        reason = "window_start_account_state_not_clean"
+    else:
+        state = "clean_window_verified"
+        reason = "flat_source_auditable_window_start"
+    blockers = _unique_text_items([*contamination_blockers, *account_state_blockers])
+    return {
+        "schema_version": "torghut.paper-route-evidence-window-contract.v1",
+        "state": state,
+        "reason": reason,
+        "proof_allowed": False,
+        "promotion_allowed": False,
+        "final_promotion_allowed": False,
+        "hypothesis_id": _safe_text(target.get("hypothesis_id")),
+        "candidate_id": _safe_text(target.get("candidate_id")),
+        "account_label": _safe_text(target.get("account_label")),
+        "window_start": _safe_text(target.get("window_start")),
+        "window_end": _safe_text(target.get("window_end")),
+        "contaminated": bool(account_contamination.get("contaminated"))
+        or bool(contamination_blockers),
+        "flat_at_baseline": (
+            account_state.get("flat")
+            if isinstance(account_state.get("flat"), bool)
+            else None
+        ),
+        "window_start_snapshot_id": _safe_text(account_state.get("snapshot_id")),
+        "window_start_snapshot_as_of": _safe_text(account_state.get("snapshot_as_of")),
+        "contamination_blockers": contamination_blockers,
+        "account_state_blockers": account_state_blockers,
+        "blockers": blockers,
+        "sample_client_order_ids": _unique_text_items(
+            account_contamination.get("sample_client_order_ids")
+        ),
+        "sample_positions": [
+            _as_mapping(item)
+            for item in _as_sequence(account_state.get("sample_positions"))
+        ],
+    }
+
+
 def _target_audit(
     session: Session,
     *,
@@ -4036,6 +4255,11 @@ def _target_audit(
         for blocker in blockers
         if blocker not in PROMOTION_ONLY_READINESS_BLOCKERS
     ]
+    evidence_window_contract = _evidence_window_contract(
+        target=target,
+        account_contamination=account_contamination,
+        account_state=account_state,
+    )
     return {
         "target": target,
         "window": {
@@ -4046,6 +4270,7 @@ def _target_audit(
         "account_contamination": account_contamination,
         "account_state": account_state,
         "account_close_state": account_close_state,
+        "evidence_window_contract": evidence_window_contract,
         "source_backed_import_ready_metadata": _source_backed_import_ready_metadata(
             target=target,
             source_activity=source_activity,
@@ -4062,6 +4287,7 @@ def _target_audit(
                 if evidence_collection_blockers
                 else "paper_evidence_collecting"
             ),
+            "evidence_window_state": evidence_window_contract["state"],
             "evidence_collection_ok": not evidence_collection_blockers,
             "canary_collection_authorized": bool(
                 target.get("canary_collection_authorized")
@@ -4236,6 +4462,18 @@ def _database_unavailable_target_audit(
             "zero_open_position_evidence": False,
             "blockers": [PAPER_ROUTE_EVIDENCE_DB_UNAVAILABLE_BLOCKER, source_blocker],
             "db_load_error": error_payload,
+        },
+        "evidence_window_contract": {
+            "schema_version": "torghut.paper-route-evidence-window-contract.v1",
+            "state": "clean_window_required",
+            "reason": "database_unavailable",
+            "proof_allowed": False,
+            "promotion_allowed": False,
+            "final_promotion_allowed": False,
+            "hypothesis_id": _safe_text(target.get("hypothesis_id")),
+            "candidate_id": _safe_text(target.get("candidate_id")),
+            "account_label": _safe_text(target.get("account_label")),
+            "blockers": [PAPER_ROUTE_EVIDENCE_DB_UNAVAILABLE_BLOCKER, source_blocker],
         },
         "source_backed_import_ready_metadata": {
             "schema_version": "torghut.paper-route-source-backed-import-ready.v1",
@@ -4471,6 +4709,7 @@ def _runtime_window_import_audit(
     import_ready = bool(session_readiness.get("import_ready"))
     session_state = _safe_text(session_readiness.get("state")) or "unknown"
     blockers: list[str]
+    evidence_window_state = "clean_window_collection_pending"
     if source_plan_target_count <= 0:
         state = "paper_probation_import_plan_missing"
         next_action = "repair_runtime_ledger_paper_probation_import_plan"
@@ -4492,10 +4731,12 @@ def _runtime_window_import_audit(
         state = "import_due_account_contamination_detected"
         next_action = "isolate_paper_account_or_discard_contaminated_window"
         blockers = account_contamination_blockers
+        evidence_window_state = "contaminated_window_discarded"
     elif account_state_blockers:
         state = "import_due_account_state_not_clean"
         next_action = "reset_paper_account_or_discard_contaminated_window"
         blockers = account_state_blockers
+        evidence_window_state = "clean_window_required"
     elif targets_with_source_activity < current_target_count:
         state = "import_due_source_activity_missing"
         next_action = "inspect_paper_route_source_activity_before_import"
@@ -4504,14 +4745,17 @@ def _runtime_window_import_audit(
             *source_missing_reasons,
             *rejected_signal_reasons,
         ]
+        evidence_window_state = "source_evidence_required"
     elif source_lifecycle_blockers:
         state = "import_due_source_lifecycle_incomplete"
         next_action = "repair_paper_route_order_fill_close_lifecycle"
         blockers = source_lifecycle_blockers
+        evidence_window_state = "source_lifecycle_required"
     elif account_close_blockers:
         state = "import_due_flatten_handoff_missing"
         next_action = "run_paper_account_flatten_and_persist_position_snapshot"
         blockers = account_close_blockers
+        evidence_window_state = "close_flatten_evidence_required"
     elif targets_with_runtime_ledger < current_target_count:
         state = "import_due_runtime_ledger_missing"
         next_action = "run_runtime_window_import_or_repair_source_materialization"
@@ -4519,6 +4763,7 @@ def _runtime_window_import_audit(
             "runtime_ledger_bucket_missing",
             *source_runtime_ledger_blockers,
         ]
+        evidence_window_state = "runtime_ledger_required"
     elif targets_with_evidence_grade_runtime_ledger < current_target_count:
         state = "runtime_ledger_imported_but_not_evidence_grade"
         next_action = "repair_runtime_ledger_bucket_authority_or_candidate"
@@ -4526,14 +4771,24 @@ def _runtime_window_import_audit(
             "runtime_ledger_evidence_grade_bucket_missing",
             *runtime_ledger_blockers,
         ]
+        evidence_window_state = "runtime_ledger_evidence_grade_required"
     else:
         state = "runtime_ledger_ready_for_gate_review"
         next_action = "review_runtime_ledger_profit_gates"
         blockers = []
+        evidence_window_state = "clean_source_backed_window_ready_for_gate_review"
+    if source_plan_target_count <= 0:
+        evidence_window_state = "clean_window_required"
+    elif not import_ready:
+        evidence_window_state = "clean_window_collection_pending"
+    elif current_target_count <= 0:
+        evidence_window_state = "clean_window_required"
     target_blockers = _runtime_window_target_blockers(next_target_audits)
     return {
         "schema_version": PAPER_ROUTE_RUNTIME_WINDOW_IMPORT_AUDIT_SCHEMA_VERSION,
         "state": state,
+        "evidence_window_state": evidence_window_state,
+        "proof_allowed": False,
         "next_action": next_action,
         "session_state": session_state,
         "session_window": _as_mapping(next_targets.get("session_window")),
@@ -4610,6 +4865,7 @@ def _runtime_window_target_blockers(
         source_activity = _as_mapping(audit.get("source_activity"))
         account_contamination = _as_mapping(audit.get("account_contamination"))
         account_state = _as_mapping(audit.get("account_state"))
+        evidence_window_contract = _as_mapping(audit.get("evidence_window_contract"))
         rejected_signal_activity = _as_mapping(audit.get("rejected_signal_activity"))
         account_close_state = _as_mapping(audit.get("account_close_state"))
         runtime_ledger = _as_mapping(audit.get("runtime_ledger"))
@@ -4738,6 +4994,21 @@ def _runtime_window_target_blockers(
                         _as_mapping(item)
                         for item in _as_sequence(account_state.get("sample_positions"))
                     ],
+                },
+                "evidence_window_contract": {
+                    "state": _safe_text(evidence_window_contract.get("state")),
+                    "proof_allowed": bool(
+                        evidence_window_contract.get("proof_allowed")
+                    ),
+                    "promotion_allowed": bool(
+                        evidence_window_contract.get("promotion_allowed")
+                    ),
+                    "final_promotion_allowed": bool(
+                        evidence_window_contract.get("final_promotion_allowed")
+                    ),
+                    "blockers": _unique_text_items(
+                        evidence_window_contract.get("blockers")
+                    ),
                 },
                 "account_close_state": {
                     "state": _safe_text(account_close_state.get("state")),
