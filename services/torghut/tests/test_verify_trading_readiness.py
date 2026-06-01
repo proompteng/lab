@@ -1405,6 +1405,90 @@ class TestVerifyTradingReadiness(TestCase):
             ],
         )
 
+    def test_paper_route_readiness_surfaces_target_quote_fillability_context(
+        self,
+    ) -> None:
+        evidence = _paper_route_evidence(
+            import_ready=True,
+            target_overrides={
+                "symbol": "AAPL",
+                "quote_routeability": {
+                    "symbol": "AAPL",
+                    "status": "blocked",
+                    "reason": "quote_feed_gap",
+                    "reason_codes": ["quote_temporarily_unavailable"],
+                    "quote_age_seconds": "61",
+                    "spread_bps": "24.5",
+                    "source": "paper_route_nbbo",
+                },
+            },
+        )
+        runtime_window_audit = evidence["runtime_window_import_audit"]
+        assert isinstance(runtime_window_audit, dict)
+        runtime_window_audit["blockers"] = ["spread_bps_exceeded"]
+        runtime_window_audit["target_blockers"] = [
+            {"blockers": ["source_reject_missing_ask"]}
+        ]
+        evidence["target_audits"] = [
+            {
+                "target": {
+                    "hypothesis_id": "H-PAIRS-01",
+                    "candidate_id": "c88421d619759b2cfaa6f4d0",
+                    "strategy_name": "microbar-pairs-vwap-cap-safe",
+                },
+                "rejected_signal_activity": {
+                    "blocking_reasons": ["source_reject_non_positive_ask"],
+                    "reason_counts": [
+                        {"reason": "source_reject_crossed_quote", "count": 2}
+                    ],
+                    "max_spread_bps": "98.1",
+                },
+            }
+        ]
+
+        result = evaluate_trading_readiness(
+            _ready_status(),
+            paper_route_evidence=evidence,
+            require_paper_route_target_plan=True,
+            require_paper_route_import_ready=True,
+        )
+
+        self.assertFalse(result["ok"])
+        quote_fillability = result["paper_route_target_plan"]["quote_fillability"]
+        self.assertTrue(quote_fillability["blocked"])
+        self.assertEqual(
+            quote_fillability["blocking_reasons"],
+            [
+                "quote_feed_gap",
+                "quote_temporarily_unavailable",
+                "source_reject_crossed_quote",
+                "source_reject_missing_ask",
+                "source_reject_non_positive_ask",
+                "spread_bps_exceeded",
+            ],
+        )
+        self.assertEqual(len(quote_fillability["targets"]), 2)
+        self.assertEqual(
+            quote_fillability["targets"][0]["repair_action"],
+            "repair_quote_quality_or_fillability_before_runtime_ledger_collection",
+        )
+        self.assertEqual(
+            quote_fillability["targets"][1]["repair_action"],
+            "refresh_ask_quote_before_routeability_claim",
+        )
+
+    def test_readiness_next_action_prioritizes_quote_fillability_failed_check(
+        self,
+    ) -> None:
+        self.assertEqual(
+            verifier._readiness_next_action(
+                failed_checks=["paper_route_target_plan_quote_fillability"],
+                checks={},
+                runtime_ledger_proof_packet=None,
+            ),
+            "repair_quote_quality_or_fillability_before_runtime_ledger_collection",
+        )
+
     def test_paper_route_target_plan_allows_drift_only_evidence_collection(
         self,
     ) -> None:
