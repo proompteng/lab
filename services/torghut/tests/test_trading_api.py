@@ -4930,30 +4930,18 @@ class TestTradingApi(TestCase):
             self.assertIn("readiness_cache", payload["dependencies"])
             self.assertIn("cache_used", payload["dependencies"]["readiness_cache"])
             self.assertFalse(payload["dependencies"]["readiness_cache"]["cache_stale"])
+            self.assertEqual(payload["readiness_surface"], "core_dependencies_only")
+            live_submission_gate = payload["live_submission_gate"]
+            self.assertFalse(live_submission_gate["allowed"])
+            self.assertFalse(live_submission_gate["promotion_authority"])
+            self.assertFalse(live_submission_gate["final_authority_ok"])
+            self.assertFalse(live_submission_gate["final_promotion_allowed"])
             self.assertEqual(
-                payload["alpha_repair_closure_board"]["schema_version"],
-                "torghut.alpha-repair-closure-board-ref.v1",
+                live_submission_gate["reason"],
+                "readyz_core_dependencies_only",
             )
-            self.assertEqual(
-                payload["alpha_repair_closure_board"]["max_notional"],
-                "0",
-            )
-            self.assertEqual(
-                payload["executable_alpha_settlement_slots"]["schema_version"],
-                "torghut.executable-alpha-settlement-slots-ref.v1",
-            )
-            self.assertEqual(
-                payload["executable_alpha_settlement_slots"]["max_notional"],
-                "0",
-            )
-            self.assertEqual(
-                payload["alpha_evidence_foundry"]["schema_version"],
-                "torghut.alpha-evidence-foundry-ref.v1",
-            )
-            self.assertEqual(
-                payload["alpha_evidence_foundry"]["max_notional"],
-                "0",
-            )
+            self.assertFalse(live_submission_gate["read_model_evaluated"])
+            self.assertNotIn("alpha_repair_closure_board", payload)
         finally:
             settings.trading_enabled = original
             settings.trading_universe_source = original_source
@@ -5263,16 +5251,11 @@ class TestTradingApi(TestCase):
         self.assertFalse(live_submission_gate["promotion_authority"])
         self.assertFalse(live_submission_gate["final_authority_ok"])
         self.assertFalse(live_submission_gate["final_promotion_allowed"])
-        self.assertTrue(live_submission_gate["readiness_dependency_guard_active"])
         self.assertIn(
-            "postgres_degraded",
-            live_submission_gate["readiness_dependency_guard_reasons"],
+            "readyz_core_dependencies_only",
+            live_submission_gate["reason_codes"],
         )
-        guarded_plan = live_submission_gate[
-            "runtime_ledger_paper_probation_import_plan"
-        ]
-        self.assertFalse(guarded_plan["final_promotion_allowed"])
-        self.assertFalse(guarded_plan["targets"][0]["final_promotion_allowed"])
+        self.assertFalse(live_submission_gate["read_model_evaluated"])
         self.assertEqual(
             _json_truthy_paths_for_keys(
                 payload,
@@ -5287,7 +5270,9 @@ class TestTradingApi(TestCase):
             [],
         )
 
-    def test_readyz_evaluation_timeout_returns_fail_closed_quickly(self) -> None:
+    def test_trading_health_evaluation_timeout_returns_fail_closed_quickly(
+        self,
+    ) -> None:
         original_timeout = main_module._TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS
         main_module._TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = 0.01
         with main_module._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
@@ -5304,7 +5289,7 @@ class TestTradingApi(TestCase):
                 side_effect=_slow_health_payload,
             ):
                 started_at = time.monotonic()
-                response = self.client.get("/readyz")
+                response = self.client.get("/trading/health")
                 elapsed = time.monotonic() - started_at
             time.sleep(0.25)
         finally:
@@ -5317,28 +5302,26 @@ class TestTradingApi(TestCase):
         self.assertEqual(response.status_code, 503)
         payload = response.json()
         self.assertEqual(payload["status"], "degraded")
-        self.assertEqual(payload["reason"], "readyz_evaluation_timeout")
+        self.assertEqual(payload["reason"], "trading_health_evaluation_timeout")
         self.assertIn(
-            "readyz_evaluation_timeout",
+            "trading_health_evaluation_timeout",
             payload["dependencies"]["health_evaluation"]["reason_codes"],
         )
         self.assertIsInstance(payload["dependencies"]["postgres"], dict)
         self.assertFalse(payload["dependencies"]["postgres"]["ok"])
-        self.assertIsInstance(payload["dependencies"]["database"], dict)
-        self.assertFalse(payload["dependencies"]["database"]["ok"])
         self.assertIsInstance(payload["scheduler"], dict)
         self.assertFalse(payload["live_submission_gate"]["allowed"])
         self.assertFalse(payload["live_submission_gate"]["promotion_authority"])
         self.assertFalse(payload["live_submission_gate"]["final_authority_ok"])
 
-    def test_readyz_timeout_uses_cached_dependency_contract_shape(self) -> None:
+    def test_trading_health_timeout_uses_cached_dependency_shape(self) -> None:
         original_timeout = main_module._TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS
         main_module._TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = 0.01
         health_cache_key = main_module._trading_health_surface_cache_key(
-            include_database_contract=True,
-            allow_stale_dependency_cache=True,
+            include_database_contract=False,
+            allow_stale_dependency_cache=False,
         )
-        dependency_cache_key = _readiness_dependency_cache_key(True)
+        dependency_cache_key = _readiness_dependency_cache_key(False)
         checked_at = datetime.now(timezone.utc)
         _TRADING_DEPENDENCY_HEALTH_CACHE[dependency_cache_key] = {
             "checked_at": checked_at,
@@ -5349,11 +5332,6 @@ class TestTradingApi(TestCase):
                 "tigerbeetle": {
                     "ok": True,
                     "blockers": ["tigerbeetle_runtime_ledger_signed_refs_missing"],
-                },
-                "database": {
-                    "ok": True,
-                    "detail": "ok",
-                    "account_scope_errors": [],
                 },
             },
         }
@@ -5373,7 +5351,7 @@ class TestTradingApi(TestCase):
                 "app.main._evaluate_trading_health_payload",
                 side_effect=_slow_health_payload,
             ):
-                response = self.client.get("/readyz")
+                response = self.client.get("/trading/health")
             time.sleep(0.25)
         finally:
             main_module._TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = original_timeout
@@ -5384,11 +5362,9 @@ class TestTradingApi(TestCase):
         self.assertEqual(response.status_code, 503)
         payload = response.json()
         dependencies = payload["dependencies"]
-        self.assertEqual(payload["reason"], "readyz_evaluation_timeout")
+        self.assertEqual(payload["reason"], "trading_health_evaluation_timeout")
         self.assertTrue(dependencies["postgres"]["ok"])
         self.assertTrue(dependencies["clickhouse"]["ok"])
-        self.assertTrue(dependencies["database"]["ok"])
-        self.assertEqual(dependencies["database"]["account_scope_errors"], [])
         self.assertEqual(
             dependencies["tigerbeetle"]["blockers"],
             ["tigerbeetle_runtime_ledger_signed_refs_missing"],
@@ -5402,10 +5378,12 @@ class TestTradingApi(TestCase):
         self.assertFalse(payload["live_submission_gate"]["final_authority_ok"])
         self.assertFalse(payload["live_submission_gate"]["final_promotion_allowed"])
 
-    def test_readyz_serves_completed_health_cache_while_refreshing(self) -> None:
+    def test_trading_health_serves_completed_health_cache_while_refreshing(
+        self,
+    ) -> None:
         cache_key = main_module._trading_health_surface_cache_key(
-            include_database_contract=True,
-            allow_stale_dependency_cache=True,
+            include_database_contract=False,
+            allow_stale_dependency_cache=False,
         )
         cached_payload: dict[str, object] = {
             "status": "degraded",
@@ -5455,7 +5433,7 @@ class TestTradingApi(TestCase):
                 "app.main._evaluate_trading_health_payload",
                 side_effect=_refresh_health_payload,
             ):
-                response = self.client.get("/readyz")
+                response = self.client.get("/trading/health")
                 self.assertTrue(refresh_called.wait(1.0))
                 self.assertEqual(len(refresh_calls), 1)
         finally:
@@ -5466,12 +5444,14 @@ class TestTradingApi(TestCase):
         self.assertEqual(response.status_code, 503)
         payload = response.json()
         self.assertEqual(payload["reason"], "cached_health_payload")
-        self.assertNotEqual(payload["reason"], "readyz_evaluation_timeout")
+        self.assertNotEqual(payload["reason"], "trading_health_evaluation_timeout")
 
-    def test_readyz_starts_fresh_eval_when_completed_future_has_no_cache(self) -> None:
+    def test_trading_health_starts_fresh_eval_when_completed_future_has_no_cache(
+        self,
+    ) -> None:
         cache_key = main_module._trading_health_surface_cache_key(
-            include_database_contract=True,
-            allow_stale_dependency_cache=True,
+            include_database_contract=False,
+            allow_stale_dependency_cache=False,
         )
         completed_future: Future[tuple[dict[str, object], int]] = Future()
         completed_future.set_result(({"reason": "orphaned_health_payload"}, 503))
@@ -5502,7 +5482,7 @@ class TestTradingApi(TestCase):
                 "app.main._evaluate_trading_health_payload",
                 side_effect=_refresh_health_payload,
             ):
-                response = self.client.get("/readyz")
+                response = self.client.get("/trading/health")
         finally:
             with main_module._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
                 main_module._TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
@@ -6359,6 +6339,9 @@ class TestTradingApi(TestCase):
             settings.trading_enabled = True
             settings.trading_mode = "live"
             scheduler = TradingScheduler()
+            scheduler.state.running = True
+            scheduler.state.last_run_at = datetime.now(timezone.utc)
+            _mark_static_universe_loaded(scheduler)
             app.state.trading_scheduler = scheduler
             shared_gate = {
                 "allowed": False,
@@ -6499,29 +6482,22 @@ class TestTradingApi(TestCase):
             self.assertEqual(
                 health_response.json()["live_submission_gate"], shared_gate
             )
-            self.assertEqual(ready_response.json()["live_submission_gate"], shared_gate)
             self.assertEqual(
                 runtime_response.json()["live_submission_gate"],
                 shared_gate,
             )
+            ready_gate = ready_response.json()["live_submission_gate"]
+            self.assertFalse(ready_gate["allowed"])
+            self.assertFalse(ready_gate["promotion_authority"])
+            self.assertFalse(ready_gate["final_authority_ok"])
+            self.assertFalse(ready_gate["final_promotion_allowed"])
+            self.assertFalse(ready_gate["read_model_evaluated"])
             self.assertEqual(
-                ready_response.json()["repair_receipt_frontier"]["schema_version"],
-                "torghut.repair-receipt-frontier.v1",
+                ready_gate["reason"],
+                "readyz_core_dependencies_only",
             )
-            self.assertEqual(
-                ready_response.json()["repair_receipt_frontier"]["max_notional"],
-                "0",
-            )
-            self.assertEqual(
-                ready_response.json()["repair_outcome_dividend_ledger"][
-                    "schema_version"
-                ],
-                "torghut.repair-outcome-dividend-ledger.v1",
-            )
-            self.assertEqual(
-                ready_response.json()["repair_outcome_dividend_ledger"]["max_notional"],
-                "0",
-            )
+            self.assertNotIn("repair_receipt_frontier", ready_response.json())
+            self.assertNotIn("repair_outcome_dividend_ledger", ready_response.json())
         finally:
             settings.trading_mode = original_mode
             settings.trading_enabled = original_enabled
