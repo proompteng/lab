@@ -2530,6 +2530,26 @@ class TestRuntimeWindowImport(TestCase):
             _runtime_ledger_bucket_blockers(missing_source_offsets),
         )
 
+        legacy_ref_aliases = _runtime_ledger_bucket(
+            source_window_ids=[],
+            source_window_refs=["postgres:order_feed_source_windows:source-window-buy"],
+            trade_decision_ids=[],
+            trade_decision_refs=["postgres:trade_decisions:decision-buy"],
+            execution_ids=[],
+            execution_refs=["postgres:executions:execution-buy"],
+            execution_order_event_ids=[],
+            execution_order_event_refs=[
+                "postgres:execution_order_events:event-fill-buy"
+            ],
+        )
+        alias_blockers = _runtime_ledger_bucket_blockers(legacy_ref_aliases)
+        self.assertIn("runtime_ledger_source_window_ids_missing", alias_blockers)
+        self.assertIn("runtime_ledger_trade_decision_refs_missing", alias_blockers)
+        self.assertIn("runtime_ledger_execution_refs_missing", alias_blockers)
+        self.assertIn(
+            "runtime_ledger_execution_order_event_refs_missing", alias_blockers
+        )
+
     def test_runtime_ledger_bucket_requires_structured_source_offsets(self) -> None:
         for malformed_offsets in (
             ["alpaca.trade_updates:0:100"],
@@ -2556,6 +2576,12 @@ class TestRuntimeWindowImport(TestCase):
             "runtime_ledger_authority_class_missing",
             _runtime_ledger_bucket_blockers(bucket),
         )
+        for marker_field in ("authority_class", "authority_reason"):
+            marker_only = _runtime_ledger_bucket(**{marker_field: None})
+            self.assertIn(
+                "runtime_ledger_authority_class_missing",
+                _runtime_ledger_bucket_blockers(marker_only),
+            )
 
     def test_runtime_ledger_bucket_requires_explicit_cost_basis_and_amount(
         self,
