@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import inspect
+import time
 from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -4593,6 +4594,122 @@ class TestTradingApi(TestCase):
             ),
             [],
         )
+
+    def test_readyz_evaluation_timeout_returns_fail_closed_quickly(self) -> None:
+        original_timeout = main_module._TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS
+        main_module._TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = 0.01
+        with main_module._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+            main_module._TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
+            main_module._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
+
+        def _slow_health_payload(**_kwargs: object) -> tuple[dict[str, object], int]:
+            time.sleep(0.2)
+            return ({"status": "ok", "live_submission_gate": {"allowed": True}}, 200)
+
+        try:
+            with patch(
+                "app.main._evaluate_trading_health_payload",
+                side_effect=_slow_health_payload,
+            ):
+                started_at = time.monotonic()
+                response = self.client.get("/readyz")
+                elapsed = time.monotonic() - started_at
+            time.sleep(0.25)
+        finally:
+            main_module._TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = original_timeout
+            with main_module._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+                main_module._TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
+                main_module._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
+
+        self.assertLess(elapsed, 0.5)
+        self.assertEqual(response.status_code, 503)
+        payload = response.json()
+        self.assertEqual(payload["status"], "degraded")
+        self.assertEqual(payload["reason"], "readyz_evaluation_timeout")
+        self.assertIn(
+            "readyz_evaluation_timeout",
+            payload["dependencies"]["health_evaluation"]["reason_codes"],
+        )
+        self.assertFalse(payload["live_submission_gate"]["allowed"])
+        self.assertFalse(payload["live_submission_gate"]["promotion_authority"])
+        self.assertFalse(payload["live_submission_gate"]["final_authority_ok"])
+
+    def test_trading_health_timeout_uses_cached_blockers_fail_closed(self) -> None:
+        original_timeout = main_module._TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS
+        main_module._TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = 0.01
+        cache_key = main_module._trading_health_surface_cache_key(
+            include_database_contract=False,
+            allow_stale_dependency_cache=False,
+        )
+        cached_payload: dict[str, object] = {
+            "status": "degraded",
+            "dependencies": {
+                "tigerbeetle": {
+                    "ok": False,
+                    "blockers": [
+                        "source_amount_mismatch",
+                        "unlinked_execution_cost",
+                    ],
+                }
+            },
+            "options_catalog_freshness": {
+                "ok": False,
+                "blockers": ["options_catalog_freshness_gap"],
+            },
+            "live_submission_gate": {
+                "allowed": True,
+                "promotion_authority": True,
+                "final_authority_ok": True,
+                "final_promotion_allowed": True,
+            },
+        }
+        with main_module._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+            main_module._TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
+            main_module._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE[cache_key] = {
+                "payload": cached_payload,
+                "status_code": 503,
+                "checked_at": datetime.now(timezone.utc),
+            }
+
+        def _slow_health_payload(**_kwargs: object) -> tuple[dict[str, object], int]:
+            time.sleep(0.2)
+            return (cached_payload, 503)
+
+        try:
+            with patch(
+                "app.main._evaluate_trading_health_payload",
+                side_effect=_slow_health_payload,
+            ):
+                response = self.client.get("/trading/health")
+            time.sleep(0.25)
+        finally:
+            main_module._TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = original_timeout
+            with main_module._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+                main_module._TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
+                main_module._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
+
+        self.assertEqual(response.status_code, 503)
+        payload = response.json()
+        self.assertEqual(payload["status"], "degraded")
+        self.assertEqual(payload["reason"], "trading_health_evaluation_timeout")
+        self.assertIn(
+            "source_amount_mismatch",
+            payload["dependencies"]["tigerbeetle"]["blockers"],
+        )
+        self.assertIn(
+            "unlinked_execution_cost",
+            payload["dependencies"]["tigerbeetle"]["blockers"],
+        )
+        self.assertEqual(
+            payload["options_catalog_freshness"]["blockers"],
+            ["options_catalog_freshness_gap"],
+        )
+        live_submission_gate = payload["live_submission_gate"]
+        self.assertFalse(live_submission_gate["allowed"])
+        self.assertFalse(live_submission_gate["promotion_authority"])
+        self.assertFalse(live_submission_gate["final_authority_ok"])
+        self.assertFalse(live_submission_gate["final_promotion_allowed"])
+        self.assertTrue(live_submission_gate["readiness_dependency_guard_active"])
 
     @patch(
         "app.main._evaluate_database_contract",
