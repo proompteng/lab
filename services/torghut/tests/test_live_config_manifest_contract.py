@@ -1443,7 +1443,7 @@ class TestLiveConfigManifestContract(TestCase):
             "torghut-tigerbeetle-journal-order-events-sim"
         )
 
-        self.assertEqual(live_spec.get("schedule"), "6,36 * * * *")
+        self.assertEqual(live_spec.get("schedule"), "*/6 * * * *")
         self.assertEqual(sim_spec.get("schedule"), "21,51 * * * *")
         for spec, job_spec, container in (
             (live_spec, live_job_spec, live_container),
@@ -1541,7 +1541,8 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertNotIn("--dsn-env SIM_DB_DSN", live_args)
         self.assertNotIn("--account-label TORGHUT_SIM", live_args)
         self.assertEqual(live_args.count("--batch-size 5"), 4)
-        self.assertIn("--max-batches 1", live_args)
+        self.assertEqual(live_args.count("--max-batches 3"), 3)
+        self.assertEqual(live_args.count("--max-batches 1"), 1)
         self.assertIn("--event-scan-limit 250", live_args)
         self.assertIn("--reconcile-limit 1000", live_args)
 
