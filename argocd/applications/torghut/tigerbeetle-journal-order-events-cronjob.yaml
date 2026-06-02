@@ -57,7 +57,7 @@ spec:
                   cd /app
                   exec /opt/venv/bin/python scripts/run_tigerbeetle_journal_cron.py \
                     --preset live \
-                    --execution-batch-size 5 \
+                    --execution-batch-size 25 \
                     --supervise-timeout-seconds 45 \
                     --json
               env:
