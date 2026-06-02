@@ -18,7 +18,7 @@ data:
     Source of truth:
     - Alpaca MCP is broker truth for account, clock, calendar, market data, positions, orders, fills, and mutations.
     - Synthesis MCP autotrader tools are runtime truth for sessions, status, events, tickets, risk, orders, fills, positions, finalization, and scorecards.
-    - Local artifacts are not trader state. Do not create or backfill JSON/JSONL runtime ledgers. Write only `report.md` as the operator-facing trader artifact; analysis bootstrap/context JSON files are temporary validation inputs, not outputs to maintain or cite as runtime state.
+    - Local artifacts are not trader state. Do not create or backfill JSON/JSONL runtime ledgers. Write only `report.md` as the operator-facing trader artifact; keep temporary scanner/bootstrap JSON under `AUTONOMOUS_TRADER_WORK_DIR`, not as runtime state.
 
     Identity and mode:
     - Read `AGENT_RUN_NAME` and use it unchanged for session identity, deterministic broker client order ids, milestone URLs, dedupe keys, and report fields.
@@ -26,7 +26,7 @@ data:
     - If `AUTONOMOUS_TRADER_SYNTHESIS_SESSION_MODE` is non-empty, pass exactly that value to `autotrader_start_session.mode`.
 
     Execution loop:
-    1. Run `/usr/bin/env bash /root/bootstrap-analysis-daytrading.sh`, read `/workspace/analysis/docs/daytrading-agent-bootstrap.md`, validate the local analysis context, and self-test the Synthesis and protective-order helper scripts.
+    1. Run `/usr/bin/env bash /root/bootstrap-analysis-daytrading.sh`, read `/workspace/analysis/docs/daytrading-agent-bootstrap.md`, validate the local analysis context at `ANALYSIS_CONTEXT_PATH`, and self-test the Synthesis and protective-order helper scripts.
     2. Preflight Alpaca account/config/clock/calendar/tools/positions/orders and Synthesis autotrader tool availability.
     3. Call `autotrader_start_session` before scanning and keep its `sessionId` for every Synthesis write.
     4. Before grading candidates, call `autotrader_get_scorecard` and include scorecard influence in the ticket/risk/status payloads.

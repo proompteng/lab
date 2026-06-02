@@ -713,9 +713,15 @@ describe('synthesis autonomous trader provider', () => {
     const artifactNames = (outputArtifacts ?? []).map((artifact) => objectAt(artifact, 'name'))
     const artifactPaths = (outputArtifacts ?? []).map((artifact) => objectAt(artifact, 'path'))
     const artifactKeys = (outputArtifacts ?? []).map((artifact) => objectAt(artifact, 'key')).filter(Boolean)
+    const bootstrapScript = (inputFiles ?? []).find(
+      (inputFile) => objectAt(inputFile, 'path') === '/root/bootstrap-analysis-daytrading.sh',
+    )
+    const bootstrapContent = objectAt(bootstrapScript, 'content')
 
     expect(objectAt(envTemplate, 'ANALYSIS_REPO_URL')).toBe('https://github.com/gregkonush/analysis.git')
     expect(objectAt(envTemplate, 'ANALYSIS_REQUIRED_COMMIT')).toBe('56be940b69bf1a56578040eda9bf2e3699c5220e')
+    expect(objectAt(envTemplate, 'ANALYSIS_CONTEXT_PATH')).toBe('/tmp/autonomous-trader-work/analysis-context.json')
+    expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_WORK_DIR')).toBe('/tmp/autonomous-trader-work')
     expect(objectAt(envTemplate, 'ANALYSIS_FETCH_DEPTH')).toBeUndefined()
     expect(objectAt(codex, 'model')).toBe('gpt-5.5')
     expect(objectAt(codex, 'effort')).toBe('high')
@@ -732,6 +738,14 @@ describe('synthesis autonomous trader provider', () => {
     expect([...artifactNames, ...artifactPaths, ...artifactKeys].join('\n')).not.toMatch(
       /jsonl|analysis-(bootstrap|context)/,
     )
+    expect(bootstrapContent).toContain('work_dir="${AUTONOMOUS_TRADER_WORK_DIR:-/tmp/autonomous-trader-work}"')
+    expect(bootstrapContent).toContain(
+      'analysis_context_path="${ANALYSIS_CONTEXT_PATH:-${work_dir}/analysis-context.json}"',
+    )
+    expect(bootstrapContent).toContain('--output "${analysis_context_path}"')
+    expect(bootstrapContent).not.toContain('"${artifact_dir}/analysis-context.json"')
+    expect(bootstrapContent).not.toContain('"${artifact_dir}/analysis-bootstrap.json"')
+    expect(bootstrapContent).not.toContain('"${artifact_dir}/analysis-venv"')
     expect(objectAt(objectAt(objectAt(vcsProvider, 'spec'), 'repositoryPolicy'), 'allow')).toContain(
       'gregkonush/analysis',
     )
