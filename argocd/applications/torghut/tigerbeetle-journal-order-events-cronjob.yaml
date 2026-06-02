@@ -63,6 +63,7 @@ spec:
                     --reconcile-limit 1000 \
                     --skip-reconcile \
                     --fail-on-degraded \
+                    --supervise-timeout-seconds 45 \
                     --json
                   /opt/venv/bin/python scripts/journal_tigerbeetle_order_events.py \
                     --dsn-env DB_DSN \
@@ -72,6 +73,7 @@ spec:
                     --event-scan-limit 250 \
                     --reconcile-limit 1000 \
                     --fail-on-degraded \
+                    --supervise-timeout-seconds 45 \
                     --json
               env:
                 - name: DB_DSN
@@ -166,6 +168,7 @@ spec:
                     --reconcile-limit 500 \
                     --skip-reconcile \
                     --fail-on-degraded \
+                    --supervise-timeout-seconds 45 \
                     --json
                   /opt/venv/bin/python scripts/journal_tigerbeetle_order_events.py \
                     --dsn-env SIM_DB_DSN \
@@ -176,6 +179,7 @@ spec:
                     --event-scan-limit 300 \
                     --reconcile-limit 500 \
                     --fail-on-degraded \
+                    --supervise-timeout-seconds 45 \
                     --json
               env:
                 - name: TORGHUT_SIM_DB_HOST
