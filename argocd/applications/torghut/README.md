@@ -32,6 +32,11 @@ source-activity blockers such as `paper_route_source_activity_missing`, `source_
 `source_executions_missing`, and `source_tca_missing` into the final verdict. Treat those as the next repair target
 before rerunning import; do not collapse them into a generic runtime-ledger-missing diagnosis.
 
+The renewal conductor also carries an explicit live H-PAIRS runtime-window target for account `PA3SX7FYNUTF`. That target
+uses `DB_DSN` for source and target reads/writes and is a separate scope from the sim paper-route target. It is expected
+to remain blocked until live execution-eligible decisions, executions, order events, TCA rows, and durable runtime-ledger
+buckets exist; the target makes those blockers visible in the scheduled proof packet without granting promotion.
+
 The `torghut-paper-account-flatten` CronJob runs both before the regular session and after the regular session close.
 The post-close run is part of the paper-route proof lane: it persists the flat account snapshot required before the
 21:23 UTC renewal/import conductor can turn a closed paper-route window into authority-checkable runtime-ledger evidence.
