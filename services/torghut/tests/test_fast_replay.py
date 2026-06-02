@@ -177,6 +177,25 @@ class TestFastReplayPreview(TestCase):
         )
         self.assertIn("hpairs_macro_window_stress", row_payload)
         self.assertFalse(row_payload["hpairs_macro_window_stress"]["proof_authority"])
+        self.assertIn("hpairs_clusterlob_order_flow_feature_lane", row_payload)
+        feature_lane = row_payload["hpairs_clusterlob_order_flow_feature_lane"]
+        self.assertEqual(feature_lane["status"], "preview_only_research_ranking")
+        self.assertEqual(
+            feature_lane["resource_scope"],
+            "local_offline_replay_tape_or_fixture_rows_only",
+        )
+        self.assertFalse(feature_lane["promotion_allowed"])
+        self.assertFalse(feature_lane["promotion_authority"])
+        self.assertFalse(feature_lane["final_authority_ok"])
+        self.assertIn("feature_schema_hashes", feature_lane)
+        self.assertIn(
+            "hpairs_clusterlob_order_flow_feature_lane",
+            payload,
+        )
+        manifest_lane = payload["hpairs_clusterlob_order_flow_feature_lane"]
+        self.assertEqual(manifest_lane["status"], "preview_only_research_ranking")
+        self.assertFalse(manifest_lane["promotion_allowed"])
+        self.assertFalse(manifest_lane["final_authority_ok"])
         self.assertEqual(
             row_payload["adv_capacity_context"]["status"], "missing_source_backed_adv"
         )

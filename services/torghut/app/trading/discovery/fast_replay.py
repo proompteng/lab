@@ -14,6 +14,10 @@ import numpy as np
 from numpy.typing import NDArray
 
 from app.trading.discovery.candidate_specs import CandidateSpec
+from app.trading.discovery.cluster_lob_features import (
+    HPAIRS_CLUSTER_LOB_FEATURE_SCHEMA_VERSION,
+    extract_cluster_lob_features,
+)
 from app.trading.discovery.microstructure_prefilter import (
     HPAIRS_PREFILTER_PROOF_SEMANTICS_LABEL,
     HPAIRS_PREFILTER_PROOF_SOURCE,
@@ -22,8 +26,8 @@ from app.trading.discovery.microstructure_prefilter import (
 from app.trading.discovery.replay_tape import ReplayTapeManifest
 from app.trading.models import SignalEnvelope
 
-FAST_REPLAY_PREVIEW_SCHEMA_VERSION = "torghut.fast-replay-preview.v6"
-FAST_REPLAY_PREVIEW_ROW_SCHEMA_VERSION = "torghut.fast-replay-preview-row.v7"
+FAST_REPLAY_PREVIEW_SCHEMA_VERSION = "torghut.fast-replay-preview.v7"
+FAST_REPLAY_PREVIEW_ROW_SCHEMA_VERSION = "torghut.fast-replay-preview-row.v8"
 FAST_REPLAY_PROOF_SEMANTICS_LABEL = (
     "preview_ranking_only_exact_replay_and_runtime_ledger_required"
 )
@@ -34,6 +38,7 @@ FAST_REPLAY_EXACT_REPLAY_CANDIDATE_CAP = 6
 FAST_REPLAY_WHITEPAPER_MECHANISMS = (
     "cluster_lob_event_clustering_proxy",
     "bounded_hpairs_clusterlob_ofi_candidate_prefilter",
+    "offline_clusterlob_order_flow_feature_lane",
     "ofi_horizon_decay_regime_screen",
     "macro_news_ofi_stress_veto_if_present",
     "square_root_impact_capacity_prefilter",
@@ -92,6 +97,9 @@ class FastReplayPreviewRow:
     exploration_score: Decimal
     frontier_bucket: str
     microstructure_prefilter: Mapping[str, Any] = field(
+        default_factory=lambda: cast(dict[str, Any], {})
+    )
+    clusterlob_order_flow_features: Mapping[str, Any] = field(
         default_factory=lambda: cast(dict[str, Any], {})
     )
     proof_semantics_label: str = FAST_REPLAY_PROOF_SEMANTICS_LABEL
@@ -207,6 +215,10 @@ class FastReplayPreviewRow:
                 "final_promotion_allowed": False,
                 "final_authority_ok": False,
             },
+            "clusterlob_order_flow_features": dict(self.clusterlob_order_flow_features),
+            "hpairs_clusterlob_order_flow_feature_lane": dict(
+                self.clusterlob_order_flow_features
+            ),
             "microstructure_prefilter": dict(self.microstructure_prefilter),
             "hpairs_microstructure_prefilter": dict(self.microstructure_prefilter),
             "hpairs_macro_window_stress": prefilter_macro_window_stress,
@@ -289,6 +301,9 @@ class FastReplayPreviewResult:
     hpairs_microstructure_prefilter: Mapping[str, Any] = field(
         default_factory=lambda: cast(dict[str, Any], {})
     )
+    clusterlob_order_flow_feature_lane: Mapping[str, Any] = field(
+        default_factory=lambda: cast(dict[str, Any], {})
+    )
 
     def to_manifest_payload(self) -> dict[str, Any]:
         return {
@@ -316,6 +331,7 @@ class FastReplayPreviewResult:
             "whitepaper_mechanisms": list(FAST_REPLAY_WHITEPAPER_MECHANISMS),
             "implemented_mechanisms": {
                 "hpairs_clusterlob_ofi_prefilter": "deterministic bounded H-PAIRS candidate prefilter metadata only; never promotion authority",
+                "clusterlob_order_flow_feature_lane": "offline replay-tape/fixture ClusterLOB and horizon OFI features for preview ranking only",
                 "cluster_lob": "cheap event-mix/OFI proxy only; exact replay remains authoritative",
                 "ofi_horizon_decay_regime": "EWMA short-vs-long OFI alignment plus spread/liquidity regime score",
                 "macro_news_stress_veto": "penalizes rows carrying macro/news stress fields; absent fields are neutral",
@@ -330,6 +346,12 @@ class FastReplayPreviewResult:
             ],
             "hpairs_microstructure_prefilter": dict(
                 self.hpairs_microstructure_prefilter
+            ),
+            "clusterlob_order_flow_feature_lane": dict(
+                self.clusterlob_order_flow_feature_lane
+            ),
+            "hpairs_clusterlob_order_flow_feature_lane": dict(
+                self.clusterlob_order_flow_feature_lane
             ),
             "requested_top_k": self.requested_top_k,
             "exact_replay_candidate_cap": self.exact_replay_candidate_cap,
@@ -496,6 +518,7 @@ def build_fast_replay_preview(
         ),
     )
     symbol_stats = _build_symbol_stats(rows)
+    clusterlob_feature_lane_by_symbol = _build_clusterlob_feature_lane_by_symbol(rows)
     hpairs_prefilter = build_hpairs_microstructure_prefilter(
         specs=specs,
         rows=rows,
@@ -517,6 +540,10 @@ def build_fast_replay_preview(
                 min_rows_per_candidate=max(1, int(min_rows_per_candidate)),
                 microstructure_prefilter=hpairs_prefilter_payload_by_spec.get(
                     spec.candidate_spec_id, {}
+                ),
+                clusterlob_order_flow_features=_candidate_clusterlob_feature_lane(
+                    requested_symbols=_candidate_symbols(spec),
+                    feature_lane_by_symbol=clusterlob_feature_lane_by_symbol,
                 ),
                 replay_tape_manifest=replay_tape_manifest,
             )
@@ -557,6 +584,9 @@ def build_fast_replay_preview(
         ),
         exact_replay_candidate_cap=bounded_top_k,
         hpairs_microstructure_prefilter=hpairs_prefilter.to_manifest_payload(),
+        clusterlob_order_flow_feature_lane=_clusterlob_feature_lane_manifest(
+            feature_lane_by_symbol=clusterlob_feature_lane_by_symbol
+        ),
     )
 
 
@@ -649,12 +679,197 @@ def _build_symbol_stats(rows: Sequence[SignalEnvelope]) -> dict[str, _SymbolTape
     return stats
 
 
+def _build_clusterlob_feature_lane_by_symbol(
+    rows: Sequence[SignalEnvelope],
+) -> dict[str, Mapping[str, Any]]:
+    rows_by_symbol: dict[str, list[SignalEnvelope]] = {}
+    for row in rows:
+        symbol = row.symbol.strip().upper()
+        if symbol:
+            rows_by_symbol.setdefault(symbol, []).append(row)
+    return {
+        symbol: extract_cluster_lob_features(symbol_rows).to_payload()
+        for symbol, symbol_rows in rows_by_symbol.items()
+    }
+
+
+def _candidate_clusterlob_feature_lane(
+    *,
+    requested_symbols: Sequence[str],
+    feature_lane_by_symbol: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    matched_symbols = tuple(
+        symbol for symbol in requested_symbols if symbol in feature_lane_by_symbol
+    )
+    symbol_features = {
+        symbol: dict(feature_lane_by_symbol[symbol]) for symbol in matched_symbols
+    }
+    row_counts = [
+        int(_float_or_none(payload.get("row_count")) or 0.0)
+        for payload in symbol_features.values()
+    ]
+    weights = [max(1, row_count) for row_count in row_counts]
+    ranking_payloads = [
+        _mapping(payload.get("ranking_features"))
+        for payload in symbol_features.values()
+    ]
+    directional_alignment_score = _weighted_average(
+        [
+            (
+                _float_or_none(ranking.get("directional_alignment_score")) or 0.0,
+                weight,
+            )
+            for ranking, weight in zip(ranking_payloads, weights)
+        ]
+    )
+    imbalance_abs_mean = _weighted_average(
+        [
+            (_float_or_none(ranking.get("imbalance_abs_mean")) or 0.0, weight)
+            for ranking, weight in zip(ranking_payloads, weights)
+        ]
+    )
+    cluster_entropy = _weighted_average(
+        [
+            (_float_or_none(ranking.get("cluster_entropy")) or 0.0, weight)
+            for ranking, weight in zip(ranking_payloads, weights)
+        ]
+    )
+    cluster_switch_rate = _weighted_average(
+        [
+            (_float_or_none(ranking.get("cluster_switch_rate")) or 0.0, weight)
+            for ranking, weight in zip(ranking_payloads, weights)
+        ]
+    )
+    missing_penalty = _weighted_average(
+        [
+            (_float_or_none(ranking.get("missing_data_penalty")) or 0.0, weight)
+            for ranking, weight in zip(ranking_payloads, weights)
+        ]
+    )
+    preview_rank_feature_score = (
+        abs(directional_alignment_score) * 18.0
+        + imbalance_abs_mean * 10.0
+        + cluster_entropy * 4.0
+        + cluster_switch_rate * 2.0
+        - missing_penalty * 8.0
+    )
+    feature_schema_hashes = tuple(
+        sorted(
+            {
+                str(payload.get("feature_schema_hash") or "")
+                for payload in symbol_features.values()
+                if str(payload.get("feature_schema_hash") or "")
+            }
+        )
+    )
+    warnings = tuple(
+        sorted(
+            {
+                str(warning)
+                for payload in symbol_features.values()
+                for warning in _string_tuple(payload.get("warnings"))
+            }
+        )
+    )
+    return {
+        "schema_version": "torghut.fast-replay-clusterlob-order-flow-feature-lane.v1",
+        "feature_schema_version": HPAIRS_CLUSTER_LOB_FEATURE_SCHEMA_VERSION,
+        "status": "preview_only_research_ranking",
+        "matched_symbols": list(matched_symbols),
+        "requested_symbols": list(requested_symbols),
+        "matched_symbol_count": len(matched_symbols),
+        "requested_symbol_count": len(requested_symbols),
+        "row_count": sum(row_counts),
+        "feature_schema_hashes": list(feature_schema_hashes),
+        "warnings": list(warnings),
+        "ranking_features": {
+            "directional_alignment_score": _decimal_string_from_float(
+                directional_alignment_score
+            ),
+            "imbalance_abs_mean": _decimal_string_from_float(imbalance_abs_mean),
+            "cluster_entropy": _decimal_string_from_float(cluster_entropy),
+            "cluster_switch_rate": _decimal_string_from_float(cluster_switch_rate),
+            "missing_data_penalty": _decimal_string_from_float(missing_penalty),
+            "preview_rank_feature_score": _decimal_string_from_float(
+                preview_rank_feature_score
+            ),
+        },
+        "symbol_features": symbol_features,
+        "resource_scope": "local_offline_replay_tape_or_fixture_rows_only",
+        "research_ranking_only": True,
+        "prefilter_only": True,
+        "promotion_proof": False,
+        "proof_authority": False,
+        "promotion_authority": False,
+        "promotion_allowed": False,
+        "final_promotion_allowed": False,
+        "final_authority_ok": False,
+    }
+
+
+def _clusterlob_feature_lane_manifest(
+    *, feature_lane_by_symbol: Mapping[str, Mapping[str, Any]]
+) -> dict[str, Any]:
+    feature_schema_hashes = tuple(
+        sorted(
+            {
+                str(payload.get("feature_schema_hash") or "")
+                for payload in feature_lane_by_symbol.values()
+                if str(payload.get("feature_schema_hash") or "")
+            }
+        )
+    )
+    return {
+        "schema_version": "torghut.fast-replay-clusterlob-order-flow-feature-lane-manifest.v1",
+        "feature_schema_version": HPAIRS_CLUSTER_LOB_FEATURE_SCHEMA_VERSION,
+        "status": "preview_only_research_ranking",
+        "symbol_count": len(feature_lane_by_symbol),
+        "feature_schema_hashes": list(feature_schema_hashes),
+        "resource_scope": "local_offline_replay_tape_or_fixture_rows_only",
+        "research_ranking_only": True,
+        "prefilter_only": True,
+        "promotion_proof": False,
+        "proof_authority": False,
+        "promotion_authority": False,
+        "promotion_allowed": False,
+        "final_promotion_allowed": False,
+        "final_authority_ok": False,
+    }
+
+
+def _clusterlob_feature_lane_score(
+    payload: Mapping[str, Any], *, direction: float
+) -> float:
+    ranking_features = _mapping(payload.get("ranking_features"))
+    directional_alignment_score = (
+        _float_or_none(ranking_features.get("directional_alignment_score")) or 0.0
+    )
+    imbalance_abs_mean = (
+        _float_or_none(ranking_features.get("imbalance_abs_mean")) or 0.0
+    )
+    cluster_entropy = _float_or_none(ranking_features.get("cluster_entropy")) or 0.0
+    cluster_switch_rate = (
+        _float_or_none(ranking_features.get("cluster_switch_rate")) or 0.0
+    )
+    missing_penalty = (
+        _float_or_none(ranking_features.get("missing_data_penalty")) or 0.0
+    )
+    return (
+        direction * directional_alignment_score * 30.0
+        + imbalance_abs_mean * 8.0
+        + cluster_entropy * 3.0
+        + cluster_switch_rate * 2.0
+        - missing_penalty * 12.0
+    )
+
+
 def _score_candidate_spec(
     *,
     spec: CandidateSpec,
     symbol_stats: Mapping[str, _SymbolTapeStats],
     min_rows_per_candidate: int,
     microstructure_prefilter: Mapping[str, Any],
+    clusterlob_order_flow_features: Mapping[str, Any],
     replay_tape_manifest: ReplayTapeManifest,
 ) -> FastReplayPreviewRow:
     candidate_frontier_hash = _candidate_frontier_hash(spec)
@@ -701,6 +916,7 @@ def _score_candidate_spec(
             exploration_score=Decimal("0"),
             frontier_bucket="not_selected",
             microstructure_prefilter=dict(microstructure_prefilter),
+            clusterlob_order_flow_features=dict(clusterlob_order_flow_features),
             candidate_frontier_hash=candidate_frontier_hash,
             exact_replay_frontier_key=exact_replay_frontier_key,
             candidate_lineage=_candidate_lineage(spec),
@@ -786,9 +1002,15 @@ def _score_candidate_spec(
     )
     if macro_window_concentration is not None:
         preview_score -= macro_window_concentration * 6.0
+    clusterlob_lane_score = _clusterlob_feature_lane_score(
+        clusterlob_order_flow_features,
+        direction=direction,
+    )
+    preview_score += clusterlob_lane_score * 0.20
     exploration_score = (
         cluster_lob_activity_score * 4.0
         + abs(ofi_decay_alignment_score) * 5.0
+        + abs(clusterlob_lane_score) * 0.12
         + liquidity_regime_score * 2.0
         + coverage_score * 6.0
         - macro_stress_veto_score * 8.0
@@ -829,6 +1051,7 @@ def _score_candidate_spec(
         exploration_score=_decimal_from_float(exploration_score),
         frontier_bucket="not_selected",
         microstructure_prefilter=dict(microstructure_prefilter),
+        clusterlob_order_flow_features=dict(clusterlob_order_flow_features),
         candidate_frontier_hash=candidate_frontier_hash,
         exact_replay_frontier_key=exact_replay_frontier_key,
         candidate_lineage=_candidate_lineage(spec),
@@ -1033,6 +1256,7 @@ def _row_with_rank_and_selection(
         exploration_score=row.exploration_score,
         frontier_bucket=frontier_bucket,
         microstructure_prefilter=dict(row.microstructure_prefilter),
+        clusterlob_order_flow_features=dict(row.clusterlob_order_flow_features),
         proof_semantics_label=row.proof_semantics_label,
         candidate_frontier_hash=row.candidate_frontier_hash,
         exact_replay_frontier_key=row.exact_replay_frontier_key,
@@ -1082,6 +1306,7 @@ def _row_with_frontier_dedupe(
         exploration_score=row.exploration_score,
         frontier_bucket=row.frontier_bucket,
         microstructure_prefilter=dict(row.microstructure_prefilter),
+        clusterlob_order_flow_features=dict(row.clusterlob_order_flow_features),
         proof_semantics_label=row.proof_semantics_label,
         candidate_frontier_hash=row.candidate_frontier_hash,
         exact_replay_frontier_key=row.exact_replay_frontier_key,
@@ -1738,6 +1963,10 @@ def _hpairs_replay_tape_features(signal: SignalEnvelope) -> dict[str, Any]:
 
 def _decimal_from_float(value: float) -> Decimal:
     return Decimal(str(round(float(value), 8)))
+
+
+def _decimal_string_from_float(value: float) -> str:
+    return str(_decimal_from_float(value))
 
 
 def _observed_post_cost_expectancy_bps(row: FastReplayPreviewRow) -> Decimal:
