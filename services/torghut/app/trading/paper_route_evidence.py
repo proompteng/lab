@@ -1243,6 +1243,52 @@ def _balanced_pair_probe_symbol_actions(
     return actions
 
 
+def _paper_route_probe_symbol_quantities(
+    target: Mapping[str, object],
+    symbols: Sequence[str],
+) -> dict[str, str]:
+    normalized_symbols = [
+        str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()
+    ]
+    quantities: dict[str, str] = {}
+    for field in (
+        "paper_route_probe_symbol_quantities",
+        "target_symbol_quantities",
+        "symbol_quantities",
+    ):
+        raw_quantities = _as_mapping(target.get(field))
+        for symbol in normalized_symbols:
+            if symbol in quantities:
+                continue
+            quantity = _safe_decimal(raw_quantities.get(symbol))
+            if quantity > 0:
+                quantities[symbol] = _decimal_text(quantity)
+
+    fallback_quantity = Decimal("0")
+    for field in (
+        "paper_route_probe_target_quantity",
+        "target_quantity",
+        "qty",
+        "quantity",
+    ):
+        fallback_quantity = _safe_decimal(target.get(field))
+        if fallback_quantity > 0:
+            break
+    if fallback_quantity <= 0 and normalized_symbols:
+        # The bounded source materializer requires an explicit quantity per leg.
+        # H-PAIRS collection is capped independently by the target notional and
+        # simple-pipeline risk clamps; use the minimum integer probe leg so the
+        # materializer can create auditable source decisions instead of
+        # silently producing a zero-decision packet.
+        fallback_quantity = Decimal("1")
+
+    if fallback_quantity > 0:
+        fallback_text = _decimal_text(fallback_quantity)
+        for symbol in normalized_symbols:
+            quantities.setdefault(symbol, fallback_text)
+    return quantities
+
+
 def _pair_probe_balance_state(actions: Mapping[str, str]) -> str:
     buy_count = sum(1 for action in actions.values() if action == "buy")
     sell_count = sum(1 for action in actions.values() if action == "sell")
@@ -1941,6 +1987,10 @@ def _next_paper_route_runtime_window_targets(
             pair_balance_target,
             target_probe_symbols,
         )
+        pair_symbol_quantities = _paper_route_probe_symbol_quantities(
+            pair_balance_target,
+            target_probe_symbols,
+        )
         pair_balance_state = (
             _pair_probe_balance_state(pair_symbol_actions)
             if pair_balance_required
@@ -2244,6 +2294,19 @@ def _next_paper_route_runtime_window_targets(
             "paper_route_probe_symbol_count": len(target_probe_symbols),
             "paper_route_probe_raw_target_symbols": raw_target_probe_symbols,
             "paper_route_probe_symbol_actions": pair_symbol_actions,
+            "paper_route_probe_symbol_quantities": pair_symbol_quantities,
+            "paper_route_probe_target_quantity": _decimal_text(
+                sum(
+                    (
+                        _safe_decimal(quantity)
+                        for quantity in pair_symbol_quantities.values()
+                    ),
+                    Decimal("0"),
+                )
+            ),
+            "paper_route_probe_symbol_quantity_source": (
+                "target_plan_explicit_or_min_integer_probe"
+            ),
             "paper_route_probe_pair_balance_required": pair_balance_required,
             "paper_route_probe_pair_balance_state": pair_balance_state,
             "paper_route_hpairs_required_symbols": (
