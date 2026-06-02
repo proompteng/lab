@@ -670,6 +670,8 @@ describe('autonomous trader provider', () => {
     })
     expect(countWords(implText)).toBeLessThanOrEqual(120)
     expect(countWords(systemPromptText)).toBeLessThanOrEqual(650)
+    expect(systemPromptText).toContain('For blocked tickets set `noTradeReason`')
+    expect(systemPromptText).toContain('pass returned `ticketId` to risk/order writes')
     expect(activeMarketOpenLanes).toHaveLength(1)
     expect(previewMarketOpenLanes).toHaveLength(1)
     const activeMarketOpenLane = activeMarketOpenLanes[0]
