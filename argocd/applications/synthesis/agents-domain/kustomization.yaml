@@ -19,6 +19,7 @@ resources:
   - autonomous-trader-agentrun-template.yaml
   - autonomous-trader-schedule.yaml
   - autonomous-trader-market-open-recovery-20260602.yaml
+  - autonomous-trader-stale-session-reconcile-20260602.yaml
   - autonomous-trader-green-system-prompt-configmap.yaml
   - autonomous-trader-green-agent.yaml
   - autonomous-trader-green-implspec.yaml
