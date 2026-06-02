@@ -39,6 +39,7 @@ class JournalCronCommand:
     account_label: str | None = None
     event_scan_limit: int | None = None
     skip_reconcile: bool = False
+    reconcile_empty_selection: bool = False
     allow_data_quality_degraded: bool = False
 
 
@@ -91,6 +92,7 @@ def _live_commands(*, execution_batch_size: int) -> list[JournalCronCommand]:
             batch_size=5,
             max_batches=1,
             reconcile_limit=1000,
+            reconcile_empty_selection=True,
             allow_data_quality_degraded=True,
         ),
     ]
@@ -125,6 +127,7 @@ def _sim_commands() -> list[JournalCronCommand]:
         ),
         JournalCronCommand(
             source=SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+            reconcile_empty_selection=True,
             allow_data_quality_degraded=True,
             **common,
         ),
@@ -172,6 +175,8 @@ def _argv_for_command(
     argv.extend(["--reconcile-limit", str(command.reconcile_limit)])
     if command.skip_reconcile:
         argv.append("--skip-reconcile")
+    if command.reconcile_empty_selection:
+        argv.append("--reconcile-empty-selection")
     argv.append("--fail-on-degraded")
     if command.allow_data_quality_degraded:
         argv.append("--allow-data-quality-degraded")

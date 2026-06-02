@@ -110,6 +110,15 @@ def _parse_args() -> argparse.Namespace:
         help="Persist journal refs without running reconciliation in this invocation.",
     )
     parser.add_argument(
+        "--reconcile-empty-selection",
+        action="store_true",
+        help=(
+            "Run bounded reconciliation even when this invocation selects no new "
+            "source rows. This is intended for scheduled freshness probes; by "
+            "default empty source slices remain a no-op."
+        ),
+    )
+    parser.add_argument(
         "--fail-on-degraded",
         action="store_true",
         help="Exit non-zero when journaling/reconciliation is degraded.",
@@ -649,6 +658,9 @@ def _payload(
         "event_scan_limit": getattr(args, "event_scan_limit", None),
         "sources": list(_parse_sources(getattr(args, "sources", "all"))),
         "skip_reconcile": bool(getattr(args, "skip_reconcile", False)),
+        "reconcile_empty_selection": bool(
+            getattr(args, "reconcile_empty_selection", False)
+        ),
         "supervised_worker": bool(getattr(args, "supervised_worker", False)),
         "supervise_timeout_seconds": float(
             getattr(args, "supervise_timeout_seconds", 0.0) or 0.0
@@ -1137,7 +1149,10 @@ def main() -> int:
             not args.dry_run
             and not args.skip_reconcile
             and not stop_journaling
-            and selected_source_rows > 0
+            and (
+                selected_source_rows > 0
+                or bool(getattr(args, "reconcile_empty_selection", False))
+            )
         ):
             reconciliation = reconcile_tigerbeetle_transfers(
                 session,
@@ -1152,6 +1167,7 @@ def main() -> int:
                 "ok": True,
                 "status": "skipped",
                 "reason": "no_source_rows_selected",
+                "reconcile_empty_selection": False,
             }
 
     payload = _payload(
