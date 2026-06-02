@@ -529,6 +529,118 @@ def test_source_account_rows_linked_to_logical_account_count_as_source_proof() -
     assert report["verdict"]["classification"] == census.AUTHORITY_CANDIDATE_READY
 
 
+def test_source_account_rows_linked_by_order_ids_count_as_source_proof() -> None:
+    payload = _fixture()
+    for event in payload["execution_order_events"]:
+        assert isinstance(event, dict)
+        day = str(event["id"]).removeprefix("event-")
+        event["alpaca_account_label"] = "PA3SX7FYNUTF"
+        event["alpaca_order_id"] = f"alpaca-order-{day}"
+        event["client_order_id"] = f"client-order-{day}"
+        event.pop("execution_id")
+        event.pop("trade_decision_id")
+    for execution in payload["executions"]:
+        assert isinstance(execution, dict)
+        day = str(execution["id"]).removeprefix("execution-")
+        execution["alpaca_order_id"] = f"alpaca-order-{day}"
+        execution["client_order_id"] = f"client-order-{day}"
+    for window in payload["order_feed_source_windows"]:
+        assert isinstance(window, dict)
+        window["alpaca_account_label"] = "PA3SX7FYNUTF"
+
+    report = _report(payload, source_account_label="PA3SX7FYNUTF")
+
+    assert report["candidate_config_match"]["matches"] is True
+    assert report["totals"]["execution_order_event_count"] == 20
+    assert (
+        report["totals"]["execution_order_events_with_direct_execution_ref_count"] == 0
+    )
+    assert (
+        report["totals"]["execution_order_events_with_direct_trade_decision_ref_count"]
+        == 0
+    )
+    assert report["totals"]["execution_order_events_with_broker_order_link_count"] == 20
+    assert report["totals"]["execution_order_events_with_client_order_link_count"] == 20
+    assert report["totals"]["execution_order_events_with_execution_ref_count"] == 20
+    assert (
+        report["totals"]["execution_order_events_with_trade_decision_ref_count"] == 20
+    )
+    assert report["verdict"]["classification"] == census.AUTHORITY_CANDIDATE_READY
+    assert (
+        census.SOURCE_ACCOUNT_ALIAS_ONLY_SOURCE_PROOF_BLOCKER not in report["blockers"]
+    )
+    assert (
+        census.SOURCE_ACCOUNT_CANONICAL_REF_MISMATCH_BLOCKER not in report["blockers"]
+    )
+
+
+def test_source_account_mismatched_refs_with_alias_remain_source_ref_blockers() -> None:
+    payload = _fixture()
+    for event in payload["execution_order_events"]:
+        assert isinstance(event, dict)
+        event["alpaca_account_label"] = "PA3SX7FYNUTF"
+        event["trade_decision_id"] = "decision-other"
+        event["execution_id"] = "execution-other"
+        event["raw_event"] = {
+            "_torghut_account_label_alias": {
+                "logical_account_label": DEFAULT_HPAIRS_ACCOUNT_LABEL,
+                "source_account_label": "PA3SX7FYNUTF",
+            }
+        }
+    for window in payload["order_feed_source_windows"]:
+        assert isinstance(window, dict)
+        window["alpaca_account_label"] = "PA3SX7FYNUTF"
+
+    report = _report(payload, source_account_label="PA3SX7FYNUTF")
+
+    assert report["totals"]["execution_order_event_count"] == 0
+    assert report["candidate_config_match"]["matches"] is False
+    assert (
+        report["candidate_config_match"][
+            "source_account_canonical_ref_mismatch_order_event_count"
+        ]
+        == 20
+    )
+    assert census.SOURCE_ACCOUNT_CANONICAL_REF_MISMATCH_BLOCKER in report["blockers"]
+    assert report["missing_source_ref_categories"][
+        census.SOURCE_ACCOUNT_CANONICAL_REF_MISMATCH_BLOCKER
+    ]
+    assert report["verdict"]["classification"] == census.SOURCE_REFS_MISSING
+
+
+def test_alias_only_source_account_scope_is_not_promotion_grade_proof() -> None:
+    payload = _fixture()
+    for event in payload["execution_order_events"]:
+        assert isinstance(event, dict)
+        event["alpaca_account_label"] = "PA3SX7FYNUTF"
+        event.pop("trade_decision_id")
+        event.pop("execution_id")
+        event.pop("alpaca_order_id", None)
+        event.pop("client_order_id", None)
+        event["raw_event"] = {
+            "aliases": [{"logical_account_label": DEFAULT_HPAIRS_ACCOUNT_LABEL}]
+        }
+    for window in payload["order_feed_source_windows"]:
+        assert isinstance(window, dict)
+        window["alpaca_account_label"] = "PA3SX7FYNUTF"
+
+    report = _report(payload, source_account_label="PA3SX7FYNUTF")
+
+    assert report["source"]["writes_proof"] is False
+    assert report["source"]["synthetic_proof_created"] is False
+    assert report["totals"]["execution_order_event_count"] == 0
+    assert (
+        report["candidate_config_match"]["source_account_alias_only_order_event_count"]
+        == 20
+    )
+    assert census.SOURCE_ACCOUNT_ALIAS_ONLY_SOURCE_PROOF_BLOCKER in report["blockers"]
+    assert report["verdict"]["authority_candidate_ready"] is False
+    assert report["verdict"]["classification"] == census.SOURCE_REFS_MISSING
+    assert "promotion_allowed" not in report
+    assert "final_promotion_allowed" not in report
+    assert report["runtime_authority"].get("promotion_allowed") is None
+
+
 def test_unrelated_source_account_rows_remain_mismatches_not_proof() -> None:
     payload = _fixture()
     for row in payload["execution_order_events"]:
@@ -595,6 +707,7 @@ def test_unrelated_source_account_rows_remain_mismatches_not_proof() -> None:
         report["candidate_config_match"]["order_feed_source_window_mismatch_count"] == 1
     )
     assert census.CANDIDATE_CONFIG_MISMATCH_BLOCKER in report["blockers"]
+    assert census.SOURCE_ACCOUNT_CANONICAL_REF_MISMATCH_BLOCKER in report["blockers"]
     assert report["verdict"]["classification"] == census.SOURCE_REFS_MISSING
 
 
@@ -703,7 +816,7 @@ def test_source_account_scope_requires_matching_refs_before_alias_fallback() -> 
             },
             **common,
         )
-        is True
+        is False
     )
 
     window_common = {
@@ -757,7 +870,7 @@ def test_source_account_scope_requires_matching_refs_before_alias_fallback() -> 
             },
             **window_common,
         )
-        is True
+        is False
     )
     assert census._text_values("decision-0") == {"decision-0"}
     assert (
