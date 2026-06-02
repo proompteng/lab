@@ -868,10 +868,27 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 cost_basis_counts={"modeled_paper_cost_budget": 2},
                 cost_basis=None,
             ),
+            _complete_runtime_ledger_bucket(
+                cost_basis_counts={"broker_reported": "not-a-number"},
+                cost_basis=None,
+            ),
         ):
             blockers = _runtime_ledger_bucket_profit_proof_blockers(bucket)
             self.assertIn("runtime_ledger_explicit_costs_missing", blockers)
             self.assertFalse(_runtime_ledger_bucket_profit_proof_present(bucket))
+
+        post_cost_basis_bucket = _complete_runtime_ledger_bucket(
+            cost_basis_counts={},
+            post_cost_basis_counts={"broker_reported": 2},
+            cost_basis=None,
+        )
+        self.assertNotIn(
+            "runtime_ledger_explicit_costs_missing",
+            _runtime_ledger_bucket_profit_proof_blockers(post_cost_basis_bucket),
+        )
+        self.assertTrue(
+            _runtime_ledger_bucket_profit_proof_present(post_cost_basis_bucket)
+        )
 
     def test_runtime_ledger_profit_proof_blocks_old_exact_replay_empty_blockers(
         self,

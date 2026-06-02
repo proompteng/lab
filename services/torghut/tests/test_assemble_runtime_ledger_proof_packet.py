@@ -968,6 +968,27 @@ class TestRuntimeLedgerProofPacket(TestCase):
             result["authority_blockers"],
         )
 
+    def test_source_offsets_accept_mapping_and_skip_invalid_or_duplicate_values(
+        self,
+    ) -> None:
+        self.assertEqual(
+            packet._source_offsets(
+                {"topic": "alpaca.trade_updates", "partition": 0, "offset": 42}
+            ),
+            [{"topic": "alpaca.trade_updates", "partition": 0, "offset": 42}],
+        )
+        self.assertEqual(
+            packet._source_offsets(
+                [
+                    {"topic": "alpaca.trade_updates", "partition": 0, "offset": 42},
+                    {"topic": "alpaca.trade_updates", "partition": 0, "offset": 42},
+                    {"topic": "alpaca.trade_updates", "offset": 43},
+                    "alpaca.trade_updates:0:44",
+                ]
+            ),
+            [{"topic": "alpaca.trade_updates", "partition": 0, "offset": 42}],
+        )
+
     def test_authority_packet_fails_each_mechanical_authority_floor(self) -> None:
         cases = [
             (
@@ -2313,6 +2334,10 @@ class TestRuntimeLedgerProofPacket(TestCase):
         readback["execution_ids"] = []
         readback["trade_decision_ids"] = []
         readback["source_offsets"] = []
+        readback["source_materializations"] = []
+        readback["authority_classes"] = []
+        readback["runtime_ledger_cost_amount"] = None
+        readback["cost_basis_counts"] = {}
 
         result = packet.build_runtime_ledger_proof_packet(
             _status(),
@@ -2343,6 +2368,16 @@ class TestRuntimeLedgerProofPacket(TestCase):
         )
         self.assertIn(
             "runtime_ledger_source_offsets_missing", materialization["blockers"]
+        )
+        self.assertIn(
+            "runtime_ledger_source_materialization_missing",
+            materialization["blockers"],
+        )
+        self.assertIn(
+            "runtime_ledger_authority_class_missing", materialization["blockers"]
+        )
+        self.assertIn(
+            "runtime_ledger_explicit_costs_missing", materialization["blockers"]
         )
 
     def test_packet_does_not_treat_promotion_only_import_metadata_as_unmaterialized(
