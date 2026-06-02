@@ -76,6 +76,15 @@ class TestEvaluationReport(TestCase):
         self.assertEqual(report.metrics.max_drawdown, Decimal("0"))
         self.assertEqual(report.gates.recommended_mode, "shadow")
         self.assertFalse(report.gates.promotion_allowed)
+        self.assertFalse(report.gates.evidence_collection_allowed)
+        gate_payload = report.gates.to_payload()
+        self.assertFalse(gate_payload["capital_promotion_allowed"])
+        self.assertFalse(gate_payload["final_promotion_allowed"])
+        self.assertFalse(gate_payload["final_authority_ok"])
+        self.assertEqual(
+            gate_payload["promotion_blockers"],
+            ["offline_evaluation_not_runtime_ledger_authority"],
+        )
         self.assertEqual(report.impact_assumptions.default_execution_seconds, 60)
         self.assertEqual(report.impact_assumptions.decisions_with_adv, 0)
         self.assertIn(
@@ -88,6 +97,33 @@ class TestEvaluationReport(TestCase):
 
         turnover_ratio = report.metrics.turnover_ratio.quantize(Decimal("0.1"))
         self.assertEqual(turnover_ratio, Decimal("4.0"))
+
+        evidence_collection_report = generate_evaluation_report(
+            results,
+            config=config,
+            gate_policy=EvaluationGatePolicy(promotion_enabled=True),
+            promotion_target="paper",
+        )
+        self.assertFalse(evidence_collection_report.gates.promotion_allowed)
+        self.assertTrue(evidence_collection_report.gates.evidence_collection_allowed)
+        self.assertEqual(evidence_collection_report.gates.recommended_mode, "paper")
+
+        live_request_report = generate_evaluation_report(
+            results,
+            config=config,
+            gate_policy=EvaluationGatePolicy(promotion_enabled=True, allow_live=True),
+            promotion_target="live",
+        )
+        self.assertFalse(live_request_report.gates.promotion_allowed)
+        self.assertTrue(live_request_report.gates.evidence_collection_allowed)
+        self.assertEqual(live_request_report.gates.recommended_mode, "paper")
+        live_request_gate_payload = live_request_report.gates.to_payload()
+        self.assertFalse(live_request_gate_payload["final_promotion_allowed"])
+        self.assertFalse(live_request_gate_payload["final_authority_ok"])
+        self.assertEqual(
+            live_request_report.gates.promotion_blockers,
+            ["offline_evaluation_not_runtime_ledger_authority"],
+        )
 
     def test_report_prefers_recorded_impact_inputs_when_present(self) -> None:
         fixture_path = Path(__file__).parent / "fixtures" / "walkforward_signals.json"

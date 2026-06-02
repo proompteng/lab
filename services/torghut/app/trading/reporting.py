@@ -205,8 +205,10 @@ class EvaluationGateOutcome:
     promotion_requested: bool
     promotion_target: Literal["shadow", "paper", "live"]
     promotion_allowed: bool
+    evidence_collection_allowed: bool
     recommended_mode: Literal["shadow", "paper", "live"]
     reasons: list[str]
+    promotion_blockers: list[str]
 
     def to_payload(self) -> dict[str, object]:
         return {
@@ -214,8 +216,15 @@ class EvaluationGateOutcome:
             "promotion_requested": self.promotion_requested,
             "promotion_target": self.promotion_target,
             "promotion_allowed": self.promotion_allowed,
+            "capital_promotion_allowed": False,
+            "final_promotion_allowed": False,
+            "final_authority_ok": False,
+            "evidence_collection_allowed": self.evidence_collection_allowed,
+            "bounded_evidence_collection_authorized": self.evidence_collection_allowed,
+            "authority_source": "offline_evaluation_status_only",
             "recommended_mode": self.recommended_mode,
             "reasons": list(self.reasons),
+            "promotion_blockers": list(self.promotion_blockers),
         }
 
 
@@ -508,22 +517,20 @@ def _evaluate_gates(
 
     promotion_requested = promotion_target != "shadow"
     gates_pass = len(reasons) == 0
-    promotion_allowed = False
+    evidence_collection_allowed = False
     recommended_mode: Literal["shadow", "paper", "live"] = "shadow"
+    promotion_blockers = ["offline_evaluation_not_runtime_ledger_authority"]
 
     if promotion_requested and policy.promotion_enabled and gates_pass:
         if promotion_target == "paper":
-            promotion_allowed = True
+            evidence_collection_allowed = True
             recommended_mode = "paper"
         elif promotion_target == "live":
             if policy.allow_live:
-                promotion_allowed = True
-                recommended_mode = "live"
+                evidence_collection_allowed = True
+                recommended_mode = "paper"
             else:
                 reasons.append("live_promotion_disabled")
-        else:
-            promotion_allowed = True
-            recommended_mode = "shadow"
 
     if promotion_requested and not policy.promotion_enabled:
         reasons.append("promotion_disabled")
@@ -532,9 +539,11 @@ def _evaluate_gates(
         policy_version=policy.policy_version,
         promotion_requested=promotion_requested,
         promotion_target=promotion_target,
-        promotion_allowed=promotion_allowed,
+        promotion_allowed=False,
+        evidence_collection_allowed=evidence_collection_allowed,
         recommended_mode=recommended_mode,
         reasons=reasons,
+        promotion_blockers=promotion_blockers,
     )
 
 
