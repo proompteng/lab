@@ -258,18 +258,42 @@ class _TradingStatusReadBudget:
     def elapsed_seconds(self) -> float:
         return max(0.0, time.monotonic() - self._started_at)
 
+    def remaining_seconds(self) -> float:
+        return max(0.0, self.max_seconds - self.elapsed_seconds())
+
     def exhausted(self) -> bool:
         return self.elapsed_seconds() >= self.max_seconds
 
-    def skip_reason(self, read_name: str) -> str:
+    def skip_reason(
+        self,
+        read_name: str,
+        *,
+        reason_code: str = "status_read_budget_exhausted",
+    ) -> str:
         if read_name not in self.skipped_reads:
             self.skipped_reads.append(read_name)
-        return f"{read_name}_status_read_budget_exhausted"
+        return f"{read_name}_{reason_code}"
+
+    def skip_reason_if_unavailable(
+        self,
+        read_name: str,
+        *,
+        min_remaining_seconds: float = 0.0,
+    ) -> str | None:
+        if self.exhausted():
+            return self.skip_reason(read_name)
+        if self.remaining_seconds() < max(0.0, min_remaining_seconds):
+            return self.skip_reason(
+                read_name,
+                reason_code="status_read_budget_insufficient_remaining",
+            )
+        return None
 
     def as_payload(self) -> dict[str, object]:
         return {
             "max_seconds": self.max_seconds,
             "elapsed_seconds": round(self.elapsed_seconds(), 3),
+            "remaining_seconds": round(self.remaining_seconds(), 3),
             "exhausted": self.exhausted(),
             "skipped_reads": list(self.skipped_reads),
         }
@@ -3356,22 +3380,32 @@ def trading_status() -> dict[str, object]:
     shorting_metadata_status = scheduler.shorting_metadata_status()
     rejection_alert_status = scheduler.rejection_alert_status()
     last_decision_at = None
-    if not status_read_budget.exhausted():
+    last_decision_skip_reason = status_read_budget.skip_reason_if_unavailable(
+        "last_decision",
+        min_remaining_seconds=0.25,
+    )
+    if last_decision_skip_reason is None:
         with SessionLocal() as session:
             last_decision_at = _load_last_decision_at(session)
-    else:
-        status_read_budget.skip_reason("last_decision")
     persisted_rejected_signal_outcome_learning = None
-    if not status_read_budget.exhausted():
+    rejected_signal_outcome_learning_skip_reason = (
+        status_read_budget.skip_reason_if_unavailable(
+            "rejected_signal_outcome_learning",
+            min_remaining_seconds=0.5,
+        )
+    )
+    if rejected_signal_outcome_learning_skip_reason is None:
         with SessionLocal() as session:
             persisted_rejected_signal_outcome_learning = (
                 _load_rejected_signal_outcome_learning_summary(session)
             )
-    else:
-        status_read_budget.skip_reason("rejected_signal_outcome_learning")
-    if status_read_budget.exhausted():
+    live_submission_gate_skip_reason = status_read_budget.skip_reason_if_unavailable(
+        "live_submission_gate",
+        min_remaining_seconds=4.0,
+    )
+    if live_submission_gate_skip_reason is not None:
         live_submission_gate = _budget_exhausted_live_submission_gate_payload(
-            reason=status_read_budget.skip_reason("live_submission_gate"),
+            reason=live_submission_gate_skip_reason,
             empirical_jobs_status=empirical_jobs,
             quant_health_status=quant_evidence,
         )
@@ -3429,9 +3463,13 @@ def trading_status() -> dict[str, object]:
         live_submission_gate=live_submission_gate,
     )
     route_claim_symbols = _route_claim_symbols(profit_signal_quorum)
-    if status_read_budget.exhausted():
+    options_catalog_freshness_skip_reason = status_read_budget.skip_reason_if_unavailable(
+        "options_catalog_freshness",
+        min_remaining_seconds=2.0,
+    )
+    if options_catalog_freshness_skip_reason is not None:
         options_catalog_freshness = _budget_exhausted_options_catalog_freshness_payload(
-            reason=status_read_budget.skip_reason("options_catalog_freshness"),
+            reason=options_catalog_freshness_skip_reason,
             route_symbols=route_claim_symbols,
         )
     else:
