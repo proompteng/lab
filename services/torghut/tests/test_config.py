@@ -36,6 +36,7 @@ class TestConfig(TestCase):
             TORGHUT_TIGERBEETLE_CLUSTER_ID=2001,
             TORGHUT_TIGERBEETLE_REPLICA_ADDRESSES=" tb-0:3000, tb-1:3000 ",
             TORGHUT_TIGERBEETLE_HEALTH_TIMEOUT_SECONDS=1.5,
+            TORGHUT_TIGERBEETLE_RPC_TIMEOUT_SECONDS=7.5,
             TORGHUT_TIGERBEETLE_JOURNAL_ENABLED=True,
             TORGHUT_TIGERBEETLE_RECONCILE_REQUIRED=True,
         )
@@ -45,6 +46,7 @@ class TestConfig(TestCase):
         self.assertEqual(settings.tigerbeetle_cluster_id, 2001)
         self.assertEqual(settings.tigerbeetle_replica_addresses, "tb-0:3000,tb-1:3000")
         self.assertEqual(settings.tigerbeetle_health_timeout_seconds, 1.5)
+        self.assertEqual(settings.tigerbeetle_rpc_timeout_seconds, 7.5)
         self.assertTrue(settings.tigerbeetle_journal_enabled)
         self.assertTrue(settings.tigerbeetle_reconcile_required)
 
@@ -67,6 +69,13 @@ class TestConfig(TestCase):
             "TORGHUT_TIGERBEETLE_HEALTH_TIMEOUT_SECONDS must be > 0",
         ):
             Settings(TORGHUT_TIGERBEETLE_HEALTH_TIMEOUT_SECONDS=0)
+
+    def test_tigerbeetle_settings_reject_invalid_rpc_timeout(self) -> None:
+        with self.assertRaisesRegex(
+            ValidationError,
+            "TORGHUT_TIGERBEETLE_RPC_TIMEOUT_SECONDS must be > 0",
+        ):
+            Settings(TORGHUT_TIGERBEETLE_RPC_TIMEOUT_SECONDS=0)
 
     def test_rejects_static_universe_when_trading_enabled_in_legacy_mode(self) -> None:
         with self.assertRaises(ValidationError):

@@ -960,6 +960,7 @@ class TestLiveConfigManifestContract(TestCase):
             "TORGHUT_TIGERBEETLE_CLUSTER_ID": "2001",
             "TORGHUT_TIGERBEETLE_REPLICA_ADDRESSES": "torghut-tigerbeetle.torghut.svc.cluster.local:3000",
             "TORGHUT_TIGERBEETLE_HEALTH_TIMEOUT_SECONDS": "5",
+            "TORGHUT_TIGERBEETLE_RPC_TIMEOUT_SECONDS": "10",
             "TORGHUT_TIGERBEETLE_JOURNAL_ENABLED": "true",
             "TORGHUT_TIGERBEETLE_RECONCILE_REQUIRED": "false",
         }
@@ -1466,6 +1467,7 @@ class TestLiveConfigManifestContract(TestCase):
             value_env["TORGHUT_TIGERBEETLE_REPLICA_ADDRESSES"],
             "torghut-tigerbeetle.torghut.svc.cluster.local:3000",
         )
+        self.assertEqual(value_env["TORGHUT_TIGERBEETLE_RPC_TIMEOUT_SECONDS"], "10")
         self.assertEqual(value_env["TORGHUT_TIGERBEETLE_JOURNAL_ENABLED"], "true")
         self.assertEqual(
             value_env["TORGHUT_TIGERBEETLE_RECONCILE_REQUIRED"],

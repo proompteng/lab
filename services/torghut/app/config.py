@@ -296,6 +296,11 @@ class Settings(BaseSettings):
         alias="TORGHUT_TIGERBEETLE_HEALTH_TIMEOUT_SECONDS",
         description="TigerBeetle protocol health timeout in seconds.",
     )
+    tigerbeetle_rpc_timeout_seconds: float = Field(
+        default=10.0,
+        alias="TORGHUT_TIGERBEETLE_RPC_TIMEOUT_SECONDS",
+        description="Maximum time allowed for one synchronous TigerBeetle client RPC.",
+    )
     tigerbeetle_journal_enabled: bool = Field(
         default=False,
         alias="TORGHUT_TIGERBEETLE_JOURNAL_ENABLED",
@@ -2668,6 +2673,8 @@ class Settings(BaseSettings):
             raise ValueError("TORGHUT_TIGERBEETLE_CLUSTER_ID must be > 0")
         if self.tigerbeetle_health_timeout_seconds <= 0:
             raise ValueError("TORGHUT_TIGERBEETLE_HEALTH_TIMEOUT_SECONDS must be > 0")
+        if self.tigerbeetle_rpc_timeout_seconds <= 0:
+            raise ValueError("TORGHUT_TIGERBEETLE_RPC_TIMEOUT_SECONDS must be > 0")
         if self.tigerbeetle_reconcile_max_age_seconds <= 0:
             raise ValueError(
                 "TORGHUT_TIGERBEETLE_RECONCILE_MAX_AGE_SECONDS must be > 0"
