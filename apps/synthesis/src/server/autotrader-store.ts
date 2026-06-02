@@ -19,6 +19,7 @@ import type {
   AutotraderScorecardObservation,
   AutotraderSession,
   AutotraderSessionDetail,
+  AutotraderSessionSummary,
   AutotraderSetupExample,
   AutotraderStartSessionInput,
   AutotraderStatus,
@@ -40,7 +41,7 @@ export type AutotraderStore = {
     scorecards: AutotraderScorecard[]
     setupExamples: AutotraderSetupExample[]
   }>
-  listSessions(limit: number): Promise<AutotraderSession[]>
+  listSessions(limit: number): Promise<AutotraderSessionSummary[]>
   getSessionDetail(sessionId: string): Promise<AutotraderSessionDetail | null>
 }
 
@@ -625,10 +626,11 @@ class InMemoryAutotraderStore implements AutotraderStore {
     return { scorecards, setupExamples }
   }
 
-  async listSessions(limit: number): Promise<AutotraderSession[]> {
+  async listSessions(limit: number): Promise<AutotraderSessionSummary[]> {
     return [...this.sessions.values()]
       .sort((left, right) => Date.parse(right.startedAt) - Date.parse(left.startedAt))
       .slice(0, limit)
+      .map((session) => this.sessionSummary(session))
   }
 
   async getSessionDetail(sessionId: string): Promise<AutotraderSessionDetail | null> {
@@ -678,6 +680,44 @@ class InMemoryAutotraderStore implements AutotraderStore {
     if (!session) throw new Error(`Unknown autotrader session: ${sessionId}`)
     return session
   }
+
+  private sessionSummary(session: AutotraderSession): AutotraderSessionSummary {
+    const sessionId = session.id
+    const tickets = [...this.tickets.values()].filter((ticket) => ticket.sessionId === sessionId)
+    const examples = [...this.examples.values()].filter((example) => example.sessionId === sessionId)
+    const scorecardKeys = new Set([
+      ...examples.map((example) => example.scorecardKey),
+      ...tickets.map((ticket) =>
+        scorecardKeyFor({
+          symbol: ticket.symbol,
+          setupType: ticket.setupType,
+          setupGrade: ticket.setupGrade,
+          regime: ticket.regime,
+          timeBucket: ticket.timeBucket ?? 'unknown',
+        }),
+      ),
+    ])
+    const relationKeys = scorecardRelationKeySet(scorecardRelationsForTickets(tickets))
+    const positionSymbols = new Set(
+      [...this.positions.values()]
+        .filter((snapshot) => snapshot.sessionId === sessionId)
+        .map((snapshot) => snapshot.symbol),
+    )
+
+    return {
+      ...session,
+      eventCount: [...this.events.values()].filter((event) => event.sessionId === sessionId).length,
+      tradeTicketCount: tickets.length,
+      riskCheckCount: [...this.riskChecks.values()].filter((riskCheck) => riskCheck.sessionId === sessionId).length,
+      orderCount: [...this.orders.values()].filter((order) => order.sessionId === sessionId).length,
+      fillCount: [...this.fills.values()].filter((fill) => fill.sessionId === sessionId).length,
+      positionSnapshotCount: positionSymbols.size,
+      scorecardCount: [...this.scorecards.values()].filter(
+        (scorecard) => scorecardKeys.has(scorecard.key) || scorecardMatchesTicketRelation(scorecard, relationKeys),
+      ).length,
+      setupExampleCount: examples.length,
+    }
+  }
 }
 
 type SessionRow = {
@@ -699,6 +739,17 @@ type SessionRow = {
   finalized_at: Date | string | null
   terminal_reason: string | null
   summary: unknown
+}
+
+type SessionSummaryRow = SessionRow & {
+  event_count: number | string | null
+  trade_ticket_count: number | string | null
+  risk_check_count: number | string | null
+  order_count: number | string | null
+  fill_count: number | string | null
+  position_snapshot_count: number | string | null
+  scorecard_count: number | string | null
+  setup_example_count: number | string | null
 }
 
 type StatusRow = {
@@ -879,6 +930,23 @@ const mapSession = (row: SessionRow): AutotraderSession => ({
   finalizedAt: toIso(row.finalized_at),
   terminalReason: row.terminal_reason,
   summary: toPayload(row.summary),
+})
+
+const countFromRow = (value: number | string | null | undefined) => {
+  const parsed = Number(value ?? 0)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+const mapSessionSummary = (row: SessionSummaryRow): AutotraderSessionSummary => ({
+  ...mapSession(row),
+  eventCount: countFromRow(row.event_count),
+  tradeTicketCount: countFromRow(row.trade_ticket_count),
+  riskCheckCount: countFromRow(row.risk_check_count),
+  orderCount: countFromRow(row.order_count),
+  fillCount: countFromRow(row.fill_count),
+  positionSnapshotCount: countFromRow(row.position_snapshot_count),
+  scorecardCount: countFromRow(row.scorecard_count),
+  setupExampleCount: countFromRow(row.setup_example_count),
 })
 
 const mapStatus = (row: StatusRow): AutotraderStatus => ({
@@ -1543,13 +1611,47 @@ class PostgresAutotraderStore implements AutotraderStore {
     return { scorecards, setupExamples }
   }
 
-  async listSessions(limit: number): Promise<AutotraderSession[]> {
+  async listSessions(limit: number): Promise<AutotraderSessionSummary[]> {
     await this.ensureSchema()
-    const result = await this.pool.query<SessionRow>(
-      `SELECT * FROM autotrader.sessions ORDER BY started_at DESC LIMIT $1`,
+    const result = await this.pool.query<SessionSummaryRow>(
+      `SELECT
+         s.*,
+         (SELECT COUNT(*)::int FROM autotrader.events e WHERE e.session_id = s.id) AS event_count,
+         (SELECT COUNT(*)::int FROM autotrader.trade_tickets t WHERE t.session_id = s.id)
+           AS trade_ticket_count,
+         (SELECT COUNT(*)::int FROM autotrader.risk_checks rc WHERE rc.session_id = s.id)
+           AS risk_check_count,
+         (SELECT COUNT(*)::int FROM autotrader.orders o WHERE o.session_id = s.id) AS order_count,
+         (SELECT COUNT(*)::int FROM autotrader.fills f WHERE f.session_id = s.id) AS fill_count,
+         (
+           SELECT COUNT(DISTINCT ps.symbol)::int
+           FROM autotrader.position_snapshots ps
+           WHERE ps.session_id = s.id
+         ) AS position_snapshot_count,
+         (
+           SELECT COUNT(*)::int
+           FROM autotrader.scorecards sc
+           WHERE EXISTS (
+             SELECT 1
+             FROM autotrader.setup_examples se
+             WHERE se.session_id = s.id AND se.scorecard_key = sc.key
+           )
+           OR EXISTS (
+             SELECT 1
+             FROM autotrader.trade_tickets t
+             WHERE t.session_id = s.id
+               AND upper(t.symbol) = upper(sc.symbol)
+               AND t.setup_type = sc.setup_type
+           )
+         ) AS scorecard_count,
+         (SELECT COUNT(*)::int FROM autotrader.setup_examples se WHERE se.session_id = s.id)
+           AS setup_example_count
+       FROM autotrader.sessions s
+       ORDER BY s.started_at DESC
+       LIMIT $1`,
       [limit],
     )
-    return result.rows.map(mapSession)
+    return result.rows.map(mapSessionSummary)
   }
 
   async getSessionDetail(sessionId: string): Promise<AutotraderSessionDetail | null> {
