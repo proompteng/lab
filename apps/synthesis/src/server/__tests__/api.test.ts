@@ -568,6 +568,161 @@ describe('synthesis REST auth', () => {
     expect(detailPayload.positionSnapshots[0].capturedAt).toBe(snapshotPayload.positionSnapshot.capturedAt)
   })
 
+  test('links ticket-matched scorecards and returns latest position exposure in session detail', async () => {
+    const authedHeaders = {
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+    }
+    const priorSessionResponse = await handleAutotraderStartSession(
+      new Request('http://synthesis.test/api/autotrader/sessions', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          agentRunName: 'autonomous-trader-scorecard-source',
+          mode: 'market_open',
+          tradingDate: '2026-05-29',
+          accountId: 'paper-account',
+          goalEquity: '500000',
+          marketOpenAt: '2026-05-29T13:30:00Z',
+          marketCloseAt: '2026-05-29T20:00:00Z',
+        }),
+      }),
+    )
+    const priorSessionId = (await priorSessionResponse.json()).session.id
+    const priorTicketResponse = await handleAutotraderCreateTradeTicket(
+      new Request('http://synthesis.test/api/autotrader/trade-tickets', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          sessionId: priorSessionId,
+          idempotencyKey: 'nvda-vwap-prior',
+          symbol: 'NVDA',
+          instrument: 'stock',
+          side: 'buy',
+          setupType: 'vwap_reclaim',
+          setupGrade: 'A',
+          regime: 'regular_session',
+          timeBucket: 'midday',
+          thesis: 'Valid setup with prior result.',
+          entryTrigger: 'VWAP reclaim.',
+          invalidation: 'Lose VWAP.',
+          protectionType: 'bracket',
+          status: 'closed',
+        }),
+      }),
+    )
+    const priorTicketId = (await priorTicketResponse.json()).ticket.id
+    await handleAutotraderFinalizeSession(
+      new Request('http://synthesis.test/api/autotrader/finalize', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          sessionId: priorSessionId,
+          terminalReason: 'market_closed',
+          summary: { accountEquity: '38900' },
+          scorecardObservations: [
+            {
+              ticketId: priorTicketId,
+              symbol: 'NVDA',
+              setupType: 'vwap_reclaim',
+              setupGrade: 'A',
+              regime: 'regular_session',
+              timeBucket: 'midday',
+              outcome: 'win',
+              realizedR: '1.5',
+              notes: 'prior NVDA reclaim worked',
+            },
+          ],
+        }),
+      }),
+    )
+
+    const currentSessionResponse = await handleAutotraderStartSession(
+      new Request('http://synthesis.test/api/autotrader/sessions', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          agentRunName: 'autonomous-trader-scorecard-consumer',
+          mode: 'market_open',
+          tradingDate: '2026-06-01',
+          accountId: 'paper-account',
+          goalEquity: '500000',
+          marketOpenAt: '2026-06-01T13:30:00Z',
+          marketCloseAt: '2026-06-01T20:00:00Z',
+        }),
+      }),
+    )
+    const currentSessionId = (await currentSessionResponse.json()).session.id
+    await handleAutotraderCreateTradeTicket(
+      new Request('http://synthesis.test/api/autotrader/trade-tickets', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          sessionId: currentSessionId,
+          idempotencyKey: 'nvda-vwap-current',
+          symbol: 'NVDA',
+          instrument: 'stock',
+          side: 'buy',
+          setupType: 'vwap_reclaim',
+          setupGrade: 'A',
+          regime: 'regular_session',
+          timeBucket: 'midday',
+          thesis: 'Current setup should see prior scorecard.',
+          entryTrigger: 'VWAP reclaim.',
+          invalidation: 'Lose VWAP.',
+          protectionType: 'bracket',
+          status: 'validated',
+        }),
+      }),
+    )
+    await handleAutotraderRecordPositionSnapshot(
+      new Request('http://synthesis.test/api/autotrader/position-snapshots', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          sessionId: currentSessionId,
+          symbol: 'NVDA',
+          quantity: '1',
+          marketValue: '220',
+          capturedAt: '2026-06-01T14:00:00Z',
+        }),
+      }),
+    )
+    await handleAutotraderRecordPositionSnapshot(
+      new Request('http://synthesis.test/api/autotrader/position-snapshots', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          sessionId: currentSessionId,
+          symbol: 'NVDA',
+          quantity: '2',
+          marketValue: '440',
+          capturedAt: '2026-06-01T14:05:00Z',
+        }),
+      }),
+    )
+
+    const detailResponse = await handleAutotraderGetSession(
+      new Request(`http://synthesis.test/api/autotrader/sessions/${currentSessionId}`),
+      currentSessionId,
+    )
+    const detailPayload = await detailResponse.json()
+
+    expect(detailPayload.scorecards[0]).toMatchObject({
+      symbol: 'NVDA',
+      setupType: 'vwap_reclaim',
+      sampleSize: 1,
+      wins: 1,
+    })
+    expect(detailPayload.setupExamples).toHaveLength(0)
+    expect(detailPayload.positionSnapshots).toHaveLength(1)
+    expect(detailPayload.positionSnapshots[0]).toMatchObject({
+      symbol: 'NVDA',
+      quantity: '2',
+      marketValue: '440',
+    })
+  })
+
   test('finalizes idempotently and detaches cross-session ticket references', async () => {
     const authedHeaders = {
       authorization: `Bearer ${token}`,

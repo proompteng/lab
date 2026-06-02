@@ -144,6 +144,18 @@ const scorecardExampleIdFor = (sessionId: string, observation: AutotraderScoreca
     .digest('base64url')
     .slice(0, 40)
 
+const latestPositionSnapshots = <T extends { symbol: string; capturedAt: string }>(snapshots: T[]): T[] => {
+  const latestBySymbol = new Map<string, T>()
+  for (const snapshot of snapshots) {
+    const symbol = normalizedSymbol(snapshot.symbol) ?? snapshot.symbol
+    const existing = latestBySymbol.get(symbol)
+    if (!existing || Date.parse(snapshot.capturedAt) > Date.parse(existing.capturedAt)) {
+      latestBySymbol.set(symbol, snapshot)
+    }
+  }
+  return [...latestBySymbol.values()].sort((left, right) => Date.parse(right.capturedAt) - Date.parse(left.capturedAt))
+}
+
 const sanitizeScorecardObservations = (
   sessionId: string,
   observations: AutotraderScorecardObservation[],
@@ -591,9 +603,9 @@ class InMemoryAutotraderStore implements AutotraderStore {
       riskChecks: [...this.riskChecks.values()].filter((riskCheck) => riskCheck.sessionId === sessionId),
       orders: [...this.orders.values()].filter((order) => order.sessionId === sessionId),
       fills: [...this.fills.values()].filter((fill) => fill.sessionId === sessionId),
-      positionSnapshots: [...this.positions.values()]
-        .filter((snapshot) => snapshot.sessionId === sessionId)
-        .sort((left, right) => Date.parse(right.capturedAt) - Date.parse(left.capturedAt)),
+      positionSnapshots: latestPositionSnapshots(
+        [...this.positions.values()].filter((snapshot) => snapshot.sessionId === sessionId),
+      ),
       scorecards: [...this.scorecards.values()].filter((scorecard) => sessionScorecardKeys.has(scorecard.key)),
       setupExamples: sessionExamples,
     }
@@ -1473,7 +1485,6 @@ class PostgresAutotraderStore implements AutotraderStore {
       orderResult,
       fillResult,
       positionResult,
-      scorecardResult,
       exampleResult,
     ] = await Promise.all([
       this.pool.query<StatusRow>(`SELECT * FROM autotrader.status WHERE session_id = $1`, [sessionId]),
@@ -1493,15 +1504,10 @@ class PostgresAutotraderStore implements AutotraderStore {
         sessionId,
       ]),
       this.pool.query<PositionSnapshotRow>(
-        `SELECT * FROM autotrader.position_snapshots WHERE session_id = $1 ORDER BY captured_at DESC`,
-        [sessionId],
-      ),
-      this.pool.query<ScorecardRow>(
-        `SELECT DISTINCT s.*
-         FROM autotrader.scorecards s
-         JOIN autotrader.setup_examples e ON e.scorecard_key = s.key
-         WHERE e.session_id = $1
-         ORDER BY s.updated_at DESC`,
+        `SELECT DISTINCT ON (symbol) *
+         FROM autotrader.position_snapshots
+         WHERE session_id = $1
+         ORDER BY symbol, captured_at DESC`,
         [sessionId],
       ),
       this.pool.query<SetupExampleRow>(
@@ -1509,17 +1515,46 @@ class PostgresAutotraderStore implements AutotraderStore {
         [sessionId],
       ),
     ])
+    const tickets = ticketResult.rows.map(mapTicket)
+    const setupExamples = exampleResult.rows.map(mapSetupExample)
+    const sessionScorecardKeys = [
+      ...new Set([
+        ...setupExamples.map((example) => example.scorecardKey),
+        ...tickets.map((ticket) =>
+          scorecardKeyFor({
+            symbol: ticket.symbol,
+            setupType: ticket.setupType,
+            setupGrade: ticket.setupGrade,
+            regime: ticket.regime,
+            timeBucket: ticket.timeBucket ?? 'unknown',
+          }),
+        ),
+      ]),
+    ]
+    const scorecards = sessionScorecardKeys.length
+      ? (
+          await this.pool.query<ScorecardRow>(
+            `SELECT *
+             FROM autotrader.scorecards
+             WHERE key = ANY($1::text[])
+             ORDER BY updated_at DESC`,
+            [sessionScorecardKeys],
+          )
+        ).rows.map(mapScorecard)
+      : []
     return {
       session,
       status: statusResult.rows[0] ? mapStatus(statusResult.rows[0]) : null,
       events: eventResult.rows.map(mapEvent),
-      tradeTickets: ticketResult.rows.map(mapTicket),
+      tradeTickets: tickets,
       riskChecks: riskResult.rows.map(mapRiskCheck),
       orders: orderResult.rows.map(mapOrder),
       fills: fillResult.rows.map(mapFill),
-      positionSnapshots: positionResult.rows.map(mapPositionSnapshot),
-      scorecards: scorecardResult.rows.map(mapScorecard),
-      setupExamples: exampleResult.rows.map(mapSetupExample),
+      positionSnapshots: positionResult.rows
+        .map(mapPositionSnapshot)
+        .sort((left, right) => Date.parse(right.capturedAt) - Date.parse(left.capturedAt)),
+      scorecards,
+      setupExamples,
     }
   }
 
