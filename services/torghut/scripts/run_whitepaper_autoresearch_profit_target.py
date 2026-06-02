@@ -172,6 +172,9 @@ _REJECTED_SIGNAL_OUTCOME_REQUIRED_FIELDS = (
 )
 _CODE_COMMIT_ENV_VARS = (
     "TORGHUT_CODE_COMMIT",
+    "TORGHUT_COMMIT",
+    "TORGHUT_SOURCE_CI_REF",
+    "TORGHUT_IMAGE_COMMIT",
     "GITHUB_SHA",
     "BUILDKITE_COMMIT",
     "SOURCE_COMMIT",
@@ -1786,7 +1789,16 @@ def _current_code_commit() -> str:
         if value:
             return value
 
-    repo_root = Path(__file__).resolve().parents[3]
+    script_path = Path(__file__).resolve()
+    fallback_repo_root = (
+        script_path.parents[3]
+        if len(script_path.parents) > 3
+        else script_path.parents[-1]
+    )
+    repo_root = next(
+        (parent for parent in script_path.parents if (parent / ".git").exists()),
+        fallback_repo_root,
+    )
     try:
         rev = subprocess.run(
             ("git", "-C", str(repo_root), "rev-parse", "HEAD"),

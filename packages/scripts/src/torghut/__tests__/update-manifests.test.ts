@@ -107,6 +107,12 @@ spec:
     tigerBeetleSmokeManifestPath,
     tigerBeetleJournalOrderEventsManifestPath,
   ]) {
+    const metadataEnv =
+      path === whitepaperAutoresearchWorkflowManifestPath
+        ? `            - name: TORGHUT_COMMIT
+              value: old-commit
+`
+        : ''
     writeFileSync(
       path,
       `apiVersion: v1
@@ -118,7 +124,7 @@ spec:
         - name: torghut
           image: registry.ide-newton.ts.net/lab/torghut@sha256:1111111111111111111111111111111111111111111111111111111111111111
           env:
-            - name: TORGHUT_IMAGE_DIGEST
+${metadataEnv}            - name: TORGHUT_IMAGE_DIGEST
               value: sha256:1111111111111111111111111111111111111111111111111111111111111111
 `,
       'utf8',
@@ -346,6 +352,7 @@ describe('update-manifests', () => {
       )
       expect(manifest).toContain('value: sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e')
     }
+    expect(whitepaperAutoresearchWorkflowManifest).toContain('value: 1234567890abcdef1234567890abcdef12345678')
     expect(
       tigerBeetleJournalOrderEventsManifest.match(
         /image: registry\.ide-newton\.ts\.net\/lab\/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e/g,

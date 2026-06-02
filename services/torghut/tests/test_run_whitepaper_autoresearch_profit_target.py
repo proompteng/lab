@@ -3768,6 +3768,31 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
 
         run.assert_not_called()
 
+    def test_current_code_commit_handles_short_container_script_path(
+        self,
+    ) -> None:
+        bad_rev_parse = runner.subprocess.CompletedProcess(
+            args=("git", "rev-parse", "HEAD"),
+            returncode=128,
+            stdout="",
+        )
+        with (
+            patch.object(runner.os, "getenv", return_value=""),
+            patch.object(
+                runner,
+                "__file__",
+                "/app/scripts/run_whitepaper_autoresearch_profit_target.py",
+            ),
+            patch.object(
+                runner.subprocess,
+                "run",
+                return_value=bad_rev_parse,
+            ) as run,
+        ):
+            self.assertEqual(runner._current_code_commit(), "unknown")
+
+        self.assertEqual(run.call_args.args[0][0:3], ("git", "-C", "/"))
+
     def test_current_code_commit_marks_dirty_or_unknown_git_state(self) -> None:
         rev_parse = runner.subprocess.CompletedProcess(
             args=("git", "rev-parse", "HEAD"),
