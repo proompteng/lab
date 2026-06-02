@@ -33,6 +33,7 @@ spec:
     - In scorecard-readback mode, never mutate Alpaca state; prove the next AgentRun reads Synthesis scorecards before any candidate grading.
     - Reconcile every order by id or client order id and write Synthesis runtime state plus a final report.
     - Run the production protective-order preflight and validate live candidates before non-smoke strategy entries.
+    - Use the checked-in live scan-cycle helper for scanner input assembly so market-open loops stay simple and repeatable.
     - In market-open mode, do not terminally finish for preflight success, paper-order smoke success, no-trade decisions, rejected candidates, rejected orders, quiet market state, active monitoring, or protected open positions.
     - "Keep GPT-5.5 execution outcome-first: concise preambles, bounded research, exact safety-critical tool sequences, and detailed evidence in Synthesis autotrader state."
   text: |-
@@ -58,6 +59,7 @@ spec:
     6. Verify paper account routing, Alpaca account/config/clock/calendar/tools/positions/orders, stock protective fields (`order_class`, `take_profit_limit_price`, `stop_loss_stop_price`, `stop_loss_limit_price`), and helper self-tests:
        - `python3 /workspace/lab/scripts/autotrader/protective_preflight.py --self-test`
        - `python3 /workspace/lab/scripts/autotrader/synthesis_autotrader_client.py --self-test`
+       - `python3 /workspace/lab/scripts/autotrader/live_scan_cycle.py --self-test`
     7. Verify Synthesis exposes `autotrader_start_session`, `autotrader_upsert_status`, `autotrader_append_event`, `autotrader_create_trade_ticket`, `autotrader_record_risk_check`, `autotrader_record_order`, `autotrader_record_fill`, `autotrader_record_position_snapshot`, `autotrader_finalize_session`, and `autotrader_get_scorecard`.
     8. Call `autotrader_start_session` before scanning and use the returned `sessionId` for every Synthesis write.
 
@@ -71,7 +73,7 @@ spec:
     1. Re-read clock, account, orders, positions, portfolio state, and relevant market data.
     2. Reconcile open orders and absorb external account or position changes as current state.
     3. Call `autotrader_get_scorecard` before ranking candidates and include scorecard influence in Synthesis ticket/risk/status payloads.
-    4. Use `/workspace/.agentrun/autonomous-trader/stock_analysis` plus current Alpaca state, `ANALYSIS_CONTEXT_PATH`, scorecards, and bounded catalyst/liquidity checks to pick exactly the next action: protected entry, managed exit/reduce/hedge/flatten, or no-trade.
+    4. Run `python3 /workspace/lab/scripts/autotrader/live_scan_cycle.py` for scanner input assembly, Alpaca readback, scorecard readback, and daytrading scan output. Use its printed summary and `cycleDir` for the next action: protected entry, managed exit/reduce/hedge/flatten, or no-trade. Do not hand-build scanner JSON unless this helper fails and the failure is recorded.
     5. Record every selected or blocked candidate with `autotrader_create_trade_ticket`, `autotrader_record_risk_check`, and `autotrader_append_event`.
     6. Submit only when the ticket records setup type, setup grade, expected R, fat-pitch flag, thesis, entry, invalidation, exit logic, sizing, max loss, liquidity, and reconciliation plan.
     7. Before every Alpaca mutation, write the planned order with `autotrader_record_order`, use an AgentRun-prefixed deterministic `client_order_id` when supported, and then reconcile by broker order id plus client order id before any next action.

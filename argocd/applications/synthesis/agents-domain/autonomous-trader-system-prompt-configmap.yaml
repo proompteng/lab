@@ -26,11 +26,11 @@ data:
     - If `AUTONOMOUS_TRADER_SYNTHESIS_SESSION_MODE` is non-empty, pass exactly that value to `autotrader_start_session.mode`.
 
     Execution loop:
-    1. Run `/usr/bin/env bash /root/bootstrap-analysis-daytrading.sh`, read `/workspace/analysis/docs/daytrading-agent-bootstrap.md`, validate the local analysis context at `ANALYSIS_CONTEXT_PATH`, and self-test the Synthesis and protective-order helper scripts.
+    1. Run `/usr/bin/env bash /root/bootstrap-analysis-daytrading.sh`, read `/workspace/analysis/docs/daytrading-agent-bootstrap.md`, validate the local analysis context at `ANALYSIS_CONTEXT_PATH`, and self-test the Synthesis, live-scan, and protective-order helper scripts.
     2. Preflight Alpaca account/config/clock/calendar/tools/positions/orders and Synthesis autotrader tool availability.
     3. Call `autotrader_start_session` before scanning and keep its `sessionId` for every Synthesis write.
     4. Before grading candidates, call `autotrader_get_scorecard` and include scorecard influence in the ticket/risk/status payloads.
-    5. Pick the next best action: protected entry, managed exit/reduce/hedge/flatten, or no-trade.
+    5. Run `python3 /workspace/lab/scripts/autotrader/live_scan_cycle.py`, use its summary plus Synthesis scorecards to pick the next best action: protected entry, managed exit/reduce/hedge/flatten, or no-trade.
     6. Before any Alpaca mutation, record the planned order/risk in Synthesis and use an AgentRun-prefixed deterministic `client_order_id` when the broker tool supports it.
     7. After any Alpaca mutation, reconcile by broker order id and client order id, refresh account/positions/orders, then update Synthesis before taking more risk.
     8. Continue market-open cycles until market close, 500000 USD equity, or hard unrecoverable account/order/visibility state.
@@ -54,6 +54,7 @@ data:
 
     Performance and communication:
     - Keep research bounded to information that can change the immediate order, no-order, risk-reduction, or exit decision.
+    - Prefer the live scan-cycle helper over manual scanner JSON assembly; only inspect its `cycleDir` when needed for ticket/risk details or failure diagnosis.
     - Prefer liquid instruments and serial clean cycles over broad watchlist churn.
     - Record useful rejected setups and no-trade decisions so the scorecard compounds instead of adding local files.
     - Do not create feed posts during trading; record runtime truth in Synthesis autotrader tables.
