@@ -85,6 +85,22 @@ class _IngestRecordOutcome:
     commit_allowed: bool = True
 
 
+@dataclass(frozen=True)
+class _ExecutionLinkageResolution:
+    """Fail-closed execution lookup result for one order-feed identity."""
+
+    execution: Execution | None
+    blockers: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class _TradeDecisionLinkageResolution:
+    """Fail-closed trade-decision lookup result for one order-feed identity."""
+
+    trade_decision: TradeDecision | None
+    blockers: tuple[str, ...] = ()
+
+
 class OrderFeedIngestor:
     """Consumes order updates from Kafka and persists normalized event rows."""
 
@@ -852,9 +868,23 @@ def _raw_record_source_evidence_payload(
     )
     order_identity = _order_identity_payload(
         alpaca_order_id=(_coerce_text(order.get("id")) if order is not None else None)
-        or (_coerce_text(order.get("order_id")) if order is not None else None),
+        or (_coerce_text(order.get("order_id")) if order is not None else None)
+        or (_coerce_text(order.get("orderId")) if order is not None else None),
         client_order_id=(
             _coerce_text(order.get("client_order_id")) if order is not None else None
+        )
+        or (_coerce_text(order.get("clientOrderId")) if order is not None else None)
+        or (_coerce_text(order.get("idempotency_key")) if order is not None else None)
+        or (_coerce_text(order.get("idempotencyKey")) if order is not None else None)
+        or (
+            _coerce_text(order.get("execution_idempotency_key"))
+            if order is not None
+            else None
+        )
+        or (
+            _coerce_text(order.get("_execution_idempotency_key"))
+            if order is not None
+            else None
         ),
     )
     lifecycle = _lifecycle_payload(
@@ -901,6 +931,7 @@ def _raw_record_source_evidence_payload(
 
 
 def _order_event_evidence_payload(event: ExecutionOrderEvent) -> dict[str, Any]:
+    linkage_blockers = _order_event_linkage_blockers(event)
     linked_refs = {
         "execution_order_event_id": str(event.id),
         "execution_id": str(event.execution_id)
@@ -918,7 +949,7 @@ def _order_event_evidence_payload(event: ExecutionOrderEvent) -> dict[str, Any]:
         and event.source_partition is not None
         and event.source_offset is not None
     )
-    return {
+    payload: dict[str, Any] = {
         "event_source_ref": {
             "topic": event.source_topic,
             "partition": event.source_partition,
@@ -947,6 +978,82 @@ def _order_event_evidence_payload(event: ExecutionOrderEvent) -> dict[str, Any]:
         "source_coverage_complete": source_coverage_complete,
         "promotion_authority_eligible": source_coverage_complete,
     }
+    if linkage_blockers:
+        payload["linkage_blockers"] = linkage_blockers
+        payload["linkage_classification"] = linkage_blockers[0]
+    return payload
+
+
+def _raw_event_with_linkage_blockers(
+    raw_event: Any,
+    blockers: tuple[str, ...] | list[str],
+) -> Any:
+    unique_blockers = _dedupe([blocker for blocker in blockers if blocker])
+    coerced = coerce_json_payload(raw_event)
+    if isinstance(coerced, Mapping):
+        payload: dict[str, Any] = {
+            str(key): value
+            for key, value in cast(Mapping[object, Any], coerced).items()
+        }
+    else:
+        payload = {"payload": coerced}
+
+    if not unique_blockers:
+        payload.pop("_torghut_linkage", None)
+        return coerce_json_payload(payload)
+
+    existing = payload.get("_torghut_linkage")
+    linkage_payload: dict[str, Any] = {}
+    if isinstance(existing, Mapping):
+        linkage_payload = {
+            str(key): value
+            for key, value in cast(Mapping[object, Any], existing).items()
+        }
+    linkage_payload["blockers"] = unique_blockers
+    linkage_payload["classification"] = unique_blockers[0]
+    payload["_torghut_linkage"] = linkage_payload
+    return coerce_json_payload(payload)
+
+
+def _order_event_linkage_blockers(event: ExecutionOrderEvent) -> list[str]:
+    raw_event = coerce_json_payload(event.raw_event)
+    if not isinstance(raw_event, Mapping):
+        return []
+    linkage = cast(Mapping[object, Any], raw_event).get("_torghut_linkage")
+    if not isinstance(linkage, Mapping):
+        return []
+    raw_blockers = cast(Mapping[object, Any], linkage).get("blockers")
+    if isinstance(raw_blockers, str):
+        return [raw_blockers] if raw_blockers else []
+    if not isinstance(raw_blockers, list):
+        return []
+    blocker_items = cast(list[object], raw_blockers)
+    return _dedupe(
+        [text for item in blocker_items if (text := str(item or "").strip())]
+    )
+
+
+def _order_event_client_identity(event: ExecutionOrderEvent) -> str | None:
+    if event.client_order_id:
+        return event.client_order_id
+    raw_event = coerce_json_payload(event.raw_event)
+    if not isinstance(raw_event, Mapping):
+        return None
+    payload = _extract_trade_update_payload(raw_event)
+    order = _as_mapping(payload.get("order")) if payload is not None else None
+    if order is None:
+        order = _as_mapping(cast(Mapping[object, Any], raw_event).get("order"))
+    if order is None:
+        return None
+    return (
+        _coerce_text(order.get("client_order_id"))
+        or _coerce_text(order.get("clientOrderId"))
+        or _coerce_text(order.get("idempotency_key"))
+        or _coerce_text(order.get("idempotencyKey"))
+        or _coerce_text(order.get("execution_idempotency_key"))
+        or _coerce_text(order.get("executionIdempotencyKey"))
+        or _coerce_text(order.get("_execution_idempotency_key"))
+    )
 
 
 def _order_identity_payload(
@@ -975,9 +1082,24 @@ def _lifecycle_payload(
     }
 
 
+def _dedupe(items: list[str] | tuple[str, ...]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        text = str(item or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        deduped.append(text)
+    return deduped
+
+
 def _source_window_event_status_reason(event: ExecutionOrderEvent) -> str:
     if event.execution_id is not None and event.trade_decision_id is not None:
         return "linked_execution_and_decision"
+    linkage_blockers = _order_event_linkage_blockers(event)
+    if linkage_blockers:
+        return linkage_blockers[0]
     if event.execution_id is None and event.trade_decision_id is None:
         return "missing_execution_and_decision_links"
     if event.execution_id is None:
@@ -1008,9 +1130,19 @@ def normalize_order_feed_record(
         symbol = _coerce_text(envelope.get("symbol"))
 
     alpaca_order_id = _coerce_text((order or {}).get("id"))
-    client_order_id = _coerce_text((order or {}).get("client_order_id"))
+    client_order_id = _coerce_text(
+        (order or {}).get("client_order_id")
+        or (order or {}).get("clientOrderId")
+        or (order or {}).get("idempotency_key")
+        or (order or {}).get("idempotencyKey")
+        or (order or {}).get("execution_idempotency_key")
+        or (order or {}).get("executionIdempotencyKey")
+        or (order or {}).get("_execution_idempotency_key")
+    )
     if alpaca_order_id is None:
-        alpaca_order_id = _coerce_text((order or {}).get("order_id"))
+        alpaca_order_id = _coerce_text(
+            (order or {}).get("order_id") or (order or {}).get("orderId")
+        )
 
     event_type = _coerce_text(data_payload.get("event")) or _coerce_text(
         data_payload.get("event_type")
@@ -1187,6 +1319,10 @@ def _order_identity_matches_account_scope(
             (Execution.client_order_id == event.client_order_id)
             & (Execution.alpaca_account_label == account_label)
         )
+        clauses.append(
+            (Execution.execution_idempotency_key == event.client_order_id)
+            & (Execution.alpaca_account_label == account_label)
+        )
     if clauses and session.scalar(select(exists().where(or_(*clauses)))):
         return True
 
@@ -1228,19 +1364,36 @@ def persist_order_event(
     filled_qty_delta, filled_notional_delta, fill_quantity_basis = _fill_delta_fields(
         session, event
     )
-    execution = _resolve_execution(session, event)
+    execution_linkage = _resolve_execution_linkage_for_identity(
+        session,
+        account_label=event.alpaca_account_label,
+        alpaca_order_id=event.alpaca_order_id,
+        client_order_id=event.client_order_id,
+    )
+    execution = execution_linkage.execution
+    raw_event = event.raw_event
     trade_decision_id = None
     if execution is not None:
         trade_decision_id = execution.trade_decision_id
-    elif event.client_order_id:
-        decision = session.execute(
-            select(TradeDecision).where(
-                TradeDecision.decision_hash == event.client_order_id,
-                TradeDecision.alpaca_account_label == event.alpaca_account_label,
-            )
-        ).scalar_one_or_none()
-        if decision is not None:
-            trade_decision_id = decision.id
+    elif not execution_linkage.blockers:
+        decision_linkage = _resolve_trade_decision_linkage_for_identity(
+            session,
+            account_label=event.alpaca_account_label,
+            client_order_id=event.client_order_id,
+        )
+        if decision_linkage.trade_decision is not None:
+            trade_decision_id = decision_linkage.trade_decision.id
+        raw_event = _raw_event_with_linkage_blockers(
+            event.raw_event,
+            decision_linkage.blockers,
+        )
+    else:
+        raw_event = _raw_event_with_linkage_blockers(
+            event.raw_event,
+            execution_linkage.blockers,
+        )
+    if execution is not None:
+        raw_event = _raw_event_with_linkage_blockers(event.raw_event, ())
 
     row = ExecutionOrderEvent(
         event_fingerprint=event.event_fingerprint,
@@ -1261,7 +1414,7 @@ def persist_order_event(
         avg_fill_price=event.avg_fill_price,
         filled_notional_delta=filled_notional_delta,
         fill_quantity_basis=fill_quantity_basis,
-        raw_event=event.raw_event,
+        raw_event=raw_event,
         execution_id=execution.id if execution is not None else None,
         trade_decision_id=trade_decision_id,
         source_window_id=source_window_id,
@@ -1468,6 +1621,14 @@ def latest_order_event_for_execution(
                 == execution.alpaca_account_label
             )
         )
+    if execution.execution_idempotency_key:
+        filters.append(
+            (ExecutionOrderEvent.client_order_id == execution.execution_idempotency_key)
+            & (
+                ExecutionOrderEvent.alpaca_account_label
+                == execution.alpaca_account_label
+            )
+        )
 
     stmt = (
         select(ExecutionOrderEvent)
@@ -1507,6 +1668,14 @@ def link_order_events_to_execution(
                 == execution.alpaca_account_label
             )
         )
+    if execution.execution_idempotency_key:
+        clauses.append(
+            (ExecutionOrderEvent.client_order_id == execution.execution_idempotency_key)
+            & (
+                ExecutionOrderEvent.alpaca_account_label
+                == execution.alpaca_account_label
+            )
+        )
     if not clauses:
         return 0
 
@@ -1534,6 +1703,26 @@ def link_order_events_to_execution(
     linked = 0
     latest_event: ExecutionOrderEvent | None = None
     for event in events:
+        event_execution_linkage = _resolve_execution_linkage_for_identity(
+            session,
+            account_label=event.alpaca_account_label,
+            alpaca_order_id=event.alpaca_order_id,
+            client_order_id=_order_event_client_identity(event),
+        )
+        if event_execution_linkage.blockers:
+            event.raw_event = _raw_event_with_linkage_blockers(
+                event.raw_event,
+                event_execution_linkage.blockers,
+            )
+            _ensure_source_window_for_event(session, event)
+            session.add(event)
+            _refresh_source_window_linkage_counts(session, event)
+            continue
+        if (
+            event_execution_linkage.execution is not None
+            and event_execution_linkage.execution.id != execution.id
+        ):
+            continue
         changed = False
         if event.execution_id is None:
             event.execution_id = execution.id
@@ -1541,7 +1730,17 @@ def link_order_events_to_execution(
         if event.trade_decision_id is None:
             trade_decision_id = execution.trade_decision_id
             if trade_decision_id is None:
-                decision = _trade_decision_for_order_event(session, event)
+                decision_linkage = _resolve_trade_decision_linkage_for_identity(
+                    session,
+                    account_label=event.alpaca_account_label,
+                    client_order_id=_order_event_client_identity(event),
+                )
+                if decision_linkage.blockers:
+                    event.raw_event = _raw_event_with_linkage_blockers(
+                        event.raw_event,
+                        decision_linkage.blockers,
+                    )
+                decision = decision_linkage.trade_decision
                 trade_decision_id = decision.id if decision is not None else None
             if trade_decision_id is not None:
                 event.trade_decision_id = trade_decision_id
@@ -1617,13 +1816,44 @@ def repair_order_feed_execution_links(
     for event in events:
         if counters["events_linked"] >= bounded_limit:
             break
-        execution = _execution_for_order_event(session, event)
+        execution_linkage = _resolve_execution_linkage_for_identity(
+            session,
+            account_label=event.alpaca_account_label,
+            alpaca_order_id=event.alpaca_order_id,
+            client_order_id=_order_event_client_identity(event),
+        )
+        if execution_linkage.blockers:
+            event.raw_event = _raw_event_with_linkage_blockers(
+                event.raw_event,
+                execution_linkage.blockers,
+            )
+            _ensure_source_window_for_event(session, event)
+            session.add(event)
+            _refresh_source_window_linkage_counts(session, event)
+            counters["events_without_execution"] += 1
+            counters["events_without_decision"] += int(event.trade_decision_id is None)
+            continue
+        execution = execution_linkage.execution
         if execution is None:
             if event.trade_decision_id is None:
-                decision = _trade_decision_for_order_event(session, event)
-                if decision is None:
+                decision_linkage = _resolve_trade_decision_linkage_for_identity(
+                    session,
+                    account_label=event.alpaca_account_label,
+                    client_order_id=_order_event_client_identity(event),
+                )
+                if decision_linkage.blockers:
+                    event.raw_event = _raw_event_with_linkage_blockers(
+                        event.raw_event,
+                        decision_linkage.blockers,
+                    )
+                    _ensure_source_window_for_event(session, event)
+                    session.add(event)
+                    _refresh_source_window_linkage_counts(session, event)
+                    counters["events_without_decision"] += 1
+                elif decision_linkage.trade_decision is None:
                     counters["events_without_decision"] += 1
                 else:
+                    decision = decision_linkage.trade_decision
                     event.trade_decision_id = decision.id
                     if decision.id not in processed_decision_ids:
                         processed_decision_ids.add(decision.id)
@@ -1879,56 +2109,6 @@ def backfill_order_feed_events_from_executions(
     return counters
 
 
-def _execution_for_order_event(
-    session: Session,
-    event: ExecutionOrderEvent,
-) -> Execution | None:
-    clauses: list[ColumnElement[bool]] = []
-    if event.alpaca_order_id:
-        clauses.append(
-            (Execution.alpaca_order_id == event.alpaca_order_id)
-            & (Execution.alpaca_account_label == event.alpaca_account_label)
-        )
-    if event.client_order_id:
-        clauses.append(
-            (Execution.client_order_id == event.client_order_id)
-            & (Execution.alpaca_account_label == event.alpaca_account_label)
-        )
-    if not clauses:
-        return None
-    return (
-        session.execute(
-            select(Execution)
-            .where(or_(*clauses))
-            .order_by(
-                Execution.order_feed_last_event_ts.desc().nullslast(),
-                Execution.last_update_at.desc().nullslast(),
-                Execution.created_at.desc(),
-            )
-            .limit(1)
-        )
-        .scalars()
-        .first()
-    )
-
-
-def _trade_decision_for_order_event(
-    session: Session,
-    event: ExecutionOrderEvent,
-) -> TradeDecision | None:
-    if not event.client_order_id:
-        return None
-    return session.execute(
-        select(TradeDecision)
-        .where(
-            TradeDecision.decision_hash == event.client_order_id,
-            TradeDecision.alpaca_account_label == event.alpaca_account_label,
-        )
-        .order_by(TradeDecision.created_at.desc())
-        .limit(1)
-    ).scalar_one_or_none()
-
-
 def _execution_order_event_exists_for_execution_clause() -> ColumnElement[bool]:
     return exists().where(
         ExecutionOrderEvent.alpaca_account_label == Execution.alpaca_account_label,
@@ -1942,6 +2122,14 @@ def _execution_order_event_exists_for_execution_clause() -> ColumnElement[bool]:
                 Execution.client_order_id.is_not(None)
                 & (Execution.client_order_id != "")
                 & (ExecutionOrderEvent.client_order_id == Execution.client_order_id)
+            ),
+            (
+                Execution.execution_idempotency_key.is_not(None)
+                & (Execution.execution_idempotency_key != "")
+                & (
+                    ExecutionOrderEvent.client_order_id
+                    == Execution.execution_idempotency_key
+                )
             ),
         ),
     )
@@ -2025,23 +2213,116 @@ def _ensure_source_window_for_event(
     return source_window, created
 
 
-def _resolve_execution(
-    session: Session, event: NormalizedOrderEvent
-) -> Execution | None:
+def _resolve_execution_linkage_for_identity(
+    session: Session,
+    *,
+    account_label: str,
+    alpaca_order_id: str | None,
+    client_order_id: str | None,
+) -> _ExecutionLinkageResolution:
     clauses: list[ColumnElement[bool]] = []
-    if event.alpaca_order_id:
-        clauses.append(
-            (Execution.alpaca_order_id == event.alpaca_order_id)
-            & (Execution.alpaca_account_label == event.alpaca_account_label)
-        )
-    if event.client_order_id:
-        clauses.append(
-            (Execution.client_order_id == event.client_order_id)
-            & (Execution.alpaca_account_label == event.alpaca_account_label)
-        )
+    if alpaca_order_id:
+        clauses.append(Execution.alpaca_order_id == alpaca_order_id)
+    if client_order_id:
+        clauses.append(Execution.client_order_id == client_order_id)
+        clauses.append(Execution.execution_idempotency_key == client_order_id)
     if not clauses:
-        return None
-    return session.execute(select(Execution).where(or_(*clauses))).scalar_one_or_none()
+        return _ExecutionLinkageResolution(
+            execution=None,
+            blockers=("order_feed_execution_identity_missing",),
+        )
+
+    matches = (
+        session.execute(
+            select(Execution)
+            .where(
+                Execution.alpaca_account_label == account_label,
+                or_(*clauses),
+            )
+            .order_by(
+                Execution.order_feed_last_event_ts.desc().nullslast(),
+                Execution.last_update_at.desc().nullslast(),
+                Execution.created_at.desc(),
+                Execution.id.asc(),
+            )
+            .limit(2)
+        )
+        .scalars()
+        .all()
+    )
+    unique_matches = list({match.id: match for match in matches}.values())
+    if len(unique_matches) == 1:
+        return _ExecutionLinkageResolution(execution=unique_matches[0])
+    if len(unique_matches) > 1:
+        return _ExecutionLinkageResolution(
+            execution=None,
+            blockers=("ambiguous_execution_identity",),
+        )
+
+    other_account_match = session.scalar(
+        select(
+            exists().where(
+                Execution.alpaca_account_label != account_label,
+                or_(*clauses),
+            )
+        )
+    )
+    if other_account_match:
+        return _ExecutionLinkageResolution(
+            execution=None,
+            blockers=("account_mismatch_execution_identity",),
+        )
+    return _ExecutionLinkageResolution(execution=None)
+
+
+def _resolve_trade_decision_linkage_for_identity(
+    session: Session,
+    *,
+    account_label: str,
+    client_order_id: str | None,
+) -> _TradeDecisionLinkageResolution:
+    if not client_order_id:
+        return _TradeDecisionLinkageResolution(
+            trade_decision=None,
+            blockers=("order_feed_trade_decision_identity_missing",),
+        )
+
+    matches = (
+        session.execute(
+            select(TradeDecision)
+            .where(
+                TradeDecision.decision_hash == client_order_id,
+                TradeDecision.alpaca_account_label == account_label,
+            )
+            .order_by(TradeDecision.created_at.desc(), TradeDecision.id.asc())
+            .limit(2)
+        )
+        .scalars()
+        .all()
+    )
+    unique_matches = list({match.id: match for match in matches}.values())
+    if len(unique_matches) == 1:
+        return _TradeDecisionLinkageResolution(trade_decision=unique_matches[0])
+    if len(unique_matches) > 1:
+        return _TradeDecisionLinkageResolution(
+            trade_decision=None,
+            blockers=("ambiguous_trade_decision_identity",),
+        )
+
+    other_account_match = session.scalar(
+        select(
+            exists().where(
+                TradeDecision.alpaca_account_label != account_label,
+                TradeDecision.decision_hash == client_order_id,
+            )
+        )
+    )
+    if other_account_match:
+        return _TradeDecisionLinkageResolution(
+            trade_decision=None,
+            blockers=("account_mismatch_trade_decision_identity",),
+        )
+    return _TradeDecisionLinkageResolution(trade_decision=None)
 
 
 def _find_existing_source_window_for_event(
@@ -2412,6 +2693,9 @@ def _refresh_source_window_linkage_counts(
     )
     if source_window.inserted_count:
         classification_counts["inserted"] = int(source_window.inserted_count)
+    linkage_blockers = _order_event_linkage_blockers(event)
+    for blocker in linkage_blockers:
+        classification_counts[blocker] = 1
     if source_window.unlinked_execution_count:
         classification_counts["unlinked_execution"] = int(
             source_window.unlinked_execution_count
@@ -2439,6 +2723,8 @@ def _refresh_source_window_linkage_counts(
         if source_window_complete
         else "order_feed_lifecycle_unlinked"
     )
+    if source_window.source_revision != HISTORICAL_ORDER_EVENT_SOURCE_WINDOW_REVISION:
+        source_window.status_reason = _source_window_event_status_reason(event)
     source_window.payload_json = coerce_json_payload(payload_dict)
     session.add(source_window)
 
