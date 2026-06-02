@@ -844,6 +844,134 @@ class TestTradingApi(TestCase):
         self.assertEqual(fake_session.calls[0], "SET LOCAL statement_timeout = 500")
         self.assertNotIn("statement_timeout = 5000", "\n".join(fake_session.calls))
 
+    def test_tca_summary_uses_bounded_status_timeout(self) -> None:
+        fake_session = _PostgresReadinessSession()
+
+        with patch(
+            "app.main.build_tca_gate_inputs",
+            return_value={"order_count": 0},
+        ) as build_tca:
+            payload = main_module._load_tca_summary(
+                fake_session,  # type: ignore[arg-type]
+                scheduler=None,
+            )
+
+        self.assertEqual(payload["order_count"], 0)
+        self.assertEqual(fake_session.calls[0], "SET LOCAL statement_timeout = 750")
+        build_tca.assert_called_once()
+
+    def test_llm_evaluation_uses_bounded_status_timeout(self) -> None:
+        fake_session = _PostgresReadinessSession()
+
+        with patch(
+            "app.main.build_llm_evaluation_metrics",
+            return_value={"ok": True, "metrics": {"total_reviews": 0}},
+        ) as build_llm:
+            payload = main_module._load_llm_evaluation(
+                fake_session,  # type: ignore[arg-type]
+            )
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(fake_session.calls[0], "SET LOCAL statement_timeout = 500")
+        build_llm.assert_called_once()
+
+    def test_status_read_optional_hooks_fail_safely(self) -> None:
+        class FailingRollbackSession:
+            def rollback(self) -> None:
+                raise SQLAlchemyError("rollback failed")
+
+        class BrokenBindSession:
+            def get_bind(self) -> object:
+                raise RuntimeError("bind unavailable")
+
+        class TimeoutSession(_PostgresReadinessSession):
+            def execute(
+                self, statement: object, params: object | None = None
+            ) -> object:
+                _ = params
+                self.calls.append(str(statement))
+                raise SQLAlchemyError("statement timeout")
+
+        main_module._rollback_status_read_session(  # type: ignore[arg-type]
+            SimpleNamespace(),
+            context="missing rollback",
+        )
+        main_module._rollback_status_read_session(  # type: ignore[arg-type]
+            FailingRollbackSession(),
+            context="failing rollback",
+        )
+        main_module._apply_status_read_statement_timeout(  # type: ignore[arg-type]
+            SimpleNamespace(),
+            milliseconds=500,
+        )
+        main_module._apply_status_read_statement_timeout(  # type: ignore[arg-type]
+            BrokenBindSession(),
+            milliseconds=500,
+        )
+        with self.assertRaises(SQLAlchemyError):
+            main_module._apply_status_read_statement_timeout(  # type: ignore[arg-type]
+                TimeoutSession(),
+                milliseconds=500,
+            )
+
+    def test_tca_summary_timeout_returns_unavailable_payload(self) -> None:
+        fake_session = _PostgresReadinessSession()
+
+        with patch(
+            "app.main.build_tca_gate_inputs",
+            side_effect=SQLAlchemyError(
+                "QueryCanceled: canceling statement due to statement timeout"
+            ),
+        ):
+            payload = main_module._load_tca_summary(
+                fake_session,  # type: ignore[arg-type]
+                scheduler=None,
+            )
+
+        self.assertTrue(payload["read_model_unavailable"])
+        self.assertEqual(
+            payload["reason_codes"], ["execution_tca_summary_query_timeout"]
+        )
+        self.assertEqual(fake_session.rollback_count, 1)
+
+    def test_llm_evaluation_timeout_returns_unavailable_payload(self) -> None:
+        fake_session = _PostgresReadinessSession()
+
+        with patch(
+            "app.main.build_llm_evaluation_metrics",
+            side_effect=SQLAlchemyError(
+                "QueryCanceled: canceling statement due to statement timeout"
+            ),
+        ):
+            payload = main_module._load_llm_evaluation(
+                fake_session,  # type: ignore[arg-type]
+            )
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["reason_codes"], ["llm_evaluation_query_timeout"])
+        self.assertEqual(fake_session.rollback_count, 1)
+
+    def test_hypothesis_runtime_summary_timeout_is_fail_closed(self) -> None:
+        with patch(
+            "app.main.build_hypothesis_runtime_summary",
+            side_effect=SQLAlchemyError(
+                "QueryCanceled: canceling statement due to statement timeout"
+            ),
+        ):
+            payload, summary, _quorum = main_module._build_hypothesis_runtime_payload(
+                TradingScheduler(),
+                tca_summary={},
+                market_context_status={},
+                feature_readiness={},
+            )
+
+        self.assertTrue(summary["read_model_unavailable"])
+        self.assertEqual(
+            summary["reason_codes"],
+            ["hypothesis_runtime_summary_query_timeout"],
+        )
+        self.assertEqual(payload["items"], [])
+
     def test_options_catalog_freshness_summary_caches_unavailable_route_scope(
         self,
     ) -> None:
@@ -2780,8 +2908,8 @@ class TestTradingApi(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertGreaterEqual(len(observed_sessions), 4)
-        self.assertIs(observed_sessions[0], observed_sessions[1])
-        self.assertIsNot(observed_sessions[0], observed_sessions[2])
+        self.assertIsNot(observed_sessions[0], observed_sessions[1])
+        self.assertIsNot(observed_sessions[1], observed_sessions[2])
         self.assertIsNot(observed_sessions[2], observed_sessions[3])
 
     def test_trading_status_reuses_clickhouse_signal_status_once(self) -> None:
@@ -2893,6 +3021,67 @@ class TestTradingApi(TestCase):
         self.assertIn(
             "options_catalog_freshness",
             payload["status_read_budget"]["skipped_reads"],
+        )
+
+    def test_trading_status_skips_early_expensive_reads_when_budget_remaining_is_low(
+        self,
+    ) -> None:
+        class ManualBudget(main_module._TradingStatusReadBudget):
+            def __init__(self) -> None:
+                super().__init__(max_seconds=10.0)
+                self.current_elapsed = 1.0
+
+            def elapsed_seconds(self) -> float:
+                return self.current_elapsed
+
+        budget = ManualBudget()
+
+        def _load_tca(_session: Session, **_kwargs: object) -> dict[str, object]:
+            budget.current_elapsed = 9.2
+            return {}
+
+        with (
+            patch("app.main._TradingStatusReadBudget", return_value=budget),
+            patch(
+                "app.main._load_clickhouse_ta_status",
+                return_value={
+                    "state": "current",
+                    "latest_signal_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+                    "source_ref": "clickhouse:ta_signals",
+                },
+            ),
+            patch("app.main._load_tca_summary", side_effect=_load_tca),
+            patch("app.main._build_tigerbeetle_ledger_status") as tigerbeetle_status,
+            patch(
+                "app.main._daily_runtime_ledger_portfolio_summary"
+            ) as portfolio_summary,
+            patch("app.main._build_hypothesis_runtime_payload") as hypothesis_runtime,
+            patch("app.main._build_live_submission_gate_payload") as live_gate,
+        ):
+            response = self.client.get("/trading/status")
+
+        self.assertEqual(response.status_code, 200)
+        tigerbeetle_status.assert_not_called()
+        portfolio_summary.assert_not_called()
+        hypothesis_runtime.assert_not_called()
+        live_gate.assert_not_called()
+        payload = response.json()
+        skipped_reads = payload["status_read_budget"]["skipped_reads"]
+        self.assertIn("tigerbeetle_ledger", skipped_reads)
+        self.assertIn("runtime_ledger_portfolio_summary", skipped_reads)
+        self.assertIn("hypothesis_runtime", skipped_reads)
+        self.assertIn("live_submission_gate", skipped_reads)
+        self.assertIn(
+            "tigerbeetle_ledger_status_read_budget_insufficient_remaining",
+            payload["tigerbeetle_ledger"]["blockers"],
+        )
+        self.assertTrue(
+            payload["portfolio_runtime_ledger_summary"]["read_model_unavailable"]
+        )
+        self.assertTrue(payload["hypotheses"]["summary"]["read_model_unavailable"])
+        self.assertEqual(
+            payload["live_submission_gate"]["reason"],
+            "live_submission_gate_status_read_budget_insufficient_remaining",
         )
 
     def test_readiness_checks_external_dependencies_before_postgres_session(
