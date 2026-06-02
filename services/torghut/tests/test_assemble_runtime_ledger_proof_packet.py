@@ -809,14 +809,15 @@ class TestRuntimeLedgerProofPacket(TestCase):
         self,
     ) -> None:
         census = _hpairs_source_proof_census()
+        census["schema_version"] = "torghut.hpairs-source-proof-census.v0"
         census["source"] = {
             "kind": "fixture_json",
             "read_only": False,
-            "writes_proof": False,
-            "modifies_rows": False,
+            "writes_proof": True,
+            "modifies_rows": True,
             "runtime_stage": "paper",
-            "replay_outputs_count_as_runtime_proof": False,
-            "synthetic_proof_created": False,
+            "replay_outputs_count_as_runtime_proof": True,
+            "synthetic_proof_created": True,
         }
 
         result = packet.build_runtime_ledger_proof_packet(
@@ -832,14 +833,23 @@ class TestRuntimeLedgerProofPacket(TestCase):
             generated_at="2026-05-26T21:05:00+00:00",
         )
 
-        blocker = "hpairs_source_proof_census_not_read_only"
+        blockers = [
+            "hpairs_source_proof_census_schema_mismatch",
+            "hpairs_source_proof_census_not_read_only",
+            "hpairs_source_proof_census_writes_proof",
+            "hpairs_source_proof_census_modifies_rows",
+            "hpairs_source_proof_census_replay_outputs_claim_runtime_proof",
+            "hpairs_source_proof_census_synthetic_proof_created",
+        ]
         self.assertFalse(result["ok"])
         self.assertFalse(result["final_authority_ok"])
         self.assertFalse(result["promotion_allowed"])
-        self.assertIn(blocker, result["authority_blockers"])
+        for blocker in blockers:
+            self.assertIn(blocker, result["authority_blockers"])
         census_status = result["evidence"]["hpairs_source_proof_census"]
-        self.assertEqual(census_status["attachment_blockers"], [blocker])
-        self.assertIn(blocker, census_status["blockers"])
+        self.assertEqual(census_status["attachment_blockers"], blockers)
+        for blocker in blockers:
+            self.assertIn(blocker, census_status["blockers"])
 
     def test_packet_prefers_importable_paper_route_plan_over_next_session_plan(
         self,

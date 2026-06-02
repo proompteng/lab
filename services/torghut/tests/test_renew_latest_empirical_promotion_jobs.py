@@ -189,17 +189,17 @@ class TestRenewLatestEmpiricalPromotionJobsRuntimeLedger(TestCase):
     ) -> None:
         status = renew._hpairs_source_proof_census_status(
             {
-                "schema_version": "torghut.hpairs-source-proof-census.v1",
+                "schema_version": "torghut.hpairs-source-proof-census.v0",
                 "identity": {"hypothesis_id": "H-PAIRS-01"},
                 "window": {},
                 "source": {
                     "kind": "fixture_json",
                     "read_only": False,
-                    "writes_proof": False,
-                    "modifies_rows": False,
+                    "writes_proof": True,
+                    "modifies_rows": True,
                     "runtime_stage": "paper",
-                    "replay_outputs_count_as_runtime_proof": False,
-                    "synthetic_proof_created": False,
+                    "replay_outputs_count_as_runtime_proof": True,
+                    "synthetic_proof_created": True,
                 },
                 "runtime_authority": {
                     "final_authority_ok": True,
@@ -219,12 +219,20 @@ class TestRenewLatestEmpiricalPromotionJobsRuntimeLedger(TestCase):
             }
         )
 
-        blocker = "hpairs_source_proof_census_not_read_only"
+        blockers = [
+            "hpairs_source_proof_census_schema_mismatch",
+            "hpairs_source_proof_census_not_read_only",
+            "hpairs_source_proof_census_writes_proof",
+            "hpairs_source_proof_census_modifies_rows",
+            "hpairs_source_proof_census_replay_outputs_claim_runtime_proof",
+            "hpairs_source_proof_census_synthetic_proof_created",
+        ]
         self.assertTrue(status["present"])
         self.assertFalse(status["promotion_allowed"])
         self.assertFalse(status["final_authority_ok"])
-        self.assertEqual(status["attachment_blockers"], [blocker])
-        self.assertIn(blocker, status["blockers"])
+        self.assertEqual(status["attachment_blockers"], blockers)
+        for blocker in blockers:
+            self.assertIn(blocker, status["blockers"])
 
     def test_runtime_bucket_materialization_rerun_is_idempotent_for_same_scope(
         self,
