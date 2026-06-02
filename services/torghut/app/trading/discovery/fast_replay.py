@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import timezone
@@ -36,6 +38,12 @@ FAST_REPLAY_WHITEPAPER_MECHANISMS = (
     "macro_news_ofi_stress_veto_if_present",
     "square_root_impact_capacity_prefilter",
     "conformal_tail_risk_prefilter",
+)
+FAST_REPLAY_FRONTIER_IDENTITY_SCHEMA_VERSION = (
+    "torghut.fast-replay-frontier-identity.v1"
+)
+FAST_REPLAY_EXACT_FRONTIER_KEY_SCHEMA_VERSION = (
+    "torghut.fast-replay-exact-frontier-key.v1"
 )
 
 
@@ -72,6 +80,11 @@ class FastReplayPreviewRow:
         default_factory=lambda: cast(dict[str, Any], {})
     )
     proof_semantics_label: str = FAST_REPLAY_PROOF_SEMANTICS_LABEL
+    candidate_frontier_hash: str = ""
+    exact_replay_frontier_key: str = ""
+    frontier_dedupe_status: str = "unique"
+    duplicate_of_candidate_spec_id: str | None = None
+    duplicate_candidate_spec_ids: tuple[str, ...] = ()
 
     def to_payload(self) -> dict[str, Any]:
         observed_post_cost_expectancy_bps = _observed_post_cost_expectancy_bps(self)
@@ -120,6 +133,29 @@ class FastReplayPreviewRow:
             ),
             "exploration_score": str(self.exploration_score),
             "frontier_bucket": self.frontier_bucket,
+            "candidate_frontier_hash": self.candidate_frontier_hash,
+            "exact_replay_frontier_key": self.exact_replay_frontier_key,
+            "frontier_dedupe_status": self.frontier_dedupe_status,
+            "duplicate_of_candidate_spec_id": self.duplicate_of_candidate_spec_id,
+            "duplicate_candidate_spec_ids": list(self.duplicate_candidate_spec_ids),
+            "frontier_dedupe_metadata": {
+                "schema_version": "torghut.fast-replay-frontier-dedupe.v1",
+                "status": self.frontier_dedupe_status,
+                "candidate_frontier_hash": self.candidate_frontier_hash,
+                "exact_replay_frontier_key": self.exact_replay_frontier_key,
+                "duplicate_of_candidate_spec_id": self.duplicate_of_candidate_spec_id,
+                "duplicate_candidate_spec_ids": list(
+                    self.duplicate_candidate_spec_ids
+                ),
+                "dedupe_scope": "same_replay_tape_cache_and_execution_identity",
+                "proof_source": "prefilter_only",
+                "prefilter_only": True,
+                "promotion_proof": False,
+                "proof_authority": False,
+                "promotion_authority": False,
+                "promotion_allowed": False,
+                "final_promotion_allowed": False,
+            },
             "microstructure_prefilter": dict(self.microstructure_prefilter),
             "hpairs_microstructure_prefilter": dict(self.microstructure_prefilter),
             "hpairs_macro_window_stress": prefilter_macro_window_stress,
@@ -243,6 +279,35 @@ class FastReplayPreviewResult:
             "selected_candidate_spec_ids": list(self.selected_candidate_spec_ids),
             "selected_candidate_spec_count": len(self.selected_candidate_spec_ids),
             "selected_row_count": self.selected_row_count,
+            "frontier_dedupe_policy": {
+                "schema_version": "torghut.fast-replay-frontier-dedupe-policy.v1",
+                "status": "enabled",
+                "dedupe_scope": "same_replay_tape_cache_and_execution_identity",
+                "candidate_frontier_hash_components": [
+                    "candidate_kind",
+                    "family_template_id",
+                    "runtime_family",
+                    "runtime_strategy_name",
+                    "strategy_overrides",
+                    "objective",
+                    "hard_vetoes",
+                ],
+                "exact_replay_frontier_key_components": [
+                    "replay_cache_key",
+                    "dataset_snapshot_ref",
+                    "source_query_digest",
+                    "feature_schema_hash",
+                    "cost_model_hash",
+                    "strategy_family",
+                    "candidate_frontier_hash",
+                ],
+                "prefilter_only": True,
+                "promotion_proof": False,
+                "proof_authority": False,
+                "promotion_authority": False,
+                "promotion_allowed": False,
+                "final_promotion_allowed": False,
+            },
             "replay_tape": {
                 "dataset_snapshot_ref": self.replay_tape_manifest.dataset_snapshot_ref,
                 "content_sha256": self.replay_tape_manifest.content_sha256,
@@ -367,10 +432,12 @@ def build_fast_replay_preview(
                 microstructure_prefilter=hpairs_prefilter_payload_by_spec.get(
                     spec.candidate_spec_id, {}
                 ),
+                replay_tape_manifest=replay_tape_manifest,
             )
         )
 
     ranked_rows = sorted(scored_rows, key=_preview_rank_key)
+    ranked_rows = _mark_frontier_duplicates(ranked_rows)
     selected_bucket_by_id = _select_frontier_buckets(
         ranked_rows=ranked_rows,
         exploitation_count=bounded_exploitation_count,
@@ -489,7 +556,13 @@ def _score_candidate_spec(
     symbol_stats: Mapping[str, _SymbolTapeStats],
     min_rows_per_candidate: int,
     microstructure_prefilter: Mapping[str, Any],
+    replay_tape_manifest: ReplayTapeManifest,
 ) -> FastReplayPreviewRow:
+    candidate_frontier_hash = _candidate_frontier_hash(spec)
+    exact_replay_frontier_key = _exact_replay_frontier_key(
+        replay_tape_manifest=replay_tape_manifest,
+        candidate_frontier_hash=candidate_frontier_hash,
+    )
     requested_symbols = _candidate_symbols(spec)
     matched = [
         stat for symbol in requested_symbols if (stat := symbol_stats.get(symbol))
@@ -529,6 +602,8 @@ def _score_candidate_spec(
             exploration_score=Decimal("0"),
             frontier_bucket="not_selected",
             microstructure_prefilter=dict(microstructure_prefilter),
+            candidate_frontier_hash=candidate_frontier_hash,
+            exact_replay_frontier_key=exact_replay_frontier_key,
         )
 
     return_vectors = [stat.returns_bps for stat in matched if stat.returns_bps.size]
@@ -654,6 +729,8 @@ def _score_candidate_spec(
         exploration_score=_decimal_from_float(exploration_score),
         frontier_bucket="not_selected",
         microstructure_prefilter=dict(microstructure_prefilter),
+        candidate_frontier_hash=candidate_frontier_hash,
+        exact_replay_frontier_key=exact_replay_frontier_key,
     )
 
 
@@ -675,6 +752,67 @@ def _row_explicitly_non_hpairs(row: FastReplayPreviewRow) -> bool:
     return isinstance(value, bool) and not value
 
 
+def _mark_frontier_duplicates(
+    ranked_rows: Sequence[FastReplayPreviewRow],
+) -> list[FastReplayPreviewRow]:
+    grouped_ids: dict[str, list[str]] = {}
+    representative_by_key: dict[str, str] = {}
+    for row in ranked_rows:
+        key = _frontier_dedupe_key(row)
+        grouped_ids.setdefault(key, []).append(row.candidate_spec_id)
+        representative_by_key.setdefault(key, row.candidate_spec_id)
+
+    deduped_rows: list[FastReplayPreviewRow] = []
+    for row in ranked_rows:
+        key = _frontier_dedupe_key(row)
+        group = tuple(grouped_ids[key])
+        representative = representative_by_key[key]
+        if len(group) <= 1:
+            deduped_rows.append(
+                _row_with_frontier_dedupe(
+                    row=row,
+                    frontier_dedupe_status="unique",
+                    duplicate_of_candidate_spec_id=None,
+                    duplicate_candidate_spec_ids=(),
+                )
+            )
+        elif row.candidate_spec_id == representative:
+            deduped_rows.append(
+                _row_with_frontier_dedupe(
+                    row=row,
+                    frontier_dedupe_status="representative",
+                    duplicate_of_candidate_spec_id=None,
+                    duplicate_candidate_spec_ids=tuple(
+                        candidate_spec_id
+                        for candidate_spec_id in group
+                        if candidate_spec_id != row.candidate_spec_id
+                    ),
+                )
+            )
+        else:
+            deduped_rows.append(
+                _row_with_frontier_dedupe(
+                    row=row,
+                    frontier_dedupe_status="duplicate_filtered",
+                    duplicate_of_candidate_spec_id=representative,
+                    duplicate_candidate_spec_ids=tuple(
+                        candidate_spec_id
+                        for candidate_spec_id in group
+                        if candidate_spec_id != row.candidate_spec_id
+                    ),
+                )
+            )
+    return deduped_rows
+
+
+def _frontier_dedupe_key(row: FastReplayPreviewRow) -> str:
+    return row.exact_replay_frontier_key or row.candidate_frontier_hash or row.candidate_spec_id
+
+
+def _row_frontier_duplicate_filtered(row: FastReplayPreviewRow) -> bool:
+    return row.frontier_dedupe_status == "duplicate_filtered"
+
+
 def _select_frontier_buckets(
     *,
     ranked_rows: Sequence[FastReplayPreviewRow],
@@ -687,6 +825,7 @@ def _select_frontier_buckets(
         for row in ranked_rows
         if row.selection_reason != "insufficient_replay_tape_rows"
         and not _row_explicitly_non_hpairs(row)
+        and not _row_frontier_duplicate_filtered(row)
     ]
     selected: dict[str, str] = {}
     for row in eligible[:exploitation_count]:
@@ -743,6 +882,59 @@ def _row_with_rank_and_selection(
         frontier_bucket=frontier_bucket,
         microstructure_prefilter=dict(row.microstructure_prefilter),
         proof_semantics_label=row.proof_semantics_label,
+        candidate_frontier_hash=row.candidate_frontier_hash,
+        exact_replay_frontier_key=row.exact_replay_frontier_key,
+        frontier_dedupe_status=row.frontier_dedupe_status,
+        duplicate_of_candidate_spec_id=row.duplicate_of_candidate_spec_id,
+        duplicate_candidate_spec_ids=row.duplicate_candidate_spec_ids,
+    )
+
+
+def _row_with_frontier_dedupe(
+    *,
+    row: FastReplayPreviewRow,
+    frontier_dedupe_status: str,
+    duplicate_of_candidate_spec_id: str | None,
+    duplicate_candidate_spec_ids: tuple[str, ...],
+) -> FastReplayPreviewRow:
+    selection_reason = row.selection_reason
+    if frontier_dedupe_status == "duplicate_filtered":
+        selection_reason = "fast_replay_frontier_duplicate_filtered"
+    return FastReplayPreviewRow(
+        candidate_spec_id=row.candidate_spec_id,
+        rank=row.rank,
+        preview_score=row.preview_score,
+        selected=False,
+        selection_reason=selection_reason,
+        matched_row_count=row.matched_row_count,
+        matched_symbol_count=row.matched_symbol_count,
+        requested_symbol_count=row.requested_symbol_count,
+        trading_day_count=row.trading_day_count,
+        signed_return_bps=row.signed_return_bps,
+        avg_abs_return_bps=row.avg_abs_return_bps,
+        median_spread_bps=row.median_spread_bps,
+        activity_score=row.activity_score,
+        coverage_score=row.coverage_score,
+        ofi_pressure_score=row.ofi_pressure_score,
+        microprice_bias_bps=row.microprice_bias_bps,
+        spread_tail_bps=row.spread_tail_bps,
+        return_tail_abs_bps=row.return_tail_abs_bps,
+        impact_liquidity_penalty_bps=row.impact_liquidity_penalty_bps,
+        cluster_lob_activity_score=row.cluster_lob_activity_score,
+        ofi_decay_alignment_score=row.ofi_decay_alignment_score,
+        liquidity_regime_score=row.liquidity_regime_score,
+        macro_stress_veto_score=row.macro_stress_veto_score,
+        conformal_tail_risk_penalty_bps=row.conformal_tail_risk_penalty_bps,
+        square_root_impact_capacity_penalty_bps=row.square_root_impact_capacity_penalty_bps,
+        exploration_score=row.exploration_score,
+        frontier_bucket=row.frontier_bucket,
+        microstructure_prefilter=dict(row.microstructure_prefilter),
+        proof_semantics_label=row.proof_semantics_label,
+        candidate_frontier_hash=row.candidate_frontier_hash,
+        exact_replay_frontier_key=row.exact_replay_frontier_key,
+        frontier_dedupe_status=frontier_dedupe_status,
+        duplicate_of_candidate_spec_id=duplicate_of_candidate_spec_id,
+        duplicate_candidate_spec_ids=duplicate_candidate_spec_ids,
     )
 
 
@@ -916,6 +1108,49 @@ def _square_root_impact_capacity_penalty_bps(
 
 def _candidate_notional(spec: CandidateSpec) -> float:
     return _float_or_none(spec.strategy_overrides.get("max_notional_per_trade")) or 0.0
+
+
+def _candidate_frontier_hash(spec: CandidateSpec) -> str:
+    """Hash the exact-replay execution identity, excluding hypothesis lineage.
+
+    Two candidate specs with different paper or hypothesis lineage but identical
+    runtime parameters produce the same offline replay target. The preview can
+    keep both rows for auditability while allowing only one representative into
+    the bounded exact-replay handoff.
+    """
+
+    return _stable_hash(
+        {
+            "schema_version": FAST_REPLAY_FRONTIER_IDENTITY_SCHEMA_VERSION,
+            "candidate_kind": spec.candidate_kind,
+            "family_template_id": spec.family_template_id,
+            "runtime_family": spec.runtime_family,
+            "runtime_strategy_name": spec.runtime_strategy_name,
+            "strategy_overrides": spec.strategy_overrides,
+            "objective": spec.objective,
+            "hard_vetoes": spec.hard_vetoes,
+        }
+    )
+
+
+def _exact_replay_frontier_key(
+    *,
+    replay_tape_manifest: ReplayTapeManifest,
+    candidate_frontier_hash: str,
+) -> str:
+    return _stable_hash(
+        {
+            "schema_version": FAST_REPLAY_EXACT_FRONTIER_KEY_SCHEMA_VERSION,
+            "replay_cache_key": replay_tape_manifest.replay_cache_key,
+            "dataset_snapshot_ref": replay_tape_manifest.dataset_snapshot_ref,
+            "source_query_digest": replay_tape_manifest.source_query_digest,
+            "source_table_versions": dict(replay_tape_manifest.source_table_versions),
+            "feature_schema_hash": replay_tape_manifest.feature_schema_hash,
+            "cost_model_hash": replay_tape_manifest.cost_model_hash,
+            "strategy_family": replay_tape_manifest.strategy_family,
+            "candidate_frontier_hash": candidate_frontier_hash,
+        }
+    )
 
 
 def _candidate_symbols(spec: CandidateSpec) -> tuple[str, ...]:
@@ -1202,6 +1437,30 @@ def _mapping(value: Any) -> dict[str, Any]:
         return {}
     mapping = cast(Mapping[Any, Any], value)
     return {str(key): item for key, item in mapping.items()}
+
+
+def _stable_hash(payload: Mapping[str, Any]) -> str:
+    encoded = json.dumps(
+        _json_ready(payload),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _json_ready(value: Any) -> Any:
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, Mapping):
+        mapping = cast(Mapping[Any, Any], value)
+        ready: dict[str, Any] = {}
+        for key in sorted(mapping.keys(), key=str):
+            ready[str(key)] = _json_ready(mapping[key])
+        return ready
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        sequence = cast(Sequence[Any], value)
+        return [_json_ready(item) for item in sequence]
+    return value
 
 
 def _string(value: Any) -> str:

@@ -459,7 +459,12 @@ class TestFastReplayPreview(TestCase):
                 source_query_digest=build_source_query_digest({"window": "cap"}),
             )
         specs = tuple(
-            self._spec(f"spec-{index}", symbols=["AAA"]) for index in range(8)
+            self._spec(
+                f"spec-{index}",
+                symbols=["AAA"],
+                max_notional_per_trade=str(2500 + index),
+            )
+            for index in range(8)
         )
 
         preview = build_fast_replay_preview(
@@ -487,4 +492,89 @@ class TestFastReplayPreview(TestCase):
                 "exploration",
                 "exploration",
             ],
+        )
+
+    def test_frontier_selection_dedupes_equivalent_exact_replay_targets(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            rows = [
+                self._signal(
+                    symbol="AAA", offset=index, price=str(100 + index), ofi="0.50"
+                )
+                for index in range(1, 6)
+            ]
+            manifest = materialize_signal_tape(
+                rows=rows,
+                tape_path=Path(tmpdir) / "tape.jsonl",
+                dataset_snapshot_ref="snapshot-dedupe",
+                symbols=("AAA",),
+                start_date=date(2026, 2, 23),
+                end_date=date(2026, 2, 23),
+                source_query_digest=build_source_query_digest({"window": "dedupe"}),
+                feature_schema_hash="feature-dedupe",
+                cost_model_hash="cost-dedupe",
+                strategy_family="hpairs-dedupe",
+            )
+        representative = self._spec("spec-a-representative", symbols=["AAA"])
+        duplicate = self._spec("spec-b-duplicate", symbols=["AAA"])
+        unique = self._spec(
+            "spec-c-unique",
+            symbols=["AAA"],
+            max_notional_per_trade="5000",
+        )
+
+        preview = build_fast_replay_preview(
+            specs=(representative, duplicate, unique),
+            rows=rows,
+            replay_tape_manifest=manifest,
+            top_k=3,
+            min_rows_per_candidate=2,
+            exploitation_count=3,
+            exploration_count=0,
+            exact_replay_candidate_cap=3,
+        )
+
+        self.assertEqual(
+            preview.selected_candidate_spec_ids,
+            ("spec-a-representative", "spec-c-unique"),
+        )
+        payloads = {row.candidate_spec_id: row.to_payload() for row in preview.rows}
+        representative_payload = payloads["spec-a-representative"]
+        duplicate_payload = payloads["spec-b-duplicate"]
+        self.assertEqual(
+            representative_payload["frontier_dedupe_status"], "representative"
+        )
+        self.assertEqual(
+            duplicate_payload["frontier_dedupe_status"], "duplicate_filtered"
+        )
+        self.assertEqual(
+            duplicate_payload["selection_reason"],
+            "fast_replay_frontier_duplicate_filtered",
+        )
+        self.assertFalse(duplicate_payload["selected"])
+        self.assertEqual(
+            duplicate_payload["duplicate_of_candidate_spec_id"],
+            "spec-a-representative",
+        )
+        self.assertEqual(
+            representative_payload["candidate_frontier_hash"],
+            duplicate_payload["candidate_frontier_hash"],
+        )
+        self.assertEqual(
+            representative_payload["exact_replay_frontier_key"],
+            duplicate_payload["exact_replay_frontier_key"],
+        )
+        self.assertFalse(
+            duplicate_payload["frontier_dedupe_metadata"]["proof_authority"]
+        )
+        self.assertFalse(
+            duplicate_payload["frontier_dedupe_metadata"]["promotion_allowed"]
+        )
+        manifest_payload = preview.to_manifest_payload()
+        self.assertEqual(
+            manifest_payload["frontier_dedupe_policy"]["status"], "enabled"
+        )
+        self.assertFalse(
+            manifest_payload["frontier_dedupe_policy"]["promotion_allowed"]
         )
