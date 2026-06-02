@@ -2339,12 +2339,15 @@ def _next_paper_route_runtime_window_targets(
                 health_gate=health_gate,
             )
         )
+        paper_probation_or_source_collection_satisfied = (
+            paper_probation_satisfied or source_collection_authorized
+        )
         evidence_collection_blockers = _unique_text_items(
             [
                 *collection_session_blockers,
                 *(
                     []
-                    if paper_probation_satisfied
+                    if paper_probation_or_source_collection_satisfied
                     else [
                         "paper_probation_prerequisites_not_satisfied_for_bounded_collection"
                     ]
