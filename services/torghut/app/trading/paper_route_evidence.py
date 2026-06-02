@@ -7012,32 +7012,10 @@ def build_paper_route_target_plan_payload(
         generated_at=resolved_generated_at,
         target_account_audit_available=target_account_audit_available,
     )
-    closed_window_start, closed_window_end = (
-        _latest_closed_regular_equities_session_window(resolved_generated_at)
-    )
-    latest_closed_targets = _next_paper_route_runtime_window_targets(
-        session=session,
-        targets=targets,
-        probe=probe,
-        live_submission_gate=live_submission_gate,
-        generated_at=resolved_generated_at,
-        require_clean_pre_session=False,
-        window_start=closed_window_start,
-        window_end=closed_window_end,
-        purpose="latest_closed_session_paper_route_runtime_window_import",
-        target_account_audit_available=target_account_audit_available,
-    )
-    source_targets = _next_paper_route_runtime_window_targets(
-        session=session,
-        targets=targets,
-        probe=probe,
-        live_submission_gate=live_submission_gate,
-        generated_at=resolved_generated_at,
-        require_clean_pre_session=False,
-        target_account_audit_available=target_account_audit_available,
-    )
     runtime_window_import_plan = next_targets
     next_clean_after_discard_targets: Mapping[str, Any] = {}
+    latest_closed_targets: Mapping[str, Any] = {}
+    source_targets: Mapping[str, Any] = {}
     latest_closed_runtime_window_import_target_audits: (
         list[dict[str, object]] | None
     ) = None
@@ -7048,61 +7026,83 @@ def build_paper_route_target_plan_payload(
             selected=False,
         )
     )
-    latest_closed_runtime_window_import_plan = _runtime_window_import_plan_for_audit(
-        latest_closed_targets=latest_closed_targets,
-        next_targets=next_targets,
-    )
-    if (
-        latest_closed_runtime_window_import_plan is latest_closed_targets
-        and include_runtime_window_import_audit is not False
-    ):
-        latest_closed_runtime_window_import_target_audits = [
-            _target_audit_fail_closed(
-                session,
-                raw_target=target,
-                probe=probe,
-                generated_at=resolved_generated_at,
-                lookback_hours=DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
-                error_source="target_plan_runtime_window_target_audit",
+    if include_runtime_window_import_audit is not False:
+        closed_window_start, closed_window_end = (
+            _latest_closed_regular_equities_session_window(resolved_generated_at)
+        )
+        latest_closed_targets = _next_paper_route_runtime_window_targets(
+            session=session,
+            targets=targets,
+            probe=probe,
+            live_submission_gate=live_submission_gate,
+            generated_at=resolved_generated_at,
+            require_clean_pre_session=False,
+            window_start=closed_window_start,
+            window_end=closed_window_end,
+            purpose="latest_closed_session_paper_route_runtime_window_import",
+            target_account_audit_available=target_account_audit_available,
+        )
+        source_targets = _next_paper_route_runtime_window_targets(
+            session=session,
+            targets=targets,
+            probe=probe,
+            live_submission_gate=live_submission_gate,
+            generated_at=resolved_generated_at,
+            require_clean_pre_session=False,
+            target_account_audit_available=target_account_audit_available,
+        )
+        latest_closed_runtime_window_import_plan = (
+            _runtime_window_import_plan_for_audit(
+                latest_closed_targets=latest_closed_targets,
+                next_targets=next_targets,
             )
-            for target in _as_mapping_items(latest_closed_targets.get("targets"))
-        ]
-        latest_closed_importable = (
-            _target_audits_have_importable_source_backed_runtime_window_import_evidence(
+        )
+        if latest_closed_runtime_window_import_plan is latest_closed_targets:
+            latest_closed_runtime_window_import_target_audits = [
+                _target_audit_fail_closed(
+                    session,
+                    raw_target=target,
+                    probe=probe,
+                    generated_at=resolved_generated_at,
+                    lookback_hours=DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
+                    error_source="target_plan_runtime_window_target_audit",
+                )
+                for target in _as_mapping_items(latest_closed_targets.get("targets"))
+            ]
+            latest_closed_importable = _target_audits_have_importable_source_backed_runtime_window_import_evidence(
                 latest_closed_runtime_window_import_target_audits
             )
-        )
-        latest_closed_runtime_window_import_selection = (
-            _runtime_window_import_candidate_selection(
-                latest_closed_targets=latest_closed_targets,
-                latest_closed_target_audits=(
-                    latest_closed_runtime_window_import_target_audits
-                ),
-                selected=latest_closed_importable,
+            latest_closed_runtime_window_import_selection = (
+                _runtime_window_import_candidate_selection(
+                    latest_closed_targets=latest_closed_targets,
+                    latest_closed_target_audits=(
+                        latest_closed_runtime_window_import_target_audits
+                    ),
+                    selected=latest_closed_importable,
+                )
             )
-        )
-        if latest_closed_importable:
-            runtime_window_import_plan = latest_closed_targets
-        elif _runtime_window_import_candidate_discard_blockers(
-            latest_closed_runtime_window_import_target_audits
-        ):
-            followup_window_start, followup_window_end = (
-                _following_regular_equities_session_window(closed_window_end)
-            )
-            next_clean_after_discard_targets = _next_paper_route_runtime_window_targets(
-                session=session,
-                targets=targets,
-                probe=probe,
-                live_submission_gate=live_submission_gate,
-                generated_at=resolved_generated_at,
-                window_start=followup_window_start,
-                window_end=followup_window_end,
-                purpose=(
-                    "next_clean_session_paper_route_runtime_window_collection_after_discard"
-                ),
-                target_account_audit_available=target_account_audit_available,
-            )
-            runtime_window_import_plan = next_clean_after_discard_targets
+            if latest_closed_importable:
+                runtime_window_import_plan = latest_closed_targets
+            elif _runtime_window_import_candidate_discard_blockers(
+                latest_closed_runtime_window_import_target_audits
+            ):
+                followup_window_start, followup_window_end = (
+                    _following_regular_equities_session_window(closed_window_end)
+                )
+                next_clean_after_discard_targets = _next_paper_route_runtime_window_targets(
+                    session=session,
+                    targets=targets,
+                    probe=probe,
+                    live_submission_gate=live_submission_gate,
+                    generated_at=resolved_generated_at,
+                    window_start=followup_window_start,
+                    window_end=followup_window_end,
+                    purpose=(
+                        "next_clean_session_paper_route_runtime_window_collection_after_discard"
+                    ),
+                    target_account_audit_available=target_account_audit_available,
+                )
+                runtime_window_import_plan = next_clean_after_discard_targets
     runtime_import_readiness = _as_mapping(
         runtime_window_import_plan.get("session_readiness")
     )

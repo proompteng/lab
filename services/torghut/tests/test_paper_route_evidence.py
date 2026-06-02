@@ -10,6 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
+import app.trading.paper_route_evidence as paper_route_evidence
 from app.models import (
     Base,
     Execution,
@@ -897,6 +898,45 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(
             import_audit["counts"]["selected_target_count"],
             1,
+        )
+
+    def test_target_plan_deferred_mode_builds_only_next_window(self) -> None:
+        generated_at = datetime(2026, 5, 26, 12, tzinfo=timezone.utc)
+        window_purposes: list[str] = []
+        original_builder = paper_route_evidence._next_paper_route_runtime_window_targets
+
+        def _record_window_build(*args: object, **kwargs: object) -> dict[str, object]:
+            window_purposes.append(str(kwargs.get("purpose") or "next_session"))
+            return original_builder(*args, **kwargs)
+
+        with Session(self.engine) as session:
+            with patch(
+                "app.trading.paper_route_evidence._next_paper_route_runtime_window_targets",
+                side_effect=_record_window_build,
+            ):
+                payload = self._build_basic_paper_route_target_plan(
+                    session,
+                    generated_at=generated_at,
+                    include_runtime_window_import_audit=False,
+                )
+
+        self.assertEqual(window_purposes, ["next_session"])
+        self.assertEqual(payload["source_runtime_window_import_plan"], {})
+        self.assertEqual(
+            payload["latest_closed_paper_route_runtime_window_targets"], {}
+        )
+        self.assertEqual(
+            payload["runtime_window_import_audit_mode"],
+            "deferred_until_import_ready",
+        )
+        self.assertEqual(payload["runtime_window_import_plan"]["target_count"], 1)
+        self.assertEqual(
+            payload["summary"]["source_runtime_window_target_count"],
+            0,
+        )
+        self.assertEqual(
+            payload["summary"]["latest_closed_runtime_window_target_count"],
+            0,
         )
 
     def test_target_plan_auto_runs_full_runtime_window_audit_when_import_ready(
