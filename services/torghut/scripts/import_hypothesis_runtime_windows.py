@@ -80,9 +80,13 @@ EXACT_REPLAY_ARTIFACT_AUTHORITY_BLOCKERS = (
 RUNTIME_LEDGER_SOURCE_WINDOW_MISSING_BLOCKER = "runtime_ledger_source_window_missing"
 RUNTIME_LEDGER_CARRY_IN_LOOKBACK = timedelta(days=5)
 RUNTIME_LEDGER_SOURCE_REFS_MISSING_BLOCKER = "runtime_ledger_source_refs_missing"
+RUNTIME_LEDGER_EXECUTION_TCA_REFS_MISSING_BLOCKER = (
+    "runtime_ledger_execution_tca_refs_missing"
+)
 RUNTIME_LEDGER_AUTHORITY_CLASS_MISSING_BLOCKER = (
     "runtime_ledger_authority_class_missing"
 )
+EXECUTION_TCA_MISSING_BLOCKER = "execution_tca_missing"
 _RUNTIME_LEDGER_PROMOTION_GRADE_AUTHORITY_MARKERS = frozenset(
     {
         "runtime_order_feed_execution_source",
@@ -1064,6 +1068,28 @@ def _runtime_ledger_bucket_profit_proof_blockers(
         add("runtime_ledger_schema_not_supported")
     for blocker in runtime_ledger_promotion_source_authority_blockers(bucket):
         add(blocker)
+    execution_count = _nonnegative_int(
+        _as_mapping(bucket.get("source_row_counts")).get("executions")
+    )
+    tca_count = _nonnegative_int(
+        _as_mapping(bucket.get("source_row_counts")).get("execution_tca_metrics")
+    )
+    execution_tca_ref_count = len(
+        _metadata_text_list(bucket.get("execution_tca_metric_ids"))
+        or _metadata_text_list(bucket.get("execution_tca_metric_refs"))
+        or _metadata_text_list(bucket.get("execution_tca_metrics"))
+    )
+    execution_tca_required = (
+        _first_bool(bucket, "execution_tca_required", "requires_execution_tca") is True
+        or tca_count > 0
+    )
+    if (
+        execution_tca_required
+        and execution_count > 0
+        and (tca_count < execution_count or execution_tca_ref_count < execution_count)
+    ):
+        add(EXECUTION_TCA_MISSING_BLOCKER)
+        add(RUNTIME_LEDGER_EXECUTION_TCA_REFS_MISSING_BLOCKER)
     for blocker in _metadata_text_list(bucket.get("blockers")):
         add(blocker)
     if _first_bool(bucket, "order_feed_lifecycle_complete") is False:
@@ -1213,6 +1239,7 @@ def _with_runtime_ledger_source_authority_context(
     source_row_counts: Mapping[str, int],
     trade_decision_ids: Sequence[object] = (),
     execution_ids: Sequence[object] = (),
+    execution_tca_metric_ids: Sequence[object] = (),
     execution_order_event_ids: Sequence[object] = (),
     source_window_ids: Sequence[object] = (),
     source_offsets: Sequence[Mapping[str, object]] = (),
@@ -1222,6 +1249,7 @@ def _with_runtime_ledger_source_authority_context(
     source_window_gap_ranges: Sequence[Mapping[str, object]] = (),
     order_feed_lifecycle_complete: bool | None = None,
     execution_economics_complete: bool | None = None,
+    execution_tca_required: bool | None = None,
     source_materialization: str | None = None,
     authority_class: str | None = None,
     authority_reason: str | None = None,
@@ -1235,6 +1263,7 @@ def _with_runtime_ledger_source_authority_context(
     for key, values in (
         ("trade_decision_ids", trade_decision_ids),
         ("execution_ids", execution_ids),
+        ("execution_tca_metric_ids", execution_tca_metric_ids),
         ("execution_order_event_ids", execution_order_event_ids),
         ("source_window_ids", source_window_ids),
     ):
@@ -1307,6 +1336,8 @@ def _with_runtime_ledger_source_authority_context(
         payload["order_feed_lifecycle_complete"] = order_feed_lifecycle_complete
     if execution_economics_complete is not None:
         payload["execution_economics_complete"] = execution_economics_complete
+    if execution_tca_required is not None:
+        payload["execution_tca_required"] = execution_tca_required
     if source_materialization:
         payload.setdefault("source_materialization", source_materialization)
     if authority_class:
@@ -1477,6 +1508,30 @@ def _decision_lifecycle_query_row_has_time(row: Sequence[object]) -> bool:
 
 
 def _execution_query_row(row: Sequence[object]) -> dict[str, object]:
+    if len(row) >= 20:
+        return {
+            "execution_id": str(row[0]),
+            "trade_decision_id": str(row[1]),
+            "decision_created_at": row[2],
+            "computed_at": row[3],
+            "execution_event_at": row[3],
+            "execution_created_at": row[4],
+            "symbol": row[5],
+            "side": row[6],
+            "filled_qty": row[7],
+            "avg_fill_price": row[8],
+            "shortfall_notional": row[9],
+            "execution_audit_json": row[10],
+            "raw_order": row[11],
+            "account_label": row[12],
+            "strategy_id": row[13],
+            "decision_hash": row[14],
+            "decision_json": row[15],
+            "alpaca_order_id": row[16],
+            "client_order_id": row[17],
+            "order_status": row[18],
+            "execution_tca_metric_id": str(row[19]) if row[19] is not None else None,
+        }
     if len(row) >= 19:
         return {
             "execution_id": str(row[0]),
@@ -3126,6 +3181,31 @@ def _execution_fill_economics_order_ids(
     return order_ids
 
 
+def _execution_tca_order_ids(
+    rows: Sequence[Mapping[str, object]],
+) -> set[str]:
+    order_ids: set[str] = set()
+    for row in rows:
+        if not _execution_row_has_fill(row):
+            continue
+        if (
+            _first_text(
+                row,
+                "execution_tca_metric_id",
+                "execution_tca_metric_ref",
+                "execution_tca_id",
+                "tca_metric_id",
+                "tca_id",
+            )
+            is None
+        ):
+            continue
+        order_id = _runtime_order_id(row)
+        if order_id is not None:
+            order_ids.add(order_id)
+    return order_ids
+
+
 def _runtime_source_context_for_bucket(
     *,
     bucket: RuntimeLedgerBucket,
@@ -3217,12 +3297,31 @@ def _runtime_source_context_for_bucket(
     execution_fill_order_ids = _execution_fill_economics_order_ids(
         bucket_execution_rows
     )
+    execution_tca_order_ids = _execution_tca_order_ids(bucket_execution_rows)
+    execution_tca_required = any(
+        _execution_row_has_fill(row)
+        and any(
+            key in row
+            for key in (
+                "execution_tca_metric_id",
+                "execution_tca_metric_ref",
+                "execution_tca_id",
+                "tca_metric_id",
+                "tca_id",
+            )
+        )
+        for row in bucket_execution_rows
+    )
     order_feed_fill_economics_complete = bool(
         expected_execution_fill_order_ids
     ) and expected_execution_fill_order_ids.issubset(event_sourced_fill_order_ids)
     execution_fill_economics_complete = bool(
         expected_execution_fill_order_ids
     ) and expected_execution_fill_order_ids.issubset(execution_fill_order_ids)
+    execution_tca_complete = bool(
+        expected_execution_fill_order_ids
+    ) and expected_execution_fill_order_ids.issubset(execution_tca_order_ids)
+    execution_tca_satisfied = (not execution_tca_required) or execution_tca_complete
     source_backed_fill_lifecycle_complete = bool(
         expected_execution_fill_order_ids
     ) and expected_execution_fill_order_ids.issubset(
@@ -3262,11 +3361,21 @@ def _runtime_source_context_for_bucket(
             expected_order_ids=expected_execution_fill_order_ids,
         )
     )
+    execution_tca_metric_ids = _source_identifier_values(
+        bucket_execution_rows,
+        "execution_tca_metric_id",
+        "execution_tca_metric_ref",
+        "execution_tca_id",
+        "tca_metric_id",
+        "tca_id",
+    )
     source_row_counts = {
         "trade_decisions": len(bucket_decision_rows),
         "executions": len(bucket_execution_rows),
         "execution_order_events": required_order_lifecycle_source_row_count,
     }
+    if execution_tca_metric_ids:
+        source_row_counts["execution_tca_metrics"] = len(execution_tca_metric_ids)
     if source_window_ids:
         source_row_counts["order_feed_source_windows"] = len(source_window_ids)
     elif required_order_lifecycle_source_row_count > 0:
@@ -3276,6 +3385,7 @@ def _runtime_source_context_for_bucket(
         for table, ref in (
             ("trade_decisions", "postgres:trade_decisions"),
             ("executions", "postgres:executions"),
+            ("execution_tca_metrics", "postgres:execution_tca_metrics"),
             ("execution_order_events", "postgres:execution_order_events"),
             ("order_feed_source_windows", "postgres:order_feed_source_windows"),
         )
@@ -3300,12 +3410,14 @@ def _runtime_source_context_for_bucket(
         "execution_order_event_id",
     )
     if source_offsets and execution_order_event_ids:
-        if order_feed_fill_economics_complete:
+        if order_feed_fill_economics_complete and execution_tca_satisfied:
             source_materialization = "execution_order_events"
             authority_class = "runtime_order_feed_execution_source"
             authority_reason = "event_sourced_runtime_ledger_profit_proof"
         elif (
-            execution_fill_economics_complete and source_backed_order_lifecycle_complete
+            execution_fill_economics_complete
+            and execution_tca_satisfied
+            and source_backed_order_lifecycle_complete
         ):
             source_materialization = "source_execution_lifecycle"
             authority_class = "source_execution_lifecycle_materialized_runtime_ledger"
@@ -3339,6 +3451,7 @@ def _runtime_source_context_for_bucket(
             [*bucket_execution_rows, *bucket_order_rows],
             "execution_id",
         ),
+        "execution_tca_metric_ids": execution_tca_metric_ids,
         "execution_order_event_ids": execution_order_event_ids,
         "source_window_status_counts": source_window_status_counts,
         "source_window_classification_counts": source_window_classification_counts,
@@ -3350,8 +3463,11 @@ def _runtime_source_context_for_bucket(
         "authority_reason": authority_reason,
         "order_feed_lifecycle_complete": source_backed_order_lifecycle_complete,
         "fill_economics_complete": (
-            order_feed_fill_economics_complete or execution_fill_economics_complete
+            (order_feed_fill_economics_complete or execution_fill_economics_complete)
+            and execution_tca_satisfied
         ),
+        "execution_tca_required": execution_tca_required,
+        "execution_tca_complete": execution_tca_complete,
         "order_feed_fill_lifecycle_blockers": _order_feed_fill_lifecycle_blockers(
             execution_rows=bucket_execution_rows,
             order_lifecycle_rows=bucket_order_rows,
@@ -3911,6 +4027,9 @@ def _build_realized_strategy_pnl_rows(
         source_row_counts = cast(dict[str, int], source_context["source_row_counts"])
         trade_decision_ids = cast(list[str], source_context["trade_decision_ids"])
         execution_ids = cast(list[str], source_context["execution_ids"])
+        execution_tca_metric_ids = cast(
+            list[str], source_context["execution_tca_metric_ids"]
+        )
         execution_order_event_ids = cast(
             list[str], source_context["execution_order_event_ids"]
         )
@@ -3939,9 +4058,30 @@ def _build_realized_strategy_pnl_rows(
             source_context["order_feed_lifecycle_complete"]
         )
         fill_economics_complete = bool(source_context["fill_economics_complete"])
+        execution_tca_required = bool(source_context["execution_tca_required"])
+        execution_tca_complete = bool(source_context["execution_tca_complete"])
         bucket_order_feed_fill_lifecycle_blockers = cast(
             list[str], source_context["order_feed_fill_lifecycle_blockers"]
         )
+        bucket_source_materialization_blockers = list(
+            bucket_order_feed_fill_lifecycle_blockers
+        )
+        if (
+            execution_tca_required
+            and not execution_tca_complete
+            and EXECUTION_TCA_MISSING_BLOCKER
+            not in bucket_source_materialization_blockers
+        ):
+            bucket_source_materialization_blockers.append(EXECUTION_TCA_MISSING_BLOCKER)
+        if (
+            execution_tca_required
+            and not execution_tca_complete
+            and RUNTIME_LEDGER_EXECUTION_TCA_REFS_MISSING_BLOCKER
+            not in bucket_source_materialization_blockers
+        ):
+            bucket_source_materialization_blockers.append(
+                RUNTIME_LEDGER_EXECUTION_TCA_REFS_MISSING_BLOCKER
+            )
         equity_denominator = cast(
             tuple[Decimal, str] | None, source_context["equity_denominator"]
         )
@@ -3994,6 +4134,7 @@ def _build_realized_strategy_pnl_rows(
                 source_row_counts=source_row_counts,
                 trade_decision_ids=trade_decision_ids,
                 execution_ids=execution_ids,
+                execution_tca_metric_ids=execution_tca_metric_ids,
                 execution_order_event_ids=execution_order_event_ids,
                 source_window_ids=source_window_ids,
                 source_offsets=source_offsets,
@@ -4003,6 +4144,7 @@ def _build_realized_strategy_pnl_rows(
                 source_window_gap_ranges=source_window_gap_ranges,
                 order_feed_lifecycle_complete=order_feed_lifecycle_complete,
                 execution_economics_complete=fill_economics_complete,
+                execution_tca_required=execution_tca_required,
                 source_materialization=source_materialization,
                 authority_class=authority_class,
                 authority_reason=authority_reason,
@@ -4011,7 +4153,7 @@ def _build_realized_strategy_pnl_rows(
         source_backed_runtime_ledger = (
             allow_authoritative_runtime_ledger_materialization
             and fill_economics_complete
-            and not bucket_order_feed_fill_lifecycle_blockers
+            and not bucket_source_materialization_blockers
             and isinstance(bucket_payload, Mapping)
             and not runtime_ledger_promotion_source_authority_blockers(bucket_payload)
         )
@@ -4085,7 +4227,7 @@ def _build_realized_strategy_pnl_rows(
                 "execution_reconstruction_not_runtime_ledger_proof"
             )
             blockers = list(row.get("runtime_ledger_blockers") or [])
-            for blocker in bucket_order_feed_fill_lifecycle_blockers:
+            for blocker in bucket_source_materialization_blockers:
                 if blocker not in blockers:
                     blockers.append(blocker)
             if isinstance(bucket_payload, Mapping):
@@ -4998,7 +5140,8 @@ def _query_timestamps(
                     d.decision_json,
                     e.alpaca_order_id,
                     e.client_order_id,
-                    e.status
+                    e.status,
+                    t.id
                 from executions e
                 join trade_decisions d on d.id = e.trade_decision_id
                 join strategies s on s.id = d.strategy_id
@@ -5309,7 +5452,8 @@ def _query_timestamps(
                         d.decision_json,
                         e.alpaca_order_id,
                         e.client_order_id,
-                        e.status
+                        e.status,
+                        t.id
                     from executions e
                     join trade_decisions d on d.id = e.trade_decision_id
                     join strategies s on s.id = d.strategy_id

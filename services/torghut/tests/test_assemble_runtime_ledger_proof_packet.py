@@ -291,6 +291,7 @@ def _runtime_import(
             if authoritative
             else [],
             "execution_ids": ["execution-1"] if authoritative else [],
+            "execution_tca_metric_ids": ["tca-1"] if authoritative else [],
             "trade_decision_ids": ["decision-1"] if authoritative else [],
             "source_offsets": [
                 {"topic": "alpaca.trade_updates", "partition": 0, "offset": 42}
@@ -610,6 +611,44 @@ class TestRuntimeLedgerProofPacket(TestCase):
 
         self.assertEqual(packet._decimal(Decimal("12.5")), Decimal("12.5"))
         self.assertIsNone(packet._decimal("not-a-number"))
+
+    def test_runtime_import_readback_blocks_missing_execution_tca_refs(self) -> None:
+        blockers = packet._runtime_import_readback_blockers(
+            target={
+                "metric_window_count": 0,
+                "promotion_decision_count": 0,
+                "runtime_ledger_bucket_count": 0,
+                "evidence_grade_runtime_ledger_bucket_count": 0,
+            },
+            readback={
+                "schema_version": "torghut.runtime-window-import-readback.v1",
+                "metric_window_count": 0,
+                "promotion_decision_count": 0,
+                "runtime_ledger_bucket_count": 0,
+                "evidence_grade_runtime_ledger_bucket_count": 0,
+                "source_refs": [
+                    "postgres:trade_decisions",
+                    "postgres:executions",
+                    "postgres:execution_order_events",
+                    "postgres:order_feed_source_windows",
+                ],
+                "runtime_ledger_source_window_ids": ["source-window-1"],
+                "runtime_ledger_execution_order_event_ids": ["event-1"],
+                "execution_ids": ["execution-1"],
+                "trade_decision_ids": ["decision-1"],
+                "source_offsets": [
+                    {"topic": "alpaca.trade_updates", "partition": 0, "offset": 42}
+                ],
+                "source_materializations": ["execution_order_events"],
+                "authority_classes": ["runtime_order_feed_execution_source"],
+                "runtime_ledger_cost_amount": "0.01",
+                "cost_basis_counts": {"broker_reported_commission_and_fees": 1},
+            },
+            profit_proof_count=1,
+        )
+
+        self.assertIn("runtime_ledger_execution_tca_refs_missing", blockers)
+        self.assertIn("execution_tca_missing", blockers)
 
     def test_ceph_client_from_env_uses_direct_empirical_endpoint(self) -> None:
         with patch.dict(
@@ -3149,6 +3188,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
                             "runtime_ledger_source_window_ids": ["source-window-1"],
                             "runtime_ledger_execution_order_event_ids": ["event-1"],
                             "execution_ids": ["execution-1"],
+                            "execution_tca_metric_ids": ["tca-1"],
                             "trade_decision_ids": ["decision-1"],
                             "source_offsets": [
                                 {
