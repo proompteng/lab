@@ -12,7 +12,7 @@ from decimal import ROUND_CEILING, Decimal
 from typing import Any, Optional, cast
 
 from sqlalchemy import func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 
 from ..config import settings
 from ..models import Execution, ExecutionTCAMetric, TradeDecision
@@ -38,6 +38,11 @@ ADAPTIVE_EXECUTION_SLOWDOWN = Decimal("1.40")
 ADAPTIVE_EXECUTION_SPEEDUP = Decimal("0.85")
 EXECUTION_TCA_COST_LINEAGE_SCHEMA_VERSION = "torghut.execution-tca-cost-lineage.v1"
 POST_COST_PNL_BASIS = "realized_strategy_pnl_after_explicit_costs"
+_TCA_STATUS_LINEAGE_SAMPLE_DEFAULT_LIMIT = 200
+_TCA_STATUS_LINEAGE_SAMPLE_MAX_LIMIT = 1000
+_TCA_STATUS_LINEAGE_SAMPLE_TRUNCATED_BLOCKER = (
+    "runtime_tca_cost_lineage_sample_truncated"
+)
 _CENT = Decimal("0.01")
 _ALPACA_2026_EQUITY_SEC_FEE_RATE = Decimal("20.60") / Decimal("1000000")
 _ALPACA_2026_EQUITY_TAF_RATE_PER_SHARE = Decimal("0.000195")
@@ -896,11 +901,13 @@ def build_tca_gate_inputs(
         account_label=normalized_account_label,
         symbols=normalized_symbols,
     )
+    filled_execution_count = int(execution_count or 0)
     runtime_ledger_lineage = _build_tca_runtime_ledger_lineage_summary(
         session,
         strategy_id=strategy_id,
         account_label=normalized_account_label,
         symbols=normalized_symbols,
+        total_filled_execution_count=filled_execution_count,
     )
     return {
         "account_label": normalized_account_label or None,
@@ -940,7 +947,7 @@ def build_tca_gate_inputs(
         else Decimal("0"),
         "avg_calibration_error_bps": avg_calibration_error_bps,
         "last_computed_at": last_computed_at,
-        "filled_execution_count": int(execution_count or 0),
+        "filled_execution_count": filled_execution_count,
         "latest_execution_created_at": latest_execution_created_at,
         "unsettled_execution_count": unsettled_execution_count,
         "symbol_breakdown": symbol_breakdown,
@@ -988,9 +995,19 @@ def _build_tca_runtime_ledger_lineage_summary(
     strategy_id: str | None,
     account_label: str,
     symbols: tuple[str, ...],
+    total_filled_execution_count: int | None = None,
 ) -> dict[str, object]:
+    sample_limit = _tca_status_lineage_sample_limit()
     stmt = (
         select(Execution)
+        .options(
+            load_only(
+                Execution.id,
+                Execution.alpaca_order_id,
+                Execution.symbol,
+                Execution.execution_audit_json,
+            )
+        )
         .join(ExecutionTCAMetric, ExecutionTCAMetric.execution_id == Execution.id)
         .where(
             Execution.avg_fill_price.is_not(None),
@@ -1003,7 +1020,79 @@ def _build_tca_runtime_ledger_lineage_summary(
         stmt = stmt.where(Execution.alpaca_account_label == account_label)
     if symbols:
         stmt = stmt.where(Execution.symbol.in_(symbols))
-    return _execution_lineage_summary(session.execute(stmt).scalars().all())
+    stmt = stmt.order_by(Execution.created_at.desc(), Execution.id.desc()).limit(
+        sample_limit + 1
+    )
+    sampled_executions = list(session.execute(stmt).scalars())
+    query_truncated = len(sampled_executions) > sample_limit
+    executions = sampled_executions[:sample_limit]
+    summary = _execution_lineage_summary(executions)
+    sampled_count = len(executions)
+    known_total = (
+        max(0, int(total_filled_execution_count))
+        if total_filled_execution_count is not None
+        else None
+    )
+    known_truncated = known_total is not None and known_total > sampled_count
+    truncated = query_truncated or known_truncated
+    summary.update(
+        {
+            "bounded": True,
+            "coverage_exact": not truncated,
+            "query_limit": sample_limit,
+            "sampled_execution_count": sampled_count,
+            "truncated": truncated,
+        }
+    )
+    if known_total is not None:
+        summary["total_filled_execution_count"] = known_total
+    if truncated:
+        _mark_tca_lineage_summary_fail_closed(
+            summary,
+            reason=_TCA_STATUS_LINEAGE_SAMPLE_TRUNCATED_BLOCKER,
+            missing_count=max(1, (known_total or sampled_count + 1) - sampled_count),
+        )
+    return summary
+
+
+def _tca_status_lineage_sample_limit() -> int:
+    configured_limit = getattr(
+        settings,
+        "trading_tca_status_lineage_sample_limit",
+        _TCA_STATUS_LINEAGE_SAMPLE_DEFAULT_LIMIT,
+    )
+    try:
+        parsed_limit = int(configured_limit)
+    except (TypeError, ValueError):
+        parsed_limit = _TCA_STATUS_LINEAGE_SAMPLE_DEFAULT_LIMIT
+    return max(1, min(parsed_limit, _TCA_STATUS_LINEAGE_SAMPLE_MAX_LIMIT))
+
+
+def _mark_tca_lineage_summary_fail_closed(
+    summary: dict[str, object],
+    *,
+    reason: str,
+    missing_count: int,
+) -> None:
+    blockers = [
+        str(blocker)
+        for blocker in cast(Collection[object], summary.get("blockers") or [])
+    ]
+    if reason not in blockers:
+        blockers.append(reason)
+    blocker_counts: dict[str, int] = {}
+    for key, value in cast(
+        Mapping[object, object], summary.get("blocker_counts") or {}
+    ).items():
+        try:
+            blocker_counts[str(key)] = int(cast(Any, value))
+        except (TypeError, ValueError):
+            blocker_counts[str(key)] = 1
+    blocker_counts[reason] = max(1, missing_count)
+    summary["status"] = "blocked"
+    summary["blockers"] = blockers
+    summary["blocker_counts"] = dict(sorted(blocker_counts.items()))
+    summary["promotion_authority"] = False
 
 
 def _execution_lineage_summary(executions: Collection[Execution]) -> dict[str, object]:

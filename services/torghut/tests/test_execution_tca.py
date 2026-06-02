@@ -8,6 +8,7 @@ from unittest import TestCase
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.config import settings
 from app.models import Base, Execution, ExecutionTCAMetric, Strategy, TradeDecision
 from app.trading.tca import (
     build_tca_gate_inputs,
@@ -70,6 +71,59 @@ class TestExecutionTcaCostLineage(TestCase):
         self.assertEqual(runtime_lineage["status"], "source_backed")
         self.assertEqual(runtime_lineage["source_backed_count"], 1)
         self.assertEqual(runtime_lineage["explicit_cost_count"], 1)
+        self.assertTrue(runtime_lineage["coverage_exact"])
+
+    def test_build_tca_gate_inputs_bounds_lineage_sample_fail_closed(self) -> None:
+        original_limit = settings.trading_tca_status_lineage_sample_limit
+        settings.trading_tca_status_lineage_sample_limit = 1
+        self.addCleanup(
+            setattr,
+            settings,
+            "trading_tca_status_lineage_sample_limit",
+            original_limit,
+        )
+
+        with self.session_local() as session:
+            strategy = self._insert_strategy(session)
+            for idx in range(3):
+                decision = self._insert_decision(
+                    session,
+                    strategy,
+                    decision_hash=f"source-backed-decision-{idx}",
+                    execution_policy={"version": "adaptive-limit-v1"},
+                )
+                execution = self._insert_execution(
+                    session,
+                    decision,
+                    order_id=f"source-backed-order-{idx}",
+                    raw_order={
+                        "commission": "0.02",
+                        "cost_model": {"source": "broker_reported_commission"},
+                    },
+                )
+                upsert_execution_tca_metric(session, execution)
+            session.flush()
+
+            tca_inputs = build_tca_gate_inputs(
+                session,
+                strategy_id=str(strategy.id),
+                account_label="paper",
+                symbols=["AAPL"],
+            )
+
+        runtime_lineage = tca_inputs["runtime_ledger_lineage"]
+        assert isinstance(runtime_lineage, dict)
+        self.assertEqual(runtime_lineage["status"], "blocked")
+        self.assertFalse(runtime_lineage["coverage_exact"])
+        self.assertTrue(runtime_lineage["truncated"])
+        self.assertEqual(runtime_lineage["query_limit"], 1)
+        self.assertEqual(runtime_lineage["sampled_execution_count"], 1)
+        self.assertEqual(runtime_lineage["total_filled_execution_count"], 3)
+        self.assertFalse(runtime_lineage["promotion_authority"])
+        self.assertIn(
+            "runtime_tca_cost_lineage_sample_truncated",
+            runtime_lineage["blockers"],
+        )
 
     def test_upsert_blocks_missing_explicit_cost_without_inference(self) -> None:
         with self.session_local() as session:
