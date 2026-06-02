@@ -301,6 +301,9 @@ def _runtime_import(
             "authority_classes": ["runtime_order_feed_execution_source"]
             if authoritative
             else [],
+            "authority_reasons": ["event_sourced_runtime_ledger_profit_proof"]
+            if authoritative
+            else [],
             "source_materializations": ["execution_order_events"]
             if authoritative
             else [],
@@ -2494,6 +2497,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
         readback["source_offsets"] = []
         readback["source_materializations"] = []
         readback["authority_classes"] = []
+        readback["authority_reasons"] = []
         readback["runtime_ledger_cost_amount"] = None
         readback["cost_basis_counts"] = {}
 
@@ -2536,6 +2540,40 @@ class TestRuntimeLedgerProofPacket(TestCase):
         )
         self.assertIn(
             "runtime_ledger_explicit_costs_missing", materialization["blockers"]
+        )
+
+    def test_packet_blocks_authority_when_readback_lacks_authority_reason(
+        self,
+    ) -> None:
+        runtime_import = _runtime_import()
+        target = runtime_import["imports"][0]["summary"][
+            "runtime_materialization_target"
+        ]
+        assert isinstance(target, dict)
+        readback = target["readback"]
+        assert isinstance(readback, dict)
+        readback["authority_reasons"] = []
+
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            proof_mode="authority",
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=runtime_import,
+            completion_status=_completion(),
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        materialization = result["evidence"]["runtime_window_import"]["materialization"]
+        self.assertFalse(result["ok"])
+        self.assertFalse(
+            result["checks"]["runtime_window_import_materialization"]["passed"]
+        )
+        self.assertIn(
+            "runtime_ledger_authority_class_missing", materialization["blockers"]
+        )
+        self.assertIn(
+            "runtime_ledger_authority_class_missing",
+            result["promotion_authority"]["blocking_reasons"],
         )
 
     def test_packet_does_not_treat_promotion_only_import_metadata_as_unmaterialized(
@@ -3125,6 +3163,9 @@ class TestRuntimeLedgerProofPacket(TestCase):
                             },
                             "authority_classes": [
                                 "runtime_order_feed_execution_source"
+                            ],
+                            "authority_reasons": [
+                                "event_sourced_runtime_ledger_profit_proof"
                             ],
                             "source_materializations": ["execution_order_events"],
                         },
