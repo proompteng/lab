@@ -26,6 +26,7 @@ from app.trading.tigerbeetle_journal import (
     build_order_event_transfer_plan,
     build_runtime_ledger_bucket_transfer_plan,
     submitted_pending_transfer_id,
+    tigerbeetle_stable_ref_payload,
 )
 from app.trading.tigerbeetle_ledger_model import (
     LEDGER_USD_MICRO,
@@ -50,6 +51,7 @@ from app.trading.tigerbeetle_reconcile import (
     BLOCKER_RUNTIME_LEDGER_METADATA_MISMATCH,
     BLOCKER_RUNTIME_LEDGER_SIGNED_REFS_MISSING,
     BLOCKER_SOURCE_ROW_MISSING,
+    BLOCKER_STABLE_REF_PAYLOAD_MISMATCH,
     BLOCKER_UNLINKED_COST,
     BLOCKER_UNLINKED_EXECUTION,
     BLOCKER_SOURCE_AMOUNT_MISMATCH,
@@ -64,6 +66,7 @@ from app.trading.tigerbeetle_reconcile import (
     _payload_int,
     _payload_string_list,
     _runtime_ledger_payload_account_ids,
+    _stable_ref_matches,
     _runtime_ledger_amount_micros,
     _usd_to_micros,
     _uuid_or_none,
@@ -710,6 +713,79 @@ class TestTigerBeetleReconcile(TestCase):
             )
             self.assertEqual(payload["runtime_ledger_missing_signed_ref_count"], 1)
             self.assertEqual(payload["runtime_ledger_missing_account_ref_count"], 2)
+
+    def test_reconciliation_blocks_stable_ref_payload_mismatch(self) -> None:
+        with Session(self.engine) as session:
+            bucket = _runtime_bucket(net_pnl=Decimal("2.50"))
+            session.add(bucket)
+            session.flush()
+            plan = build_runtime_ledger_bucket_transfer_plan(bucket)
+            self.assertIsNotNone(plan)
+            assert plan is not None
+            _add_account_refs_for_plan(session, plan)
+            transfer = plan.transfer_spec
+            stable_payload = tigerbeetle_stable_ref_payload(
+                cluster_id=2001,
+                account_specs=plan.account_specs,
+                transfer_spec=transfer,
+                source_type=SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                source_id=str(bucket.id),
+                payload_json={
+                    "runtime_key": plan.runtime_key,
+                    "debit_account_id": str(transfer.debit_account_id),
+                    "credit_account_id": str(transfer.credit_account_id),
+                },
+            )
+            stable_ref = stable_payload["stable_ref"]
+            assert isinstance(stable_ref, dict)
+            components = stable_ref["components"]
+            assert isinstance(components, dict)
+            components["source_id"] = "different-runtime-bucket"
+            payload_json = {
+                "source": SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                "run_id": bucket.run_id,
+                "candidate_id": bucket.candidate_id,
+                "hypothesis_id": bucket.hypothesis_id,
+                "observed_stage": bucket.observed_stage,
+                "pnl_basis": bucket.pnl_basis,
+                "ledger_schema_version": bucket.ledger_schema_version,
+                "amount_source": str(plan.amount_source),
+                "signed_amount_micros": plan.signed_amount_micros,
+                "pnl_direction": plan.pnl_direction,
+                "runtime_key": plan.runtime_key,
+                "debit_account_id": str(transfer.debit_account_id),
+                "credit_account_id": str(transfer.credit_account_id),
+                **stable_payload,
+            }
+            ref = TigerBeetleTransferRef(
+                cluster_id=2001,
+                transfer_id=str(transfer.transfer_id),
+                transfer_kind=transfer.transfer_kind,
+                ledger=transfer.ledger,
+                code=transfer.code,
+                amount=Decimal(transfer.amount),
+                status="created",
+                runtime_ledger_bucket_id=bucket.id,
+                source_type=SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                source_id=str(bucket.id),
+                payload_json=payload_json,
+            )
+            session.add(ref)
+            session.flush()
+            client = FakeTigerBeetleClient()
+            client.transfers[transfer.transfer_id] = transfer
+
+            payload = reconcile_tigerbeetle_transfers(
+                session,
+                settings_obj=_settings(),
+                client=client,
+            )
+
+        self.assertFalse(_stable_ref_matches(ref))
+        self.assertFalse(payload["ok"], payload)
+        self.assertIn(BLOCKER_STABLE_REF_PAYLOAD_MISMATCH, payload["blockers"])
+        self.assertEqual(payload["stable_ref_count"], 1)
+        self.assertEqual(payload["stable_ref_mismatch_count"], 1)
 
     def test_ref_counts_expose_source_materialization_identifiers(self) -> None:
         with Session(self.engine) as session:

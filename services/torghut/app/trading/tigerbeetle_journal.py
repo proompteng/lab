@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 import hashlib
+import json
 from types import TracebackType
 from typing import Any, Self, cast
 
@@ -27,7 +28,7 @@ from app.trading.tigerbeetle_client import (
     TigerBeetleClientProtocol,
     create_tigerbeetle_client,
 )
-from app.trading.tigerbeetle_ids import stable_u128, u128_decimal
+from app.trading.tigerbeetle_ids import stable_ref_u128, stable_u128, u128_decimal
 from app.trading.tigerbeetle_ledger_model import (
     ACCOUNT_CODE_CASH_CONTROL,
     ACCOUNT_CODE_EVIDENCE_CONTROL,
@@ -61,6 +62,8 @@ SOURCE_TYPE_RUNTIME_LEDGER_BUCKET = "strategy_runtime_ledger_bucket"
 TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_PARITY_SCHEMA_VERSION = (
     "torghut.tigerbeetle-runtime-ledger-journal-parity.v1"
 )
+TIGERBEETLE_STABLE_REF_SCHEMA_VERSION = "torghut.tigerbeetle-stable-ref.v1"
+TIGERBEETLE_STABLE_REF_NAMESPACE = "torghut.tigerbeetle.journal_ref"
 TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_STATUS_PASS = "pass"
 TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_STATUS_NON_AUTHORITY_BLOCKED = (
     "non_authority_blocked"
@@ -146,6 +149,122 @@ def _lookup_payload_decimal(
 
 def _nested_mapping(value: object) -> Mapping[str, Any]:
     return cast(Mapping[str, Any], value) if isinstance(value, Mapping) else {}
+
+
+def _stable_ref_source_signature(
+    payload_json: Mapping[str, object],
+    *,
+    event_fingerprint: str | None = None,
+) -> str | None:
+    for key in (
+        "source_economic_fingerprint",
+        "runtime_key",
+        "economic_event_key",
+        "event_fingerprint",
+    ):
+        value = payload_json.get(key)
+        text = str(value).strip() if value is not None else ""
+        if text:
+            if key == "economic_event_key":
+                return hashlib.sha256(text.encode("utf-8")).hexdigest()
+            return text
+    return event_fingerprint
+
+
+def _stable_ref_account_label(
+    account_specs: Sequence[TigerBeetleAccountSpec],
+    payload_json: Mapping[str, object],
+) -> str | None:
+    payload_account_label = str(payload_json.get("account_label") or "").strip()
+    if payload_account_label:
+        return payload_account_label
+    for spec in account_specs:
+        account_label = (spec.account_label or "").strip()
+        if account_label:
+            return account_label
+    return None
+
+
+def _payload_account_ids(
+    payload_json: Mapping[str, object],
+    account_specs: Sequence[TigerBeetleAccountSpec],
+) -> list[str]:
+    account_ids = [u128_decimal(spec.account_id) for spec in account_specs]
+    raw_account_ids = payload_json.get("account_ids")
+    if isinstance(raw_account_ids, Sequence) and not isinstance(
+        raw_account_ids, (str, bytes, bytearray)
+    ):
+        for value in cast(Sequence[object], raw_account_ids):
+            account_id = str(value).strip() if value is not None else ""
+            if account_id and account_id not in account_ids:
+                account_ids.append(account_id)
+    for key in ("debit_account_id", "credit_account_id"):
+        value = payload_json.get(key)
+        account_id = str(value).strip() if value is not None else ""
+        if account_id and account_id not in account_ids:
+            account_ids.append(account_id)
+    return sorted(account_ids)
+
+
+def tigerbeetle_stable_ref_payload(
+    *,
+    cluster_id: int,
+    account_specs: Sequence[TigerBeetleAccountSpec],
+    transfer_spec: TigerBeetleTransferSpec,
+    source_type: str,
+    source_id: str,
+    payload_json: Mapping[str, object],
+    event_fingerprint: str | None = None,
+) -> dict[str, object]:
+    """Return a signed, deterministic audit-ref payload for a transfer ref.
+
+    TigerBeetle transfer IDs are immutable once written. This stable ref is a
+    source-backed audit handle that includes cluster/account/source/kind inputs
+    without rewriting old transfer IDs or letting TigerBeetle become promotion
+    authority.
+    """
+
+    account_label = _stable_ref_account_label(account_specs, payload_json)
+    source_signature = _stable_ref_source_signature(
+        payload_json,
+        event_fingerprint=event_fingerprint,
+    )
+    components = {
+        "cluster_id": int(cluster_id),
+        "account_label": account_label or "unknown",
+        "source_type": source_type,
+        "source_id": source_id,
+        "transfer_kind": transfer_spec.transfer_kind,
+        "source_signature": source_signature or "none",
+    }
+    stable_ref_id = u128_decimal(
+        stable_ref_u128(
+            cluster_id=int(cluster_id),
+            account_label=account_label,
+            source_type=source_type,
+            source_id=source_id,
+            transfer_kind=transfer_spec.transfer_kind,
+            source_signature=source_signature,
+        )
+    )
+    stable_ref: dict[str, object] = {
+        "schema_version": TIGERBEETLE_STABLE_REF_SCHEMA_VERSION,
+        "derivation_namespace": TIGERBEETLE_STABLE_REF_NAMESPACE,
+        "stable_ref_id": stable_ref_id,
+        "components": components,
+        "account_ids": _payload_account_ids(payload_json, account_specs),
+        "account_keys": sorted({spec.account_key for spec in account_specs}),
+        "transfer_id": u128_decimal(transfer_spec.transfer_id),
+        "ledger": transfer_spec.ledger,
+        "code": transfer_spec.code,
+        "amount": str(transfer_spec.amount),
+        "authority": "accounting_parity_only",
+        "promotion_authority": False,
+        "overrides_runtime_ledger_authority": False,
+    }
+    canonical = json.dumps(stable_ref, sort_keys=True, separators=(",", ":"))
+    stable_ref["payload_hash"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return {"stable_ref": stable_ref, "stable_ref_id": stable_ref_id}
 
 
 def _payload_text_list(value: object) -> list[str]:
@@ -247,6 +366,9 @@ def tigerbeetle_runtime_ledger_journal_payload(
                 account_id = str(raw_account_id)
                 if account_id not in account_ids:
                     account_ids.append(account_id)
+    stable_ref_payload = _nested_mapping(transfer_payload.get("stable_ref"))
+    stable_ref_id = str(stable_ref_payload.get("stable_ref_id") or "").strip()
+    stable_refs = [stable_ref_payload] if stable_ref_id else []
     for account_ref in account_refs:
         if account_ref.account_id not in account_ids:
             account_ids.append(account_ref.account_id)
@@ -275,10 +397,14 @@ def tigerbeetle_runtime_ledger_journal_payload(
             "account_keys": sorted({row.account_key for row in account_refs}),
             "transfer_count": len(transfer_ids),
             "transfer_ids": sorted(transfer_ids),
+            "stable_ref_count": len(stable_refs),
+            "stable_ref_ids": [stable_ref_id] if stable_ref_id else [],
+            "stable_refs": stable_refs,
             "source_refs": source_refs,
             "transfer": {
                 "cluster_id": ref.cluster_id,
                 "transfer_id": ref.transfer_id,
+                "stable_ref_id": stable_ref_id or None,
                 "transfer_kind": ref.transfer_kind,
                 "ledger": ref.ledger,
                 "code": ref.code,
@@ -1212,6 +1338,18 @@ class TigerBeetleLedgerJournal:
         payload_json: Mapping[str, object],
     ) -> TigerBeetleTransferRef:
         transfer_id_text = u128_decimal(transfer_spec.transfer_id)
+        payload_json = {
+            **payload_json,
+            **tigerbeetle_stable_ref_payload(
+                cluster_id=self._settings.tigerbeetle_cluster_id,
+                account_specs=account_specs,
+                transfer_spec=transfer_spec,
+                source_type=source_type,
+                source_id=source_id,
+                payload_json=payload_json,
+                event_fingerprint=event_fingerprint,
+            ),
+        }
         source_existing = session.execute(
             select(TigerBeetleTransferRef).where(
                 TigerBeetleTransferRef.cluster_id
@@ -1317,6 +1455,76 @@ class TigerBeetleLedgerJournal:
         session.add(ref)
         session.flush()
         return ref
+
+    def backfill_stable_ref_payloads(
+        self,
+        session: Session,
+        *,
+        limit: int = 1000,
+    ) -> dict[str, object]:
+        """Backfill stable audit-ref payloads on existing PostgreSQL refs only."""
+
+        if (
+            not self._settings.tigerbeetle_enabled
+            or not self._settings.tigerbeetle_journal_enabled
+        ):
+            return {"selected": 0, "updated": 0, "skipped": 0}
+
+        refs = (
+            session.execute(
+                select(TigerBeetleTransferRef)
+                .where(
+                    TigerBeetleTransferRef.cluster_id
+                    == self._settings.tigerbeetle_cluster_id,
+                    TigerBeetleTransferRef.source_type.is_not(None),
+                    TigerBeetleTransferRef.source_id.is_not(None),
+                )
+                .order_by(TigerBeetleTransferRef.created_at.desc())
+                .limit(max(1, int(limit)))
+            )
+            .scalars()
+            .all()
+        )
+        updated = 0
+        skipped = 0
+        for ref in refs:
+            existing_payload = _nested_mapping(ref.payload_json)
+            if isinstance(existing_payload.get("stable_ref"), Mapping):
+                skipped += 1
+                continue
+            source_type = str(ref.source_type or "").strip()
+            source_id = str(ref.source_id or "").strip()
+            if not source_type or not source_id:
+                skipped += 1
+                continue
+            transfer_spec = TigerBeetleTransferSpec(
+                transfer_id=int(ref.transfer_id),
+                transfer_kind=ref.transfer_kind,
+                debit_account_id=0,
+                credit_account_id=0,
+                amount=int(ref.amount),
+                ledger=ref.ledger,
+                code=ref.code,
+            )
+            ref.payload_json = coerce_json_payload(
+                {
+                    **existing_payload,
+                    **tigerbeetle_stable_ref_payload(
+                        cluster_id=ref.cluster_id,
+                        account_specs=(),
+                        transfer_spec=transfer_spec,
+                        source_type=source_type,
+                        source_id=source_id,
+                        payload_json=existing_payload,
+                        event_fingerprint=ref.event_fingerprint,
+                    ),
+                }
+            )
+            session.add(ref)
+            updated += 1
+        if updated:
+            session.flush()
+        return {"selected": len(refs), "updated": updated, "skipped": skipped}
 
     def journal_order_event(
         self, session: Session, event: ExecutionOrderEvent
