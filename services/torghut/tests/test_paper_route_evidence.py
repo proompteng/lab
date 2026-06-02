@@ -33,6 +33,7 @@ from app.trading.paper_route_evidence import (
     _account_window_start_snapshot_audit,
     _balanced_pair_probe_symbol_actions,
     _hpairs_round_trip_identity_blockers,
+    _hpairs_zero_activity_reason_flags,
     _next_regular_equities_session_window,
     _normalized_open_positions,
     _paper_route_probe_summary,
@@ -41,6 +42,7 @@ from app.trading.paper_route_evidence import (
     _runtime_ledger_bucket_evidence_grade,
     _runtime_ledger_non_evidence_diagnostic_summary,
     _runtime_ledger_row_diagnostic_expectancy_bps,
+    _source_activity_stage_diagnostics,
     _strategy_source_activity,
     _strategy_source_decision_readiness,
     _target_audit_fail_closed,
@@ -490,6 +492,10 @@ class TestPaperRouteEvidenceAudit(TestCase):
         readiness = audit["readiness"]
         self.assertEqual(readiness["state"], "evidence_collection_blocked")
         self.assertFalse(readiness["promotion_authority"]["allowed"])
+        self.assertIn(
+            "paper_route_evidence_db_unavailable",
+            readiness["capital_promotion_blockers"],
+        )
         self.assertIn("paper_route_evidence_db_unavailable", readiness["blockers"])
         self.assertIn(
             "paper_route_source_target_audit_db_unavailable",
@@ -2759,6 +2765,9 @@ class TestPaperRouteEvidenceAudit(TestCase):
             audit["source_activity"]["missing_reasons"], ["strategy_name_missing"]
         )
         blockers = set(audit["readiness"]["blockers"])
+        self.assertEqual(
+            set(audit["readiness"]["capital_promotion_blockers"]), blockers
+        )
         self.assertIn("manual_review_required", blockers)
         self.assertIn("paper_probation_evidence_collection_only", blockers)
         self.assertIn("paper_route_probe_disabled", blockers)
@@ -5273,6 +5282,92 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(diagnostics["counts"]["hpairs_decision_count"], 0)
         self.assertFalse(diagnostics["safe_to_promote"])
         self.assertFalse(diagnostics["proof_semantics"]["synthetic_orders_or_fills"])
+        stage_diagnostics = diagnostics["source_activity_stage_diagnostics"]
+        self.assertFalse(stage_diagnostics["source_decisions_present"])
+        self.assertFalse(stage_diagnostics["source_executions_present"])
+        self.assertFalse(stage_diagnostics["source_tca_present"])
+        self.assertFalse(stage_diagnostics["runtime_ledger_buckets_present"])
+        self.assertIn("source_decisions_missing", stage_diagnostics["blockers"])
+        self.assertIn("source_executions_missing", stage_diagnostics["blockers"])
+        self.assertIn("source_tca_missing", stage_diagnostics["blockers"])
+        self.assertIn("runtime_ledger_bucket_missing", stage_diagnostics["blockers"])
+
+    def test_hpairs_zero_activity_reason_flags_distinguish_source_stages(
+        self,
+    ) -> None:
+        no_decisions = _hpairs_zero_activity_reason_flags(
+            blockers=["source_decisions_missing", "runtime_ledger_bucket_missing"],
+            probe={"configured_enabled": True},
+            runtime_window_import_audit={"state": "import_due_source_activity_missing"},
+            hpairs_target_count=1,
+            hpairs_symbol_count=2,
+            hpairs_source_decision_ready_count=1,
+            hpairs_decision_count=0,
+            hpairs_submitted_order_count=0,
+            hpairs_tca_sample_count=0,
+            hpairs_runtime_bucket_count=0,
+        )
+        self.assertTrue(no_decisions["source_decisions_missing"])
+        self.assertFalse(no_decisions["source_executions_missing"])
+        self.assertFalse(no_decisions["source_tca_missing"])
+        self.assertTrue(no_decisions["runtime_ledger_bucket_missing"])
+
+        decisions_without_execution = _hpairs_zero_activity_reason_flags(
+            blockers=[],
+            probe={"configured_enabled": True},
+            runtime_window_import_audit={"import_ready": True},
+            hpairs_target_count=1,
+            hpairs_symbol_count=2,
+            hpairs_source_decision_ready_count=1,
+            hpairs_decision_count=2,
+            hpairs_submitted_order_count=0,
+            hpairs_tca_sample_count=0,
+            hpairs_runtime_bucket_count=0,
+        )
+        self.assertFalse(decisions_without_execution["source_decisions_missing"])
+        self.assertTrue(decisions_without_execution["source_executions_missing"])
+        self.assertFalse(decisions_without_execution["source_tca_missing"])
+        self.assertTrue(decisions_without_execution["runtime_ledger_bucket_missing"])
+
+        executions_without_tca = _hpairs_zero_activity_reason_flags(
+            blockers=[],
+            probe={"configured_enabled": True},
+            runtime_window_import_audit={"import_ready": True},
+            hpairs_target_count=1,
+            hpairs_symbol_count=2,
+            hpairs_source_decision_ready_count=1,
+            hpairs_decision_count=2,
+            hpairs_submitted_order_count=2,
+            hpairs_tca_sample_count=0,
+            hpairs_runtime_bucket_count=0,
+        )
+        self.assertFalse(executions_without_tca["source_decisions_missing"])
+        self.assertFalse(executions_without_tca["source_executions_missing"])
+        self.assertTrue(executions_without_tca["source_tca_missing"])
+        self.assertTrue(executions_without_tca["runtime_ledger_bucket_missing"])
+
+    def test_source_activity_stage_diagnostics_exposes_runtime_bucket_absence(
+        self,
+    ) -> None:
+        diagnostics = _source_activity_stage_diagnostics(
+            source_activity={
+                "decision_count": 2,
+                "execution_count": 2,
+                "tca_sample_count": 1,
+                "stage_presence": {
+                    "source_decisions_present": True,
+                    "submitted_lifecycle_present": True,
+                    "runtime_execution_economics_present": True,
+                },
+            },
+            runtime_ledger={"bucket_count": 0},
+        )
+
+        self.assertTrue(diagnostics["source_decisions_present"])
+        self.assertTrue(diagnostics["source_executions_present"])
+        self.assertTrue(diagnostics["source_tca_present"])
+        self.assertFalse(diagnostics["runtime_ledger_buckets_present"])
+        self.assertEqual(diagnostics["blockers"], ["runtime_ledger_bucket_missing"])
 
     def test_hpairs_zero_activity_diagnostics_surface_route_vetoes(
         self,
