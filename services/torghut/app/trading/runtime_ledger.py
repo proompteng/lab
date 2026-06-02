@@ -403,6 +403,14 @@ def _build_bucket(
     usable_fills = [row for row in rows if row.is_usable_fill]
     carry_in_usable_fills = [row for row in carry_in_rows if row.is_usable_fill]
     all_usable_fills = [*carry_in_usable_fills, *usable_fills]
+    current_bucket_filled_notional = sum(
+        (
+            row.filled_notional
+            for row in usable_fills
+            if row.filled_notional is not None
+        ),
+        Decimal("0"),
+    )
     if not usable_fills:
         blockers.append("runtime_fills_missing")
 
@@ -469,7 +477,11 @@ def _build_bucket(
         blockers.append("closed_round_trip_missing")
     if open_position_count > 0:
         blockers.append("unclosed_position")
-    if accumulator.filled_notional <= 0:
+    reported_filled_notional = max(
+        accumulator.filled_notional,
+        current_bucket_filled_notional,
+    )
+    if reported_filled_notional <= 0:
         blockers.append("filled_notional_missing")
     if require_order_lifecycle or source_authority_claimed:
         source_lifecycle_present = any(
@@ -532,7 +544,7 @@ def _build_bucket(
         unfilled_order_count=unfilled_order_count,
         closed_trade_count=accumulator.closed_trade_count,
         open_position_count=open_position_count,
-        filled_notional=accumulator.filled_notional,
+        filled_notional=reported_filled_notional,
         gross_strategy_pnl=accumulator.gross_strategy_pnl,
         cost_amount=accumulator.cost_amount,
         net_strategy_pnl_after_costs=accumulator.net_strategy_pnl_after_costs,

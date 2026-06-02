@@ -472,18 +472,21 @@ def _source_decision_priority_payloads(
     decision_json = _as_mapping(row.get("decision_json"))
     if decision_json:
         payloads.append(decision_json)
+        params = _as_mapping(decision_json.get("params"))
+        if params:
+            payloads.append(params)
         for key in (
             "strategy_signal_paper",
+            "paper_route_target_plan_source_decision",
             "paper_route_target_plan",
             "paper_route_target",
         ):
             if nested := _as_mapping(decision_json.get(key)):
                 payloads.append(nested)
-        params = _as_mapping(decision_json.get("params"))
         if params:
-            payloads.append(params)
             for key in (
                 "strategy_signal_paper",
+                "paper_route_target_plan_source_decision",
                 "paper_route_target_plan",
                 "paper_route_target",
             ):
@@ -4822,12 +4825,19 @@ def _source_runtime_ledger_payload_from_row(
     row: Sequence[object],
 ) -> dict[str, object]:
     payload = dict(zip(_SOURCE_RUNTIME_LEDGER_COLUMNS, row, strict=True))
-    payload_json = _as_mapping(payload.get("payload_json"))
+    payload_json = {
+        key: value
+        for key, value in _as_mapping(payload.get("payload_json")).items()
+        if key != "payload_json"
+    }
+    row_payload = {
+        key: value for key, value in payload.items() if key != "payload_json"
+    }
     started_at = _parse_dt_or_none(payload.get("bucket_started_at"))
     ended_at = _parse_dt_or_none(payload.get("bucket_ended_at"))
     return {
         **payload_json,
-        **payload,
+        **row_payload,
         "bucket_started_at": started_at.isoformat()
         if started_at is not None
         else payload.get("bucket_started_at"),

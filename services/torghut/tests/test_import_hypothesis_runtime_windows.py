@@ -64,6 +64,7 @@ from scripts.import_hypothesis_runtime_windows import (
     _source_decision_mode,
     _source_decision_mode_counts,
     _source_decision_rows_profit_proof_eligible,
+    _source_runtime_ledger_payload_from_row,
     _source_order_feed_payload_delta_fill,
     _required_order_lifecycle_source_row_count,
     _source_window_classification_counts,
@@ -1795,6 +1796,43 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             )
         )
 
+    def test_source_decision_helpers_prefer_current_target_source_over_legacy_probe(
+        self,
+    ) -> None:
+        row = {
+            "decision_json": {
+                "paper_route_target_plan": {
+                    "source_decision_mode": "route_acquisition_probe",
+                    "profit_proof_eligible": False,
+                },
+                "params": {
+                    "source_decision_mode": "bounded_paper_route_collection",
+                    "profit_proof_eligible": True,
+                    "source_candidate_ids": ["c88421d619759b2cfaa6f4d0"],
+                    "source_hypothesis_ids": ["H-PAIRS-01"],
+                    "paper_route_target_plan_source_decision": {
+                        "source_decision_mode": "bounded_paper_route_collection",
+                        "profit_proof_eligible": True,
+                    },
+                },
+            }
+        }
+
+        self.assertEqual(_source_decision_mode(row), "bounded_paper_route_collection")
+        self.assertEqual(
+            _source_decision_mode_counts([row]),
+            {"bounded_paper_route_collection": 1},
+        )
+        self.assertTrue(_source_decision_rows_profit_proof_eligible([row]))
+        self.assertTrue(
+            _source_row_matches_lineage(
+                row,
+                candidate_id="c88421d619759b2cfaa6f4d0",
+                hypothesis_id="H-PAIRS-01",
+                require_source_lineage=True,
+            )
+        )
+
     def test_runtime_ledger_tca_rows_from_durable_buckets_queries_matching_proof(
         self,
     ) -> None:
@@ -2109,6 +2147,23 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 ["intraday-tsmom-profit-v3"],
             ),
         )
+
+    def test_source_runtime_ledger_payload_drops_recursive_payload_json(self) -> None:
+        cursor = _SourceLedgerCursor()
+        row = list(cursor._results[0][0])
+        payload_json = dict(cast(Mapping[str, object], row[-1]))
+        payload_json["payload_json"] = {"stale_nested_payload": True}
+        row[-1] = payload_json
+
+        payload = _source_runtime_ledger_payload_from_row(tuple(row))
+
+        self.assertNotIn("payload_json", payload)
+        self.assertEqual(payload["run_id"], "runtime-proof-source")
+        self.assertEqual(
+            payload["source_decision_mode_counts"],
+            {"strategy_signal_paper": 2},
+        )
+        self.assertEqual(payload["bucket_started_at"], "2026-03-06T14:30:00+00:00")
 
     def test_runtime_ledger_tca_rows_from_source_dsn_block_aggregate_only_proof(
         self,
