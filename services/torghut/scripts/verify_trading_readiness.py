@@ -351,14 +351,10 @@ def _paper_route_quote_fillability_summary(
                     "hypothesis_id": _text(target.get("hypothesis_id")),
                     "candidate_id": _text(target.get("candidate_id")),
                     "strategy_name": _text(target.get("strategy_name")),
-                    "symbol": _text(
-                        routeability.get("symbol") or target.get("symbol")
-                    ),
+                    "symbol": _text(routeability.get("symbol") or target.get("symbol")),
                     "status": _text(routeability.get("status"), "unknown"),
                     "reasons": target_reasons,
-                    "repair_action": _text(
-                        routeability.get("repair_action")
-                    )
+                    "repair_action": _text(routeability.get("repair_action"))
                     or (
                         _quote_fillability_repair_action(target_reasons)
                         if target_reasons
@@ -1011,7 +1007,9 @@ def _readiness_next_action(
                     blockers.append(text)
     for blocker in blockers:
         if _quote_fillability_reason(blocker):
-            return "repair_quote_quality_or_fillability_before_runtime_ledger_collection"
+            return (
+                "repair_quote_quality_or_fillability_before_runtime_ledger_collection"
+            )
         if blocker in {
             "runtime_window_import_missing",
             "runtime_window_import_runtime_ledger_materialization_missing",
@@ -1043,7 +1041,9 @@ def _readiness_next_action(
             return "repair_runtime_ledger_lifecycle_cost_or_lineage_evidence"
     for failed_check in failed_checks:
         if "quote_fillability" in failed_check:
-            return "repair_quote_quality_or_fillability_before_runtime_ledger_collection"
+            return (
+                "repair_quote_quality_or_fillability_before_runtime_ledger_collection"
+            )
         if failed_check.startswith("paper_route_target_plan"):
             return "repair_candidate_frontier_or_paper_route_target_plan"
         if failed_check.startswith("runtime_ledger"):
