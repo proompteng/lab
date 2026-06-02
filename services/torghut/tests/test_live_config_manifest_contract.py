@@ -1531,9 +1531,9 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("--dsn-env DB_DSN", live_args)
         self.assertNotIn("--dsn-env SIM_DB_DSN", live_args)
         self.assertNotIn("--account-label TORGHUT_SIM", live_args)
-        self.assertIn("--batch-size 500", live_args)
-        self.assertIn("--batch-size 125", live_args)
-        self.assertIn("--event-scan-limit 1000", live_args)
+        self.assertIn("--batch-size 50", live_args)
+        self.assertIn("--max-batches 1", live_args)
+        self.assertIn("--event-scan-limit 250", live_args)
         self.assertIn("--reconcile-limit 1000", live_args)
 
         sim_env = {

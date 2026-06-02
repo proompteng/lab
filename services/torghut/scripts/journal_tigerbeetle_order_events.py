@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, cast
 
-from sqlalchemy import String, create_engine, or_, select
+from sqlalchemy import String, create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from app.config import Settings
@@ -203,29 +203,6 @@ def _select_unlinked_events(
     return OrderEventSelection(rows=events, scan_failed=scan_failed)
 
 
-def _source_ref_exists(
-    session: Any,
-    *,
-    settings_obj: Settings,
-    source_type: str,
-    source_id_column: Any,
-    transfer_kind: str,
-) -> Any:
-    return (
-        select(TigerBeetleTransferRef.id)
-        .where(
-            TigerBeetleTransferRef.cluster_id == settings_obj.tigerbeetle_cluster_id,
-            TigerBeetleTransferRef.source_type == source_type,
-            or_(
-                TigerBeetleTransferRef.source_id == source_id_column,
-                TigerBeetleTransferRef.source_id.like(source_id_column + ":%"),
-            ),
-            TigerBeetleTransferRef.transfer_kind == transfer_kind,
-        )
-        .exists()
-    )
-
-
 def _select_unlinked_executions(
     session: Any,
     *,
@@ -233,12 +210,14 @@ def _select_unlinked_executions(
     account_label: str | None,
     limit: int,
 ) -> list[Execution]:
-    linked_ref = _source_ref_exists(
-        session,
-        settings_obj=settings_obj,
-        source_type=SOURCE_TYPE_EXECUTION,
-        source_id_column=Execution.id.cast(String),
-        transfer_kind=TRANSFER_KIND_EXECUTION_FILL,
+    linked_ref = (
+        select(TigerBeetleTransferRef.id)
+        .where(
+            TigerBeetleTransferRef.cluster_id == settings_obj.tigerbeetle_cluster_id,
+            TigerBeetleTransferRef.execution_id == Execution.id,
+            TigerBeetleTransferRef.transfer_kind == TRANSFER_KIND_EXECUTION_FILL,
+        )
+        .exists()
     )
     stmt = (
         select(Execution)
@@ -261,12 +240,14 @@ def _select_unlinked_tca_metrics(
     account_label: str | None,
     limit: int,
 ) -> list[ExecutionTCAMetric]:
-    linked_ref = _source_ref_exists(
-        session,
-        settings_obj=settings_obj,
-        source_type=SOURCE_TYPE_EXECUTION_TCA_METRIC,
-        source_id_column=ExecutionTCAMetric.id.cast(String),
-        transfer_kind=TRANSFER_KIND_EXECUTION_COST,
+    linked_ref = (
+        select(TigerBeetleTransferRef.id)
+        .where(
+            TigerBeetleTransferRef.cluster_id == settings_obj.tigerbeetle_cluster_id,
+            TigerBeetleTransferRef.execution_tca_metric_id == ExecutionTCAMetric.id,
+            TigerBeetleTransferRef.transfer_kind == TRANSFER_KIND_EXECUTION_COST,
+        )
+        .exists()
     )
     stmt = (
         select(ExecutionTCAMetric)
