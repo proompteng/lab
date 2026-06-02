@@ -255,6 +255,138 @@ def test_rollout_drift_is_first_blocker() -> None:
     assert "rollout_revision_drift" in report["blockers"]
 
 
+def test_missing_target_plan_is_reported_before_route_checks() -> None:
+    report = _report(
+        status={
+            "schema_version": "trading-status.v1",
+            "running": True,
+            "revision": "rev-a",
+        },
+        target_plan={
+            "schema_version": "torghut.paper-route-target-plan.v1",
+            "targets": [],
+        },
+        paper_route_evidence={
+            "schema_version": "torghut.paper-route-evidence.v1",
+            "targets": [],
+        },
+    )
+
+    assert report["blocker_stage"] == "target_plan_missing"
+    assert report["target_plan"]["present"] is False
+    assert report["target_plan"]["target_count"] == 0
+    assert "hpairs_target_plan_missing" in report["blockers"]
+
+
+def test_inactive_paper_route_is_reported_after_target_match() -> None:
+    report = _report(paper_route_evidence=_paper_route_evidence(active=False))
+
+    assert report["blocker_stage"] == "paper_route_inactive"
+    assert report["paper_route"]["active"] is False
+    assert "hpairs_paper_route_inactive_or_ambiguous" in report["blockers"]
+
+
+def test_lifecycle_and_execution_cost_blockers_fail_closed() -> None:
+    source_census = _source_census(lifecycle=False, economics=False) | {
+        "blockers": ["order_feed_lifecycle_missing", "explicit_cost_missing"],
+    }
+
+    report = _report(source_census=source_census)
+
+    assert report["blocker_stage"] == "lifecycle_economics_blocked"
+    assert report["lifecycle_economics"]["lifecycle_complete"] is False
+    assert report["lifecycle_economics"]["economics_complete"] is False
+    assert "runtime_lifecycle_or_execution_economics_blocked" in report["blockers"]
+
+
+def test_missing_numeric_readback_blocks_authority() -> None:
+    report = _report(
+        runtime_summary={
+            "schema_version": "torghut.runtime-ledger-daily-summary.v1",
+            "trading_days": [],
+        }
+    )
+
+    assert report["blocker_stage"] == "insufficient_days"
+    assert report["numeric_readback"]["trading_days"] == 0
+    assert "mean_daily_net_pnl_after_costs_missing" in report["blockers"]
+    assert "filled_notional_missing_or_below_threshold" in report["blockers"]
+    assert "closed_trades_missing_or_below_threshold" in report["blockers"]
+    assert "open_positions_missing" in report["blockers"]
+
+
+def test_positive_but_below_target_daily_pnl_blocks_authority() -> None:
+    report = _report(runtime_summary=_runtime_summary(days=20, net_pnl="499.99"))
+
+    assert report["blocker_stage"] == "insufficient_daily_pnl"
+    assert "mean_daily_net_pnl_after_costs_below_threshold" in report["blockers"]
+    assert "median_daily_net_pnl_after_costs_below_threshold" in report["blockers"]
+    assert "worst_daily_net_pnl_after_costs_below_threshold" in report["blockers"]
+
+
+def test_concentration_and_drawdown_evidence_blocks_authority() -> None:
+    runtime_summary = _runtime_summary() | {
+        "max_drawdown_pct_equity": "0.01",
+        "best_day_share": "0.25",
+        "symbol_concentration_share": "0.35",
+    }
+
+    report = _report(runtime_summary=runtime_summary)
+
+    assert report["blocker_stage"] == "concentration_or_drawdown_blocked"
+    assert report["promotion_allowed"] is False
+
+
+def test_json_source_non_object_and_read_errors_are_reported(tmp_path: Path) -> None:
+    list_path = tmp_path / "payload.json"
+    list_path.write_text(json.dumps(["not", "an", "object"]), encoding="utf-8")
+
+    sources = dict(_sources())
+    sources["readyz"] = cli._load_json_location(
+        "readyz", str(list_path), required=True, timeout_seconds=1.0
+    )
+
+    report = cli.build_readback_report(
+        sources,
+        identity=cli.Identity(
+            hypothesis_id=cli.DEFAULT_HPAIRS_HYPOTHESIS_ID,
+            candidate_id=cli.DEFAULT_HPAIRS_CANDIDATE_ID,
+            runtime_strategy_name=cli.DEFAULT_HPAIRS_RUNTIME_STRATEGY,
+            account_label=cli.DEFAULT_ACCOUNT_LABEL,
+        ),
+    )
+
+    assert report["blocker_stage"] == "rollout_drift"
+    assert "readyz_missing_or_unreadable" in report["blockers"]
+    assert "readyz_read_error:json_payload_not_object" in report["blockers"]
+
+
+def test_parser_helpers_accept_live_payload_shapes() -> None:
+    assert cli._text(1) == "1"
+    assert cli._text(True) == "True"
+    assert cli._text_list({"a": True, "b": False}) == ["a"]
+    assert cli._bool_or_none("enabled") is True
+    assert cli._bool_or_none("disabled") is False
+    assert cli._bool_or_none(1) is True
+    assert cli._int_or_none(True) is None
+    assert cli._int_or_none("bad") is None
+    assert cli._decimal(True) is None
+    assert cli._decimal(12) == cli.Decimal("12")
+    assert cli._decimal(12.5) == cli.Decimal("12.5")
+    assert cli._decimal("not-decimal") is None
+    assert cli._truthy_route_flag({"unrelated": "value"}) is None
+    assert cli._has_positive_key({"source_ref_count": "2"}, cli.SOURCE_REF_KEYS) is True
+    assert (
+        cli._has_positive_key({"source_ref_count": "0"}, cli.SOURCE_REF_KEYS) is False
+    )
+    assert cli._daily_net_pnls(
+        [{"daily_net_pnl": ["1.25", "bad", {"net_pnl_after_costs": "2.5"}]}]
+    ) == [
+        cli.Decimal("1.25"),
+        cli.Decimal("2.5"),
+    ]
+
+
 class _FakeResponse:
     def __init__(self, payload: dict[str, Any]) -> None:
         self._payload = payload
