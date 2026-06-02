@@ -31,6 +31,8 @@ import type {
   ThreadResumeResponse,
   ThreadStartParams,
   ThreadStartResponse,
+  ThreadStatus,
+  ThreadStatusChangedNotification,
   ThreadTokenUsageUpdatedNotification,
   Turn,
   TurnCompletedNotification,
@@ -151,6 +153,17 @@ export type CodexAppServerTurnOptions = {
   developerInstructions?: string | null
   personality?: ThreadStartParams['personality']
   goal?: CodexAppServerGoalOptions | null
+}
+
+export type ThreadIdleWaitOptions = {
+  quietMs?: number
+  timeoutMs?: number
+  signal?: AbortSignal
+}
+
+export type ThreadIdleWaitResult = {
+  status: ThreadStatus | null
+  lastTurn: Turn | null
 }
 
 const normalizeTurnGoalOptions = (goal: CodexAppServerGoalOptions): CodexAppServerGoalOptions => {
@@ -417,6 +430,9 @@ export class CodexAppServerClient {
   private pendingTurnStreams = new Map<string, TurnStream>()
   private turnItems = new Map<string, Set<string>>()
   private itemTurnMap = new Map<string, string>()
+  private threadStatuses = new Map<string, ThreadStatus>()
+  private threadLastTurns = new Map<string, Turn>()
+  private threadStatusWaiters = new Set<() => void>()
   private lastActiveTurnId: string | null = null
   private readyPromise: Promise<void>
   private resolveReady: (() => void) | null = null
@@ -730,6 +746,76 @@ export class CodexAppServerClient {
       params,
     )) as ThreadGoalClearResponse
     return response.cleared
+  }
+
+  async waitForThreadIdle(
+    threadId: string,
+    { quietMs = 1000, timeoutMs = 0, signal }: ThreadIdleWaitOptions = {},
+  ): Promise<ThreadIdleWaitResult> {
+    await this.ensureReady()
+    if (!this.threadStatuses.has(threadId)) {
+      return {
+        status: null,
+        lastTurn: this.threadLastTurns.get(threadId) ?? null,
+      }
+    }
+
+    let idleSince: number | null = null
+    const startedAt = Date.now()
+
+    return new Promise<ThreadIdleWaitResult>((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout> | null = null
+      const cleanup = () => {
+        if (timer) clearTimeout(timer)
+        this.threadStatusWaiters.delete(check)
+        signal?.removeEventListener('abort', onAbort)
+      }
+      const onAbort = () => {
+        cleanup()
+        reject(signal?.reason ?? new Error(`wait for thread ${threadId} idle cancelled`))
+      }
+      const finish = () => {
+        cleanup()
+        resolve({
+          status: this.threadStatuses.get(threadId) ?? null,
+          lastTurn: this.threadLastTurns.get(threadId) ?? null,
+        })
+      }
+      const schedule = (delayMs: number) => {
+        if (timer) clearTimeout(timer)
+        timer = setTimeout(check, Math.max(0, delayMs))
+      }
+      const check = () => {
+        if (signal?.aborted) {
+          onAbort()
+          return
+        }
+        if (timeoutMs > 0 && Date.now() - startedAt >= timeoutMs) {
+          cleanup()
+          reject(new Error(`timed out waiting for thread ${threadId} to become idle`))
+          return
+        }
+
+        const status = this.threadStatuses.get(threadId)
+        if (status?.type === 'idle') {
+          idleSince ??= Date.now()
+          const remainingQuietMs = quietMs - (Date.now() - idleSince)
+          if (remainingQuietMs <= 0) {
+            finish()
+            return
+          }
+          schedule(remainingQuietMs)
+          return
+        }
+
+        idleSince = null
+        schedule(250)
+      }
+
+      signal?.addEventListener('abort', onAbort, { once: true })
+      this.threadStatusWaiters.add(check)
+      check()
+    })
   }
 
   async interruptTurn(turnId: string, threadId: string): Promise<void> {
@@ -1254,6 +1340,8 @@ export class CodexAppServerClient {
       }
       case 'turn/completed': {
         const params = notification.params as TurnCompletedNotification
+        this.threadLastTurns.set(params.threadId, params.turn)
+        this.notifyThreadStatusWaiters()
         const turnId = this.findTurnId(params) ?? params.turn.id
         this.reconcileActiveTurnId(turnId)
         const resolved = this.resolveTurnStream(params) ?? { stream: this.turnStreams.get(turnId), turnId }
@@ -1269,6 +1357,13 @@ export class CodexAppServerClient {
           turnId,
           status: params.turn.status,
         })
+        break
+      }
+      case 'thread/status/changed': {
+        const params = notification.params as ThreadStatusChangedNotification
+        this.threadStatuses.set(params.threadId, params.status)
+        this.notifyThreadStatusWaiters()
+        this.log('info', 'thread status changed', { threadId: params.threadId, status: params.status })
         break
       }
       case 'turn/started': {
@@ -1618,6 +1713,10 @@ export class CodexAppServerClient {
       const remaining = Array.from(this.turnStreams.keys())
       this.lastActiveTurnId = remaining.length ? (remaining.at(-1) ?? null) : null
     }
+  }
+
+  private notifyThreadStatusWaiters(): void {
+    for (const waiter of this.threadStatusWaiters) waiter()
   }
 
   private failTurnStream(turnId: string, error: unknown): void {

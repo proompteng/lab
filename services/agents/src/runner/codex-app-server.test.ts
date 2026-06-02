@@ -200,6 +200,120 @@ describe('codex app-server runner adapter', () => {
     expect(await readFile(logPath, 'utf8')).toContain('"delta":"done"')
   })
 
+  it('waits for the app-server thread to settle before reporting success', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agents-codex-runner-'))
+    const runPath = join(dir, 'run.json')
+    const statusPath = join(dir, 'status.json')
+    await writeFile(
+      runPath,
+      `${JSON.stringify({
+        implementation: { text: 'continue until the session is actually done' },
+        agentRun: { name: 'run-continuation' },
+      })}\n`,
+      'utf8',
+    )
+
+    let waitedForThreadId: string | null = null
+    const fakeClient: CodexAppServerRunnerClient = {
+      runTurnStream: async () => ({
+        stream: makeStream(),
+        turnId: 'turn-initial',
+        threadId: 'thread-continuation',
+      }),
+      waitForThreadIdle: async (threadId) => {
+        waitedForThreadId = threadId
+        return { lastTurn: makeTurn('completed') }
+      },
+      stop: () => undefined,
+    }
+
+    const exitCode = await runCodexAppServerAdapter(
+      {
+        provider: 'codex-runner',
+        payloads: {
+          eventFilePath: runPath,
+        },
+        artifacts: {
+          statusPath,
+        },
+      },
+      {
+        prompt: 'continue until the session is actually done',
+      },
+      {
+        createClient: () => fakeClient,
+        uploadArtifacts: async (artifacts) => artifacts,
+      },
+    )
+
+    expect(exitCode).toBe(0)
+    expect(waitedForThreadId).toBe('thread-continuation')
+    const status = JSON.parse(await readFile(statusPath, 'utf8')) as Record<string, unknown>
+    expect(status).toMatchObject({
+      status: 'succeeded',
+      threadId: 'thread-continuation',
+      turnStatus: 'completed',
+    })
+  })
+
+  it('fails when an automatic app-server continuation fails before the thread settles', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agents-codex-runner-'))
+    const runPath = join(dir, 'run.json')
+    const statusPath = join(dir, 'status.json')
+    await writeFile(
+      runPath,
+      `${JSON.stringify({
+        implementation: { text: 'continue until failure is visible' },
+        agentRun: { name: 'run-continuation-failure' },
+      })}\n`,
+      'utf8',
+    )
+
+    const fakeClient: CodexAppServerRunnerClient = {
+      runTurnStream: async () => ({
+        stream: makeStream(),
+        turnId: 'turn-initial',
+        threadId: 'thread-continuation-failure',
+      }),
+      waitForThreadIdle: async () => ({
+        lastTurn: makeTurn('failed', {
+          message: 'automatic continuation failed',
+          codexErrorInfo: null,
+          additionalDetails: null,
+        }),
+      }),
+      stop: () => undefined,
+    }
+
+    await expect(
+      runCodexAppServerAdapter(
+        {
+          provider: 'codex-runner',
+          payloads: {
+            eventFilePath: runPath,
+          },
+          artifacts: {
+            statusPath,
+          },
+        },
+        {
+          prompt: 'continue until failure is visible',
+        },
+        {
+          createClient: () => fakeClient,
+          uploadArtifacts: async (artifacts) => artifacts,
+        },
+      ),
+    ).rejects.toBeInstanceOf(CodexRunnerTurnError)
+
+    const status = JSON.parse(await readFile(statusPath, 'utf8')) as Record<string, unknown>
+    expect(status).toMatchObject({
+      status: 'failed',
+      turnStatus: 'failed',
+    })
+    expect(String(status.error)).toContain('automatic continuation failed')
+  })
+
   it('renders threadConfig string templates from runtime environment before creating the Codex client', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'agents-codex-runner-'))
     const runPath = join(dir, 'run.json')
