@@ -115,6 +115,8 @@ _BOUNDED_SIM_COLLECTION_RESERVATION_BLOCKERS = frozenset(
 _PAPER_ROUTE_TARGET_ACCOUNT_AUDIT_UNAVAILABLE_BLOCKER = (
     "paper_route_target_account_audit_unavailable"
 )
+_BOUNDED_PAPER_ROUTE_DEFAULT_CLOSEOUT_BUFFER_MINUTES = 15
+_PAPER_ROUTE_PROBE_EXIT_PENDING_GRACE_SECONDS = 300
 _BOUNDED_SIM_COLLECTION_ALLOWED_HEALTH_GATE_BLOCKERS = frozenset(
     {"evidence_continuity_not_ok"}
 )
@@ -754,7 +756,14 @@ def _target_probe_exit_minute_after_open(
         or _target_truthy(target.get("paper_probation_authorized"))
         or _target_truthy(target.get("source_collection_authorized"))
     ):
-        return _REGULAR_SESSION_MINUTES, True
+        return (
+            max(
+                0,
+                _REGULAR_SESSION_MINUTES
+                - _BOUNDED_PAPER_ROUTE_DEFAULT_CLOSEOUT_BUFFER_MINUTES,
+            ),
+            True,
+        )
     return None, False
 
 
@@ -941,7 +950,13 @@ def _merge_unique_texts(target: list[str], values: Sequence[str]) -> None:
 
 def _paper_route_probe_lineage_from_params(params: Mapping[str, Any]) -> dict[str, Any]:
     payloads: list[Mapping[str, Any]] = [params]
-    for key in ("paper_route_probe", "paper_route_probe_exit", "strategy_signal_paper"):
+    for key in (
+        "paper_route_probe",
+        "paper_route_target_plan_source_decision",
+        "paper_route_target_plan",
+        "paper_route_probe_exit",
+        "strategy_signal_paper",
+    ):
         value = params.get(key)
         if isinstance(value, Mapping):
             payloads.append(cast(Mapping[str, Any], value))
@@ -1072,21 +1087,27 @@ def _paper_route_probe_entry_metadata(
 def _bounded_paper_route_collection_entry_metadata(
     params: Mapping[str, Any],
 ) -> Mapping[str, Any] | None:
-    metadata = params.get("paper_route_probe")
-    if not isinstance(metadata, Mapping):
-        return None
-    probe_metadata = cast(Mapping[str, Any], metadata)
-    source_decision_mode = normalize_source_decision_mode(
-        params.get("source_decision_mode")
-    ) or normalize_source_decision_mode(probe_metadata.get("source_decision_mode"))
-    if source_decision_mode != BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE:
-        return None
-    if not (
-        _target_bool(params.get("profit_proof_eligible")) is True
-        or _target_bool(probe_metadata.get("profit_proof_eligible")) is True
+    for key in (
+        "paper_route_probe",
+        "paper_route_target_plan_source_decision",
+        "paper_route_target_plan",
     ):
-        return None
-    return probe_metadata
+        metadata = params.get(key)
+        if not isinstance(metadata, Mapping):
+            continue
+        probe_metadata = cast(Mapping[str, Any], metadata)
+        source_decision_mode = normalize_source_decision_mode(
+            params.get("source_decision_mode")
+        ) or normalize_source_decision_mode(probe_metadata.get("source_decision_mode"))
+        if source_decision_mode != BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE:
+            continue
+        if not (
+            _target_bool(params.get("profit_proof_eligible")) is True
+            or _target_bool(probe_metadata.get("profit_proof_eligible")) is True
+        ):
+            continue
+        return probe_metadata
+    return None
 
 
 def _strategy_signal_paper_entry_metadata(
@@ -2196,11 +2217,16 @@ class SimpleTradingPipeline(TradingPipeline):
                     params[key] = exit_lineage[key]
             if avg_entry_price is not None:
                 params["price"] = avg_entry_price
+            exit_event_ts = now if now > exit_due_at else exit_due_at
+            if exit_event_ts != exit_due_at:
+                params["paper_route_probe_exit"]["retry_event_ts"] = (
+                    exit_event_ts.isoformat()
+                )
             decisions.append(
                 StrategyDecision(
                     strategy_id=str(strategy.id),
                     symbol=symbol,
-                    event_ts=exit_due_at,
+                    event_ts=exit_event_ts,
                     timeframe=str(exposure["timeframe"] or strategy.base_timeframe),
                     action=exit_action,
                     qty=exit_qty,
@@ -2243,12 +2269,39 @@ class SimpleTradingPipeline(TradingPipeline):
                 continue
             if str(metadata.get("exit_due_at") or "") != exit_due_at_text:
                 continue
-            if row.status in {"planned", "submitted", "filled", "rejected"}:
-                if row.status == "rejected" and not self.executor.execution_exists(
-                    session, row
-                ):
-                    continue
+            linked_executions = (
+                session.execute(
+                    select(Execution)
+                    .where(Execution.trade_decision_id == row.id)
+                    .order_by(Execution.created_at.desc())
+                )
+                .scalars()
+                .all()
+            )
+            filled_execution_recorded = any(
+                _safe_text(execution.status) == "filled"
+                or (_optional_decimal(execution.filled_qty) or Decimal("0"))
+                > Decimal("0")
+                for execution in linked_executions
+            )
+            if row.status in {"filled", "executed"} or filled_execution_recorded:
                 return True
+            if row.status in {"planned", "submitted"}:
+                created_at = (
+                    row.created_at
+                    if row.created_at.tzinfo is not None
+                    else row.created_at.replace(tzinfo=timezone.utc)
+                ).astimezone(timezone.utc)
+                now = trading_now(account_label=self.account_label).astimezone(
+                    timezone.utc
+                )
+                if (
+                    now - created_at
+                ).total_seconds() < _PAPER_ROUTE_PROBE_EXIT_PENDING_GRACE_SECONDS:
+                    return True
+                continue
+            if row.status == "rejected":
+                continue
         return False
 
     def _reopen_rejected_paper_route_probe_exit_decision(

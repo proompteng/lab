@@ -186,6 +186,144 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(source_activity["raw_decision_count"], 1)
         self.assertEqual(source_activity["lineage_matched_decision_count"], 1)
 
+    def test_hpairs_source_activity_surfaces_unfilled_closeout_fillability(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 6, 2, 13, 30, tzinfo=timezone.utc)
+        event_at = window_start + timedelta(minutes=10)
+        exit_due_at = window_start + timedelta(minutes=60)
+        candidate_id = "c88421d619759b2cfaa6f4d0"
+        with Session(self.engine) as session:
+            strategy = Strategy(
+                name="microbar-cross-sectional-pairs-v1",
+                enabled=True,
+                base_timeframe="1Sec",
+                universe_type="static",
+                universe_symbols=["AAPL", "AMZN"],
+            )
+            session.add(strategy)
+            session.flush()
+            entry_decision = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="TORGHUT_SIM",
+                symbol="AAPL",
+                timeframe="1Sec",
+                decision_json={
+                    "action": "buy",
+                    "qty": "1",
+                    "candidate_id": candidate_id,
+                    "hypothesis_id": "H-PAIRS-01",
+                    "params": {
+                        "source_candidate_ids": [candidate_id],
+                        "source_hypothesis_ids": ["H-PAIRS-01"],
+                    },
+                },
+                rationale="H-PAIRS entry with unfilled closeout fixture",
+                status="executed",
+                created_at=event_at,
+                executed_at=event_at,
+            )
+            session.add(entry_decision)
+            session.flush()
+            session.add(
+                Execution(
+                    trade_decision_id=entry_decision.id,
+                    alpaca_account_label="TORGHUT_SIM",
+                    alpaca_order_id="hpairs-fillability-entry",
+                    client_order_id="hpairs-fillability-entry",
+                    symbol="AAPL",
+                    side="buy",
+                    order_type="market",
+                    time_in_force="day",
+                    submitted_qty=Decimal("1"),
+                    filled_qty=Decimal("1"),
+                    avg_fill_price=Decimal("100"),
+                    status="filled",
+                    raw_order={},
+                    created_at=event_at,
+                    updated_at=event_at,
+                    last_update_at=event_at,
+                )
+            )
+            closeout_decision = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="TORGHUT_SIM",
+                symbol="AAPL",
+                timeframe="1Sec",
+                decision_json={
+                    "action": "sell",
+                    "qty": "1",
+                    "candidate_id": candidate_id,
+                    "hypothesis_id": "H-PAIRS-01",
+                    "params": {
+                        "source_candidate_ids": [candidate_id],
+                        "source_hypothesis_ids": ["H-PAIRS-01"],
+                        "paper_route_probe_exit": {
+                            "mode": "paper_route_exit",
+                            "exit_due_at": exit_due_at.isoformat(),
+                        },
+                        "promotion_allowed": False,
+                        "final_promotion_allowed": False,
+                    },
+                },
+                rationale="H-PAIRS unfilled closeout fixture",
+                status="submitted",
+                created_at=exit_due_at,
+            )
+            session.add(closeout_decision)
+            session.flush()
+            closeout_ref = str(closeout_decision.id)
+            session.add(
+                Execution(
+                    trade_decision_id=closeout_decision.id,
+                    alpaca_account_label="TORGHUT_SIM",
+                    alpaca_order_id="hpairs-fillability-exit",
+                    client_order_id="hpairs-fillability-exit",
+                    symbol="AAPL",
+                    side="sell",
+                    order_type="market",
+                    time_in_force="day",
+                    submitted_qty=Decimal("1"),
+                    filled_qty=Decimal("0"),
+                    avg_fill_price=Decimal("0"),
+                    status="submitted",
+                    raw_order={},
+                    created_at=exit_due_at,
+                    updated_at=exit_due_at,
+                    last_update_at=exit_due_at,
+                )
+            )
+            session.commit()
+
+            source_activity = _strategy_source_activity(
+                session,
+                strategy_name="microbar-cross-sectional-pairs-v1",
+                account_label="TORGHUT_SIM",
+                symbols=["AAPL", "AMZN"],
+                window_start=window_start,
+                window_end=window_start + timedelta(hours=6, minutes=30),
+                candidate_id=candidate_id,
+                hypothesis_id="H-PAIRS-01",
+                require_source_lineage=True,
+            )
+
+        closeout_fillability = source_activity["closeout_fillability"]
+        self.assertEqual(closeout_fillability["closeout_decision_count"], 1)
+        self.assertEqual(closeout_fillability["closeout_filled_execution_count"], 0)
+        self.assertEqual(closeout_fillability["closeout_decision_refs"], [closeout_ref])
+        self.assertIn(
+            "source_closeout_fillability_missing",
+            closeout_fillability["blockers"],
+        )
+        self.assertIn(
+            "source_closeout_fillability_missing",
+            source_activity["source_lifecycle_blockers"],
+        )
+        self.assertIn(
+            "source_closed_round_trip_missing",
+            source_activity["source_lifecycle_blockers"],
+        )
+
     def _seed_hpairs_strategy_and_flat_snapshot(
         self,
         session: Session,
