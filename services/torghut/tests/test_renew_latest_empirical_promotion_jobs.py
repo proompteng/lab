@@ -13,6 +13,7 @@ from app.trading.runtime_window_import import (
     build_observed_runtime_buckets,
     persist_observed_runtime_windows,
 )
+from scripts import renew_latest_empirical_promotion_jobs as renew
 
 
 def _runtime_pnl_basis() -> dict[str, object]:
@@ -120,6 +121,60 @@ class TestRenewLatestEmpiricalPromotionJobsRuntimeLedger(TestCase):
             bind=engine, expire_on_commit=False, future=True
         )
 
+    def test_hpairs_source_proof_census_status_is_non_authority_renewal_evidence(
+        self,
+    ) -> None:
+        status = renew._hpairs_source_proof_census_status(
+            {
+                "schema_version": "torghut.hpairs-source-proof-census.v1",
+                "identity": {"hypothesis_id": "H-PAIRS-01"},
+                "window": {},
+                "runtime_authority": {
+                    "final_authority_ok": False,
+                    "blockers": ["runtime_ledger_source_materialization_missing"],
+                },
+                "missing_requirement_categories": {
+                    "submitted_orders": False,
+                    "filled_notional": False,
+                },
+                "missing_source_ref_categories": {
+                    "runtime_ledger_source_materialization_missing": True,
+                },
+                "blocker_ladder": [
+                    {
+                        "step": "runtime_ledger_source_materialization_present",
+                        "status": "blocked",
+                        "blocker_codes": [
+                            "runtime_ledger_source_materialization_missing"
+                        ],
+                    }
+                ],
+                "blockers": ["runtime_ledger_source_materialization_missing"],
+                "verdict": {
+                    "classification": "source_refs_missing",
+                    "authority_candidate_ready": False,
+                    "next_blocker": {
+                        "step": "runtime_ledger_source_materialization_present"
+                    },
+                    "next_action": "backfill runtime-ledger source refs",
+                },
+                "totals": {"runtime_ledger_source_materialization_count": 0},
+            }
+        )
+
+        self.assertTrue(status["present"])
+        self.assertTrue(status["non_authority_status_only"])
+        self.assertFalse(status["promotion_allowed"])
+        self.assertFalse(status["final_authority_ok"])
+        self.assertEqual(
+            status["blockers"],
+            ["runtime_ledger_source_materialization_missing"],
+        )
+        self.assertEqual(
+            status["next_blocker"]["step"],
+            "runtime_ledger_source_materialization_present",
+        )
+
     def test_runtime_bucket_materialization_rerun_is_idempotent_for_same_scope(
         self,
     ) -> None:
@@ -162,14 +217,14 @@ class TestRenewLatestEmpiricalPromotionJobsRuntimeLedger(TestCase):
                 },
             )
             session.commit()
-            rows = (
-                session.execute(select(StrategyRuntimeLedgerBucket))
-                .scalars()
-                .all()
-            )
+            rows = session.execute(select(StrategyRuntimeLedgerBucket)).scalars().all()
 
-        self.assertEqual(first_summary["current_runtime_ledger_bucket_replacement_count"], 0)
-        self.assertEqual(second_summary["current_runtime_ledger_bucket_replacement_count"], 1)
+        self.assertEqual(
+            first_summary["current_runtime_ledger_bucket_replacement_count"], 0
+        )
+        self.assertEqual(
+            second_summary["current_runtime_ledger_bucket_replacement_count"], 1
+        )
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0].account_label, "TORGHUT_SIM")
         self.assertEqual(
@@ -240,7 +295,9 @@ class TestRenewLatestEmpiricalPromotionJobsRuntimeLedger(TestCase):
                 .all()
             )
 
-        self.assertEqual([row.account_label for row in rows], ["TORGHUT_SIM", "TORGHUT_SIM_ALT"])
+        self.assertEqual(
+            [row.account_label for row in rows], ["TORGHUT_SIM", "TORGHUT_SIM_ALT"]
+        )
         self.assertEqual(
             [row.observed_stage for row in rows],
             ["paper", "paper"],

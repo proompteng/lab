@@ -131,6 +131,9 @@ RUNTIME_WINDOW_TARGET_PLAN_IMPORT_BLOCKED_STATES = frozenset(
     )
 )
 OFFLINE_REPLAY_TRIAGE_CANDIDATE_LIMIT = 5
+HPAIRS_SOURCE_PROOF_CENSUS_STATUS_SCHEMA_VERSION = (
+    "torghut.hpairs-source-proof-census-status.v1"
+)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -299,6 +302,15 @@ def _parse_args() -> argparse.Namespace:
         default="microbar-cross-sectional-pairs-v1",
     )
     parser.add_argument("--runtime-window-account-label", default="TORGHUT_SIM")
+    parser.add_argument(
+        "--hpairs-source-proof-census-file",
+        type=Path,
+        default=None,
+        help=(
+            "Optional read-only audit_hpairs_source_proof_census.py JSON artifact "
+            "to attach as non-authority renewal status evidence."
+        ),
+    )
     parser.add_argument(
         "--runtime-window-observed-stage",
         default="paper",
@@ -591,6 +603,64 @@ def _read_json_mapping(path: Path) -> dict[str, Any]:
     except Exception:
         return {}
     return _as_dict(payload)
+
+
+def _hpairs_source_proof_census_status(
+    census: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    payload = _as_dict(census)
+    if not payload:
+        return {
+            "schema_version": HPAIRS_SOURCE_PROOF_CENSUS_STATUS_SCHEMA_VERSION,
+            "present": False,
+            "non_authority_status_only": True,
+            "authority_source": False,
+            "promotion_allowed": False,
+            "final_authority_ok": False,
+            "blockers": [],
+            "attachment_blockers": ["hpairs_source_proof_census_missing"],
+            "blocker_ladder": [],
+            "next_blocker": {
+                "step": "hpairs_source_proof_census",
+                "status": "missing",
+                "blocker_codes": ["hpairs_source_proof_census_missing"],
+                "next_action": "attach a fresh read-only H-PAIRS source-proof census artifact",
+            },
+        }
+    verdict = _as_dict(payload.get("verdict"))
+    runtime_authority = _as_dict(payload.get("runtime_authority"))
+    blockers = _as_text_list(payload.get("blockers"))
+    blockers.extend(
+        item
+        for item in _as_text_list(runtime_authority.get("blockers"))
+        if item not in blockers
+    )
+    next_blocker = _as_dict(verdict.get("next_blocker"))
+    return {
+        "schema_version": HPAIRS_SOURCE_PROOF_CENSUS_STATUS_SCHEMA_VERSION,
+        "present": True,
+        "non_authority_status_only": True,
+        "authority_source": False,
+        "source_schema_version": payload.get("schema_version"),
+        "identity": _as_dict(payload.get("identity")),
+        "window": _as_dict(payload.get("window")),
+        "classification": verdict.get("classification"),
+        "authority_candidate_ready": bool(verdict.get("authority_candidate_ready")),
+        "promotion_allowed": False,
+        "final_authority_ok": bool(runtime_authority.get("final_authority_ok"))
+        and not blockers,
+        "blockers": blockers,
+        "missing_requirement_categories": _as_dict(
+            payload.get("missing_requirement_categories")
+        ),
+        "missing_source_ref_categories": _as_dict(
+            payload.get("missing_source_ref_categories")
+        ),
+        "blocker_ladder": list(_as_sequence(payload.get("blocker_ladder"))),
+        "next_blocker": dict(next_blocker) if next_blocker else None,
+        "next_action": verdict.get("next_action"),
+        "totals": _as_dict(payload.get("totals")),
+    }
 
 
 def _read_runtime_window_target_plan(ref: str) -> dict[str, Any]:
@@ -2614,6 +2684,20 @@ def main() -> int:
     output_dir = Path(args.output_dir) / run_id
     output_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = output_dir / "empirical-promotion-manifest.yaml"
+    hpairs_source_proof_census_file = getattr(
+        args, "hpairs_source_proof_census_file", None
+    )
+    hpairs_source_proof_census = (
+        _read_json_mapping(hpairs_source_proof_census_file)
+        if hpairs_source_proof_census_file is not None
+        else None
+    )
+    hpairs_source_proof_census_status = _hpairs_source_proof_census_status(
+        hpairs_source_proof_census
+    )
+    hpairs_source_proof_census_blockers = _as_text_list(
+        hpairs_source_proof_census_status.get("blockers")
+    )
 
     with SessionLocal() as session:
         rows = (
@@ -2657,6 +2741,11 @@ def main() -> int:
         "run_id": run_id,
         "manifest_path": str(manifest_path),
         "output_dir": str(output_dir),
+        "promotion_allowed": False,
+        "final_authority_ok": False
+        if hpairs_source_proof_census_blockers
+        else bool(hpairs_source_proof_census_status.get("final_authority_ok")),
+        "hpairs_source_proof_census": hpairs_source_proof_census_status,
         "empirical_promotion": json.loads(result.stdout),
         "runtime_window_import": runtime_window_import,
     }

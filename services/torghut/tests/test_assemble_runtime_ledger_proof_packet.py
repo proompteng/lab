@@ -512,6 +512,77 @@ def _completion(
     }
 
 
+def _hpairs_source_proof_census(
+    *,
+    blockers: list[str] | None = None,
+    final_authority_ok: bool = True,
+) -> dict[str, object]:
+    blocker_list = blockers or []
+    return {
+        "schema_version": "torghut.hpairs-source-proof-census.v1",
+        "identity": {
+            "hypothesis_id": "H-PAIRS-01",
+            "candidate_id": "c88421d619759b2cfaa6f4d0",
+            "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+            "account_label": "TORGHUT_SIM",
+            "observed_stage": "paper",
+        },
+        "window": {
+            "started_at": "2026-05-01T14:00:00+00:00",
+            "ended_at": "2026-05-29T21:00:00+00:00",
+        },
+        "runtime_authority": {
+            "final_authority_ok": final_authority_ok,
+            "blockers": blocker_list,
+            "aggregate": {},
+        },
+        "missing_requirement_categories": {
+            "submitted_orders": "submitted_orders_missing" in blocker_list,
+        },
+        "missing_source_ref_categories": {},
+        "blocker_ladder": [
+            {
+                "step": "submitted_orders_present",
+                "status": "blocked" if blocker_list else "pass",
+                "blocker_codes": blocker_list,
+                "next_action": (
+                    "route selected H-PAIRS decisions as submitted paper/live orders "
+                    "before proof review"
+                )
+                if blocker_list
+                else None,
+            }
+        ],
+        "blockers": blocker_list,
+        "verdict": {
+            "classification": "authority_candidate_ready"
+            if not blocker_list
+            else "lifecycle_missing",
+            "authority_candidate_ready": not blocker_list,
+            "next_blocker": None
+            if not blocker_list
+            else {
+                "step": "submitted_orders_present",
+                "status": "blocked",
+                "blocker_codes": blocker_list,
+                "next_action": (
+                    "route selected H-PAIRS decisions as submitted paper/live orders "
+                    "before proof review"
+                ),
+            },
+            "next_action": (
+                "assemble authority proof packet from the same source-backed runtime rows"
+            )
+            if not blocker_list
+            else (
+                "materialize linked decisions, executions, order events, fills, "
+                "and closed round trips"
+            ),
+        },
+        "totals": {"runtime_submitted_order_count": 0 if blocker_list else 20},
+    }
+
+
 class TestRuntimeLedgerProofPacket(TestCase):
     def test_scalar_normalizers_handle_runtime_json_variants(self) -> None:
         self.assertTrue(packet._bool(Decimal("1")))
@@ -633,6 +704,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
             ],
             "0.02",
         )
+
         self.assertEqual(
             result["checks"]["runtime_ledger_daily_distribution_authority"]["observed"][
                 "median_daily_net_pnl_after_costs"
@@ -691,6 +763,37 @@ class TestRuntimeLedgerProofPacket(TestCase):
                 "postgres:tigerbeetle_account_refs",
                 "postgres:tigerbeetle_transfer_refs",
             ],
+        )
+
+    def test_hpairs_source_proof_census_blockers_are_non_authority_packet_blockers(
+        self,
+    ) -> None:
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            proof_mode="authority",
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=_runtime_import(),
+            completion_status=_completion(),
+            hpairs_source_proof_census=_hpairs_source_proof_census(
+                blockers=["submitted_orders_missing"],
+                final_authority_ok=False,
+            ),
+            min_runtime_ledger_net_pnl=Decimal("500"),
+            min_runtime_ledger_daily_net_pnl=Decimal("500"),
+            min_runtime_ledger_trading_days=1,
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertFalse(result["final_authority_ok"])
+        self.assertFalse(result["promotion_allowed"])
+        self.assertIn("submitted_orders_missing", result["authority_blockers"])
+        census_status = result["evidence"]["hpairs_source_proof_census"]
+        self.assertTrue(census_status["present"])
+        self.assertTrue(census_status["non_authority_status_only"])
+        self.assertFalse(census_status["promotion_allowed"])
+        self.assertEqual(
+            census_status["next_blocker"]["step"], "submitted_orders_present"
         )
 
     def test_packet_prefers_importable_paper_route_plan_over_next_session_plan(

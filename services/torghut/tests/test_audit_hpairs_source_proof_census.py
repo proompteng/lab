@@ -229,20 +229,69 @@ def test_full_source_backed_census_is_authority_candidate_ready() -> None:
     assert report["totals"]["source_window_count"] == 20
     assert report["totals"]["runtime_ledger_bucket_count"] == 20
     assert report["totals"]["blocker_free_runtime_ledger_bucket_count"] == 20
+    assert report["totals"]["runtime_submitted_order_count"] == 400
+    assert report["totals"]["runtime_ledger_source_materialization_count"] == 20
+    assert report["totals"]["runtime_ledger_clean_authority_trading_day_count"] == 20
     assert report["totals"]["closed_trade_count"] == 400
     assert report["totals"]["filled_notional"] == "12000000"
+    assert report["totals"]["target_implied_notional_gap"] == "0"
     assert report["totals"]["post_cost_pnl"] == "12000"
     assert report["source"]["runtime_stage"] == "paper"
     assert report["source"]["replay_outputs_count_as_runtime_proof"] is False
     assert report["source"]["synthetic_proof_created"] is False
     assert report["verdict"]["next_blocker"] is None
     assert (
-        _ladder_step(report, "source_windows_and_refs")["status"] == census.LADDER_PASS
+        _ladder_step(report, "source_windows_refs_offsets_present")["status"]
+        == census.LADDER_PASS
     )
     assert (
-        _ladder_step(report, "runtime_ledger_buckets")["status"] == census.LADDER_PASS
+        _ladder_step(report, "runtime_ledger_source_materialization_present")["status"]
+        == census.LADDER_PASS
     )
-    assert _ladder_step(report, "daily_post_cost_pnl")["status"] == census.LADDER_PASS
+    assert (
+        _ladder_step(
+            report, "twenty_authority_grade_trading_days_daily_post_cost_distribution"
+        )["status"]
+        == census.LADDER_PASS
+    )
+    assert [item["step"] for item in report["blocker_ladder"]] == [
+        "decisions_present",
+        "submitted_orders_present",
+        "fill_lifecycle_present",
+        "linked_executions_present",
+        "source_windows_refs_offsets_present",
+        "runtime_ledger_source_materialization_present",
+        "closed_round_trips_present",
+        "explicit_costs_present",
+        "filled_notional_present_and_target_implied",
+        "flat_no_open_positions_after_grace",
+        "twenty_authority_grade_trading_days_daily_post_cost_distribution",
+    ]
+
+
+def test_missing_submitted_orders_and_fills_are_machine_readable_blockers() -> None:
+    payload = _fixture()
+    payload["executions"] = []
+    payload["execution_order_events"] = []
+    for bucket in payload["runtime_ledger_buckets"]:
+        bucket["submitted_order_count"] = 0
+        bucket["fill_count"] = 0
+        bucket["payload"]["execution_ids"] = []
+        bucket["payload"]["execution_order_event_ids"] = []
+
+    report = _report(payload)
+
+    assert report["verdict"]["classification"] == census.LIFECYCLE_MISSING
+    assert census.SUBMITTED_ORDERS_MISSING_BLOCKER in report["blockers"]
+    assert AUTHORITY_RUNTIME_FILLS_MISSING_BLOCKER in report["blockers"]
+    assert (
+        _ladder_step(report, "submitted_orders_present")["status"]
+        == census.LADDER_BLOCKED
+    )
+    assert (
+        _ladder_step(report, "fill_lifecycle_present")["status"]
+        == census.LADDER_BLOCKED
+    )
 
 
 def test_missing_decisions_reports_exact_trade_decision_ref_gap() -> None:
@@ -354,10 +403,15 @@ def test_runtime_bucket_aggregate_only_is_source_refs_missing() -> None:
 
     assert report["verdict"]["classification"] == census.SOURCE_REFS_MISSING
     assert report["totals"]["blocker_free_runtime_ledger_bucket_count"] == 0
+    assert report["totals"]["runtime_ledger_source_materialization_count"] == 0
     assert census.RUNTIME_LEDGER_SOURCE_REFS_MISSING_BLOCKER in report["blockers"]
     assert (
         census.RUNTIME_LEDGER_SOURCE_MATERIALIZATION_MISSING_BLOCKER
         in report["blockers"]
+    )
+    assert (
+        _ladder_step(report, "runtime_ledger_source_materialization_present")["status"]
+        == census.LADDER_BLOCKED
     )
 
 
@@ -383,9 +437,9 @@ def test_empty_fixture_has_no_source_activity_verdict() -> None:
 
     assert report["verdict"]["classification"] == census.NO_SOURCE_ACTIVITY
     assert report["totals"]["runtime_ledger_bucket_count"] == 0
-    assert _ladder_step(report, "decisions")["status"] == census.LADDER_BLOCKED
+    assert _ladder_step(report, "decisions_present")["status"] == census.LADDER_BLOCKED
     assert report["verdict"]["next_blocker"] == {
-        "step": "decisions",
+        "step": "decisions_present",
         "status": census.LADDER_BLOCKED,
         "blocker_codes": [
             AUTHORITY_RUNTIME_DECISIONS_MISSING_BLOCKER,
@@ -408,12 +462,16 @@ def test_partial_evidence_ladder_points_at_order_feed_lifecycle() -> None:
 
     report = _report(payload)
 
-    assert _ladder_step(report, "decisions")["status"] == census.LADDER_PASS
-    assert _ladder_step(report, "executions")["status"] == census.LADDER_PASS
+    assert _ladder_step(report, "decisions_present")["status"] == census.LADDER_PASS
     assert (
-        _ladder_step(report, "order_feed_lifecycle")["status"] == census.LADDER_BLOCKED
+        _ladder_step(report, "submitted_orders_present")["status"]
+        == census.LADDER_BLOCKED
     )
-    assert report["verdict"]["next_blocker"]["step"] == "order_feed_lifecycle"
+    assert (
+        _ladder_step(report, "fill_lifecycle_present")["status"]
+        == census.LADDER_BLOCKED
+    )
+    assert report["verdict"]["next_blocker"]["step"] == "submitted_orders_present"
     assert (
         census.ORDER_FEED_LIFECYCLE_MISSING_BLOCKER
         in report["verdict"]["next_blocker"]["blocker_codes"]
