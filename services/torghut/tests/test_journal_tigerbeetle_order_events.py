@@ -751,8 +751,12 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
             if cronjob_name == "torghut-tigerbeetle-journal-order-events-live":
                 order_event_argv = command_argvs[2]
                 self.assertEqual(
+                    order_event_argv[order_event_argv.index("--batch-size") + 1],
+                    "1",
+                )
+                self.assertEqual(
                     order_event_argv[order_event_argv.index("--max-batches") + 1],
-                    "2",
+                    "1",
                 )
             runtime_argv = command_argvs[-1]
             self.assertEqual(

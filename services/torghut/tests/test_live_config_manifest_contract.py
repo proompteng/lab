@@ -1551,6 +1551,7 @@ class TestLiveConfigManifestContract(TestCase):
             live_order_event_command.batch_size,
             tigerbeetle_journal_runner.LIVE_ORDER_EVENT_BATCH_SIZE,
         )
+        self.assertEqual(live_order_event_command.batch_size, 1)
         self.assertEqual(
             live_order_event_command.event_scan_limit,
             tigerbeetle_journal_runner.LIVE_ORDER_EVENT_SCAN_LIMIT,
@@ -1559,10 +1560,16 @@ class TestLiveConfigManifestContract(TestCase):
             live_order_event_command.max_batches,
             tigerbeetle_journal_runner.LIVE_ORDER_EVENT_MAX_BATCHES,
         )
+        self.assertEqual(live_order_event_command.max_batches, 1)
         self.assertLessEqual(
             live_order_event_command.max_batches,
             2,
             "live order-event slices must not run PR #9799's unsafe 3-batch shape under the 45s watchdog",
+        )
+        self.assertLessEqual(
+            live_order_event_command.batch_size * live_order_event_command.max_batches,
+            1,
+            "live order-event slices must stay to one selected row after the 2-batch image still timed out",
         )
         self.assertTrue(live_order_event_command.skip_reconcile)
         self.assertTrue(live_order_event_command.allow_data_quality_degraded)
