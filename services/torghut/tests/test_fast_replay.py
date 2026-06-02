@@ -17,6 +17,7 @@ from app.trading.discovery.fast_replay import (
 )
 from app.trading.discovery.replay_tape import (
     build_source_query_digest,
+    load_replay_tape,
     materialize_signal_tape,
 )
 from app.trading.models import SignalEnvelope
@@ -202,6 +203,101 @@ class TestFastReplayPreview(TestCase):
             payload["replay_tape"]["cache_identity"]["blockers"],
         )
         self.assertFalse(payload["proof_authority"])
+
+    def test_loaded_hpairs_replay_tape_features_feed_offline_ranking_only(
+        self,
+    ) -> None:
+        def hpairs_signal(offset: int, price: str, ofi: str) -> SignalEnvelope:
+            return SignalEnvelope(
+                event_ts=datetime(2026, 2, 23, 14, 30, tzinfo=timezone.utc)
+                + timedelta(minutes=offset),
+                symbol="AAA",
+                timeframe="1Min",
+                seq=offset,
+                source="test",
+                payload={
+                    "price": Decimal(price),
+                    "spread_bps": Decimal("2"),
+                    "microbar_volume": Decimal("100000"),
+                    "ofi_horizons": {
+                        "3": Decimal(ofi),
+                        "12": Decimal("0.25"),
+                    },
+                    "ofi_decay_memory": {
+                        "half_life_3": Decimal("0.60"),
+                        "half_life_12": Decimal("0.30"),
+                    },
+                    "cluster_lob_bucket": "directional",
+                    "regime_tags": ["opening_drive"],
+                    "target_implied_notional": Decimal("50000"),
+                },
+                ingest_ts=datetime(2026, 2, 23, 14, 31, tzinfo=timezone.utc),
+            )
+
+        with TemporaryDirectory() as tmpdir:
+            tape_path = Path(tmpdir) / "tape.jsonl"
+            materialize_signal_tape(
+                rows=[
+                    hpairs_signal(1, "100", "0.70"),
+                    hpairs_signal(2, "101", "0.80"),
+                    hpairs_signal(3, "102", "0.90"),
+                ],
+                tape_path=tape_path,
+                dataset_snapshot_ref="snapshot-hpairs-features",
+                symbols=("AAA",),
+                start_date=date(2026, 2, 23),
+                end_date=date(2026, 2, 23),
+                source_query_digest=build_source_query_digest(
+                    {"window": "hpairs-features"}
+                ),
+            )
+            tape = load_replay_tape(tape_path)
+
+        preview = build_fast_replay_preview(
+            specs=(self._spec("spec-hpairs", symbols=["AAA"]),),
+            rows=tape.rows,
+            replay_tape_manifest=tape.manifest,
+            top_k=1,
+            min_rows_per_candidate=2,
+        )
+
+        row = preview.rows[0]
+        payload = row.to_payload()
+        self.assertGreater(row.ofi_pressure_score, Decimal("0"))
+        self.assertGreater(row.ofi_decay_alignment_score, Decimal("0"))
+        self.assertEqual(row.frontier_bucket, "exploitation")
+        self.assertIn("hpairs_replay_tape_features", tape.rows[0].payload)
+        self.assertFalse(
+            tape.rows[0].payload["hpairs_replay_tape_features"]["proof_authority"]
+        )
+        self.assertFalse(payload["promotion_allowed"])
+        self.assertFalse(payload["proof_authority"])
+
+    def test_ofi_pressure_uses_nonstandard_hpair_horizon_values(self) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 2, 23, 14, 30, tzinfo=timezone.utc),
+            symbol="AAA",
+            timeframe="1Min",
+            seq=1,
+            source="test",
+            payload={
+                "hpairs_replay_tape_features": {
+                    "order_flow_imbalance_horizons": {
+                        "custom_short": "125",
+                        "custom_long": "175",
+                        "bad": "not-a-decimal",
+                    },
+                },
+            },
+            ingest_ts=datetime(2026, 2, 23, 14, 31, tzinfo=timezone.utc),
+        )
+
+        ofi_pressure = fast_replay._extract_ofi_pressure(signal)
+
+        self.assertIsNotNone(ofi_pressure)
+        assert ofi_pressure is not None
+        self.assertGreater(ofi_pressure, 0.9)
+        self.assertLessEqual(ofi_pressure, 1.0)
 
     def test_target_implied_notional_blocks_non_positive_expectancy(self) -> None:
         with TemporaryDirectory() as tmpdir:

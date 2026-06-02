@@ -795,6 +795,12 @@ def _event_label(signal: SignalEnvelope) -> str:
         value = str(payload.get(key) or "").strip().lower()
         if value:
             return value
+    hpairs_features = _hpairs_replay_tape_features(signal)
+    cluster_lob = _mapping(hpairs_features.get("cluster_lob"))
+    for key in ("bucket", "label"):
+        value = str(cluster_lob.get(key) or "").strip().lower()
+        if value:
+            return value
     return "unknown"
 
 
@@ -866,6 +872,13 @@ def _extract_macro_stress(signal: SignalEnvelope) -> float | None:
             return 1.0
         if text in {"no", "false", "none", "normal"}:
             return 0.0
+    hpairs_features = _hpairs_replay_tape_features(signal)
+    stress_tags = hpairs_features.get("stress_tags")
+    if isinstance(stress_tags, Sequence) and not isinstance(
+        stress_tags, (str, bytes, bytearray)
+    ):
+        parsed_stress_tags = cast(Sequence[object], stress_tags)
+        return 1.0 if any(str(item).strip() for item in parsed_stress_tags) else 0.0
     return None
 
 
@@ -985,6 +998,24 @@ def _extract_ofi_pressure(signal: SignalEnvelope) -> float | None:
         if -1.0 <= value <= 1.0:
             return value
         return float(np.tanh(value / 100.0))
+    hpairs_ofi = _mapping(
+        _hpairs_replay_tape_features(signal).get("order_flow_imbalance_horizons")
+    )
+    values: list[float] = []
+    for horizon in ("instant", "1", "3", "12", "36"):
+        value = _float_or_none(hpairs_ofi.get(horizon))
+        if value is not None:
+            values.append(value)
+    if not values:
+        for value in hpairs_ofi.values():
+            parsed = _float_or_none(value)
+            if parsed is not None:
+                values.append(parsed)
+    if values:
+        mean_value = float(np.mean(np.asarray(values, dtype=np.float64)))
+        if -1.0 <= mean_value <= 1.0:
+            return mean_value
+        return float(np.tanh(mean_value / 100.0))
     return _extract_quote_depth_imbalance(signal)
 
 
@@ -1100,6 +1131,15 @@ def _float_or_none(value: Any) -> float | None:
     if not np.isfinite(parsed):
         return None
     return parsed
+
+
+def _hpairs_replay_tape_features(signal: SignalEnvelope) -> dict[str, Any]:
+    raw = signal.payload.get("hpairs_replay_tape_features") or signal.payload.get(
+        "hpairs_features"
+    )
+    if not isinstance(raw, Mapping):
+        return {}
+    return dict(cast(Mapping[str, Any], raw))
 
 
 def _decimal_from_float(value: float) -> Decimal:

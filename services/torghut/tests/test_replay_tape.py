@@ -13,6 +13,7 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from app.trading.discovery.replay_tape import (
+    HPAIRS_REPLAY_TAPE_FEATURE_SCHEMA_VERSION,
     REPLAY_TAPE_MANIFEST_SCHEMA_VERSION,
     ReplayTapeCoverageError,
     ReplayTapeManifest,
@@ -159,6 +160,135 @@ class TestReplayTape(TestCase):
             ],
             [2],
         )
+
+    def test_materialize_signal_tape_carries_hpairs_clusterlob_ofi_features(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 14, 31, tzinfo=timezone.utc),
+            symbol="NVDA",
+            timeframe="1Sec",
+            seq=1,
+            source="ta",
+            payload={
+                "price": Decimal("900.10"),
+                "ofi_horizons": {
+                    "3_events": Decimal("0.42"),
+                    "12_events": Decimal("0.31"),
+                },
+                "ofi_decay_memory": {
+                    "half_life_3": Decimal("0.55"),
+                    "half_life_12": Decimal("0.21"),
+                },
+                "cluster_lob_label": "directional",
+                "cluster_lob_bucket": "aggressive_buy_pressure",
+                "regime_tags": ["opening_drive", "tight_spread"],
+                "macro_event_window": True,
+                "target_implied_notional": Decimal("125000"),
+                "capacity_notional_lineage": {
+                    "target_net_pnl_per_day": "500",
+                    "formula": "target/expectancy",
+                },
+            },
+            ingest_ts=datetime(2026, 3, 26, 14, 32, tzinfo=timezone.utc),
+        )
+
+        with TemporaryDirectory() as tmpdir:
+            tape_path = Path(tmpdir) / "tape.jsonl"
+            materialize_signal_tape(
+                rows=[signal],
+                tape_path=tape_path,
+                dataset_snapshot_ref="snapshot-hpairs",
+                symbols=("NVDA",),
+                start_date=date(2026, 3, 26),
+                end_date=date(2026, 3, 26),
+                source_query_digest=build_source_query_digest({"window": "hpairs"}),
+            )
+            raw_row = json.loads(tape_path.read_text(encoding="utf-8").splitlines()[0])
+            restored = signal_from_tape_payload(raw_row)
+
+        self.assertIn("hpairs_features", raw_row)
+        hpairs_features = restored.payload["hpairs_replay_tape_features"]
+        self.assertEqual(
+            hpairs_features["schema_version"],
+            HPAIRS_REPLAY_TAPE_FEATURE_SCHEMA_VERSION,
+        )
+        self.assertEqual(
+            hpairs_features["order_flow_imbalance_horizons"],
+            {"12_events": "0.31", "3_events": "0.42"},
+        )
+        self.assertEqual(
+            hpairs_features["ofi_decay_memory"],
+            {"half_life_12": "0.21", "half_life_3": "0.55"},
+        )
+        self.assertEqual(hpairs_features["cluster_lob"]["label"], "directional")
+        self.assertEqual(
+            hpairs_features["cluster_lob"]["bucket"], "aggressive_buy_pressure"
+        )
+        self.assertEqual(
+            hpairs_features["regime_tags"], ["opening_drive", "tight_spread"]
+        )
+        self.assertEqual(hpairs_features["stress_tags"], ["macro_event_window"])
+        self.assertEqual(
+            hpairs_features["capacity_notional_lineage"]["target_implied_notional"],
+            "125000",
+        )
+        self.assertFalse(hpairs_features["promotion_allowed"])
+        self.assertFalse(hpairs_features["proof_authority"])
+
+    def test_materialize_signal_tape_coerces_loose_hpairs_feature_shapes(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 14, 31, tzinfo=timezone.utc),
+            symbol="NVDA",
+            timeframe="1Sec",
+            seq=1,
+            source="ta",
+            payload={
+                "price": Decimal("900.10"),
+                "ofi_horizon_custom": "0.44",
+                "order_flow_imbalance_horizon_bad": "not-a-decimal",
+                "ofi_decay_score": "0.12",
+                "macro_announcement_window": "yes",
+                "regime_tags": "opening_drive",
+                "stress_tag": "fed",
+            },
+            ingest_ts=datetime(2026, 3, 26, 14, 32, tzinfo=timezone.utc),
+        )
+
+        with TemporaryDirectory() as tmpdir:
+            tape_path = Path(tmpdir) / "tape.jsonl"
+            materialize_signal_tape(
+                rows=[signal],
+                tape_path=tape_path,
+                dataset_snapshot_ref="snapshot-hpairs-loose",
+                symbols=("NVDA",),
+                start_date=date(2026, 3, 26),
+                end_date=date(2026, 3, 26),
+                source_query_digest=build_source_query_digest(
+                    {"window": "hpairs-loose"}
+                ),
+            )
+            restored = signal_from_tape_payload(
+                json.loads(tape_path.read_text(encoding="utf-8").splitlines()[0])
+            )
+
+        hpairs_features = restored.payload["hpairs_replay_tape_features"]
+        self.assertEqual(
+            hpairs_features["order_flow_imbalance_horizons"],
+            {"custom": "0.44"},
+        )
+        self.assertEqual(
+            hpairs_features["ofi_decay_memory"],
+            {"ofi_decay_score": "0.12"},
+        )
+        self.assertEqual(hpairs_features["regime_tags"], ["opening_drive"])
+        self.assertEqual(
+            hpairs_features["stress_tags"],
+            ["fed", "macro_announcement_window"],
+        )
+        self.assertFalse(hpairs_features["proof_authority"])
 
     def test_materialize_signal_tape_skips_nyse_full_day_holidays(self) -> None:
         with TemporaryDirectory() as tmpdir:

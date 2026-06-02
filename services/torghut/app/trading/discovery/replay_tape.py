@@ -8,7 +8,7 @@ import json
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, TextIO, cast
 
@@ -22,6 +22,7 @@ from app.trading.session_context import (
 REPLAY_TAPE_SCHEMA_VERSION = "torghut.replay-tape.v1"
 REPLAY_TAPE_MANIFEST_SCHEMA_VERSION = "torghut.replay-tape-manifest.v1"
 REPLAY_TAPE_CACHE_IDENTITY_SCHEMA_VERSION = "torghut.replay-tape-cache-identity.v1"
+HPAIRS_REPLAY_TAPE_FEATURE_SCHEMA_VERSION = "torghut.hpairs-replay-tape-features.v1"
 _DECIMAL_TAG = "__torghut_decimal__"
 _DATETIME_TAG = "__torghut_datetime__"
 
@@ -590,6 +591,7 @@ def signal_to_tape_payload(signal: SignalEnvelope) -> dict[str, Any]:
         "event_ts": signal.event_ts.astimezone(timezone.utc).isoformat(),
         "symbol": signal.symbol,
         "payload": _encode_value(signal.payload),
+        "hpairs_features": _encode_value(hpairs_replay_tape_features(signal)),
         "timeframe": signal.timeframe,
         "ingest_ts": signal.ingest_ts.astimezone(timezone.utc).isoformat()
         if signal.ingest_ts is not None
@@ -604,15 +606,98 @@ def signal_from_tape_payload(payload: Mapping[str, Any]) -> SignalEnvelope:
     if schema_version != REPLAY_TAPE_SCHEMA_VERSION:
         raise ValueError(f"replay_tape_row_schema_invalid:{schema_version}")
     ingest_ts = payload.get("ingest_ts")
+    decoded_signal_payload = _decode_value(payload.get("payload") or {})
+    signal_payload: dict[str, Any] = (
+        dict(cast(Mapping[str, Any], decoded_signal_payload))
+        if isinstance(decoded_signal_payload, Mapping)
+        else {}
+    )
+    hpairs_features = _decode_value(payload.get("hpairs_features") or {})
+    if (
+        isinstance(hpairs_features, Mapping)
+        and hpairs_features
+        and "hpairs_replay_tape_features" not in signal_payload
+    ):
+        signal_payload["hpairs_replay_tape_features"] = dict(
+            cast(Mapping[str, Any], hpairs_features)
+        )
     return SignalEnvelope(
         event_ts=_parse_datetime(str(payload["event_ts"])),
         symbol=str(payload["symbol"]),
-        payload=_decode_value(payload.get("payload") or {}),
+        payload=signal_payload,
         timeframe=str(payload["timeframe"]) if payload.get("timeframe") else None,
         ingest_ts=_parse_datetime(str(ingest_ts)) if ingest_ts else None,
         seq=int(payload["seq"]) if payload.get("seq") is not None else None,
         source=str(payload["source"]) if payload.get("source") else None,
     )
+
+
+def hpairs_replay_tape_features(signal: SignalEnvelope) -> dict[str, Any]:
+    """Normalize H-PAIRS discovery features carried by a replay-tape row.
+
+    The representation is deliberately metadata-only: it preserves ClusterLOB/
+    OFI-style inputs for deterministic offline candidate narrowing, but marks
+    every row as prefilter-only so a downstream consumer cannot treat it as
+    runtime-ledger proof or promotion authority.
+    """
+
+    payload = signal.payload
+    source_fields: set[str] = set()
+    horizon_ofi = _hpairs_ofi_horizons(payload, source_fields=source_fields)
+    decay_memory = _hpairs_ofi_decay_memory(payload, source_fields=source_fields)
+    cluster_label = _first_text(
+        payload,
+        (
+            "cluster_lob_label",
+            "cluster_label",
+            "order_cluster",
+            "lob_event_type",
+            "event_type",
+        ),
+        source_fields=source_fields,
+    )
+    cluster_bucket = _first_text(
+        payload,
+        (
+            "cluster_lob_bucket",
+            "cluster_bucket",
+            "participant_bucket",
+            "behavior_bucket",
+        ),
+        source_fields=source_fields,
+    )
+    regime_tags = _tag_tuple(
+        payload,
+        ("regime_tags", "regime_tag", "market_regime", "liquidity_regime"),
+        source_fields=source_fields,
+    )
+    stress_tags = _stress_tag_tuple(payload, source_fields=source_fields)
+    capacity_notional_lineage = _hpairs_capacity_notional_lineage(
+        payload,
+        source_fields=source_fields,
+    )
+    return {
+        "schema_version": HPAIRS_REPLAY_TAPE_FEATURE_SCHEMA_VERSION,
+        "order_flow_imbalance_horizons": horizon_ofi,
+        "ofi_decay_memory": decay_memory,
+        "cluster_lob": {
+            "label": cluster_label,
+            "bucket": cluster_bucket,
+        },
+        "regime_tags": list(regime_tags),
+        "stress_tags": list(stress_tags),
+        "capacity_notional_lineage": capacity_notional_lineage,
+        "source_fields": sorted(source_fields),
+        "prefilter_only": True,
+        "promotion_proof": False,
+        "proof_authority": False,
+        "promotion_authority": False,
+        "promotion_allowed": False,
+        "final_promotion_allowed": False,
+        "proof_semantics_label": (
+            "hpairs_replay_tape_features_prefilter_only_exact_replay_and_runtime_ledger_required"
+        ),
+    }
 
 
 def _canonical_row_json(signal: SignalEnvelope) -> str:
@@ -626,6 +711,208 @@ def _canonical_row_json(signal: SignalEnvelope) -> str:
 def _signal_sort_key(signal: SignalEnvelope) -> tuple[datetime, str, int]:
     seq = signal.seq if signal.seq is not None else 0
     return (signal.event_ts.astimezone(timezone.utc), signal.symbol.upper(), seq)
+
+
+def _hpairs_ofi_horizons(
+    payload: Mapping[str, Any],
+    *,
+    source_fields: set[str],
+) -> dict[str, str]:
+    horizons: dict[str, str] = {}
+    for key in (
+        "order_flow_imbalance_horizons",
+        "ofi_horizons",
+        "horizon_ofi",
+        "ofi_by_horizon",
+    ):
+        raw = payload.get(key)
+        if not isinstance(raw, Mapping):
+            continue
+        source_fields.add(key)
+        for horizon, value in cast(Mapping[object, object], raw).items():
+            parsed = _decimal_or_none(value)
+            if parsed is not None:
+                horizons[str(horizon)] = str(parsed)
+    for key in (
+        "ofi_pressure_score",
+        "order_flow_imbalance",
+        "ofi",
+        "signed_order_flow_imbalance",
+        "queue_imbalance",
+        "book_imbalance",
+        "depth_imbalance",
+    ):
+        parsed = _decimal_or_none(payload.get(key))
+        if parsed is not None:
+            source_fields.add(key)
+            horizons.setdefault("instant", str(parsed))
+            break
+    for key, value in payload.items():
+        text_key = str(key)
+        if not (
+            text_key.startswith("ofi_horizon_")
+            or text_key.startswith("order_flow_imbalance_horizon_")
+        ):
+            continue
+        parsed = _decimal_or_none(value)
+        if parsed is None:
+            continue
+        source_fields.add(text_key)
+        horizons[text_key.rsplit("_", 1)[-1]] = str(parsed)
+    return dict(sorted(horizons.items()))
+
+
+def _hpairs_ofi_decay_memory(
+    payload: Mapping[str, Any],
+    *,
+    source_fields: set[str],
+) -> dict[str, str]:
+    memory: dict[str, str] = {}
+    for key in (
+        "ofi_decay_memory",
+        "ofi_memory",
+        "order_flow_memory",
+        "ofi_decay",
+    ):
+        raw = payload.get(key)
+        if not isinstance(raw, Mapping):
+            continue
+        source_fields.add(key)
+        for name, value in cast(Mapping[object, object], raw).items():
+            parsed = _decimal_or_none(value)
+            if parsed is not None:
+                memory[str(name)] = str(parsed)
+    for key in (
+        "ofi_decay_score",
+        "ofi_memory_score",
+        "ofi_ewma_short",
+        "ofi_ewma_long",
+    ):
+        parsed = _decimal_or_none(payload.get(key))
+        if parsed is None:
+            continue
+        source_fields.add(key)
+        memory[key] = str(parsed)
+    return dict(sorted(memory.items()))
+
+
+def _hpairs_capacity_notional_lineage(
+    payload: Mapping[str, Any],
+    *,
+    source_fields: set[str],
+) -> dict[str, Any]:
+    lineage: dict[str, Any] = {
+        "status": "source_row_metadata" if payload else "missing_inputs",
+        "prefilter_only": True,
+        "proof_authority": False,
+        "promotion_authority": False,
+    }
+    for key in (
+        "capacity_notional_lineage",
+        "impact_capacity_lineage",
+        "target_implied_notional_context",
+        "cost_impact_lineage",
+    ):
+        raw = payload.get(key)
+        if isinstance(raw, Mapping):
+            source_fields.add(key)
+            lineage[key] = _json_ready(raw)
+    for key in (
+        "target_implied_notional",
+        "required_daily_notional",
+        "max_notional_per_trade",
+        "configured_daily_notional_capacity",
+        "adv_notional_capacity",
+        "dollar_volume",
+    ):
+        parsed = _decimal_or_none(payload.get(key))
+        if parsed is None:
+            continue
+        source_fields.add(key)
+        lineage[key] = str(parsed)
+    return lineage
+
+
+def _stress_tag_tuple(
+    payload: Mapping[str, Any],
+    *,
+    source_fields: set[str],
+) -> tuple[str, ...]:
+    tags = set(
+        _tag_tuple(
+            payload,
+            ("stress_tags", "stress_tag", "news_stress_tag", "macro_stress_tag"),
+            source_fields=source_fields,
+        )
+    )
+    for key in (
+        "macro_event_window",
+        "macro_announcement_window",
+        "news_event_window",
+        "stress_veto_window",
+    ):
+        value = payload.get(key)
+        if value is None:
+            continue
+        source_fields.add(key)
+        if isinstance(value, bool):
+            if value:
+                tags.add(key)
+            continue
+        text = str(value).strip().lower()
+        if text in {"yes", "true", "macro", "news", "event", "stress", "1"}:
+            tags.add(key)
+    return tuple(sorted(tags))
+
+
+def _tag_tuple(
+    payload: Mapping[str, Any],
+    keys: Sequence[str],
+    *,
+    source_fields: set[str],
+) -> tuple[str, ...]:
+    tags: set[str] = set()
+    for key in keys:
+        if key not in payload:
+            continue
+        value = payload.get(key)
+        source_fields.add(key)
+        if isinstance(value, Sequence) and not isinstance(
+            value, (str, bytes, bytearray)
+        ):
+            for item in cast(Sequence[object], value):
+                tag = str(item).strip().lower()
+                if tag:
+                    tags.add(tag)
+            continue
+        tag = str(value).strip().lower()
+        if tag:
+            tags.add(tag)
+    return tuple(sorted(tags))
+
+
+def _first_text(
+    payload: Mapping[str, Any],
+    keys: Sequence[str],
+    *,
+    source_fields: set[str],
+) -> str | None:
+    for key in keys:
+        text = str(payload.get(key) or "").strip().lower()
+        if not text:
+            continue
+        source_fields.add(key)
+        return text
+    return None
+
+
+def _decimal_or_none(value: Any) -> Decimal | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
 
 
 def _open_text_writer(path: Path) -> TextIO:
@@ -870,6 +1157,7 @@ def _json_ready(value: Any) -> Any:
 
 __all__ = [
     "REPLAY_TAPE_CACHE_IDENTITY_SCHEMA_VERSION",
+    "HPAIRS_REPLAY_TAPE_FEATURE_SCHEMA_VERSION",
     "REPLAY_TAPE_MANIFEST_SCHEMA_VERSION",
     "REPLAY_TAPE_SCHEMA_VERSION",
     "ReplayTape",
@@ -881,6 +1169,7 @@ __all__ = [
     "default_manifest_path",
     "load_replay_tape",
     "materialize_signal_tape",
+    "hpairs_replay_tape_features",
     "signal_from_tape_payload",
     "signal_to_tape_payload",
     "slice_tape_by_symbols",
