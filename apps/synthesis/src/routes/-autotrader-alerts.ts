@@ -19,6 +19,7 @@ const terminalOrderStatuses = new Set<AutotraderOrder['status']>([
   'rejected',
   'expired',
   'reconciled',
+  'replaced',
 ])
 
 const protectiveOrderClasses = new Set(['bracket', 'oco', 'oto'])
@@ -44,6 +45,18 @@ const parsedTime = (value: string | null | undefined) => {
   const parsed = Date.parse(value)
   return Number.isFinite(parsed) ? parsed : null
 }
+
+const countIsZero = (value: unknown) => {
+  if (Array.isArray(value)) return value.length === 0
+  const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : Number.NaN
+  return Number.isFinite(parsed) && parsed === 0
+}
+
+const finalizedWithNoOpenOrders = (detail: AutotraderSessionDetail) =>
+  Boolean(detail.session.finalizedAt && countIsZero(detail.session.summary.finalOpenOrders))
+
+const finalizedWithNoPositions = (detail: AutotraderSessionDetail) =>
+  Boolean(detail.session.finalizedAt && countIsZero(detail.session.summary.finalPositions))
 
 const truthyRuntimeFlag = (value: unknown) => {
   if (value === true) return true
@@ -193,24 +206,28 @@ export const getAutotraderRuntimeAlerts = (detail: AutotraderSessionDetail, now 
     }
   }
 
-  for (const order of detail.orders) {
-    if (!isAutotraderOrderUnreconciled(order, now)) continue
-    alerts.push({
-      key: `unreconciled-order:${order.clientOrderId}`,
-      severity: 'critical',
-      title: 'Unreconciled order',
-      message: `${order.symbol} order ${order.clientOrderId} is still ${order.status} after 30 seconds.`,
-    })
+  if (!finalizedWithNoOpenOrders(detail)) {
+    for (const order of detail.orders) {
+      if (!isAutotraderOrderUnreconciled(order, now)) continue
+      alerts.push({
+        key: `unreconciled-order:${order.clientOrderId}`,
+        severity: 'critical',
+        title: 'Unreconciled order',
+        message: `${order.symbol} order ${order.clientOrderId} is still ${order.status} after 30 seconds.`,
+      })
+    }
   }
 
-  for (const snapshot of latestPositionSnapshots(detail)) {
-    if (positionHasProtection(detail, snapshot)) continue
-    alerts.push({
-      key: `unprotected-position:${snapshot.symbol}`,
-      severity: 'warning',
-      title: 'Position protection missing',
-      message: `${snapshot.symbol} has a non-zero position without broker-attached protection or an active managed-loop fallback.`,
-    })
+  if (!finalizedWithNoPositions(detail)) {
+    for (const snapshot of latestPositionSnapshots(detail)) {
+      if (positionHasProtection(detail, snapshot)) continue
+      alerts.push({
+        key: `unprotected-position:${snapshot.symbol}`,
+        severity: 'warning',
+        title: 'Position protection missing',
+        message: `${snapshot.symbol} has a non-zero position without broker-attached protection or an active managed-loop fallback.`,
+      })
+    }
   }
 
   return alerts
