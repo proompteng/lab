@@ -84,8 +84,10 @@ jobs:
         env:
           TORGHUT_IMAGE_TAG: ${{ steps.meta.outputs.tag }}
           TORGHUT_IMAGE_PLATFORMS: linux/arm64
-          TORGHUT_IMAGE_CACHE_REF: registry.ide-newton.ts.net/lab/torghut:buildcache
-          DOCKER_BUILD_CACHE_MODE: max
+          # Remote cache export has intermittently canceled after the image push,
+          # before the release contract can be written. Keep the image contract
+          # path authoritative and skip the cache until the exporter is stable.
+          TORGHUT_IMAGE_CACHE_REF: none
         run: bun run packages/scripts/src/torghut/build-image.ts
 
       - name: Resolve pushed image digest
