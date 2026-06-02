@@ -79,6 +79,53 @@ describe('getAutotraderRuntimeAlerts', () => {
     expect(getAutotraderRuntimeAlerts(detail, new Date('2026-05-29T13:10:00Z'))).toEqual([])
   })
 
+  test('flags guard-finalized market sessions after the AgentRun ended early', () => {
+    const base = detailFor()
+    const detail = detailFor({
+      session: {
+        ...base.session,
+        finalizedAt: '2026-06-01T20:00:54.011Z',
+        terminalReason: 'market_closed',
+        summary: {
+          guard: 'autotrader-session-guard',
+          reason: 'market close reached after original AgentRun job completed early',
+        },
+      },
+    })
+
+    expect(getAutotraderRuntimeAlerts(detail, new Date('2026-06-01T21:00:00Z'))).toEqual(
+      expect.arrayContaining([expect.objectContaining({ key: 'market-session-ended-early', severity: 'critical' })]),
+    )
+  })
+
+  test('flags market sessions finalized before regular close', () => {
+    const base = detailFor()
+    const detail = detailFor({
+      session: {
+        ...base.session,
+        finalizedAt: '2026-05-29T16:09:44.000Z',
+        terminalReason: 'market_closed',
+      },
+    })
+
+    expect(getAutotraderRuntimeAlerts(detail, new Date('2026-05-29T21:00:00Z'))).toEqual(
+      expect.arrayContaining([expect.objectContaining({ key: 'market-session-ended-early', severity: 'critical' })]),
+    )
+  })
+
+  test('does not flag target-reached sessions that finish before regular close', () => {
+    const base = detailFor()
+    const detail = detailFor({
+      session: {
+        ...base.session,
+        finalizedAt: '2026-05-29T16:09:44.000Z',
+        terminalReason: 'target_reached',
+      },
+    })
+
+    expect(getAutotraderRuntimeAlerts(detail, new Date('2026-05-29T21:00:00Z'))).toEqual([])
+  })
+
   test('flags nonterminal orders older than 30 seconds', () => {
     const detail = detailFor({
       orders: [
