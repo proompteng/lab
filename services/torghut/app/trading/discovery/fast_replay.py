@@ -22,8 +22,8 @@ from app.trading.discovery.microstructure_prefilter import (
 from app.trading.discovery.replay_tape import ReplayTapeManifest
 from app.trading.models import SignalEnvelope
 
-FAST_REPLAY_PREVIEW_SCHEMA_VERSION = "torghut.fast-replay-preview.v4"
-FAST_REPLAY_PREVIEW_ROW_SCHEMA_VERSION = "torghut.fast-replay-preview-row.v5"
+FAST_REPLAY_PREVIEW_SCHEMA_VERSION = "torghut.fast-replay-preview.v5"
+FAST_REPLAY_PREVIEW_ROW_SCHEMA_VERSION = "torghut.fast-replay-preview-row.v6"
 FAST_REPLAY_PROOF_SEMANTICS_LABEL = (
     "preview_ranking_only_exact_replay_and_runtime_ledger_required"
 )
@@ -169,6 +169,7 @@ class FastReplayPreviewRow:
                 "promotion_authority": False,
                 "promotion_allowed": False,
                 "final_promotion_allowed": False,
+                "final_authority_ok": False,
             },
             "microstructure_prefilter": dict(self.microstructure_prefilter),
             "hpairs_microstructure_prefilter": dict(self.microstructure_prefilter),
@@ -231,6 +232,7 @@ class FastReplayPreviewRow:
             "promotion_authority": False,
             "promotion_allowed": False,
             "final_promotion_allowed": False,
+            "final_authority_ok": False,
             "proof_authority_reason": (
                 "fast_replay_preview_rank_only_exact_replay_and_source_backed_runtime_ledger_required"
             ),
@@ -261,6 +263,7 @@ class FastReplayPreviewResult:
             "promotion_authority": False,
             "promotion_allowed": False,
             "final_promotion_allowed": False,
+            "final_authority_ok": False,
             "authority": "not_promotion_proof",
             "proof_semantics_label": FAST_REPLAY_PROOF_SEMANTICS_LABEL,
             "selection_policy": {
@@ -328,6 +331,7 @@ class FastReplayPreviewResult:
                 "promotion_authority": False,
                 "promotion_allowed": False,
                 "final_promotion_allowed": False,
+                "final_authority_ok": False,
             },
             "replay_tape": {
                 "dataset_snapshot_ref": self.replay_tape_manifest.dataset_snapshot_ref,

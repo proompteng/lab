@@ -151,6 +151,8 @@ class TestFastReplayPreview(TestCase):
         self.assertFalse(payload["promotion_proof"])
         self.assertFalse(payload["promotion_allowed"])
         self.assertFalse(payload["final_promotion_allowed"])
+        self.assertFalse(payload["final_authority_ok"])
+        self.assertFalse(row_payload["final_authority_ok"])
         self.assertEqual(
             payload["proof_semantics_label"], FAST_REPLAY_PROOF_SEMANTICS_LABEL
         )
@@ -272,6 +274,7 @@ class TestFastReplayPreview(TestCase):
         )
         self.assertFalse(payload["promotion_allowed"])
         self.assertFalse(payload["proof_authority"])
+        self.assertFalse(payload["final_authority_ok"])
 
     def test_ofi_pressure_uses_nonstandard_hpair_horizon_values(self) -> None:
         signal = SignalEnvelope(
@@ -566,6 +569,7 @@ class TestFastReplayPreview(TestCase):
         self.assertFalse(payload["promotion_authority"])
         self.assertFalse(payload["promotion_allowed"])
         self.assertFalse(payload["final_promotion_allowed"])
+        self.assertFalse(payload["final_authority_ok"])
 
     def test_frontier_selection_dedupes_equivalent_exact_replay_targets(
         self,
@@ -644,10 +648,16 @@ class TestFastReplayPreview(TestCase):
         self.assertFalse(
             duplicate_payload["frontier_dedupe_metadata"]["promotion_allowed"]
         )
+        self.assertFalse(
+            duplicate_payload["frontier_dedupe_metadata"]["final_authority_ok"]
+        )
         manifest_payload = preview.to_manifest_payload()
         self.assertEqual(
             manifest_payload["frontier_dedupe_policy"]["status"], "enabled"
         )
         self.assertFalse(
             manifest_payload["frontier_dedupe_policy"]["promotion_allowed"]
+        )
+        self.assertFalse(
+            manifest_payload["frontier_dedupe_policy"]["final_authority_ok"]
         )

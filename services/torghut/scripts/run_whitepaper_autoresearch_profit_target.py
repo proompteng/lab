@@ -6698,6 +6698,7 @@ def _apply_fast_replay_preview_narrowing(
             updated["fast_replay_promotion_authority"] = False
             updated["fast_replay_promotion_allowed"] = False
             updated["fast_replay_final_promotion_allowed"] = False
+            updated["fast_replay_final_authority_ok"] = False
             microstructure_prefilter = _mapping(
                 preview_row.get("hpairs_microstructure_prefilter")
                 or preview_row.get("microstructure_prefilter")
@@ -6820,6 +6821,7 @@ def _fast_replay_preview_proof_semantics() -> dict[str, Any]:
         "promotion_authority": False,
         "promotion_allowed": False,
         "final_promotion_allowed": False,
+        "final_authority_ok": False,
         "authority": "preview_prefilter_only",
         "prefilter_only": True,
         "no_kubernetes_fanout": True,
@@ -6950,10 +6952,11 @@ def _bounded_sim_target_queue_metadata(
                 "promotion_authority": False,
                 "promotion_allowed": False,
                 "final_promotion_allowed": False,
+                "final_authority_ok": False,
             }
         )
     return {
-        "schema_version": "torghut.fast-replay-bounded-sim-target-queue.v2",
+        "schema_version": "torghut.fast-replay-bounded-sim-target-queue.v3",
         "status": "metadata_only_preview_to_exact_replay_queue",
         "authority": "not_promotion_proof",
         "prefilter_only": True,
@@ -6962,6 +6965,7 @@ def _bounded_sim_target_queue_metadata(
         "promotion_authority": False,
         "promotion_allowed": False,
         "final_promotion_allowed": False,
+        "final_authority_ok": False,
         "proof_semantics": _fast_replay_preview_proof_semantics(),
         "whitepaper_mechanisms": list(FAST_REPLAY_WHITEPAPER_MECHANISMS),
         "queue_policy": "top_exploitation_plus_exploration_exact_replay_cap",
@@ -6975,6 +6979,7 @@ def _bounded_sim_target_queue_metadata(
             "promotion_authority": False,
             "promotion_allowed": False,
             "final_promotion_allowed": False,
+            "final_authority_ok": False,
         },
         "runner_policy": {
             "default_shard_timeout_seconds": _DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS,
@@ -6984,6 +6989,22 @@ def _bounded_sim_target_queue_metadata(
             ),
             "kubernetes_fanout_enabled": False,
             "handoff_mode": "metadata_only_no_live_submit",
+        },
+        "exact_replay_command_policy": {
+            "schema_version": "torghut.fast-replay-exact-command-policy.v1",
+            "generation_scope": "bounded_frontier_only",
+            "max_exact_replay_candidates": _DEFAULT_FAST_REPLAY_EXACT_CANDIDATE_CAP,
+            "effective_exact_replay_candidate_cap": exact_replay_candidate_cap,
+            "max_local_workers": _DEFAULT_REAL_REPLAY_SHARD_WORKERS,
+            "shard_timeout_seconds": _DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS,
+            "proof_packet_upload_allowed": False,
+            "db_writes_allowed": False,
+            "cluster_fanout_allowed": False,
+            "kubernetes_fanout_allowed": False,
+            "promotion_writes_allowed": False,
+            "promotion_allowed": False,
+            "final_promotion_allowed": False,
+            "final_authority_ok": False,
         },
         "target_queue": {
             "sim_account_label": "TORGHUT_SIM",
@@ -7031,7 +7052,7 @@ def _fast_replay_exact_handoff_lineage(
     frontier_bucket: str,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
-        "schema_version": "torghut.fast-replay-exact-handoff-lineage.v1",
+        "schema_version": "torghut.fast-replay-exact-handoff-lineage.v2",
         "status": "preview_only_exact_replay_handoff",
         "authority": "not_promotion_proof",
         "prefilter_only": True,
@@ -7040,6 +7061,7 @@ def _fast_replay_exact_handoff_lineage(
         "promotion_authority": False,
         "promotion_allowed": False,
         "final_promotion_allowed": False,
+        "final_authority_ok": False,
         "candidate_spec_id": candidate_spec_id,
         "queue_priority": queue_priority,
         "frontier_bucket": frontier_bucket,
