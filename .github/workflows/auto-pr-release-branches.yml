@@ -60,8 +60,69 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
 
+      - name: Evaluate release PR creation eligibility
+        id: release_pr_guard
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          HEAD_BRANCH: ${{ steps.release_branch.outputs.head_branch }}
+        run: |
+          set -euo pipefail
+
+          create_pr="true"
+          reason="eligible"
+
+          is_release_image_tag() {
+            [[ "$1" =~ ^[0-9]+(\.[0-9]+){1,3}([-.][A-Za-z0-9_.-]+)?$ ]]
+          }
+
+          extract_synthesis_image_tag() {
+            awk '
+              $0 ~ /name:[[:space:]]*registry\.ide-newton\.ts\.net\/lab\/synthesis/ { in_image = 1; next }
+              in_image && $1 == "newTag:" {
+                tag = $2
+                gsub(/^"|"$/, "", tag)
+                print tag
+                exit
+              }
+            '
+          }
+
+          read_repo_file_at_ref() {
+            local path="$1"
+            local ref="$2"
+            gh api "repos/$GH_REPO/contents/$path?ref=$ref" --jq '.content' | tr -d '\n' | base64 -d
+          }
+
+          base_file=""
+          head_file=""
+          if base_file="$(read_repo_file_at_ref "argocd/applications/synthesis/kustomization.yaml" "main")" &&
+            head_file="$(read_repo_file_at_ref "argocd/applications/synthesis/kustomization.yaml" "$HEAD_BRANCH")"; then
+            base_tag="$(extract_synthesis_image_tag <<< "$base_file")"
+            head_tag="$(extract_synthesis_image_tag <<< "$head_file")"
+
+            if [[ -n "$base_tag" ]] && [[ -n "$head_tag" ]] && [[ "$base_tag" != "$head_tag" ]] &&
+              ! is_release_image_tag "$base_tag" &&
+              is_release_image_tag "$head_tag"; then
+              create_pr="false"
+              reason="synthesis-custom-pin-overwrite:${base_tag}-to-${head_tag}"
+            fi
+          fi
+
+          echo "create_pr=$create_pr" >> "$GITHUB_OUTPUT"
+          echo "reason=$reason" >> "$GITHUB_OUTPUT"
+          echo "create_pr=$create_pr"
+          echo "reason=$reason"
+
+      - name: Skip release PR creation
+        if: steps.release_pr_guard.outputs.create_pr != 'true'
+        run: |
+          set -euo pipefail
+          echo "Skipped release PR creation: ${{ steps.release_pr_guard.outputs.reason }}"
+
       - name: Create PR if not exists
         id: create_pr
+        if: steps.release_pr_guard.outputs.create_pr == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -137,7 +198,7 @@ jobs:
           echo "pr_number=${pr_number}" >> "${GITHUB_OUTPUT}"
 
       - name: Trigger release auto-merge evaluation
-        if: ${{ steps.create_pr.outputs.pr_number != '' }}
+        if: ${{ steps.release_pr_guard.outputs.create_pr == 'true' && steps.create_pr.outputs.pr_number != '' }}
         env:
           GH_TOKEN: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
