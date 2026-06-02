@@ -31,7 +31,7 @@ spec:
                   kubernetes.io/arch: arm64
                 containers:
                   - name: analysis
-                    image: registry.ide-newton.ts.net/lab/torghut@sha256:0b0b27a34d1c2986e389694ae6cea2d7747240e8c16219cbccdfe5ab094d86f8
+                    image: registry.ide-newton.ts.net/lab/torghut@sha256:b1330996769ecdecdc10bffd6e24b95681591fd98e0a11d269cabe0fc76eec5d
                     imagePullPolicy: IfNotPresent
                     env:
                       - name: DB_DSN
