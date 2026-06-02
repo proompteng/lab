@@ -543,6 +543,15 @@ class Settings(BaseSettings):
             "bounded reads instead of waiting for large catalog aggregates to time out."
         ),
     )
+    trading_tca_status_lineage_sample_limit: int = Field(
+        default=200,
+        alias="TRADING_TCA_STATUS_LINEAGE_SAMPLE_LIMIT",
+        description=(
+            "Maximum execution audit rows sampled when trading status summarizes "
+            "non-authoritative TCA cost lineage. Truncated samples remain fail-closed "
+            "and never count as promotion authority."
+        ),
+    )
     trading_poll_ms: int = Field(default=5000, alias="TRADING_POLL_MS")
     trading_reconcile_ms: int = Field(default=15000, alias="TRADING_RECONCILE_MS")
     trading_order_feed_enabled: bool = Field(
