@@ -1738,10 +1738,13 @@ def test_source_decision_collection_mode_is_not_profit_proof_eligible() -> None:
             bucket_ranges=[(_ts(), _ts(60))],
         )[0]
 
-        assert bucket.fill_count == 0
+        assert bucket.fill_count == 2
+        assert bucket.closed_trade_count == 1
+        assert bucket.filled_notional == Decimal("201")
         assert bucket.post_cost_expectancy_bps is None
+        assert bucket.diagnostic_closed_trade_expectancy_bps is not None
         assert "source_decision_mode_not_profit_proof_eligible" in bucket.blockers
-        assert "runtime_source_not_promotion_authority" in bucket.blockers
+        assert "runtime_source_not_promotion_authority" not in bucket.blockers
 
 
 def test_execution_reconstruction_rows_do_not_become_runtime_authority() -> None:

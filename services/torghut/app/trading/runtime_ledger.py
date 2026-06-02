@@ -222,6 +222,7 @@ class _NormalizedFill:
     lineage_hash: str | None
     replay_data_hash: str | None
     blockers: tuple[str, ...]
+    bucket_blockers: tuple[str, ...] = ()
     filled_qty_delta: Decimal | None = None
     filled_notional_delta: Decimal | None = None
     fill_quantity_basis: str | None = None
@@ -380,6 +381,7 @@ def _build_bucket(
     blockers: list[str] = []
     for row in [*carry_in_rows, *rows]:
         blockers.extend(row.blockers)
+        blockers.extend(row.bucket_blockers)
 
     lifecycle_rows = [
         row for row in [*carry_in_rows, *rows] if row.event_type in _LIFECYCLE_EVENTS
@@ -938,7 +940,8 @@ def _normalize_fill_row(
     blockers: list[str] = []
     if _has_tca_pnl_shortcut(row):
         blockers.append("tca_shortfall_not_runtime_pnl")
-    blockers.extend(_runtime_source_mode_blockers(row))
+    bucket_blockers = _runtime_source_collection_mode_blockers(row)
+    blockers.extend(_runtime_source_hard_mode_blockers(row))
     if _is_non_promotion_runtime_source_row(row):
         blockers.append("runtime_source_not_promotion_authority")
     blockers.extend(_tigerbeetle_journal_blockers(row))
@@ -1000,6 +1003,7 @@ def _normalize_fill_row(
         lineage_hash=lineage_hash,
         replay_data_hash=replay_data_hash,
         blockers=tuple(_dedupe(blockers)),
+        bucket_blockers=tuple(_dedupe(bucket_blockers)),
         lifecycle_only=lifecycle_only,
         order_feed_lifecycle_source=order_feed_lifecycle_source,
     )
@@ -1181,7 +1185,7 @@ def _is_non_promotion_runtime_source_row(
     )
     if promotion_authority is False:
         return True
-    if _runtime_source_mode_blockers(row):
+    if _runtime_source_hard_mode_blockers(row):
         return True
     for key in (
         "authority_class",
@@ -1204,7 +1208,7 @@ def _is_non_promotion_runtime_source_row(
     return False
 
 
-def _runtime_source_mode_blockers(
+def _runtime_source_collection_mode_blockers(
     row: RuntimeLedgerFill | Mapping[str, object],
 ) -> list[str]:
     blockers: list[str] = []
@@ -1228,6 +1232,31 @@ def _runtime_source_mode_blockers(
         normalized = text.lower().replace("-", "_").replace(" ", "_")
         if any(marker in normalized for marker in _SOURCE_DECISION_COLLECTION_MARKERS):
             blockers.append("source_decision_mode_not_profit_proof_eligible")
+    return _dedupe(blockers)
+
+
+def _runtime_source_hard_mode_blockers(
+    row: RuntimeLedgerFill | Mapping[str, object],
+) -> list[str]:
+    blockers: list[str] = []
+    for key in (
+        "authority_class",
+        "authority_mode",
+        "authority_reason",
+        "decision_mode",
+        "materialization_mode",
+        "pnl_derivation",
+        "proof_mode",
+        "route_mode",
+        "source",
+        "source_kind",
+        "source_materialization",
+        "source_mode",
+    ):
+        text = _coerce_text(_row_value(row, key))
+        if text is None:
+            continue
+        normalized = text.lower().replace("-", "_").replace(" ", "_")
         if any(marker in normalized for marker in _EXECUTION_RECONSTRUCTION_MARKERS):
             blockers.append("execution_reconstruction_not_runtime_ledger_proof")
     return _dedupe(blockers)
