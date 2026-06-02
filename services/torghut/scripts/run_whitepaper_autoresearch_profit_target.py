@@ -6636,6 +6636,23 @@ def _apply_fast_replay_preview_narrowing(
         if preview_row is not None:
             updated["fast_replay_preview_rank"] = preview_row["rank"]
             updated["fast_replay_preview_score"] = preview_row["preview_score"]
+            updated["fast_replay_preview_rank_score"] = preview_row.get(
+                "preview_rank_score", preview_row["preview_score"]
+            )
+            updated["fast_replay_robust_lower_percentile_post_cost_utility_bps"] = (
+                preview_row.get("robust_lower_percentile_post_cost_utility_bps")
+            )
+            updated["fast_replay_bootstrap_lower_percentile_post_cost_utility_bps"] = (
+                preview_row.get("bootstrap_lower_percentile_post_cost_utility_bps")
+            )
+            updated["fast_replay_ranking_only_reasons"] = list(
+                cast(Sequence[Any], preview_row.get("ranking_only_reasons") or ())
+            )
+            updated["fast_replay_risk_veto_reasons"] = list(
+                cast(Sequence[Any], preview_row.get("risk_veto_reasons") or ())
+            )
+            updated["fast_replay_exact_replay_required"] = True
+            updated["fast_replay_runtime_ledger_required"] = True
             updated["fast_replay_preview_selected"] = preview_row["selected"]
             updated["fast_replay_preview_selection_reason"] = preview_row[
                 "selection_reason"
@@ -6846,6 +6863,15 @@ def _fast_replay_preview_proof_semantics() -> dict[str, Any]:
             _DEFAULT_REAL_REPLAY_MAX_PARALLEL_FRONTIER_CANDIDATES
         ),
         "safe_exact_replay_candidate_cap": _DEFAULT_FAST_REPLAY_EXACT_CANDIDATE_CAP,
+        "ranking_authority_boundary": {
+            "preview_rank_score_field": "preview_rank_score",
+            "ranking_only_reasons_field": "ranking_only_reasons",
+            "risk_veto_reasons_field": "risk_veto_reasons",
+            "exact_replay_required": True,
+            "runtime_ledger_required": True,
+            "promotion_allowed": False,
+            "ranking_output_can_authorize_promotion": False,
+        },
         "final_promotion_requires": [
             "exact_replay_evidence",
             "source_backed_runtime_ledger",
@@ -6981,6 +7007,22 @@ def _bounded_sim_target_queue_metadata(
                 "frontier_dedupe_metadata": row.get("frontier_dedupe_metadata"),
                 "preview_rank": row.get("rank"),
                 "preview_score": row.get("preview_score"),
+                "preview_rank_score": row.get("preview_rank_score")
+                or row.get("preview_score"),
+                "ranking_only_reasons": list(
+                    cast(Sequence[Any], row.get("ranking_only_reasons") or ())
+                ),
+                "risk_veto_reasons": list(
+                    cast(Sequence[Any], row.get("risk_veto_reasons") or ())
+                ),
+                "robust_lower_percentile_post_cost_utility_bps": row.get(
+                    "robust_lower_percentile_post_cost_utility_bps"
+                ),
+                "bootstrap_lower_percentile_post_cost_utility_bps": row.get(
+                    "bootstrap_lower_percentile_post_cost_utility_bps"
+                ),
+                "exact_replay_required": True,
+                "runtime_ledger_required": True,
                 "observed_post_cost_expectancy_bps": row.get(
                     "observed_post_cost_expectancy_bps"
                 ),
@@ -7007,6 +7049,11 @@ def _bounded_sim_target_queue_metadata(
                         replay_tape_manifest.cache_identity_diagnostics()
                     ),
                     "preview_score": row.get("preview_score"),
+                    "preview_rank_score": row.get("preview_rank_score")
+                    or row.get("preview_score"),
+                    "robust_lower_percentile_post_cost_utility_bps": row.get(
+                        "robust_lower_percentile_post_cost_utility_bps"
+                    ),
                     "frontier_bucket": row.get("frontier_bucket"),
                     "handoff_lineage_hash": handoff_lineage_hash,
                 },
@@ -7051,6 +7098,16 @@ def _bounded_sim_target_queue_metadata(
         "proof_semantics": _fast_replay_preview_proof_semantics(),
         "whitepaper_mechanisms": list(FAST_REPLAY_WHITEPAPER_MECHANISMS),
         "queue_policy": "top_exploitation_plus_exploration_exact_replay_cap",
+        "ranking_authority_boundary": {
+            "schema_version": "torghut.fast-replay-queue-ranking-authority-boundary.v1",
+            "preview_rank_score_field": "preview_rank_score",
+            "ranking_only_reasons_field": "ranking_only_reasons",
+            "risk_veto_reasons_field": "risk_veto_reasons",
+            "exact_replay_required": True,
+            "runtime_ledger_required": True,
+            "promotion_allowed": False,
+            "ranking_output_can_authorize_promotion": False,
+        },
         "dedupe_policy": {
             "schema_version": "torghut.fast-replay-sim-target-queue-dedupe.v1",
             "status": "enabled",
@@ -7156,6 +7213,18 @@ def _fast_replay_exact_handoff_lineage(
         "frontier_dedupe_metadata": row.get("frontier_dedupe_metadata"),
         "preview_rank": row.get("rank"),
         "preview_score": row.get("preview_score"),
+        "preview_rank_score": row.get("preview_rank_score") or row.get("preview_score"),
+        "ranking_only_reasons": list(
+            cast(Sequence[Any], row.get("ranking_only_reasons") or ())
+        ),
+        "risk_veto_reasons": list(
+            cast(Sequence[Any], row.get("risk_veto_reasons") or ())
+        ),
+        "robust_lower_percentile_post_cost_utility_bps": row.get(
+            "robust_lower_percentile_post_cost_utility_bps"
+        ),
+        "exact_replay_required": True,
+        "runtime_ledger_required": True,
         "proof_semantics_label": row.get("proof_semantics_label"),
         "replay_tape": {
             "dataset_snapshot_ref": replay_tape_manifest.dataset_snapshot_ref,
