@@ -6622,6 +6622,18 @@ def _apply_fast_replay_preview_narrowing(
                 cast(Sequence[Any], preview_row.get("risk_flags") or ())
             )
             updated["fast_replay_frontier_bucket"] = preview_row["frontier_bucket"]
+            updated["fast_replay_candidate_frontier_hash"] = preview_row.get(
+                "candidate_frontier_hash"
+            )
+            updated["fast_replay_exact_replay_frontier_key"] = preview_row.get(
+                "exact_replay_frontier_key"
+            )
+            updated["fast_replay_frontier_dedupe_status"] = preview_row.get(
+                "frontier_dedupe_status"
+            )
+            updated["fast_replay_frontier_dedupe_metadata"] = preview_row.get(
+                "frontier_dedupe_metadata"
+            )
             updated["fast_replay_proof_semantics_label"] = preview_row[
                 "proof_semantics_label"
             ]
@@ -6782,9 +6794,27 @@ def _bounded_sim_target_queue_metadata(
     exploitation_slots: int,
     exploration_slots: int,
 ) -> dict[str, Any]:
-    selected_rows = [dict(row) for row in preview_rows if bool(row.get("selected"))][
-        :exact_replay_candidate_cap
+    selected_preview_rows = [
+        dict(row) for row in preview_rows if bool(row.get("selected"))
     ]
+    selected_rows: list[dict[str, Any]] = []
+    duplicate_filtered_candidate_spec_ids: list[str] = []
+    seen_frontier_keys: set[str] = set()
+    for row in selected_preview_rows:
+        frontier_key = (
+            _string(row.get("exact_replay_frontier_key"))
+            or _string(row.get("candidate_frontier_hash"))
+            or _string(row.get("candidate_spec_id"))
+        )
+        if frontier_key in seen_frontier_keys:
+            duplicate_filtered_candidate_spec_ids.append(
+                _string(row.get("candidate_spec_id"))
+            )
+            continue
+        seen_frontier_keys.add(frontier_key)
+        selected_rows.append(row)
+        if len(selected_rows) >= exact_replay_candidate_cap:
+            break
     entries: list[dict[str, Any]] = []
     for index, row in enumerate(selected_rows, start=1):
         candidate_spec_id = _string(row.get("candidate_spec_id"))
@@ -6802,6 +6832,10 @@ def _bounded_sim_target_queue_metadata(
                 "queue_priority": index,
                 "candidate_spec_id": candidate_spec_id,
                 "frontier_bucket": frontier_bucket,
+                "candidate_frontier_hash": row.get("candidate_frontier_hash"),
+                "exact_replay_frontier_key": row.get("exact_replay_frontier_key"),
+                "frontier_dedupe_status": row.get("frontier_dedupe_status"),
+                "frontier_dedupe_metadata": row.get("frontier_dedupe_metadata"),
                 "preview_rank": row.get("rank"),
                 "preview_score": row.get("preview_score"),
                 "observed_post_cost_expectancy_bps": row.get(
@@ -6867,6 +6901,17 @@ def _bounded_sim_target_queue_metadata(
         "proof_semantics": _fast_replay_preview_proof_semantics(),
         "whitepaper_mechanisms": list(FAST_REPLAY_WHITEPAPER_MECHANISMS),
         "queue_policy": "top_exploitation_plus_exploration_exact_replay_cap",
+        "dedupe_policy": {
+            "schema_version": "torghut.fast-replay-sim-target-queue-dedupe.v1",
+            "status": "enabled",
+            "dedupe_scope": "same_replay_tape_cache_and_execution_identity",
+            "prefilter_only": True,
+            "promotion_proof": False,
+            "proof_authority": False,
+            "promotion_authority": False,
+            "promotion_allowed": False,
+            "final_promotion_allowed": False,
+        },
         "runner_policy": {
             "default_shard_timeout_seconds": _DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS,
             "default_worker_cap": _DEFAULT_REAL_REPLAY_SHARD_WORKERS,
@@ -6901,7 +6946,13 @@ def _bounded_sim_target_queue_metadata(
         "exploitation_slots": exploitation_slots,
         "exploration_slots": exploration_slots,
         "exact_replay_candidate_count": len(entries),
+        "pre_dedupe_selected_candidate_count": len(selected_preview_rows),
+        "deduped_candidate_count": len(entries),
+        "duplicate_filtered_candidate_spec_ids": duplicate_filtered_candidate_spec_ids,
         "candidate_spec_ids": [entry["candidate_spec_id"] for entry in entries],
+        "exact_replay_frontier_keys": [
+            entry["exact_replay_frontier_key"] for entry in entries
+        ],
         "handoff_lineage_hashes": [entry["handoff_lineage_hash"] for entry in entries],
         "entries": entries,
     }
@@ -6928,6 +6979,10 @@ def _fast_replay_exact_handoff_lineage(
         "candidate_spec_id": candidate_spec_id,
         "queue_priority": queue_priority,
         "frontier_bucket": frontier_bucket,
+        "candidate_frontier_hash": row.get("candidate_frontier_hash"),
+        "exact_replay_frontier_key": row.get("exact_replay_frontier_key"),
+        "frontier_dedupe_status": row.get("frontier_dedupe_status"),
+        "frontier_dedupe_metadata": row.get("frontier_dedupe_metadata"),
         "preview_rank": row.get("rank"),
         "preview_score": row.get("preview_score"),
         "proof_semantics_label": row.get("proof_semantics_label"),
