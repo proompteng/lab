@@ -38,6 +38,7 @@ spec:
     mode: market-open
     synthesisSessionMode: market_open
     brokerMutationEnabled: "true"
+    sessionReconcileEnabled: "true"
     accountType: paper
     targetEquityUsd: "500000"
     marketOpenTimezone: America/New_York

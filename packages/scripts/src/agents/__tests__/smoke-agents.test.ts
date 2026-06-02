@@ -743,6 +743,7 @@ describe('autonomous trader provider', () => {
       expect(objectAt(parameters, 'mode')).toBe('market-open')
       expect(objectAt(parameters, 'synthesisSessionMode')).toBe('market_open')
       expect(objectAt(parameters, 'brokerMutationEnabled')).toBe(role === 'active' ? 'true' : 'false')
+      expect(objectAt(parameters, 'sessionReconcileEnabled')).toBe(role === 'active' ? 'true' : 'false')
       expect(objectAt(parameters, 'accountType')).toBe('paper')
       expect(objectAt(parameters, 'targetEquityUsd')).toBe('500000')
     }
@@ -754,6 +755,9 @@ describe('autonomous trader provider', () => {
     expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_ACCOUNT_TYPE')).toBe('{{parameters.accountType}}')
     expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED')).toBe(
       '{{parameters.brokerMutationEnabled}}',
+    )
+    expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_SESSION_RECONCILE_ENABLED')).toBe(
+      '{{parameters.sessionReconcileEnabled}}',
     )
     expect(
       (secretEnv ?? [])
@@ -792,6 +796,7 @@ describe('autonomous trader provider', () => {
     expect(objectAt(parameters, 'mode')).toBe('scorecard-readback')
     expect(objectAt(parameters, 'synthesisSessionMode')).toBe('scorecard_readback')
     expect(objectAt(parameters, 'brokerMutationEnabled')).toBe('false')
+    expect(objectAt(parameters, 'sessionReconcileEnabled')).toBe('true')
     const goal = objectAt(templateSpec, 'goal') as Record<string, unknown>
     expect(Object.hasOwn(goal, 'tokenBudget')).toBe(false)
     expect(secrets).toContain('synthesis-env')
@@ -852,6 +857,9 @@ describe('autonomous trader provider', () => {
     )
     expect(bootstrapContent).toContain('report_path="/workspace/.agentrun/autonomous-trader/report.md"')
     expect(bootstrapContent).toContain('work_dir="${AUTONOMOUS_TRADER_WORK_DIR:-/tmp/autonomous-trader-work}"')
+    expect(bootstrapContent).toContain('AUTONOMOUS_TRADER_SESSION_RECONCILE_ENABLED')
+    expect(bootstrapContent).toContain('/workspace/lab/scripts/autotrader/session_reconciler.py')
+    expect(bootstrapContent).toContain('--finalize-stale-flat')
     expect(bootstrapContent).toContain('analysis_context_path="${work_dir}/analysis-context.json"')
     expect(bootstrapContent).toContain('analysis_fetch_timeout_seconds="${ANALYSIS_FETCH_TIMEOUT_SECONDS:-180}"')
     expect(bootstrapContent).toContain('fetch --prune --filter=blob:none --depth="${analysis_fetch_depth}"')
