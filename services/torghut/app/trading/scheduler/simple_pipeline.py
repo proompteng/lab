@@ -2937,6 +2937,15 @@ class SimpleTradingPipeline(TradingPipeline):
             mismatches.append("target_plan_symbol_mismatch")
         if target_symbols and symbol not in target_symbols:
             mismatches.append("target_plan_symbol_scope_mismatch")
+        expected_action = SimpleTradingPipeline._target_plan_action_for_symbol(
+            metadata,
+            symbol=symbol,
+        )
+        decision_action = SimpleTradingPipeline._normalize_target_plan_action(
+            decision.action
+        )
+        if expected_action is not None and decision_action != expected_action:
+            mismatches.append("target_plan_side_mismatch")
         if not mismatches:
             return None
         return {
@@ -2944,8 +2953,54 @@ class SimpleTradingPipeline(TradingPipeline):
             "symbol": symbol,
             "metadata_symbol": metadata_symbol,
             "target_symbols": sorted(target_symbols),
+            "decision_action": decision_action,
+            "target_action": expected_action,
             "mismatches": mismatches,
         }
+
+    @staticmethod
+    def _target_plan_action_for_symbol(
+        metadata: Mapping[str, Any],
+        *,
+        symbol: str,
+    ) -> Literal["buy", "sell"] | None:
+        normalized_symbol = symbol.strip().upper()
+        raw_actions = metadata.get("paper_route_probe_symbol_actions")
+        if isinstance(raw_actions, Mapping):
+            for raw_symbol, raw_action in cast(
+                Mapping[object, object], raw_actions
+            ).items():
+                if str(raw_symbol).strip().upper() != normalized_symbol:
+                    continue
+                return SimpleTradingPipeline._normalize_target_plan_action(raw_action)
+        metadata_symbol = _safe_text(metadata.get("symbol"))
+        direct_symbol_matches = (
+            metadata_symbol is None or metadata_symbol.upper() == normalized_symbol
+        )
+        if not direct_symbol_matches:
+            return None
+        for key in (
+            "paper_route_probe_leg_action",
+            "paper_route_probe_action",
+            "probe_action",
+            "action",
+            "side",
+        ):
+            action = SimpleTradingPipeline._normalize_target_plan_action(
+                metadata.get(key)
+            )
+            if action is not None:
+                return action
+        return None
+
+    @staticmethod
+    def _normalize_target_plan_action(value: object) -> Literal["buy", "sell"] | None:
+        normalized = str(value or "").strip().lower()
+        if normalized in {"buy", "long"}:
+            return "buy"
+        if normalized in {"sell", "short"}:
+            return "sell"
+        return None
 
     @staticmethod
     def _paper_route_quote_routeability_payload(
@@ -3002,6 +3057,127 @@ class SimpleTradingPipeline(TradingPipeline):
             if target_mismatch is not None
             else None,
         }
+
+    @staticmethod
+    def _paper_route_quote_routeability_retry_metadata(
+        decision_row: TradeDecision,
+    ) -> dict[str, object] | None:
+        if decision_row.status != "rejected":
+            return None
+        decision_json_raw = decision_row.decision_json
+        if not isinstance(decision_json_raw, Mapping):
+            return None
+        decision_json = cast(Mapping[str, Any], decision_json_raw)
+        params = _mapping_value(decision_json.get("params"))
+        if params is None:
+            return None
+        if not (
+            isinstance(params.get("paper_route_target_plan_source_decision"), Mapping)
+            or isinstance(params.get("paper_route_target_plan"), Mapping)
+            or isinstance(params.get("paper_route_probe"), Mapping)
+        ):
+            return None
+        routeability = _mapping_value(params.get("quote_routeability"))
+        if routeability is None:
+            return None
+        if _safe_text(routeability.get("status")) != "blocked":
+            return None
+        reason = _safe_text(routeability.get("reason"))
+        retryable_reasons = {
+            "absent_snapshot_fallback",
+            "missing_executable_quote",
+            "missing_bid",
+            "missing_ask",
+            "non_positive_price",
+            "non_positive_bid",
+            "non_positive_ask",
+            "crossed_quote",
+            "stale_quote",
+            "spread_bps_exceeded",
+            "wide_spread_midpoint_jump",
+        }
+        if reason not in retryable_reasons:
+            return None
+        retry_attempts = _safe_int(
+            decision_json.get("paper_route_quote_routeability_retry_attempts")
+        )
+        retry_limit = max(
+            _safe_int(settings.trading_simple_paper_route_probe_retry_attempt_limit),
+            0,
+        )
+        if retry_limit <= 0 or retry_attempts >= retry_limit:
+            return None
+        return {
+            "previous_decision_status": "rejected",
+            "previous_submission_stage": "rejected_quote_routeability",
+            "previous_quote_routeability_reason": reason,
+            "previous_quote_routeability": dict(routeability),
+            "previous_retry_attempts": retry_attempts,
+        }
+
+    def _reopen_rejected_paper_route_quote_routeability_decision(
+        self,
+        *,
+        session: Session,
+        decision: StrategyDecision,
+        decision_row: TradeDecision,
+    ) -> TradeDecision | None:
+        retry_metadata = self._paper_route_quote_routeability_retry_metadata(
+            decision_row
+        )
+        if retry_metadata is None:
+            return None
+        if self.executor.execution_exists(session, decision_row):
+            return None
+
+        self.executor.sync_decision_state(session, decision_row, decision)
+        raw_decision_json = decision_row.decision_json
+        decision_json = (
+            dict(cast(Mapping[str, Any], raw_decision_json))
+            if isinstance(raw_decision_json, Mapping)
+            else {}
+        )
+        retry_attempts = _safe_int(
+            decision_json.get("paper_route_quote_routeability_retry_attempts")
+        )
+        params_mapping = _mapping_value(decision_json.get("params"))
+        params = dict(params_mapping) if params_mapping is not None else {}
+        params.pop("quote_routeability", None)
+        decision_json["params"] = params
+        decision_json["submission_stage"] = (
+            "paper_route_quote_routeability_retry_pending"
+        )
+        decision_json["paper_route_quote_routeability_retry_attempts"] = (
+            retry_attempts + 1
+        )
+        decision_json["paper_route_quote_routeability_retry"] = {
+            **retry_metadata,
+            "submission_stage": "paper_route_quote_routeability_retry_pending",
+            "symbol": decision.symbol.strip().upper(),
+            "strategy_id": decision.strategy_id,
+        }
+        for key in (
+            "risk_reasons",
+            "reject_reason_atomic",
+            "reject_class",
+            "reject_origin",
+            "broker_precheck",
+        ):
+            decision_json.pop(key, None)
+        decision_row.status = "planned"
+        decision_row.created_at = trading_now(account_label=self.account_label)
+        decision_row.decision_json = decision_json
+        session.add(decision_row)
+        session.commit()
+        session.refresh(decision_row)
+        logger.warning(
+            "Reopening paper route target source decision after transient quote routeability failure strategy_id=%s decision_id=%s symbol=%s previous_reason=%s",
+            decision.strategy_id,
+            decision_row.id,
+            decision.symbol,
+            retry_metadata["previous_quote_routeability_reason"],
+        )
+        return decision_row
 
     def _prepare_decision_for_submission(
         self,
@@ -4954,6 +5130,15 @@ class SimpleTradingPipeline(TradingPipeline):
         decision_row = self.executor.ensure_decision(
             session, decision, strategy, self.account_label
         )
+        reopened_quote_routeability = (
+            self._reopen_rejected_paper_route_quote_routeability_decision(
+                session=session,
+                decision=decision,
+                decision_row=decision_row,
+            )
+        )
+        if reopened_quote_routeability is not None:
+            return reopened_quote_routeability
         if "paper_route_target_plan" in decision.params:
             self.executor.update_decision_params(session, decision_row, decision.params)
             self.executor.sync_decision_state(session, decision_row, decision)

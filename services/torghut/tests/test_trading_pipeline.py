@@ -3908,6 +3908,141 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(refreshed_snapshot.get("ask"), "190.14")
         self.assertEqual(row.status, "planned")
 
+    def test_paper_route_quote_routeability_retries_rejected_decision_when_quote_recovers(
+        self,
+    ) -> None:
+        from app import config
+
+        now = datetime(2026, 6, 1, 14, 0, tzinfo=timezone.utc)
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_simple_submit_enabled = True
+        config.settings.trading_fractional_equities_enabled = True
+        config.settings.trading_simple_paper_route_probe_retry_attempt_limit = 1
+        strategy = Strategy(
+            id=uuid4(),
+            name="microbar-cross-sectional-pairs-v1",
+            description="bounded target strategy",
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="static",
+            universe_symbols=["AAPL"],
+            max_notional_per_trade=Decimal("1000"),
+        )
+        decision = StrategyDecision(
+            strategy_id=str(strategy.id),
+            symbol="AAPL",
+            event_ts=now,
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            rationale="paper-route-target-source",
+            params={
+                "paper_route_target_plan": {
+                    "candidate_id": "c88421d619759b2cfaa6f4d0",
+                    "hypothesis_id": "H-PAIRS-01",
+                    "account_label": "TORGHUT_SIM",
+                    "observed_stage": "paper",
+                    "source_kind": "paper_route_probe_runtime_observed",
+                },
+                "source_decision_mode": BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
+                "profit_proof_eligible": True,
+            },
+        )
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="TORGHUT_SIM",
+            session_factory=self.session_local,
+            price_fetcher=FakePriceFetcher(
+                Decimal("190.12"),
+                spread=Decimal("0.04"),
+                bid=Decimal("190.10"),
+                ask=Decimal("190.14"),
+            ),
+        )
+
+        with self.session_local() as session:
+            session.add(strategy)
+            session.commit()
+            row = pipeline.executor.ensure_decision(
+                session,
+                decision,
+                strategy,
+                "TORGHUT_SIM",
+            )
+            row.status = "rejected"
+            decision_json = cast(dict[str, Any], row.decision_json)
+            params = cast(dict[str, Any], decision_json["params"])
+            params["quote_routeability"] = {
+                "schema_version": "torghut.paper-route-quote-routeability.v1",
+                "status": "blocked",
+                "reason": "missing_executable_quote",
+                "bounded_evidence_collection_ready": False,
+                "promotion_allowed": False,
+                "final_authority_ok": False,
+                "final_promotion_allowed": False,
+            }
+            decision_json["params"] = params
+            decision_json["reject_reason_atomic"] = ["missing_executable_quote"]
+            row.decision_json = decision_json
+            session.add(row)
+            session.commit()
+
+            reopened = pipeline._ensure_pending_decision_row(
+                session=session,
+                decision=decision,
+                strategy=strategy,
+            )
+            assert reopened is not None
+            session.refresh(row)
+            reopened_json = cast(dict[str, Any], row.decision_json)
+            self.assertEqual(row.status, "planned")
+            self.assertEqual(
+                reopened_json.get("submission_stage"),
+                "paper_route_quote_routeability_retry_pending",
+            )
+            self.assertEqual(
+                cast(
+                    dict[str, Any],
+                    reopened_json["paper_route_quote_routeability_retry"],
+                )["previous_quote_routeability_reason"],
+                "missing_executable_quote",
+            )
+
+            prepared = pipeline._prepare_decision_for_submission(
+                session=session,
+                decision=decision,
+                decision_row=row,
+                strategy=strategy,
+                account={
+                    "equity": "100000",
+                    "cash": "100000",
+                    "buying_power": "100000",
+                },
+                positions=[],
+            )
+            session.refresh(row)
+            final_params = cast(
+                dict[str, Any], cast(dict[str, Any], row.decision_json)["params"]
+            )
+            routeability = cast(dict[str, Any], final_params.get("quote_routeability"))
+
+        self.assertIsNotNone(prepared)
+        self.assertEqual(routeability.get("status"), "accepted")
+        self.assertEqual(routeability.get("reason"), "executable_quote_ready")
+        self.assertFalse(routeability.get("promotion_allowed"))
+        self.assertFalse(routeability.get("final_authority_ok"))
+        self.assertEqual(row.status, "planned")
+
     def test_decision_price_uses_existing_executable_quote_without_refetch(
         self,
     ) -> None:

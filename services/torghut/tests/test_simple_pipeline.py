@@ -575,6 +575,24 @@ def test_target_plan_source_mismatch_readback_handles_no_metadata_and_symbol_fie
     assert mismatch["metadata_symbol"] == "AMZN"
 
 
+def test_target_plan_source_mismatch_rejects_pair_leg_side_mismatch() -> None:
+    mismatch = SimpleTradingPipeline._paper_route_target_plan_source_mismatch(
+        _routeability_decision(
+            params={
+                "paper_route_target_plan_source_decision": _bounded_hpairs_target(
+                    paper_route_probe_symbol_actions={"AAPL": "sell", "AMZN": "buy"}
+                )
+            }
+        )
+    )
+
+    assert mismatch is not None
+    assert mismatch["mismatches"] == ["target_plan_side_mismatch"]
+    assert mismatch["symbol"] == "AAPL"
+    assert mismatch["decision_action"] == "buy"
+    assert mismatch["target_action"] == "sell"
+
+
 def test_blocked_target_readiness_maps_collection_gate_to_wait_for_fresh_quote() -> (
     None
 ):
