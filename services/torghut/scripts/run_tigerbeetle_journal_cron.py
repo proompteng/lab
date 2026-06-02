@@ -31,6 +31,7 @@ LIVE_EXECUTION_BATCH_SIZE = 5
 LIVE_EXECUTION_SLICE_COUNT = 5
 LIVE_TCA_METRIC_BATCH_SIZE = 5
 LIVE_TCA_METRIC_MAX_BATCHES = 1
+LIVE_RECONCILE_LIMIT = 500
 
 
 @dataclass(frozen=True)
@@ -103,7 +104,8 @@ def _live_commands(*, execution_batch_size: int) -> list[JournalCronCommand]:
             dsn_env="DB_DSN",
             batch_size=5,
             max_batches=1,
-            reconcile_limit=1000,
+            reconcile_limit=LIVE_RECONCILE_LIMIT,
+            reconcile_empty_selection=True,
             allow_data_quality_degraded=True,
         ),
     ]
