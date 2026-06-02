@@ -1445,7 +1445,7 @@ class TestLiveConfigManifestContract(TestCase):
             "torghut-tigerbeetle-journal-order-events-sim"
         )
 
-        self.assertEqual(live_spec.get("schedule"), "*/6 * * * *")
+        self.assertEqual(live_spec.get("schedule"), "*/2 * * * *")
         self.assertEqual(sim_spec.get("schedule"), "21,51 * * * *")
         for spec, job_spec, container in (
             (live_spec, live_job_spec, live_container),
@@ -1514,6 +1514,10 @@ class TestLiveConfigManifestContract(TestCase):
                 security_context.get("seccompProfile", {}),
             )
             self.assertEqual(seccomp_profile.get("type"), "Unconfined")
+        live_args = "\n".join(str(item) for item in live_container.get("args", []))
+        self.assertIn("--execution-batch-size 25", live_args)
+        sim_args = "\n".join(str(item) for item in sim_container.get("args", []))
+        self.assertNotIn("--execution-batch-size", sim_args)
 
         live_env = {
             item.get("name"): item
@@ -1531,7 +1535,7 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertNotIn("SIM_DB_DSN", live_env)
         live_args = "\n".join(str(item) for item in live_container.get("args", []))
         self.assertIn("--preset live", live_args)
-        self.assertIn("--execution-batch-size 5", live_args)
+        self.assertIn("--execution-batch-size 25", live_args)
         self.assertIn("--supervise-timeout-seconds 45", live_args)
         self.assertNotIn("--dsn-env DB_DSN", live_args)
         self.assertNotIn("--dsn-env SIM_DB_DSN", live_args)
