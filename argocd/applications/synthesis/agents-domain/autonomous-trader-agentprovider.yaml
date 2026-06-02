@@ -188,7 +188,7 @@ spec:
         }
 
         fetch_analysis_main() {
-          git_with_auth -C "${analysis_dir}" fetch --prune origin main:refs/remotes/origin/main
+          git_with_auth -C "${analysis_dir}" fetch --prune origin refs/heads/main:refs/remotes/origin/main
         }
 
         if [ ! -d "${analysis_dir}/.git" ]; then
@@ -201,8 +201,9 @@ spec:
         git -C "${analysis_dir}" remote set-url origin "${analysis_repo_url}"
         git -C "${analysis_dir}" config gc.auto 0
         fetch_analysis_main
-        git -C "${analysis_dir}" checkout --force --detach origin/main
-        git -C "${analysis_dir}" reset --hard origin/main
+        analysis_main_sha="$(git -C "${analysis_dir}" rev-parse refs/remotes/origin/main^{commit})"
+        git -C "${analysis_dir}" checkout --force "${analysis_main_sha}"
+        git -C "${analysis_dir}" reset --hard "${analysis_main_sha}"
         git -C "${analysis_dir}" clean -ffd
 
         analysis_head="$(git -C "${analysis_dir}" rev-parse HEAD)"

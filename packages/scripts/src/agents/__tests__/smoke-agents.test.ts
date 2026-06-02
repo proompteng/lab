@@ -742,6 +742,14 @@ describe('synthesis autonomous trader provider', () => {
     expect(bootstrapContent).toContain(
       'analysis_context_path="${ANALYSIS_CONTEXT_PATH:-${work_dir}/analysis-context.json}"',
     )
+    expect(bootstrapContent).toContain('fetch --prune origin refs/heads/main:refs/remotes/origin/main')
+    expect(bootstrapContent).toContain(
+      'analysis_main_sha="$(git -C "${analysis_dir}" rev-parse refs/remotes/origin/main^{commit})"',
+    )
+    expect(bootstrapContent).toContain('git -C "${analysis_dir}" checkout --force "${analysis_main_sha}"')
+    expect(bootstrapContent).not.toContain('fetch --prune origin main:refs/remotes/origin/main')
+    expect(bootstrapContent).not.toContain('checkout --force --detach origin/main')
+    expect(bootstrapContent).not.toContain('reset --hard origin/main')
     expect(bootstrapContent).toContain('--output "${analysis_context_path}"')
     expect(bootstrapContent).not.toContain('"${artifact_dir}/analysis-context.json"')
     expect(bootstrapContent).not.toContain('"${artifact_dir}/analysis-bootstrap.json"')
