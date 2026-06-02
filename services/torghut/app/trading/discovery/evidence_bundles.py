@@ -415,7 +415,6 @@ def _artifact_refs_from_scorecard(scorecard: Mapping[str, Any]) -> tuple[str, ..
         "market_impact_stress_artifact_ref",
         "delay_adjusted_depth_stress_artifact_ref",
         "exact_replay_ledger_artifact_ref",
-        "runtime_ledger_artifact_ref",
     ):
         ref = _string(scorecard.get(key))
         if ref:
@@ -426,7 +425,6 @@ def _artifact_refs_from_scorecard(scorecard: Mapping[str, Any]) -> tuple[str, ..
         "market_limit_order_mix_artifact_refs",
         "order_type_ablation_artifact_refs",
         "exact_replay_ledger_artifact_refs",
-        "runtime_ledger_artifact_refs",
     ):
         raw_refs = scorecard.get(key)
         if isinstance(raw_refs, str):

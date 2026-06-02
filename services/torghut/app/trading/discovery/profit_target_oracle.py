@@ -1089,17 +1089,13 @@ def evaluate_profit_target_oracle(
         scorecard,
         "exact_replay_ledger_artifact_ref",
         "exact_replay_ledger_artifact_refs",
-        "runtime_ledger_artifact_ref",
-        "runtime_ledger_artifact_refs",
     )
     exact_replay_ledger_artifact_present = bool(exact_replay_ledger_artifact_refs)
     exact_replay_ledger_row_count = _nonnegative_int(
         scorecard.get("exact_replay_ledger_artifact_row_count")
-        or scorecard.get("runtime_ledger_artifact_row_count")
     )
     exact_replay_ledger_fill_count = _nonnegative_int(
         scorecard.get("exact_replay_ledger_artifact_fill_count")
-        or scorecard.get("runtime_ledger_artifact_fill_count")
     )
     checks.extend(
         (
@@ -1108,7 +1104,7 @@ def evaluate_profit_target_oracle(
                 "observed": str(exact_replay_ledger_artifact_present).lower(),
                 "operator": "eq",
                 "threshold": "true",
-                "source_marker": "exact_replay_runtime_ledger_authority",
+                "source_marker": "exact_replay_ledger_probation_gate",
                 "passed": exact_replay_ledger_artifact_present
                 if policy.require_exact_replay_ledger
                 else True,
@@ -1134,7 +1130,7 @@ def evaluate_profit_target_oracle(
                 "observed": portfolio_post_cost_net_pnl_basis,
                 "operator": "in",
                 "threshold": sorted(_ACCEPTED_LEDGER_PNL_BASES),
-                "source_marker": "exact_replay_runtime_ledger_authority",
+                "source_marker": "exact_replay_ledger_probation_gate",
                 "passed": (
                     portfolio_post_cost_net_pnl_basis in _ACCEPTED_LEDGER_PNL_BASES
                 )
@@ -1146,7 +1142,7 @@ def evaluate_profit_target_oracle(
                 "observed": portfolio_post_cost_net_pnl_source,
                 "operator": "in",
                 "threshold": sorted(_ACCEPTED_LEDGER_PNL_SOURCES),
-                "source_marker": "exact_replay_runtime_ledger_authority",
+                "source_marker": "exact_replay_ledger_probation_gate",
                 "passed": (
                     portfolio_post_cost_net_pnl_source in _ACCEPTED_LEDGER_PNL_SOURCES
                 )

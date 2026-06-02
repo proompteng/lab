@@ -98,7 +98,7 @@ def _executable_scorecard_fields(index: int | str = 0) -> dict[str, object]:
 
 
 class TestPortfolioOptimizer(TestCase):
-    def test_exact_replay_ledger_helpers_accept_list_refs_and_runtime_artifact_counts(
+    def test_exact_replay_ledger_helpers_accept_exact_replay_refs_and_counts(
         self,
     ) -> None:
         bundle = evidence_bundle_from_frontier_candidate(
@@ -111,9 +111,8 @@ class TestPortfolioOptimizer(TestCase):
                         "s3://proof/exact-ledger.json",
                         "s3://proof/exact-ledger.json",
                     ],
-                    "runtime_ledger_artifact_refs": ["s3://proof/runtime-ledger.json"],
-                    "runtime_ledger_artifact_row_count": "7",
-                    "runtime_ledger_artifact_fill_count": "6",
+                    "exact_replay_ledger_artifact_row_count": "7",
+                    "exact_replay_ledger_artifact_fill_count": "6",
                 },
             },
             dataset_snapshot_id="snapshot-ledger-list",
@@ -124,7 +123,6 @@ class TestPortfolioOptimizer(TestCase):
             portfolio_optimizer_module._exact_replay_ledger_artifact_refs(bundle),
             [
                 "s3://proof/exact-ledger.json",
-                "s3://proof/runtime-ledger.json",
             ],
         )
         self.assertEqual(
@@ -136,7 +134,7 @@ class TestPortfolioOptimizer(TestCase):
             6,
         )
 
-    def test_exact_replay_ledger_helpers_reject_non_artifact_count_aliases(
+    def test_exact_replay_ledger_helpers_reject_runtime_and_non_artifact_aliases(
         self,
     ) -> None:
         bundle = evidence_bundle_from_frontier_candidate(
@@ -144,6 +142,10 @@ class TestPortfolioOptimizer(TestCase):
             candidate={
                 "candidate_id": "cand-ledger-summary-alias",
                 "objective_scorecard": {
+                    "runtime_ledger_artifact_ref": "s3://proof/runtime-ledger.json",
+                    "runtime_ledger_artifact_refs": ["s3://proof/runtime-ledger.json"],
+                    "runtime_ledger_artifact_row_count": "7",
+                    "runtime_ledger_artifact_fill_count": "6",
                     "exact_replay_ledger_row_count": "7",
                     "runtime_ledger_row_count": "7",
                     "exact_replay_ledger_fill_count": "6",
@@ -154,6 +156,14 @@ class TestPortfolioOptimizer(TestCase):
             result_path="/tmp/cand-ledger-summary-alias.json",
         )
 
+        self.assertEqual(
+            portfolio_optimizer_module._exact_replay_ledger_artifact_refs(bundle),
+            [],
+        )
+        self.assertNotIn(
+            "s3://proof/runtime-ledger.json",
+            bundle.replay_artifact_refs,
+        )
         self.assertEqual(
             portfolio_optimizer_module._exact_replay_ledger_row_count(bundle),
             0,

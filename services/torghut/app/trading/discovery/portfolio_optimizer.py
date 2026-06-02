@@ -456,8 +456,6 @@ def _exact_replay_ledger_artifact_refs(bundle: CandidateEvidenceBundle) -> list[
         scorecard,
         "exact_replay_ledger_artifact_ref",
         "exact_replay_ledger_artifact_refs",
-        "runtime_ledger_artifact_ref",
-        "runtime_ledger_artifact_refs",
     )
 
 
@@ -468,7 +466,6 @@ def _exact_replay_ledger_row_count(bundle: CandidateEvidenceBundle) -> int:
         int(
             _decimal(
                 scorecard.get("exact_replay_ledger_artifact_row_count")
-                or scorecard.get("runtime_ledger_artifact_row_count")
             )
         ),
     )
@@ -481,7 +478,6 @@ def _exact_replay_ledger_fill_count(bundle: CandidateEvidenceBundle) -> int:
         int(
             _decimal(
                 scorecard.get("exact_replay_ledger_artifact_fill_count")
-                or scorecard.get("runtime_ledger_artifact_fill_count")
             )
         ),
     )
@@ -1680,14 +1676,8 @@ def _portfolio_scorecard(
         "exact_replay_ledger_artifact_ref": exact_replay_ledger_artifact_refs[0]
         if exact_replay_ledger_artifact_refs
         else "",
-        "runtime_ledger_artifact_refs": exact_replay_ledger_artifact_refs,
-        "runtime_ledger_artifact_ref": exact_replay_ledger_artifact_refs[0]
-        if exact_replay_ledger_artifact_refs
-        else "",
         "exact_replay_ledger_artifact_row_count": exact_replay_ledger_row_count,
-        "runtime_ledger_artifact_row_count": exact_replay_ledger_row_count,
         "exact_replay_ledger_artifact_fill_count": exact_replay_ledger_fill_count,
-        "runtime_ledger_artifact_fill_count": exact_replay_ledger_fill_count,
         "executable_replay_account_buying_power": str(
             min(executable_buying_powers, default=Decimal("0"))
         ),
