@@ -635,6 +635,8 @@ def _hpairs_source_proof_census_status(
         for item in _as_text_list(runtime_authority.get("blockers"))
         if item not in blockers
     )
+    attachment_blockers = _hpairs_source_proof_census_attachment_blockers(payload)
+    blockers = _extend_unique_text_items(blockers, attachment_blockers)
     next_blocker = _as_dict(verdict.get("next_blocker"))
     return {
         "schema_version": HPAIRS_SOURCE_PROOF_CENSUS_STATUS_SCHEMA_VERSION,
@@ -650,6 +652,7 @@ def _hpairs_source_proof_census_status(
         "final_authority_ok": bool(runtime_authority.get("final_authority_ok"))
         and not blockers,
         "blockers": blockers,
+        "attachment_blockers": attachment_blockers,
         "missing_requirement_categories": _as_dict(
             payload.get("missing_requirement_categories")
         ),
@@ -661,6 +664,29 @@ def _hpairs_source_proof_census_status(
         "next_action": verdict.get("next_action"),
         "totals": _as_dict(payload.get("totals")),
     }
+
+
+def _hpairs_source_proof_census_attachment_blockers(
+    payload: Mapping[str, Any],
+) -> list[str]:
+    blockers: list[str] = []
+    if (
+        _as_text(payload.get("schema_version"))
+        != "torghut.hpairs-source-proof-census.v1"
+    ):
+        blockers.append("hpairs_source_proof_census_schema_mismatch")
+    source = _as_dict(payload.get("source"))
+    if source.get("read_only") is not True:
+        blockers.append("hpairs_source_proof_census_not_read_only")
+    if source.get("writes_proof") is not False:
+        blockers.append("hpairs_source_proof_census_writes_proof")
+    if source.get("modifies_rows") is not False:
+        blockers.append("hpairs_source_proof_census_modifies_rows")
+    if source.get("replay_outputs_count_as_runtime_proof") is not False:
+        blockers.append("hpairs_source_proof_census_replay_outputs_claim_runtime_proof")
+    if source.get("synthetic_proof_created") is not False:
+        blockers.append("hpairs_source_proof_census_synthetic_proof_created")
+    return blockers
 
 
 def _read_runtime_window_target_plan(ref: str) -> dict[str, Any]:

@@ -129,6 +129,15 @@ class TestRenewLatestEmpiricalPromotionJobsRuntimeLedger(TestCase):
                 "schema_version": "torghut.hpairs-source-proof-census.v1",
                 "identity": {"hypothesis_id": "H-PAIRS-01"},
                 "window": {},
+                "source": {
+                    "kind": "fixture_json",
+                    "read_only": True,
+                    "writes_proof": False,
+                    "modifies_rows": False,
+                    "runtime_stage": "paper",
+                    "replay_outputs_count_as_runtime_proof": False,
+                    "synthetic_proof_created": False,
+                },
                 "runtime_authority": {
                     "final_authority_ok": False,
                     "blockers": ["runtime_ledger_source_materialization_missing"],
@@ -174,6 +183,48 @@ class TestRenewLatestEmpiricalPromotionJobsRuntimeLedger(TestCase):
             status["next_blocker"]["step"],
             "runtime_ledger_source_materialization_present",
         )
+
+    def test_hpairs_source_proof_census_attachment_blockers_block_renewal_authority(
+        self,
+    ) -> None:
+        status = renew._hpairs_source_proof_census_status(
+            {
+                "schema_version": "torghut.hpairs-source-proof-census.v1",
+                "identity": {"hypothesis_id": "H-PAIRS-01"},
+                "window": {},
+                "source": {
+                    "kind": "fixture_json",
+                    "read_only": False,
+                    "writes_proof": False,
+                    "modifies_rows": False,
+                    "runtime_stage": "paper",
+                    "replay_outputs_count_as_runtime_proof": False,
+                    "synthetic_proof_created": False,
+                },
+                "runtime_authority": {
+                    "final_authority_ok": True,
+                    "blockers": [],
+                },
+                "missing_requirement_categories": {},
+                "missing_source_ref_categories": {},
+                "blocker_ladder": [],
+                "blockers": [],
+                "verdict": {
+                    "classification": "authority_candidate_ready",
+                    "authority_candidate_ready": True,
+                    "next_blocker": None,
+                    "next_action": "assemble authority proof packet",
+                },
+                "totals": {},
+            }
+        )
+
+        blocker = "hpairs_source_proof_census_not_read_only"
+        self.assertTrue(status["present"])
+        self.assertFalse(status["promotion_allowed"])
+        self.assertFalse(status["final_authority_ok"])
+        self.assertEqual(status["attachment_blockers"], [blocker])
+        self.assertIn(blocker, status["blockers"])
 
     def test_runtime_bucket_materialization_rerun_is_idempotent_for_same_scope(
         self,

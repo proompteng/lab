@@ -531,6 +531,15 @@ def _hpairs_source_proof_census(
             "started_at": "2026-05-01T14:00:00+00:00",
             "ended_at": "2026-05-29T21:00:00+00:00",
         },
+        "source": {
+            "kind": "fixture_json",
+            "read_only": True,
+            "writes_proof": False,
+            "modifies_rows": False,
+            "runtime_stage": "paper",
+            "replay_outputs_count_as_runtime_proof": False,
+            "synthetic_proof_created": False,
+        },
         "runtime_authority": {
             "final_authority_ok": final_authority_ok,
             "blockers": blocker_list,
@@ -795,6 +804,42 @@ class TestRuntimeLedgerProofPacket(TestCase):
         self.assertEqual(
             census_status["next_blocker"]["step"], "submitted_orders_present"
         )
+
+    def test_hpairs_source_proof_census_attachment_blockers_block_authority(
+        self,
+    ) -> None:
+        census = _hpairs_source_proof_census()
+        census["source"] = {
+            "kind": "fixture_json",
+            "read_only": False,
+            "writes_proof": False,
+            "modifies_rows": False,
+            "runtime_stage": "paper",
+            "replay_outputs_count_as_runtime_proof": False,
+            "synthetic_proof_created": False,
+        }
+
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            proof_mode="authority",
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=_runtime_import(),
+            completion_status=_completion(),
+            hpairs_source_proof_census=census,
+            min_runtime_ledger_net_pnl=Decimal("500"),
+            min_runtime_ledger_daily_net_pnl=Decimal("500"),
+            min_runtime_ledger_trading_days=1,
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        blocker = "hpairs_source_proof_census_not_read_only"
+        self.assertFalse(result["ok"])
+        self.assertFalse(result["final_authority_ok"])
+        self.assertFalse(result["promotion_allowed"])
+        self.assertIn(blocker, result["authority_blockers"])
+        census_status = result["evidence"]["hpairs_source_proof_census"]
+        self.assertEqual(census_status["attachment_blockers"], [blocker])
+        self.assertIn(blocker, census_status["blockers"])
 
     def test_packet_prefers_importable_paper_route_plan_over_next_session_plan(
         self,
