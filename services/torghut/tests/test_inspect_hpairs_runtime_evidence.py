@@ -353,3 +353,277 @@ def test_json_output_is_stable(tmp_path: Path) -> None:
         "routeability_submission_evidence",
         "runtime_ledger_source_authority_evidence",
     ]
+
+
+def test_status_payload_loader_fail_closed_cases(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    non_object = tmp_path / "status-list.json"
+    non_object.write_text("[]")
+    payload, source, error = census.load_status_payload(
+        status_fixture_json=non_object,
+        status_service_url=None,
+        timeout_seconds=0.1,
+    )
+    assert payload == {}
+    assert source == f"fixture_json:{non_object}"
+    assert error == "status_fixture_json_not_object"
+
+    payload, source, error = census.load_status_payload(
+        status_fixture_json=None,
+        status_service_url=None,
+        timeout_seconds=0.1,
+    )
+    assert payload == {}
+    assert source is None
+    assert error is None
+
+    class _FailingUrlopen:
+        def __call__(self, *_args: object, **_kwargs: object) -> object:
+            raise OSError("offline")
+
+    monkeypatch.setattr(census.urllib.request, "urlopen", _FailingUrlopen())
+    payload, source, error = census.load_status_payload(
+        status_fixture_json=None,
+        status_service_url="https://status.invalid/hpairs",
+        timeout_seconds=0.1,
+    )
+    assert payload == {}
+    assert source == "https://status.invalid/hpairs"
+    assert error == "offline"
+
+
+class _FakeResponse:
+    def __init__(self, body: bytes) -> None:
+        self.body = body
+
+    def __enter__(self) -> "_FakeResponse":
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self.body
+
+
+def test_status_url_non_object_payload_blocks(monkeypatch: object) -> None:
+    monkeypatch.setattr(
+        census.urllib.request,
+        "urlopen",
+        lambda *_args, **_kwargs: _FakeResponse(b"[]"),
+    )
+
+    payload, source, error = census.load_status_payload(
+        status_fixture_json=None,
+        status_service_url="https://status.invalid/hpairs",
+        timeout_seconds=0.1,
+    )
+
+    assert payload == {}
+    assert source == "https://status.invalid/hpairs"
+    assert error == "status_service_payload_not_object"
+
+
+def test_configuration_route_and_target_blocker_branches() -> None:
+    identity = census.RuntimeEvidenceIdentity(
+        hypothesis_id=DEFAULT_HPAIRS_HYPOTHESIS_ID,
+        candidate_id=DEFAULT_HPAIRS_CANDIDATE_ID,
+        runtime_strategy_name=DEFAULT_HPAIRS_RUNTIME_STRATEGY,
+        account_label=DEFAULT_HPAIRS_ACCOUNT_LABEL,
+        observed_stage="paper",
+    )
+    totals = {
+        "trade_decision_count": 0,
+        "execution_count": 0,
+        "execution_order_event_count": 0,
+        "runtime_ledger_bucket_count": 0,
+        "runtime_submitted_order_count": 0,
+        "fill_lifecycle_event_count": 0,
+    }
+
+    no_status = census._configured_candidate_truth(
+        {},
+        totals=totals,
+        identity=identity,
+        status_source=None,
+        status_read_error="timeout",
+    )
+    assert census.STATUS_SERVICE_NOT_PROVIDED_BLOCKER in no_status["blockers"]
+    assert census.STATUS_SERVICE_READ_ERROR_BLOCKER in no_status["blockers"]
+
+    missing_target = census._configured_candidate_truth(
+        {"unrelated": True},
+        totals=totals,
+        identity=identity,
+        status_source="fixture_json:status.json",
+        status_read_error=None,
+    )
+    assert census.CONFIGURED_CANDIDATE_MISSING_BLOCKER in missing_target["blockers"]
+
+    mismatch = census._configured_candidate_truth(
+        {"target": {"candidate_id": "other-candidate"}},
+        totals=totals,
+        identity=identity,
+        status_source="fixture_json:status.json",
+        status_read_error=None,
+    )
+    assert census.CONFIGURED_CANDIDATE_MISMATCH_BLOCKER in mismatch["blockers"]
+
+    route = census._routeability_truth(
+        {"route": {"route_enabled": False}, "status": {"simple_submit_enabled": "yes"}},
+        totals=totals,
+        blockers=[census.SUBMITTED_ORDERS_MISSING_BLOCKER],
+        identifier_counts={
+            "trade_decision_ids_count": 0,
+            "execution_ids_count": 0,
+            "execution_order_event_ids_count": 0,
+            "source_window_ids_count": 0,
+        },
+    )
+    assert "routeability_flags_disabled" in route["blockers"]
+    assert route["route_flags"] == {
+        "route_enabled": False,
+        "simple_submit_enabled": True,
+    }
+
+
+def test_target_sequence_matching_and_mismatch_branches() -> None:
+    identity = census.RuntimeEvidenceIdentity(
+        hypothesis_id=DEFAULT_HPAIRS_HYPOTHESIS_ID,
+        candidate_id=DEFAULT_HPAIRS_CANDIDATE_ID,
+        runtime_strategy_name=DEFAULT_HPAIRS_RUNTIME_STRATEGY,
+        account_label=DEFAULT_HPAIRS_ACCOUNT_LABEL,
+        observed_stage="paper",
+    )
+
+    first_match = census._target_from_status(
+        {
+            "targets": [
+                {"candidate_id": "wrong"},
+                {"hypothesis_id": DEFAULT_HPAIRS_HYPOTHESIS_ID},
+            ]
+        },
+        identity,
+    )
+    assert first_match == {"hypothesis_id": DEFAULT_HPAIRS_HYPOTHESIS_ID}
+
+    fallback_first = census._target_from_status(
+        {"targets": [{"candidate_id": "wrong"}]}, identity
+    )
+    assert fallback_first == {"candidate_id": "wrong"}
+    assert census._target_from_status({"targets": []}, identity) == {}
+
+    assert census._target_matches({"candidate_id": "wrong"}, identity) is False
+    assert census._target_matches({"hypothesis_id": "wrong"}, identity) is False
+    assert census._target_matches({"account_label": "ALPACA_PAPER"}, identity) is False
+    assert census._target_matches({"runtime_strategy_name": "other"}, identity) is False
+
+
+def test_low_level_json_and_parse_helpers_cover_fail_closed_branches() -> None:
+    aware = datetime(2026, 6, 2, 12, 0, tzinfo=timezone.utc)
+    naive = datetime(2026, 6, 2, 12, 0)
+
+    assert census._parse_cli_timestamp(None) is None
+    assert census._parse_cli_timestamp("2026-06-02T12:00:00Z") == aware
+    try:
+        census._parse_cli_timestamp("not-a-timestamp")
+    except ValueError as exc:
+        assert "invalid timestamp" in str(exc)
+    else:  # pragma: no cover - defensive assertion
+        raise AssertionError("invalid timestamp should raise")
+
+    assert census._parse_timestamp(aware) == aware
+    assert census._parse_timestamp(None) is None
+    assert census._parse_timestamp("bad") is None
+    assert census._as_values({"a": 1}) == [1]
+    assert census._as_values(None) == []
+    assert census._text(None, default="missing") == "missing"
+    assert census._int("nan") == 0
+    assert census._decimal("nan") == census.Decimal("0")
+    assert census._bool_or_none("enabled") is True
+    assert census._bool_or_none("disabled") is False
+    assert census._bool_or_none(1) is True
+    assert census._utc(naive).tzinfo is timezone.utc
+    assert census._isoformat(aware) == "2026-06-02T12:00:00Z"
+    assert census._json_default(census.Decimal("1.20")) == "1.2"
+    assert census._json_default(aware) == "2026-06-02T12:00:00Z"
+    assert census._json_default(Path("x")) == "x"
+
+
+def test_identifier_counts_include_forward_compatible_runtime_payload_values() -> None:
+    rows = source_census.CensusSourceRows()
+    counts = census._identifier_counts(
+        rows,
+        {
+            "trading_days": [
+                {
+                    "source_window_id_count": 1,
+                    "execution_order_event_ref_count": 1,
+                    "execution_ref_count": 1,
+                    "trade_decision_ref_count": 1,
+                }
+            ],
+            "runtime_ledger_buckets": [
+                {
+                    "payload": {
+                        "source_window_ids": ["window-a", "window-b"],
+                        "execution_order_event_ids": ["event-a"],
+                        "execution_ids": ["execution-a"],
+                        "trade_decision_ids": ["decision-a"],
+                    }
+                }
+            ],
+        },
+    )
+
+    assert counts == {
+        "source_window_ids_count": 2,
+        "execution_order_event_ids_count": 1,
+        "execution_ids_count": 1,
+        "trade_decision_ids_count": 1,
+    }
+
+
+def test_main_stdout_dsn_default_and_read_error_paths(
+    monkeypatch: object, capsys: object
+) -> None:
+    fixture_rows = _rows(_fixture(days=1, include_buckets=False))
+
+    monkeypatch.setattr(
+        census.source_census, "load_fixture_rows", lambda _path: fixture_rows
+    )
+    assert census.main(["--fixture-json", "fixture.json"]) == 0
+    stdout = capsys.readouterr().out
+    assert "torghut.hpairs-runtime-live-paper-evidence-census.v1" in stdout
+
+    calls: list[str] = []
+
+    def _fake_load_dsn_rows(
+        *_args: object, **_kwargs: object
+    ) -> source_census.CensusSourceRows:
+        calls.append("dsn")
+        return fixture_rows
+
+    def _fake_load_default_session_rows(
+        *_args: object, **_kwargs: object
+    ) -> source_census.CensusSourceRows:
+        calls.append("default")
+        return fixture_rows
+
+    monkeypatch.setattr(census, "load_dsn_rows", _fake_load_dsn_rows)
+    monkeypatch.setattr(
+        census, "load_default_session_rows", _fake_load_default_session_rows
+    )
+    assert census.main(["--dsn", "sqlite:///:memory:"]) == 0
+    assert census.main([]) == 0
+    assert calls == ["dsn", "default"]
+
+    def _raise_load_dsn_rows(
+        *_args: object, **_kwargs: object
+    ) -> source_census.CensusSourceRows:
+        raise ValueError("missing table")
+
+    monkeypatch.setattr(census, "load_dsn_rows", _raise_load_dsn_rows)
+    assert census.main(["--dsn", "sqlite:///:memory:"]) == 0
+    assert "missing table" in capsys.readouterr().out
