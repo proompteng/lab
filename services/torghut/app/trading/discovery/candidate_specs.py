@@ -11,6 +11,10 @@ from typing import Any, Literal, Mapping, Sequence, cast
 from app.trading.discovery.capital_budget import estimate_capital_pressure
 from app.trading.discovery.factor_acceptance import build_factor_acceptance_artifact
 from app.trading.discovery.hypothesis_cards import HypothesisCard
+from app.trading.discovery.replay_tape import (
+    HPAIRS_REPLAY_TAPE_FEATURE_SCHEMA_VERSION,
+    build_hpairs_replay_tape_feature_schema_hash,
+)
 from app.trading.semiconductor_universe import (
     LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE as LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE,
     RESEARCHED_SEMICONDUCTOR_TECH_UNIVERSE,
@@ -5839,6 +5843,23 @@ def compile_candidate_specs(
                             "square_root_power_law_prefilter_only_requires_source_backed_adv"
                         ),
                         "ranking_authority": "candidate_discovery_prefilter_only",
+                    }
+                    feature_contract["hpairs_replay_tape_feature_contract"] = {
+                        "schema_version": "torghut.hpairs-replay-tape-candidate-contract.v1",
+                        "feature_schema_version": HPAIRS_REPLAY_TAPE_FEATURE_SCHEMA_VERSION,
+                        "feature_schema_hash": build_hpairs_replay_tape_feature_schema_hash(),
+                        "clusterlob_buckets": (
+                            "deterministic_clustered_event_quote_behavior_metadata"
+                        ),
+                        "ofi_memory_regime_slices": [
+                            "instant",
+                            "short",
+                            "medium",
+                            "long",
+                        ],
+                        "ranking_authority": "candidate_discovery_prefilter_only",
+                        "promotion_authority": False,
+                        "runtime_ledger_authority": False,
                     }
                     parameter_space["hpairs_microstructure_prefilter"] = {
                         "enabled": True,

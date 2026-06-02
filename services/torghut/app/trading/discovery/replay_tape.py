@@ -23,6 +23,10 @@ REPLAY_TAPE_SCHEMA_VERSION = "torghut.replay-tape.v1"
 REPLAY_TAPE_MANIFEST_SCHEMA_VERSION = "torghut.replay-tape-manifest.v1"
 REPLAY_TAPE_CACHE_IDENTITY_SCHEMA_VERSION = "torghut.replay-tape-cache-identity.v1"
 HPAIRS_REPLAY_TAPE_FEATURE_SCHEMA_VERSION = "torghut.hpairs-replay-tape-features.v1"
+HPAIRS_REPLAY_TAPE_FEATURE_CONTRACT_SCHEMA_VERSION = (
+    "torghut.hpairs-replay-tape-feature-contract.v1"
+)
+HPAIRS_OFI_MEMORY_REGIME_SCHEMA_VERSION = "torghut.hpairs-ofi-memory-regime-slices.v1"
 _DECIMAL_TAG = "__torghut_decimal__"
 _DATETIME_TAG = "__torghut_datetime__"
 
@@ -205,6 +209,90 @@ def build_source_query_digest(payload: Mapping[str, Any]) -> str:
         separators=(",", ":"),
     )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def hpairs_replay_tape_feature_contract() -> dict[str, Any]:
+    """Return the stable H-PAIRS replay-tape discovery feature contract.
+
+    The contract is intentionally proof-neutral. Its hash can be supplied as a
+    replay tape ``feature_schema_hash`` so ClusterLOB/OFI discovery features are
+    part of cache lineage without changing runtime-ledger authority.
+    """
+
+    return {
+        "schema_version": HPAIRS_REPLAY_TAPE_FEATURE_CONTRACT_SCHEMA_VERSION,
+        "feature_schema_version": HPAIRS_REPLAY_TAPE_FEATURE_SCHEMA_VERSION,
+        "mechanisms": [
+            "clusterlob_clustered_event_quote_behavior_buckets",
+            "horizon_specific_ofi_memory_regime_slices",
+            "proof_neutral_candidate_discovery_prefilter",
+        ],
+        "cluster_lob": {
+            "event_fields": [
+                "cluster_lob_label",
+                "cluster_label",
+                "order_cluster",
+                "lob_event_type",
+                "event_type",
+            ],
+            "bucket_fields": [
+                "cluster_lob_bucket",
+                "cluster_bucket",
+                "participant_bucket",
+                "behavior_bucket",
+            ],
+            "quote_fields": [
+                "bid_size",
+                "bid_qty",
+                "best_bid_size",
+                "ask_size",
+                "ask_qty",
+                "best_ask_size",
+            ],
+            "bucket_policy": "deterministic_source_bucket_or_event_quote_fallback",
+        },
+        "ofi_memory_regime": {
+            "horizon_slices": ["instant", "short", "medium", "long"],
+            "preferred_horizon_keys": ["instant", "3_events", "12_events", "36_events"],
+            "decay_memory_fields": [
+                "ofi_decay_memory",
+                "ofi_memory",
+                "order_flow_memory",
+                "ofi_decay",
+            ],
+            "regime_fields": [
+                "regime_tags",
+                "regime_tag",
+                "market_regime",
+                "liquidity_regime",
+            ],
+            "stress_fields": [
+                "macro_event_window",
+                "macro_announcement_window",
+                "news_event_window",
+                "stress_veto_window",
+            ],
+        },
+        "lineage": {
+            "serializable": True,
+            "deterministic": True,
+            "hashable": True,
+            "hash_function": "sha256_canonical_json",
+        },
+        "proof_neutrality": {
+            "proof_source": "prefilter_only",
+            "promotion_proof": False,
+            "proof_authority": False,
+            "promotion_authority": False,
+            "runtime_ledger_authority": False,
+            "requires_exact_replay": True,
+            "requires_source_backed_runtime_ledger": True,
+        },
+    }
+
+
+def build_hpairs_replay_tape_feature_schema_hash() -> str:
+    return build_source_query_digest(hpairs_replay_tape_feature_contract())
 
 
 def build_replay_tape_cache_key(
@@ -645,45 +733,30 @@ def hpairs_replay_tape_features(signal: SignalEnvelope) -> dict[str, Any]:
     source_fields: set[str] = set()
     horizon_ofi = _hpairs_ofi_horizons(payload, source_fields=source_fields)
     decay_memory = _hpairs_ofi_decay_memory(payload, source_fields=source_fields)
-    cluster_label = _first_text(
-        payload,
-        (
-            "cluster_lob_label",
-            "cluster_label",
-            "order_cluster",
-            "lob_event_type",
-            "event_type",
-        ),
-        source_fields=source_fields,
-    )
-    cluster_bucket = _first_text(
-        payload,
-        (
-            "cluster_lob_bucket",
-            "cluster_bucket",
-            "participant_bucket",
-            "behavior_bucket",
-        ),
-        source_fields=source_fields,
-    )
     regime_tags = _tag_tuple(
         payload,
         ("regime_tags", "regime_tag", "market_regime", "liquidity_regime"),
         source_fields=source_fields,
     )
     stress_tags = _stress_tag_tuple(payload, source_fields=source_fields)
+    cluster_lob = _hpairs_cluster_lob_payload(payload, source_fields=source_fields)
+    ofi_memory_regime_slices = _hpairs_ofi_memory_regime_slices(
+        horizon_ofi=horizon_ofi,
+        decay_memory=decay_memory,
+        regime_tags=regime_tags,
+        stress_tags=stress_tags,
+    )
     capacity_notional_lineage = _hpairs_capacity_notional_lineage(
         payload,
         source_fields=source_fields,
     )
     return {
         "schema_version": HPAIRS_REPLAY_TAPE_FEATURE_SCHEMA_VERSION,
+        "feature_schema_hash": build_hpairs_replay_tape_feature_schema_hash(),
         "order_flow_imbalance_horizons": horizon_ofi,
         "ofi_decay_memory": decay_memory,
-        "cluster_lob": {
-            "label": cluster_label,
-            "bucket": cluster_bucket,
-        },
+        "ofi_memory_regime_slices": ofi_memory_regime_slices,
+        "cluster_lob": cluster_lob,
         "regime_tags": list(regime_tags),
         "stress_tags": list(stress_tags),
         "capacity_notional_lineage": capacity_notional_lineage,
@@ -794,6 +867,251 @@ def _hpairs_ofi_decay_memory(
         source_fields.add(key)
         memory[key] = str(parsed)
     return dict(sorted(memory.items()))
+
+
+def _hpairs_cluster_lob_payload(
+    payload: Mapping[str, Any],
+    *,
+    source_fields: set[str],
+) -> dict[str, Any]:
+    label = _first_text(
+        payload,
+        (
+            "cluster_lob_label",
+            "cluster_label",
+            "order_cluster",
+            "lob_event_type",
+            "event_type",
+        ),
+        source_fields=source_fields,
+    )
+    raw_bucket = _first_text(
+        payload,
+        (
+            "cluster_lob_bucket",
+            "cluster_bucket",
+            "participant_bucket",
+            "behavior_bucket",
+        ),
+        source_fields=source_fields,
+    )
+    behavior_bucket = raw_bucket or _cluster_lob_behavior_bucket(label)
+    quote_behavior_bucket = _quote_behavior_bucket(payload, source_fields=source_fields)
+    return {
+        "label": label,
+        "bucket": behavior_bucket,
+        "source_bucket": raw_bucket,
+        "behavior_bucket": behavior_bucket,
+        "quote_behavior_bucket": quote_behavior_bucket,
+        "bucket_policy": (
+            "source_bucket"
+            if raw_bucket
+            else "deterministic_event_quote_behavior_fallback"
+        ),
+    }
+
+
+def _cluster_lob_behavior_bucket(label: str | None) -> str:
+    text = str(label or "").strip().lower()
+    if not text:
+        return "unknown"
+    if any(token in text for token in ("buy", "bid", "lift", "add_bid")):
+        return "aggressive_buy_pressure"
+    if any(token in text for token in ("sell", "ask", "hit", "add_ask")):
+        return "aggressive_sell_pressure"
+    if any(token in text for token in ("cancel", "delete", "remove", "withdraw")):
+        return "liquidity_withdrawal"
+    if any(token in text for token in ("quote", "replace", "modify", "update")):
+        return "quote_revision"
+    if "trade" in text or "print" in text:
+        return "trade_print"
+    return text.replace(" ", "_")
+
+
+def _quote_behavior_bucket(
+    payload: Mapping[str, Any],
+    *,
+    source_fields: set[str],
+) -> str:
+    bid_size = _first_decimal_with_key(
+        payload,
+        (
+            "bid_size",
+            "bid_qty",
+            "best_bid_size",
+            "best_bid_qty",
+            "bid_depth",
+            "bid_volume",
+        ),
+    )
+    ask_size = _first_decimal_with_key(
+        payload,
+        (
+            "ask_size",
+            "ask_qty",
+            "best_ask_size",
+            "best_ask_qty",
+            "ask_depth",
+            "ask_volume",
+        ),
+    )
+    if bid_size[0] is None or ask_size[0] is None:
+        return "quote_depth_missing"
+    bid_value, bid_key = bid_size
+    ask_value, ask_key = ask_size
+    if bid_key is not None:
+        source_fields.add(bid_key)
+    if ask_key is not None:
+        source_fields.add(ask_key)
+    assert bid_value is not None
+    assert ask_value is not None
+    total = bid_value + ask_value
+    if total <= 0:
+        return "quote_depth_empty"
+    imbalance = (bid_value - ask_value) / total
+    if imbalance >= Decimal("0.20"):
+        return "bid_depth_dominant"
+    if imbalance <= Decimal("-0.20"):
+        return "ask_depth_dominant"
+    return "balanced_quote_depth"
+
+
+def _hpairs_ofi_memory_regime_slices(
+    *,
+    horizon_ofi: Mapping[str, str],
+    decay_memory: Mapping[str, str],
+    regime_tags: Sequence[str],
+    stress_tags: Sequence[str],
+) -> dict[str, Any]:
+    instant = _mean_decimal_for_keys(horizon_ofi, ("instant", "1", "1_events"))
+    short = _mean_decimal_for_token(horizon_ofi, ("short", "3", "5"))
+    medium = _mean_decimal_for_token(horizon_ofi, ("medium", "12", "15"))
+    long = _mean_decimal_for_token(horizon_ofi, ("long", "36", "60"))
+    all_horizon_mean = _mean_decimal(horizon_ofi.values())
+    instant = instant if instant is not None else all_horizon_mean
+    short = short if short is not None else instant
+    medium = medium if medium is not None else short
+    long = long if long is not None else medium
+    memory_score = _mean_decimal(decay_memory.values())
+    if memory_score is None:
+        memory_score = _mean_decimal(
+            value for value in (short, medium, long) if value is not None
+        )
+    bounded_memory_score = _bounded_decimal(memory_score or Decimal("0"))
+    shock_score = _bounded_decimal((short or Decimal("0")) - (long or Decimal("0")))
+    directional_alignment = _bounded_decimal(
+        Decimal("0.60") * shock_score + Decimal("0.40") * bounded_memory_score
+    )
+    return {
+        "schema_version": HPAIRS_OFI_MEMORY_REGIME_SCHEMA_VERSION,
+        "horizons": {
+            "instant": _decimal_text(instant or Decimal("0")),
+            "short": _decimal_text(short or Decimal("0")),
+            "medium": _decimal_text(medium or Decimal("0")),
+            "long": _decimal_text(long or Decimal("0")),
+        },
+        "memory_score": _decimal_text(bounded_memory_score),
+        "shock_score": _decimal_text(shock_score),
+        "directional_alignment_score": _decimal_text(directional_alignment),
+        "regime_bucket": _ofi_regime_bucket(
+            memory_score=bounded_memory_score,
+            shock_score=shock_score,
+            regime_tags=regime_tags,
+            stress_tags=stress_tags,
+        ),
+        "regime_tags": list(regime_tags),
+        "stress_tags": list(stress_tags),
+        "prefilter_only": True,
+        "proof_authority": False,
+        "promotion_authority": False,
+    }
+
+
+def _ofi_regime_bucket(
+    *,
+    memory_score: Decimal,
+    shock_score: Decimal,
+    regime_tags: Sequence[str],
+    stress_tags: Sequence[str],
+) -> str:
+    if stress_tags:
+        return "stress_veto_window"
+    tags = {str(tag).strip().lower() for tag in regime_tags}
+    if any("wide" in tag or "illiquid" in tag for tag in tags):
+        return "wide_spread_liquidity_regime"
+    if any("tight" in tag or "liquid" in tag for tag in tags):
+        return "tight_spread_liquidity_regime"
+    if shock_score >= Decimal("0.20"):
+        return "positive_ofi_shock"
+    if shock_score <= Decimal("-0.20"):
+        return "negative_ofi_shock"
+    if memory_score >= Decimal("0.20"):
+        return "positive_ofi_memory"
+    if memory_score <= Decimal("-0.20"):
+        return "negative_ofi_memory"
+    return "balanced_ofi_memory"
+
+
+def _mean_decimal_for_keys(
+    values: Mapping[str, str],
+    keys: Sequence[str],
+) -> Decimal | None:
+    wanted = {str(key).lower() for key in keys}
+    return _mean_decimal(
+        value for key, value in values.items() if str(key).strip().lower() in wanted
+    )
+
+
+def _mean_decimal_for_token(
+    values: Mapping[str, str],
+    tokens: Sequence[str],
+) -> Decimal | None:
+    lowered_tokens = tuple(str(token).lower() for token in tokens)
+    return _mean_decimal(
+        value
+        for key, value in values.items()
+        if any(
+            _horizon_key_matches_token(str(key).strip().lower(), token)
+            for token in lowered_tokens
+        )
+    )
+
+
+def _horizon_key_matches_token(key: str, token: str) -> bool:
+    if key == token:
+        return True
+    if token in {"short", "medium", "long"}:
+        return token in key
+    return key.startswith(f"{token}_") or key.startswith(f"{token}-")
+
+
+def _mean_decimal(values: Iterable[Any]) -> Decimal | None:
+    parsed = tuple(
+        value
+        for value in (_decimal_or_none(item) for item in values)
+        if value is not None
+    )
+    if not parsed:
+        return None
+    return sum(parsed, Decimal("0")) / Decimal(len(parsed))
+
+
+def _bounded_decimal(value: Decimal) -> Decimal:
+    return max(Decimal("-1"), min(Decimal("1"), value))
+
+
+def _decimal_text(value: Decimal) -> str:
+    return format(value.normalize(), "f")
+
+
+def _first_decimal_with_key(
+    payload: Mapping[str, Any], keys: Sequence[str]
+) -> tuple[Decimal | None, str | None]:
+    for key in keys:
+        value = _decimal_or_none(payload.get(key))
+        if value is not None:
+            return value, key
+    return None, None
 
 
 def _hpairs_capacity_notional_lineage(

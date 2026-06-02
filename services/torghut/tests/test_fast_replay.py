@@ -302,6 +302,39 @@ class TestFastReplayPreview(TestCase):
         self.assertGreater(ofi_pressure, 0.9)
         self.assertLessEqual(ofi_pressure, 1.0)
 
+    def test_ofi_pressure_uses_replay_tape_memory_regime_slices(self) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 2, 23, 14, 30, tzinfo=timezone.utc),
+            symbol="AAA",
+            timeframe="1Min",
+            seq=1,
+            source="test",
+            payload={
+                "hpairs_replay_tape_features": {
+                    "ofi_memory_regime_slices": {
+                        "horizons": {
+                            "instant": "0.30",
+                            "short": "0.50",
+                            "medium": "0.20",
+                            "long": "0.10",
+                        },
+                        "directional_alignment_score": "0.35",
+                        "regime_bucket": "positive_ofi_shock",
+                        "prefilter_only": True,
+                        "proof_authority": False,
+                    },
+                    "cluster_lob": {"bucket": "aggressive_buy_pressure"},
+                },
+            },
+            ingest_ts=datetime(2026, 2, 23, 14, 31, tzinfo=timezone.utc),
+        )
+
+        ofi_pressure = fast_replay._extract_ofi_pressure(signal)
+        ofi_memory = fast_replay._extract_ofi_memory_regime_score(signal)
+
+        self.assertEqual(ofi_pressure, 0.275)
+        self.assertEqual(ofi_memory, 0.35)
+
     def test_target_implied_notional_blocks_non_positive_expectancy(self) -> None:
         with TemporaryDirectory() as tmpdir:
             rows = [
