@@ -314,6 +314,7 @@ class TestSubmissionCouncil(TestCase):
             ],
             "source_materialization": "execution_order_events",
             "authority_class": "runtime_order_feed_execution_source",
+            "authority_reason": "event_sourced_runtime_ledger_profit_proof",
             "blockers": [],
         }
 
@@ -1239,6 +1240,7 @@ class TestSubmissionCouncil(TestCase):
                 ],
                 "source_materialization": "execution_order_events",
                 "authority_class": "runtime_order_feed_execution_source",
+                "authority_reason": "event_sourced_runtime_ledger_profit_proof",
             }
             reversal_source_payload = {
                 "source_window_start": (now - timedelta(minutes=75)).isoformat(),
@@ -1266,6 +1268,7 @@ class TestSubmissionCouncil(TestCase):
                 ],
                 "source_materialization": "execution_order_events",
                 "authority_class": "runtime_order_feed_execution_source",
+                "authority_reason": "event_sourced_runtime_ledger_profit_proof",
             }
             session.add_all(
                 [
@@ -1623,6 +1626,7 @@ class TestSubmissionCouncil(TestCase):
                 ],
                 "source_materialization": "execution_order_events",
                 "authority_class": "runtime_order_feed_execution_source",
+                "authority_reason": "event_sourced_runtime_ledger_profit_proof",
             },
             manifest={"candidate_id": "c88421d619759b2cfaa6f4d0"},
         )
@@ -1762,6 +1766,7 @@ class TestSubmissionCouncil(TestCase):
             ],
             "source_materialization": "execution_order_events",
             "authority_class": "runtime_order_feed_execution_source",
+            "authority_reason": "event_sourced_runtime_ledger_profit_proof",
             "reason_codes": ["runtime_ledger_stage_not_live"],
         }
 
@@ -1836,6 +1841,7 @@ class TestSubmissionCouncil(TestCase):
                     ],
                     "source_materialization": "execution_order_events",
                     "authority_class": "runtime_order_feed_execution_source",
+                    "authority_reason": "event_sourced_runtime_ledger_profit_proof",
                     "reason_codes": ["runtime_ledger_stage_not_live"],
                 },
                 {
@@ -1963,6 +1969,7 @@ class TestSubmissionCouncil(TestCase):
             ],
             "source_materialization": "execution_order_events",
             "authority_class": "runtime_order_feed_execution_source",
+            "authority_reason": "event_sourced_runtime_ledger_profit_proof",
             "reason_codes": ["runtime_ledger_stage_not_live"],
         }
 

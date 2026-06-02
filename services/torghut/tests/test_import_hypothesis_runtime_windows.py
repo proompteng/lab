@@ -949,7 +949,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertIn("runtime_ledger_authority_class_missing", blockers)
         self.assertFalse(_runtime_ledger_bucket_profit_proof_present(aggregate_only))
 
-    def test_runtime_ledger_profit_proof_accepts_source_window_ref_aliases(
+    def test_runtime_ledger_profit_proof_rejects_source_ref_aliases(
         self,
     ) -> None:
         source_window_ref_bucket = _complete_runtime_ledger_bucket(
@@ -971,7 +971,11 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             ],
         )
 
-        self.assertTrue(
+        self.assertIn(
+            "runtime_ledger_source_window_ids_missing",
+            _runtime_ledger_bucket_profit_proof_blockers(source_window_ref_bucket),
+        )
+        self.assertFalse(
             _runtime_ledger_bucket_profit_proof_present(source_window_ref_bucket)
         )
         self.assertTrue(

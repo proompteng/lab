@@ -340,7 +340,7 @@ def _promotion_grade_authority_marker_present(bucket: Mapping[str, object]) -> b
     return _promotion_grade_authority_field_present(
         bucket,
         "authority_class",
-    ) or _promotion_grade_authority_field_present(bucket, "authority_reason")
+    ) and _promotion_grade_authority_field_present(bucket, "authority_reason")
 
 
 def _non_promotion_derivation_present(bucket: Mapping[str, object]) -> bool:
@@ -503,64 +503,36 @@ def runtime_ledger_promotion_source_authority_blockers(
     if not _source_refs_present(
         bucket,
         "source_window_ids",
-        "source_window_id",
-        "source_window_refs",
-        "source_window_ref",
         "runtime_ledger_source_window_ids",
-        "runtime_ledger_source_window_id",
-        "runtime_ledger_source_window_refs",
-        "runtime_ledger_source_window_ref",
     ) or _source_ref_count(
         bucket,
         "source_window_ids",
-        "source_window_id",
-        "source_window_refs",
-        "source_window_ref",
         "runtime_ledger_source_window_ids",
-        "runtime_ledger_source_window_id",
-        "runtime_ledger_source_window_refs",
-        "runtime_ledger_source_window_ref",
     ) < _source_row_count(bucket, "order_feed_source_windows"):
         blockers.append(RUNTIME_LEDGER_SOURCE_WINDOW_MISSING_BLOCKER)
         blockers.append(RUNTIME_LEDGER_SOURCE_WINDOW_IDS_MISSING_BLOCKER)
     if not _source_refs_present(
         bucket,
         "trade_decision_ids",
-        "trade_decision_refs",
-        "trade_decision_id",
-        "decision_ids",
-        "decision_id",
     ) or _source_ref_count(
         bucket,
         "trade_decision_ids",
-        "trade_decision_refs",
-        "trade_decision_id",
-        "decision_ids",
-        "decision_id",
     ) < _source_row_count(bucket, "trade_decisions"):
         blockers.append(RUNTIME_LEDGER_TRADE_DECISION_REFS_MISSING_BLOCKER)
     if not _source_refs_present(
         bucket,
         "execution_ids",
-        "execution_refs",
-        "execution_id",
     ) or _source_ref_count(
         bucket,
         "execution_ids",
-        "execution_refs",
-        "execution_id",
     ) < _source_row_count(bucket, "executions"):
         blockers.append(RUNTIME_LEDGER_EXECUTION_REFS_MISSING_BLOCKER)
     if not _source_refs_present(
         bucket,
         "execution_order_event_ids",
-        "execution_order_event_refs",
-        "execution_order_event_id",
     ) or _source_ref_count(
         bucket,
         "execution_order_event_ids",
-        "execution_order_event_refs",
-        "execution_order_event_id",
     ) < _source_row_count(bucket, "execution_order_events"):
         blockers.append(RUNTIME_LEDGER_EXECUTION_ORDER_EVENT_REFS_MISSING_BLOCKER)
     if not _source_offsets_present(bucket) or _source_offset_count(

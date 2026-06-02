@@ -872,6 +872,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
             ],
             "source_materialization": "execution_order_events",
             "authority_class": "runtime_order_feed_execution_source",
+            "authority_reason": "event_sourced_runtime_ledger_profit_proof",
             "source_decision_mode_counts": {"strategy_signal_paper": 1},
         }
 

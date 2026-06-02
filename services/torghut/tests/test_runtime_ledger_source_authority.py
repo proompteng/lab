@@ -39,15 +39,16 @@ def _source_backed_payload(**overrides: object) -> dict[str, object]:
             "order_feed_source_windows": 1,
         },
         **_economics_payload(),
-        "trade_decision_id": "decision-1",
-        "execution_id": "execution-1",
-        "execution_order_event_id": "event-1",
-        "source_window_id": "source-window-1",
+        "trade_decision_ids": ["decision-1"],
+        "execution_ids": ["execution-1"],
+        "execution_order_event_ids": ["event-1"],
+        "source_window_ids": ["source-window-1"],
         "source_offsets": [
             {"topic": "alpaca.trade_updates", "partition": 0, "offset": 42}
         ],
         "source_materialization": "execution_order_events",
         "authority_class": "runtime_order_feed_execution_source",
+        "authority_reason": "event_sourced_runtime_ledger_profit_proof",
     }
     payload.update(overrides)
     return payload
@@ -201,6 +202,7 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
             ],
             "source_materialization": "execution_order_events",
             "authority_class": "runtime_order_feed_execution_source",
+            "authority_reason": "event_sourced_runtime_ledger_profit_proof",
         }
 
         self.assertEqual(
@@ -226,15 +228,16 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
                 "execution_order_events": 1,
                 "order_feed_source_windows": 1,
             },
-            "trade_decision_id": "decision-1",
-            "execution_id": "execution-1",
-            "execution_order_event_id": "event-1",
-            "source_window_id": "source-window-1",
+            "trade_decision_ids": ["decision-1"],
+            "execution_ids": ["execution-1"],
+            "execution_order_event_ids": ["event-1"],
+            "source_window_ids": ["source-window-1"],
             "source_offsets": [
                 {"topic": "alpaca.trade_updates", "partition": 0, "offset": 42}
             ],
             "source_materialization": "execution_order_events",
             "authority_class": "runtime_order_feed_execution_source",
+            "authority_reason": "event_sourced_runtime_ledger_profit_proof",
             "filled_notional": "1000",
             "cost_amount": "0",
             "post_cost_basis_counts": {"broker_reported_zero_cost": 1},
@@ -283,7 +286,7 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
         self.assertIn("runtime_ledger_source_window_ids_missing", blockers)
         self.assertIn("runtime_ledger_source_offsets_missing", blockers)
 
-    def test_promotion_source_authority_counts_mapping_and_scalar_refs(
+    def test_promotion_source_authority_counts_mapping_canonical_refs(
         self,
     ) -> None:
         blockers = runtime_ledger_promotion_source_authority_blockers(
@@ -303,15 +306,16 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
                     "order_feed_source_windows": 1,
                 },
                 **_economics_payload(),
-                "trade_decision_id": "decision-1",
-                "execution_id": "execution-1",
-                "execution_order_event_id": "event-1",
+                "trade_decision_ids": {"decision-1": True},
+                "execution_ids": ["execution-1"],
+                "execution_order_event_ids": {"event-1": True},
                 "source_window_ids": {"source-window-1": True},
                 "source_offsets": [
                     {"topic": "alpaca.trade_updates", "partition": 0, "offset": 42}
                 ],
                 "source_materialization": "execution_order_events",
                 "authority_class": "runtime_order_feed_execution_source",
+                "authority_reason": "event_sourced_runtime_ledger_profit_proof",
             }
         )
 
@@ -479,15 +483,16 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
                     "execution_order_events": 1,
                     "order_feed_source_windows": 1,
                 },
-                "trade_decision_id": "decision-1",
-                "execution_id": "execution-1",
-                "execution_order_event_id": "event-1",
-                "source_window_id": "source-window-1",
+                "trade_decision_ids": ["decision-1"],
+                "execution_ids": ["execution-1"],
+                "execution_order_event_ids": ["event-1"],
+                "source_window_ids": ["source-window-1"],
                 "source_offsets": [
                     {"topic": "alpaca.trade_updates", "partition": 0, "offset": 42}
                 ],
                 "source_materialization": "execution_order_events",
                 "authority_class": "runtime_order_feed_execution_source",
+                "authority_reason": "event_sourced_runtime_ledger_profit_proof",
                 "execution_economics_complete": False,
             }
         )
@@ -514,15 +519,16 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
                     "order_feed_source_windows": 1,
                 },
                 **_economics_payload(),
-                "trade_decision_id": "decision-1",
-                "execution_id": "execution-1",
-                "execution_order_event_id": "event-1",
-                "source_window_id": "source-window-1",
+                "trade_decision_ids": ["decision-1"],
+                "execution_ids": ["execution-1"],
+                "execution_order_event_ids": ["event-1"],
+                "source_window_ids": ["source-window-1"],
                 "source_offsets": [
                     {"topic": "alpaca.trade_updates", "partition": 0, "offset": 42}
                 ],
                 "source_materialization": "execution_order_events",
                 "authority_class": "runtime_order_feed_execution_source",
+                "authority_reason": "event_sourced_runtime_ledger_profit_proof",
                 "source_kind": "paper_route_probe_runtime_observed",
                 "promotion_authority": False,
             }
@@ -530,7 +536,7 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
 
         self.assertIn("runtime_ledger_authority_class_missing", blockers)
 
-    def test_promotion_source_authority_accepts_runtime_authority_reason_only(
+    def test_promotion_source_authority_rejects_runtime_authority_reason_only(
         self,
     ) -> None:
         blockers = runtime_ledger_promotion_source_authority_blockers(
@@ -550,10 +556,10 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
                     "order_feed_source_windows": 1,
                 },
                 **_economics_payload(),
-                "trade_decision_id": "decision-1",
-                "execution_id": "execution-1",
-                "execution_order_event_id": "event-1",
-                "source_window_id": "source-window-1",
+                "trade_decision_ids": ["decision-1"],
+                "execution_ids": ["execution-1"],
+                "execution_order_event_ids": ["event-1"],
+                "source_window_ids": ["source-window-1"],
                 "source_offsets": [
                     {"topic": "alpaca.trade_updates", "partition": 0, "offset": 42}
                 ],
@@ -562,7 +568,7 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
             }
         )
 
-        self.assertEqual(blockers, [])
+        self.assertIn("runtime_ledger_authority_class_missing", blockers)
 
     def test_promotion_source_authority_requires_named_source_ref_tables(
         self,
@@ -591,6 +597,7 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
                 ],
                 "source_materialization": "execution_order_events",
                 "authority_class": "runtime_order_feed_execution_source",
+                "authority_reason": "event_sourced_runtime_ledger_profit_proof",
             }
         )
 
@@ -615,15 +622,16 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
                 "order_feed_source_windows": 1,
             },
             **_economics_payload(),
-            "trade_decision_id": "decision-1",
-            "execution_id": "execution-1",
-            "execution_order_event_id": "event-1",
-            "source_window_id": "source-window-1",
+            "trade_decision_ids": ["decision-1"],
+            "execution_ids": ["execution-1"],
+            "execution_order_event_ids": ["event-1"],
+            "source_window_ids": ["source-window-1"],
             "source_offsets": [
                 {"topic": "alpaca.trade_updates", "partition": 0, "offset": 42}
             ],
             "source_materialization": "execution_order_events",
             "authority_class": "runtime_order_feed_execution_source",
+            "authority_reason": "event_sourced_runtime_ledger_profit_proof",
         }
 
         blockers = runtime_ledger_promotion_source_authority_blockers(
@@ -660,15 +668,16 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
                     "execution_order_events": 1,
                     "order_feed_source_windows": 1,
                 },
-                "trade_decision_id": "decision-1",
-                "execution_id": "execution-1",
-                "execution_order_event_id": "event-1",
-                "source_window_id": "source-window-1",
+                "trade_decision_ids": ["decision-1"],
+                "execution_ids": ["execution-1"],
+                "execution_order_event_ids": ["event-1"],
+                "source_window_ids": ["source-window-1"],
                 "source_offsets": [
                     {"topic": "alpaca.trade_updates", "partition": 0, "offset": 42}
                 ],
                 "source_materialization": "execution_order_events",
                 "authority_class": "runtime_order_feed_execution_source",
+                "authority_reason": "event_sourced_runtime_ledger_profit_proof",
                 "source_window_gap_count": 1,
             }
         )
@@ -694,15 +703,16 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
                 "order_feed_source_windows": 1,
             },
             **_economics_payload(),
-            "trade_decision_id": "decision-1",
-            "execution_id": "execution-1",
-            "execution_order_event_id": "event-1",
-            "source_window_id": "source-window-1",
+            "trade_decision_ids": ["decision-1"],
+            "execution_ids": ["execution-1"],
+            "execution_order_event_ids": ["event-1"],
+            "source_window_ids": ["source-window-1"],
             "source_offsets": [
                 {"topic": "alpaca.trade_updates", "partition": 0, "offset": 42}
             ],
             "source_materialization": "execution_order_events",
             "authority_class": "runtime_order_feed_execution_source",
+            "authority_reason": "event_sourced_runtime_ledger_profit_proof",
         }
 
         range_blockers = runtime_ledger_promotion_source_authority_blockers(
@@ -744,15 +754,16 @@ class TestRuntimeLedgerSourceAuthority(TestCase):
                 "order_feed_source_windows": 1,
             },
             **_economics_payload(),
-            "trade_decision_id": "decision-1",
-            "execution_id": "execution-1",
-            "execution_order_event_id": "event-1",
-            "source_window_id": "source-window-1",
+            "trade_decision_ids": ["decision-1"],
+            "execution_ids": ["execution-1"],
+            "execution_order_event_ids": ["event-1"],
+            "source_window_ids": ["source-window-1"],
             "source_offsets": [
                 {"topic": "alpaca.trade_updates", "partition": 0, "offset": 42}
             ],
             "source_materialization": "source_execution_lifecycle",
             "authority_class": "source_execution_lifecycle_materialized_runtime_ledger",
+            "authority_reason": "source_execution_lifecycle_materialized_runtime_ledger",
         }
 
         lifecycle_blockers = runtime_ledger_promotion_source_authority_blockers(
