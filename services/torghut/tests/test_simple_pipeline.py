@@ -955,6 +955,110 @@ def test_bounded_source_collection_authorizes_after_runtime_account_audit_readba
         settings.trading_allow_shorts = allow_shorts_before
 
 
+def test_hpairs_source_collection_authorization_emits_bounded_lineage_decisions(
+    monkeypatch,
+) -> None:
+    trading_mode_before = settings.trading_mode
+    probe_enabled_before = settings.trading_simple_paper_route_probe_enabled
+    allow_shorts_before = settings.trading_allow_shorts
+    try:
+        settings.trading_mode = "paper"
+        settings.trading_simple_paper_route_probe_enabled = True
+        settings.trading_allow_shorts = True
+        now = datetime(2026, 6, 2, 18, 0, tzinfo=timezone.utc)
+        target = _bounded_hpairs_target(
+            paper_route_probe_window_start="2026-06-02T13:30:00+00:00",
+            paper_route_probe_window_end="2026-06-02T20:00:00+00:00",
+            paper_route_probe_next_session_max_notional="25",
+            paper_route_probe_symbol_actions={"AAPL": "buy", "AMZN": "sell"},
+            paper_route_probe_symbol_quantities={"AAPL": "2", "AMZN": "1"},
+            source_collection_authorized=True,
+            source_collection_authorization_scope=(
+                "bounded_paper_route_source_decision_collection_only"
+            ),
+            source_collection_reason_codes=[
+                "runtime_ledger_source_decisions_missing",
+                "bounded_paper_route_manifest_seed",
+            ],
+            paper_probation_authorized=False,
+            paper_probation_satisfied_for_bounded_live_paper_collection=False,
+            evidence_collection_ok=False,
+            canary_collection_authorized=False,
+            bounded_evidence_collection_authorized=False,
+            bounded_live_paper_collection_authorized=False,
+            bounded_evidence_collection_blockers=[
+                "paper_probation_prerequisites_not_satisfied_for_bounded_collection"
+            ],
+            candidate_blockers=[
+                "runtime_ledger_source_decisions_missing",
+                "source_backed_paper_probation_required",
+                "paper_probation_prerequisites_not_satisfied_for_bounded_collection",
+            ],
+        )
+        strategy = Strategy(
+            name="microbar-cross-sectional-pairs-v1",
+            description="metadata fixture",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="static",
+            universe_symbols=["AAPL", "AMZN"],
+        )
+        pipeline = object.__new__(SimpleTradingPipeline)
+        pipeline.account_label = "TORGHUT_SIM"
+        pipeline._is_market_session_open = lambda _now: True
+        pipeline._external_paper_route_target_probe_symbols_cached = lambda: (
+            {"AAPL", "AMZN"},
+            None,
+            [target],
+        )
+        monkeypatch.setattr(
+            "app.trading.scheduler.simple_pipeline.trading_now",
+            lambda account_label=None: now,
+        )
+
+        decisions = pipeline._paper_route_target_source_decisions(
+            strategies=[strategy],
+            allowed_symbols={"AAPL", "AMZN"},
+            positions=[],
+            session=None,
+        )
+
+        assert {decision.symbol for decision in decisions} == {"AAPL", "AMZN"}
+        for decision in decisions:
+            params = decision.params
+            metadata = params["paper_route_target_plan_source_decision"]
+            assert params["hypothesis_id"] == "H-PAIRS-01"
+            assert params["candidate_id"] == "c88421d619759b2cfaa6f4d0"
+            assert params["strategy_name"] == "microbar-cross-sectional-pairs-v1"
+            assert (
+                params["runtime_strategy_name"] == "microbar-cross-sectional-pairs-v1"
+            )
+            assert params["account_label"] == "TORGHUT_SIM"
+            assert params["source_account_label"] == "TORGHUT_SIM"
+            assert params["source_decision_mode"] == "bounded_paper_route_collection"
+            assert params["profit_proof_eligible"] is True
+            assert params["promotion_allowed"] is False
+            assert params["final_promotion_authorized"] is False
+            assert params["final_promotion_allowed"] is False
+            assert params["live_capital_routing_enabled"] is False
+            assert metadata["source_collection_authorized"] is True
+            assert metadata["bounded_evidence_collection_authorized"] is True
+            assert metadata["bounded_live_paper_collection_authorized"] is True
+            assert metadata["canary_collection_authorized"] is True
+            assert metadata["evidence_collection_ok"] is True
+            assert (
+                "paper_probation_prerequisites_not_satisfied_for_bounded_collection"
+                not in metadata["bounded_evidence_collection_blockers"]
+            )
+            assert metadata["promotion_allowed"] is False
+            assert metadata["final_promotion_allowed"] is False
+            assert metadata["paper_route_probe_symbols"] == ["AAPL", "AMZN"]
+    finally:
+        settings.trading_mode = trading_mode_before
+        settings.trading_simple_paper_route_probe_enabled = probe_enabled_before
+        settings.trading_allow_shorts = allow_shorts_before
+
+
 def test_bounded_source_collection_blocks_closed_session_with_explicit_reason(
     monkeypatch,
 ) -> None:
