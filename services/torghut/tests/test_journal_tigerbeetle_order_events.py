@@ -424,6 +424,8 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
         self.assertIn("supervised_worker_timeout", stderr.getvalue())
         self.assertIn("--supervised-worker", run_mock.call_args.args[0])
         self.assertEqual(run_mock.call_args.kwargs["timeout"], 0.01)
+        self.assertTrue(run_mock.call_args.kwargs["capture_output"])
+        self.assertTrue(run_mock.call_args.kwargs["text"])
 
     def test_supervised_worker_splits_multi_source_timeout_budget(self) -> None:
         stdout = io.StringIO()
@@ -485,6 +487,8 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
         self.assertIn("--supervised-worker", second_argv)
         self.assertEqual(run_mock.call_args_list[0].kwargs["timeout"], 0.01)
         self.assertEqual(run_mock.call_args_list[1].kwargs["timeout"], 0.01)
+        self.assertTrue(run_mock.call_args_list[0].kwargs["capture_output"])
+        self.assertTrue(run_mock.call_args_list[1].kwargs["capture_output"])
 
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["sources"], [script.SOURCE_TYPE_EXECUTION_TCA_METRIC])
@@ -500,6 +504,196 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
             f'"{script.SOURCE_TYPE_EXECUTION}","{script.SOURCE_TYPE_EXECUTION_TCA_METRIC}"',
             stderr.getvalue(),
         )
+
+    def test_supervised_worker_normalizes_safe_payload_exit_mismatch(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        safe_payload = {
+            "schema_version": "torghut.tigerbeetle-journal-order-events.v1",
+            "ok": False,
+            "status": "degraded",
+            "authority": "non_authoritative_tigerbeetle_journal_telemetry",
+            "promotion_authority": False,
+            "overrides_runtime_ledger_authority": False,
+            "exit_nonzero": False,
+            "failed": 0,
+            "hard_failure_reasons": [],
+            "stop_reasons": [],
+            "accounting_blockers": ["tigerbeetle_unlinked_execution"],
+            "reconciliation_blockers": ["tigerbeetle_unlinked_execution"],
+            "sources": [script.SOURCE_TYPE_RUNTIME_LEDGER_BUCKET],
+        }
+
+        with (
+            patch.dict(os.environ, {"DB_DSN": "sqlite+pysqlite:///:memory:"}),
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "journal_tigerbeetle_order_events.py",
+                    "--dsn-env",
+                    "DB_DSN",
+                    "--sources",
+                    script.SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                    "--batch-size",
+                    "5",
+                    "--max-batches",
+                    "1",
+                    "--fail-on-degraded",
+                    "--allow-data-quality-degraded",
+                    "--json",
+                    "--supervise-timeout-seconds",
+                    "0.01",
+                ],
+            ),
+            patch(
+                "scripts.journal_tigerbeetle_order_events.subprocess.run",
+                return_value=subprocess.CompletedProcess(
+                    args=["python", "journal_tigerbeetle_order_events.py"],
+                    returncode=1,
+                    stdout=json.dumps(safe_payload, separators=(",", ":")) + "\n",
+                    stderr="",
+                ),
+            ),
+            redirect_stdout(stdout),
+            redirect_stderr(stderr),
+        ):
+            exit_code = script.main()
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(json.loads(stdout.getvalue()), safe_payload)
+        progress = json.loads(stderr.getvalue())
+        self.assertEqual(
+            progress["event"],
+            "supervised_worker_exit_mismatch_normalized",
+        )
+        self.assertEqual(progress["returncode"], 1)
+        self.assertEqual(
+            progress["sources"],
+            [script.SOURCE_TYPE_RUNTIME_LEDGER_BUCKET],
+        )
+        self.assertEqual(
+            progress["accounting_blockers"],
+            ["tigerbeetle_unlinked_execution"],
+        )
+
+    def test_supervised_worker_keeps_unsafe_payload_exit_nonzero(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        unsafe_payload = {
+            "schema_version": "torghut.tigerbeetle-journal-order-events.v1",
+            "ok": False,
+            "status": "degraded",
+            "authority": "non_authoritative_tigerbeetle_journal_telemetry",
+            "promotion_authority": False,
+            "overrides_runtime_ledger_authority": False,
+            "exit_nonzero": True,
+            "failed": 1,
+            "hard_failure_reasons": ["journal_batch_failures"],
+            "stop_reasons": [],
+            "accounting_blockers": [],
+            "reconciliation_blockers": [],
+            "sources": [script.SOURCE_TYPE_EXECUTION],
+        }
+
+        with (
+            patch.dict(os.environ, {"DB_DSN": "sqlite+pysqlite:///:memory:"}),
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "journal_tigerbeetle_order_events.py",
+                    "--dsn-env",
+                    "DB_DSN",
+                    "--sources",
+                    script.SOURCE_TYPE_EXECUTION,
+                    "--batch-size",
+                    "5",
+                    "--max-batches",
+                    "1",
+                    "--fail-on-degraded",
+                    "--json",
+                    "--supervise-timeout-seconds",
+                    "0.01",
+                ],
+            ),
+            patch(
+                "scripts.journal_tigerbeetle_order_events.subprocess.run",
+                return_value=subprocess.CompletedProcess(
+                    args=["python", "journal_tigerbeetle_order_events.py"],
+                    returncode=1,
+                    stdout=json.dumps(unsafe_payload, separators=(",", ":")) + "\n",
+                    stderr="",
+                ),
+            ),
+            redirect_stdout(stdout),
+            redirect_stderr(stderr),
+        ):
+            exit_code = script.main()
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(json.loads(stdout.getvalue()), unsafe_payload)
+        self.assertEqual(stderr.getvalue(), "")
+
+    def test_last_journal_payload_skips_worker_noise_and_invalid_json(self) -> None:
+        first_payload = {
+            "schema_version": "torghut.tigerbeetle-journal-order-events.v1",
+            "status": "stale",
+        }
+        final_payload = {
+            "schema_version": "torghut.tigerbeetle-journal-order-events.v1",
+            "status": "degraded",
+            "exit_nonzero": False,
+        }
+
+        payload = script._last_journal_payload(
+            "\n".join(
+                [
+                    "worker booted before json output",
+                    "{invalid-json",
+                    json.dumps({"schema_version": "unrelated.worker.v1"}),
+                    json.dumps(first_payload, separators=(",", ":")),
+                    "worker flushed trailing progress",
+                    json.dumps(final_payload, separators=(",", ":")),
+                ]
+            )
+        )
+
+        self.assertEqual(payload, final_payload)
+
+    def test_safe_payload_rejects_unsafe_supervised_exit_mismatches(self) -> None:
+        safe_payload = {
+            "schema_version": "torghut.tigerbeetle-journal-order-events.v1",
+            "promotion_authority": False,
+            "overrides_runtime_ledger_authority": False,
+            "exit_nonzero": False,
+            "failed": 0,
+            "hard_failure_reasons": [],
+            "stop_reasons": [],
+        }
+        unsafe_cases = [
+            ("missing_payload", None),
+            ("wrong_schema", {**safe_payload, "schema_version": "unrelated.worker.v1"}),
+            ("promotion_authority", {**safe_payload, "promotion_authority": True}),
+            (
+                "runtime_ledger_authority_override",
+                {**safe_payload, "overrides_runtime_ledger_authority": True},
+            ),
+            ("failed_rows", {**safe_payload, "failed": 2}),
+            (
+                "hard_failure_reasons",
+                {**safe_payload, "hard_failure_reasons": ["journal_batch_failures"]},
+            ),
+            (
+                "scalar_stop_reason",
+                {**safe_payload, "stop_reasons": "tigerbeetle_rpc_timeout"},
+            ),
+        ]
+
+        self.assertTrue(script._safe_payload_allows_success(safe_payload))
+        for label, payload in unsafe_cases:
+            with self.subTest(label=label):
+                self.assertFalse(script._safe_payload_allows_success(payload))
 
     def test_torghut_cronjob_keeps_live_sources_split_and_honest(self) -> None:
         manifest = (
