@@ -363,15 +363,24 @@ class GateEvaluationReport:
     recalibration_run_id: str | None
     evaluated_at: datetime
     code_version: str
+    evidence_collection_allowed: bool = False
+    promotion_blockers: list[str] = field(default_factory=_empty_str_list)
 
     def to_payload(self) -> dict[str, object]:
         return {
             "policy_version": self.policy_version,
             "promotion_target": self.promotion_target,
             "promotion_allowed": self.promotion_allowed,
+            "capital_promotion_allowed": False,
+            "final_promotion_allowed": False,
+            "final_authority_ok": False,
+            "evidence_collection_allowed": self.evidence_collection_allowed,
+            "bounded_evidence_collection_authorized": self.evidence_collection_allowed,
+            "authority_source": "autonomy_gate_status_only",
             "recommended_mode": self.recommended_mode,
             "gates": [item.to_payload() for item in self.gates],
             "reasons": list(self.reasons),
+            "promotion_blockers": list(self.promotion_blockers),
             "uncertainty_gate_action": self.uncertainty_gate_action,
             "coverage_error": self.coverage_error,
             "conformal_interval_width": self.conformal_interval_width,
@@ -438,31 +447,31 @@ def evaluate_gate_matrix(
 
     reasons = [reason for gate in gates for reason in gate.reasons]
     recommended_mode: PromotionTarget = "shadow"
-    promotion_allowed = False
+    evidence_collection_allowed = False
+    promotion_blockers = ["autonomy_gate_not_runtime_ledger_authority"]
 
     if uncertainty_outcome.action in ("abstain", "fail"):
-        promotion_allowed = False
         recommended_mode = "shadow"
     elif promotion_target == "shadow":
-        promotion_allowed = all_required_pass
+        evidence_collection_allowed = all_required_pass
         recommended_mode = "shadow"
     elif promotion_target == "paper":
-        promotion_allowed = all_required_pass
+        evidence_collection_allowed = all_required_pass
         recommended_mode = "paper" if all_required_pass else "shadow"
     elif promotion_target == "live":
-        promotion_allowed = all_required_pass and gate5_pass
-        if promotion_allowed:
-            recommended_mode = "live"
-        elif all_required_pass:
+        evidence_collection_allowed = all_required_pass and gate5_pass
+        if all_required_pass:
             recommended_mode = "paper"
 
     return GateEvaluationReport(
         policy_version=policy.policy_version,
         promotion_target=promotion_target,
-        promotion_allowed=promotion_allowed,
+        promotion_allowed=False,
+        evidence_collection_allowed=evidence_collection_allowed,
         recommended_mode=recommended_mode,
         gates=gates,
         reasons=reasons,
+        promotion_blockers=promotion_blockers,
         uncertainty_gate_action=uncertainty_outcome.action,
         coverage_error=(
             str(uncertainty_outcome.coverage_error)
@@ -816,8 +825,13 @@ def _gate2_tca_reasons(inputs: GateInputs, policy: GatePolicyMatrix) -> list[str
     if policy.gate2_min_tca_expected_shortfall_coverage > 0:
         if expected_shortfall_sample_count <= 0 or expected_shortfall_coverage is None:
             reasons.append("tca_expected_shortfall_calibration_coverage_missing")
-        elif expected_shortfall_coverage < policy.gate2_min_tca_expected_shortfall_coverage:
-            reasons.append("tca_expected_shortfall_calibration_coverage_below_threshold")
+        elif (
+            expected_shortfall_coverage
+            < policy.gate2_min_tca_expected_shortfall_coverage
+        ):
+            reasons.append(
+                "tca_expected_shortfall_calibration_coverage_below_threshold"
+            )
 
     avg_tca_churn_ratio = _decimal(inputs.tca_metrics.get("avg_churn_ratio"))
     if avg_tca_churn_ratio is None:

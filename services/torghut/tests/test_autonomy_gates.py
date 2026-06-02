@@ -16,47 +16,40 @@ from app.trading.autonomy.gates import (
 class TestAutonomyGates(TestCase):
     def test_gate_matrix_passes_paper_with_safe_metrics(self) -> None:
         policy = GatePolicyMatrix()
-        inputs = GateInputs(
-            feature_schema_version="3.0.0",
-            required_feature_null_rate=Decimal("0.00"),
-            staleness_ms_p95=0,
-            symbol_coverage=3,
-            tca_metrics={
-                "order_count": 12,
-                "avg_slippage_bps": "18",
-                "avg_shortfall_notional": "7",
-                "avg_churn_ratio": "0.45",
-                "avg_realized_shortfall_bps": "7",
-                "avg_divergence_bps": "1",
-                "avg_calibration_error_bps": "0",
-                "expected_shortfall_coverage": "0.50",
-                "expected_shortfall_sample_count": 12,
-            },
-            llm_metrics={"error_ratio": "0.00"},
-            metrics={
-                "decision_count": 20,
-                "trade_count": 10,
-                "net_pnl": "50",
-                "max_drawdown": "100",
-                "turnover_ratio": "1.5",
-                "cost_bps": "5",
-            },
-            robustness={
-                "fold_count": 4,
-                "negative_fold_count": 1,
-                "net_pnl_cv": "0.3",
-            },
-            forecast_metrics=_healthy_forecast_metrics_payload(),
-            profitability_evidence=_profitability_evidence_payload(),
-        )
+        inputs = _healthy_gate_inputs(symbol_coverage=3)
 
         report = evaluate_gate_matrix(
             inputs, policy=policy, promotion_target="paper", code_version="test"
         )
 
-        self.assertTrue(report.promotion_allowed)
+        self.assertFalse(report.promotion_allowed)
+        self.assertTrue(report.evidence_collection_allowed)
         self.assertEqual(report.recommended_mode, "paper")
+        payload = report.to_payload()
+        self.assertFalse(payload["capital_promotion_allowed"])
+        self.assertFalse(payload["final_promotion_allowed"])
+        self.assertFalse(payload["final_authority_ok"])
+        self.assertEqual(
+            payload["promotion_blockers"],
+            ["autonomy_gate_not_runtime_ledger_authority"],
+        )
         self.assertEqual(report.uncertainty_gate_action, "pass")
+
+    def test_gate_matrix_shadow_target_is_evidence_only_when_clean(self) -> None:
+        report = evaluate_gate_matrix(
+            _healthy_gate_inputs(),
+            policy=GatePolicyMatrix(),
+            promotion_target="shadow",
+            code_version="test",
+        )
+
+        self.assertFalse(report.promotion_allowed)
+        self.assertTrue(report.evidence_collection_allowed)
+        self.assertEqual(report.recommended_mode, "shadow")
+        self.assertEqual(
+            report.promotion_blockers,
+            ["autonomy_gate_not_runtime_ledger_authority"],
+        )
 
     def test_live_remains_gated_by_default(self) -> None:
         policy = GatePolicyMatrix(gate5_live_enabled=False)
@@ -325,7 +318,9 @@ class TestAutonomyGates(TestCase):
             report.reasons,
         )
 
-    def test_gate_matrix_treats_invalid_tca_expected_shortfall_sample_count_as_missing(self) -> None:
+    def test_gate_matrix_treats_invalid_tca_expected_shortfall_sample_count_as_missing(
+        self,
+    ) -> None:
         policy = GatePolicyMatrix(
             gate2_min_tca_expected_shortfall_coverage=Decimal("0.50"),
         )
@@ -409,13 +404,16 @@ class TestAutonomyGates(TestCase):
             inputs, policy=policy, promotion_target="paper", code_version="test"
         )
 
-        self.assertTrue(report.promotion_allowed)
+        self.assertFalse(report.promotion_allowed)
+        self.assertTrue(report.evidence_collection_allowed)
         self.assertNotIn(
             "tca_expected_shortfall_calibration_coverage_missing",
             report.reasons,
         )
 
-    def test_gate_matrix_fails_when_tca_realized_shortfall_and_divergence_exceed_threshold(self) -> None:
+    def test_gate_matrix_fails_when_tca_realized_shortfall_and_divergence_exceed_threshold(
+        self,
+    ) -> None:
         policy = GatePolicyMatrix(
             gate2_max_tca_realized_shortfall_bps=Decimal("1"),
             gate2_max_tca_divergence_bps=Decimal("0.5"),
@@ -948,6 +946,42 @@ class TestAutonomyGates(TestCase):
         self.assertFalse(report.promotion_allowed)
         self.assertEqual(report.uncertainty_gate_action, "fail")
         self.assertIn("regime_shift_score_fail_threshold_exceeded", report.reasons)
+
+
+def _healthy_gate_inputs(*, symbol_coverage: int = 2) -> GateInputs:
+    return GateInputs(
+        feature_schema_version="3.0.0",
+        required_feature_null_rate=Decimal("0.00"),
+        staleness_ms_p95=0,
+        symbol_coverage=symbol_coverage,
+        tca_metrics={
+            "order_count": 12,
+            "avg_slippage_bps": "18",
+            "avg_shortfall_notional": "7",
+            "avg_churn_ratio": "0.45",
+            "avg_realized_shortfall_bps": "7",
+            "avg_divergence_bps": "1",
+            "avg_calibration_error_bps": "0",
+            "expected_shortfall_coverage": "0.50",
+            "expected_shortfall_sample_count": 12,
+        },
+        llm_metrics={"error_ratio": "0.00"},
+        metrics={
+            "decision_count": 20,
+            "trade_count": 10,
+            "net_pnl": "50",
+            "max_drawdown": "100",
+            "turnover_ratio": "1.5",
+            "cost_bps": "5",
+        },
+        robustness={
+            "fold_count": 4,
+            "negative_fold_count": 1,
+            "net_pnl_cv": "0.3",
+        },
+        forecast_metrics=_healthy_forecast_metrics_payload(),
+        profitability_evidence=_profitability_evidence_payload(),
+    )
 
 
 def _profitability_evidence_payload(
