@@ -495,6 +495,67 @@ def _paper_route_decision_hash(payload: Mapping[str, Any]) -> str:
     return sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def _paper_route_source_materialization_blockers(
+    payload: object,
+    *,
+    identity: Mapping[str, Any],
+) -> list[str]:
+    payload_mapping = _to_str_map(payload)
+    params = _to_str_map(payload_mapping.get("params"))
+    source_metadata = _to_str_map(params.get("paper_route_target_plan_source_decision"))
+    if not source_metadata:
+        source_metadata = _to_str_map(payload_mapping.get("paper_route_target_plan"))
+    required_values = {
+        "hypothesis_id": identity.get("hypothesis_id"),
+        "candidate_id": identity.get("candidate_id"),
+        "runtime_strategy_name": identity.get("runtime_strategy_name"),
+        "account_label": PAPER_ROUTE_MATERIALIZATION_ACCOUNT_LABEL,
+        "bounded_collection_stage": PAPER_ROUTE_MATERIALIZATION_STAGE,
+        "source_plan_ref": identity.get("source_plan_ref"),
+    }
+    blockers: list[str] = []
+    for key, expected in required_values.items():
+        expected_text = _safe_text(expected)
+        observed_text = (
+            _safe_text(payload_mapping.get(key))
+            or _safe_text(params.get(key))
+            or _safe_text(source_metadata.get(key))
+        )
+        if expected_text is None:
+            blockers.append(f"paper_route_target_plan_expected_{key}_missing")
+        elif observed_text != expected_text:
+            blockers.append(f"paper_route_source_decision_{key}_missing")
+    mode = (
+        _safe_text(payload_mapping.get("source_decision_mode"))
+        or _safe_text(params.get("source_decision_mode"))
+        or _safe_text(source_metadata.get("source_decision_mode"))
+    )
+    if mode != BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE:
+        blockers.append("paper_route_source_decision_mode_missing")
+    if not bool(payload_mapping.get("final_promotion_allowed") is False) or not bool(
+        params.get("final_promotion_allowed") is False
+    ):
+        blockers.append("paper_route_source_decision_final_promotion_not_blocked")
+    return sorted(dict.fromkeys(blockers))
+
+
+def _paper_route_source_decision_needs_refresh(
+    existing: TradeDecision,
+    *,
+    identity: Mapping[str, Any],
+) -> bool:
+    if existing.alpaca_account_label != PAPER_ROUTE_MATERIALIZATION_ACCOUNT_LABEL:
+        return True
+    if _safe_text(existing.status) != "planned":
+        return False
+    return bool(
+        _paper_route_source_materialization_blockers(
+            existing.decision_json,
+            identity=identity,
+        )
+    )
+
+
 def _paper_route_decision_payload(
     *,
     target: Mapping[str, Any],
@@ -514,6 +575,8 @@ def _paper_route_decision_payload(
             source_decision_mode
         ),
         "profit_proof_eligible_scope": "bounded_paper_collection_only",
+        "stage": PAPER_ROUTE_MATERIALIZATION_STAGE,
+        "observed_stage": "paper",
         "hypothesis_id": identity.get("hypothesis_id"),
         "candidate_id": identity.get("candidate_id"),
         "runtime_strategy_name": identity.get("runtime_strategy_name"),
@@ -575,6 +638,8 @@ def _paper_route_decision_payload(
             source_decision_mode_is_profit_proof_eligible(source_decision_mode)
         ),
         "profit_proof_eligible_scope": "bounded_paper_collection_only",
+        "stage": PAPER_ROUTE_MATERIALIZATION_STAGE,
+        "observed_stage": "paper",
         "hypothesis_id": identity.get("hypothesis_id"),
         "candidate_id": identity.get("candidate_id"),
         "runtime_strategy_name": identity.get("runtime_strategy_name"),
@@ -672,6 +737,8 @@ def materialize_bounded_paper_route_target_plan(
     materialized_decisions: list[dict[str, Any]] = []
     route_submissions: list[dict[str, Any]] = []
     blocked_targets: list[dict[str, Any]] = []
+    repaired_decision_count = 0
+    existing_decision_count = 0
     for target_index, target in enumerate(paper_route_target_plan_targets(plan)):
         identity = _target_identity(target, target_index=target_index)
         blockers = _target_materialization_blockers(
@@ -762,6 +829,41 @@ def materialize_bounded_paper_route_target_plan(
                 )
                 session.add(existing)
                 session.flush()
+            else:
+                existing_decision_count += 1
+                if _paper_route_source_decision_needs_refresh(
+                    existing,
+                    identity=identity,
+                ):
+                    existing.strategy_id = strategy.id
+                    existing.symbol = symbol
+                    existing.timeframe = "1Min"
+                    existing.decision_json = coerce_json_payload(payload)
+                    existing.rationale = (
+                        "bounded H-PAIRS paper-route target materialization; "
+                        "live-capital routing disabled"
+                    )
+                    session.add(existing)
+                    session.flush()
+                    repaired_decision_count += 1
+            integrity_blockers = _paper_route_source_materialization_blockers(
+                existing.decision_json,
+                identity=identity,
+            )
+            if integrity_blockers:
+                blocked_targets.append(
+                    {
+                        "target_index": target_index,
+                        "hypothesis_id": identity.get("hypothesis_id"),
+                        "candidate_id": identity.get("candidate_id"),
+                        "symbol": symbol,
+                        "blockers": integrity_blockers,
+                        "readiness": _blocked_target_readiness(integrity_blockers),
+                        "target_identity": identity,
+                        "trade_decision_id": str(existing.id),
+                    }
+                )
+                continue
             route_submission = dict(
                 cast(Mapping[str, Any], payload["paper_route_order_submission"])
             )
@@ -802,6 +904,10 @@ def materialize_bounded_paper_route_target_plan(
         "bounded_notional_limit": _decimal_text(limit),
         "target_count": len(paper_route_target_plan_targets(plan)),
         "materialized_decision_count": len(materialized_decisions),
+        "source_decision_count": len(materialized_decisions),
+        "target_plan_source_decision_count": len(materialized_decisions),
+        "existing_decision_count": existing_decision_count,
+        "repaired_decision_count": repaired_decision_count,
         "route_submission_count": len(route_submissions),
         "blocked_target_count": len(blocked_targets),
         "blocked": bool(blocked_targets),

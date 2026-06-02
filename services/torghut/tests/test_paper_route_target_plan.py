@@ -11,7 +11,17 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.models import Base, Strategy, TradeDecision
+from app.config import settings
+from app.trading.execution import (
+    OrderExecutor,
+    _target_plan_ref_value,
+    _target_plan_source_decision_mode,
+    _target_plan_source_decision_needs_refresh,
+)
+from app.trading.models import StrategyDecision, decision_hash
 from app.trading.paper_route_target_plan import (
+    _paper_route_source_decision_needs_refresh,
+    _paper_route_source_materialization_blockers,
     _truthy,
     materialize_bounded_paper_route_target_plan,
 )
@@ -139,6 +149,8 @@ def test_fresh_hpairs_target_materializes_bounded_collection_source_decisions(
     )
 
     assert result["materialized_decision_count"] == 2
+    assert result["source_decision_count"] == 2
+    assert result["target_plan_source_decision_count"] == 2
     assert result["route_submission_count"] == 2
     assert result["blocked_target_count"] == 0
     assert result["promotion_allowed"] is False
@@ -153,6 +165,12 @@ def test_fresh_hpairs_target_materializes_bounded_collection_source_decisions(
             payload["source_decision_mode"]
             == BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE
         )
+        assert payload["hypothesis_id"] == "H-PAIRS-01"
+        assert payload["candidate_id"] == "c88421d619759b2cfaa6f4d0"
+        assert payload["runtime_strategy_name"] == "microbar-cross-sectional-pairs-v1"
+        assert payload["account_label"] == "TORGHUT_SIM"
+        assert payload["observed_stage"] == "paper"
+        assert payload["bounded_collection_stage"] == "bounded_paper_collection"
         assert payload["final_authority_ok"] is False
         assert (
             params["source_decision_mode"]
@@ -171,6 +189,302 @@ def test_fresh_hpairs_target_materializes_bounded_collection_source_decisions(
             _bounded_paper_route_collection_entry_metadata(params)
             == params["paper_route_probe"]
         )
+
+
+def test_existing_hpairs_target_plan_decision_is_repaired_with_source_refs(
+    db_session: Session,
+) -> None:
+    generated_at = datetime(2026, 6, 1, 13, 35, tzinfo=timezone.utc)
+    plan = _plan(_hpairs_target())
+    first = materialize_bounded_paper_route_target_plan(
+        db_session,
+        plan,
+        generated_at=generated_at,
+        bounded_notional_limit=Decimal("25"),
+    )
+    row = db_session.execute(
+        select(TradeDecision).where(TradeDecision.symbol == "AAPL")
+    ).scalar_one()
+    row.decision_json = {
+        "params": {
+            "source_decision_mode": BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
+            "paper_route_target_plan_source_decision": {
+                "mode": "paper_route_target_plan_source_decision"
+            },
+        },
+        "source_decision_mode": BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
+        "promotion_allowed": False,
+        "final_promotion_allowed": False,
+    }
+    db_session.add(row)
+    db_session.flush()
+
+    repaired = materialize_bounded_paper_route_target_plan(
+        db_session,
+        plan,
+        generated_at=generated_at,
+        bounded_notional_limit=Decimal("25"),
+    )
+    repaired_row = db_session.execute(
+        select(TradeDecision).where(TradeDecision.id == row.id)
+    ).scalar_one()
+    source_metadata = repaired_row.decision_json["params"][
+        "paper_route_target_plan_source_decision"
+    ]
+
+    assert first["materialized_decision_count"] == 2
+    assert repaired["existing_decision_count"] == 2
+    assert repaired["repaired_decision_count"] == 1
+    assert repaired["blocked_target_count"] == 0
+    assert source_metadata["hypothesis_id"] == "H-PAIRS-01"
+    assert source_metadata["candidate_id"] == "c88421d619759b2cfaa6f4d0"
+    assert (
+        source_metadata["runtime_strategy_name"] == "microbar-cross-sectional-pairs-v1"
+    )
+    assert source_metadata["account_label"] == "TORGHUT_SIM"
+    assert source_metadata["observed_stage"] == "paper"
+    assert source_metadata["bounded_collection_stage"] == "bounded_paper_collection"
+    assert source_metadata["final_promotion_allowed"] is False
+
+
+def test_unrepairable_existing_hpairs_target_plan_decision_is_visible_blocker(
+    db_session: Session,
+) -> None:
+    generated_at = datetime(2026, 6, 1, 13, 35, tzinfo=timezone.utc)
+    plan = _plan(_hpairs_target())
+    materialize_bounded_paper_route_target_plan(
+        db_session,
+        plan,
+        generated_at=generated_at,
+        bounded_notional_limit=Decimal("25"),
+    )
+    row = db_session.execute(
+        select(TradeDecision).where(TradeDecision.symbol == "AAPL")
+    ).scalar_one()
+    row.status = "executed"
+    row.decision_json = {
+        "params": {},
+        "promotion_allowed": False,
+        "final_promotion_allowed": False,
+    }
+    db_session.add(row)
+    db_session.flush()
+
+    result = materialize_bounded_paper_route_target_plan(
+        db_session,
+        plan,
+        generated_at=generated_at,
+        bounded_notional_limit=Decimal("25"),
+    )
+
+    assert result["blocked_target_count"] == 1
+    assert result["materialized_decision_count"] == 1
+    assert result["route_submission_count"] == 1
+    assert "paper_route_source_decision_hypothesis_id_missing" in result["blockers"]
+    assert result["blocked_targets"][0]["trade_decision_id"] == str(row.id)
+
+
+def test_order_executor_refreshes_existing_bounded_target_plan_source_refs(
+    db_session: Session,
+) -> None:
+    strategy = db_session.execute(select(Strategy)).scalar_one()
+    event_ts = datetime(2026, 6, 1, 13, 36, tzinfo=timezone.utc)
+    decision = StrategyDecision(
+        strategy_id=str(strategy.id),
+        symbol="AAPL",
+        event_ts=event_ts,
+        timeframe="1Min",
+        action="buy",
+        qty=Decimal("1"),
+        rationale="external paper-route target plan source decision",
+        params={
+            "source_decision_mode": BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
+            "paper_route_target_plan_source_decision": {
+                "mode": "paper_route_target_plan_source_decision",
+                "source_decision_mode": BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
+                "hypothesis_id": "H-PAIRS-01",
+                "candidate_id": "c88421d619759b2cfaa6f4d0",
+                "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                "account_label": "TORGHUT_SIM",
+                "observed_stage": "paper",
+                "bounded_collection_stage": "bounded_paper_collection",
+                "promotion_allowed": False,
+                "final_promotion_allowed": False,
+                "live_capital_routing_enabled": False,
+            },
+            "promotion_allowed": False,
+            "final_promotion_allowed": False,
+            "live_capital_routing_enabled": False,
+        },
+    )
+    digest = decision_hash(
+        decision,
+        account_label="TORGHUT_SIM" if settings.trading_multi_account_enabled else None,
+    )
+    existing_row = TradeDecision(
+        strategy_id=strategy.id,
+        alpaca_account_label="TORGHUT_SIM",
+        symbol="AAPL",
+        timeframe="1Min",
+        decision_json={
+            "params": {
+                "source_decision_mode": (
+                    BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE
+                )
+            }
+        },
+        rationale="stale target-plan decision without source refs",
+        decision_hash=digest,
+        status="planned",
+        created_at=event_ts,
+    )
+    db_session.add(existing_row)
+    db_session.commit()
+    existing_id = existing_row.id
+
+    row = OrderExecutor().ensure_decision(
+        db_session,
+        decision,
+        strategy,
+        "TORGHUT_SIM",
+    )
+
+    metadata = row.decision_json["params"]["paper_route_target_plan_source_decision"]
+    assert row.id == existing_id
+    assert row.rationale == "external paper-route target plan source decision"
+    assert metadata["hypothesis_id"] == "H-PAIRS-01"
+    assert metadata["candidate_id"] == "c88421d619759b2cfaa6f4d0"
+    assert metadata["runtime_strategy_name"] == "microbar-cross-sectional-pairs-v1"
+    assert metadata["account_label"] == "TORGHUT_SIM"
+    assert metadata["observed_stage"] == "paper"
+    assert metadata["bounded_collection_stage"] == "bounded_paper_collection"
+    assert row.status == "planned"
+
+
+def test_order_executor_target_plan_source_refresh_helpers_cover_missing_refs() -> None:
+    new_payload = {
+        "params": {
+            "paper_route_target_plan_source_decision": {
+                "mode": "paper_route_target_plan_source_decision",
+                "source_decision_mode": BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
+                "hypothesis_id": "H-PAIRS-01",
+                "candidate_id": "c88421d619759b2cfaa6f4d0",
+                "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                "account_label": "TORGHUT_SIM",
+                "bounded_collection_stage": "bounded_paper_collection",
+            },
+        },
+    }
+
+    assert _target_plan_source_decision_mode({}) is None
+    assert _target_plan_ref_value({}, "hypothesis_id") is None
+    assert _target_plan_source_decision_needs_refresh({}, new_payload) is True
+    assert (
+        _target_plan_source_decision_needs_refresh(
+            {
+                "params": {
+                    "paper_route_target_plan_source_decision": {
+                        "mode": "paper_route_target_plan_source_decision",
+                        "source_decision_mode": "artifact_only",
+                    }
+                }
+            },
+            new_payload,
+        )
+        is True
+    )
+    assert (
+        _target_plan_source_decision_needs_refresh(
+            {
+                "params": {
+                    "paper_route_target_plan_source_decision": {
+                        "mode": "paper_route_target_plan_source_decision",
+                        "source_decision_mode": BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
+                        "hypothesis_id": "H-PAIRS-01",
+                        "candidate_id": "other-candidate",
+                        "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                        "account_label": "TORGHUT_SIM",
+                        "bounded_collection_stage": "bounded_paper_collection",
+                    }
+                }
+            },
+            new_payload,
+        )
+        is True
+    )
+
+
+def test_target_plan_source_materialization_blockers_are_fail_closed() -> None:
+    identity = {
+        "hypothesis_id": "H-PAIRS-01",
+        "candidate_id": None,
+        "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+        "source_plan_ref": "paper-route-plan:c88421d619759b2cfaa6f4d0",
+    }
+    blockers = _paper_route_source_materialization_blockers(
+        {
+            "params": {"final_promotion_allowed": False},
+            "paper_route_target_plan": {
+                "hypothesis_id": "H-PAIRS-01",
+                "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                "account_label": "TORGHUT_SIM",
+                "bounded_collection_stage": "bounded_paper_collection",
+                "source_plan_ref": "paper-route-plan:c88421d619759b2cfaa6f4d0",
+            },
+            "final_promotion_allowed": False,
+        },
+        identity=identity,
+    )
+
+    assert "paper_route_target_plan_expected_candidate_id_missing" in blockers
+    assert "paper_route_source_decision_mode_missing" in blockers
+
+
+def test_target_plan_source_decision_refresh_guards_status_and_account(
+    db_session: Session,
+) -> None:
+    strategy = db_session.execute(select(Strategy)).scalar_one()
+    identity = {
+        "hypothesis_id": "H-PAIRS-01",
+        "candidate_id": "c88421d619759b2cfaa6f4d0",
+        "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+        "source_plan_ref": "paper-route-plan:c88421d619759b2cfaa6f4d0",
+    }
+    wrong_account = TradeDecision(
+        strategy_id=strategy.id,
+        alpaca_account_label="OTHER",
+        symbol="AAPL",
+        timeframe="1Min",
+        decision_json={},
+        rationale="wrong account",
+        decision_hash="wrong-account",
+        status="planned",
+    )
+    executed = TradeDecision(
+        strategy_id=strategy.id,
+        alpaca_account_label="TORGHUT_SIM",
+        symbol="AAPL",
+        timeframe="1Min",
+        decision_json={},
+        rationale="already executed",
+        decision_hash="executed",
+        status="executed",
+    )
+
+    assert (
+        _paper_route_source_decision_needs_refresh(
+            wrong_account,
+            identity=identity,
+        )
+        is True
+    )
+    assert (
+        _paper_route_source_decision_needs_refresh(
+            executed,
+            identity=identity,
+        )
+        is False
+    )
 
 
 @pytest.mark.parametrize(

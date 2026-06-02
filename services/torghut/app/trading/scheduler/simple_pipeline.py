@@ -4007,6 +4007,8 @@ class SimpleTradingPipeline(TradingPipeline):
             "source_kind": _safe_text(target.get("source_kind")),
             "account_label": _safe_text(target.get("account_label")),
             "source_account_label": _safe_text(target.get("source_account_label")),
+            "observed_stage": _safe_text(target.get("observed_stage")) or "paper",
+            "bounded_collection_stage": "bounded_paper_collection",
             "account_stage_runtime_identity": {
                 "account_label": _safe_text(target.get("account_label")),
                 "source_account_label": _safe_text(target.get("source_account_label")),
@@ -4415,6 +4417,9 @@ class SimpleTradingPipeline(TradingPipeline):
                     "simple_lane": simple_lane,
                     "source_decision_mode": source_decision_mode,
                     "profit_proof_eligible": profit_proof_eligible,
+                    "observed_stage": _safe_text(target.get("observed_stage"))
+                    or "paper",
+                    "bounded_collection_stage": "bounded_paper_collection",
                     "promotion_allowed": False,
                     "final_promotion_authorized": False,
                     "final_authority_ok": False,
