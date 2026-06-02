@@ -4752,6 +4752,135 @@ class TestPaperRouteEvidenceAudit(TestCase):
         )
         self.assertIn("source_reject_spread_bps_exceeded", import_audit["blockers"])
 
+    def test_source_activity_readback_exposes_rejected_decision_submit_blocker(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            strategy = Strategy(
+                name="microbar-cross-sectional-pairs-v1",
+                description="H-PAIRS paper route source strategy",
+                enabled=True,
+                base_timeframe="1Sec",
+                universe_type="static",
+                universe_symbols=["AAPL", "AMZN"],
+                created_at=window_start,
+                updated_at=window_start,
+            )
+            session.add(strategy)
+            session.flush()
+            session.add(
+                TradeDecision(
+                    strategy_id=strategy.id,
+                    alpaca_account_label="TORGHUT_SIM",
+                    symbol="AAPL",
+                    timeframe="1Sec",
+                    decision_json={
+                        "action": "buy",
+                        "qty": "1",
+                        "source_candidate_ids": ["c88421d619759b2cfaa6f4d0"],
+                        "source_hypothesis_ids": ["H-PAIRS-01"],
+                        "source_strategy_names": ["microbar-cross-sectional-pairs-v1"],
+                        "risk_reasons": ["missing_executable_quote"],
+                        "reject_reason_atomic": ["missing_executable_quote"],
+                        "params": {
+                            "quote_routeability": {
+                                "status": "blocked",
+                                "reason": "missing_executable_quote",
+                                "readiness": {
+                                    "state": "blocked",
+                                    "blockers": ["missing_executable_quote"],
+                                },
+                            }
+                        },
+                    },
+                    rationale="target source decision rejected before submit",
+                    status="rejected",
+                    created_at=window_start + timedelta(minutes=20),
+                )
+            )
+            self._add_flat_account_start_snapshot(
+                session,
+                account_label="TORGHUT_SIM",
+                window_start=window_start,
+            )
+            session.commit()
+
+            payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "paper_route_probe_only",
+                    "blocked_reasons": [],
+                    "promotion_eligible_total": 0,
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "target_count": 1,
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-PAIRS-01",
+                                "candidate_id": "c88421d619759b2cfaa6f4d0",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_cross_sectional_pairs",
+                                "strategy_name": "microbar-cross-sectional-pairs-v1",
+                                "runtime_strategy_name": (
+                                    "microbar-cross-sectional-pairs-v1"
+                                ),
+                                "account_label": "TORGHUT_SIM",
+                                "source_manifest_ref": (
+                                    "config/trading/hypotheses/h-pairs-01.json"
+                                ),
+                                "window_start": window_start.isoformat(),
+                                "window_end": window_end.isoformat(),
+                                "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                                "paper_route_probe_symbol_actions": {
+                                    "AAPL": "buy",
+                                    "AMZN": "sell",
+                                },
+                                "paper_probation_authorized": True,
+                                "paper_probation_satisfied_for_bounded_live_paper_collection": True,
+                                "promotion_allowed": False,
+                                "final_promotion_authorized": False,
+                                "max_notional": "25",
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "summary": {
+                        "paper_route_probe_eligible_symbols": ["AAPL", "AMZN"],
+                        "paper_route_probe_active_symbols": ["AAPL", "AMZN"],
+                    },
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": True,
+                        "next_session_max_notional": "25",
+                        "eligible_symbol_count": 2,
+                    },
+                },
+                generated_at=datetime(2026, 5, 26, 21, tzinfo=timezone.utc),
+            )
+
+        target_audit = payload["next_runtime_window_target_audits"][0]
+        source_activity = target_audit["source_activity"]
+        self.assertEqual(source_activity["decision_count"], 1)
+        self.assertEqual(source_activity["submitted_order_count"], 0)
+        self.assertIn(
+            "source_reject_missing_executable_quote",
+            source_activity["submitted_order_blockers"],
+        )
+        self.assertIn(
+            "source_reject_missing_executable_quote",
+            source_activity["missing_reasons"],
+        )
+        self.assertIn(
+            "source_reject_missing_executable_quote",
+            target_audit["readiness"]["blockers"],
+        )
+
     def test_hpairs_zero_activity_diagnostics_report_market_window_blocker(
         self,
     ) -> None:

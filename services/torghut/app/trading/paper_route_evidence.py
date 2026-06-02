@@ -2839,6 +2839,62 @@ def _order_event_signed_filled_qty(row: ExecutionOrderEvent) -> Decimal:
     return qty.copy_abs()
 
 
+def _source_decision_reject_reason_values(row: TradeDecision) -> list[str]:
+    decision_json = _as_mapping(row.decision_json)
+    params = _as_mapping(decision_json.get("params"))
+    routeability = _as_mapping(params.get("quote_routeability"))
+    raw_values: list[object] = [
+        decision_json.get("risk_reasons"),
+        decision_json.get("reject_reason_atomic"),
+        decision_json.get("reject_reason"),
+    ]
+    if _safe_text(routeability.get("status")) == "blocked":
+        raw_values.append(routeability.get("reason"))
+
+    reasons: list[str] = []
+    for raw_value in raw_values:
+        raw_items: Sequence[object]
+        if isinstance(raw_value, str):
+            raw_items = raw_value.replace(";", ",").split(",")
+        elif isinstance(raw_value, Sequence) and not isinstance(
+            raw_value, (bytes, bytearray)
+        ):
+            raw_items = cast(Sequence[object], raw_value)
+        else:
+            raw_items = ()
+        for raw_item in raw_items:
+            reason = _safe_text(raw_item)
+            if reason and reason not in reasons:
+                reasons.append(reason)
+    return reasons
+
+
+def _source_decision_rejection_summary(
+    decision_rows: Sequence[TradeDecision],
+) -> dict[str, object]:
+    reason_counts: Counter[str] = Counter()
+    decision_refs: list[str] = []
+    for row in decision_rows:
+        if _safe_text(row.status) != "rejected":
+            continue
+        row_reasons = _source_decision_reject_reason_values(row)
+        if not row_reasons:
+            row_reasons = ["source_decision_rejected_without_reason"]
+        decision_refs.append(str(row.id))
+        for reason in row_reasons:
+            reason_counts[reason] += 1
+    blockers = [f"source_reject_{reason}" for reason in sorted(reason_counts)]
+    return {
+        "rejected_decision_count": len(decision_refs),
+        "decision_refs": decision_refs[:PAPER_ROUTE_SOURCE_ACTIVITY_REF_LIMIT],
+        "reason_counts": [
+            {"reason": reason, "count": count}
+            for reason, count in sorted(reason_counts.items())
+        ],
+        "blockers": blockers,
+    }
+
+
 def _source_activity_lifecycle_summary(
     *,
     execution_rows: Sequence[Execution],
@@ -3349,11 +3405,16 @@ def _strategy_source_activity(
     complete_fill_order_event_count = sum(
         int(_order_event_has_complete_fill_lifecycle(row)) for row in order_event_rows
     )
+    decision_rejection_summary = _source_decision_rejection_summary(decision_rows)
+    decision_reject_blockers = _unique_text_items(
+        decision_rejection_summary.get("blockers")
+    )
     missing_reasons: list[str] = []
     if decision_count <= 0:
         missing_reasons.append("source_decisions_missing")
     if execution_count <= 0:
         missing_reasons.append("source_executions_missing")
+        missing_reasons.extend(decision_reject_blockers)
     if tca_sample_count <= 0 and complete_fill_order_event_count <= 0:
         missing_reasons.append("source_tca_missing")
     missing_reasons.extend(lineage_blockers)
@@ -3401,12 +3462,22 @@ def _strategy_source_activity(
         [
             *_unique_text_items(lifecycle_summary.get("submitted_order_blockers")),
             *(["source_execution_refs_missing"] if not execution_refs else []),
+            *(
+                decision_reject_blockers
+                if execution_count <= 0 and decision_reject_blockers
+                else []
+            ),
         ]
     )
     source_lifecycle_blockers = _unique_text_items(
         [
             *_unique_text_items(lifecycle_summary.get("blockers")),
             *source_reference_blockers,
+            *(
+                decision_reject_blockers
+                if execution_count <= 0 and decision_reject_blockers
+                else []
+            ),
             *(
                 ["source_activity_readback_truncated"]
                 if decision_truncated
@@ -3447,6 +3518,8 @@ def _strategy_source_activity(
         "lineage_matched_decision_count": decision_count,
         "lineage_blockers": lineage_blockers,
         "source_lineage_observation": source_lineage_observation,
+        "source_decision_rejection_summary": decision_rejection_summary,
+        "source_decision_reject_blockers": decision_reject_blockers,
         "decision_refs": decision_refs,
         "execution_refs": execution_refs,
         "order_lifecycle_refs": order_lifecycle_refs,

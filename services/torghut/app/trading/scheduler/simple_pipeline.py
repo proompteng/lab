@@ -2656,8 +2656,19 @@ class SimpleTradingPipeline(TradingPipeline):
             decision.params,
             symbol=decision.symbol,
         )
+        snapshot_has_executable_quote = (
+            snapshot is not None
+            and snapshot.bid is not None
+            and snapshot.ask is not None
+            and snapshot.bid > 0
+            and snapshot.ask >= snapshot.bid
+        )
         if (
-            (snapshot is None or snapshot.price is None)
+            (
+                snapshot is None
+                or snapshot.price is None
+                or (requires_executable_quote and not snapshot_has_executable_quote)
+            )
             and target_snapshot is not None
             and _snapshot_has_executable_quote(target_snapshot)
         ):
@@ -2797,6 +2808,11 @@ class SimpleTradingPipeline(TradingPipeline):
             params,
             symbol=decision.symbol,
         )
+        target_price_snapshot: Mapping[str, Any] = (
+            target_quote_snapshot
+            if target_quote_snapshot is not None
+            else cast(Mapping[str, Any], {})
+        )
         if not price_snapshot and target_quote_snapshot is not None:
             price_snapshot = target_quote_snapshot
 
@@ -2806,27 +2822,48 @@ class SimpleTradingPipeline(TradingPipeline):
             price_snapshot,
             ("price", "mid", "mid_price", "midpoint"),
         )
-        price = _first_decimal(snapshot_price, payload_price, params_price)
+        target_payload_price = _decimal_from_mapping(
+            target_price_snapshot,
+            ("price", "mid", "mid_price", "midpoint"),
+        )
+        price = _first_decimal(
+            snapshot_price,
+            payload_price,
+            target_payload_price,
+            params_price,
+        )
 
         snapshot_bid = snapshot.bid if snapshot is not None else None
         payload_bid = _decimal_from_mapping(
             price_snapshot,
             ("bid", "bid_px", "bid_price", "bp"),
         )
+        target_payload_bid = _decimal_from_mapping(
+            target_price_snapshot,
+            ("bid", "bid_px", "bid_price", "bp"),
+        )
         params_bid = _optional_decimal(params.get("imbalance_bid_px"))
-        bid = _first_decimal(snapshot_bid, payload_bid, params_bid)
+        bid = _first_decimal(snapshot_bid, payload_bid, target_payload_bid, params_bid)
 
         snapshot_ask = snapshot.ask if snapshot is not None else None
         payload_ask = _decimal_from_mapping(
             price_snapshot,
             ("ask", "ask_px", "ask_price", "ap"),
         )
+        target_payload_ask = _decimal_from_mapping(
+            target_price_snapshot,
+            ("ask", "ask_px", "ask_price", "ap"),
+        )
         params_ask = _optional_decimal(params.get("imbalance_ask_px"))
-        ask = _first_decimal(snapshot_ask, payload_ask, params_ask)
+        ask = _first_decimal(snapshot_ask, payload_ask, target_payload_ask, params_ask)
 
         snapshot_spread = snapshot.spread if snapshot is not None else None
         payload_spread = _decimal_from_mapping(
             price_snapshot,
+            ("spread", "imbalance_spread"),
+        )
+        target_payload_spread = _decimal_from_mapping(
+            target_price_snapshot,
             ("spread", "imbalance_spread"),
         )
         params_spread = _optional_decimal(params.get("spread"))
@@ -2834,29 +2871,62 @@ class SimpleTradingPipeline(TradingPipeline):
         spread = _first_decimal(
             snapshot_spread,
             payload_spread,
+            target_payload_spread,
             params_spread,
             computed_spread,
         )
-        quote_as_of = (
-            snapshot.quote_as_of
-            if snapshot is not None and snapshot.quote_as_of is not None
-            else _parse_target_datetime(price_snapshot.get("quote_as_of"))
+        using_target_executable_quote = (
+            target_quote_snapshot is not None
+            and snapshot_bid is None
+            and snapshot_ask is None
+            and payload_bid is None
+            and payload_ask is None
+            and target_payload_bid is not None
+            and target_payload_ask is not None
+        )
+        target_quote_as_of = (
+            _parse_target_datetime(target_price_snapshot.get("quote_as_of"))
+            or _parse_target_datetime(target_price_snapshot.get("as_of"))
+            or _parse_target_datetime(target_price_snapshot.get("timestamp"))
+        )
+        price_snapshot_quote_as_of = (
+            _parse_target_datetime(price_snapshot.get("quote_as_of"))
             or _parse_target_datetime(price_snapshot.get("as_of"))
             or _parse_target_datetime(price_snapshot.get("timestamp"))
         )
+        quote_as_of = (
+            target_quote_as_of
+            if using_target_executable_quote and target_quote_as_of is not None
+            else (
+                snapshot.quote_as_of
+                if snapshot is not None and snapshot.quote_as_of is not None
+                else price_snapshot_quote_as_of or target_quote_as_of
+            )
+        )
+        target_source = _text_from_mapping(
+            target_price_snapshot,
+            ("quote_source", "source", "feed"),
+        )
+        price_snapshot_source = _text_from_mapping(
+            price_snapshot,
+            ("quote_source", "source", "feed"),
+        )
         source = (
-            str(
-                (
-                    snapshot.quote_source
-                    if snapshot is not None and snapshot.quote_source is not None
-                    else price_snapshot.get("quote_source")
-                    or price_snapshot.get("source")
-                    or price_snapshot.get("feed")
-                    or (snapshot.source if snapshot is not None else "")
-                )
-                or ""
-            ).strip()
-            or None
+            target_source
+            if using_target_executable_quote and target_source is not None
+            else (
+                str(
+                    (
+                        snapshot.quote_source
+                        if snapshot is not None and snapshot.quote_source is not None
+                        else price_snapshot_source
+                        or target_source
+                        or (snapshot.source if snapshot is not None else "")
+                    )
+                    or ""
+                ).strip()
+                or None
+            )
         )
         quality_payload: dict[str, object] = {
             "price": price,

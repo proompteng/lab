@@ -460,6 +460,50 @@ def test_paper_route_quote_routeability_prefers_executable_snapshot_price() -> N
     assert routeability["readiness"]["state"] == "ready"
 
 
+def test_paper_route_quote_routeability_uses_target_quote_when_snapshot_price_only() -> (
+    None
+):
+    pipeline = object.__new__(SimpleTradingPipeline)
+    target = _bounded_hpairs_target(
+        paper_route_probe_symbol_quotes={
+            "AAPL": {
+                "price": "190.01",
+                "bid": "190.00",
+                "ask": "190.02",
+                "quote_as_of": "2026-06-01T14:29:59+00:00",
+                "quote_source": "target_plan_h_pairs_quote",
+            }
+        }
+    )
+    decision = _routeability_decision(
+        params={
+            "price_snapshot": {
+                "price": "190.01",
+                "as_of": "2026-06-01T14:30:00+00:00",
+                "source": "price_only_snapshot",
+            },
+            "paper_route_target_plan_source_decision": target,
+            "source_decision_mode": "bounded_paper_route_collection",
+            "promotion_allowed": False,
+            "final_authority_ok": False,
+        }
+    )
+
+    status, routeability = pipeline._paper_route_quote_routeability(
+        decision,
+        snapshot=None,
+    )
+
+    assert status.valid is True
+    assert status.bid == Decimal("190.00")
+    assert status.ask == Decimal("190.02")
+    assert status.source == "target_plan_h_pairs_quote"
+    assert routeability["quote_as_of"] == "2026-06-01T14:29:59+00:00"
+    assert routeability["bounded_evidence_collection_ready"] is True
+    assert routeability["promotion_allowed"] is False
+    assert routeability["final_promotion_allowed"] is False
+
+
 def test_paper_route_quote_helpers_read_target_snapshot_fallbacks() -> None:
     direct_snapshot = {
         "symbol": "AAPL",
@@ -546,6 +590,44 @@ def test_ensure_decision_price_backfills_target_quote_when_snapshot_missing() ->
         "ask": "190.02",
         "spread": "0.02",
     }
+
+
+def test_ensure_decision_price_backfills_target_quote_when_snapshot_price_only() -> (
+    None
+):
+    pipeline = object.__new__(SimpleTradingPipeline)
+    pipeline.price_fetcher = SimpleNamespace(
+        fetch_market_snapshot=lambda _signal: MarketSnapshot(
+            symbol="AAPL",
+            as_of=datetime(2026, 6, 1, 14, 30, tzinfo=timezone.utc),
+            price=Decimal("190.01"),
+            spread=None,
+            source="price_only_snapshot",
+        )
+    )
+    decision = _routeability_decision(
+        params={
+            "paper_route_target_plan_source_decision": _bounded_hpairs_target(
+                paper_route_probe_symbol_quotes={
+                    "AAPL": {
+                        "bid": "190.00",
+                        "ask": "190.02",
+                        "timestamp": "2026-06-01T14:29:59+00:00",
+                        "feed": "target_feed",
+                    }
+                }
+            )
+        }
+    )
+
+    updated, snapshot = pipeline._ensure_decision_price(decision, signal_price=None)
+
+    assert snapshot is None
+    assert updated.params["price"] == Decimal("190.01")
+    assert updated.params["imbalance_bid_px"] == Decimal("190.00")
+    assert updated.params["imbalance_ask_px"] == Decimal("190.02")
+    assert updated.params["spread"] == Decimal("0.02")
+    assert updated.params["price_snapshot"]["source"] == "target_feed"
 
 
 def test_target_plan_source_mismatch_readback_handles_no_metadata_and_symbol_field() -> (
