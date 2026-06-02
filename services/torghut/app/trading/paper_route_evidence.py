@@ -2772,6 +2772,10 @@ def _unavailable_source_activity(
             "source_order_lifecycle_refs_missing",
             "source_explicit_costs_missing",
         ],
+        "submitted_order_blockers": [
+            "source_submitted_orders_missing",
+            "source_execution_refs_missing",
+        ],
         "decision_count": lineage_matched_decision_count,
         "execution_count": 0,
         "filled_execution_count": 0,
@@ -2913,9 +2917,13 @@ def _source_activity_lifecycle_summary(
         )
     if len(tca_rows) <= 0 and complete_fill_event_count <= 0:
         lifecycle_blockers.append("source_execution_economics_missing")
+    submitted_order_blockers = (
+        ["source_submitted_orders_missing"] if submitted_order_count <= 0 else []
+    )
     return {
         "schema_version": "torghut.paper-route-source-lifecycle-summary.v1",
         "submitted_order_count": submitted_order_count,
+        "submitted_order_blockers": submitted_order_blockers,
         "execution_status_counts": dict(sorted(execution_status_counts.items())),
         "order_event_status_counts": dict(sorted(order_event_status_counts.items())),
         "order_event_type_counts": dict(sorted(order_event_type_counts.items())),
@@ -3000,6 +3008,7 @@ def _strategy_source_activity(
                 "source_order_lifecycle_refs_missing",
                 "source_explicit_costs_missing",
             ],
+            "submitted_order_blockers": ["source_submitted_orders_missing"],
             "decision_count": 0,
             "execution_count": 0,
             "filled_execution_count": 0,
@@ -3388,6 +3397,12 @@ def _strategy_source_activity(
             *(["source_explicit_costs_missing"] if not tca_metric_refs else []),
         ]
     )
+    submitted_order_blockers = _unique_text_items(
+        [
+            *_unique_text_items(lifecycle_summary.get("submitted_order_blockers")),
+            *(["source_execution_refs_missing"] if not execution_refs else []),
+        ]
+    )
     source_lifecycle_blockers = _unique_text_items(
         [
             *_unique_text_items(lifecycle_summary.get("blockers")),
@@ -3437,6 +3452,7 @@ def _strategy_source_activity(
         "order_lifecycle_refs": order_lifecycle_refs,
         "tca_metric_refs": tca_metric_refs,
         "source_reference_blockers": source_reference_blockers,
+        "submitted_order_blockers": submitted_order_blockers,
         "decision_count": decision_count,
         "execution_count": execution_count,
         "filled_execution_count": filled_execution_count,

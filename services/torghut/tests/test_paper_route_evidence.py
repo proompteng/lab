@@ -540,6 +540,14 @@ class TestPaperRouteEvidenceAudit(TestCase):
         )
         self.assertTrue(activity["query_limits"]["decision_truncated"])
         self.assertIn("source_executions_missing", activity["missing_reasons"])
+        self.assertEqual(
+            activity["submitted_order_blockers"],
+            ["source_submitted_orders_missing", "source_execution_refs_missing"],
+        )
+        self.assertIn(
+            "source_submitted_orders_missing",
+            activity["source_lifecycle_blockers"],
+        )
 
     def test_evidence_readback_diagnostics_distinguish_source_lifecycle_and_blockers(
         self,
