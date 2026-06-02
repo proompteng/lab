@@ -246,6 +246,183 @@ def _paper_route_probe_summary(
     }
 
 
+_QUOTE_FILLABILITY_REASON_TOKENS = (
+    "quote",
+    "bid",
+    "ask",
+    "spread",
+    "fillability",
+    "fillable",
+    "routeability",
+)
+_QUOTE_FILLABILITY_REPAIR_ACTIONS: Mapping[str, str] = {
+    "stale_quote": "refresh_quote_snapshot_and_recompute_route_fillability",
+    "missing_executable_quote": "collect_bid_ask_quote_before_routeability_claim",
+    "missing_bid": "collect_bid_quote_before_routeability_claim",
+    "missing_ask": "collect_ask_quote_before_routeability_claim",
+    "non_positive_bid": "refresh_bid_quote_before_routeability_claim",
+    "non_positive_ask": "refresh_ask_quote_before_routeability_claim",
+    "crossed_quote": "refresh_uncrossed_executable_quote_before_routeability_claim",
+    "spread_bps_exceeded": "wait_for_tighter_executable_quote_before_routeability_claim",
+    "wide_spread_midpoint_jump": "collect_fresh_tight_quote_and_recheck_midpoint_jump",
+    "source_signal_rejected_by_quote_quality": "inspect_rejected_signal_quote_quality_events",
+}
+
+
+def _quote_fillability_reason(reason: object) -> str:
+    text = _text(reason)
+    if not text:
+        return ""
+    lowered = text.lower()
+    if lowered.startswith("source_reject_"):
+        lowered = lowered.removeprefix("source_reject_")
+    if lowered in _QUOTE_FILLABILITY_REPAIR_ACTIONS:
+        return text
+    if any(token in lowered for token in _QUOTE_FILLABILITY_REASON_TOKENS):
+        return text
+    return ""
+
+
+def _quote_fillability_repair_action(reasons: Sequence[str]) -> str:
+    for reason in reasons:
+        lowered = reason.lower()
+        if lowered.startswith("source_reject_"):
+            lowered = lowered.removeprefix("source_reject_")
+        action = _QUOTE_FILLABILITY_REPAIR_ACTIONS.get(lowered)
+        if action:
+            return action
+    return "repair_quote_quality_or_fillability_before_runtime_ledger_collection"
+
+
+def _append_unique_text(target: list[str], value: object) -> None:
+    text = _text(value)
+    if text and text not in target:
+        target.append(text)
+
+
+def _paper_route_quote_fillability_summary(
+    *,
+    evidence: Mapping[str, Any],
+    targets: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    runtime_window_audit = _mapping(evidence.get("runtime_window_import_audit"))
+    diagnostics = _mapping(runtime_window_audit.get("diagnostics"))
+    reasons: list[str] = []
+    target_summaries: list[dict[str, Any]] = []
+
+    for key in (
+        "rejected_signal_diagnostic_reasons",
+        "quote_fillability_reasons",
+        "quote_quality_reasons",
+        "fillability_reasons",
+    ):
+        for reason in _sequence(diagnostics.get(key)):
+            _append_unique_text(reasons, _quote_fillability_reason(reason))
+
+    for raw_blocker in _sequence(runtime_window_audit.get("blockers")):
+        _append_unique_text(reasons, _quote_fillability_reason(raw_blocker))
+    for raw_target_blocker in _sequence(runtime_window_audit.get("target_blockers")):
+        target_blocker = _mapping(raw_target_blocker)
+        for blocker in _sequence(target_blocker.get("blockers")):
+            _append_unique_text(reasons, _quote_fillability_reason(blocker))
+
+    for target in targets:
+        routeability = (
+            _mapping(target.get("paper_route_quote_routeability"))
+            or _mapping(target.get("quote_routeability"))
+            or _mapping(target.get("quote_fillability"))
+            or _mapping(target.get("fillability"))
+            or _mapping(target.get("routeability"))
+        )
+        target_reasons: list[str] = []
+        routeability_reason = _quote_fillability_reason(routeability.get("reason"))
+        if routeability_reason:
+            target_reasons.append(routeability_reason)
+        for key in ("blocking_reasons", "reasons", "reason_codes"):
+            for reason in _sequence(routeability.get(key)):
+                normalized = _quote_fillability_reason(reason)
+                if normalized and normalized not in target_reasons:
+                    target_reasons.append(normalized)
+        for reason in target_reasons:
+            _append_unique_text(reasons, reason)
+        if routeability or target_reasons:
+            target_summaries.append(
+                {
+                    "hypothesis_id": _text(target.get("hypothesis_id")),
+                    "candidate_id": _text(target.get("candidate_id")),
+                    "strategy_name": _text(target.get("strategy_name")),
+                    "symbol": _text(
+                        routeability.get("symbol") or target.get("symbol")
+                    ),
+                    "status": _text(routeability.get("status"), "unknown"),
+                    "reasons": target_reasons,
+                    "repair_action": _text(
+                        routeability.get("repair_action")
+                    )
+                    or (
+                        _quote_fillability_repair_action(target_reasons)
+                        if target_reasons
+                        else "none"
+                    ),
+                    "quote_age_seconds": _text(routeability.get("quote_age_seconds")),
+                    "spread_bps": _text(routeability.get("spread_bps")),
+                    "source": _text(routeability.get("source")),
+                }
+            )
+
+    for audit_key in ("target_audits", "runtime_window_import_target_audits"):
+        for raw_audit in _sequence(evidence.get(audit_key)):
+            audit = _mapping(raw_audit)
+            rejected_signal_activity = _mapping(audit.get("rejected_signal_activity"))
+            audit_reasons: list[str] = []
+            for reason in _sequence(rejected_signal_activity.get("blocking_reasons")):
+                normalized = _quote_fillability_reason(reason)
+                if normalized and normalized not in audit_reasons:
+                    audit_reasons.append(normalized)
+            for raw_reason_count in _sequence(
+                rejected_signal_activity.get("reason_counts")
+            ):
+                reason_count = _mapping(raw_reason_count)
+                normalized = _quote_fillability_reason(reason_count.get("reason"))
+                if normalized and normalized not in audit_reasons:
+                    audit_reasons.append(normalized)
+            for reason in audit_reasons:
+                _append_unique_text(reasons, reason)
+            if audit_reasons:
+                target = _mapping(audit.get("target"))
+                target_summaries.append(
+                    {
+                        "hypothesis_id": _text(target.get("hypothesis_id")),
+                        "candidate_id": _text(target.get("candidate_id")),
+                        "strategy_name": _text(target.get("strategy_name")),
+                        "symbol": "",
+                        "status": "blocked",
+                        "reasons": audit_reasons,
+                        "repair_action": _quote_fillability_repair_action(
+                            audit_reasons
+                        ),
+                        "quote_age_seconds": "",
+                        "spread_bps": _text(
+                            rejected_signal_activity.get("max_spread_bps")
+                        ),
+                        "source": "rejected_signal_activity",
+                    }
+                )
+
+    present = bool(target_summaries or reasons)
+    blocked = bool(reasons)
+    return {
+        "present": present,
+        "state": "blocked" if blocked else ("clear" if present else "not_reported"),
+        "blocked": blocked,
+        "blocking_reasons": sorted(reasons),
+        "repair_action": _quote_fillability_repair_action(sorted(reasons))
+        if blocked
+        else "none",
+        "targets": target_summaries,
+    }
+
+
 def _paper_route_target_plan_summary(
     paper_route_evidence: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
@@ -482,6 +659,10 @@ def _paper_route_target_plan_summary(
     import_ready = _bool(handoff.get("import_ready")) or _bool(
         session_readiness.get("import_ready")
     )
+    quote_fillability = _paper_route_quote_fillability_summary(
+        evidence=evidence,
+        targets=targets,
+    )
     return {
         "present": bool(plan),
         "schema_version": _text(plan.get("schema_version")),
@@ -501,6 +682,7 @@ def _paper_route_target_plan_summary(
         "promotion_blocked_count": promotion_blocked_count,
         "account_clean": not account_clean_blockers,
         "account_clean_blockers": sorted(account_clean_blockers),
+        "quote_fillability": quote_fillability,
         "runtime_window_import_health_gate": {
             "ready": bool(targets)
             and health_gate_ready_count == len(targets)
@@ -828,6 +1010,8 @@ def _readiness_next_action(
                 if text and text not in blockers:
                     blockers.append(text)
     for blocker in blockers:
+        if _quote_fillability_reason(blocker):
+            return "repair_quote_quality_or_fillability_before_runtime_ledger_collection"
         if blocker in {
             "runtime_window_import_missing",
             "runtime_window_import_runtime_ledger_materialization_missing",
@@ -858,6 +1042,8 @@ def _readiness_next_action(
         if blocker.startswith("runtime_ledger_"):
             return "repair_runtime_ledger_lifecycle_cost_or_lineage_evidence"
     for failed_check in failed_checks:
+        if "quote_fillability" in failed_check:
+            return "repair_quote_quality_or_fillability_before_runtime_ledger_collection"
         if failed_check.startswith("paper_route_target_plan"):
             return "repair_candidate_frontier_or_paper_route_target_plan"
         if failed_check.startswith("runtime_ledger"):
@@ -1482,6 +1668,14 @@ def evaluate_trading_readiness(
                 "skipped_targets": paper_route_target_plan["skipped_targets"],
             },
             expected={"account_clean": True, "account_clean_blockers": []},
+        )
+        quote_fillability = _mapping(paper_route_target_plan["quote_fillability"])
+        _add_check(
+            checks,
+            "paper_route_target_plan_quote_fillability",
+            passed=not _bool(quote_fillability.get("blocked")),
+            observed=quote_fillability,
+            expected={"blocked": False},
         )
         import_health_gate = _mapping(
             paper_route_target_plan["runtime_window_import_health_gate"]

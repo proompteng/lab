@@ -1360,6 +1360,215 @@ class TestVerifyTradingReadiness(TestCase):
         )
         self.assertTrue(ready["ok"], ready)
 
+    def test_paper_route_readiness_surfaces_quote_fillability_blockers(
+        self,
+    ) -> None:
+        evidence = _paper_route_evidence(import_ready=True)
+        runtime_window_audit = evidence["runtime_window_import_audit"]
+        assert isinstance(runtime_window_audit, dict)
+        diagnostics = runtime_window_audit["diagnostics"]
+        assert isinstance(diagnostics, dict)
+        diagnostics["rejected_signal_diagnostic_reasons"] = [
+            "source_signal_rejected_by_quote_quality",
+            "source_reject_missing_bid",
+            "source_reject_spread_bps_exceeded",
+        ]
+
+        result = evaluate_trading_readiness(
+            _ready_status(),
+            paper_route_evidence=evidence,
+            require_paper_route_target_plan=True,
+            require_paper_route_import_ready=True,
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertIn(
+            "paper_route_target_plan_quote_fillability", result["failed_checks"]
+        )
+        self.assertEqual(
+            result["next_action"],
+            "repair_quote_quality_or_fillability_before_runtime_ledger_collection",
+        )
+        quote_fillability = result["paper_route_target_plan"]["quote_fillability"]
+        self.assertTrue(quote_fillability["blocked"])
+        self.assertEqual(quote_fillability["state"], "blocked")
+        self.assertEqual(
+            quote_fillability["repair_action"],
+            "collect_bid_quote_before_routeability_claim",
+        )
+        self.assertEqual(
+            quote_fillability["blocking_reasons"],
+            [
+                "source_reject_missing_bid",
+                "source_reject_spread_bps_exceeded",
+                "source_signal_rejected_by_quote_quality",
+            ],
+        )
+
+    def test_paper_route_readiness_surfaces_target_quote_fillability_context(
+        self,
+    ) -> None:
+        evidence = _paper_route_evidence(
+            import_ready=True,
+            target_overrides={
+                "symbol": "AAPL",
+                "quote_routeability": {
+                    "symbol": "AAPL",
+                    "status": "blocked",
+                    "reason": "quote_feed_gap",
+                    "reason_codes": ["quote_temporarily_unavailable"],
+                    "quote_age_seconds": "61",
+                    "spread_bps": "24.5",
+                    "source": "paper_route_nbbo",
+                },
+            },
+        )
+        runtime_window_audit = evidence["runtime_window_import_audit"]
+        assert isinstance(runtime_window_audit, dict)
+        runtime_window_audit["blockers"] = ["spread_bps_exceeded"]
+        runtime_window_audit["target_blockers"] = [
+            {"blockers": ["source_reject_missing_ask"]}
+        ]
+        evidence["target_audits"] = [
+            {
+                "target": {
+                    "hypothesis_id": "H-PAIRS-01",
+                    "candidate_id": "c88421d619759b2cfaa6f4d0",
+                    "strategy_name": "microbar-pairs-vwap-cap-safe",
+                },
+                "rejected_signal_activity": {
+                    "blocking_reasons": ["source_reject_non_positive_ask"],
+                    "reason_counts": [
+                        {"reason": "source_reject_crossed_quote", "count": 2}
+                    ],
+                    "max_spread_bps": "98.1",
+                },
+            }
+        ]
+
+        result = evaluate_trading_readiness(
+            _ready_status(),
+            paper_route_evidence=evidence,
+            require_paper_route_target_plan=True,
+            require_paper_route_import_ready=True,
+        )
+
+        self.assertFalse(result["ok"])
+        quote_fillability = result["paper_route_target_plan"]["quote_fillability"]
+        self.assertTrue(quote_fillability["blocked"])
+        self.assertEqual(
+            quote_fillability["blocking_reasons"],
+            [
+                "quote_feed_gap",
+                "quote_temporarily_unavailable",
+                "source_reject_crossed_quote",
+                "source_reject_missing_ask",
+                "source_reject_non_positive_ask",
+                "spread_bps_exceeded",
+            ],
+        )
+        self.assertEqual(len(quote_fillability["targets"]), 2)
+        self.assertEqual(
+            quote_fillability["targets"][0]["repair_action"],
+            "repair_quote_quality_or_fillability_before_runtime_ledger_collection",
+        )
+        self.assertEqual(
+            quote_fillability["targets"][1]["repair_action"],
+            "refresh_ask_quote_before_routeability_claim",
+        )
+
+    def test_quote_fillability_summary_reads_routeability_and_audit_shapes(
+        self,
+    ) -> None:
+        evidence = _paper_route_evidence(import_ready=True)
+        target_plan = evidence["next_paper_route_runtime_window_targets"]
+        assert isinstance(target_plan, dict)
+        targets = target_plan["targets"]
+        assert isinstance(targets, list)
+        target = targets[0]
+        assert isinstance(target, dict)
+        target["paper_route_quote_routeability"] = {
+            "status": "blocked",
+            "symbol": "AAPL",
+            "reason": "stale_quote",
+            "blocking_reasons": ["routeability_spread_guardrail_exceeded"],
+            "quote_age_seconds": "61",
+            "spread_bps": "75",
+            "source": "paper_route_h_pairs_quote",
+        }
+        runtime_window_audit = evidence["runtime_window_import_audit"]
+        assert isinstance(runtime_window_audit, dict)
+        runtime_window_audit["blockers"] = ["fillability_receipt_missing"]
+        runtime_window_audit["target_blockers"] = [
+            {
+                "hypothesis_id": "H-PAIRS-01",
+                "blockers": ["source_reject_missing_ask"],
+            }
+        ]
+        evidence["target_audits"] = [
+            {
+                "target": target,
+                "rejected_signal_activity": {
+                    "blocking_reasons": ["source_signal_rejected_by_quote_quality"],
+                    "reason_counts": [{"reason": "spread_bps_exceeded", "count": 2}],
+                    "max_spread_bps": "90",
+                },
+            }
+        ]
+
+        result = evaluate_trading_readiness(
+            _ready_status(),
+            paper_route_evidence=evidence,
+            require_paper_route_target_plan=True,
+            require_paper_route_import_ready=True,
+        )
+
+        self.assertFalse(result["ok"])
+        quote_fillability = result["paper_route_target_plan"]["quote_fillability"]
+        self.assertTrue(quote_fillability["present"])
+        self.assertTrue(quote_fillability["blocked"])
+        self.assertIn("stale_quote", quote_fillability["blocking_reasons"])
+        self.assertIn(
+            "routeability_spread_guardrail_exceeded",
+            quote_fillability["blocking_reasons"],
+        )
+        self.assertIn(
+            "source_signal_rejected_by_quote_quality",
+            quote_fillability["blocking_reasons"],
+        )
+        self.assertEqual(quote_fillability["targets"][0]["symbol"], "AAPL")
+        self.assertEqual(
+            quote_fillability["targets"][0]["repair_action"],
+            "refresh_quote_snapshot_and_recompute_route_fillability",
+        )
+        self.assertEqual(
+            quote_fillability["targets"][1]["source"], "rejected_signal_activity"
+        )
+
+    def test_quote_fillability_helpers_keep_generic_repair_fallback(
+        self,
+    ) -> None:
+        self.assertEqual(
+            verifier._quote_fillability_reason("routeability_depth_missing"),
+            "routeability_depth_missing",
+        )
+        self.assertEqual(
+            verifier._quote_fillability_repair_action(["routeability_depth_missing"]),
+            "repair_quote_quality_or_fillability_before_runtime_ledger_collection",
+        )
+        self.assertEqual(
+            verifier._readiness_next_action(
+                failed_checks=["paper_route_target_plan_quote_fillability"],
+                checks={
+                    "paper_route_target_plan_quote_fillability": {
+                        "observed": {"blocking_reasons": []}
+                    }
+                },
+                runtime_ledger_proof_packet=None,
+            ),
+            "repair_quote_quality_or_fillability_before_runtime_ledger_collection",
+        )
+
     def test_paper_route_target_plan_allows_drift_only_evidence_collection(
         self,
     ) -> None:
