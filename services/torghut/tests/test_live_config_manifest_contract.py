@@ -7,7 +7,7 @@ from typing import Iterable, Mapping, cast
 from unittest import TestCase
 
 from pydantic import ValidationError
-from yaml import safe_load
+from yaml import safe_load, safe_load_all
 
 from app.config import Settings
 from app.trading.llm.dspy_programs.runtime import DSPyReviewRuntime
@@ -46,6 +46,18 @@ def _load_yaml_mapping(relative_path: str) -> dict[str, object]:
     if not isinstance(manifest, dict):
         raise AssertionError(f"{relative_path} did not parse to a mapping")
     return manifest
+
+
+def _load_yaml_mappings(relative_path: str) -> list[dict[str, object]]:
+    manifest_path = _repo_root() / relative_path
+    manifests: list[dict[str, object]] = []
+    for manifest in safe_load_all(manifest_path.read_text(encoding="utf-8")):
+        if not isinstance(manifest, dict):
+            raise AssertionError(f"{relative_path} contained a non-mapping document")
+        manifests.append(manifest)
+    if not manifests:
+        raise AssertionError(f"{relative_path} did not contain any YAML documents")
+    return manifests
 
 
 def _load_torghut_knative_manifest() -> dict[str, object]:
@@ -1373,77 +1385,164 @@ class TestLiveConfigManifestContract(TestCase):
         relative_path = (
             "argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml"
         )
-        manifest = _load_yaml_mapping(relative_path)
-        spec, container = _load_cronjob_container(relative_path)
-        metadata = cast(Mapping[str, object], manifest.get("metadata", {}))
+        manifests = _load_yaml_mappings(relative_path)
+        by_name = {
+            cast(Mapping[str, object], manifest.get("metadata", {})).get(
+                "name"
+            ): manifest
+            for manifest in manifests
+        }
 
         self.assertEqual(
-            metadata.get("name"),
-            "torghut-tigerbeetle-journal-order-events",
-        )
-        self.assertEqual(
-            spec.get("schedule"),
-            "6,36 * * * *",
-        )
-        self.assertEqual(spec.get("concurrencyPolicy"), "Forbid")
-        self.assertEqual(spec.get("startingDeadlineSeconds"), 300)
-        self.assertEqual(spec.get("successfulJobsHistoryLimit"), 2)
-        self.assertEqual(spec.get("failedJobsHistoryLimit"), 3)
-
-        job_spec = cast(
-            Mapping[str, object],
-            cast(Mapping[str, object], spec.get("jobTemplate", {})).get("spec", {}),
-        )
-        template = cast(
-            Mapping[str, object],
-            cast(Mapping[str, object], job_spec.get("template", {})),
-        )
-        pod_spec = cast(Mapping[str, object], template.get("spec", {}))
-        self.assertEqual(job_spec.get("activeDeadlineSeconds"), 900)
-        self.assertEqual(job_spec.get("backoffLimit"), 0)
-        self.assertEqual(pod_spec.get("restartPolicy"), "Never")
-        self.assertEqual(pod_spec.get("serviceAccountName"), "torghut-runtime")
-        self.assertEqual(
-            pod_spec.get("nodeSelector"),
-            {"kubernetes.io/arch": "arm64"},
-        )
-        self.assertEqual(
-            container.get("command"),
-            ["/bin/bash", "-lc"],
-        )
-        self.assertIn(
-            "registry.ide-newton.ts.net/lab/torghut@sha256:",
-            str(container.get("image")),
-        )
-        resources = cast(Mapping[str, object], container.get("resources", {}))
-        self.assertEqual(
-            resources,
+            set(by_name),
             {
-                "requests": {
-                    "cpu": "250m",
-                    "memory": "512Mi",
-                    "ephemeral-storage": "128Mi",
-                },
-                "limits": {
-                    "cpu": "1",
-                    "memory": "2Gi",
-                    "ephemeral-storage": "512Mi",
-                },
+                "torghut-tigerbeetle-journal-order-events-live",
+                "torghut-tigerbeetle-journal-order-events-sim",
             },
         )
 
-        env = {
-            item.get("name"): item
-            for item in cast(list[Mapping[str, object]], container.get("env", []))
+        def cronjob_parts(
+            name: str,
+        ) -> tuple[Mapping[str, object], Mapping[str, object], Mapping[str, object]]:
+            manifest = by_name[name]
+            spec = cast(Mapping[str, object], manifest.get("spec", {}))
+            job_spec = cast(
+                Mapping[str, object],
+                cast(Mapping[str, object], spec.get("jobTemplate", {})).get("spec", {}),
+            )
+            template = cast(
+                Mapping[str, object],
+                cast(Mapping[str, object], job_spec.get("template", {})),
+            )
+            pod_spec = cast(Mapping[str, object], template.get("spec", {}))
+            containers = cast(
+                list[Mapping[str, object]],
+                pod_spec.get("containers", []),
+            )
+            if not containers:
+                raise AssertionError(f"{name} missing job container")
+            return spec, job_spec, containers[0]
+
+        common_resources = {
+            "requests": {
+                "cpu": "250m",
+                "memory": "512Mi",
+                "ephemeral-storage": "128Mi",
+            },
+            "limits": {
+                "cpu": "1",
+                "memory": "2Gi",
+                "ephemeral-storage": "512Mi",
+            },
         }
-        db_dsn = cast(Mapping[str, object], env["DB_DSN"])
-        db_value_from = cast(Mapping[str, object], db_dsn.get("valueFrom", {}))
-        self.assertEqual(
-            db_value_from.get("secretKeyRef"),
-            {"name": "torghut-db-app", "key": "uri"},
+
+        live_spec, live_job_spec, live_container = cronjob_parts(
+            "torghut-tigerbeetle-journal-order-events-live"
+        )
+        sim_spec, sim_job_spec, sim_container = cronjob_parts(
+            "torghut-tigerbeetle-journal-order-events-sim"
+        )
+
+        self.assertEqual(live_spec.get("schedule"), "6,36 * * * *")
+        self.assertEqual(sim_spec.get("schedule"), "21,51 * * * *")
+        for spec, job_spec, container in (
+            (live_spec, live_job_spec, live_container),
+            (sim_spec, sim_job_spec, sim_container),
+        ):
+            self.assertEqual(spec.get("concurrencyPolicy"), "Forbid")
+            self.assertEqual(spec.get("startingDeadlineSeconds"), 300)
+            self.assertEqual(spec.get("successfulJobsHistoryLimit"), 2)
+            self.assertEqual(spec.get("failedJobsHistoryLimit"), 3)
+            self.assertEqual(job_spec.get("activeDeadlineSeconds"), 900)
+            self.assertEqual(job_spec.get("backoffLimit"), 0)
+            template = cast(
+                Mapping[str, object],
+                cast(Mapping[str, object], job_spec.get("template", {})),
+            )
+            pod_spec = cast(Mapping[str, object], template.get("spec", {}))
+            self.assertEqual(pod_spec.get("restartPolicy"), "Never")
+            self.assertEqual(pod_spec.get("serviceAccountName"), "torghut-runtime")
+            self.assertEqual(
+                pod_spec.get("nodeSelector"),
+                {"kubernetes.io/arch": "arm64"},
+            )
+            self.assertEqual(container.get("command"), ["/bin/bash", "-lc"])
+            self.assertIn(
+                "registry.ide-newton.ts.net/lab/torghut@sha256:",
+                str(container.get("image")),
+            )
+            self.assertEqual(
+                cast(Mapping[str, object], container.get("resources", {})),
+                common_resources,
+            )
+            value_env = _container_env(container)
+            self.assertEqual(value_env["TORGHUT_TIGERBEETLE_ENABLED"], "true")
+            self.assertEqual(value_env["TORGHUT_TIGERBEETLE_REQUIRED"], "false")
+            self.assertEqual(value_env["TORGHUT_TIGERBEETLE_CLUSTER_ID"], "2001")
+            self.assertEqual(
+                value_env["TORGHUT_TIGERBEETLE_REPLICA_ADDRESSES"],
+                "torghut-tigerbeetle.torghut.svc.cluster.local:3000",
+            )
+            self.assertEqual(value_env["TORGHUT_TIGERBEETLE_RPC_TIMEOUT_SECONDS"], "10")
+            self.assertEqual(
+                value_env["TORGHUT_TIGERBEETLE_JOURNAL_ENABLED"],
+                "true",
+            )
+            self.assertEqual(
+                value_env["TORGHUT_TIGERBEETLE_RECONCILE_REQUIRED"],
+                "false",
+            )
+            self.assertEqual(value_env["PYTHONUNBUFFERED"], "1")
+            args = "\n".join(str(item) for item in container.get("args", []))
+            self.assertIn("scripts/journal_tigerbeetle_order_events.py", args)
+            self.assertNotIn("scripts/repair_order_feed_source_windows.py", args)
+            self.assertEqual(
+                args.count("scripts/journal_tigerbeetle_order_events.py"),
+                2,
+            )
+            self.assertEqual(args.count("--skip-reconcile"), 1)
+            self.assertNotIn("--fail-on-degraded", args)
+            self.assertIn("--json", args)
+            security_context = cast(
+                Mapping[str, object],
+                container.get("securityContext", {}),
+            )
+            seccomp_profile = cast(
+                Mapping[str, object],
+                security_context.get("seccompProfile", {}),
+            )
+            self.assertEqual(seccomp_profile.get("type"), "Unconfined")
+
+        live_env = {
+            item.get("name"): item
+            for item in cast(list[Mapping[str, object]], live_container.get("env", []))
+        }
+        live_db_dsn = cast(Mapping[str, object], live_env["DB_DSN"])
+        live_db_value_from = cast(
+            Mapping[str, object],
+            live_db_dsn.get("valueFrom", {}),
         )
         self.assertEqual(
-            env["SIM_DB_DSN"].get("value"),
+            live_db_value_from.get("secretKeyRef"),
+            {"name": "torghut-db-app", "key": "uri"},
+        )
+        self.assertNotIn("SIM_DB_DSN", live_env)
+        live_args = "\n".join(str(item) for item in live_container.get("args", []))
+        self.assertIn("--dsn-env DB_DSN", live_args)
+        self.assertNotIn("--dsn-env SIM_DB_DSN", live_args)
+        self.assertNotIn("--account-label TORGHUT_SIM", live_args)
+        self.assertIn("--batch-size 500", live_args)
+        self.assertIn("--batch-size 125", live_args)
+        self.assertIn("--event-scan-limit 1000", live_args)
+        self.assertIn("--reconcile-limit 1000", live_args)
+
+        sim_env = {
+            item.get("name"): item
+            for item in cast(list[Mapping[str, object]], sim_container.get("env", []))
+        }
+        self.assertNotIn("DB_DSN", sim_env)
+        self.assertEqual(
+            sim_env["SIM_DB_DSN"].get("value"),
             "postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@"
             "$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default",
         )
@@ -1453,62 +1552,19 @@ class TestLiveConfigManifestContract(TestCase):
             "TORGHUT_SIM_DB_USER": "username",
             "TORGHUT_SIM_DB_PASSWORD": "password",
         }.items():
-            value_from = cast(Mapping[str, object], env[name].get("valueFrom", {}))
+            value_from = cast(Mapping[str, object], sim_env[name].get("valueFrom", {}))
             self.assertEqual(
                 value_from.get("secretKeyRef"),
                 {"name": "torghut-db-app", "key": key},
             )
-
-        value_env = _container_env(container)
-        self.assertEqual(value_env["TORGHUT_TIGERBEETLE_ENABLED"], "true")
-        self.assertEqual(value_env["TORGHUT_TIGERBEETLE_REQUIRED"], "false")
-        self.assertEqual(value_env["TORGHUT_TIGERBEETLE_CLUSTER_ID"], "2001")
-        self.assertEqual(
-            value_env["TORGHUT_TIGERBEETLE_REPLICA_ADDRESSES"],
-            "torghut-tigerbeetle.torghut.svc.cluster.local:3000",
-        )
-        self.assertEqual(value_env["TORGHUT_TIGERBEETLE_RPC_TIMEOUT_SECONDS"], "10")
-        self.assertEqual(value_env["TORGHUT_TIGERBEETLE_JOURNAL_ENABLED"], "true")
-        self.assertEqual(
-            value_env["TORGHUT_TIGERBEETLE_RECONCILE_REQUIRED"],
-            "false",
-        )
-        self.assertEqual(value_env["PYTHONUNBUFFERED"], "1")
-
-        args = "\n".join(str(item) for item in container.get("args", []))
-        self.assertIn("scripts/journal_tigerbeetle_order_events.py", args)
-        self.assertNotIn("scripts/repair_order_feed_source_windows.py", args)
-        self.assertIn("--dsn-env DB_DSN", args)
-        self.assertIn("--sources execution,execution_tca_metric", args)
-        self.assertIn(
-            "--sources execution_order_event,strategy_runtime_ledger_bucket",
-            args,
-        )
-        self.assertIn("--batch-size 500", args)
-        self.assertIn("--batch-size 250", args)
-        self.assertIn("--batch-size 125", args)
-        self.assertIn("--max-batches 2", args)
-        self.assertIn("--event-scan-limit 1000", args)
-        self.assertIn("--reconcile-limit 1000", args)
-        self.assertIn("--dsn-env SIM_DB_DSN", args)
-        self.assertIn("--account-label TORGHUT_SIM", args)
-        self.assertIn("--batch-size 75", args)
-        self.assertIn("--max-batches 4", args)
-        self.assertIn("--event-scan-limit 300", args)
-        self.assertIn("--reconcile-limit 500", args)
-        self.assertIn("--skip-reconcile", args)
-        self.assertEqual(args.count("scripts/journal_tigerbeetle_order_events.py"), 4)
-        self.assertNotIn("--fail-on-degraded", args)
-        self.assertIn("--json", args)
-        security_context = cast(
-            Mapping[str, object],
-            container.get("securityContext", {}),
-        )
-        seccomp_profile = cast(
-            Mapping[str, object],
-            security_context.get("seccompProfile", {}),
-        )
-        self.assertEqual(seccomp_profile.get("type"), "Unconfined")
+        sim_args = "\n".join(str(item) for item in sim_container.get("args", []))
+        self.assertIn("--dsn-env SIM_DB_DSN", sim_args)
+        self.assertIn("--account-label TORGHUT_SIM", sim_args)
+        self.assertIn("--batch-size 250", sim_args)
+        self.assertIn("--batch-size 75", sim_args)
+        self.assertIn("--max-batches 4", sim_args)
+        self.assertIn("--event-scan-limit 300", sim_args)
+        self.assertIn("--reconcile-limit 500", sim_args)
 
     def test_empirical_promotion_renewal_imports_authoritative_sim_paper_plan_and_sim_db(
         self,
