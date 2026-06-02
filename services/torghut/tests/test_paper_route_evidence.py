@@ -222,6 +222,9 @@ class TestPaperRouteEvidenceAudit(TestCase):
         continuity_reason: str,
         drift_ok: bool,
         drift_reason: str,
+        paper_probation_satisfied: bool = True,
+        source_collection_authorized: bool = False,
+        source_collection_reason_codes: list[str] | None = None,
     ) -> dict[str, object]:
         return {
             "allowed": False,
@@ -253,7 +256,16 @@ class TestPaperRouteEvidenceAudit(TestCase):
                         "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
                         "source_kind": "paper_route_probe_runtime_observed",
                         "paper_route_probe_symbols": ["AAPL", "AMZN"],
-                        "paper_probation_satisfied_for_bounded_live_paper_collection": True,
+                        "paper_probation_satisfied_for_bounded_live_paper_collection": paper_probation_satisfied,
+                        "source_collection_authorized": source_collection_authorized,
+                        "source_collection_authorization_scope": (
+                            "bounded_paper_route_source_decision_collection_only"
+                            if source_collection_authorized
+                            else ""
+                        ),
+                        "source_collection_reason_codes": (
+                            source_collection_reason_codes or []
+                        ),
                         "evidence_collection_ok": True,
                         "promotion_allowed": False,
                         "final_promotion_authorized": False,
@@ -331,6 +343,60 @@ class TestPaperRouteEvidenceAudit(TestCase):
             target["stale_collection_blockers_cleared_by_current_inputs"],
             ["drift_checks_missing", "signal_lag_exceeded"],
         )
+
+    def test_hpairs_source_collection_does_not_require_existing_paper_probation(
+        self,
+    ) -> None:
+        generated_at = datetime(2026, 6, 2, 15, tzinfo=timezone.utc)
+        window_start, _window_end = _next_regular_equities_session_window(generated_at)
+        with Session(self.engine) as session:
+            self._seed_hpairs_strategy_and_flat_snapshot(
+                session,
+                window_start=window_start,
+            )
+
+            payload = build_paper_route_target_plan_payload(
+                session,
+                live_submission_gate=self._hpairs_live_submission_gate(
+                    candidate_blockers=[
+                        "runtime_ledger_source_decisions_missing",
+                        "source_backed_paper_probation_required",
+                        "paper_route_runtime_ledger_import_pending",
+                    ],
+                    continuity_ok=True,
+                    continuity_reason="signals_present",
+                    drift_ok=True,
+                    drift_reason="drift_checks_recent",
+                    paper_probation_satisfied=False,
+                    source_collection_authorized=True,
+                    source_collection_reason_codes=[
+                        "runtime_ledger_source_decisions_missing",
+                        "bounded_paper_route_manifest_seed",
+                    ],
+                ),
+                route_reacquisition_book=self._hpairs_route_reacquisition_book(),
+                generated_at=generated_at,
+                include_runtime_window_import_audit=False,
+            )
+
+        target = payload["targets"][0]
+        self.assertTrue(target["source_collection_authorized"])
+        self.assertFalse(
+            target["paper_probation_satisfied_for_bounded_live_paper_collection"]
+        )
+        self.assertTrue(target["evidence_collection_ok"])
+        self.assertTrue(target["bounded_evidence_collection_authorized"])
+        self.assertEqual(
+            target["source_decision_mode"], "bounded_paper_route_collection"
+        )
+        self.assertTrue(target["profit_proof_eligible"])
+        self.assertNotIn(
+            "paper_probation_prerequisites_not_satisfied_for_bounded_collection",
+            target["bounded_evidence_collection_blockers"],
+        )
+        self.assertFalse(target["promotion_allowed"])
+        self.assertFalse(target["final_promotion_authorized"])
+        self.assertFalse(target["final_promotion_allowed"])
 
     def test_hpairs_stale_signal_and_missing_drift_block_collection_when_current(
         self,
