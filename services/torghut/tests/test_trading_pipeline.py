@@ -71,6 +71,7 @@ from app.trading.scheduler.simple_pipeline import (
     _bounded_sim_collection_blockers,
     _bounded_sim_collection_target_with_runtime_account_audit,
     _bounded_sim_collection_metadata_from_decision,
+    _executable_bid_ask_present,
     _paper_route_probe_entry_metadata,
     _paper_route_probe_lineage_from_params,
     _strategy_signal_paper_entry_metadata,
@@ -3906,6 +3907,93 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(refreshed_snapshot.get("bid"), "190.10")
         self.assertEqual(refreshed_snapshot.get("ask"), "190.14")
         self.assertEqual(row.status, "planned")
+
+    def test_decision_price_uses_existing_executable_quote_without_refetch(
+        self,
+    ) -> None:
+        now = datetime(2026, 6, 1, 14, 0, tzinfo=timezone.utc)
+        price_fetcher = FakePriceFetcher(Decimal("190.12"))
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="TORGHUT_SIM",
+            session_factory=self.session_local,
+            price_fetcher=price_fetcher,
+        )
+        non_paper_route_decision = StrategyDecision(
+            strategy_id=str(uuid4()),
+            symbol="AAPL",
+            event_ts=now,
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            rationale="strategy-signal",
+            params={
+                "price": Decimal("190.12"),
+                "price_snapshot": {"price": "190.12", "spread": "0.04"},
+            },
+        )
+        nested_quote_decision = StrategyDecision(
+            strategy_id=str(uuid4()),
+            symbol="AAPL",
+            event_ts=now,
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            rationale="paper-route-target-source",
+            params={
+                "paper_route_target_plan": {"candidate_id": "c88421d619759b2cfaa6f4d0"},
+                "source_decision_mode": ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
+                "price": Decimal("190.12"),
+                "price_snapshot": {
+                    "price": "190.12",
+                    "bid": "190.10",
+                    "ask": "190.14",
+                },
+            },
+        )
+        top_level_quote_decision = nested_quote_decision.model_copy(
+            update={
+                "params": {
+                    "paper_route_target_plan": {
+                        "candidate_id": "c88421d619759b2cfaa6f4d0"
+                    },
+                    "source_decision_mode": ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
+                    "price": Decimal("190.12"),
+                    "imbalance_bid_px": "190.10",
+                    "imbalance_ask_px": "190.14",
+                }
+            }
+        )
+
+        for decision in (
+            non_paper_route_decision,
+            nested_quote_decision,
+            top_level_quote_decision,
+        ):
+            prepared, snapshot = pipeline._ensure_decision_price(
+                decision,
+                Decimal("190.12"),
+            )
+            self.assertIs(prepared, decision)
+            self.assertIsNone(snapshot)
+
+        self.assertEqual(price_fetcher.snapshot_requests, 0)
+
+    def test_executable_bid_ask_rejects_crossed_or_missing_quotes(self) -> None:
+        self.assertFalse(
+            _executable_bid_ask_present({"bid": "190.14", "ask": "190.10"})
+        )
+        self.assertFalse(_executable_bid_ask_present({"bid": "190.10"}))
+        self.assertTrue(_executable_bid_ask_present({"bid": "190.10", "ask": "190.14"}))
 
     def test_bounded_collection_contamination_blocker_is_not_hidden_by_quote_readiness(
         self,
