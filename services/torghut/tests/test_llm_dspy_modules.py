@@ -5,6 +5,7 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from app.trading.llm.dspy_programs.modules import (
+    HeuristicCommitteeProgram,
     LiveDSPyCommitteeProgram,
     _coerce_dspy_api_base,
 )
@@ -29,6 +30,74 @@ class _StaticPredictor:
 
 
 class TestDSPyTransportHardening(TestCase):
+    def test_heuristic_program_ignores_retired_context_domain_risk_flags(self) -> None:
+        program = HeuristicCommitteeProgram()
+
+        result = program.run(
+            SimpleNamespace(
+                request_json={
+                    "policy": {"adjustment_allowed": True},
+                    "market_context": {
+                        "risk_flags": [
+                            "fundamentals_missing",
+                            "news_missing",
+                        ],
+                        "domains": {
+                            "fundamentals": {
+                                "domain": "fundamentals",
+                                "risk_flags": ["fundamentals_missing"],
+                            },
+                            "news": {
+                                "domain": "news",
+                                "risk_flags": ["news_stale"],
+                            },
+                            "technicals": {
+                                "domain": "technicals",
+                                "risk_flags": [],
+                            },
+                            "regime": {
+                                "domain": "regime",
+                                "risk_flags": [],
+                            },
+                        },
+                    },
+                }
+            )
+        )
+
+        self.assertEqual(result.verdict, "approve")
+        self.assertEqual(result.risk_flags, [])
+
+    def test_heuristic_program_keeps_active_context_domain_risk_flags(self) -> None:
+        program = HeuristicCommitteeProgram()
+
+        result = program.run(
+            SimpleNamespace(
+                request_json={
+                    "policy": {"adjustment_allowed": True},
+                    "market_context": {
+                        "risk_flags": ["market_context_quality_low"],
+                        "domains": {
+                            "technicals": {
+                                "domain": "technicals",
+                                "risk_flags": ["technicals_source_error"],
+                            },
+                            "regime": {
+                                "domain": "regime",
+                                "risk_flags": [],
+                            },
+                        },
+                    },
+                }
+            )
+        )
+
+        self.assertEqual(result.verdict, "veto")
+        self.assertEqual(
+            result.risk_flags,
+            ["market_context_quality_low", "technicals_source_error"],
+        )
+
     def test_coerces_chat_completion_url_to_llm_base(self) -> None:
         self.assertEqual(
             _coerce_dspy_api_base(
@@ -149,7 +218,9 @@ class TestDSPyTransportHardening(TestCase):
             LM=_FakeLM,
             InputField=lambda *_args, **_kwargs: None,
             OutputField=lambda *_args, **_kwargs: None,
-            Predict=lambda *_args, **_kwargs: _StaticPredictor(response_json=["unexpected"]),
+            Predict=lambda *_args, **_kwargs: _StaticPredictor(
+                response_json=["unexpected"]
+            ),
             context=None,
             configure=lambda **_kwargs: None,
         )

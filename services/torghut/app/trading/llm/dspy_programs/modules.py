@@ -14,6 +14,10 @@ from .signatures import (
     DSPyTradeReviewInput,
     DSPyTradeReviewOutput,
 )
+from ...market_context_domains import (
+    active_market_context_reasons,
+    is_active_market_context_domain,
+)
 
 try:
     import dspy as _dspy  # type: ignore[import-not-found]
@@ -185,21 +189,23 @@ class LiveDSPyCommitteeProgram:
 def _collect_risk_flags(market_context: dict[str, Any]) -> list[str]:
     flags: set[str] = set()
     if isinstance(market_context.get("risk_flags"), list):
-        for value in cast(list[Any], market_context.get("risk_flags")):
-            text = str(value).strip()
-            if text:
-                flags.add(text)
+        flags.update(
+            active_market_context_reasons(
+                cast(list[Any], market_context.get("risk_flags"))
+            )
+        )
     domains = cast(dict[str, Any], market_context.get("domains") or {})
-    for domain_payload in domains.values():
+    for domain_name, domain_payload in domains.items():
         if not isinstance(domain_payload, dict):
             continue
         domain_payload_dict = cast(dict[str, Any], domain_payload)
+        if not is_active_market_context_domain(
+            domain_payload_dict.get("domain") or domain_name
+        ):
+            continue
         domain_flags = domain_payload_dict.get("risk_flags")
         if isinstance(domain_flags, list):
-            for value in cast(list[Any], domain_flags):
-                text = str(value).strip()
-                if text:
-                    flags.add(text)
+            flags.update(active_market_context_reasons(cast(list[Any], domain_flags)))
     return sorted(flags)
 
 
@@ -274,14 +280,14 @@ def _coerce_dspy_api_base(
         base_path = "/openai/v1"
     elif normalized_path == _DSPY_OPENAI_BASE_PATH:
         base_path = _DSPY_OPENAI_BASE_PATH
-    elif normalized_path == _DSPY_OPENAI_BASE_PATH + _DSPY_OPENAI_CHAT_COMPLETION_SUFFIX:
+    elif (
+        normalized_path == _DSPY_OPENAI_BASE_PATH + _DSPY_OPENAI_CHAT_COMPLETION_SUFFIX
+    ):
         base_path = _DSPY_OPENAI_BASE_PATH
     else:
         raise RuntimeError("dspy_api_base_invalid")
 
-    return (
-        f"{parsed.scheme}://{parsed.netloc}{base_path}"
-    )
+    return f"{parsed.scheme}://{parsed.netloc}{base_path}"
 
 
 def _resolve_dspy_temperature(model_name: str) -> float:
