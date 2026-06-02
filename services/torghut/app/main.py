@@ -716,6 +716,142 @@ def _readiness_dependency_snapshot(
     return dependencies, checked_at, False
 
 
+def _readiness_authority_truthy(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int | float | Decimal):
+        return bool(value)
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _append_unique_reason(target: list[object], reason: str) -> list[object]:
+    if reason not in {str(item) for item in target}:
+        target.append(reason)
+    return target
+
+
+def _readiness_dependency_degradation_reason_codes(
+    dependencies: Mapping[str, object],
+    *,
+    scheduler_ok: bool,
+) -> list[str]:
+    reason_codes: list[str] = []
+    if not scheduler_ok:
+        reason_codes.append("scheduler_degraded")
+    for name, checks in dependencies.items():
+        if name in {"readiness_cache", "live_submission_gate"}:
+            continue
+        if not isinstance(checks, Mapping):
+            continue
+        dependency_checks = cast(Mapping[str, object], checks)
+        if bool(dependency_checks.get("ok", True)):
+            continue
+        reason_codes.append(f"{name}_degraded")
+    return sorted(set(reason_codes))
+
+
+def _guard_live_submission_gate_for_readiness(
+    live_submission_gate: Mapping[str, object],
+    *,
+    readiness_dependency_reasons: Sequence[str],
+) -> dict[str, object]:
+    gate = deepcopy(dict(live_submission_gate))
+    if not readiness_dependency_reasons:
+        return gate
+
+    authority_keys = (
+        "allowed",
+        "promotion_authority",
+        "promotion_authority_ok",
+        "final_authority_ok",
+        "final_promotion_allowed",
+        "final_promotion_authorized",
+    )
+    claims_authority = any(
+        _readiness_authority_truthy(gate.get(key)) for key in authority_keys
+    )
+    if not claims_authority:
+        return gate
+
+    guard_reason = "readiness_dependency_degraded"
+    gate["allowed"] = False
+    gate["promotion_authority"] = False
+    gate["promotion_authority_ok"] = False
+    gate["final_authority_ok"] = False
+    gate["final_promotion_allowed"] = False
+    gate["final_promotion_authorized"] = False
+    gate["readiness_dependency_guard_active"] = True
+    gate["readiness_dependency_guard_original_allowed"] = bool(
+        live_submission_gate.get("allowed")
+    )
+    gate["readiness_dependency_guard_reasons"] = list(readiness_dependency_reasons)
+    gate["reason"] = guard_reason
+
+    blocked_reasons = list(cast(Sequence[object], gate.get("blocked_reasons") or []))
+    gate["blocked_reasons"] = _append_unique_reason(blocked_reasons, guard_reason)
+    reason_codes = list(cast(Sequence[object], gate.get("reason_codes") or []))
+    gate["reason_codes"] = _append_unique_reason(reason_codes, guard_reason)
+
+    plan = gate.get("runtime_ledger_paper_probation_import_plan")
+    if isinstance(plan, Mapping):
+        guarded_plan = deepcopy(dict(cast(Mapping[str, object], plan)))
+        guarded_plan["promotion_allowed"] = False
+        guarded_plan["final_promotion_allowed"] = False
+        guarded_plan["final_promotion_authorized"] = False
+        raw_targets = guarded_plan.get("targets")
+        if isinstance(raw_targets, Sequence) and not isinstance(
+            raw_targets,
+            (str, bytes, bytearray),
+        ):
+            targets: list[object] = []
+            for raw_target in cast(Sequence[object], raw_targets):
+                if isinstance(raw_target, Mapping):
+                    target = deepcopy(dict(cast(Mapping[str, object], raw_target)))
+                    target["promotion_allowed"] = False
+                    target["final_promotion_allowed"] = False
+                    target["final_promotion_authorized"] = False
+                    targets.append(target)
+                else:
+                    targets.append(raw_target)
+            guarded_plan["targets"] = targets
+        gate["runtime_ledger_paper_probation_import_plan"] = guarded_plan
+
+    return gate
+
+
+_READINESS_PROMOTION_AUTHORITY_KEYS = frozenset(
+    {
+        "promotion_authority",
+        "promotion_authority_ok",
+        "promotion_allowed",
+        "final_authority_ok",
+        "final_promotion_allowed",
+        "final_promotion_authorized",
+    }
+)
+
+
+def _strip_promotion_authority_claims_for_readiness(value: object) -> object:
+    if isinstance(value, Mapping):
+        payload: dict[str, object] = {}
+        mapping_value = cast(Mapping[object, object], value)
+        for raw_key, raw_child in mapping_value.items():
+            key = str(raw_key)
+            if key in _READINESS_PROMOTION_AUTHORITY_KEYS and raw_child is True:
+                payload[key] = False
+            else:
+                payload[key] = _strip_promotion_authority_claims_for_readiness(
+                    raw_child
+                )
+        return payload
+    if isinstance(value, list):
+        list_value = cast(list[object], value)
+        return [
+            _strip_promotion_authority_claims_for_readiness(item) for item in list_value
+        ]
+    return value
+
+
 def _evaluate_trading_health_payload(
     *,
     include_database_contract: bool = False,
@@ -1115,13 +1251,36 @@ def _evaluate_trading_health_payload(
         "required": bool(quant_evidence.get("required", False)),
         "window": quant_evidence.get("window"),
     }
+    readiness_dependency_reasons = _readiness_dependency_degradation_reason_codes(
+        dependencies,
+        scheduler_ok=scheduler_ok,
+    )
+    live_submission_gate_for_readiness = _guard_live_submission_gate_for_readiness(
+        live_submission_gate,
+        readiness_dependency_reasons=readiness_dependency_reasons,
+    )
+    if bool(
+        live_submission_gate_for_readiness.get("readiness_dependency_guard_active")
+    ):
+        dependencies["live_submission_gate"] = {
+            "ok": False,
+            "detail": str(
+                live_submission_gate_for_readiness.get("reason")
+                or "readiness_dependency_degraded"
+            ),
+            "capital_stage": live_submission_gate_for_readiness.get("capital_stage"),
+            "readiness_dependency_guard_active": True,
+            "readiness_dependency_guard_reasons": readiness_dependency_reasons,
+        }
     revenue_repair_digest = build_revenue_repair_digest(
         readyz_payload={
             "status": (
-                "degraded" if live_submission_gate.get("allowed") is not True else "ok"
+                "degraded"
+                if live_submission_gate_for_readiness.get("allowed") is not True
+                else "ok"
             ),
             "proof_floor": proof_floor,
-            "live_submission_gate": live_submission_gate,
+            "live_submission_gate": live_submission_gate_for_readiness,
             "quant_evidence": quant_evidence,
             "dependencies": dependencies,
         },
@@ -1130,7 +1289,7 @@ def _evaluate_trading_health_payload(
             "pipeline_mode": settings.trading_pipeline_mode,
             "build": build_payload,
             "dependency_quorum": _dependency_quorum.as_payload(),
-            "live_submission_gate": live_submission_gate,
+            "live_submission_gate": live_submission_gate_for_readiness,
             "proof_floor": proof_floor,
             "quant_evidence": quant_evidence,
             "routeability_repair_acceptance_ledger": routeability_repair_acceptance_ledger,
@@ -1171,101 +1330,105 @@ def _evaluate_trading_health_payload(
     status = "ok" if overall_ok else "degraded"
     status_code = 200 if overall_ok else 503
 
-    return (
-        {
-            "status": status,
-            "scheduler": scheduler_payload,
-            "dependencies": dependencies,
-            "alpha_readiness": alpha_readiness,
-            "live_submission_gate": live_submission_gate,
-            "proof_floor": proof_floor,
-            "renewal_bond_profit_escrow": renewal_bond_profit_escrow,
-            "capital_replay_board": capital_replay_projection["capital_replay_board"],
-            "executable_alpha_receipts": capital_replay_projection[
-                "executable_alpha_receipts"
-            ],
-            "quality_adjusted_profit_frontier": quality_adjusted_profit_frontier,
-            "torghut_consumer_evidence_receipt": consumer_evidence_receipt,
-            "route_proven_profit_receipt": route_proven_profit_receipt,
-            "consumer_evidence_canary": route_proven_profit_receipt.get("route_canary"),
-            "capital_reentry_cohort_ledger": capital_reentry_cohort_ledger,
-            "profit_repair_settlement_ledger": profit_repair_settlement_ledger,
-            "routeability_repair_acceptance_ledger": routeability_repair_acceptance_ledger,
-            "profit_freshness_frontier": profit_freshness_frontier,
-            "profit_signal_quorum": profit_signal_quorum,
-            "evidence_clock_arbiter": evidence_clock_arbiter,
-            "routeable_profit_candidate_exchange": routeable_profit_candidate_exchange,
-            "clock_settlement_receipt": clock_settlement_receipt,
-            "route_evidence_clearinghouse_packet": route_evidence_clearinghouse_packet,
-            "repair_bid_settlement_ledger": repair_bid_settlement_ledger,
-            **_revenue_repair_topline_fields(revenue_repair_digest),
-            "route_warrant_exchange": route_warrant_exchange,
-            "source_serving_repair_receipt_ledger": source_serving_repair_receipt_ledger,
-            "freshness_carry_ledger": freshness_carry_ledger,
-            "repair_receipt_frontier": repair_receipt_frontier,
-            "repair_outcome_dividend_ledger": repair_outcome_dividend_ledger,
-            "executable_alpha_settlement_slots": compact_executable_alpha_settlement_slots(
-                cast(
-                    Mapping[str, Any],
-                    revenue_repair_digest.get("executable_alpha_settlement_slots"),
-                )
+    response_payload = {
+        "status": status,
+        "scheduler": scheduler_payload,
+        "dependencies": dependencies,
+        "alpha_readiness": alpha_readiness,
+        "live_submission_gate": live_submission_gate_for_readiness,
+        "proof_floor": proof_floor,
+        "renewal_bond_profit_escrow": renewal_bond_profit_escrow,
+        "capital_replay_board": capital_replay_projection["capital_replay_board"],
+        "executable_alpha_receipts": capital_replay_projection[
+            "executable_alpha_receipts"
+        ],
+        "quality_adjusted_profit_frontier": quality_adjusted_profit_frontier,
+        "torghut_consumer_evidence_receipt": consumer_evidence_receipt,
+        "route_proven_profit_receipt": route_proven_profit_receipt,
+        "consumer_evidence_canary": route_proven_profit_receipt.get("route_canary"),
+        "capital_reentry_cohort_ledger": capital_reentry_cohort_ledger,
+        "profit_repair_settlement_ledger": profit_repair_settlement_ledger,
+        "routeability_repair_acceptance_ledger": routeability_repair_acceptance_ledger,
+        "profit_freshness_frontier": profit_freshness_frontier,
+        "profit_signal_quorum": profit_signal_quorum,
+        "evidence_clock_arbiter": evidence_clock_arbiter,
+        "routeable_profit_candidate_exchange": routeable_profit_candidate_exchange,
+        "clock_settlement_receipt": clock_settlement_receipt,
+        "route_evidence_clearinghouse_packet": route_evidence_clearinghouse_packet,
+        "repair_bid_settlement_ledger": repair_bid_settlement_ledger,
+        **_revenue_repair_topline_fields(revenue_repair_digest),
+        "route_warrant_exchange": route_warrant_exchange,
+        "source_serving_repair_receipt_ledger": source_serving_repair_receipt_ledger,
+        "freshness_carry_ledger": freshness_carry_ledger,
+        "repair_receipt_frontier": repair_receipt_frontier,
+        "repair_outcome_dividend_ledger": repair_outcome_dividend_ledger,
+        "executable_alpha_settlement_slots": compact_executable_alpha_settlement_slots(
+            cast(
+                Mapping[str, Any],
+                revenue_repair_digest.get("executable_alpha_settlement_slots"),
+            )
+        ),
+        "alpha_repair_closure_board": compact_alpha_repair_closure_board(
+            cast(
+                Mapping[str, Any],
+                revenue_repair_digest.get("alpha_repair_closure_board"),
+            )
+        ),
+        "alpha_evidence_foundry": compact_alpha_evidence_foundry(
+            cast(
+                Mapping[str, Any],
+                revenue_repair_digest.get("alpha_evidence_foundry"),
+            )
+        ),
+        "alpha_readiness_settlement_conveyor": compact_alpha_readiness_settlement_conveyor(
+            cast(
+                Mapping[str, Any],
+                revenue_repair_digest.get("alpha_readiness_settlement_conveyor"),
+            )
+        ),
+        "alpha_repair_dividend_ledger": compact_alpha_repair_dividend_ledger(
+            cast(
+                Mapping[str, Any],
+                revenue_repair_digest.get("alpha_repair_dividend_ledger"),
+            )
+        ),
+        "alpha_closure_dividend_slo": build_alpha_closure_dividend_slo(
+            generated_at=datetime.now(timezone.utc),
+            alpha_repair_closure_board=cast(
+                Mapping[str, Any] | None,
+                revenue_repair_digest.get("alpha_repair_closure_board"),
             ),
-            "alpha_repair_closure_board": compact_alpha_repair_closure_board(
-                cast(
-                    Mapping[str, Any],
-                    revenue_repair_digest.get("alpha_repair_closure_board"),
-                )
+            alpha_repair_dividend_ledger=cast(
+                Mapping[str, Any] | None,
+                revenue_repair_digest.get("alpha_repair_dividend_ledger"),
             ),
-            "alpha_evidence_foundry": compact_alpha_evidence_foundry(
-                cast(
-                    Mapping[str, Any],
-                    revenue_repair_digest.get("alpha_evidence_foundry"),
-                )
-            ),
-            "alpha_readiness_settlement_conveyor": compact_alpha_readiness_settlement_conveyor(
-                cast(
-                    Mapping[str, Any],
-                    revenue_repair_digest.get("alpha_readiness_settlement_conveyor"),
-                )
-            ),
-            "alpha_repair_dividend_ledger": compact_alpha_repair_dividend_ledger(
-                cast(
-                    Mapping[str, Any],
-                    revenue_repair_digest.get("alpha_repair_dividend_ledger"),
-                )
-            ),
-            "alpha_closure_dividend_slo": build_alpha_closure_dividend_slo(
-                generated_at=datetime.now(timezone.utc),
-                alpha_repair_closure_board=cast(
-                    Mapping[str, Any] | None,
-                    revenue_repair_digest.get("alpha_repair_closure_board"),
-                ),
-                alpha_repair_dividend_ledger=cast(
-                    Mapping[str, Any] | None,
-                    revenue_repair_digest.get("alpha_repair_dividend_ledger"),
-                ),
-            ),
-            "jangar_controller_ingestion_carry": compact_jangar_controller_ingestion_carry(
-                cast(
-                    Mapping[str, Any],
-                    revenue_repair_digest.get("jangar_controller_ingestion_carry"),
-                )
-            ),
-            "no_delta_repair_reentry_auction": compact_no_delta_repair_reentry_auction(
-                cast(
-                    Mapping[str, Any],
-                    revenue_repair_digest.get("no_delta_repair_reentry_auction"),
-                )
-            ),
-            "route_reacquisition_book": proof_floor.get("route_reacquisition_book"),
-            "route_reacquisition_board": route_reacquisition_board,
-            "quant_evidence": quant_evidence,
-            "profit_lease_projection": live_submission_gate.get(
-                "profit_lease_projection"
-            ),
-        },
-        status_code,
-    )
+        ),
+        "jangar_controller_ingestion_carry": compact_jangar_controller_ingestion_carry(
+            cast(
+                Mapping[str, Any],
+                revenue_repair_digest.get("jangar_controller_ingestion_carry"),
+            )
+        ),
+        "no_delta_repair_reentry_auction": compact_no_delta_repair_reentry_auction(
+            cast(
+                Mapping[str, Any],
+                revenue_repair_digest.get("no_delta_repair_reentry_auction"),
+            )
+        ),
+        "route_reacquisition_book": proof_floor.get("route_reacquisition_book"),
+        "route_reacquisition_board": route_reacquisition_board,
+        "quant_evidence": quant_evidence,
+        "profit_lease_projection": live_submission_gate_for_readiness.get(
+            "profit_lease_projection"
+        ),
+    }
+    if readiness_dependency_reasons:
+        response_payload = cast(
+            dict[str, object],
+            _strip_promotion_authority_claims_for_readiness(response_payload),
+        )
+
+    return response_payload, status_code
 
 
 def _evaluate_universe_dependency(
@@ -5552,14 +5715,109 @@ def _tigerbeetle_status_int(value: object) -> int:
         return 0
 
 
+def _empty_tigerbeetle_ref_counts(
+    *,
+    reason_codes: Sequence[str],
+    last_error: str | None = None,
+) -> dict[str, object]:
+    return {
+        "schema_version": "torghut.tigerbeetle-ref-counts.v1",
+        "cluster_id": settings.tigerbeetle_cluster_id,
+        "ref_counts_unavailable": True,
+        "reason_codes": list(reason_codes),
+        "last_error": last_error,
+        "account_ref_count": 0,
+        "transfer_ref_count": 0,
+        "by_source_type": {},
+        "order_event_ref_count": 0,
+        "execution_ref_count": 0,
+        "cost_ref_count": 0,
+        "runtime_ledger_ref_count": 0,
+        "stable_ref_count": 0,
+        "stable_ref_missing_count": 0,
+        "stable_ref_mismatch_count": 0,
+        "stable_ref_diagnostic_bounded": True,
+        "stable_ref_sample_size": 0,
+        "runtime_ledger_required_bucket_count": 0,
+        "runtime_ledger_signed_ref_count": 0,
+        "runtime_ledger_missing_signed_ref_count": 0,
+        "runtime_ledger_account_ref_count": 0,
+        "runtime_ledger_missing_account_ref_count": 0,
+        "runtime_ledger_missing_account_ids": [],
+        "runtime_ledger_source_ids": [],
+        "runtime_ledger_transfer_ids": [],
+        "runtime_ledger_signed_bucket_ids": [],
+        "runtime_ledger_ref_coverage_bounded": True,
+        "runtime_ledger_ref_sample_size": 0,
+        "source_materialization": {
+            "account_ref_table": "tigerbeetle_account_refs",
+            "transfer_ref_table": "tigerbeetle_transfer_refs",
+            "reconciliation_run_table": "tigerbeetle_reconciliation_runs",
+            "runtime_ledger_source_table": "strategy_runtime_ledger_buckets",
+            "runtime_ledger_source_type": "strategy_runtime_ledger_bucket",
+            "runtime_ledger_transfer_kind": "runtime_net_pnl",
+        },
+    }
+
+
+def _unavailable_tigerbeetle_reconciliation_payload(
+    *,
+    reason_codes: Sequence[str],
+    last_error: str | None = None,
+) -> dict[str, object]:
+    return {
+        "schema_version": "torghut.tigerbeetle-reconciliation-status.v1",
+        "ok": False,
+        "cluster_id": settings.tigerbeetle_cluster_id,
+        "status": "unavailable",
+        "age_seconds": None,
+        "reconciliation_freshness": {
+            "observed_at": None,
+            "age_seconds": None,
+            "max_age_seconds": max(
+                1,
+                int(settings.tigerbeetle_reconcile_max_age_seconds),
+            ),
+            "stale": True,
+        },
+        "authority": "accounting_parity_only",
+        "promotion_authority": False,
+        "overrides_runtime_ledger_authority": False,
+        "reason_codes": list(reason_codes),
+        "last_error": last_error,
+        "blockers": list(reason_codes),
+        "ref_counts": {},
+    }
+
+
 def _build_tigerbeetle_ledger_status(session: Session) -> dict[str, object]:
     protocol = _check_tigerbeetle_protocol_health()
-    latest_reconciliation = latest_tigerbeetle_reconciliation_payload(
-        session,
-        cluster_id=settings.tigerbeetle_cluster_id,
-    )
     blockers: list[str] = []
+    latest_reconciliation: dict[str, object] | None
+    reconciliation_status_available = True
+    try:
+        bind = session.get_bind()
+        if bind.dialect.name == "postgresql":
+            session.execute(text("SET LOCAL statement_timeout = 750"))
+        latest_reconciliation = latest_tigerbeetle_reconciliation_payload(
+            session,
+            cluster_id=settings.tigerbeetle_cluster_id,
+        )
+    except SQLAlchemyError as exc:
+        logger.warning("TigerBeetle reconciliation status unavailable: %s", exc)
+        session.rollback()
+        reconciliation_status_available = False
+        reason_codes = ["tigerbeetle_reconciliation_status_unavailable"]
+        if _sqlalchemy_error_indicates_statement_timeout(exc):
+            reason_codes.append("tigerbeetle_reconciliation_status_query_timeout")
+        blockers.extend(reason_codes)
+        latest_reconciliation = _unavailable_tigerbeetle_reconciliation_payload(
+            reason_codes=reason_codes,
+            last_error=str(exc),
+        )
+
     ref_counts: dict[str, object]
+    ref_counts_available = True
     try:
         bind = session.get_bind()
         if bind.dialect.name == "postgresql":
@@ -5572,44 +5830,15 @@ def _build_tigerbeetle_ledger_status(session: Session) -> dict[str, object]:
     except SQLAlchemyError as exc:
         logger.warning("TigerBeetle ref-count status unavailable: %s", exc)
         session.rollback()
-        blockers.append("tigerbeetle_ref_counts_unavailable")
-        ref_counts = {
-            "schema_version": "torghut.tigerbeetle-ref-counts.v1",
-            "cluster_id": settings.tigerbeetle_cluster_id,
-            "ref_counts_unavailable": True,
-            "last_error": str(exc),
-            "account_ref_count": 0,
-            "transfer_ref_count": 0,
-            "by_source_type": {},
-            "order_event_ref_count": 0,
-            "execution_ref_count": 0,
-            "cost_ref_count": 0,
-            "runtime_ledger_ref_count": 0,
-            "stable_ref_count": 0,
-            "stable_ref_missing_count": 0,
-            "stable_ref_mismatch_count": 0,
-            "stable_ref_diagnostic_bounded": True,
-            "stable_ref_sample_size": 0,
-            "runtime_ledger_required_bucket_count": 0,
-            "runtime_ledger_signed_ref_count": 0,
-            "runtime_ledger_missing_signed_ref_count": 0,
-            "runtime_ledger_account_ref_count": 0,
-            "runtime_ledger_missing_account_ref_count": 0,
-            "runtime_ledger_missing_account_ids": [],
-            "runtime_ledger_source_ids": [],
-            "runtime_ledger_transfer_ids": [],
-            "runtime_ledger_signed_bucket_ids": [],
-            "runtime_ledger_ref_coverage_bounded": True,
-            "runtime_ledger_ref_sample_size": 0,
-            "source_materialization": {
-                "account_ref_table": "tigerbeetle_account_refs",
-                "transfer_ref_table": "tigerbeetle_transfer_refs",
-                "reconciliation_run_table": "tigerbeetle_reconciliation_runs",
-                "runtime_ledger_source_table": "strategy_runtime_ledger_buckets",
-                "runtime_ledger_source_type": "strategy_runtime_ledger_bucket",
-                "runtime_ledger_transfer_kind": "runtime_net_pnl",
-            },
-        }
+        ref_counts_available = False
+        reason_codes = ["tigerbeetle_ref_counts_unavailable"]
+        if _sqlalchemy_error_indicates_statement_timeout(exc):
+            reason_codes.append("tigerbeetle_ref_counts_query_timeout")
+        blockers.extend(reason_codes)
+        ref_counts = _empty_tigerbeetle_ref_counts(
+            reason_codes=reason_codes,
+            last_error=str(exc),
+        )
     runtime_ledger_ref_count = _tigerbeetle_status_int(
         ref_counts.get("runtime_ledger_ref_count")
     )
@@ -5651,6 +5880,10 @@ def _build_tigerbeetle_ledger_status(session: Session) -> dict[str, object]:
         ):
             blocker_items = cast(Sequence[object], raw_blockers)
             blockers.extend(str(item) for item in blocker_items)
+    if not reconciliation_status_available:
+        reconciliation_ok = False
+    if not ref_counts_available:
+        reconciliation_ok = False
     reconciliation_age_seconds = (
         _tigerbeetle_status_int(latest_reconciliation.get("age_seconds"))
         if latest_reconciliation is not None
@@ -6330,9 +6563,13 @@ def _load_bounded_options_catalog_freshness_summary(
     scoped_symbols: tuple[str, ...],
     *,
     reason: str,
+    reason_codes: list[str] | None = None,
 ) -> dict[str, object] | None:
     if not scoped_symbols:
         return None
+    fallback_reason_codes = reason_codes if reason_codes is not None else [reason]
+    if reason not in fallback_reason_codes:
+        fallback_reason_codes.append(reason)
     rows: list[Mapping[str, object]] = []
     bounded_query = text(
         """
@@ -6366,6 +6603,11 @@ LIMIT 1
             "Options catalog bounded freshness fallback unavailable: %s",
             bounded_exc,
         )
+        fallback_reason_codes.append(
+            "options_catalog_freshness_bounded_route_scope_timeout"
+            if _sqlalchemy_error_indicates_statement_timeout(bounded_exc)
+            else "options_catalog_freshness_bounded_route_scope_unavailable"
+        )
         return None
 
     route_symbol_freshness: dict[str, dict[str, object]] = {}
@@ -6393,7 +6635,7 @@ LIMIT 1
             else 0,
             "reason_codes": [
                 "options_catalog_freshness_bounded_route_scope",
-                reason,
+                *fallback_reason_codes,
             ],
         }
 
@@ -6441,7 +6683,7 @@ LIMIT 1
         "route_symbol_freshness": route_symbol_freshness,
         "reason_codes": [
             "options_catalog_freshness_bounded_route_scope",
-            reason,
+            *fallback_reason_codes,
         ],
     }
 
@@ -6472,13 +6714,20 @@ def _load_options_catalog_freshness_summary(
             session,
             scoped_symbols,
             reason=reason_codes[-1],
+            reason_codes=reason_codes,
         )
         if bounded_payload is not None:
             return _store_options_catalog_freshness_summary(
                 scoped_symbols,
                 bounded_payload,
             )
-        reason_codes.append("options_catalog_freshness_bounded_route_scope_unavailable")
+        if (
+            "options_catalog_freshness_bounded_route_scope_unavailable"
+            not in reason_codes
+        ):
+            reason_codes.append(
+                "options_catalog_freshness_bounded_route_scope_unavailable"
+            )
         return _store_options_catalog_freshness_summary(
             scoped_symbols,
             {
@@ -6627,6 +6876,7 @@ LIMIT 200
             session,
             scoped_symbols,
             reason=reason_codes[-1],
+            reason_codes=reason_codes,
         )
         if bounded_payload is not None:
             return _store_options_catalog_freshness_summary(
