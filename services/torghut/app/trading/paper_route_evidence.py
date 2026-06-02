@@ -137,6 +137,12 @@ HPAIRS_ZERO_ACTIVITY_DIAGNOSTICS_SCHEMA_VERSION = (
 SOURCE_LINEAGE_OBSERVATION_SCHEMA_VERSION = (
     "torghut.paper-route-source-lineage-observation.v1"
 )
+HPAIRS_CURRENT_COLLECTION_PREREQUISITE_BLOCKERS = frozenset(
+    {
+        "drift_checks_missing",
+        "signal_lag_exceeded",
+    }
+)
 PAPER_ROUTE_ACCOUNT_STATE_DISCARD_BLOCKERS = frozenset(
     {
         "paper_route_account_window_start_not_flat",
@@ -1773,6 +1779,106 @@ def _runtime_window_import_health_gate_summary(
     }
 
 
+def _health_gate_ready_bool(
+    health_gate: Mapping[str, object],
+    *,
+    ok_key: str,
+    source_key: str,
+) -> bool:
+    return str(health_gate.get(ok_key) or "").strip().lower() == "true" and _safe_text(
+        health_gate.get(source_key)
+    ) not in {None, "missing"}
+
+
+def _hpairs_current_collection_prerequisite_blockers(
+    *,
+    target: Mapping[str, object],
+    health_gate: Mapping[str, object],
+) -> list[str]:
+    """Return current H-PAIRS source/TA health blockers for collection."""
+
+    if not _target_is_hpairs(target):
+        return []
+
+    raw_blockers = (
+        set(
+            _unique_text_items(
+                [
+                    *_unique_text_items(target.get("candidate_blockers")),
+                    *_unique_text_items(
+                        target.get("runtime_ledger_target_metadata_blockers")
+                    ),
+                ]
+            )
+        )
+        & HPAIRS_CURRENT_COLLECTION_PREREQUISITE_BLOCKERS
+    )
+    current_blockers: set[str] = set()
+    continuity_reason = _safe_text(health_gate.get("continuity_reason"))
+    drift_reason = _safe_text(health_gate.get("drift_reason"))
+
+    signal_currently_stale = not _health_gate_ready_bool(
+        health_gate,
+        ok_key="continuity_ok",
+        source_key="continuity_source",
+    )
+    if (
+        "signal_lag_exceeded" in raw_blockers
+        or continuity_reason == "signal_lag_exceeded"
+    ) and signal_currently_stale:
+        current_blockers.add("signal_lag_exceeded")
+
+    drift_currently_missing = not _health_gate_ready_bool(
+        health_gate,
+        ok_key="drift_ok",
+        source_key="drift_source",
+    )
+    if (
+        "drift_checks_missing" in raw_blockers
+        or (drift_reason is not None and "missing" in drift_reason)
+    ) and drift_currently_missing:
+        current_blockers.add("drift_checks_missing")
+
+    return sorted(current_blockers)
+
+
+def _hpairs_stale_collection_blockers_cleared_by_current_inputs(
+    *,
+    target: Mapping[str, object],
+    health_gate: Mapping[str, object],
+) -> list[str]:
+    if not _target_is_hpairs(target):
+        return []
+
+    raw_blockers = (
+        set(
+            _unique_text_items(
+                [
+                    *_unique_text_items(target.get("candidate_blockers")),
+                    *_unique_text_items(
+                        target.get("runtime_ledger_target_metadata_blockers")
+                    ),
+                ]
+            )
+        )
+        & HPAIRS_CURRENT_COLLECTION_PREREQUISITE_BLOCKERS
+    )
+    cleared: list[str] = []
+    if "drift_checks_missing" in raw_blockers and _health_gate_ready_bool(
+        health_gate,
+        ok_key="drift_ok",
+        source_key="drift_source",
+    ):
+        cleared.append("drift_checks_missing")
+    if "signal_lag_exceeded" in raw_blockers and _health_gate_ready_bool(
+        health_gate,
+        ok_key="continuity_ok",
+        source_key="continuity_source",
+    ):
+        cleared.append("signal_lag_exceeded")
+    return sorted(cleared)
+
+
 def _execution_source_strategy_key(
     *,
     strategy_id: str | None,
@@ -2220,6 +2326,18 @@ def _next_paper_route_runtime_window_targets(
                 and target.get("bounded_live_paper_collection_authorized")
             )
         )
+        current_collection_prerequisite_blockers = (
+            _hpairs_current_collection_prerequisite_blockers(
+                target=pair_balance_target,
+                health_gate=health_gate,
+            )
+        )
+        stale_collection_blockers_cleared_by_current_inputs = (
+            _hpairs_stale_collection_blockers_cleared_by_current_inputs(
+                target=pair_balance_target,
+                health_gate=health_gate,
+            )
+        )
         evidence_collection_blockers = _unique_text_items(
             [
                 *collection_session_blockers,
@@ -2231,6 +2349,7 @@ def _next_paper_route_runtime_window_targets(
                     ]
                 ),
                 *_unique_text_items(source_decision_readiness.get("blockers")),
+                *current_collection_prerequisite_blockers,
                 *target_account_audit_blockers,
                 *account_pre_session_blockers,
                 *clean_window_baseline_blockers,
@@ -2409,6 +2528,12 @@ def _next_paper_route_runtime_window_targets(
             ),
             "bounded_evidence_collection_max_notional": next_notional,
             "bounded_evidence_collection_blockers": evidence_collection_blockers,
+            "current_collection_prerequisite_blockers": (
+                current_collection_prerequisite_blockers
+            ),
+            "stale_collection_blockers_cleared_by_current_inputs": (
+                stale_collection_blockers_cleared_by_current_inputs
+            ),
             "evidence_collection_stage": "paper",
             "probation_allowed": True,
             "probation_reason": "paper_route_probe_next_session_runtime_window",
@@ -2428,7 +2553,14 @@ def _next_paper_route_runtime_window_targets(
             "candidate_blockers": _unique_text_items(
                 [
                     "paper_route_runtime_ledger_import_pending",
-                    *_unique_text_items(target.get("candidate_blockers")),
+                    *[
+                        blocker
+                        for blocker in _unique_text_items(
+                            target.get("candidate_blockers")
+                        )
+                        if blocker
+                        not in stale_collection_blockers_cleared_by_current_inputs
+                    ],
                     *evidence_collection_blockers,
                     *health_gate_blockers,
                     *health_gate_promotion_blockers,
@@ -2438,6 +2570,14 @@ def _next_paper_route_runtime_window_targets(
                 [
                     "paper_route_runtime_ledger_import_pending",
                     "live_runtime_ledger_required",
+                    *[
+                        blocker
+                        for blocker in _unique_text_items(
+                            target.get("runtime_ledger_target_metadata_blockers")
+                        )
+                        if blocker
+                        not in stale_collection_blockers_cleared_by_current_inputs
+                    ],
                     *health_gate_blockers,
                     *health_gate_promotion_blockers,
                 ]

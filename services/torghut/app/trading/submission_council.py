@@ -257,7 +257,42 @@ def _load_profit_promotion_bounded_row_count(
     return min(len(rows), _PROMOTION_TABLE_COUNT_SCAN_LIMIT)
 
 
-def _runtime_window_import_continuity_signal(state: object) -> tuple[str, str, str]:
+def _fresh_clickhouse_signal_continuity(
+    clickhouse_ta_status: Mapping[str, Any] | None,
+) -> tuple[str, str, str] | None:
+    if not isinstance(clickhouse_ta_status, Mapping):
+        return None
+    state = _safe_text(clickhouse_ta_status.get("state"))
+    latest_signal_at = _coerce_aware_datetime(
+        clickhouse_ta_status.get("latest_signal_at")
+        or clickhouse_ta_status.get("readiness_window_end")
+        or clickhouse_ta_status.get("as_of")
+    )
+    if state != "current" or latest_signal_at is None:
+        return None
+
+    max_age_seconds = max(
+        1,
+        int(settings.trading_feature_max_staleness_ms) // 1000,
+    )
+    lag_seconds = max(
+        0,
+        int((datetime.now(timezone.utc) - latest_signal_at).total_seconds()),
+    )
+    if lag_seconds <= max_age_seconds:
+        return "true", "clickhouse_ta_status", "signals_present"
+    return "false", "clickhouse_ta_status", "signal_lag_exceeded"
+
+
+def _runtime_window_import_continuity_signal(
+    state: object,
+    *,
+    clickhouse_ta_status: Mapping[str, Any] | None = None,
+) -> tuple[str, str, str]:
+    persisted_signal = _fresh_clickhouse_signal_continuity(clickhouse_ta_status)
+    if persisted_signal is not None and persisted_signal[0] == "true":
+        return persisted_signal
+
     state_text = _safe_attr_text(state, "last_signal_continuity_state")
     reason = _safe_attr_text(state, "last_signal_continuity_reason")
     actionable = _safe_bool(getattr(state, "last_signal_continuity_actionable", None))
@@ -279,6 +314,8 @@ def _runtime_window_import_continuity_signal(state: object) -> tuple[str, str, s
         return "true", "signal_continuity", state_text
     if actionable is False and state_text:
         return "true", "signal_continuity", state_text
+    if persisted_signal is not None:
+        return persisted_signal
     return "false", "missing", "signal_continuity_missing"
 
 
@@ -299,9 +336,13 @@ def _runtime_window_import_health_gate_inputs(
     state: object,
     *,
     dependency_quorum_decision: str,
+    clickhouse_ta_status: Mapping[str, Any] | None = None,
 ) -> dict[str, object]:
     continuity_ok, continuity_source, continuity_reason = (
-        _runtime_window_import_continuity_signal(state)
+        _runtime_window_import_continuity_signal(
+            state,
+            clickhouse_ta_status=clickhouse_ta_status,
+        )
     )
     drift_ok, drift_source, drift_reason = _runtime_window_import_drift_signal(state)
     blockers: list[str] = []
@@ -3972,6 +4013,7 @@ def build_live_submission_gate_payload(
     runtime_window_import_health_gate = _runtime_window_import_health_gate_inputs(
         state,
         dependency_quorum_decision=dependency_decision,
+        clickhouse_ta_status=clickhouse_ta_status,
     )
     empirical_ready = (
         bool(empirical_jobs_status.get("ready"))
