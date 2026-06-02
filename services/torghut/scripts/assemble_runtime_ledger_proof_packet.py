@@ -1090,16 +1090,86 @@ def _runtime_import_target_blocker_codes(value: object) -> list[str]:
     return blockers
 
 
+_RUNTIME_LEDGER_PROMOTION_GRADE_SOURCE_MATERIALIZATIONS = frozenset(
+    {
+        "execution_order_events",
+        "source_execution_lifecycle",
+    }
+)
+_RUNTIME_LEDGER_NON_AUTHORITY_MATERIALIZATION_MARKERS = frozenset(
+    {
+        "aggregate_only",
+        "artifact_only",
+        "exact_replay",
+        "replay_artifact",
+        "simulation_source_replay_only",
+    }
+)
+
+
+def _runtime_ledger_non_authority_marker_present(value: object) -> bool:
+    text = _text(value)
+    if text is None:
+        return False
+    normalized = text.lower().replace("-", "_")
+    return any(
+        marker in normalized
+        for marker in _RUNTIME_LEDGER_NON_AUTHORITY_MATERIALIZATION_MARKERS
+    )
+
+
 def _runtime_import_materialization_metadata_blockers(
     observation: Mapping[str, Any],
 ) -> list[str]:
-    return [
+    blockers = [
         blocker
         for blocker in _text_list(
             observation.get("runtime_ledger_target_metadata_blockers")
         )
         if blocker not in RUNTIME_IMPORT_MATERIALIZATION_PROMOTION_ONLY_BLOCKERS
     ]
+    proof_count = max(
+        _int(observation.get("runtime_ledger_tca_profit_proof_count")),
+        _int(observation.get("runtime_ledger_source_bucket_profit_proof_count")),
+        _int(observation.get("runtime_ledger_durable_bucket_profit_proof_count")),
+        1 if _bool(observation.get("runtime_ledger_profit_proof_present")) else 0,
+    )
+    if proof_count <= 0:
+        return blockers
+
+    source_materialized_count = _int(
+        observation.get("runtime_ledger_source_execution_materialized_bucket_count")
+    )
+    if source_materialized_count < proof_count:
+        blockers.append("runtime_window_import_source_execution_materialization_missing")
+
+    source_materializations = _text_list(
+        observation.get("runtime_ledger_source_materializations")
+    )
+    if not any(
+        materialization in _RUNTIME_LEDGER_PROMOTION_GRADE_SOURCE_MATERIALIZATIONS
+        for materialization in source_materializations
+    ) or any(
+        _runtime_ledger_non_authority_marker_present(materialization)
+        for materialization in source_materializations
+    ):
+        blockers.append("runtime_window_import_source_materialization_missing")
+
+    derivations = _text_list(
+        observation.get("runtime_ledger_materialization_pnl_derivations")
+    )
+    authority_reasons = _text_list(
+        observation.get("runtime_ledger_materialization_authority_reasons")
+    )
+    authority_reason = _text(observation.get("authority_reason"))
+    if authority_reason is not None:
+        authority_reasons.append(authority_reason)
+    if any(
+        _runtime_ledger_non_authority_marker_present(value)
+        for value in [*derivations, *authority_reasons]
+    ):
+        blockers.append("runtime_window_import_replay_or_artifact_derivation_not_authority")
+    return list(dict.fromkeys(blockers))
 
 
 def _runtime_import_readback_payload(
