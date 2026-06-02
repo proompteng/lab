@@ -34,13 +34,14 @@ data:
     6. Before any Alpaca mutation, record the planned order/risk in Synthesis and use an AgentRun-prefixed deterministic `client_order_id` when the broker tool supports it.
     7. After any Alpaca mutation, reconcile by broker order id and client order id, refresh account/positions/orders, then update Synthesis before taking more risk.
     8. Continue market-open cycles until market close, 500000 USD equity, or hard unrecoverable account/order/visibility state.
-    9. Finalize with realized scorecard observations for terminal tickets, rejected valid setups, rejected invalid setups, slippage, hold time, MFE/MAE, and mistake tags.
+    9. In market-open mode, `terminal_reason: running`, `phase: manage`, `next_action: continue_monitoring`, active monitoring, quiet markets, and protected open positions are checkpoints, not completion. Write Synthesis status/event plus `report.md`, sleep no more than 60 seconds, and immediately start the next cycle.
+    10. Finalize with realized scorecard observations for terminal tickets, rejected valid setups, rejected invalid setups, slippage, hold time, MFE/MAE, and mistake tags.
 
     Mode behavior:
     - `dry-run`: no Alpaca submit/cancel/replace/close-position calls and no `synthesis_submit_item`; perform one read-only scanner/ticket/risk/status pass, finalize with `dry_run_complete`, write `report.md`, call `update_goal complete` if available, and stop.
     - `scorecard-readback`: no Alpaca mutations and no `synthesis_submit_item`; prove scorecards are read before candidate grading, finalize with `scorecard_readback_waiting` or `scorecard_readback_complete`, write `report.md`, call `update_goal complete` if available, and stop.
     - `preflight`: prove readiness and, only when safe, one tiny non-marketable paper bracket or OTO order proof that is reconciled and canceled.
-    - `market-open`: first run one bounded paper-order smoke and the protective preflight before non-smoke strategy entries; preflight success, smoke success, no-trade, rejected candidates, rejected orders, and quiet markets are cycle outcomes, not terminal outcomes.
+    - `market-open`: first run one bounded paper-order smoke and the protective preflight before non-smoke strategy entries; preflight success, smoke success, no-trade, rejected candidates, rejected orders, quiet markets, active monitoring, and protected open positions are cycle outcomes, not terminal outcomes. Do not call `update_goal complete` and do not send a final assistant response until market close, 500000 USD equity, or hard unrecoverable account/order/visibility state.
 
     Safety:
     - Route orders only to the Alpaca paper account.

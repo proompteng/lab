@@ -11,5 +11,5 @@ resources:
   - agents-domain
 images:
   - name: registry.ide-newton.ts.net/lab/synthesis
-    newTag: 0.588.0
+    newTag: autotrader-detail-d0c7a66e
     newName: registry.ide-newton.ts.net/lab/synthesis
