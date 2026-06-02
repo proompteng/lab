@@ -27,6 +27,8 @@ HPAIRS_REPLAY_TAPE_FEATURE_CONTRACT_SCHEMA_VERSION = (
     "torghut.hpairs-replay-tape-feature-contract.v1"
 )
 HPAIRS_OFI_MEMORY_REGIME_SCHEMA_VERSION = "torghut.hpairs-ofi-memory-regime-slices.v1"
+HPAIRS_CLUSTERLOB_FEATURE_VERSION = "torghut.hpairs-clusterlob-feature-buckets.v1"
+HPAIRS_OFI_FEATURE_VERSION = HPAIRS_OFI_MEMORY_REGIME_SCHEMA_VERSION
 _DECIMAL_TAG = "__torghut_decimal__"
 _DATETIME_TAG = "__torghut_datetime__"
 
@@ -36,6 +38,10 @@ def _empty_row_count_by_trading_day() -> dict[str, int]:
 
 
 def _empty_row_count_by_symbol_trading_day() -> dict[str, dict[str, int]]:
+    return {}
+
+
+def _empty_string_mapping() -> dict[str, str]:
     return {}
 
 
@@ -69,6 +75,7 @@ class ReplayTapeManifest:
     cost_model_hash: str = ""
     strategy_family: str = ""
     replay_cache_key: str = ""
+    feature_versions: Mapping[str, str] = field(default_factory=_empty_string_mapping)
     requested_trading_days: tuple[date, ...] = ()
     observed_trading_days: tuple[date, ...] = ()
     missing_trading_days: tuple[date, ...] = ()
@@ -104,6 +111,7 @@ class ReplayTapeManifest:
             "cost_model_hash": self.cost_model_hash,
             "strategy_family": self.strategy_family,
             "replay_cache_key": self.replay_cache_key,
+            "feature_versions": dict(self.feature_versions),
             "cache_identity": self.cache_identity_diagnostics(),
             "artifact_refs": dict(self.artifact_refs),
             "source_table_versions": dict(self.source_table_versions),
@@ -139,6 +147,7 @@ class ReplayTapeManifest:
             feature_schema_hash=self.feature_schema_hash,
             cost_model_hash=self.cost_model_hash,
             strategy_family=self.strategy_family,
+            feature_versions=self.feature_versions,
             source_table_versions=self.source_table_versions,
         )
 
@@ -174,6 +183,7 @@ class ReplayTapeManifest:
             cost_model_hash=str(payload.get("cost_model_hash") or ""),
             strategy_family=str(payload.get("strategy_family") or ""),
             replay_cache_key=str(payload.get("replay_cache_key") or ""),
+            feature_versions=_string_mapping(payload.get("feature_versions")),
             artifact_refs=_string_mapping(payload.get("artifact_refs")),
             source_table_versions=_string_mapping(payload.get("source_table_versions")),
             created_at=_parse_datetime(str(payload["created_at"])),
@@ -211,6 +221,14 @@ def build_source_query_digest(payload: Mapping[str, Any]) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def hpairs_replay_tape_feature_versions() -> dict[str, str]:
+    return {
+        "hpairs": HPAIRS_REPLAY_TAPE_FEATURE_SCHEMA_VERSION,
+        "cluster_lob": HPAIRS_CLUSTERLOB_FEATURE_VERSION,
+        "ofi_memory_regime": HPAIRS_OFI_FEATURE_VERSION,
+    }
+
+
 def hpairs_replay_tape_feature_contract() -> dict[str, Any]:
     """Return the stable H-PAIRS replay-tape discovery feature contract.
 
@@ -222,6 +240,7 @@ def hpairs_replay_tape_feature_contract() -> dict[str, Any]:
     return {
         "schema_version": HPAIRS_REPLAY_TAPE_FEATURE_CONTRACT_SCHEMA_VERSION,
         "feature_schema_version": HPAIRS_REPLAY_TAPE_FEATURE_SCHEMA_VERSION,
+        "feature_versions": hpairs_replay_tape_feature_versions(),
         "mechanisms": [
             "clusterlob_clustered_event_quote_behavior_buckets",
             "horizon_specific_ofi_memory_regime_slices",
@@ -305,6 +324,7 @@ def build_replay_tape_cache_key(
     feature_schema_hash: str = "",
     cost_model_hash: str = "",
     strategy_family: str = "",
+    feature_versions: Mapping[str, str] | None = None,
     source_table_versions: Mapping[str, str] | None = None,
 ) -> str:
     """Build a stable cache key for a manifest-verified replay tape input set."""
@@ -320,6 +340,7 @@ def build_replay_tape_cache_key(
             "feature_schema_hash": str(feature_schema_hash or ""),
             "cost_model_hash": str(cost_model_hash or ""),
             "strategy_family": str(strategy_family or ""),
+            "feature_versions": _string_mapping(feature_versions),
             "source_table_versions": dict(source_table_versions or {}),
         }
     )
@@ -335,6 +356,7 @@ def build_replay_tape_cache_identity_diagnostics(
     feature_schema_hash: str = "",
     cost_model_hash: str = "",
     strategy_family: str = "",
+    feature_versions: Mapping[str, str] | None = None,
     source_table_versions: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Report whether the replay/cache identity has all local reproducibility keys.
@@ -382,9 +404,29 @@ def build_replay_tape_cache_identity_diagnostics(
             "feature_schema_hash": str(feature_schema_hash or ""),
             "cost_model_hash": str(cost_model_hash or ""),
             "strategy_family": str(strategy_family or ""),
+            "feature_versions": _string_mapping(feature_versions),
             "source_table_versions": dict(source_table_versions or {}),
         },
     }
+
+
+def _resolve_replay_feature_versions(
+    *,
+    feature_schema_hash: str,
+    strategy_family: str,
+    feature_versions: Mapping[str, str] | None,
+) -> dict[str, str]:
+    explicit_versions = _string_mapping(feature_versions)
+    if explicit_versions:
+        return explicit_versions
+    normalized_family = str(strategy_family or "").lower()
+    if (
+        str(feature_schema_hash or "") == build_hpairs_replay_tape_feature_schema_hash()
+        or "hpairs" in normalized_family
+        or "microbar_cross_sectional_pairs" in normalized_family
+    ):
+        return hpairs_replay_tape_feature_versions()
+    return {}
 
 
 def materialize_signal_tape(
@@ -400,6 +442,7 @@ def materialize_signal_tape(
     feature_schema_hash: str = "",
     cost_model_hash: str = "",
     strategy_family: str = "",
+    feature_versions: Mapping[str, str] | None = None,
     source_table_versions: Mapping[str, str] | None = None,
     artifact_refs: Mapping[str, str] | None = None,
     created_at: datetime | None = None,
@@ -447,6 +490,11 @@ def materialize_signal_tape(
     tape_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_ref = manifest_path or default_manifest_path(tape_path)
     manifest_ref.parent.mkdir(parents=True, exist_ok=True)
+    resolved_feature_versions = _resolve_replay_feature_versions(
+        feature_schema_hash=feature_schema_hash,
+        strategy_family=strategy_family,
+        feature_versions=feature_versions,
+    )
 
     content_hash = hashlib.sha256()
     with _open_text_writer(tape_path) as handle:
@@ -471,6 +519,7 @@ def materialize_signal_tape(
         feature_schema_hash=feature_schema_hash,
         cost_model_hash=cost_model_hash,
         strategy_family=strategy_family,
+        feature_versions=resolved_feature_versions,
         source_table_versions=source_table_versions,
     )
     manifest = ReplayTapeManifest(
@@ -492,6 +541,7 @@ def materialize_signal_tape(
         cost_model_hash=str(cost_model_hash or ""),
         strategy_family=str(strategy_family or ""),
         replay_cache_key=replay_cache_key,
+        feature_versions=resolved_feature_versions,
         artifact_refs=resolved_artifact_refs,
         source_table_versions=dict(source_table_versions or {}),
         created_at=created_at or datetime.now(timezone.utc),
@@ -622,6 +672,7 @@ def validate_tape_freshness(
         "feature_schema_hash": manifest.feature_schema_hash,
         "cost_model_hash": manifest.cost_model_hash,
         "strategy_family": manifest.strategy_family,
+        "feature_versions": dict(manifest.feature_versions),
         "replay_cache_key": manifest.replay_cache_key,
         "cache_identity": manifest.cache_identity_diagnostics(),
         "row_count": manifest.row_count,
@@ -1400,7 +1451,7 @@ def _string_tuple(value: Any) -> tuple[str, ...]:
     return tuple(str(item) for item in cast(Sequence[object], value))
 
 
-def _string_mapping(value: Any) -> Mapping[str, str]:
+def _string_mapping(value: Any) -> dict[str, str]:
     if not isinstance(value, Mapping):
         return {}
     return {

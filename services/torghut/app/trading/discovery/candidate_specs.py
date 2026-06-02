@@ -14,6 +14,7 @@ from app.trading.discovery.hypothesis_cards import HypothesisCard
 from app.trading.discovery.replay_tape import (
     HPAIRS_REPLAY_TAPE_FEATURE_SCHEMA_VERSION,
     build_hpairs_replay_tape_feature_schema_hash,
+    hpairs_replay_tape_feature_versions,
 )
 from app.trading.semiconductor_universe import (
     LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE as LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE,
@@ -5848,6 +5849,7 @@ def compile_candidate_specs(
                         "schema_version": "torghut.hpairs-replay-tape-candidate-contract.v1",
                         "feature_schema_version": HPAIRS_REPLAY_TAPE_FEATURE_SCHEMA_VERSION,
                         "feature_schema_hash": build_hpairs_replay_tape_feature_schema_hash(),
+                        "feature_versions": hpairs_replay_tape_feature_versions(),
                         "clusterlob_buckets": (
                             "deterministic_clustered_event_quote_behavior_metadata"
                         ),

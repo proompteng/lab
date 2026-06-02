@@ -100,6 +100,9 @@ class FastReplayPreviewRow:
     frontier_dedupe_status: str = "unique"
     duplicate_of_candidate_spec_id: str | None = None
     duplicate_candidate_spec_ids: tuple[str, ...] = ()
+    candidate_lineage: Mapping[str, Any] = field(
+        default_factory=lambda: cast(dict[str, Any], {})
+    )
 
     def to_payload(self) -> dict[str, Any]:
         observed_post_cost_expectancy_bps = _observed_post_cost_expectancy_bps(self)
@@ -108,6 +111,9 @@ class FastReplayPreviewRow:
         )
         notional_blocked = required_daily_notional is None
         exact_replay_selection_blockers = _exact_replay_selection_blockers_for_row(self)
+        frontier_selection_blockers = _frontier_selection_blockers_for_row(
+            self, exact_replay_selection_blockers=exact_replay_selection_blockers
+        )
         lineage_blockers = _lineage_blockers_for_row(self)
         risk_flags = _risk_flags_for_row(self, lineage_blockers=lineage_blockers)
         prefilter_capacity_lineage = _mapping(
@@ -154,6 +160,26 @@ class FastReplayPreviewRow:
             "frontier_dedupe_status": self.frontier_dedupe_status,
             "duplicate_of_candidate_spec_id": self.duplicate_of_candidate_spec_id,
             "duplicate_candidate_spec_ids": list(self.duplicate_candidate_spec_ids),
+            "candidate_lineage": dict(self.candidate_lineage),
+            "frontier_selection": {
+                "schema_version": "torghut.fast-replay-frontier-selection.v1",
+                "selected": self.selected,
+                "frontier_bucket": self.frontier_bucket,
+                "reason_code": self.selection_reason,
+                "blockers": list(frontier_selection_blockers),
+                "rank": self.rank,
+                "exact_replay_enqueue_allowed": self.selected,
+                "bounded_sim_evidence_enqueue_allowed": self.selected,
+                "resource_scope": "local_offline_bounded_queue_metadata_only",
+                "proof_source": "prefilter_only",
+                "prefilter_only": True,
+                "promotion_proof": False,
+                "proof_authority": False,
+                "promotion_authority": False,
+                "promotion_allowed": False,
+                "final_promotion_allowed": False,
+                "final_authority_ok": False,
+            },
             "frontier_dedupe_metadata": {
                 "schema_version": "torghut.fast-replay-frontier-dedupe.v1",
                 "status": self.frontier_dedupe_status,
@@ -323,6 +349,7 @@ class FastReplayPreviewResult:
                     "feature_schema_hash",
                     "cost_model_hash",
                     "strategy_family",
+                    "feature_versions",
                     "candidate_frontier_hash",
                 ],
                 "prefilter_only": True,
@@ -344,6 +371,7 @@ class FastReplayPreviewResult:
                 "feature_schema_hash": self.replay_tape_manifest.feature_schema_hash,
                 "cost_model_hash": self.replay_tape_manifest.cost_model_hash,
                 "strategy_family": self.replay_tape_manifest.strategy_family,
+                "feature_versions": dict(self.replay_tape_manifest.feature_versions),
                 "cache_identity": (
                     self.replay_tape_manifest.cache_identity_diagnostics()
                 ),
@@ -352,6 +380,26 @@ class FastReplayPreviewResult:
                 "start_date": self.replay_tape_manifest.start_date.isoformat(),
                 "end_date": self.replay_tape_manifest.end_date.isoformat(),
                 "row_symbols": list(self.replay_tape_manifest.row_symbols),
+            },
+            "bounded_sim_target_queue": {
+                "schema_version": "torghut.fast-replay-bounded-sim-target-queue.v1",
+                "status": "metadata_only_not_dispatched",
+                "queue_scope": "offline_preview_to_exact_replay_or_bounded_sim_handoff",
+                "selected_candidate_spec_ids": list(self.selected_candidate_spec_ids),
+                "target_candidate_cap": self.exact_replay_candidate_cap,
+                "enqueue_candidate_count": len(self.selected_candidate_spec_ids),
+                "exploitation_candidate_count": self.exploitation_candidate_count,
+                "exploration_candidate_count": self.exploration_candidate_count,
+                "broad_cluster_fanout_allowed": False,
+                "kubernetes_fanout_allowed": False,
+                "db_writes_allowed": False,
+                "proof_packet_upload_allowed": False,
+                "exact_replay_required": True,
+                "source_backed_runtime_ledger_required": True,
+                "bounded_sim_evidence_collection_allowed": True,
+                "promotion_allowed": False,
+                "final_promotion_allowed": False,
+                "final_authority_ok": False,
             },
         }
 
@@ -643,6 +691,7 @@ def _score_candidate_spec(
             microstructure_prefilter=dict(microstructure_prefilter),
             candidate_frontier_hash=candidate_frontier_hash,
             exact_replay_frontier_key=exact_replay_frontier_key,
+            candidate_lineage=_candidate_lineage(spec),
         )
 
     return_vectors = [stat.returns_bps for stat in matched if stat.returns_bps.size]
@@ -770,6 +819,7 @@ def _score_candidate_spec(
         microstructure_prefilter=dict(microstructure_prefilter),
         candidate_frontier_hash=candidate_frontier_hash,
         exact_replay_frontier_key=exact_replay_frontier_key,
+        candidate_lineage=_candidate_lineage(spec),
     )
 
 
@@ -880,8 +930,27 @@ def _select_frontier_buckets(
         (row for row in eligible if row.candidate_spec_id not in selected),
         key=lambda row: (-float(row.exploration_score), row.candidate_spec_id),
     )
-    for row in exploration_pool[:exploration_count]:
-        if len(selected) >= exact_replay_candidate_cap:
+    explored_diversity_keys: set[tuple[str, ...]] = set()
+    deferred_exploration: list[FastReplayPreviewRow] = []
+    for row in exploration_pool:
+        if (
+            len(selected) >= exact_replay_candidate_cap
+            or len([bucket for bucket in selected.values() if bucket == "exploration"])
+            >= exploration_count
+        ):
+            break
+        diversity_key = _row_exploration_diversity_key(row)
+        if diversity_key in explored_diversity_keys:
+            deferred_exploration.append(row)
+            continue
+        selected[row.candidate_spec_id] = "exploration"
+        explored_diversity_keys.add(diversity_key)
+    for row in deferred_exploration:
+        if (
+            len(selected) >= exact_replay_candidate_cap
+            or len([bucket for bucket in selected.values() if bucket == "exploration"])
+            >= exploration_count
+        ):
             break
         selected[row.candidate_spec_id] = "exploration"
     if not selected:
@@ -891,6 +960,23 @@ def _select_frontier_buckets(
     return selected
 
 
+def _row_exploration_diversity_key(row: FastReplayPreviewRow) -> tuple[str, ...]:
+    lineage = row.candidate_lineage
+    symbols = lineage.get("symbol_universe")
+    if isinstance(symbols, Sequence) and not isinstance(
+        symbols, (str, bytes, bytearray)
+    ):
+        raw_symbols = cast(Sequence[object], symbols)
+        symbol_key = ",".join(str(symbol).upper() for symbol in raw_symbols)
+    else:
+        symbol_key = str(symbols or row.candidate_spec_id)
+    return (
+        str(lineage.get("family_template_id") or "unknown_family"),
+        str(lineage.get("runtime_strategy_name") or "unknown_strategy"),
+        symbol_key,
+    )
+
+
 def _row_with_rank_and_selection(
     *, row: FastReplayPreviewRow, rank: int, frontier_bucket: str
 ) -> FastReplayPreviewRow:
@@ -898,10 +984,14 @@ def _row_with_rank_and_selection(
     selection_reason = row.selection_reason
     if selected:
         selection_reason = f"fast_replay_frontier_{frontier_bucket}_selected"
-    elif not _row_frontier_duplicate_filtered(
-        row
-    ) and _row_exact_replay_selection_blocked(row):
+    elif _row_frontier_duplicate_filtered(row):
+        selection_reason = "fast_replay_frontier_duplicate_filtered"
+    elif _row_exact_replay_selection_blocked(row):
         selection_reason = "fast_replay_frontier_lineage_blocked"
+    elif _row_explicitly_non_hpairs(row):
+        selection_reason = "fast_replay_frontier_non_hpairs_skipped"
+    elif row.selection_reason != "insufficient_replay_tape_rows":
+        selection_reason = "fast_replay_frontier_budget_exhausted_skipped"
     return FastReplayPreviewRow(
         candidate_spec_id=row.candidate_spec_id,
         rank=rank,
@@ -937,6 +1027,7 @@ def _row_with_rank_and_selection(
         frontier_dedupe_status=row.frontier_dedupe_status,
         duplicate_of_candidate_spec_id=row.duplicate_of_candidate_spec_id,
         duplicate_candidate_spec_ids=row.duplicate_candidate_spec_ids,
+        candidate_lineage=dict(row.candidate_lineage),
     )
 
 
@@ -985,7 +1076,28 @@ def _row_with_frontier_dedupe(
         frontier_dedupe_status=frontier_dedupe_status,
         duplicate_of_candidate_spec_id=duplicate_of_candidate_spec_id,
         duplicate_candidate_spec_ids=duplicate_candidate_spec_ids,
+        candidate_lineage=dict(row.candidate_lineage),
     )
+
+
+def _frontier_selection_blockers_for_row(
+    row: FastReplayPreviewRow,
+    *,
+    exact_replay_selection_blockers: Sequence[str],
+) -> tuple[str, ...]:
+    if row.selected:
+        return ()
+    if row.selection_reason == "fast_replay_frontier_budget_exhausted_skipped":
+        return ("frontier_budget_exhausted",)
+    if row.selection_reason == "fast_replay_frontier_duplicate_filtered":
+        return ("frontier_duplicate_filtered",)
+    if row.selection_reason == "fast_replay_frontier_non_hpairs_skipped":
+        return ("non_hpairs_candidate",)
+    if row.selection_reason == "insufficient_replay_tape_rows":
+        return ("insufficient_replay_tape_rows",)
+    if row.selection_reason == "fast_replay_frontier_lineage_blocked":
+        return tuple(exact_replay_selection_blockers)
+    return ()
 
 
 def _row_exact_replay_selection_blocked(row: FastReplayPreviewRow) -> bool:
@@ -1232,6 +1344,29 @@ def _candidate_notional(spec: CandidateSpec) -> float:
     return _float_or_none(spec.strategy_overrides.get("max_notional_per_trade")) or 0.0
 
 
+def _candidate_lineage(spec: CandidateSpec) -> dict[str, Any]:
+    return {
+        "schema_version": "torghut.fast-replay-candidate-lineage.v1",
+        "candidate_spec_id": spec.candidate_spec_id,
+        "hypothesis_id": spec.hypothesis_id,
+        "family_template_id": spec.family_template_id,
+        "candidate_kind": spec.candidate_kind,
+        "runtime_family": spec.runtime_family,
+        "runtime_strategy_name": spec.runtime_strategy_name,
+        "symbol_universe": list(_candidate_symbols(spec)),
+        "feature_contract": _json_ready(spec.feature_contract),
+        "objective": _json_ready(spec.objective),
+        "hard_vetoes": _json_ready(spec.hard_vetoes),
+        "promotion_contract": _json_ready(spec.promotion_contract),
+        "candidate_frontier_hash": _candidate_frontier_hash(spec),
+        "lineage_preserved": True,
+        "prefilter_only": True,
+        "promotion_allowed": False,
+        "final_promotion_allowed": False,
+        "final_authority_ok": False,
+    }
+
+
 def _candidate_frontier_hash(spec: CandidateSpec) -> str:
     """Hash the exact-replay execution identity, excluding hypothesis lineage.
 
@@ -1270,6 +1405,7 @@ def _exact_replay_frontier_key(
             "feature_schema_hash": replay_tape_manifest.feature_schema_hash,
             "cost_model_hash": replay_tape_manifest.cost_model_hash,
             "strategy_family": replay_tape_manifest.strategy_family,
+            "feature_versions": dict(replay_tape_manifest.feature_versions),
             "candidate_frontier_hash": candidate_frontier_hash,
         }
     )
