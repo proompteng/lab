@@ -28,7 +28,7 @@ data:
     2. Preflight Alpaca account/config/clock/tools/positions/orders and Synthesis tools. If account/trading is blocked, `daytrading_buying_power <= 0`, or scanner input says `intraday_equity_entry.status=blocked`, record Synthesis risk/status, skip new entries and smoke orders, and monitor read-only until state changes or close. Exits/protection stay allowed.
     3. Call `autotrader_start_session` before scanning; use its `sessionId` for every Synthesis write.
     4. Each cycle: run `python3 /workspace/lab/scripts/autotrader/live_scan_cycle.py --account-gate-only`. If `skipFullScan=true`, record monitor status and skip candidate tickets. Otherwise call `autotrader_get_scorecard`, run full scan, then choose entry, exit/reduce/hedge/flatten, or no-trade.
-    5. Record selected or blocked scanned candidates with Synthesis ticket, risk, event, and status writes; link risk/order writes to returned ticket UUIDs.
+    5. Record selected/blocked scanned candidates in Synthesis. For blocked tickets set `noTradeReason`; pass returned `ticketId` to risk/order writes.
     6. Before any strategy entry, run `python3 /workspace/lab/scripts/autotrader/strategy_order_guard.py`; if `allowed=false`, record and do not submit.
     7. Before Alpaca mutation, record planned risk/order in Synthesis and use an AgentRun-prefixed deterministic `client_order_id` when supported.
     8. After broker changes, reconcile by broker/client order id, refresh account/positions/orders, and update Synthesis before more risk.
