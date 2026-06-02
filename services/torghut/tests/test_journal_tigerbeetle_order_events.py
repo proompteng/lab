@@ -1508,6 +1508,93 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
         self.assertEqual([row.id for row in selected_after_fk_repair], [bucket.id])
         self.assertEqual(selected_after_signed_materialization, [])
 
+    def test_runtime_signed_ref_helpers_fail_closed_on_unusable_payloads(
+        self,
+    ) -> None:
+        observed_at = datetime.now(timezone.utc)
+        bucket = StrategyRuntimeLedgerBucket(
+            run_id="runtime-run-unjournalable",
+            candidate_id="candidate",
+            hypothesis_id="hypothesis",
+            observed_stage="paper",
+            bucket_started_at=observed_at,
+            bucket_ended_at=observed_at,
+            account_label="paper",
+            runtime_strategy_name="demo-runtime",
+            strategy_family="demo",
+            fill_count=1,
+            decision_count=1,
+            submitted_order_count=1,
+            cancelled_order_count=0,
+            rejected_order_count=0,
+            unfilled_order_count=0,
+            closed_trade_count=1,
+            open_position_count=0,
+            filled_notional=Decimal("190.25"),
+            gross_strategy_pnl=Decimal("0"),
+            cost_amount=Decimal("0"),
+            net_strategy_pnl_after_costs=Decimal("0"),
+            post_cost_expectancy_bps=Decimal("0"),
+            ledger_schema_version="torghut.runtime-ledger.v1",
+            pnl_basis="post_cost",
+            payload_json={"source": "test"},
+        )
+        ref = TigerBeetleTransferRef(
+            transfer_id="0",
+            transfer_kind=script.TRANSFER_KIND_RUNTIME_NET_PNL,
+            amount=Decimal("0"),
+            payload_json="not-a-mapping",
+        )
+
+        self.assertEqual(script._payload_mapping(ref), {})
+        self.assertFalse(script._payload_int_matches({"value": object()}, "value", 1))
+        self.assertFalse(script._runtime_ref_matches_signed_bucket(ref, bucket))
+
+    def test_select_runtime_buckets_stops_at_limit(
+        self,
+    ) -> None:
+        settings_obj = Settings(TORGHUT_TIGERBEETLE_ENABLED=True)
+        observed_at = datetime.now(timezone.utc)
+        with Session(self.engine) as session:
+            bucket = StrategyRuntimeLedgerBucket(
+                run_id="runtime-run-limit",
+                candidate_id="candidate",
+                hypothesis_id="hypothesis",
+                observed_stage="paper",
+                bucket_started_at=observed_at,
+                bucket_ended_at=observed_at,
+                account_label="paper",
+                runtime_strategy_name="demo-runtime",
+                strategy_family="demo",
+                fill_count=1,
+                decision_count=1,
+                submitted_order_count=1,
+                cancelled_order_count=0,
+                rejected_order_count=0,
+                unfilled_order_count=0,
+                closed_trade_count=1,
+                open_position_count=0,
+                filled_notional=Decimal("190.25"),
+                gross_strategy_pnl=Decimal("3.00"),
+                cost_amount=Decimal("0.50"),
+                net_strategy_pnl_after_costs=Decimal("2.50"),
+                post_cost_expectancy_bps=Decimal("12.50"),
+                ledger_schema_version="torghut.runtime-ledger.v1",
+                pnl_basis="post_cost",
+                payload_json={"source": "test"},
+            )
+            session.add(bucket)
+            session.flush()
+
+            selected = script._select_unlinked_runtime_buckets(
+                session,
+                settings_obj=settings_obj,
+                account_label="paper",
+                limit=1,
+            )
+
+        self.assertEqual([row.id for row in selected], [bucket.id])
+
     def test_main_journals_selected_events_and_reconciles(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = os.path.join(tmpdir, "torghut.db")
