@@ -361,6 +361,7 @@ def _complete_runtime_ledger_bucket(**overrides: object) -> dict[str, object]:
         "source_row_counts": {
             "trade_decisions": 2,
             "executions": 2,
+            "execution_tca_metrics": 2,
             "execution_order_events": 4,
             "order_feed_source_windows": 4,
         },
@@ -372,6 +373,7 @@ def _complete_runtime_ledger_bucket(**overrides: object) -> dict[str, object]:
         ],
         "trade_decision_ids": ["decision-buy", "decision-sell"],
         "execution_ids": ["execution-buy", "execution-sell"],
+        "execution_tca_metric_ids": ["tca-buy", "tca-sell"],
         "execution_order_event_ids": [
             "event-new-buy",
             "event-fill-buy",
@@ -477,6 +479,7 @@ def _source_backed_runtime_split_rows(
                     "execution_event_at": _runtime_split_ts(minute),
                     "execution_created_at": _runtime_split_ts(minute),
                     "execution_id": execution_id,
+                    "execution_tca_metric_id": f"tca-{execution_id}",
                     "side": side,
                     "filled_qty": "1",
                     "avg_fill_price": price,
@@ -1047,6 +1050,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             source_refs=[
                 "postgres:trade_decisions",
                 "postgres:executions",
+                "postgres:execution_tca_metrics",
                 "postgres:execution_order_events",
                 "postgres:order_feed_source_windows",
             ],
@@ -1103,17 +1107,20 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             source_refs=[
                 "postgres:trade_decisions",
                 "postgres:executions",
+                "postgres:execution_tca_metrics",
                 "postgres:execution_order_events",
                 "postgres:order_feed_source_windows",
             ],
             source_row_counts={
                 "trade_decisions": 2,
                 "executions": 2,
+                "execution_tca_metrics": 2,
                 "execution_order_events": 4,
                 "order_feed_source_windows": 4,
             },
             trade_decision_ids=["decision-buy", "decision-sell"],
             execution_ids=["execution-buy", "execution-sell"],
+            execution_tca_metric_ids=["tca-buy", "tca-sell"],
             execution_order_event_ids=[
                 "event-new-buy",
                 "event-fill-buy",
@@ -1142,6 +1149,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             bucket["source_row_counts"],
             {
                 "execution_order_events": 4,
+                "execution_tca_metrics": 2,
                 "executions": 2,
                 "order_feed_source_windows": 4,
                 "trade_decisions": 2,
@@ -1200,6 +1208,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             bucket["source_row_counts"],
             {
                 "execution_order_events": 4,
+                "execution_tca_metrics": 2,
                 "executions": 2,
                 "order_feed_source_windows": 4,
                 "trade_decisions": 2,
@@ -1252,6 +1261,40 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertIn("execution_economics_missing", row["runtime_ledger_blockers"])
         self.assertIn("runtime_fills_missing", row["runtime_ledger_blockers"])
         self.assertNotIn("order_feed_lifecycle_missing", row["runtime_ledger_blockers"])
+
+    def test_source_backed_lifecycle_blocks_missing_execution_tca_refs(
+        self,
+    ) -> None:
+        decision_rows, order_rows, execution_rows = _source_backed_runtime_split_rows()
+        for row in execution_rows:
+            row["execution_tca_metric_id"] = None
+
+        rows = _build_realized_strategy_pnl_rows(
+            execution_rows,
+            decision_lifecycle_rows=decision_rows,
+            order_lifecycle_rows=order_rows,
+            allow_authoritative_runtime_ledger_materialization=True,
+        )
+
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertFalse(row["authoritative"])
+        self.assertFalse(row["post_cost_promotion_eligible"])
+        self.assertIn("execution_tca_missing", row["runtime_ledger_blockers"])
+        self.assertIn(
+            "runtime_ledger_execution_tca_refs_missing",
+            row["runtime_ledger_blockers"],
+        )
+        bucket = row["runtime_ledger_bucket"]
+        self.assertIsInstance(bucket, dict)
+        assert isinstance(bucket, dict)
+        self.assertTrue(bucket["execution_tca_required"])
+        self.assertIn("execution_tca_missing", bucket["blockers"])
+        self.assertIn(
+            "runtime_ledger_execution_tca_refs_missing",
+            _runtime_ledger_bucket_profit_proof_blockers(bucket),
+        )
+        self.assertFalse(_runtime_ledger_bucket_profit_proof_present(bucket))
 
     def test_execution_economics_without_order_lifecycle_blocks_missing_lifecycle(
         self,
@@ -2723,6 +2766,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "cost_basis": "broker_reported_commission_and_fees",
                     "decision_hash": "decision-buy",
                     "alpaca_order_id": "order-buy",
+                    "execution_tca_metric_id": "tca-buy",
                     "execution_policy_hash": "policy-buy",
                     "cost_model_hash": "cost-sha",
                     "lineage_hash": "lineage-sha",
@@ -2739,6 +2783,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "cost_basis": "broker_reported_commission_and_fees",
                     "decision_hash": "decision-sell",
                     "alpaca_order_id": "order-sell",
+                    "execution_tca_metric_id": "tca-sell",
                     "execution_policy_hash": "policy-sell",
                     "cost_model_hash": "cost-sha",
                     "lineage_hash": "lineage-sha",
@@ -2859,6 +2904,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "cost_basis": "broker_reported_commission_and_fees",
                     "decision_hash": "decision-buy",
                     "alpaca_order_id": "order-buy",
+                    "execution_tca_metric_id": "tca-buy",
                     "execution_policy_hash": "policy-buy",
                     "cost_model_hash": "cost-sha",
                     "lineage_hash": "lineage-sha",
@@ -2876,6 +2922,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "cost_basis": "broker_reported_commission_and_fees",
                     "decision_hash": "decision-sell",
                     "alpaca_order_id": "order-sell",
+                    "execution_tca_metric_id": "tca-sell",
                     "execution_policy_hash": "policy-sell",
                     "cost_model_hash": "cost-sha",
                     "lineage_hash": "lineage-sha",
@@ -3038,6 +3085,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             [
                 "postgres:trade_decisions",
                 "postgres:executions",
+                "postgres:execution_tca_metrics",
                 "postgres:execution_order_events",
                 "postgres:order_feed_source_windows",
             ],
@@ -3046,6 +3094,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             bucket["source_row_counts"],
             {
                 "executions": 2,
+                "execution_tca_metrics": 2,
                 "execution_order_events": 4,
                 "order_feed_source_windows": 4,
                 "trade_decisions": 2,
@@ -3069,6 +3118,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 "event-fill-sell",
             ],
         )
+        self.assertEqual(bucket["execution_tca_metric_ids"], ["tca-buy", "tca-sell"])
         self.assertTrue(_runtime_ledger_bucket_profit_proof_present(bucket))
 
     def test_build_realized_strategy_pnl_rows_uses_source_backed_carry_in(

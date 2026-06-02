@@ -95,11 +95,13 @@ def _runtime_ledger_bucket(**overrides: object) -> dict[str, object]:
         "source_row_counts": {
             "trade_decisions": 2,
             "executions": 2,
+            "execution_tca_metrics": 2,
             "execution_order_events": 2,
             "order_feed_source_windows": 2,
         },
         "trade_decision_ids": ["decision-buy", "decision-sell"],
         "execution_ids": ["execution-buy", "execution-sell"],
+        "execution_tca_metric_ids": ["tca-buy", "tca-sell"],
         "execution_order_event_ids": ["event-fill-buy", "event-fill-sell"],
         "source_window_ids": ["source-window-buy", "source-window-sell"],
         "source_offsets": [
@@ -993,6 +995,88 @@ class TestRuntimeWindowImport(TestCase):
         self.assertTrue(_persisted_runtime_ledger_bucket_evidence_grade(row))
         row.payload_json = {**source_backed_payload, "authority_reason": None}
         self.assertFalse(_persisted_runtime_ledger_bucket_evidence_grade(row))
+
+    def test_runtime_window_readback_counts_only_source_backed_mixed_rows(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc)
+        source_backed_payload = _runtime_ledger_bucket()
+        aggregate_only_payload = {
+            key: value
+            for key, value in source_backed_payload.items()
+            if key
+            not in {
+                "trade_decision_ids",
+                "execution_ids",
+                "execution_tca_metric_ids",
+                "execution_order_event_ids",
+                "source_window_ids",
+                "source_offsets",
+                "source_materialization",
+                "authority_class",
+                "authority_reason",
+            }
+        }
+
+        ledger_rows = [
+            StrategyRuntimeLedgerBucket(
+                run_id="mixed-source-runtime",
+                candidate_id="cand",
+                hypothesis_id="hyp",
+                observed_stage="paper",
+                bucket_started_at=window_start,
+                bucket_ended_at=window_end,
+                account_label="TORGHUT_SIM",
+                runtime_strategy_name="strategy",
+                fill_count=2,
+                decision_count=2,
+                submitted_order_count=2,
+                closed_trade_count=1,
+                open_position_count=0,
+                filled_notional=Decimal("200"),
+                gross_strategy_pnl=Decimal("1"),
+                cost_amount=Decimal("0.20"),
+                net_strategy_pnl_after_costs=Decimal("0.80"),
+                post_cost_expectancy_bps=Decimal("40"),
+                pnl_basis="realized_strategy_pnl_after_explicit_costs",
+                ledger_schema_version="torghut.runtime-ledger-bucket.v1",
+                execution_policy_hash_counts={"policy-sha": 2},
+                cost_model_hash_counts={"cost-sha": 2},
+                lineage_hash_counts={"lineage-sha": 2},
+                blockers_json=[],
+                payload_json=payload,
+            )
+            for payload in (source_backed_payload, aggregate_only_payload)
+        ]
+
+        readback = _runtime_window_import_readback_from_rows(
+            run_id="mixed-source-runtime",
+            candidate_id="cand",
+            hypothesis_id="hyp",
+            observed_stage="paper",
+            window_start=window_start,
+            window_end=window_end,
+            metric_rows=[],
+            promotion_rows=[],
+            ledger_rows=ledger_rows,
+            runtime_ledger_daily_summary={},
+            proof_blocker_codes=[],
+        )
+
+        self.assertEqual(readback["runtime_ledger_bucket_count"], 2)
+        self.assertEqual(readback["evidence_grade_runtime_ledger_bucket_count"], 1)
+        self.assertEqual(readback["execution_tca_metric_ids"], ["tca-buy", "tca-sell"])
+        distance = readback["runtime_ledger_profit_distance_readback"]
+        assert isinstance(distance, dict)
+        self.assertEqual(
+            distance["source_authority"]["source_backed_bucket_count"],
+            1,
+        )
+        self.assertEqual(
+            distance["source_authority"]["blocked_bucket_count"],
+            1,
+        )
 
     def test_runtime_window_import_readback_normalizes_source_offsets(
         self,

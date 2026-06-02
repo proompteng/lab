@@ -110,6 +110,10 @@ RUNTIME_LEDGER_BUCKET_SCHEMAS = frozenset(
 RUNTIME_LEDGER_AUTHORITY_CLASS_MISSING_BLOCKER = (
     "runtime_ledger_authority_class_missing"
 )
+EXECUTION_TCA_MISSING_BLOCKER = "execution_tca_missing"
+RUNTIME_LEDGER_EXECUTION_TCA_REFS_MISSING_BLOCKER = (
+    "runtime_ledger_execution_tca_refs_missing"
+)
 _RUNTIME_LEDGER_PROMOTION_GRADE_AUTHORITY_MARKERS = frozenset(
     {
         "runtime_order_feed_execution_source",
@@ -419,6 +423,28 @@ def _runtime_ledger_bucket_blockers(bucket: Mapping[str, Any]) -> list[str]:
     elif pnl_basis != POST_COST_PNL_BASIS:
         blockers.append("runtime_ledger_pnl_basis_invalid")
     blockers.extend(runtime_ledger_promotion_source_authority_blockers(bucket))
+    source_row_counts = _mapping(bucket.get("source_row_counts"))
+    execution_count = _observation_int(source_row_counts.get("executions"))
+    tca_count = _observation_int(source_row_counts.get("execution_tca_metrics"))
+    execution_tca_ref_count = len(
+        _string_list(bucket.get("execution_tca_metric_ids"))
+        or _string_list(bucket.get("execution_tca_metric_refs"))
+        or _string_list(bucket.get("execution_tca_metrics"))
+    )
+    execution_tca_required = (
+        _observation_bool(
+            bucket.get("execution_tca_required") or bucket.get("requires_execution_tca")
+        )
+        is True
+        or tca_count > 0
+    )
+    if (
+        execution_tca_required
+        and execution_count > 0
+        and (tca_count < execution_count or execution_tca_ref_count < execution_count)
+    ):
+        blockers.append(EXECUTION_TCA_MISSING_BLOCKER)
+        blockers.append(RUNTIME_LEDGER_EXECUTION_TCA_REFS_MISSING_BLOCKER)
     if _observation_int(bucket.get("fill_count")) <= 0:
         blockers.append("runtime_fills_missing")
     if _observation_int(bucket.get("decision_count")) <= 0:
@@ -1572,6 +1598,7 @@ def _runtime_window_import_readback_from_rows(
     source_window_ids: list[str] = []
     execution_order_event_ids: list[str] = []
     execution_ids: list[str] = []
+    execution_tca_metric_ids: list[str] = []
     trade_decision_ids: list[str] = []
     source_offsets: list[dict[str, Any]] = []
     source_offset_keys: set[tuple[str, str, str]] = set()
@@ -1614,6 +1641,13 @@ def _runtime_window_import_readback_from_rows(
             ("execution_refs", execution_ids),
             ("execution_id", execution_ids),
             ("execution_ref", execution_ids),
+            ("execution_tca_metric_ids", execution_tca_metric_ids),
+            ("execution_tca_metric_refs", execution_tca_metric_ids),
+            ("execution_tca_metric_id", execution_tca_metric_ids),
+            ("execution_tca_metric_ref", execution_tca_metric_ids),
+            ("execution_tca_metrics", execution_tca_metric_ids),
+            ("execution_tca_ids", execution_tca_metric_ids),
+            ("execution_tca_id", execution_tca_metric_ids),
             ("trade_decision_ids", trade_decision_ids),
             ("trade_decision_refs", trade_decision_ids),
             ("trade_decision_id", trade_decision_ids),
@@ -1730,6 +1764,8 @@ def _runtime_window_import_readback_from_rows(
         "execution_order_event_ids": execution_order_event_ids,
         "runtime_ledger_execution_order_event_ids": execution_order_event_ids,
         "execution_ids": execution_ids,
+        "execution_tca_metric_ids": execution_tca_metric_ids,
+        "runtime_ledger_execution_tca_metric_ids": execution_tca_metric_ids,
         "trade_decision_ids": trade_decision_ids,
         "source_offsets": source_offsets,
         "authority_classes": authority_classes,

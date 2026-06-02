@@ -1129,6 +1129,10 @@ def _runtime_import_target_materialization_ref(
             )
             or _text_list(readback.get("execution_order_event_ids")),
             "execution_ids": _text_list(readback.get("execution_ids")),
+            "execution_tca_metric_ids": _text_list(
+                readback.get("runtime_ledger_execution_tca_metric_ids")
+            )
+            or _text_list(readback.get("execution_tca_metric_ids")),
             "trade_decision_ids": _text_list(readback.get("trade_decision_ids")),
             "source_offsets": _source_offsets(readback.get("source_offsets")),
             "authority_classes": _text_list(readback.get("authority_classes")),
@@ -1416,6 +1420,12 @@ def _runtime_import_readback_blockers(
             blockers.append("runtime_ledger_execution_order_event_refs_missing")
         if not _text_list(readback.get("execution_ids")):
             blockers.append("runtime_ledger_execution_refs_missing")
+        if not (
+            _text_list(readback.get("runtime_ledger_execution_tca_metric_ids"))
+            or _text_list(readback.get("execution_tca_metric_ids"))
+        ):
+            blockers.append("runtime_ledger_execution_tca_refs_missing")
+            blockers.append("execution_tca_missing")
         if not _text_list(readback.get("trade_decision_ids")):
             blockers.append("runtime_ledger_trade_decision_refs_missing")
         if not _source_offsets(readback.get("source_offsets")):
