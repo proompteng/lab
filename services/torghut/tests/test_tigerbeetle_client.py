@@ -223,6 +223,50 @@ class TestTigerBeetleClient(TestCase):
             ):
                 client.create_accounts([account])
 
+    def test_real_client_times_out_blocked_health_lookup(self) -> None:
+        class _BlockingHealthSync:
+            def __init__(self, *, cluster_id: int, replica_addresses: str) -> None:
+                del cluster_id, replica_addresses
+
+            def lookup_accounts(self, ids: list[int]) -> list[object]:
+                del ids
+                time.sleep(0.2)
+                return []
+
+        fake_module = SimpleNamespace(
+            ClientSync=_BlockingHealthSync,
+            Account=_Event,
+            Transfer=_Event,
+        )
+        with (
+            patch.dict(sys.modules, {"tigerbeetle": fake_module}),
+            patch(
+                "app.trading.tigerbeetle_client.socket.getaddrinfo",
+                return_value=[
+                    (
+                        socket.AF_INET,
+                        socket.SOCK_STREAM,
+                        6,
+                        "",
+                        ("10.99.251.1", 3000),
+                    )
+                ],
+            ),
+        ):
+            client = RealTigerBeetleClient(
+                cluster_id=2001,
+                replica_addresses=[
+                    "torghut-tigerbeetle.torghut.svc.cluster.local:3000"
+                ],
+                rpc_timeout_seconds=0.01,
+            )
+
+            with self.assertRaisesRegex(
+                TigerBeetleClientTimeoutError,
+                "tigerbeetle_lookup_accounts_timeout",
+            ):
+                client.nop()
+
     def test_real_client_times_out_blocked_connect(self) -> None:
         class _BlockingConnectSync:
             def __init__(self, *, cluster_id: int, replica_addresses: str) -> None:

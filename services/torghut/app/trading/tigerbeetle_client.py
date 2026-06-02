@@ -188,7 +188,7 @@ class RealTigerBeetleClient:
         # The Python client does not expose TigerBeetle's internal NOP request.
         # A one-id account lookup is read-only but still proves client/server
         # protocol connectivity through the official public API.
-        self._client.lookup_accounts([HEALTH_PROBE_ACCOUNT_ID])
+        self.lookup_accounts([HEALTH_PROBE_ACCOUNT_ID])
 
     def _account_event(self, account: object) -> object:
         if not isinstance(account, TigerBeetleAccountSpec):
