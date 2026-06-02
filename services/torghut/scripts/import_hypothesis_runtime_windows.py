@@ -2055,19 +2055,19 @@ def _runtime_observation_authority_payload(
         or row.get("authority_reason") == "exact_replay_artifact_not_runtime_proof"
         for row in tca_rows
     )
-    if source_kind.startswith("simulation_"):
-        return {
-            "authoritative": False,
-            "authority_reason": "simulation_source_replay_only",
-            "promotion_authority": "blocked",
-            "runtime_ledger_profit_proof_present": has_runtime_ledger_profit_proof,
-        }
     if has_runtime_ledger_profit_proof:
         return {
             "authoritative": True,
             "authority_reason": "runtime_ledger_profit_proof",
             "promotion_authority": "runtime_ledger",
             "runtime_ledger_profit_proof_present": True,
+        }
+    if source_kind.startswith("simulation_"):
+        return {
+            "authoritative": False,
+            "authority_reason": "simulation_source_replay_only",
+            "promotion_authority": "blocked",
+            "runtime_ledger_profit_proof_present": has_runtime_ledger_profit_proof,
         }
     if exact_replay_artifact_only:
         return {

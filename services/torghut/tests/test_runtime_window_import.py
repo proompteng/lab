@@ -1897,6 +1897,48 @@ class TestRuntimeWindowImport(TestCase):
                     "source_kind": "runtime_ledger_source_collection_candidate",
                 },
             )
+            ledger_row = session.execute(
+                select(StrategyRuntimeLedgerBucket).where(
+                    StrategyRuntimeLedgerBucket.run_id
+                    == "import-hpairs-source-backed-readback"
+                )
+            ).scalar_one()
+            ledger_payload = ledger_row.payload_json
+            self.assertEqual(ledger_row.hypothesis_id, "H-PAIRS-01")
+            self.assertEqual(ledger_row.candidate_id, "cand-hpairs-source-backed")
+            self.assertEqual(ledger_row.observed_stage, "paper")
+            self.assertEqual(ledger_row.account_label, "TORGHUT_SIM")
+            self.assertEqual(
+                ledger_row.runtime_strategy_name,
+                "microbar-cross-sectional-pairs-v1",
+            )
+            self.assertEqual(
+                ledger_payload["trade_decision_ids"],
+                ["decision-buy", "decision-sell"],
+            )
+            self.assertEqual(
+                ledger_payload["execution_ids"],
+                ["execution-buy", "execution-sell"],
+            )
+            self.assertEqual(
+                ledger_payload["execution_order_event_ids"],
+                ["event-fill-buy", "event-fill-sell"],
+            )
+            self.assertEqual(
+                ledger_payload["source_window_ids"],
+                ["source-window-buy", "source-window-sell"],
+            )
+            self.assertEqual(
+                ledger_payload["source_offsets"],
+                [
+                    {"topic": "alpaca.trade_updates", "partition": 0, "offset": 100},
+                    {"topic": "alpaca.trade_updates", "partition": 0, "offset": 101},
+                ],
+            )
+            self.assertEqual(
+                ledger_payload["source_materialization"], "execution_order_events"
+            )
+            self.assertEqual(ledger_payload["blockers"], [])
             session.commit()
 
         readback = summary["runtime_window_import_readback"]
@@ -2460,6 +2502,32 @@ class TestRuntimeWindowImport(TestCase):
         self.assertIn(
             "runtime_ledger_source_window_ids_missing",
             _runtime_ledger_bucket_blockers(missing_source_window_ids),
+        )
+
+        missing_trade_decision_ids = _runtime_ledger_bucket(trade_decision_ids=[])
+        self.assertIn(
+            "runtime_ledger_trade_decision_refs_missing",
+            _runtime_ledger_bucket_blockers(missing_trade_decision_ids),
+        )
+
+        missing_execution_ids = _runtime_ledger_bucket(execution_ids=[])
+        self.assertIn(
+            "runtime_ledger_execution_refs_missing",
+            _runtime_ledger_bucket_blockers(missing_execution_ids),
+        )
+
+        missing_execution_order_event_ids = _runtime_ledger_bucket(
+            execution_order_event_ids=[]
+        )
+        self.assertIn(
+            "runtime_ledger_execution_order_event_refs_missing",
+            _runtime_ledger_bucket_blockers(missing_execution_order_event_ids),
+        )
+
+        missing_source_offsets = _runtime_ledger_bucket(source_offsets=[])
+        self.assertIn(
+            "runtime_ledger_source_offsets_missing",
+            _runtime_ledger_bucket_blockers(missing_source_offsets),
         )
 
     def test_runtime_ledger_bucket_requires_structured_source_offsets(self) -> None:
