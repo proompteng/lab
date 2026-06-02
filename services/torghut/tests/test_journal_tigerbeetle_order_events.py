@@ -759,6 +759,7 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
                 runtime_argv[runtime_argv.index("--sources") + 1],
                 script.SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
             )
+            self.assertIn("--reconcile-empty-selection", runtime_argv)
             self.assertIn("--fail-on-degraded", runtime_argv)
             self.assertIn("--allow-data-quality-degraded", runtime_argv)
 
@@ -1777,9 +1778,63 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
         self.assertEqual(payload["failed"], 0)
         self.assertEqual(payload["reconciliation"]["status"], "skipped")
         self.assertEqual(payload["reconciliation"]["reason"], "no_source_rows_selected")
+        self.assertFalse(payload["reconcile_empty_selection"])
         self.assertEqual(FakeJournal.instances[0].runtime_buckets, [])
         self.assertEqual(FakeJournal.instances[0].stable_ref_backfills, 0)
         reconcile.assert_not_called()
+
+    def test_main_can_reconcile_when_source_selects_no_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "torghut.db")
+            dsn = f"sqlite+pysqlite:///{db_path}"
+            engine = create_engine(dsn, future=True)
+            Base.metadata.create_all(engine)
+
+            stdout = io.StringIO()
+            with (
+                patch.dict(os.environ, {"TEST_DB_DSN": dsn}),
+                patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "journal_tigerbeetle_order_events.py",
+                        "--dsn-env",
+                        "TEST_DB_DSN",
+                        "--sources",
+                        "strategy_runtime_ledger_bucket",
+                        "--batch-size",
+                        "5",
+                        "--reconcile-limit",
+                        "12",
+                        "--reconcile-empty-selection",
+                        "--fail-on-degraded",
+                        "--allow-data-quality-degraded",
+                        "--json",
+                    ],
+                ),
+                patch.object(script, "TigerBeetleLedgerJournal", FakeJournal),
+                patch.object(
+                    script,
+                    "reconcile_tigerbeetle_transfers",
+                    return_value={"ok": True, "status": "ok"},
+                ) as reconcile,
+                redirect_stdout(stdout),
+            ):
+                exit_code = script.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["selected"], 0)
+        self.assertTrue(payload["reconcile_empty_selection"])
+        self.assertEqual(payload["reconciliation"]["status"], "ok")
+        self.assertEqual(FakeJournal.instances[0].stable_ref_backfills, 0)
+        reconcile.assert_called_once()
+        self.assertEqual(reconcile.call_args.kwargs["limit"], 12)
+        self.assertIs(
+            reconcile.call_args.kwargs["client"],
+            FakeJournal.instances[0].reconciliation_client,
+        )
 
     def test_main_dry_run_rolls_back_without_reconcile(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
