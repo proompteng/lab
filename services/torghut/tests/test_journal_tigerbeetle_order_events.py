@@ -748,6 +748,12 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
             source_args = [argv[argv.index("--sources") + 1] for argv in command_argvs]
             self.assertEqual(source_args, [command.source for command in commands])
             self.assertTrue(all("," not in source for source in source_args))
+            if cronjob_name == "torghut-tigerbeetle-journal-order-events-live":
+                order_event_argv = command_argvs[2]
+                self.assertEqual(
+                    order_event_argv[order_event_argv.index("--max-batches") + 1],
+                    "2",
+                )
             runtime_argv = command_argvs[-1]
             self.assertEqual(
                 runtime_argv[runtime_argv.index("--sources") + 1],

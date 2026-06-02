@@ -75,7 +75,7 @@ def _live_commands(*, execution_batch_size: int) -> list[JournalCronCommand]:
             source=SOURCE_TYPE_EXECUTION_ORDER_EVENT,
             dsn_env="DB_DSN",
             batch_size=5,
-            max_batches=3,
+            max_batches=2,
             reconcile_limit=1000,
             event_scan_limit=250,
             skip_reconcile=True,
