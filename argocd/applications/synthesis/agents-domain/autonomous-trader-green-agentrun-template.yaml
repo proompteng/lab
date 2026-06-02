@@ -14,9 +14,9 @@ metadata:
     autonomous-trader.proompteng.ai/deployment-role: preview
 spec:
   agentRef:
-    name: autonomous-trader-agent
+    name: autonomous-trader-agent-green
   implementationSpecRef:
-    name: autonomous-trader-v1
+    name: autonomous-trader-v1-green
   goal:
     objective: Reach 500000 USD account equity in the dedicated Synthesis Alpaca paper account through autonomous market-open day trading while recording every decision, risk check, broker action, reconciliation result, and scorecard update in Synthesis.
   vcsRef:

@@ -616,11 +616,20 @@ describe('autonomous trader provider', () => {
     const agent = readYamlObjects('argocd/applications/synthesis/agents-domain/autonomous-trader-agent.yaml').find(
       (manifest) => objectAt(manifest, 'kind') === 'Agent',
     )
+    const greenAgent = readYamlObjects(
+      'argocd/applications/synthesis/agents-domain/autonomous-trader-green-agent.yaml',
+    ).find((manifest) => objectAt(manifest, 'kind') === 'Agent')
     const implSpec = readYamlObjects(
       'argocd/applications/synthesis/agents-domain/autonomous-trader-implspec.yaml',
     ).find((manifest) => objectAt(manifest, 'kind') === 'ImplementationSpec')
+    const greenImplSpec = readYamlObjects(
+      'argocd/applications/synthesis/agents-domain/autonomous-trader-green-implspec.yaml',
+    ).find((manifest) => objectAt(manifest, 'kind') === 'ImplementationSpec')
     const systemPrompt = readYamlObjects(
       'argocd/applications/synthesis/agents-domain/autonomous-trader-system-prompt-configmap.yaml',
+    ).find((manifest) => objectAt(manifest, 'kind') === 'ConfigMap')
+    const greenSystemPrompt = readYamlObjects(
+      'argocd/applications/synthesis/agents-domain/autonomous-trader-green-system-prompt-configmap.yaml',
     ).find((manifest) => objectAt(manifest, 'kind') === 'ConfigMap')
     const envTemplate = objectAt(objectAt(provider, 'spec'), 'envTemplate')
     const secretEnv = objectAt(objectAt(provider, 'spec'), 'secretEnv') as Record<string, unknown>[] | undefined
@@ -629,13 +638,23 @@ describe('autonomous trader provider', () => {
     const marketOpenLanes = [
       {
         color: 'blue',
+        agent,
+        agentName: 'autonomous-trader-agent',
+        implementationSpec: implSpec,
+        implementationSpecName: 'autonomous-trader-v1',
         schedule,
+        systemPrompt,
         template,
         templateName: 'autonomous-trader-template',
       },
       {
         color: 'green',
+        agent: greenAgent,
+        agentName: 'autonomous-trader-agent-green',
+        implementationSpec: greenImplSpec,
+        implementationSpecName: 'autonomous-trader-v1-green',
         schedule: greenSchedule,
+        systemPrompt: greenSystemPrompt,
         template: greenTemplate,
         templateName: 'autonomous-trader-template-green',
       },
@@ -648,14 +667,20 @@ describe('autonomous trader provider', () => {
     )
     const overallTimeoutSeconds = Number(objectAt(envTemplate, 'CODEX_MARKET_CONTEXT_OVERALL_TIMEOUT_SECONDS'))
     const systemPromptRef = objectAt(objectAt(objectAt(agent, 'spec'), 'defaults'), 'systemPromptRef')
+    const greenSystemPromptRef = objectAt(objectAt(objectAt(greenAgent, 'spec'), 'defaults'), 'systemPromptRef')
     const implText = String(objectAt(objectAt(implSpec, 'spec'), 'text') ?? '')
+    const greenImplText = String(objectAt(objectAt(greenImplSpec, 'spec'), 'text') ?? '')
     const systemPromptText = String(objectAt(objectAt(systemPrompt, 'data'), 'system-prompt.md') ?? '')
+    const greenSystemPromptText = String(objectAt(objectAt(greenSystemPrompt, 'data'), 'system-prompt.md') ?? '')
     const countWords = (value: string) => value.trim().split(/\s+/).filter(Boolean).length
 
     expect(resources).toContain('autonomous-trader-dedicated-alpaca-mcp-sealedsecret.yaml')
     expect(resources).not.toContain('autonomous-trader-alpaca-mcp-sealedsecret.yaml')
     expect(resources).toContain('autonomous-trader-schedule.yaml')
     expect(resources).toContain('autonomous-trader-agentrun-template.yaml')
+    expect(resources).toContain('autonomous-trader-green-system-prompt-configmap.yaml')
+    expect(resources).toContain('autonomous-trader-green-agent.yaml')
+    expect(resources).toContain('autonomous-trader-green-implspec.yaml')
     expect(resources).toContain('autonomous-trader-green-schedule.yaml')
     expect(resources).toContain('autonomous-trader-green-agentrun-template.yaml')
     expect(
@@ -668,10 +693,19 @@ describe('autonomous trader provider', () => {
       name: 'autonomous-trader-system-prompt',
       key: 'system-prompt.md',
     })
+    expect(greenSystemPromptRef).toEqual({
+      kind: 'ConfigMap',
+      name: 'autonomous-trader-system-prompt-green',
+      key: 'system-prompt.md',
+    })
     expect(countWords(implText)).toBeLessThanOrEqual(120)
+    expect(countWords(greenImplText)).toBeLessThanOrEqual(130)
     expect(countWords(systemPromptText)).toBeLessThanOrEqual(650)
+    expect(countWords(greenSystemPromptText)).toBeLessThanOrEqual(650)
     expect(systemPromptText).toContain('For blocked tickets set `noTradeReason`')
     expect(systemPromptText).toContain('pass returned `ticketId` to risk/order writes')
+    expect(greenSystemPromptText).toContain('For blocked tickets set `noTradeReason`')
+    expect(greenSystemPromptText).toContain('pass returned `ticketId` to risk/order writes')
     expect(activeMarketOpenLanes).toHaveLength(1)
     expect(previewMarketOpenLanes).toHaveLength(1)
     const activeMarketOpenLane = activeMarketOpenLanes[0]
@@ -691,19 +725,21 @@ describe('autonomous trader provider', () => {
       const templateSpec = objectAt(lane.template, 'spec')
       const parameters = objectAt(templateSpec, 'parameters')
       const role = objectAt(scheduleSpec, 'suspend') === false ? 'active' : 'preview'
-      const scheduleAnnotations = objectAt(objectAt(lane.schedule, 'metadata'), 'annotations')
-      const scheduleLabels = objectAt(objectAt(lane.schedule, 'metadata'), 'labels')
-      const templateAnnotations = objectAt(objectAt(lane.template, 'metadata'), 'annotations')
+      const laneResources = [lane.schedule, lane.template, lane.agent, lane.implementationSpec, lane.systemPrompt]
 
       expect(objectAt(scheduleSpec, 'cron')).toBe('15 9 * * 1-5')
       expect(objectAt(scheduleSpec, 'timezone')).toBe('America/New_York')
       expect(objectAt(objectAt(scheduleSpec, 'targetRef'), 'name')).toBe(lane.templateName)
-      expect(objectAt(scheduleAnnotations, deploymentColorKey)).toBe(lane.color)
-      expect(objectAt(scheduleLabels, deploymentColorKey)).toBe(lane.color)
-      expect(objectAt(templateAnnotations, deploymentColorKey)).toBe(lane.color)
-      expect(objectAt(scheduleAnnotations, deploymentRoleKey)).toBe(role)
-      expect(objectAt(scheduleLabels, deploymentRoleKey)).toBe(role)
-      expect(objectAt(templateAnnotations, deploymentRoleKey)).toBe(role)
+      expect(objectAt(objectAt(templateSpec, 'agentRef'), 'name')).toBe(lane.agentName)
+      expect(objectAt(objectAt(templateSpec, 'implementationSpecRef'), 'name')).toBe(lane.implementationSpecName)
+      for (const resource of laneResources) {
+        const annotations = objectAt(objectAt(resource, 'metadata'), 'annotations')
+        const labels = objectAt(objectAt(resource, 'metadata'), 'labels')
+        expect(objectAt(annotations, deploymentColorKey)).toBe(lane.color)
+        expect(objectAt(labels, deploymentColorKey)).toBe(lane.color)
+        expect(objectAt(annotations, deploymentRoleKey)).toBe(role)
+        expect(objectAt(labels, deploymentRoleKey)).toBe(role)
+      }
       expect(objectAt(parameters, 'mode')).toBe('market-open')
       expect(objectAt(parameters, 'synthesisSessionMode')).toBe('market_open')
       expect(objectAt(parameters, 'brokerMutationEnabled')).toBe(role === 'active' ? 'true' : 'false')
