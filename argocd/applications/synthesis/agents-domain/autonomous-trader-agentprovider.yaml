@@ -159,6 +159,10 @@ spec:
         required_commit="${ANALYSIS_REQUIRED_COMMIT:-56be940b69bf1a56578040eda9bf2e3699c5220e}"
         analysis_context_path="${ANALYSIS_CONTEXT_PATH:-${work_dir}/analysis-context.json}"
         analysis_bootstrap_status_path="${ANALYSIS_BOOTSTRAP_STATUS_PATH:-${work_dir}/analysis-bootstrap.json}"
+        analysis_fetch_depth="${ANALYSIS_FETCH_DEPTH:-256}"
+        analysis_fetch_deepen="${ANALYSIS_FETCH_DEEPEN:-2048}"
+        analysis_fetch_deepen_attempts="${ANALYSIS_FETCH_DEEPEN_ATTEMPTS:-3}"
+        analysis_fetch_timeout_seconds="${ANALYSIS_FETCH_TIMEOUT_SECONDS:-180}"
         python_bin="${PYTHON_BIN:-python3}"
 
         mkdir -p "${artifact_dir}"
@@ -187,8 +191,24 @@ spec:
           fi
         }
 
+        git_with_auth_timeout() {
+          local timeout_seconds="$1"
+          shift
+          if command -v timeout >/dev/null 2>&1; then
+            if [ "${#git_auth[@]}" -gt 0 ]; then
+              timeout "${timeout_seconds}" git "${git_auth[@]}" "$@"
+            else
+              timeout "${timeout_seconds}" git "$@"
+            fi
+          else
+            git_with_auth "$@"
+          fi
+        }
+
         fetch_analysis_main() {
-          git_with_auth -C "${analysis_dir}" fetch --prune origin refs/heads/main:refs/remotes/origin/main
+          git_with_auth_timeout "${analysis_fetch_timeout_seconds}" \
+            -C "${analysis_dir}" fetch --prune --filter=blob:none --depth="${analysis_fetch_depth}" \
+            origin refs/heads/main:refs/remotes/origin/main
         }
 
         if [ ! -d "${analysis_dir}/.git" ]; then
@@ -200,6 +220,9 @@ spec:
 
         git -C "${analysis_dir}" remote set-url origin "${analysis_repo_url}"
         git -C "${analysis_dir}" config gc.auto 0
+        git -C "${analysis_dir}" config remote.origin.promisor true
+        git -C "${analysis_dir}" config remote.origin.partialclonefilter blob:none
+        find "${analysis_dir}/.git/objects/pack" -name 'tmp_pack_*' -delete 2>/dev/null || true
         fetch_analysis_main
         analysis_main_sha="$(git -C "${analysis_dir}" rev-parse refs/remotes/origin/main^{commit})"
         git -C "${analysis_dir}" checkout --force "${analysis_main_sha}"
@@ -207,12 +230,20 @@ spec:
         git -C "${analysis_dir}" clean -ffd
 
         analysis_head="$(git -C "${analysis_dir}" rev-parse HEAD)"
-        if ! git -C "${analysis_dir}" merge-base --is-ancestor "${required_commit}" HEAD; then
-          printf '{"ok":false,"reason":"analysis_repo_stale","analysis_head":"%s","required_commit":"%s"}\n' \
-            "${analysis_head}" "${required_commit}" > "${analysis_bootstrap_status_path}"
-          exit 42
-        fi
-
+        deepen_attempt=0
+        while ! git -C "${analysis_dir}" merge-base --is-ancestor "${required_commit}" HEAD; do
+          if [ "$(git -C "${analysis_dir}" rev-parse --is-shallow-repository)" != "true" ] || \
+            [ "${deepen_attempt}" -ge "${analysis_fetch_deepen_attempts}" ]; then
+            printf '{"ok":false,"reason":"analysis_repo_stale","analysis_head":"%s","required_commit":"%s","fetch_depth":"%s","deepen_attempts":"%s"}\n' \
+              "${analysis_head}" "${required_commit}" "${analysis_fetch_depth}" "${deepen_attempt}" > "${analysis_bootstrap_status_path}"
+            exit 42
+          fi
+          deepen_attempt=$((deepen_attempt + 1))
+          git_with_auth_timeout "${analysis_fetch_timeout_seconds}" \
+            -C "${analysis_dir}" fetch --filter=blob:none --deepen="${analysis_fetch_deepen}" \
+            origin refs/heads/main:refs/remotes/origin/main
+          analysis_head="$(git -C "${analysis_dir}" rev-parse HEAD)"
+        done
         analysis_python="${python_bin}"
         install_method="pythonpath"
         rm -rf "${work_dir}/analysis-venv"
