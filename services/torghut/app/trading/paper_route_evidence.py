@@ -152,6 +152,18 @@ PAPER_ROUTE_ACCOUNT_STATE_DISCARD_BLOCKERS = frozenset(
         "paper_route_account_window_start_non_target_positions_present",
     }
 )
+RUNTIME_LEDGER_SOURCE_COLLECTION_PENDING_BLOCKER = (
+    "runtime_ledger_source_collection_pending"
+)
+RUNTIME_LEDGER_SOURCE_COLLECTION_SOURCE_KIND = (
+    "runtime_ledger_source_collection_candidate"
+)
+RUNTIME_LEDGER_SOURCE_COLLECTION_HANDOFF = "runtime_ledger_source_collection_import"
+RUNTIME_LEDGER_SOURCE_COLLECTION_SELECTED_BY = "runtime_ledger_source_collection"
+RUNTIME_LEDGER_SOURCE_COLLECTION_PROMOTION_BLOCKERS = (
+    "runtime_ledger_source_collection_only",
+    "live_runtime_ledger_required",
+)
 
 
 def _maybe_set_paper_route_audit_statement_timeout(session: Session) -> None:
@@ -7680,6 +7692,191 @@ def _runtime_window_import_plan_for_audit(
     return next_targets
 
 
+def _truthy_plan_value(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes"}
+
+
+def _live_gate_has_source_collection_pending(
+    live_submission_gate: Mapping[str, Any],
+) -> bool:
+    return RUNTIME_LEDGER_SOURCE_COLLECTION_PENDING_BLOCKER in {
+        str(reason or "").strip()
+        for reason in _as_sequence(live_submission_gate.get("blocked_reasons"))
+        if str(reason or "").strip()
+    }
+
+
+def _target_is_runtime_ledger_source_collection(
+    target: Mapping[str, Any],
+) -> bool:
+    source_kind = _safe_text(target.get("source_kind"))
+    handoff = _safe_text(target.get("handoff"))
+    selected_by = _safe_text(target.get("selected_by"))
+    return (
+        _truthy_plan_value(target.get("source_collection_authorized"))
+        or source_kind == RUNTIME_LEDGER_SOURCE_COLLECTION_SOURCE_KIND
+        or handoff == RUNTIME_LEDGER_SOURCE_COLLECTION_HANDOFF
+        or selected_by == RUNTIME_LEDGER_SOURCE_COLLECTION_SELECTED_BY
+    )
+
+
+def _sanitized_runtime_ledger_source_collection_target(
+    target: Mapping[str, Any],
+) -> dict[str, object]:
+    strategy_name = _safe_text(target.get("strategy_name"))
+    strategy_id = _safe_text(target.get("strategy_id"))
+    runtime_strategy_name = (
+        explicit_runtime_strategy_name_or_family_harness(
+            runtime_strategy_name=target.get("runtime_strategy_name"),
+            strategy_name=strategy_name,
+            strategy_id=strategy_id,
+        )
+        or strategy_name
+        or ""
+    )
+    strategy_lookup_names = _strategy_lookup_names(
+        target.get("strategy_lookup_names"),
+        runtime_strategy_name,
+        strategy_name,
+        strategy_names_from_strategy_id(strategy_id),
+        derived_strategy_name_from_strategy_id(strategy_id),
+    )
+    account_label = (
+        _safe_text(target.get("account_label")) or PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL
+    )
+    source_account_label = (
+        _safe_text(target.get("source_account_label")) or account_label
+    )
+    source_kind = (
+        _safe_text(target.get("source_kind"))
+        or RUNTIME_LEDGER_SOURCE_COLLECTION_SOURCE_KIND
+    )
+    final_promotion_blockers = _unique_text_items(
+        target.get("final_promotion_blockers")
+    ) or list(RUNTIME_LEDGER_SOURCE_COLLECTION_PROMOTION_BLOCKERS)
+    sanitized: dict[str, object] = {
+        "hypothesis_id": _safe_text(target.get("hypothesis_id")),
+        "candidate_id": _safe_text(target.get("candidate_id")),
+        "observed_stage": _safe_text(target.get("observed_stage")) or "paper",
+        "strategy_family": _safe_text(target.get("strategy_family")),
+        "strategy_name": strategy_name or runtime_strategy_name,
+        "strategy_id": strategy_id or "",
+        "runtime_strategy_name": runtime_strategy_name,
+        "strategy_lookup_names": strategy_lookup_names,
+        "account_label": account_label,
+        "source_account_label": source_account_label,
+        "account_stage_runtime_identity": {
+            "account_label": account_label,
+            "source_account_label": source_account_label,
+            "observed_stage": _safe_text(target.get("observed_stage")) or "paper",
+            "runtime_strategy_name": runtime_strategy_name,
+            "source_kind": source_kind,
+        },
+        "source_dsn_env": _safe_text(target.get("source_dsn_env")) or "SIM_DB_DSN",
+        "target_dsn_env": _safe_text(target.get("target_dsn_env")) or "SIM_DB_DSN",
+        "dataset_snapshot_ref": _safe_text(target.get("dataset_snapshot_ref")) or "",
+        "source_manifest_ref": _safe_text(target.get("source_manifest_ref")) or "",
+        "source_kind": source_kind,
+        "window_start": _safe_text(target.get("window_start")) or "",
+        "window_end": _safe_text(target.get("window_end")) or "",
+        "paper_probation_authorized": False,
+        "paper_probation_authorization_scope": "",
+        "paper_probation_satisfied_for_bounded_live_paper_collection": False,
+        "source_collection_authorized": True,
+        "source_collection_authorization_scope": _safe_text(
+            target.get("source_collection_authorization_scope")
+        )
+        or "source_window_evidence_collection_only",
+        "source_collection_reason_codes": _unique_text_items(
+            target.get("source_collection_reason_codes")
+        ),
+        "proof_mode": "probation",
+        "evidence_collection_ok": True,
+        "canary_collection_authorized": False,
+        "bounded_live_paper_collection_authorized": False,
+        "bounded_evidence_collection_authorized": False,
+        "capital_promotion_allowed": False,
+        "final_authority_ok": False,
+        "evidence_collection_stage": "paper",
+        "probation_allowed": False,
+        "probation_reason": "source_window_evidence_collection_pending",
+        "promotion_allowed": False,
+        "final_promotion_authorized": False,
+        "final_promotion_allowed": False,
+        "final_promotion_blockers": final_promotion_blockers,
+        "candidate_blockers": _unique_text_items(target.get("candidate_blockers")),
+        "runtime_ledger_target_metadata_blockers": _unique_text_items(
+            target.get("runtime_ledger_target_metadata_blockers")
+        )
+        or final_promotion_blockers,
+        "handoff": _safe_text(target.get("handoff"))
+        or RUNTIME_LEDGER_SOURCE_COLLECTION_HANDOFF,
+        "promotion_gate": _safe_text(target.get("promotion_gate"))
+        or "runtime_ledger_live_or_live_paper_required",
+        "selected_by": _safe_text(target.get("selected_by"))
+        or RUNTIME_LEDGER_SOURCE_COLLECTION_SELECTED_BY,
+        "selection_reason": _safe_text(target.get("selection_reason"))
+        or "positive_activity_needs_source_window_runtime_evidence",
+        "max_notional": "0",
+        "stripped_source_promotion_authority": bool(
+            target.get("promotion_allowed")
+            or target.get("final_promotion_allowed")
+            or target.get("final_promotion_authorized")
+        ),
+    }
+    if runtime_ledger_bucket_ref := _safe_text(target.get("runtime_ledger_bucket_ref")):
+        sanitized["runtime_ledger_bucket_ref"] = runtime_ledger_bucket_ref
+    if artifact_refs := _unique_text_items(target.get("artifact_refs")):
+        sanitized["artifact_refs"] = artifact_refs
+    return sanitized
+
+
+def _runtime_ledger_source_collection_import_plan_for_payload(
+    *,
+    plan: Mapping[str, Any],
+    live_submission_gate: Mapping[str, Any],
+    target_limit: int,
+) -> dict[str, object]:
+    if not _live_gate_has_source_collection_pending(live_submission_gate):
+        return {}
+    limit = max(0, target_limit)
+    source_targets: list[dict[str, object]] = []
+    for target in _as_mapping_items(plan.get("targets")):
+        if len(source_targets) >= limit:
+            break
+        if not _target_is_runtime_ledger_source_collection(target):
+            continue
+        source_targets.append(
+            _sanitized_runtime_ledger_source_collection_target(target)
+        )
+    if not source_targets:
+        return {}
+    return {
+        "schema_version": _safe_text(plan.get("schema_version"))
+        or "torghut.runtime-ledger-paper-probation-import-plan.v1",
+        "source": "live_submission_gate_runtime_ledger_source_collection",
+        "purpose": "runtime_ledger_source_collection_import",
+        "proof_mode": "probation",
+        "evidence_collection_ok": True,
+        "paper_probation_satisfied_for_bounded_live_paper_collection": False,
+        "canary_collection_authorized": False,
+        "bounded_live_paper_collection_authorized": False,
+        "capital_promotion_allowed": False,
+        "final_authority_ok": False,
+        "promotion_allowed": False,
+        "final_promotion_authorized": False,
+        "final_promotion_allowed": False,
+        "target_count": len(source_targets),
+        "paper_probation_target_count": 0,
+        "source_collection_target_count": len(source_targets),
+        "skipped_target_count": 0,
+        "targets": source_targets,
+        "skipped_targets": [],
+    }
+
+
 def build_paper_route_target_plan_payload(
     session: Session,
     *,
@@ -7695,6 +7892,13 @@ def build_paper_route_target_plan_payload(
     resolved_generated_at = generated_at or datetime.now(timezone.utc)
     plan = _as_mapping(
         live_submission_gate.get("runtime_ledger_paper_probation_import_plan")
+    )
+    source_collection_import_plan = (
+        _runtime_ledger_source_collection_import_plan_for_payload(
+            plan=plan,
+            live_submission_gate=live_submission_gate,
+            target_limit=target_limit,
+        )
     )
     targets = _as_mapping_items(plan.get("targets"))[: max(0, target_limit)]
     probe = _paper_route_probe_summary(
@@ -7719,7 +7923,7 @@ def build_paper_route_target_plan_payload(
     runtime_window_import_plan = next_targets
     next_clean_after_discard_targets: Mapping[str, Any] = {}
     latest_closed_targets: Mapping[str, Any] = {}
-    source_targets: Mapping[str, Any] = {}
+    source_targets: Mapping[str, Any] = source_collection_import_plan
     latest_closed_runtime_window_import_target_audits: (
         list[dict[str, object]] | None
     ) = None
@@ -7746,15 +7950,16 @@ def build_paper_route_target_plan_payload(
             purpose="latest_closed_session_paper_route_runtime_window_import",
             target_account_audit_available=target_account_audit_available,
         )
-        source_targets = _next_paper_route_runtime_window_targets(
-            session=session,
-            targets=targets,
-            probe=probe,
-            live_submission_gate=live_submission_gate,
-            generated_at=resolved_generated_at,
-            require_clean_pre_session=False,
-            target_account_audit_available=target_account_audit_available,
-        )
+        if not _as_mapping_items(source_targets.get("targets")):
+            source_targets = _next_paper_route_runtime_window_targets(
+                session=session,
+                targets=targets,
+                probe=probe,
+                live_submission_gate=live_submission_gate,
+                generated_at=resolved_generated_at,
+                require_clean_pre_session=False,
+                target_account_audit_available=target_account_audit_available,
+            )
         latest_closed_runtime_window_import_plan = (
             _runtime_window_import_plan_for_audit(
                 latest_closed_targets=latest_closed_targets,
@@ -7919,6 +8124,16 @@ def build_paper_route_target_plan_payload(
                 "schema_version": _safe_text(plan.get("schema_version")),
                 "target_count": _safe_int(plan.get("target_count") or len(targets)),
                 "skipped_target_count": _safe_int(plan.get("skipped_target_count")),
+                "source_collection_target_count": _safe_int(
+                    source_collection_import_plan.get("target_count")
+                    or plan.get("source_collection_target_count")
+                ),
+                "targets": _as_mapping_items(
+                    source_collection_import_plan.get("targets")
+                ),
+                "skipped_targets": _as_mapping_items(
+                    source_collection_import_plan.get("skipped_targets")
+                ),
                 "stripped_source_promotion_authority": bool(
                     plan.get("promotion_allowed")
                     or plan.get("final_promotion_allowed")
@@ -8015,6 +8230,13 @@ def build_paper_route_evidence_audit(
         live_submission_gate.get("runtime_ledger_paper_probation_import_plan")
     )
     targets = _as_mapping_items(plan.get("targets"))[:effective_target_limit]
+    source_collection_import_plan = (
+        _runtime_ledger_source_collection_import_plan_for_payload(
+            plan=plan,
+            live_submission_gate=live_submission_gate,
+            target_limit=effective_target_limit,
+        )
+    )
     probe = _paper_route_probe_summary(
         route_reacquisition_book,
         target_plan=plan,
@@ -8220,6 +8442,16 @@ def build_paper_route_evidence_audit(
                 "schema_version": _safe_text(plan.get("schema_version")),
                 "target_count": _safe_int(plan.get("target_count") or len(targets)),
                 "skipped_target_count": _safe_int(plan.get("skipped_target_count")),
+                "source_collection_target_count": _safe_int(
+                    source_collection_import_plan.get("target_count")
+                    or plan.get("source_collection_target_count")
+                ),
+                "targets": _as_mapping_items(
+                    source_collection_import_plan.get("targets")
+                ),
+                "skipped_targets": _as_mapping_items(
+                    source_collection_import_plan.get("skipped_targets")
+                ),
                 "stripped_source_promotion_authority": bool(
                     plan.get("promotion_allowed")
                     or plan.get("final_promotion_allowed")
