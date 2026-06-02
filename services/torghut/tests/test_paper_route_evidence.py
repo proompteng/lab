@@ -8418,6 +8418,75 @@ class TestPaperRouteEvidenceAudit(TestCase):
             target["observed_from_contaminated_target"]["order_event_count"], 2
         )
 
+    def test_observed_strategy_source_collection_plan_uses_plan_count_pending(
+        self,
+    ) -> None:
+        plan = paper_route_evidence._observed_strategy_source_collection_import_plan(
+            live_submission_gate={
+                "blocked_reasons": [],
+                "runtime_ledger_repair_candidates": [
+                    {
+                        "hypothesis_id": "H-TSMOM-LIQ-01",
+                        "candidate_id": "candidate-tsmom",
+                        "strategy_family": "intraday_tsmom_consistent",
+                        "strategy_name": "intraday-tsmom-profit-v3",
+                        "runtime_strategy_name": "intraday-tsmom-profit-v3",
+                    }
+                ],
+                "runtime_ledger_paper_probation_import_plan": {
+                    "source_collection_target_count": 1,
+                    "targets": [],
+                },
+            },
+            candidate_plans=[
+                {
+                    "targets": [
+                        {
+                            "hypothesis_id": "H-PAIRS-01",
+                            "candidate_id": "candidate-hpairs",
+                            "strategy_name": "microbar-cross-sectional-pairs-v1",
+                            "window_start": "2026-06-02T13:30:00+00:00",
+                            "window_end": "2026-06-02T20:00:00+00:00",
+                            "paper_route_account_contamination_state": {
+                                "foreign_strategy_counts": {
+                                    "intraday-tsmom-profit-v3": 3,
+                                },
+                            },
+                        }
+                    ],
+                }
+            ],
+            target_limit=5,
+        )
+
+        self.assertEqual(plan["target_count"], 1)
+        target = plan["targets"][0]
+        self.assertEqual(target["candidate_id"], "candidate-tsmom")
+        self.assertEqual(target["runtime_strategy_name"], "intraday-tsmom-profit-v3")
+        self.assertEqual(
+            target["selected_by"], "paper_route_observed_strategy_source_collection"
+        )
+
+    def test_source_collection_pending_accepts_candidate_shapes(self) -> None:
+        self.assertTrue(
+            paper_route_evidence._live_gate_has_source_collection_pending(
+                {
+                    "blocked_reasons": [],
+                    "runtime_ledger_source_collection_candidates": [
+                        {"candidate_id": "candidate-tsmom"}
+                    ],
+                }
+            )
+        )
+        self.assertTrue(
+            paper_route_evidence._live_gate_has_source_collection_pending(
+                {
+                    "blocked_reasons": [],
+                    "runtime_ledger_source_collection_candidate_total": 1,
+                }
+            )
+        )
+
     def test_observed_strategy_source_collection_plan_skips_unmapped_noise(
         self,
     ) -> None:
