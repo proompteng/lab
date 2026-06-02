@@ -32,10 +32,6 @@ source-activity blockers such as `paper_route_source_activity_missing`, `source_
 `source_executions_missing`, and `source_tca_missing` into the final verdict. Treat those as the next repair target
 before rerunning import; do not collapse them into a generic runtime-ledger-missing diagnosis.
 
-The `torghut-paper-account-flatten` CronJob runs both before the regular session and after the regular session close.
-The post-close run is part of the paper-route proof lane: it persists the flat account snapshot required before the
-21:23 UTC renewal/import conductor can turn a closed paper-route window into authority-checkable runtime-ledger evidence.
-
 Trigger a simulation run via Argo:
 
 The proof packet separates post-cost proof authority from live capital promotion
