@@ -34,6 +34,7 @@ NEXT_ACTIONS = (
     "route_disabled",
     "evidence_collection_disabled",
     "materialize_drift_checks",
+    "materialize_runtime_buckets",
     "wait_for_fresh_signal_window",
     "wait_for_market_session_open",
     "ready_to_submit_sim_order",
@@ -307,6 +308,7 @@ def _symbols_from_target(target: Mapping[str, object]) -> list[str]:
         "symbol_universe",
         "required_symbols",
         "pair_symbols",
+        "paper_route_probe_symbols",
         "legs",
     ):
         raw_value = target.get(key)
@@ -589,6 +591,84 @@ def _signal_drift_readiness_report(
     }
 
 
+def _runtime_materialization_count(
+    containers: Sequence[Mapping[str, object]],
+    keys: Sequence[str],
+) -> float | None:
+    for container in containers:
+        value = _first_value_from_keys(container, keys)
+        count = _float_or_none(value)
+        if count is not None:
+            return count
+    return None
+
+
+def _runtime_materialization_report(
+    *,
+    source: Mapping[str, object],
+    status: Mapping[str, object],
+    target: Mapping[str, object],
+) -> dict[str, object]:
+    observed = _mapping(status.get("observed")) or _mapping(source.get("observed"))
+    containers = [observed, status, target, source]
+    decision_count = _runtime_materialization_count(
+        containers,
+        (
+            "hpairs_decisions",
+            "h_pairs_decisions",
+            "recent_hpairs_decisions",
+            "decision_count",
+            "decisions_count",
+            "recent_decision_count",
+        ),
+    )
+    order_event_count = _runtime_materialization_count(
+        containers,
+        (
+            "hpairs_order_events",
+            "h_pairs_order_events",
+            "recent_hpairs_order_events",
+            "order_event_count",
+            "order_events_count",
+            "recent_order_event_count",
+        ),
+    )
+    runtime_bucket_count = _runtime_materialization_count(
+        containers,
+        (
+            "hpairs_runtime_buckets",
+            "h_pairs_runtime_buckets",
+            "recent_hpairs_runtime_buckets",
+            "runtime_bucket_count",
+            "runtime_buckets_count",
+            "recent_runtime_bucket_count",
+        ),
+    )
+    counts = {
+        "decision_count": decision_count,
+        "order_event_count": order_event_count,
+        "runtime_bucket_count": runtime_bucket_count,
+    }
+    observed_counts: dict[str, float] = {
+        key: value for key, value in counts.items() if value is not None
+    }
+    zero_fields = sorted(key for key, value in observed_counts.items() if value <= 0)
+    return {
+        "observed_any": bool(observed_counts),
+        "counts": counts,
+        "zero_fields": zero_fields,
+        "ready": bool(observed_counts) and not zero_fields,
+        "window": _text(
+            observed.get("window")
+            or status.get("window")
+            or source.get("window")
+            or observed.get("recent_window")
+            or status.get("recent_window")
+            or source.get("recent_window")
+        ),
+    }
+
+
 def _veto_report(
     target: Mapping[str, object],
     signal: Mapping[str, object],
@@ -691,6 +771,8 @@ def _choose_next_action(blocker_codes: Sequence[str], unsupported: bool) -> str:
         return "evidence_collection_disabled"
     if "drift_checks_missing" in blockers:
         return "materialize_drift_checks"
+    if "runtime_materialization_missing" in blockers:
+        return "materialize_runtime_buckets"
     if "signal_lag_exceeded" in blockers:
         return "wait_for_fresh_signal_window"
     if "market_session_closed" in blockers:
@@ -747,6 +829,11 @@ def build_liveness_report(
         signal=signal,
         expectations=expectations,
     )
+    runtime_materialization = _runtime_materialization_report(
+        source=source,
+        status=status,
+        target=target,
+    )
     vetoes = _veto_report(target, signal, risk)
     route_flags = _flag_report((target, status, route), _ROUTE_FLAG_KEYS)
     evidence_flags = _flag_report((target, status, route), _EVIDENCE_COLLECTION_KEYS)
@@ -785,6 +872,8 @@ def build_liveness_report(
     if evidence_flags["disabled_flags"]:
         blocker_codes.append("evidence_collection_disabled")
     blocker_codes.extend(cast(Sequence[str], signal_drift_readiness["blockers"]))
+    if runtime_materialization["zero_fields"]:
+        blocker_codes.append("runtime_materialization_missing")
 
     explicit_blockers = _unique_text_items(source.get("blockers"))
     explicit_blockers.extend(
@@ -840,6 +929,7 @@ def build_liveness_report(
         "latest_quote_availability": quote_report,
         "signal_threshold_status": signal_report,
         "signal_drift_readiness": signal_drift_readiness,
+        "runtime_materialization_status": runtime_materialization,
         "entry_exit_vetoes": vetoes,
         "route_eligibility_flags": route_flags,
         "simple_submit_flag_state": submit_flags,
