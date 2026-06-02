@@ -4978,7 +4978,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
 
         self.assertEqual(queue_payload["pre_dedupe_selected_candidate_count"], 3)
         self.assertEqual(queue_payload["exact_replay_candidate_count"], 2)
-        self.assertEqual(queue_payload["duplicate_filtered_candidate_spec_ids"], ["spec-b"])
+        self.assertEqual(
+            queue_payload["duplicate_filtered_candidate_spec_ids"], ["spec-b"]
+        )
         self.assertEqual(queue_payload["candidate_spec_ids"], ["spec-a", "spec-c"])
         self.assertEqual(
             queue_payload["exact_replay_frontier_keys"],
@@ -10595,7 +10597,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             args.max_total_frontier_candidates = 24
             args.real_replay_timeout_seconds = 7200
             args.real_replay_shard_size = 2
-            args.real_replay_shard_timeout_seconds = 900
+            args.real_replay_shard_timeout_seconds = 1200
             args.real_replay_shard_workers = 3
             args.real_replay_failed_spec_retries = 2
             args.real_replay_retry_timeout_seconds = 1800
@@ -10610,6 +10612,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                             "--max-total-frontier-candidates": "48",
                             "--kubernetes-fanout": "32",
                             "--real-replay-shard-workers": "16",
+                            "--real-replay-shard-timeout-seconds": "3600",
                         },
                     }
                 ]
@@ -10672,6 +10675,33 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertIn(
             {
+                "flag": "--real-replay-shard-timeout-seconds",
+                "requested_value": "1200",
+                "capped_value": "900",
+                "reason": "capped_to_local_shard_timeout_no_cluster_fanout",
+            },
+            plan["capped_runtime_flags"],
+        )
+        self.assertIn(
+            {
+                "action": "increase_breadth_and_portfolio_diversity",
+                "flag": "--real-replay-shard-timeout-seconds",
+                "requested_value": "3600",
+                "capped_value": "900",
+                "reason": "capped_to_local_shard_timeout_no_cluster_fanout",
+            },
+            plan["capped_runtime_flags"],
+        )
+        self.assertIn(
+            {
+                "action": "increase_breadth_and_portfolio_diversity",
+                "flag": "--real-replay-shard-timeout-seconds",
+                "value": "900",
+            },
+            plan["applied_recommended_flags"],
+        )
+        self.assertIn(
+            {
                 "flag": "--real-replay-shard-workers",
                 "requested_value": "3",
                 "capped_value": "2",
@@ -10684,6 +10714,79 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             plan["no_fast_path_policy"]["max_generated_real_replay_shard_workers"], 2
         )
         self.assertNotIn("--kubernetes-fanout", plan["flags"])
+
+    def test_next_epoch_plan_rejects_invalid_shard_timeout_remediation(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            args = self._args(Path(tmpdir) / "epoch")
+            remediation = {
+                "next_actions": [
+                    {
+                        "action": "increase_breadth_and_portfolio_diversity",
+                        "recommended_flags": {
+                            "--real-replay-shard-timeout-seconds": "not-a-number",
+                        },
+                    }
+                ]
+            }
+
+            plan = runner._profitability_next_epoch_plan(
+                args=args, target=Decimal("500"), remediation=remediation
+            )
+
+        self.assertEqual(
+            runner._bounded_real_replay_shard_timeout_seconds(0),
+            runner._DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS,
+        )
+        self.assertEqual(
+            runner._bounded_real_replay_shard_timeout_seconds(-1),
+            runner._DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS,
+        )
+        self.assertEqual(plan["flags"]["--real-replay-shard-timeout-seconds"], "900")
+        self.assertIn(
+            {
+                "action": "increase_breadth_and_portfolio_diversity",
+                "flag": "--real-replay-shard-timeout-seconds",
+                "current_value": "900",
+                "recommended_value": "not-a-number",
+                "reason": "rejected_invalid_numeric_remediation_flag",
+            },
+            plan["rejected_recommended_flags"],
+        )
+
+    def test_next_epoch_plan_applies_within_limit_shard_timeout_remediation(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            args = self._args(Path(tmpdir) / "epoch")
+            args.real_replay_shard_timeout_seconds = 900
+            remediation = {
+                "next_actions": [
+                    {
+                        "action": "shrink_per_spec_frontier_or_extend_timeout",
+                        "recommended_flags": {
+                            "--real-replay-shard-timeout-seconds": "600",
+                        },
+                    }
+                ]
+            }
+
+            plan = runner._profitability_next_epoch_plan(
+                args=args, target=Decimal("500"), remediation=remediation
+            )
+
+        self.assertEqual(plan["flags"]["--real-replay-shard-timeout-seconds"], "600")
+        self.assertFalse(plan["rejected_recommended_flags"])
+        self.assertFalse(plan["capped_runtime_flags"])
+        self.assertIn(
+            {
+                "action": "shrink_per_spec_frontier_or_extend_timeout",
+                "flag": "--real-replay-shard-timeout-seconds",
+                "value": "600",
+            },
+            plan["applied_recommended_flags"],
+        )
 
     def test_train_ranker_script_main_writes_model_and_scores(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -12600,16 +12703,50 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 output_dir=output_dir,
                 specs=specs,
                 shard_size=2,
-                shard_timeout_seconds=7,
+                shard_timeout_seconds=1200,
             )
 
         self.assertEqual(
             [runner._replay_shard_frontier_candidate_budget(plan) for plan in plans],
             [8, 8, 8],
         )
+        self.assertEqual([plan.timeout_seconds for plan in plans], [900, 900, 900])
         self.assertEqual(
             runner._bounded_real_replay_shard_workers(args=args, plans=plans),
             1,
+        )
+
+    def test_real_replay_shards_cap_workers_to_local_limit_even_under_budget(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "epoch"
+            cards = claim_compiler_script.compile_sources_to_hypothesis_cards(
+                [runner.RECENT_WHITEPAPER_SEEDS[0]]
+            )
+            compilation = runner.compile_whitepaper_candidate_specs(
+                hypothesis_cards=cards,
+                family_template_dir=Path("config/trading/families"),
+                seed_sweep_dir=Path("config/trading"),
+            )
+            specs = compilation.executable_specs[:4]
+            args = self._args(output_dir)
+            args.max_frontier_candidates_per_spec = 1
+            args.max_total_frontier_candidates = 4
+            args.real_replay_shard_workers = 8
+            args.real_replay_max_parallel_frontier_candidates = 99
+
+            plans = runner._build_real_replay_shards(
+                args=args,
+                output_dir=output_dir,
+                specs=specs,
+                shard_size=1,
+                shard_timeout_seconds=7,
+            )
+
+        self.assertEqual(
+            runner._bounded_real_replay_shard_workers(args=args, plans=plans),
+            2,
         )
 
     def test_incomplete_sharded_replay_cannot_report_oracle_candidate_found(
