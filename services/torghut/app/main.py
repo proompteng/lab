@@ -5558,10 +5558,58 @@ def _build_tigerbeetle_ledger_status(session: Session) -> dict[str, object]:
         session,
         cluster_id=settings.tigerbeetle_cluster_id,
     )
-    ref_counts = tigerbeetle_ref_counts(
-        session,
-        cluster_id=settings.tigerbeetle_cluster_id,
-    )
+    blockers: list[str] = []
+    ref_counts: dict[str, object]
+    try:
+        bind = session.get_bind()
+        if bind.dialect.name == "postgresql":
+            session.execute(text("SET LOCAL statement_timeout = 750"))
+        ref_counts = tigerbeetle_ref_counts(
+            session,
+            cluster_id=settings.tigerbeetle_cluster_id,
+            full_ref_scan=False,
+        )
+    except SQLAlchemyError as exc:
+        logger.warning("TigerBeetle ref-count status unavailable: %s", exc)
+        session.rollback()
+        blockers.append("tigerbeetle_ref_counts_unavailable")
+        ref_counts = {
+            "schema_version": "torghut.tigerbeetle-ref-counts.v1",
+            "cluster_id": settings.tigerbeetle_cluster_id,
+            "ref_counts_unavailable": True,
+            "last_error": str(exc),
+            "account_ref_count": 0,
+            "transfer_ref_count": 0,
+            "by_source_type": {},
+            "order_event_ref_count": 0,
+            "execution_ref_count": 0,
+            "cost_ref_count": 0,
+            "runtime_ledger_ref_count": 0,
+            "stable_ref_count": 0,
+            "stable_ref_missing_count": 0,
+            "stable_ref_mismatch_count": 0,
+            "stable_ref_diagnostic_bounded": True,
+            "stable_ref_sample_size": 0,
+            "runtime_ledger_required_bucket_count": 0,
+            "runtime_ledger_signed_ref_count": 0,
+            "runtime_ledger_missing_signed_ref_count": 0,
+            "runtime_ledger_account_ref_count": 0,
+            "runtime_ledger_missing_account_ref_count": 0,
+            "runtime_ledger_missing_account_ids": [],
+            "runtime_ledger_source_ids": [],
+            "runtime_ledger_transfer_ids": [],
+            "runtime_ledger_signed_bucket_ids": [],
+            "runtime_ledger_ref_coverage_bounded": True,
+            "runtime_ledger_ref_sample_size": 0,
+            "source_materialization": {
+                "account_ref_table": "tigerbeetle_account_refs",
+                "transfer_ref_table": "tigerbeetle_transfer_refs",
+                "reconciliation_run_table": "tigerbeetle_reconciliation_runs",
+                "runtime_ledger_source_table": "strategy_runtime_ledger_buckets",
+                "runtime_ledger_source_type": "strategy_runtime_ledger_bucket",
+                "runtime_ledger_transfer_kind": "runtime_net_pnl",
+            },
+        }
     runtime_ledger_ref_count = _tigerbeetle_status_int(
         ref_counts.get("runtime_ledger_ref_count")
     )
@@ -5575,7 +5623,6 @@ def _build_tigerbeetle_ledger_status(session: Session) -> dict[str, object]:
         ref_counts.get("runtime_ledger_missing_account_ref_count")
     )
     claimed_by_runtime_evidence = runtime_ledger_ref_count > 0
-    blockers: list[str] = []
     if settings.tigerbeetle_enabled and not bool(protocol.get("protocol_ok")):
         blockers.append("tigerbeetle_protocol_unhealthy")
     reconciliation_ok = True

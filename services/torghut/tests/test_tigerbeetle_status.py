@@ -7,6 +7,7 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from sqlalchemy import create_engine
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -67,6 +68,41 @@ class TestTigerBeetleStatus(TestCase):
         self.assertTrue(payload["protocol_ok"])
         self.assertEqual(payload["blockers"], [])
         self.assertEqual(payload["ref_counts"]["transfer_ref_count"], 0)
+
+    def test_status_uses_bounded_ref_count_diagnostics(self) -> None:
+        ref_counts = {
+            "schema_version": "torghut.tigerbeetle-ref-counts.v1",
+            "cluster_id": 2001,
+            "account_ref_count": 0,
+            "transfer_ref_count": 0,
+            "by_source_type": {},
+            "runtime_ledger_ref_count": 0,
+            "runtime_ledger_signed_ref_count": 0,
+            "runtime_ledger_missing_signed_ref_count": 0,
+            "runtime_ledger_missing_account_ref_count": 0,
+            "source_materialization": {},
+        }
+
+        with Session(self.engine) as session:
+            with patch(
+                "app.main.tigerbeetle_ref_counts", return_value=ref_counts
+            ) as ref_counts_mock:
+                payload = _build_tigerbeetle_ledger_status(session)
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(ref_counts_mock.call_args.kwargs["full_ref_scan"], False)
+
+    def test_ref_count_failure_degrades_without_status_exception(self) -> None:
+        with Session(self.engine) as session:
+            with patch(
+                "app.main.tigerbeetle_ref_counts",
+                side_effect=SQLAlchemyError("idle in transaction timeout"),
+            ):
+                payload = _build_tigerbeetle_ledger_status(session)
+
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["ref_counts"]["ref_counts_unavailable"])
+        self.assertIn("tigerbeetle_ref_counts_unavailable", payload["blockers"])
 
     def test_tigerbeetle_status_int_normalizes_bool_strings_and_bad_values(
         self,

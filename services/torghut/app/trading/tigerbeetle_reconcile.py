@@ -481,20 +481,97 @@ def _runtime_ledger_ref_coverage(
     *,
     cluster_id: int,
     sample_limit: int = 50,
+    full_ref_scan: bool = True,
 ) -> dict[str, object]:
-    runtime_refs = (
+    runtime_ref_filter = (
+        TigerBeetleTransferRef.cluster_id == cluster_id,
+        TigerBeetleTransferRef.source_type == SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+        TigerBeetleTransferRef.transfer_kind == TRANSFER_KIND_RUNTIME_NET_PNL,
+    )
+    runtime_ref_count = int(
+        session.scalar(
+            select(func.count(TigerBeetleTransferRef.id)).where(*runtime_ref_filter)
+        )
+        or 0
+    )
+    required_runtime_bucket_count = int(
+        session.scalar(
+            select(func.count(StrategyRuntimeLedgerBucket.id)).where(
+                (StrategyRuntimeLedgerBucket.net_strategy_pnl_after_costs != 0)
+                | (StrategyRuntimeLedgerBucket.cost_amount != 0)
+            )
+        )
+        or 0
+    )
+    sample_refs = (
         session.execute(
             select(TigerBeetleTransferRef)
-            .where(
-                TigerBeetleTransferRef.cluster_id == cluster_id,
-                TigerBeetleTransferRef.source_type == SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
-                TigerBeetleTransferRef.transfer_kind == TRANSFER_KIND_RUNTIME_NET_PNL,
-            )
+            .where(*runtime_ref_filter)
             .order_by(TigerBeetleTransferRef.created_at.desc())
+            .limit(sample_limit)
         )
         .scalars()
         .all()
     )
+    if not full_ref_scan:
+        runtime_source_ids = [
+            str(ref.source_id) for ref in sample_refs if ref.source_id is not None
+        ]
+        runtime_transfer_ids = [str(ref.transfer_id) for ref in sample_refs]
+        runtime_account_ids: list[str] = []
+        for ref in sample_refs:
+            for account_id in _runtime_ledger_payload_account_ids(ref):
+                if account_id not in runtime_account_ids:
+                    runtime_account_ids.append(account_id)
+        account_ref_ids: set[str] = (
+            {
+                str(account_id)
+                for account_id in session.execute(
+                    select(TigerBeetleAccountRef.account_id).where(
+                        TigerBeetleAccountRef.cluster_id == cluster_id,
+                        TigerBeetleAccountRef.account_id.in_(runtime_account_ids),
+                    )
+                ).scalars()
+            }
+            if runtime_account_ids
+            else set()
+        )
+        missing_account_ids = [
+            account_id
+            for account_id in runtime_account_ids
+            if account_id not in account_ref_ids
+        ]
+        return {
+            "runtime_ledger_required_bucket_count": required_runtime_bucket_count,
+            "runtime_ledger_ref_count": runtime_ref_count,
+            "runtime_ledger_signed_ref_count": 0,
+            "runtime_ledger_missing_signed_ref_count": max(
+                required_runtime_bucket_count,
+                runtime_ref_count,
+                0,
+            ),
+            "runtime_ledger_account_ref_count": len(runtime_account_ids)
+            - len(missing_account_ids),
+            "runtime_ledger_missing_account_ref_count": len(missing_account_ids),
+            "runtime_ledger_missing_account_ids": missing_account_ids[:sample_limit],
+            "runtime_ledger_source_ids": runtime_source_ids,
+            "runtime_ledger_transfer_ids": runtime_transfer_ids,
+            "runtime_ledger_signed_bucket_ids": [],
+            "runtime_ledger_ref_coverage_bounded": True,
+            "runtime_ledger_ref_sample_size": len(sample_refs),
+        }
+
+    runtime_refs = sample_refs
+    if runtime_ref_count > len(sample_refs):
+        runtime_refs = (
+            session.execute(
+                select(TigerBeetleTransferRef)
+                .where(*runtime_ref_filter)
+                .order_by(TigerBeetleTransferRef.created_at.desc())
+            )
+            .scalars()
+            .all()
+        )
     current_bucket_ids = {
         str(bucket_id)
         for bucket_id in session.execute(
@@ -513,15 +590,6 @@ def _runtime_ledger_ref_coverage(
         )
         or (ref.source_id is not None and ref.source_id in current_bucket_ids)
     ]
-    required_runtime_bucket_count = int(
-        session.scalar(
-            select(func.count(StrategyRuntimeLedgerBucket.id)).where(
-                (StrategyRuntimeLedgerBucket.net_strategy_pnl_after_costs != 0)
-                | (StrategyRuntimeLedgerBucket.cost_amount != 0)
-            )
-        )
-        or 0
-    )
     signed_refs = [
         ref for ref in current_runtime_refs if _runtime_ledger_ref_is_signed(ref)
     ]
@@ -569,6 +637,8 @@ def _runtime_ledger_ref_coverage(
         "runtime_ledger_source_ids": runtime_source_ids,
         "runtime_ledger_transfer_ids": runtime_transfer_ids,
         "runtime_ledger_signed_bucket_ids": sorted(signed_bucket_ids)[:sample_limit],
+        "runtime_ledger_ref_coverage_bounded": False,
+        "runtime_ledger_ref_sample_size": len(runtime_refs),
     }
 
 
@@ -617,7 +687,12 @@ def _runtime_ledger_ref_matches_expected_bucket(
     return direction_matches, metadata_matches
 
 
-def tigerbeetle_ref_counts(session: Session, *, cluster_id: int) -> dict[str, object]:
+def tigerbeetle_ref_counts(
+    session: Session,
+    *,
+    cluster_id: int,
+    full_ref_scan: bool = True,
+) -> dict[str, object]:
     account_total = session.scalar(
         select(func.count(TigerBeetleAccountRef.id)).where(
             TigerBeetleAccountRef.cluster_id == cluster_id
@@ -639,15 +714,14 @@ def tigerbeetle_ref_counts(session: Session, *, cluster_id: int) -> dict[str, ob
             TigerBeetleTransferRef.cluster_id == cluster_id
         )
     )
-    refs = (
-        session.execute(
-            select(TigerBeetleTransferRef).where(
-                TigerBeetleTransferRef.cluster_id == cluster_id
-            )
-        )
-        .scalars()
-        .all()
+    refs_query = (
+        select(TigerBeetleTransferRef)
+        .where(TigerBeetleTransferRef.cluster_id == cluster_id)
+        .order_by(TigerBeetleTransferRef.created_at.desc())
     )
+    if not full_ref_scan:
+        refs_query = refs_query.limit(SAMPLE_LIMIT)
+    refs = session.execute(refs_query).scalars().all()
     stable_ref_count = sum(1 for ref in refs if _stable_ref_payload(ref))
     stable_ref_missing_count = sum(
         1
@@ -660,6 +734,7 @@ def tigerbeetle_ref_counts(session: Session, *, cluster_id: int) -> dict[str, ob
     runtime_coverage = _runtime_ledger_ref_coverage(
         session,
         cluster_id=cluster_id,
+        full_ref_scan=full_ref_scan,
     )
     return {
         "schema_version": "torghut.tigerbeetle-ref-counts.v1",
@@ -677,6 +752,8 @@ def tigerbeetle_ref_counts(session: Session, *, cluster_id: int) -> dict[str, ob
         "stable_ref_count": stable_ref_count,
         "stable_ref_missing_count": stable_ref_missing_count,
         "stable_ref_mismatch_count": stable_ref_mismatch_count,
+        "stable_ref_diagnostic_bounded": not full_ref_scan,
+        "stable_ref_sample_size": len(refs),
         "source_materialization": {
             "account_ref_table": "tigerbeetle_account_refs",
             "transfer_ref_table": "tigerbeetle_transfer_refs",
