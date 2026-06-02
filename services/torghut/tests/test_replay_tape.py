@@ -236,6 +236,60 @@ class TestReplayTape(TestCase):
         self.assertFalse(hpairs_features["promotion_allowed"])
         self.assertFalse(hpairs_features["proof_authority"])
 
+    def test_materialize_signal_tape_coerces_loose_hpairs_feature_shapes(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 26, 14, 31, tzinfo=timezone.utc),
+            symbol="NVDA",
+            timeframe="1Sec",
+            seq=1,
+            source="ta",
+            payload={
+                "price": Decimal("900.10"),
+                "ofi_horizon_custom": "0.44",
+                "order_flow_imbalance_horizon_bad": "not-a-decimal",
+                "ofi_decay_score": "0.12",
+                "macro_announcement_window": "yes",
+                "regime_tags": "opening_drive",
+                "stress_tag": "fed",
+            },
+            ingest_ts=datetime(2026, 3, 26, 14, 32, tzinfo=timezone.utc),
+        )
+
+        with TemporaryDirectory() as tmpdir:
+            tape_path = Path(tmpdir) / "tape.jsonl"
+            materialize_signal_tape(
+                rows=[signal],
+                tape_path=tape_path,
+                dataset_snapshot_ref="snapshot-hpairs-loose",
+                symbols=("NVDA",),
+                start_date=date(2026, 3, 26),
+                end_date=date(2026, 3, 26),
+                source_query_digest=build_source_query_digest(
+                    {"window": "hpairs-loose"}
+                ),
+            )
+            restored = signal_from_tape_payload(
+                json.loads(tape_path.read_text(encoding="utf-8").splitlines()[0])
+            )
+
+        hpairs_features = restored.payload["hpairs_replay_tape_features"]
+        self.assertEqual(
+            hpairs_features["order_flow_imbalance_horizons"],
+            {"custom": "0.44"},
+        )
+        self.assertEqual(
+            hpairs_features["ofi_decay_memory"],
+            {"ofi_decay_score": "0.12"},
+        )
+        self.assertEqual(hpairs_features["regime_tags"], ["opening_drive"])
+        self.assertEqual(
+            hpairs_features["stress_tags"],
+            ["fed", "macro_announcement_window"],
+        )
+        self.assertFalse(hpairs_features["proof_authority"])
+
     def test_materialize_signal_tape_skips_nyse_full_day_holidays(self) -> None:
         with TemporaryDirectory() as tmpdir:
             tape_path = Path(tmpdir) / "tape.jsonl"

@@ -273,6 +273,32 @@ class TestFastReplayPreview(TestCase):
         self.assertFalse(payload["promotion_allowed"])
         self.assertFalse(payload["proof_authority"])
 
+    def test_ofi_pressure_uses_nonstandard_hpair_horizon_values(self) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 2, 23, 14, 30, tzinfo=timezone.utc),
+            symbol="AAA",
+            timeframe="1Min",
+            seq=1,
+            source="test",
+            payload={
+                "hpairs_replay_tape_features": {
+                    "order_flow_imbalance_horizons": {
+                        "custom_short": "125",
+                        "custom_long": "175",
+                        "bad": "not-a-decimal",
+                    },
+                },
+            },
+            ingest_ts=datetime(2026, 2, 23, 14, 31, tzinfo=timezone.utc),
+        )
+
+        ofi_pressure = fast_replay._extract_ofi_pressure(signal)
+
+        self.assertIsNotNone(ofi_pressure)
+        assert ofi_pressure is not None
+        self.assertGreater(ofi_pressure, 0.9)
+        self.assertLessEqual(ofi_pressure, 1.0)
+
     def test_target_implied_notional_blocks_non_positive_expectancy(self) -> None:
         with TemporaryDirectory() as tmpdir:
             rows = [
