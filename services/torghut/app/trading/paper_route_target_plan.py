@@ -59,8 +59,18 @@ def paper_route_target_plan_targets(plan: Mapping[str, Any]) -> list[dict[str, A
 
 def paper_route_target_plan_from_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     live_gate = _to_str_map(payload.get("live_submission_gate"))
+    top_level_target_plan = (
+        dict(payload)
+        if str(payload.get("schema_version") or "").strip()
+        == "torghut.paper-route-target-plan.v1"
+        and paper_route_target_plan_targets(payload)
+        else {}
+    )
     next_clean_after_discard_plan = _to_str_map(
         payload.get("next_clean_paper_route_runtime_window_targets_after_discard")
+    )
+    observed_strategy_source_plan = _to_str_map(
+        payload.get("observed_strategy_source_runtime_window_import_plan")
     )
     runtime_window_plan = _to_str_map(payload.get("runtime_window_import_plan"))
     source_runtime_window_plan = _to_str_map(
@@ -70,7 +80,9 @@ def paper_route_target_plan_from_payload(payload: Mapping[str, Any]) -> dict[str
         payload.get("next_paper_route_runtime_window_targets")
     )
     candidate_plans = [
+        top_level_target_plan,
         next_clean_after_discard_plan,
+        observed_strategy_source_plan,
         next_paper_route_plan,
         source_runtime_window_plan,
         runtime_window_plan,
