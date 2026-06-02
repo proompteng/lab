@@ -4500,6 +4500,7 @@ class TestRunEmpiricalPromotionJobs(TestCase):
                     output_dir=str(self.tmp_dir),
                     strategy_spec_ref="strategy@paper",
                     run_id_prefix="renew-prefix",
+                    hpairs_source_proof_census_file=None,
                     json=True,
                 ),
             ),
