@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
@@ -55,6 +56,7 @@ from app.trading.submission_council import (
     _metric_window_activity_reason_codes,
     _rollback_runtime_ledger_status_session,
     _runtime_ledger_repair_reason_codes,
+    _runtime_ledger_status_query_timeout_ms,
     _refresh_runtime_summary_totals,
     _runtime_ledger_paper_probation_blockers,
     _runtime_ledger_paper_probation_import_plan,
@@ -1083,8 +1085,47 @@ class TestSubmissionCouncil(TestCase):
 
         self.assertEqual(
             fake_session.calls,
-            ["SET LOCAL statement_timeout = 500"],
+            ["SET LOCAL statement_timeout = 2500"],
         )
+
+    def test_runtime_ledger_status_timeout_helper_uses_configured_timeout(
+        self,
+    ) -> None:
+        fake_session = _RaisingBindRuntimeLedgerStatusSession()
+
+        with patch.dict(
+            os.environ,
+            {"TORGHUT_RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_MS": "3250"},
+        ):
+            _maybe_set_runtime_ledger_status_statement_timeout(
+                fake_session,  # type: ignore[arg-type]
+            )
+
+        self.assertEqual(
+            fake_session.calls,
+            ["SET LOCAL statement_timeout = 3250"],
+        )
+
+    def test_runtime_ledger_status_timeout_helper_bounds_configured_timeout(
+        self,
+    ) -> None:
+        with patch.dict(
+            os.environ,
+            {"TORGHUT_RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_MS": "25"},
+        ):
+            self.assertEqual(_runtime_ledger_status_query_timeout_ms(), 500)
+
+        with patch.dict(
+            os.environ,
+            {"TORGHUT_RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_MS": "25000"},
+        ):
+            self.assertEqual(_runtime_ledger_status_query_timeout_ms(), 10000)
+
+        with patch.dict(
+            os.environ,
+            {"TORGHUT_RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_MS": "not-an-int"},
+        ):
+            self.assertEqual(_runtime_ledger_status_query_timeout_ms(), 2500)
 
     def test_runtime_ledger_status_rollback_helper_ignores_missing_rollback(
         self,
