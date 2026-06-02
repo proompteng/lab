@@ -30,9 +30,20 @@ OPEN_ORDER_STATUSES = {
 PAPER_ALPACA_HOST = "paper-api.alpaca.markets"
 
 
+def normalize_alpaca_base_url(base_url: str) -> str:
+    trimmed = base_url.rstrip("/")
+    parsed = urllib.parse.urlparse(trimmed)
+    path = parsed.path.rstrip("/")
+    if path.endswith("/v2"):
+        path = path[:-3]
+    if not parsed.scheme or not parsed.netloc:
+        return trimmed
+    return urllib.parse.urlunparse(parsed._replace(path=path, params="", query="", fragment="")).rstrip("/")
+
+
 class AlpacaClient:
     def __init__(self, *, base_url: str | None = None, timeout_seconds: float = 10.0):
-        self.base_url = (base_url or os.environ.get("APCA_API_BASE_URL") or DEFAULT_ALPACA_BASE_URL).rstrip("/")
+        self.base_url = normalize_alpaca_base_url(base_url or os.environ.get("APCA_API_BASE_URL") or DEFAULT_ALPACA_BASE_URL)
         self.key_id = os.environ.get("APCA_API_KEY_ID") or os.environ.get("ALPACA_API_KEY_ID") or os.environ.get("ALPACA_API_KEY")
         self.secret_key = os.environ.get("APCA_API_SECRET_KEY") or os.environ.get("ALPACA_SECRET_KEY")
         self.timeout_seconds = timeout_seconds
@@ -320,6 +331,36 @@ def cancel_and_reconcile_order(
     )
 
 
+def read_smoke_exposure(
+    alpaca: AlpacaClient,
+    payload: dict[str, Any],
+    broker_order: dict[str, Any] | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None]:
+    open_orders = alpaca.list_open_orders(payload["symbol"])
+    smoke_open_orders = [
+        order for order in flatten_orders(open_orders) if order_belongs_to_smoke(order, payload, broker_order)
+    ]
+    position = alpaca.get_open_position(payload["symbol"])
+    return open_orders, smoke_open_orders, position
+
+
+def wait_for_smoke_exposure_clear(
+    alpaca: AlpacaClient,
+    payload: dict[str, Any],
+    broker_order: dict[str, Any] | None,
+    *,
+    timeout_seconds: float,
+    poll_seconds: float,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None]:
+    deadline = time.monotonic() + max(0.0, timeout_seconds)
+    open_orders, smoke_open_orders, position = read_smoke_exposure(alpaca, payload, broker_order)
+    while (smoke_open_orders or position_quantity(position) != 0) and time.monotonic() < deadline:
+        if poll_seconds > 0:
+            time.sleep(min(poll_seconds, max(0.0, deadline - time.monotonic())))
+        open_orders, smoke_open_orders, position = read_smoke_exposure(alpaca, payload, broker_order)
+    return open_orders, smoke_open_orders, position
+
+
 def append_event(
     synthesis: SynthesisClient | None,
     *,
@@ -346,7 +387,9 @@ def append_event(
 def run_preflight(args: argparse.Namespace) -> dict[str, Any]:
     payload = build_bracket_payload(args)
     validate_bracket_payload(payload)
-    base_url = (args.alpaca_base_url or os.environ.get("APCA_API_BASE_URL") or DEFAULT_ALPACA_BASE_URL).rstrip("/")
+    base_url = normalize_alpaca_base_url(
+        args.alpaca_base_url or os.environ.get("APCA_API_BASE_URL") or DEFAULT_ALPACA_BASE_URL
+    )
     if args.submit_smoke:
         assert_paper_base_url(base_url)
     report: dict[str, Any] = {
@@ -407,11 +450,13 @@ def run_preflight(args: argparse.Namespace) -> dict[str, Any]:
         final_status = alpaca_order_status(final_order)
         report["filledQty"] = order_filled_quantity(final_order)
         report["protectiveLegCount"] = max(protective_leg_count(reconciled_order), protective_leg_count(final_order))
-        open_orders = alpaca.list_open_orders(payload["symbol"])
-        smoke_open_orders = [
-            order for order in flatten_orders(open_orders) if order_belongs_to_smoke(order, payload, final_order or broker_order)
-        ]
-        position = alpaca.get_open_position(payload["symbol"])
+        open_orders, smoke_open_orders, position = wait_for_smoke_exposure_clear(
+            alpaca,
+            payload,
+            final_order or broker_order,
+            timeout_seconds=args.cancel_reconcile_timeout_seconds,
+            poll_seconds=args.cancel_reconcile_poll_seconds,
+        )
         report["openOrdersAfterCancel"] = len(open_orders)
         report["smokeOpenOrdersAfterCancel"] = len(smoke_open_orders)
         report["positionAfterCancel"] = position
@@ -490,13 +535,13 @@ def run_preflight(args: argparse.Namespace) -> dict[str, Any]:
                     protective_leg_count(reconciled_after_error),
                     protective_leg_count(final_order),
                 )
-                open_orders = alpaca.list_open_orders(payload["symbol"])
-                smoke_open_orders = [
-                    order
-                    for order in flatten_orders(open_orders)
-                    if order_belongs_to_smoke(order, payload, final_order or reconciled_after_error)
-                ]
-                position = alpaca.get_open_position(payload["symbol"])
+                open_orders, smoke_open_orders, position = wait_for_smoke_exposure_clear(
+                    alpaca,
+                    payload,
+                    final_order or reconciled_after_error,
+                    timeout_seconds=args.cancel_reconcile_timeout_seconds,
+                    poll_seconds=args.cancel_reconcile_poll_seconds,
+                )
                 report["openOrdersAfterCancel"] = len(open_orders)
                 report["smokeOpenOrdersAfterCancel"] = len(smoke_open_orders)
                 report["positionAfterCancel"] = position
