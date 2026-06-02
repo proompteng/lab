@@ -98,6 +98,63 @@ describe('getAutotraderRuntimeAlerts', () => {
     )
   })
 
+  test('does not bury guard-finalized sessions under stale zero-exposure risk alerts', () => {
+    const base = detailFor()
+    const detail = detailFor({
+      session: {
+        ...base.session,
+        finalizedAt: '2026-06-01T20:00:54.011Z',
+        terminalReason: 'market_closed',
+        summary: {
+          guard: 'autotrader-session-guard',
+          reason: 'market close reached after original AgentRun job completed early',
+          finalOpenOrders: 0,
+          finalPositions: 0,
+        },
+      },
+      orders: [
+        {
+          sessionId: 'session-1',
+          ticketId: null,
+          clientOrderId: 'atr-20260601-stale-SPY-01',
+          brokerOrderId: null,
+          symbol: 'SPY',
+          instrument: 'etf',
+          side: 'buy',
+          quantity: '1',
+          orderType: 'limit',
+          orderClass: null,
+          limitPrice: '500',
+          stopPrice: null,
+          takeProfitLimitPrice: null,
+          stopLossStopPrice: null,
+          stopLossLimitPrice: null,
+          status: 'submitted',
+          rejectReason: null,
+          brokerPayload: {},
+          updatedAt: '2026-06-01T15:59:20Z',
+        },
+      ],
+      positionSnapshots: [
+        {
+          id: 'pos-1',
+          sessionId: 'session-1',
+          symbol: 'SPY',
+          quantity: '1',
+          marketValue: '500',
+          averageEntryPrice: '500',
+          unrealizedPnl: '0',
+          capturedAt: '2026-06-01T15:59:30Z',
+          brokerPayload: {},
+        },
+      ],
+    })
+
+    expect(getAutotraderRuntimeAlerts(detail, new Date('2026-06-01T21:00:00Z')).map((alert) => alert.key)).toEqual([
+      'market-session-ended-early',
+    ])
+  })
+
   test('flags market sessions finalized before regular close', () => {
     const base = detailFor()
     const detail = detailFor({
@@ -124,6 +181,38 @@ describe('getAutotraderRuntimeAlerts', () => {
     })
 
     expect(getAutotraderRuntimeAlerts(detail, new Date('2026-05-29T21:00:00Z'))).toEqual([])
+  })
+
+  test('treats replaced orders as terminal for reconciliation alerts', () => {
+    const detail = detailFor({
+      orders: [
+        {
+          sessionId: 'session-1',
+          ticketId: null,
+          clientOrderId: 'atr-20260529-test-1-NVDA-01',
+          brokerOrderId: null,
+          symbol: 'NVDA',
+          instrument: 'stock',
+          side: 'buy',
+          quantity: '1',
+          orderType: 'limit',
+          orderClass: null,
+          limitPrice: '100',
+          stopPrice: null,
+          takeProfitLimitPrice: null,
+          stopLossStopPrice: null,
+          stopLossLimitPrice: null,
+          status: 'replaced',
+          rejectReason: null,
+          brokerPayload: {},
+          updatedAt: '2026-05-29T13:59:20Z',
+        },
+      ],
+    })
+
+    expect(getAutotraderRuntimeAlerts(detail, now).map((alert) => alert.key)).not.toContain(
+      'unreconciled-order:atr-20260529-test-1-NVDA-01',
+    )
   })
 
   test('flags nonterminal orders older than 30 seconds', () => {
