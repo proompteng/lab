@@ -2447,7 +2447,20 @@ class SimpleTradingPipeline(TradingPipeline):
     def _ensure_decision_price(
         self, decision: StrategyDecision, signal_price: Any
     ) -> tuple[StrategyDecision, Optional[MarketSnapshot]]:
+        requires_executable_quote = (
+            self._paper_route_decision_requires_executable_quote(decision)
+        )
         if signal_price is not None and "price_snapshot" in decision.params:
+            if (
+                not requires_executable_quote
+                or self._decision_has_executable_quote_payload(decision)
+            ):
+                return decision, None
+        if (
+            signal_price is not None
+            and requires_executable_quote
+            and self._decision_has_executable_quote_payload(decision)
+        ):
             return decision, None
         snapshot = self.price_fetcher.fetch_market_snapshot(
             SignalEnvelope(
@@ -2474,6 +2487,16 @@ class SimpleTradingPipeline(TradingPipeline):
         if snapshot.spread is not None:
             updated_params.setdefault("imbalance_spread", snapshot.spread)
         return decision.model_copy(update={"params": updated_params}), snapshot
+
+    @staticmethod
+    def _decision_has_executable_quote_payload(decision: StrategyDecision) -> bool:
+        params = decision.params
+        if _executable_bid_ask_present(params):
+            return True
+        price_snapshot = params.get("price_snapshot")
+        if isinstance(price_snapshot, Mapping):
+            return _executable_bid_ask_present(cast(Mapping[str, Any], price_snapshot))
+        return False
 
     @staticmethod
     def _paper_route_price_snapshot_payload(
@@ -5097,6 +5120,20 @@ def _first_decimal(*values: Decimal | None) -> Decimal | None:
         if value is not None:
             return value
     return None
+
+
+def _executable_bid_ask_present(payload: Mapping[str, Any]) -> bool:
+    bid = _first_decimal(
+        _optional_decimal(payload.get("imbalance_bid_px")),
+        _optional_decimal(payload.get("bid")),
+    )
+    ask = _first_decimal(
+        _optional_decimal(payload.get("imbalance_ask_px")),
+        _optional_decimal(payload.get("ask")),
+    )
+    if bid is None or ask is None:
+        return False
+    return bid > 0 and ask >= bid
 
 
 def _min_optional_decimal(*values: Decimal | None) -> Decimal | None:
