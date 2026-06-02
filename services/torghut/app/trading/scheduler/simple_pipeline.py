@@ -118,6 +118,9 @@ _PAPER_ROUTE_TARGET_ACCOUNT_AUDIT_UNAVAILABLE_BLOCKER = (
 _BOUNDED_SIM_COLLECTION_ALLOWED_HEALTH_GATE_BLOCKERS = frozenset(
     {"evidence_continuity_not_ok"}
 )
+_BOUNDED_SIM_COLLECTION_SOURCE_AUTHORIZED_SUPERSEDED_BLOCKERS = frozenset(
+    {"paper_probation_prerequisites_not_satisfied_for_bounded_collection"}
+)
 _BOUNDED_SIM_COLLECTION_LINEAGE_KEYS = (
     "account_label",
     "source_account_label",
@@ -147,6 +150,12 @@ _BOUNDED_SIM_COLLECTION_RUNTIME_ACCOUNT_ALIAS_FIELDS = (
     "paper_account_label",
     "paper_route_runtime_account_label",
     "source_account_label",
+)
+_BOUNDED_SIM_COLLECTION_SOURCE_AUTHORIZATION_SCOPES = frozenset(
+    {
+        "bounded_paper_route_source_decision_collection_only",
+        "source_window_evidence_collection_only",
+    }
 )
 
 
@@ -242,6 +251,28 @@ def _target_lineage_strategy_names(target: Mapping[str, Any]) -> list[str]:
     return names
 
 
+def _target_has_bounded_source_collection_authorization(
+    target: Mapping[str, Any],
+) -> bool:
+    scope = _safe_text(target.get("source_collection_authorization_scope"))
+    return (
+        _target_truthy(target.get("source_collection_authorized"))
+        and _safe_text(target.get("source_kind")) == _BOUNDED_SIM_COLLECTION_SOURCE_KIND
+        and _safe_text(target.get("account_label"))
+        == _BOUNDED_SIM_COLLECTION_ACCOUNT_LABEL
+        and scope in _BOUNDED_SIM_COLLECTION_SOURCE_AUTHORIZATION_SCOPES
+    )
+
+
+def _target_bounded_collection_authorized(target: Mapping[str, Any]) -> bool:
+    return (
+        _target_truthy(target.get("bounded_evidence_collection_authorized"))
+        or _target_truthy(target.get("bounded_live_paper_collection_authorized"))
+        or _target_truthy(target.get("canary_collection_authorized"))
+        or _target_has_bounded_source_collection_authorization(target)
+    )
+
+
 def _bounded_sim_collection_blockers(
     target: Mapping[str, Any],
     *,
@@ -278,11 +309,7 @@ def _bounded_sim_collection_blockers(
         blockers.append("bounded_sim_collection_runtime_strategy_missing")
     if _safe_text(target.get("source_manifest_ref")) is None:
         blockers.append("bounded_sim_collection_source_manifest_missing")
-    if not (
-        _target_truthy(target.get("bounded_evidence_collection_authorized"))
-        or _target_truthy(target.get("bounded_live_paper_collection_authorized"))
-        or _target_truthy(target.get("canary_collection_authorized"))
-    ):
+    if not _target_bounded_collection_authorized(target):
         blockers.append("bounded_sim_collection_authorization_missing")
     if not _target_truthy(target.get("evidence_collection_ok")):
         blockers.append("bounded_sim_collection_evidence_collection_not_ready")
@@ -375,6 +402,18 @@ def _bounded_sim_collection_target_with_runtime_account_audit(
     normalized = dict(target)
     if positions is None:
         return normalized
+
+    if _target_has_bounded_source_collection_authorization(normalized):
+        for key in (
+            "bounded_evidence_collection_blockers",
+            "candidate_blockers",
+            "runtime_ledger_target_metadata_blockers",
+        ):
+            if key in normalized:
+                normalized[key] = _without_lineage_text_values(
+                    normalized.get(key),
+                    set(_BOUNDED_SIM_COLLECTION_SOURCE_AUTHORIZED_SUPERSEDED_BLOCKERS),
+                )
 
     unavailable = {_PAPER_ROUTE_TARGET_ACCOUNT_AUDIT_UNAVAILABLE_BLOCKER}
     normalized["paper_route_target_account_audit_state"] = {
@@ -3976,17 +4015,16 @@ class SimpleTradingPipeline(TradingPipeline):
         max_notional: Decimal,
     ) -> dict[str, Any]:
         lineage = _target_plan_lineage([dict(target)], symbol)
-        bounded_collection_authorized = (
-            _target_truthy(target.get("bounded_evidence_collection_authorized"))
-            or _target_truthy(target.get("bounded_live_paper_collection_authorized"))
-            or _target_truthy(target.get("canary_collection_authorized"))
+        bounded_collection_authorized = _target_bounded_collection_authorized(target)
+        target_runtime_strategy_name = (
+            _safe_text(target.get("runtime_strategy_name")) or strategy.name
         )
         metadata: dict[str, Any] = {
             "mode": "paper_route_target_plan_source_decision",
             "source": "external_target_plan_url",
             "symbol": symbol,
             "strategy_name": strategy.name,
-            "runtime_strategy_name": _safe_text(target.get("runtime_strategy_name")),
+            "runtime_strategy_name": target_runtime_strategy_name,
             "strategy_lookup_names": _target_lookup_names(target),
             "paper_route_probe_symbols": sorted(_target_symbols(target)),
             "paper_route_probe_window_start": window_start.isoformat(),
@@ -4013,9 +4051,7 @@ class SimpleTradingPipeline(TradingPipeline):
                 "account_label": _safe_text(target.get("account_label")),
                 "source_account_label": _safe_text(target.get("source_account_label")),
                 "observed_stage": _safe_text(target.get("observed_stage")) or "paper",
-                "runtime_strategy_name": _safe_text(
-                    target.get("runtime_strategy_name")
-                ),
+                "runtime_strategy_name": target_runtime_strategy_name,
                 "source_kind": _safe_text(target.get("source_kind")),
             },
             "source_manifest_ref": _safe_text(target.get("source_manifest_ref")),
@@ -4417,6 +4453,23 @@ class SimpleTradingPipeline(TradingPipeline):
                     "simple_lane": simple_lane,
                     "source_decision_mode": source_decision_mode,
                     "profit_proof_eligible": profit_proof_eligible,
+                    "hypothesis_id": metadata.get("hypothesis_id"),
+                    "candidate_id": metadata.get("candidate_id"),
+                    "strategy_name": metadata.get("strategy_name"),
+                    "runtime_strategy_name": metadata.get("runtime_strategy_name"),
+                    "account_label": metadata.get("account_label"),
+                    "source_account_label": metadata.get("source_account_label"),
+                    "source_kind": metadata.get("source_kind"),
+                    "source_manifest_ref": metadata.get("source_manifest_ref"),
+                    "paper_route_target_plan_source": metadata.get(
+                        "paper_route_target_plan_source"
+                    ),
+                    "paper_route_probe_scope_authority": metadata.get(
+                        "paper_route_probe_scope_authority"
+                    ),
+                    "paper_route_probe_symbols": metadata.get(
+                        "paper_route_probe_symbols"
+                    ),
                     "observed_stage": _safe_text(target.get("observed_stage"))
                     or "paper",
                     "bounded_collection_stage": "bounded_paper_collection",
