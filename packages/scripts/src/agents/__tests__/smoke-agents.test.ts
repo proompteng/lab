@@ -683,6 +683,10 @@ describe('autonomous trader provider', () => {
     expect(resources).toContain('autonomous-trader-green-implspec.yaml')
     expect(resources).toContain('autonomous-trader-green-schedule.yaml')
     expect(resources).toContain('autonomous-trader-green-agentrun-template.yaml')
+    expect(resources).toContain('autonomous-trader-readback-agentprovider.yaml')
+    expect(resources).toContain('autonomous-trader-readback-agent.yaml')
+    expect(resources).toContain('autonomous-trader-readback-secretbinding.yaml')
+    expect(resources).toContain('autonomous-trader-readback-implspec.yaml')
     expect(resources).toContain('autonomous-trader-stale-session-reconcile-20260602.yaml')
     expect(
       existsSync(
@@ -780,29 +784,121 @@ describe('autonomous trader provider', () => {
   })
 
   it('schedules a post-close scorecard readback proof without broker mutations', () => {
+    const kustomization = readYamlObjects('argocd/applications/synthesis/agents-domain/kustomization.yaml')[0]
+    const resources = objectAt(kustomization, 'resources') as string[] | undefined
+    const deploymentColorKey = 'autonomous-trader.proompteng.ai/deployment-color'
+    const deploymentRoleKey = 'autonomous-trader.proompteng.ai/deployment-role'
     const schedule = readYamlObjects(
       'argocd/applications/synthesis/agents-domain/autonomous-trader-scorecard-readback-schedule.yaml',
     ).find((manifest) => objectAt(manifest, 'kind') === 'Schedule')
     const template = readYamlObjects(
       'argocd/applications/synthesis/agents-domain/autonomous-trader-scorecard-readback-template.yaml',
     ).find((manifest) => objectAt(manifest, 'kind') === 'AgentRun')
+    const provider = readYamlObjects(
+      'argocd/applications/synthesis/agents-domain/autonomous-trader-readback-agentprovider.yaml',
+    ).find((manifest) => objectAt(manifest, 'kind') === 'AgentProvider')
+    const agent = readYamlObjects(
+      'argocd/applications/synthesis/agents-domain/autonomous-trader-readback-agent.yaml',
+    ).find((manifest) => objectAt(manifest, 'kind') === 'Agent')
+    const implementationSpec = readYamlObjects(
+      'argocd/applications/synthesis/agents-domain/autonomous-trader-readback-implspec.yaml',
+    ).find((manifest) => objectAt(manifest, 'kind') === 'ImplementationSpec')
+    const secretBinding = readYamlObjects(
+      'argocd/applications/synthesis/agents-domain/autonomous-trader-readback-secretbinding.yaml',
+    ).find((manifest) => objectAt(manifest, 'kind') === 'SecretBinding')
+    const scheduleMetadata = objectAt(schedule, 'metadata')
+    const templateMetadata = objectAt(template, 'metadata')
     const scheduleSpec = objectAt(schedule, 'spec')
     const templateSpec = objectAt(template, 'spec')
+    const providerSpec = objectAt(provider, 'spec')
+    const providerMetadata = objectAt(provider, 'metadata')
+    const agentSpec = objectAt(agent, 'spec')
+    const agentMetadata = objectAt(agent, 'metadata')
+    const implementationMetadata = objectAt(implementationSpec, 'metadata')
+    const adapter = objectAt(providerSpec, 'adapter')
+    const execAdapter = objectAt(adapter, 'exec')
+    const envTemplate = objectAt(providerSpec, 'envTemplate')
+    const secretEnv = objectAt(providerSpec, 'secretEnv') as Record<string, unknown>[] | undefined
+    const inputFiles = objectAt(providerSpec, 'inputFiles') as Record<string, unknown>[] | undefined
+    const outputArtifacts = objectAt(providerSpec, 'outputArtifacts') as Record<string, unknown>[] | undefined
+    const secretBindingSpec = objectAt(secretBinding, 'spec')
+    const secretBindingSecrets = objectAt(secretBindingSpec, 'allowedSecrets') as unknown[]
+    const secretBindingSubjects = objectAt(secretBindingSpec, 'subjects') as Record<string, unknown>[]
+    const readbackScript = (inputFiles ?? []).find(
+      (inputFile) => objectAt(inputFile, 'path') === '/root/autonomous-trader-scorecard-readback.sh',
+    )
+    const readbackScriptContent = String(objectAt(readbackScript, 'content') ?? '')
+    const outputArtifactNames = (outputArtifacts ?? []).map((artifact) => objectAt(artifact, 'name'))
     const parameters = objectAt(templateSpec, 'parameters')
     const secrets = objectAt(templateSpec, 'secrets') as unknown[]
+    const autotraderSecretNames = (secretEnv ?? [])
+      .filter(
+        (entry) =>
+          String(objectAt(entry, 'name') ?? '').includes('ALPACA') ||
+          String(objectAt(entry, 'name') ?? '').includes('APCA'),
+      )
+      .map((entry) => objectAt(entry, 'secretName'))
 
+    expect(resources).toContain('autonomous-trader-readback-agentprovider.yaml')
+    expect(resources).toContain('autonomous-trader-readback-agent.yaml')
+    expect(resources).toContain('autonomous-trader-readback-secretbinding.yaml')
+    expect(resources).toContain('autonomous-trader-readback-implspec.yaml')
     expect(objectAt(scheduleSpec, 'cron')).toBe('20 16 * * 1-5')
     expect(objectAt(scheduleSpec, 'timezone')).toBe('America/New_York')
     expect(objectAt(objectAt(scheduleSpec, 'targetRef'), 'name')).toBe('autonomous-trader-scorecard-readback-template')
+    for (const resource of [
+      scheduleMetadata,
+      templateMetadata,
+      providerMetadata,
+      agentMetadata,
+      implementationMetadata,
+    ]) {
+      expect(objectAt(objectAt(resource, 'annotations'), deploymentColorKey)).toBe('blue')
+      expect(objectAt(objectAt(resource, 'labels'), deploymentColorKey)).toBe('blue')
+      expect(objectAt(objectAt(resource, 'annotations'), deploymentRoleKey)).toBe('scorecard-readback')
+      expect(objectAt(objectAt(resource, 'labels'), deploymentRoleKey)).toBe('scorecard-readback')
+    }
+    expect(objectAt(objectAt(templateSpec, 'agentRef'), 'name')).toBe('autonomous-trader-readback-agent')
+    expect(objectAt(objectAt(templateSpec, 'implementationSpecRef'), 'name')).toBe('autonomous-trader-readback-v1')
+    expect(objectAt(objectAt(agentSpec, 'providerRef'), 'name')).toBe('autonomous-trader-readback-runner')
+    expect(secretBindingSubjects).toEqual([{ kind: 'Agent', name: 'autonomous-trader-readback-agent' }])
+    expect(secretBindingSecrets).toEqual(['autonomous-trader-alpaca-mcp', 'agents-artifacts', 'synthesis-env'])
+    expect(objectAt(providerSpec, 'binary')).toBe('/usr/local/bin/agent-runner')
+    expect(objectAt(adapter, 'type')).toBe('exec')
+    expect(objectAt(execAdapter, 'binary')).toBe('/usr/bin/env')
+    expect(objectAt(execAdapter, 'argsTemplate')).toEqual(['bash', '/root/autonomous-trader-scorecard-readback.sh'])
     expect(objectAt(parameters, 'mode')).toBe('scorecard-readback')
     expect(objectAt(parameters, 'synthesisSessionMode')).toBe('scorecard_readback')
     expect(objectAt(parameters, 'brokerMutationEnabled')).toBe('false')
     expect(objectAt(parameters, 'sessionReconcileEnabled')).toBe('true')
+    expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_MODE')).toBe('{{parameters.mode}}')
+    expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED')).toBe(
+      '{{parameters.brokerMutationEnabled}}',
+    )
+    expect(objectAt(envTemplate, 'SYNTHESIS_BASE_URL')).toBe('http://synthesis.synthesis.svc.cluster.local:3000')
+    expect(autotraderSecretNames).toEqual([
+      'autonomous-trader-alpaca-mcp',
+      'autonomous-trader-alpaca-mcp',
+      'autonomous-trader-alpaca-mcp',
+      'autonomous-trader-alpaca-mcp',
+      'autonomous-trader-alpaca-mcp',
+      'autonomous-trader-alpaca-mcp',
+    ])
+    expect(readbackScriptContent).toContain('scorecard_readback.py')
+    expect(readbackScriptContent).toContain('trader_mode="$(printf')
+    expect(readbackScriptContent).toContain('exit 64')
+    expect(readbackScriptContent).toContain('readback_args+=(--finalize-stale-flat)')
+    expect(readbackScriptContent).not.toContain('git ')
+    expect(readbackScriptContent).not.toContain('stock_analysis')
+    expect(outputArtifactNames).toEqual(['autonomous-trader-report', 'runner-log', 'runner-status'])
     const goal = objectAt(templateSpec, 'goal') as Record<string, unknown>
     expect(Object.hasOwn(goal, 'tokenBudget')).toBe(false)
     expect(secrets).toContain('synthesis-env')
     expect(secrets).toContain('autonomous-trader-alpaca-mcp')
+    expect(secrets).toContain('agents-artifacts')
     expect(secrets).not.toContain('alpaca-mcp')
+    expect(secrets).not.toContain('codex-auth')
+    expect(secrets).not.toContain('github-token')
   })
 
   it('runs a one-off stale session reconcile through the read-only autotrader lane', () => {

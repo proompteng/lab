@@ -1,0 +1,110 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentProvider
+metadata:
+  name: autonomous-trader-readback-runner
+  namespace: synthesis
+  annotations:
+    autonomous-trader.proompteng.ai/deployment-color: blue
+    autonomous-trader.proompteng.ai/deployment-role: scorecard-readback
+  labels:
+    app.kubernetes.io/part-of: synthesis
+    app.kubernetes.io/component: autonomous-trader
+    autonomous-trader.proompteng.ai/deployment-color: blue
+    autonomous-trader.proompteng.ai/deployment-role: scorecard-readback
+spec:
+  binary: /usr/local/bin/agent-runner
+  adapter:
+    type: exec
+    exec:
+      binary: /usr/bin/env
+      argsTemplate:
+        - bash
+        - /root/autonomous-trader-scorecard-readback.sh
+  argsTemplate: []
+  secretEnv:
+    - name: APCA_API_KEY_ID
+      secretName: autonomous-trader-alpaca-mcp
+      key: APCA_API_KEY_ID
+    - name: APCA_API_SECRET_KEY
+      secretName: autonomous-trader-alpaca-mcp
+      key: APCA_API_SECRET_KEY
+    - name: APCA_API_BASE_URL
+      secretName: autonomous-trader-alpaca-mcp
+      key: APCA_API_BASE_URL
+    - name: ALPACA_API_KEY
+      secretName: autonomous-trader-alpaca-mcp
+      key: ALPACA_API_KEY
+    - name: ALPACA_API_KEY_ID
+      secretName: autonomous-trader-alpaca-mcp
+      key: ALPACA_API_KEY_ID
+    - name: ALPACA_SECRET_KEY
+      secretName: autonomous-trader-alpaca-mcp
+      key: ALPACA_SECRET_KEY
+    - name: AGENTS_ARTIFACTS_ACCESS_KEY_ID
+      secretName: agents-artifacts
+      key: AWS_ACCESS_KEY_ID
+    - name: AGENTS_ARTIFACTS_SECRET_ACCESS_KEY
+      secretName: agents-artifacts
+      key: AWS_SECRET_ACCESS_KEY
+    - name: SYNTHESIS_API_TOKEN
+      secretName: synthesis-env
+      key: SYNTHESIS_API_TOKEN
+  envTemplate:
+    AGENT_RUN_NAME: "{{agentRun.name}}"
+    AGENT_RUN_NAMESPACE: "{{agentRun.namespace}}"
+    AGENTS_ARTIFACTS_BUCKET: agents-artifacts
+    AGENTS_ARTIFACTS_ENDPOINT: http://rook-ceph-rgw-objectstore.rook-ceph.svc:80
+    AGENTS_ARTIFACTS_SECURE: "false"
+    ALPACA_PAPER_TRADE: "true"
+    AUTONOMOUS_TRADER_ACCOUNT_TYPE: "{{parameters.accountType}}"
+    AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED: "{{parameters.brokerMutationEnabled}}"
+    AUTONOMOUS_TRADER_MODE: "{{parameters.mode}}"
+    AUTONOMOUS_TRADER_SESSION_RECONCILE_ENABLED: "{{parameters.sessionReconcileEnabled}}"
+    AUTONOMOUS_TRADER_SYNTHESIS_SESSION_MODE: "{{parameters.synthesisSessionMode}}"
+    AUTONOMOUS_TRADER_TARGET_EQUITY_USD: "{{parameters.targetEquityUsd}}"
+    AUTONOMOUS_TRADER_WORK_DIR: /tmp/autonomous-trader-readback
+    HOME: /root
+    PYTHON_BIN: python3
+    SYNTHESIS_API_TOKEN_FILE: /var/run/synthesis/SYNTHESIS_API_TOKEN
+    SYNTHESIS_BASE_URL: http://synthesis.synthesis.svc.cluster.local:3000
+  inputFiles:
+    - path: /root/autonomous-trader-scorecard-readback.sh
+      content: |-
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        report_path="/workspace/.agentrun/autonomous-trader/report.md"
+        work_dir="${AUTONOMOUS_TRADER_WORK_DIR:-/tmp/autonomous-trader-readback}"
+        python_bin="${PYTHON_BIN:-python3}"
+
+        mkdir -p "${work_dir}"
+        mkdir -p "$(dirname "${report_path}")"
+        printf '# Autonomous Trader Report\n\nstatus: scorecard_readback_bootstrapping\n' > "${report_path}"
+
+        trader_mode="$(printf '%s' "${AUTONOMOUS_TRADER_MODE:-}" | tr '[:upper:]' '[:lower:]' | tr '_' '-')"
+        if [ "${trader_mode}" != "scorecard-readback" ]; then
+          printf 'autonomous-trader readback runner only accepts scorecard-readback mode, got %s\n' "${trader_mode}" >&2
+          exit 64
+        fi
+
+        reconcile_enabled="$(printf '%s' "${AUTONOMOUS_TRADER_SESSION_RECONCILE_ENABLED:-false}" | tr '[:upper:]' '[:lower:]')"
+        readback_args=(
+          --report-path "${report_path}"
+          --scorecard-limit 20
+          --agent-run-name "${AGENT_RUN_NAME:-autonomous-trader-readback}"
+          --session-mode "${AUTONOMOUS_TRADER_SYNTHESIS_SESSION_MODE:-scorecard_readback}"
+          --goal-equity "${AUTONOMOUS_TRADER_TARGET_EQUITY_USD:-500000}"
+        )
+        if [ "${reconcile_enabled}" = "true" ] || [ "${reconcile_enabled}" = "1" ] || [ "${reconcile_enabled}" = "yes" ]; then
+          readback_args+=(--finalize-stale-flat)
+        fi
+
+        exec "${python_bin}" /workspace/lab/scripts/autotrader/scorecard_readback.py "${readback_args[@]}"
+  outputArtifacts:
+    - name: autonomous-trader-report
+      path: /workspace/.agentrun/autonomous-trader/report.md
+      key: synthesis/autonomous-trader/{{ agentRun.name }}/report.md
+    - name: runner-log
+      path: /workspace/.agent/runner.log
+    - name: runner-status
+      path: /workspace/.agent/status.json
