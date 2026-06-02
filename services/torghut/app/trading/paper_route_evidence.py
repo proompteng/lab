@@ -8597,8 +8597,12 @@ def build_paper_route_evidence_audit(
         )
         for target in _as_mapping_items(next_targets.get("targets"))
     ]
+    raw_next_targets: Mapping[str, Any] = next_targets
+    raw_next_target_audits: list[dict[str, object]] = next_target_audits
     runtime_window_import_plan = next_targets
     runtime_window_import_target_audits = next_target_audits
+    source_targets: Mapping[str, Any] = source_collection_import_plan
+    observed_strategy_source_targets: Mapping[str, Any] = {}
     next_clean_after_discard_targets: Mapping[str, Any] = {}
     latest_closed_runtime_window_import_selection = (
         _runtime_window_import_candidate_selection(
@@ -8671,6 +8675,31 @@ def build_paper_route_evidence_audit(
                     runtime_window_import_plan.get("targets")
                 )
             ]
+    observed_strategy_source_targets = _observed_strategy_source_collection_import_plan(
+        live_submission_gate=live_submission_gate,
+        candidate_plans=(
+            runtime_window_import_plan,
+            latest_closed_targets,
+            raw_next_targets,
+        ),
+        target_limit=effective_target_limit,
+    )
+    if _as_mapping_items(observed_strategy_source_targets.get("targets")):
+        source_targets = observed_strategy_source_targets
+        runtime_window_import_plan = observed_strategy_source_targets
+        runtime_window_import_target_audits = [
+            _target_audit_fail_closed(
+                session,
+                raw_target=target,
+                probe=probe,
+                generated_at=resolved_generated_at,
+                lookback_hours=effective_lookback_hours,
+                error_source="paper_route_observed_strategy_source_target_audit",
+            )
+            for target in _as_mapping_items(runtime_window_import_plan.get("targets"))
+        ]
+        next_targets = observed_strategy_source_targets
+        next_target_audits = runtime_window_import_target_audits
     runtime_window_import_audit = _runtime_window_import_audit(
         next_targets=runtime_window_import_plan,
         target_audits=target_audits,
@@ -8712,10 +8741,10 @@ def build_paper_route_evidence_audit(
     hpairs_zero_activity_diagnostics = _hpairs_zero_activity_diagnostics(
         generated_at=resolved_generated_at,
         probe=probe,
-        next_targets=next_targets,
+        next_targets=raw_next_targets,
         runtime_window_import_audit=runtime_window_import_audit,
         target_audits=target_audits,
-        runtime_window_import_target_audits=runtime_window_import_target_audits,
+        runtime_window_import_target_audits=raw_next_target_audits,
     )
     return {
         "schema_version": PAPER_ROUTE_EVIDENCE_SCHEMA_VERSION,
@@ -8773,8 +8802,15 @@ def build_paper_route_evidence_audit(
         },
         "paper_route_probe": probe,
         "next_paper_route_runtime_window_targets": next_targets,
+        "raw_next_paper_route_runtime_window_targets": (
+            raw_next_targets if raw_next_targets is not next_targets else {}
+        ),
         "latest_closed_paper_route_runtime_window_targets": latest_closed_targets,
         "runtime_window_import_plan": runtime_window_import_plan,
+        "source_runtime_window_import_plan": source_targets,
+        "observed_strategy_source_runtime_window_import_plan": (
+            observed_strategy_source_targets
+        ),
         "latest_closed_runtime_window_import_selection": (
             latest_closed_runtime_window_import_selection
         ),
@@ -8782,11 +8818,34 @@ def build_paper_route_evidence_audit(
             next_clean_after_discard_targets
         ),
         "next_runtime_window_target_audits": next_target_audits,
+        "raw_next_runtime_window_target_audits": (
+            raw_next_target_audits
+            if raw_next_target_audits is not next_target_audits
+            else []
+        ),
         "runtime_window_import_target_audits": runtime_window_import_target_audits,
         "runtime_window_import_audit": runtime_window_import_audit,
         "runtime_ledger_proof_packet_handoff": proof_packet_handoff,
         "summary": {
             "target_count": len(targets),
+            "source_runtime_window_target_count": _safe_int(
+                source_targets.get("target_count")
+            ),
+            "observed_strategy_source_runtime_window_target_count": _safe_int(
+                observed_strategy_source_targets.get("target_count")
+            ),
+            "raw_next_runtime_window_target_count": _safe_int(
+                raw_next_targets.get("target_count")
+            ),
+            "selected_next_runtime_window_target_count": _safe_int(
+                next_targets.get("target_count")
+            ),
+            "selected_next_runtime_window_plan_source": _safe_text(
+                next_targets.get("source")
+            ),
+            "runtime_window_import_plan_source": _safe_text(
+                runtime_window_import_plan.get("source")
+            ),
             "target_with_source_activity_count": sum(
                 int(not bool(_as_mapping(audit.get("source_activity")).get("missing")))
                 for audit in target_audits
