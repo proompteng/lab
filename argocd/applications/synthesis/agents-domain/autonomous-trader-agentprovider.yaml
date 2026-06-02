@@ -159,24 +159,9 @@ spec:
         mkdir -p "${artifact_dir}"
         bootstrap_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-        ensure_artifact_file() {
-          local name="$1"
-          local content="${2:-}"
-          if [ ! -e "${artifact_dir}/${name}" ]; then
-            printf '%s' "${content}" > "${artifact_dir}/${name}"
-          fi
-        }
-
-        ensure_artifact_file "decision-ledger.jsonl" ""
-        ensure_artifact_file "visibility-events.jsonl" ""
-        ensure_artifact_file "synthesis-posts.jsonl" ""
-        ensure_artifact_file "protective-orders.jsonl" ""
-        ensure_artifact_file "preflight.json" $'{}\n'
-        ensure_artifact_file "protective-preflight.json" $'{}\n'
-        ensure_artifact_file "live-scan-input.json" $'{}\n'
-        ensure_artifact_file "current-status.json" $'{}\n'
-        ensure_artifact_file "trade-ticket.json" $'{}\n'
-        ensure_artifact_file "report.md" $'# Autonomous Trader Report\n\nstatus: bootstrapping\n'
+        if [ ! -e "${artifact_dir}/report.md" ]; then
+          printf '# Autonomous Trader Report\n\nstatus: bootstrapping\n' > "${artifact_dir}/report.md"
+        fi
 
         git_auth=()
         git_token="${GITHUB_TOKEN:-}"
@@ -591,39 +576,12 @@ spec:
     - name: autonomous-trader-report
       path: /workspace/.agentrun/autonomous-trader/report.md
       key: synthesis/autonomous-trader/{{ agentRun.name }}/report.md
-    - name: autonomous-trader-ledger
-      path: /workspace/.agentrun/autonomous-trader/decision-ledger.jsonl
-      key: synthesis/autonomous-trader/{{ agentRun.name }}/decision-ledger.jsonl
-    - name: autonomous-trader-preflight
-      path: /workspace/.agentrun/autonomous-trader/preflight.json
-      key: synthesis/autonomous-trader/{{ agentRun.name }}/preflight.json
     - name: autonomous-trader-analysis-bootstrap
       path: /workspace/.agentrun/autonomous-trader/analysis-bootstrap.json
       key: synthesis/autonomous-trader/{{ agentRun.name }}/analysis-bootstrap.json
     - name: autonomous-trader-analysis-context
       path: /workspace/.agentrun/autonomous-trader/analysis-context.json
       key: synthesis/autonomous-trader/{{ agentRun.name }}/analysis-context.json
-    - name: autonomous-trader-protective-preflight
-      path: /workspace/.agentrun/autonomous-trader/protective-preflight.json
-      key: synthesis/autonomous-trader/{{ agentRun.name }}/protective-preflight.json
-    - name: autonomous-trader-live-scan-input
-      path: /workspace/.agentrun/autonomous-trader/live-scan-input.json
-      key: synthesis/autonomous-trader/{{ agentRun.name }}/live-scan-input.json
-    - name: autonomous-trader-current-status
-      path: /workspace/.agentrun/autonomous-trader/current-status.json
-      key: synthesis/autonomous-trader/{{ agentRun.name }}/current-status.json
-    - name: autonomous-trader-visibility-events
-      path: /workspace/.agentrun/autonomous-trader/visibility-events.jsonl
-      key: synthesis/autonomous-trader/{{ agentRun.name }}/visibility-events.jsonl
-    - name: autonomous-trader-synthesis-posts
-      path: /workspace/.agentrun/autonomous-trader/synthesis-posts.jsonl
-      key: synthesis/autonomous-trader/{{ agentRun.name }}/synthesis-posts.jsonl
-    - name: autonomous-trader-trade-ticket
-      path: /workspace/.agentrun/autonomous-trader/trade-ticket.json
-      key: synthesis/autonomous-trader/{{ agentRun.name }}/trade-ticket.json
-    - name: autonomous-trader-protective-orders
-      path: /workspace/.agentrun/autonomous-trader/protective-orders.jsonl
-      key: synthesis/autonomous-trader/{{ agentRun.name }}/protective-orders.jsonl
     - name: runner-log
       path: /workspace/.agent/runner.log
     - name: runner-status
