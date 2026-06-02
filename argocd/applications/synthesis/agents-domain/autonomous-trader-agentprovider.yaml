@@ -45,22 +45,22 @@ spec:
   argsTemplate: []
   secretEnv:
     - name: APCA_API_KEY_ID
-      secretName: alpaca-mcp
+      secretName: autonomous-trader-alpaca-mcp
       key: APCA_API_KEY_ID
     - name: APCA_API_SECRET_KEY
-      secretName: alpaca-mcp
+      secretName: autonomous-trader-alpaca-mcp
       key: APCA_API_SECRET_KEY
     - name: APCA_API_BASE_URL
-      secretName: alpaca-mcp
+      secretName: autonomous-trader-alpaca-mcp
       key: APCA_API_BASE_URL
     - name: ALPACA_API_KEY
-      secretName: alpaca-mcp
+      secretName: autonomous-trader-alpaca-mcp
       key: ALPACA_API_KEY
     - name: ALPACA_API_KEY_ID
-      secretName: alpaca-mcp
+      secretName: autonomous-trader-alpaca-mcp
       key: ALPACA_API_KEY_ID
     - name: ALPACA_SECRET_KEY
-      secretName: alpaca-mcp
+      secretName: autonomous-trader-alpaca-mcp
       key: ALPACA_SECRET_KEY
     - name: AGENTS_ARTIFACTS_ACCESS_KEY_ID
       secretName: agents-artifacts
@@ -83,7 +83,7 @@ spec:
     ANALYSIS_REPO_URL: https://github.com/gregkonush/analysis.git
     ANALYSIS_REQUIRED_COMMIT: 56be940b69bf1a56578040eda9bf2e3699c5220e
     AUTONOMOUS_TRADER_ARTIFACT_DIR: /workspace/.agentrun/autonomous-trader
-    AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED: "false"
+    AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED: "true"
     AUTONOMOUS_TRADER_MODE: "{{parameters.mode}}"
     AUTONOMOUS_TRADER_SYNTHESIS_SESSION_MODE: "{{parameters.synthesisSessionMode}}"
     AUTONOMOUS_TRADER_TARGET_EQUITY_USD: "{{parameters.targetEquityUsd}}"
@@ -139,7 +139,7 @@ spec:
         command = "/usr/bin/python3"
         args = ["-u", "/root/alpaca-mcp-stdio-bridge.py"]
         startup_timeout_sec = 60.0
-        env = { FASTMCP_SHOW_SERVER_BANNER = "false", FASTMCP_LOG_LEVEL = "ERROR", AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED = "false" }
+        env = { FASTMCP_SHOW_SERVER_BANNER = "false", FASTMCP_LOG_LEVEL = "ERROR", AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED = "true" }
 
         [mcp_servers.synthesis]
         command = "node"
@@ -374,11 +374,11 @@ spec:
                         "message": (
                             "Alpaca broker mutation blocked: "
                             "AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED=false "
-                            "while the paper account is shared with Torghut proof collection"
+                            "because the autonomous trader broker mutation gate is disabled"
                         ),
                         "data": {
                             "toolName": tool_name,
-                            "reason": "blocked_shared_torghut_proof_account",
+                            "reason": "broker_mutation_gate_disabled",
                             "mode": os.environ.get("AUTONOMOUS_TRADER_MODE"),
                         },
                     },
