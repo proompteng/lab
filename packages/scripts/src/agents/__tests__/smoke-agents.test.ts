@@ -683,6 +683,7 @@ describe('autonomous trader provider', () => {
     expect(resources).toContain('autonomous-trader-green-implspec.yaml')
     expect(resources).toContain('autonomous-trader-green-schedule.yaml')
     expect(resources).toContain('autonomous-trader-green-agentrun-template.yaml')
+    expect(resources).toContain('autonomous-trader-stale-session-reconcile-20260602.yaml')
     expect(
       existsSync(
         resolve(process.cwd(), 'argocd/applications/synthesis/agents-domain/autonomous-trader-agentrun-template.yaml'),
@@ -802,6 +803,49 @@ describe('autonomous trader provider', () => {
     expect(secrets).toContain('synthesis-env')
     expect(secrets).toContain('autonomous-trader-alpaca-mcp')
     expect(secrets).not.toContain('alpaca-mcp')
+  })
+
+  it('runs a one-off stale session reconcile through the read-only autotrader lane', () => {
+    const kustomization = readYamlObjects('argocd/applications/synthesis/agents-domain/kustomization.yaml')[0]
+    const resources = objectAt(kustomization, 'resources') as string[] | undefined
+    const agentRun = readYamlObjects(
+      'argocd/applications/synthesis/agents-domain/autonomous-trader-stale-session-reconcile-20260602.yaml',
+    ).find((manifest) => objectAt(manifest, 'kind') === 'AgentRun')
+    const metadata = objectAt(agentRun, 'metadata')
+    const annotations = objectAt(metadata, 'annotations')
+    const labels = objectAt(metadata, 'labels')
+    const spec = objectAt(agentRun, 'spec')
+    const parameters = objectAt(spec, 'parameters')
+    const secrets = objectAt(spec, 'secrets') as unknown[]
+    const workload = objectAt(spec, 'workload')
+    const resourcesSpec = objectAt(workload, 'resources')
+
+    expect(resources).toContain('autonomous-trader-stale-session-reconcile-20260602.yaml')
+    expect(objectAt(metadata, 'name')).toBe('autonomous-trader-stale-reconcile-20260602')
+    expect(objectAt(metadata, 'namespace')).toBe('synthesis')
+    expect(objectAt(annotations, 'autonomous-trader.proompteng.ai/deployment-color')).toBe('blue')
+    expect(objectAt(labels, 'autonomous-trader.proompteng.ai/deployment-color')).toBe('blue')
+    expect(objectAt(annotations, 'autonomous-trader.proompteng.ai/deployment-role')).toBe('stale-session-reconcile')
+    expect(objectAt(labels, 'autonomous-trader.proompteng.ai/deployment-role')).toBe('stale-session-reconcile')
+    expect(objectAt(annotations, 'autonomous-trader.proompteng.ai/reconcile-for')).toBe(
+      'autonomous-trader-market-open-lxhgb',
+    )
+    expect(objectAt(annotations, 'autonomous-trader.proompteng.ai/reconcile-session')).toBe(
+      'c41d58a4-5e50-4d02-96d5-2a0458193c90',
+    )
+    expect(objectAt(objectAt(spec, 'agentRef'), 'name')).toBe('autonomous-trader-agent')
+    expect(objectAt(objectAt(spec, 'implementationSpecRef'), 'name')).toBe('autonomous-trader-v1')
+    expect(objectAt(objectAt(spec, 'vcsPolicy'), 'mode')).toBe('read-only')
+    expect(objectAt(parameters, 'mode')).toBe('scorecard-readback')
+    expect(objectAt(parameters, 'synthesisSessionMode')).toBe('scorecard_readback')
+    expect(objectAt(parameters, 'brokerMutationEnabled')).toBe('false')
+    expect(objectAt(parameters, 'sessionReconcileEnabled')).toBe('true')
+    expect(Object.hasOwn(spec as Record<string, unknown>, 'ttlSecondsAfterFinished')).toBe(false)
+    expect(secrets).toContain('autonomous-trader-alpaca-mcp')
+    expect(secrets).toContain('synthesis-env')
+    expect(secrets).not.toContain('alpaca-mcp')
+    expect(objectAt(objectAt(resourcesSpec, 'requests'), 'cpu')).toBe('2')
+    expect(objectAt(objectAt(resourcesSpec, 'limits'), 'memory')).toBe('16Gi')
   })
 
   it('preinstalls day-trading Python dependencies in the Codex runner image', () => {
