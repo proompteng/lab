@@ -39,6 +39,30 @@ from app.trading.tigerbeetle_ledger_model import (
 )
 from app.trading.tigerbeetle_reconcile import reconcile_tigerbeetle_transfers
 
+DEFAULT_SOURCES = (
+    SOURCE_TYPE_EXECUTION_ORDER_EVENT,
+    SOURCE_TYPE_EXECUTION,
+    SOURCE_TYPE_EXECUTION_TCA_METRIC,
+    SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+)
+SOURCE_ALIASES = {
+    "event": SOURCE_TYPE_EXECUTION_ORDER_EVENT,
+    "events": SOURCE_TYPE_EXECUTION_ORDER_EVENT,
+    "execution_order_event": SOURCE_TYPE_EXECUTION_ORDER_EVENT,
+    "execution_order_events": SOURCE_TYPE_EXECUTION_ORDER_EVENT,
+    "execution": SOURCE_TYPE_EXECUTION,
+    "executions": SOURCE_TYPE_EXECUTION,
+    "execution_tca_metric": SOURCE_TYPE_EXECUTION_TCA_METRIC,
+    "execution_tca_metrics": SOURCE_TYPE_EXECUTION_TCA_METRIC,
+    "tca": SOURCE_TYPE_EXECUTION_TCA_METRIC,
+    "cost": SOURCE_TYPE_EXECUTION_TCA_METRIC,
+    "costs": SOURCE_TYPE_EXECUTION_TCA_METRIC,
+    "runtime": SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+    "runtime_ledger": SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+    "strategy_runtime_ledger_bucket": SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+    "strategy_runtime_ledger_buckets": SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+}
+
 
 @dataclass(frozen=True)
 class OrderEventSelection:
@@ -62,6 +86,20 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--reconcile-limit", type=int, default=1000)
     parser.add_argument(
+        "--sources",
+        default="all",
+        help=(
+            "Comma-separated source groups to journal. Supported values: all, "
+            "execution_order_event, execution, execution_tca_metric, "
+            "strategy_runtime_ledger_bucket."
+        ),
+    )
+    parser.add_argument(
+        "--skip-reconcile",
+        action="store_true",
+        help="Persist journal refs without running reconciliation in this invocation.",
+    )
+    parser.add_argument(
         "--fail-on-degraded",
         action="store_true",
         help="Exit non-zero when journaling/reconciliation is degraded.",
@@ -80,6 +118,29 @@ def _sqlalchemy_dsn(dsn: str) -> str:
     if text.startswith("postgresql://"):
         return text.replace("postgresql://", "postgresql+psycopg://", 1)
     return text
+
+
+def _parse_sources(raw_sources: object) -> tuple[str, ...]:
+    raw = str(raw_sources or "all").strip()
+    if not raw or raw.lower() == "all":
+        return DEFAULT_SOURCES
+
+    selected: list[str] = []
+    for item in raw.split(","):
+        key = item.strip().lower().replace("-", "_")
+        if not key:
+            continue
+        source = SOURCE_ALIASES.get(key)
+        if source is None:
+            supported = ", ".join(("all", *DEFAULT_SOURCES))
+            raise ValueError(
+                f"unsupported source {item!r}; expected one of: {supported}"
+            )
+        if source not in selected:
+            selected.append(source)
+    if not selected:
+        raise ValueError("at least one journal source must be selected")
+    return tuple(selected)
 
 
 def _select_unlinked_events(
@@ -384,6 +445,8 @@ def _payload(
         "batch_size": max(1, min(int(args.batch_size), 5000)),
         "max_batches": max(1, int(args.max_batches)),
         "event_scan_limit": getattr(args, "event_scan_limit", None),
+        "sources": list(_parse_sources(getattr(args, "sources", "all"))),
+        "skip_reconcile": bool(getattr(args, "skip_reconcile", False)),
         "started_at": started_at.isoformat(),
         "completed_at": datetime.now(timezone.utc).isoformat(),
         "selected": selected,
@@ -404,6 +467,10 @@ def main() -> int:
     started_at = datetime.now(timezone.utc)
     batch_size = max(1, min(int(args.batch_size), 5000))
     max_batches = max(1, int(args.max_batches))
+    try:
+        enabled_sources = _parse_sources(args.sources)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     settings_obj = Settings(
         DB_DSN=dsn,
         TORGHUT_TIGERBEETLE_ENABLED=True,
@@ -427,47 +494,40 @@ def main() -> int:
         ) as journal,
     ):
         for _ in range(max_batches):
-            events = _select_unlinked_events(
-                session,
-                settings_obj=settings_obj,
-                account_label=args.account_label,
-                limit=batch_size,
-                event_scan_limit=args.event_scan_limit,
-            )
-            executions = _select_unlinked_executions(
-                session,
-                settings_obj=settings_obj,
-                account_label=args.account_label,
-                limit=batch_size,
-            )
-            tca_metrics = _select_unlinked_tca_metrics(
-                session,
-                settings_obj=settings_obj,
-                account_label=args.account_label,
-                limit=batch_size,
-            )
-            runtime_buckets = _select_unlinked_runtime_buckets(
-                session,
-                settings_obj=settings_obj,
-                account_label=args.account_label,
-                limit=batch_size,
-            )
-            event_batch = _journal_source_batch(
-                session,
-                args=args,
-                source=SOURCE_TYPE_EXECUTION_ORDER_EVENT,
-                rows=events.rows,
-                journal_one=lambda event: journal.journal_order_event(
+            batch_lengths: list[int] = []
+            if SOURCE_TYPE_EXECUTION_ORDER_EVENT in enabled_sources:
+                events = _select_unlinked_events(
                     session,
-                    event,
-                ),
-            )
-            if events.scan_failed:
-                event_batch["failed"] = int(event_batch["failed"]) + events.scan_failed
-                event_batch["scan_failed"] = events.scan_failed
-            batches.extend(
-                [
-                    event_batch,
+                    settings_obj=settings_obj,
+                    account_label=args.account_label,
+                    limit=batch_size,
+                    event_scan_limit=args.event_scan_limit,
+                )
+                event_batch = _journal_source_batch(
+                    session,
+                    args=args,
+                    source=SOURCE_TYPE_EXECUTION_ORDER_EVENT,
+                    rows=events.rows,
+                    journal_one=lambda event: journal.journal_order_event(
+                        session,
+                        event,
+                    ),
+                )
+                if events.scan_failed:
+                    event_batch["failed"] = (
+                        int(event_batch["failed"]) + events.scan_failed
+                    )
+                    event_batch["scan_failed"] = events.scan_failed
+                batches.append(event_batch)
+                batch_lengths.append(len(events.rows))
+            if SOURCE_TYPE_EXECUTION in enabled_sources:
+                executions = _select_unlinked_executions(
+                    session,
+                    settings_obj=settings_obj,
+                    account_label=args.account_label,
+                    limit=batch_size,
+                )
+                batches.append(
                     _journal_source_batch(
                         session,
                         args=args,
@@ -477,7 +537,17 @@ def main() -> int:
                             session,
                             execution,
                         ),
-                    ),
+                    )
+                )
+                batch_lengths.append(len(executions))
+            if SOURCE_TYPE_EXECUTION_TCA_METRIC in enabled_sources:
+                tca_metrics = _select_unlinked_tca_metrics(
+                    session,
+                    settings_obj=settings_obj,
+                    account_label=args.account_label,
+                    limit=batch_size,
+                )
+                batches.append(
                     _journal_source_batch(
                         session,
                         args=args,
@@ -487,7 +557,17 @@ def main() -> int:
                             session,
                             metric,
                         ),
-                    ),
+                    )
+                )
+                batch_lengths.append(len(tca_metrics))
+            if SOURCE_TYPE_RUNTIME_LEDGER_BUCKET in enabled_sources:
+                runtime_buckets = _select_unlinked_runtime_buckets(
+                    session,
+                    settings_obj=settings_obj,
+                    account_label=args.account_label,
+                    limit=batch_size,
+                )
+                batches.append(
                     _journal_source_batch(
                         session,
                         args=args,
@@ -499,22 +579,19 @@ def main() -> int:
                                 bucket,
                             )
                         ),
-                    ),
-                ]
-            )
+                    )
+                )
+                batch_lengths.append(len(runtime_buckets))
             if args.dry_run:
                 session.rollback()
                 _reset_session_identity_map(session)
                 break
             session.commit()
             _reset_session_identity_map(session)
-            if all(
-                len(rows) < batch_size
-                for rows in (events.rows, executions, tca_metrics, runtime_buckets)
-            ):
+            if batch_lengths and all(length < batch_size for length in batch_lengths):
                 break
 
-        if not args.dry_run:
+        if not args.dry_run and not args.skip_reconcile:
             reconciliation = reconcile_tigerbeetle_transfers(
                 session,
                 settings_obj=settings_obj,
