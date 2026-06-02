@@ -2450,10 +2450,15 @@ def _check_account_scope_invariants_bounded(session: Session) -> dict[str, objec
     all_index_rows = _execute_readiness_account_scope_query(
         session,
         """
-        SELECT tablename AS table_name, indexname AS index_name
-        FROM pg_catalog.pg_indexes
-        WHERE schemaname = current_schema()
-          AND tablename IN :table_names
+        SELECT tbl.relname AS table_name, idx.relname AS index_name
+        FROM pg_catalog.pg_index ix
+        JOIN pg_catalog.pg_class idx ON idx.oid = ix.indexrelid
+        JOIN pg_catalog.pg_class tbl ON tbl.oid = ix.indrelid
+        JOIN pg_catalog.pg_namespace ns ON ns.oid = tbl.relnamespace
+        WHERE ns.nspname = current_schema()
+          AND tbl.relname IN :table_names
+          AND tbl.relkind IN ('r', 'p')
+          AND idx.relkind IN ('i', 'I')
         """,
         table_names=table_names,
     )
