@@ -23,6 +23,28 @@ class LiveScanCycleTest(unittest.TestCase):
 
             self.assertEqual(live_scan_cycle.next_cycle_number(root), 4)
 
+    def test_prunes_old_cycle_dirs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for cycle in range(1, 7):
+                cycle_dir = root / f"cycle-{cycle}"
+                cycle_dir.mkdir()
+                (cycle_dir / "scratch.json").write_text("{}\n", encoding="utf-8")
+            (root / "cycle-other").mkdir()
+
+            self.assertEqual(live_scan_cycle.prune_old_cycle_dirs(root, 3), ["cycle-1", "cycle-2", "cycle-3"])
+            self.assertFalse((root / "cycle-1").exists())
+            self.assertTrue((root / "cycle-4").exists())
+            self.assertTrue((root / "cycle-other").exists())
+
+    def test_does_not_prune_when_retention_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "cycle-1").mkdir()
+
+            self.assertEqual(live_scan_cycle.prune_old_cycle_dirs(root, 0), [])
+            self.assertTrue((root / "cycle-1").exists())
+
     def test_normalizes_alpaca_data_base_url(self) -> None:
         self.assertEqual(
             live_scan_cycle.normalize_alpaca_data_base_url("https://data.alpaca.markets"),
@@ -86,11 +108,15 @@ class LiveScanCycleTest(unittest.TestCase):
                 ]
             },
             ["NVDA"],
+            retained_cycles=5,
+            removed_cycle_dirs=[],
         )
 
         self.assertEqual(summary["cycle"], 2)
         self.assertEqual(summary["resultCount"], 1)
         self.assertEqual(summary["topResults"][0]["symbol"], "NVDA")
+        self.assertEqual(summary["retainedCycles"], 5)
+        self.assertEqual(summary["removedCycleDirs"], [])
 
     def test_run_cycle_returns_summary_without_summary_file(self) -> None:
         case = self
@@ -134,7 +160,11 @@ class LiveScanCycleTest(unittest.TestCase):
             return {"results": [{"symbol": "NVDA", "bars": 9, "no_trade_reason": "limited_live_bars"}]}
 
         with tempfile.TemporaryDirectory() as directory:
-            args = live_scan_cycle.build_parser().parse_args(["--work-dir", directory, "--watchlist", "NVDA"])
+            old_cycle = Path(directory) / "cycle-1"
+            old_cycle.mkdir()
+            args = live_scan_cycle.build_parser().parse_args(
+                ["--work-dir", directory, "--watchlist", "NVDA", "--retain-cycles", "1"]
+            )
             with (
                 patch.object(live_scan_cycle, "AlpacaRestClient", FakeAlpaca),
                 patch.object(live_scan_cycle, "SynthesisClient", FakeSynthesis),
@@ -142,12 +172,14 @@ class LiveScanCycleTest(unittest.TestCase):
             ):
                 summary = live_scan_cycle.run_cycle(args)
 
-            cycle_dir = Path(directory) / "cycle-1"
-            self.assertEqual(summary["cycle"], 1)
+            cycle_dir = Path(directory) / "cycle-2"
+            self.assertEqual(summary["cycle"], 2)
             self.assertEqual(summary["resultCount"], 1)
             self.assertTrue((cycle_dir / "account.json").exists())
             self.assertTrue((cycle_dir / "watchlist.json").exists())
             self.assertFalse((cycle_dir / "summary.json").exists())
+            self.assertFalse(old_cycle.exists())
+            self.assertEqual(summary["removedCycleDirs"], ["cycle-1"])
 
 
 if __name__ == "__main__":

@@ -607,6 +607,15 @@ describe('synthesis autonomous trader provider', () => {
     const template = readYamlObjects(
       'argocd/applications/synthesis/agents-domain/autonomous-trader-agentrun-template.yaml',
     ).find((manifest) => objectAt(manifest, 'kind') === 'AgentRun')
+    const agent = readYamlObjects('argocd/applications/synthesis/agents-domain/autonomous-trader-agent.yaml').find(
+      (manifest) => objectAt(manifest, 'kind') === 'Agent',
+    )
+    const implSpec = readYamlObjects(
+      'argocd/applications/synthesis/agents-domain/autonomous-trader-implspec.yaml',
+    ).find((manifest) => objectAt(manifest, 'kind') === 'ImplementationSpec')
+    const systemPrompt = readYamlObjects(
+      'argocd/applications/synthesis/agents-domain/autonomous-trader-system-prompt-configmap.yaml',
+    ).find((manifest) => objectAt(manifest, 'kind') === 'ConfigMap')
     const envTemplate = objectAt(objectAt(provider, 'spec'), 'envTemplate')
     const secretEnv = objectAt(objectAt(provider, 'spec'), 'secretEnv') as Record<string, unknown>[] | undefined
     const scheduleSpec = objectAt(schedule, 'spec')
@@ -614,6 +623,10 @@ describe('synthesis autonomous trader provider', () => {
     const parameters = objectAt(templateSpec, 'parameters')
     const annotations = objectAt(objectAt(schedule, 'metadata'), 'annotations')
     const overallTimeoutSeconds = Number(objectAt(envTemplate, 'CODEX_MARKET_CONTEXT_OVERALL_TIMEOUT_SECONDS'))
+    const systemPromptRef = objectAt(objectAt(objectAt(agent, 'spec'), 'defaults'), 'systemPromptRef')
+    const implText = String(objectAt(objectAt(implSpec, 'spec'), 'text') ?? '')
+    const systemPromptText = String(objectAt(objectAt(systemPrompt, 'data'), 'system-prompt.md') ?? '')
+    const countWords = (value: string) => value.trim().split(/\s+/).filter(Boolean).length
 
     expect(resources).toContain('autonomous-trader-dedicated-alpaca-mcp-sealedsecret.yaml')
     expect(resources).not.toContain('autonomous-trader-alpaca-mcp-sealedsecret.yaml')
@@ -624,6 +637,13 @@ describe('synthesis autonomous trader provider', () => {
         resolve(process.cwd(), 'argocd/applications/synthesis/agents-domain/autonomous-trader-agentrun-template.yaml'),
       ),
     ).toBe(true)
+    expect(systemPromptRef).toEqual({
+      kind: 'ConfigMap',
+      name: 'autonomous-trader-system-prompt',
+      key: 'system-prompt.md',
+    })
+    expect(countWords(implText)).toBeLessThanOrEqual(120)
+    expect(countWords(systemPromptText)).toBeLessThanOrEqual(650)
     expect(objectAt(scheduleSpec, 'cron')).toBe('15 9 * * 1-5')
     expect(objectAt(scheduleSpec, 'suspend')).toBe(false)
     expect(objectAt(scheduleSpec, 'timezone')).toBe('America/New_York')

@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import urllib.error
 import urllib.parse
@@ -111,6 +112,26 @@ def next_cycle_number(work_dir: Path) -> int:
         if match:
             max_cycle = max(max_cycle, int(match.group(1)))
     return max_cycle + 1
+
+
+def prune_old_cycle_dirs(work_dir: Path, retain_cycles: int) -> list[str]:
+    if retain_cycles < 1:
+        return []
+    cycles: list[tuple[int, Path]] = []
+    pattern = re.compile(r"^cycle-(\d+)$")
+    for path in work_dir.glob("cycle-*"):
+        if not path.is_dir():
+            continue
+        match = pattern.match(path.name)
+        if match:
+            cycles.append((int(match.group(1)), path))
+    cycles.sort(key=lambda item: item[0])
+    stale_cycles = cycles[: max(0, len(cycles) - retain_cycles)]
+    removed: list[str] = []
+    for _, path in stale_cycles:
+        shutil.rmtree(path)
+        removed.append(path.name)
+    return removed
 
 
 def format_account(account: dict[str, Any]) -> dict[str, Any]:
@@ -246,7 +267,15 @@ def fetch_scan_inputs(
     }
 
 
-def summarize_scan(cycle: int, cycle_dir: Path, scan: dict[str, Any], symbols: list[str]) -> dict[str, Any]:
+def summarize_scan(
+    cycle: int,
+    cycle_dir: Path,
+    scan: dict[str, Any],
+    symbols: list[str],
+    *,
+    retained_cycles: int,
+    removed_cycle_dirs: list[str],
+) -> dict[str, Any]:
     results = scan.get("results")
     if not isinstance(results, list):
         results = []
@@ -278,6 +307,8 @@ def summarize_scan(cycle: int, cycle_dir: Path, scan: dict[str, Any], symbols: l
         "ok": True,
         "cycle": cycle,
         "cycleDir": str(cycle_dir),
+        "retainedCycles": retained_cycles,
+        "removedCycleDirs": removed_cycle_dirs,
         "watchlist": symbols,
         "resultCount": len(results),
         "topResults": top_results,
@@ -315,7 +346,15 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
         analysis_context_path=analysis_context,
         watchlist=symbols,
     )
-    return summarize_scan(cycle, cycle_dir, scan, symbols)
+    removed_cycle_dirs = prune_old_cycle_dirs(work_dir, args.retain_cycles)
+    return summarize_scan(
+        cycle,
+        cycle_dir,
+        scan,
+        symbols,
+        retained_cycles=args.retain_cycles,
+        removed_cycle_dirs=removed_cycle_dirs,
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -331,6 +370,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--synthesis-base-url")
     parser.add_argument("--analysis-context")
     parser.add_argument("--stock-analysis-cli")
+    parser.add_argument("--retain-cycles", type=int, default=5)
     parser.add_argument("--self-test", action="store_true")
     return parser
 
