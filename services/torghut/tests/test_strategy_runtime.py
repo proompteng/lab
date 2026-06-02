@@ -21,6 +21,7 @@ from app.trading.research_sleeves import (
     _rank_thresholds,
     evaluate_mean_reversion_exhaustion_short,
 )
+from app.trading.evaluation_trace import GateTrace, StrategyTrace
 from app.trading.strategy_runtime import (
     LegacyMacdRsiPlugin,
     MicrobarCrossSectionalLongPlugin,
@@ -37,6 +38,7 @@ from app.trading.strategy_runtime import (
     _microbar_minutes_elapsed,
     _microbar_rank_thresholds,
     _microbar_universe_size,
+    _trace_suppression_reason,
 )
 
 
@@ -5513,6 +5515,28 @@ class TestStrategyRuntime(TestCase):
             definition.compiled_targets["live_runtime_config"]["strategy_type"],
             "microbar_cross_sectional_pairs_v1",
         )
+
+    def test_trace_suppression_reason_falls_back_to_gate_or_default(self) -> None:
+        trace = StrategyTrace(
+            strategy_id="microbar_cross_sectional_pairs_v1@research",
+            strategy_type="microbar_cross_sectional_pairs_v1",
+            symbol="AAPL",
+            event_ts="2026-03-24T14:30:00+00:00",
+            timeframe="1Sec",
+            passed=False,
+            action=None,
+            gates=(
+                GateTrace(
+                    gate="pair_rank_selection",
+                    category="confirmation",
+                    passed=False,
+                ),
+            ),
+        )
+        empty_trace = trace.with_updates(gates=())
+
+        self.assertEqual(_trace_suppression_reason(trace), "pair_rank_selection")
+        self.assertEqual(_trace_suppression_reason(empty_trace), "no_runtime_intent")
 
 
 class TestStrategyRuntimeMicrobarCoverage(TestCase):
