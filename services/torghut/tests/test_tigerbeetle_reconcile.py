@@ -21,6 +21,8 @@ from app.models import (
 )
 from app.trading.tigerbeetle_client import FakeTigerBeetleClient
 from app.trading.tigerbeetle_journal import (
+    SOURCE_TYPE_EXECUTION,
+    SOURCE_TYPE_EXECUTION_TCA_METRIC,
     SOURCE_TYPE_EXECUTION_ORDER_EVENT,
     SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
     build_order_event_transfer_plan,
@@ -34,6 +36,8 @@ from app.trading.tigerbeetle_ledger_model import (
     TRANSFER_CODE_FILL_POST,
     TRANSFER_CODE_RUNTIME_NET_PNL,
     TRANSFER_CODE_SUBMITTED_PENDING,
+    TRANSFER_KIND_EXECUTION_COST,
+    TRANSFER_KIND_EXECUTION_FILL,
     TRANSFER_KIND_SUBMITTED_PENDING,
     TRANSFER_KIND_RUNTIME_NET_PNL,
     TigerBeetleTransferSpec,
@@ -306,7 +310,7 @@ class TestTigerBeetleReconcile(TestCase):
                     status="created",
                     execution_id=execution.id,
                     source_type="execution",
-                    source_id=str(execution.id),
+                    source_id=f"{execution.id}:current",
                 )
             )
             session.flush()
@@ -328,6 +332,65 @@ class TestTigerBeetleReconcile(TestCase):
             self.assertFalse(payload["ok"])
             self.assertIn(BLOCKER_SOURCE_AMOUNT_MISMATCH, payload["blockers"])
             self.assertEqual(payload["source_amount_mismatch_count"], 1)
+
+    def test_reconciliation_reports_legacy_unversioned_source_amount_without_blocking(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            execution = Execution(
+                alpaca_account_label="paper",
+                alpaca_order_id="order-legacy-source",
+                client_order_id="client-legacy-source",
+                symbol="AAPL",
+                side="buy",
+                order_type="market",
+                time_in_force="day",
+                submitted_qty=Decimal("1"),
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("190.25"),
+                status="filled",
+                raw_order={"id": "order-legacy-source"},
+            )
+            session.add(execution)
+            session.flush()
+            ref = TigerBeetleTransferRef(
+                cluster_id=2001,
+                transfer_id="1004",
+                transfer_kind=TRANSFER_KIND_EXECUTION_FILL,
+                ledger=LEDGER_USD_MICRO,
+                code=TRANSFER_CODE_EXECUTION_FILL,
+                amount=Decimal("1"),
+                status="created",
+                execution_id=execution.id,
+                source_type=SOURCE_TYPE_EXECUTION,
+                source_id=str(execution.id),
+            )
+            session.add(ref)
+            session.flush()
+            client = FakeTigerBeetleClient()
+            client.transfers[1004] = TigerBeetleTransferSpec(
+                transfer_id=1004,
+                transfer_kind=TRANSFER_KIND_EXECUTION_FILL,
+                debit_account_id=11,
+                credit_account_id=12,
+                amount=1,
+                ledger=LEDGER_USD_MICRO,
+                code=TRANSFER_CODE_EXECUTION_FILL,
+            )
+
+            payload = reconcile_tigerbeetle_transfers(
+                session,
+                settings_obj=_settings(),
+                client=client,
+            )
+
+            self.assertTrue(payload["ok"])
+            self.assertNotIn(BLOCKER_SOURCE_AMOUNT_MISMATCH, payload["blockers"])
+            self.assertEqual(payload["source_amount_mismatch_count"], 0)
+            self.assertEqual(payload["legacy_source_amount_unverifiable_count"], 1)
+            legacy_refs = payload["legacy_source_amount_unverifiable_refs"]
+            assert isinstance(legacy_refs, list)
+            self.assertEqual(legacy_refs[0]["row_id"], str(ref.id))
 
     def test_reconciliation_blocks_source_row_missing(self) -> None:
         with Session(self.engine) as session:
@@ -1158,6 +1221,97 @@ class TestTigerBeetleReconcile(TestCase):
             self.assertFalse(payload["ok"])
             self.assertIn(BLOCKER_UNLINKED_COST, payload["blockers"])
             self.assertEqual(payload["unlinked_cost_count"], 1)
+
+    def test_reconciliation_treats_fk_linked_cost_ref_as_linked(self) -> None:
+        with Session(self.engine) as session:
+            execution = Execution(
+                alpaca_account_label="paper",
+                alpaca_order_id="order-linked-cost",
+                client_order_id="client-linked-cost",
+                symbol="AAPL",
+                side="buy",
+                order_type="market",
+                time_in_force="day",
+                submitted_qty=Decimal("1"),
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("190.25"),
+                status="filled",
+                raw_order={"id": "order-linked-cost"},
+            )
+            session.add(execution)
+            session.flush()
+            metric = ExecutionTCAMetric(
+                execution_id=execution.id,
+                alpaca_account_label="paper",
+                symbol="AAPL",
+                side="buy",
+                filled_qty=Decimal("1"),
+                signed_qty=Decimal("1"),
+                shortfall_notional=Decimal("0.25"),
+                computed_at=datetime.now(timezone.utc),
+            )
+            session.add(metric)
+            session.flush()
+            session.add_all(
+                [
+                    TigerBeetleTransferRef(
+                        cluster_id=2001,
+                        transfer_id="1005",
+                        transfer_kind=TRANSFER_KIND_EXECUTION_FILL,
+                        ledger=LEDGER_USD_MICRO,
+                        code=TRANSFER_CODE_EXECUTION_FILL,
+                        amount=Decimal("190250000"),
+                        status="created",
+                        execution_id=execution.id,
+                        source_type=SOURCE_TYPE_EXECUTION,
+                        source_id=str(execution.id),
+                        payload_json={"amount_source": "190.25"},
+                    ),
+                    TigerBeetleTransferRef(
+                        cluster_id=2001,
+                        transfer_id="1006",
+                        transfer_kind=TRANSFER_KIND_EXECUTION_COST,
+                        ledger=LEDGER_USD_MICRO,
+                        code=TRANSFER_CODE_EXECUTION_FILL,
+                        amount=Decimal("250000"),
+                        status="created",
+                        execution_id=execution.id,
+                        execution_tca_metric_id=metric.id,
+                        source_type=SOURCE_TYPE_EXECUTION_TCA_METRIC,
+                        source_id=str(metric.id),
+                    ),
+                ]
+            )
+            session.flush()
+            client = FakeTigerBeetleClient()
+            client.transfers[1005] = TigerBeetleTransferSpec(
+                transfer_id=1005,
+                transfer_kind=TRANSFER_KIND_EXECUTION_FILL,
+                debit_account_id=11,
+                credit_account_id=12,
+                amount=190250000,
+                ledger=LEDGER_USD_MICRO,
+                code=TRANSFER_CODE_EXECUTION_FILL,
+            )
+            client.transfers[1006] = TigerBeetleTransferSpec(
+                transfer_id=1006,
+                transfer_kind=TRANSFER_KIND_EXECUTION_COST,
+                debit_account_id=11,
+                credit_account_id=13,
+                amount=250000,
+                ledger=LEDGER_USD_MICRO,
+                code=TRANSFER_CODE_EXECUTION_FILL,
+            )
+
+            payload = reconcile_tigerbeetle_transfers(
+                session,
+                settings_obj=_settings(),
+                client=client,
+            )
+
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["unlinked_cost_count"], 0)
+            self.assertNotIn(BLOCKER_UNLINKED_COST, payload["blockers"])
 
     def test_reconciliation_blocks_unlinked_runtime_ledger_ref(self) -> None:
         with Session(self.engine) as session:
