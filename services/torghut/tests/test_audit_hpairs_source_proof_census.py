@@ -320,6 +320,7 @@ def test_load_session_rows_adds_linked_source_account_windows() -> None:
         filled_qty_delta="1",
         avg_fill_price="100",
         filled_notional_delta="100",
+        raw_event=None,
         created_at=datetime(2026, 5, 1, 15, tzinfo=timezone.utc),
     )
     session = _FakeReadSession(
@@ -356,6 +357,8 @@ def test_source_account_matching_helpers_cover_alias_and_mismatch_paths() -> Non
             target_account_label=DEFAULT_HPAIRS_ACCOUNT_LABEL,
             canonical_decision_ids={"decision-1"},
             canonical_execution_ids={"execution-1"},
+            canonical_order_ids=set(),
+            canonical_client_order_ids=set(),
         )
         is False
     )
@@ -367,6 +370,8 @@ def test_source_account_matching_helpers_cover_alias_and_mismatch_paths() -> Non
             target_account_label=DEFAULT_HPAIRS_ACCOUNT_LABEL,
             canonical_decision_ids={"decision-1"},
             canonical_execution_ids=set(),
+            canonical_order_ids=set(),
+            canonical_client_order_ids=set(),
         )
         is True
     )
@@ -378,6 +383,8 @@ def test_source_account_matching_helpers_cover_alias_and_mismatch_paths() -> Non
             target_account_label=DEFAULT_HPAIRS_ACCOUNT_LABEL,
             canonical_decision_ids=set(),
             canonical_execution_ids={"execution-1"},
+            canonical_order_ids=set(),
+            canonical_client_order_ids=set(),
         )
         is True
     )
@@ -549,6 +556,12 @@ def test_unrelated_source_account_rows_remain_mismatches_not_proof() -> None:
             "filled_qty_delta": "10",
             "avg_fill_price": "100",
             "filled_notional_delta": "1000",
+            "raw_event": {
+                "_torghut_account_label_alias": {
+                    "logical_account_label": DEFAULT_HPAIRS_ACCOUNT_LABEL,
+                    "source_account_label": "PA3SX7FYNUTF",
+                }
+            },
             "event_ts": _iso(0, 16),
         }
     )
@@ -563,6 +576,12 @@ def test_unrelated_source_account_rows_remain_mismatches_not_proof() -> None:
             "start_offset": 9999,
             "end_offset": 10000,
             "status": "complete",
+            "raw_event": {
+                "_torghut_account_label_alias": {
+                    "logical_account_label": DEFAULT_HPAIRS_ACCOUNT_LABEL,
+                    "source_account_label": "PA3SX7FYNUTF",
+                }
+            },
         }
     )
 
@@ -577,6 +596,177 @@ def test_unrelated_source_account_rows_remain_mismatches_not_proof() -> None:
     )
     assert census.CANDIDATE_CONFIG_MISMATCH_BLOCKER in report["blockers"]
     assert report["verdict"]["classification"] == census.SOURCE_REFS_MISSING
+
+
+def test_source_account_scope_requires_matching_refs_before_alias_fallback() -> None:
+    identity = census.CensusIdentity(
+        hypothesis_id=DEFAULT_HPAIRS_HYPOTHESIS_ID,
+        candidate_id=DEFAULT_HPAIRS_CANDIDATE_ID,
+        runtime_strategy_name=DEFAULT_HPAIRS_RUNTIME_STRATEGY,
+        account_label=DEFAULT_HPAIRS_ACCOUNT_LABEL,
+        observed_stage="paper",
+        source_account_label="PA3SX7FYNUTF",
+    )
+    common = {
+        "identity": identity,
+        "source_account_label": "PA3SX7FYNUTF",
+        "target_account_label": DEFAULT_HPAIRS_ACCOUNT_LABEL,
+        "canonical_decision_ids": {"decision-0"},
+        "canonical_execution_ids": {"execution-0"},
+        "canonical_order_ids": {"order-0"},
+        "canonical_client_order_ids": {"client-order-0"},
+    }
+
+    assert (
+        census._source_event_row_matches_identity(
+            {"alpaca_account_label": "other-account"}, **common
+        )
+        is False
+    )
+    assert (
+        census._source_event_row_matches_identity(
+            {"alpaca_account_label": "PA3SX7FYNUTF", "trade_decision_id": "decision-0"},
+            **common,
+        )
+        is True
+    )
+    assert (
+        census._source_event_row_matches_identity(
+            {"alpaca_account_label": "PA3SX7FYNUTF", "decision_id": "decision-0"},
+            **common,
+        )
+        is True
+    )
+    assert (
+        census._source_event_row_matches_identity(
+            {"alpaca_account_label": "PA3SX7FYNUTF", "execution_id": "execution-0"},
+            **common,
+        )
+        is True
+    )
+    assert (
+        census._source_event_row_matches_identity(
+            {"alpaca_account_label": "PA3SX7FYNUTF", "alpaca_order_id": "order-0"},
+            **common,
+        )
+        is True
+    )
+    assert (
+        census._source_event_row_matches_identity(
+            {
+                "alpaca_account_label": "PA3SX7FYNUTF",
+                "client_order_id": "client-order-0",
+            },
+            **common,
+        )
+        is True
+    )
+    assert (
+        census._source_event_row_matches_identity(
+            {
+                "alpaca_account_label": "PA3SX7FYNUTF",
+                "trade_decision_id": "decision-other",
+                "raw_event": {
+                    "_torghut_account_label_alias": {
+                        "logical_account_label": DEFAULT_HPAIRS_ACCOUNT_LABEL
+                    }
+                },
+            },
+            **common,
+        )
+        is False
+    )
+    assert (
+        census._source_event_row_matches_identity(
+            {
+                "alpaca_account_label": "PA3SX7FYNUTF",
+                "alpaca_order_id": "order-other",
+                "raw_event": {
+                    "_torghut_account_label_alias": {
+                        "logical_account_label": DEFAULT_HPAIRS_ACCOUNT_LABEL
+                    }
+                },
+            },
+            **common,
+        )
+        is False
+    )
+    assert (
+        census._source_event_row_matches_identity(
+            {
+                "alpaca_account_label": "PA3SX7FYNUTF",
+                "raw_event": {
+                    "nested": {
+                        "canonical": {"account_label": DEFAULT_HPAIRS_ACCOUNT_LABEL}
+                    }
+                },
+            },
+            **common,
+        )
+        is True
+    )
+
+    window_common = {
+        "identity": identity,
+        "source_account_label": "PA3SX7FYNUTF",
+        "target_account_label": DEFAULT_HPAIRS_ACCOUNT_LABEL,
+        "canonical_source_window_ids": {"window-0"},
+    }
+    assert (
+        census._source_window_row_matches_identity(
+            {"alpaca_account_label": "other-account"}, **window_common
+        )
+        is False
+    )
+    assert (
+        census._source_window_row_matches_identity(
+            {"alpaca_account_label": "PA3SX7FYNUTF", "id": "window-0"},
+            **window_common,
+        )
+        is True
+    )
+    assert (
+        census._source_window_row_matches_identity(
+            {"alpaca_account_label": "PA3SX7FYNUTF", "source_window_id": "window-0"},
+            **window_common,
+        )
+        is True
+    )
+    assert (
+        census._source_window_row_matches_identity(
+            {
+                "alpaca_account_label": "PA3SX7FYNUTF",
+                "id": "window-other",
+                "raw_event": {
+                    "_torghut_account_label_alias": {
+                        "logical_account_label": DEFAULT_HPAIRS_ACCOUNT_LABEL
+                    }
+                },
+            },
+            **window_common,
+        )
+        is False
+    )
+    assert (
+        census._source_window_row_matches_identity(
+            {
+                "alpaca_account_label": "PA3SX7FYNUTF",
+                "raw_event": {
+                    "aliases": [{"logical_account_label": DEFAULT_HPAIRS_ACCOUNT_LABEL}]
+                },
+            },
+            **window_common,
+        )
+        is True
+    )
+    assert census._text_values("decision-0") == {"decision-0"}
+    assert (
+        census._row_aliases_target_account(
+            {"items": [{"materialized": {"account": DEFAULT_HPAIRS_ACCOUNT_LABEL}}]},
+            DEFAULT_HPAIRS_ACCOUNT_LABEL,
+        )
+        is True
+    )
 
 
 def test_missing_submitted_orders_and_fills_are_machine_readable_blockers() -> None:
@@ -846,7 +1036,7 @@ def test_session_loader_normalizes_bounded_sqlalchemy_rows(monkeypatch) -> None:
         source_topic="alpaca.trade_updates",
         source_partition=0,
         source_offset=11,
-        alpaca_account_label=DEFAULT_HPAIRS_ACCOUNT_LABEL,
+        alpaca_account_label="PA3SX7FYNUTF",
         event_ts=start + timedelta(minutes=3),
         created_at=start + timedelta(minutes=3),
         symbol="AAA",
@@ -858,8 +1048,14 @@ def test_session_loader_normalizes_bounded_sqlalchemy_rows(monkeypatch) -> None:
         filled_qty_delta="10",
         avg_fill_price="100",
         filled_notional_delta="1000",
-        execution_id="execution-0",
-        trade_decision_id="decision-0",
+        raw_event={
+            "_torghut_account_label_alias": {
+                "logical_account_label": DEFAULT_HPAIRS_ACCOUNT_LABEL,
+                "source_account_label": "PA3SX7FYNUTF",
+            }
+        },
+        execution_id=None,
+        trade_decision_id=None,
         source_window_id="window-0",
     )
     tca = SimpleNamespace(
@@ -880,7 +1076,7 @@ def test_session_loader_normalizes_bounded_sqlalchemy_rows(monkeypatch) -> None:
         consumer_group="torghut-order-feed",
         source_topic="alpaca.trade_updates",
         source_partition=0,
-        alpaca_account_label=DEFAULT_HPAIRS_ACCOUNT_LABEL,
+        alpaca_account_label="PA3SX7FYNUTF",
         window_started_at=start,
         window_ended_at=end,
         start_offset=10,
@@ -958,6 +1154,7 @@ def test_session_loader_normalizes_bounded_sqlalchemy_rows(monkeypatch) -> None:
             runtime_strategy_name=DEFAULT_HPAIRS_RUNTIME_STRATEGY,
             account_label=DEFAULT_HPAIRS_ACCOUNT_LABEL,
             observed_stage="paper",
+            source_account_label="PA3SX7FYNUTF",
         ),
         started_at=start,
         ended_at=end,
@@ -965,8 +1162,12 @@ def test_session_loader_normalizes_bounded_sqlalchemy_rows(monkeypatch) -> None:
 
     assert rows.trade_decisions[0]["id"] == "decision-0"
     assert rows.executions[0]["id"] == "execution-0"
+    assert rows.execution_order_events[0]["alpaca_account_label"] == "PA3SX7FYNUTF"
+    assert rows.execution_order_events[0]["execution_id"] is None
+    assert rows.execution_order_events[0]["trade_decision_id"] is None
     assert rows.execution_order_events[0]["source_offset"] == 11
     assert rows.execution_tca_metrics[0]["id"] == "tca-0"
+    assert rows.order_feed_source_windows[0]["alpaca_account_label"] == "PA3SX7FYNUTF"
     assert rows.order_feed_source_windows[0]["id"] == "window-0"
     assert rows.runtime_ledger_buckets[0]["id"] == "ledger-0"
 
