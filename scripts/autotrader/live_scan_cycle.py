@@ -209,6 +209,42 @@ def format_account(account: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def list_payload(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def account_gate_action(account: dict[str, Any], positions: list[Any], orders: list[Any]) -> str:
+    eligibility = account.get("intraday_equity_entry")
+    entry_allowed = isinstance(eligibility, dict) and eligibility.get("status") == "allowed"
+    if entry_allowed:
+        return "scan"
+    if positions or orders:
+        return "manage_existing_broker_state"
+    return "monitor_only"
+
+
+def summarize_account_gate(
+    *,
+    raw_account: dict[str, Any],
+    raw_positions: Any,
+    raw_orders: Any,
+) -> dict[str, Any]:
+    account = format_account(raw_account)["account"]
+    positions = list_payload(raw_positions)
+    orders = list_payload(raw_orders)
+    action = account_gate_action(account, positions, orders)
+    return {
+        "ok": True,
+        "mode": "account_gate",
+        "account": account,
+        "openPositionCount": len(positions),
+        "openOrderCount": len(orders),
+        "hasOpenBrokerState": bool(positions or orders),
+        "action": action,
+        "skipFullScan": action == "monitor_only",
+    }
+
+
 def format_latest_quotes(payload: dict[str, Any], symbols: list[str]) -> dict[str, Any]:
     raw_quotes = payload.get("quotes") if isinstance(payload, dict) else None
     if not isinstance(raw_quotes, dict):
@@ -418,6 +454,15 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
     )
 
 
+def run_account_gate(args: argparse.Namespace) -> dict[str, Any]:
+    alpaca = AlpacaRestClient(timeout_seconds=args.timeout_seconds)
+    return summarize_account_gate(
+        raw_account=alpaca.trading_get("/v2/account"),
+        raw_positions=alpaca.trading_get("/v2/positions"),
+        raw_orders=alpaca.trading_get("/v2/orders", {"status": "open", "nested": "true"}),
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run one autonomous-trader live scan cycle.")
     parser.add_argument("--work-dir")
@@ -433,6 +478,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--stock-analysis-cli")
     parser.add_argument("--retain-cycles", type=int, default=5)
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("--account-gate-only", action="store_true")
     return parser
 
 
@@ -441,10 +487,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.self_test:
         payload = {
             "ok": True,
+            "accountGateOnly": True,
             "defaultWatchlist": list(DEFAULT_WATCHLIST),
             "stockAnalysisCli": stock_analysis_cli_path(args.stock_analysis_cli),
         }
         print(json.dumps(payload, sort_keys=True, indent=2))
+        return 0
+    if args.account_gate_only:
+        print(json.dumps(run_account_gate(args), sort_keys=True, indent=2))
         return 0
     print(json.dumps(run_cycle(args), sort_keys=True, indent=2))
     return 0
