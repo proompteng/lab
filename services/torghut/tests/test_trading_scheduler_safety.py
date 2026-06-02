@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 from app import config
 from app.models import Strategy
+from app.strategies.catalog import StrategyConfig, _compose_strategy_description
 from app.trading.scheduler.simple_pipeline import (
     SimpleTradingPipeline,
     _target_pair_balance_state,
@@ -329,7 +330,11 @@ class TestTradingSchedulerSafety(TestCase):
             "_external_paper_route_target_probe_symbols_cached",
             lambda: ({"AAPL", "AMZN", "MSFT"}, None, [target]),
         )
-        setattr(pipeline, "_paper_route_target_strategy", lambda _target, _strategies: strategy)
+        setattr(
+            pipeline,
+            "_paper_route_target_strategy",
+            lambda _target, _strategies: strategy,
+        )
         setattr(
             pipeline,
             "_paper_route_target_strategy_symbols",
@@ -339,7 +344,10 @@ class TestTradingSchedulerSafety(TestCase):
         config.settings.trading_simple_paper_route_probe_enabled = True
         config.settings.trading_allow_shorts = True
 
-        with patch("app.trading.scheduler.simple_pipeline.trading_now", return_value=window_start):
+        with patch(
+            "app.trading.scheduler.simple_pipeline.trading_now",
+            return_value=window_start,
+        ):
             decisions = pipeline._paper_route_target_source_decisions(
                 strategies=[strategy],
                 allowed_symbols=set(),
@@ -376,7 +384,11 @@ class TestTradingSchedulerSafety(TestCase):
             "_external_paper_route_target_probe_symbols_cached",
             lambda: ({"AAPL", "AMZN"}, None, [target]),
         )
-        setattr(pipeline, "_paper_route_target_strategy", lambda _target, _strategies: strategy)
+        setattr(
+            pipeline,
+            "_paper_route_target_strategy",
+            lambda _target, _strategies: strategy,
+        )
         setattr(
             pipeline,
             "_paper_route_target_strategy_symbols",
@@ -386,13 +398,93 @@ class TestTradingSchedulerSafety(TestCase):
         config.settings.trading_simple_paper_route_probe_enabled = True
         config.settings.trading_allow_shorts = False
 
-        with patch("app.trading.scheduler.simple_pipeline.trading_now", return_value=window_start):
+        with patch(
+            "app.trading.scheduler.simple_pipeline.trading_now",
+            return_value=window_start,
+        ):
             decisions = pipeline._paper_route_target_source_decisions(
                 strategies=[strategy],
                 allowed_symbols=set(),
             )
 
         self.assertEqual(decisions, [])
+
+    def test_hpairs_target_strategy_matches_declared_catalog_strategy_id(self) -> None:
+        window_start = datetime(2026, 6, 1, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 6, 1, 20, 0, tzinfo=timezone.utc)
+        target = {
+            "hypothesis_id": "H-PAIRS-01",
+            "candidate_id": "c88421d619759b2cfaa6f4d0",
+            "account_label": "TORGHUT_SIM",
+            "observed_stage": "paper",
+            "source_kind": "paper_route_probe_runtime_observed",
+            "strategy_id": "microbar_cross_sectional_pairs_v1@research",
+            "source_manifest_ref": "runtime-window:H-PAIRS-01",
+            "source_decision_readiness": {"ready": True, "blockers": []},
+            "bounded_evidence_collection_authorized": True,
+            "evidence_collection_ok": True,
+            "paper_route_probe_symbols": ["AAPL", "AMZN"],
+            "paper_route_probe_symbol_actions": {"AAPL": "buy", "AMZN": "sell"},
+            "paper_route_probe_next_session_max_notional": "1000",
+            "paper_route_probe_window_start": window_start.isoformat(),
+            "paper_route_probe_window_end": window_end.isoformat(),
+        }
+        strategy = Strategy(
+            name="microbar-cross-sectional-pairs-v1",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="microbar-cross-sectional-pairs-v1",
+                    strategy_id="microbar_cross_sectional_pairs_v1@research",
+                    strategy_type="microbar_cross_sectional_pairs_v1",
+                    version="1.0.0",
+                    base_timeframe="1Sec",
+                    universe_symbols=["AAPL", "AMZN"],
+                    max_notional_per_trade=Decimal("1000"),
+                    params={"max_pair_legs": "2"},
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="microbar_cross_sectional_pairs_v1",
+            universe_symbols=["AAPL", "AMZN"],
+            max_notional_per_trade=Decimal("1000"),
+        )
+        pipeline = object.__new__(SimpleTradingPipeline)
+        setattr(pipeline, "account_label", "TORGHUT_SIM")
+        setattr(pipeline, "_is_market_session_open", lambda _now: True)
+        setattr(
+            pipeline,
+            "_external_paper_route_target_probe_symbols_cached",
+            lambda: ({"AAPL", "AMZN"}, None, [target]),
+        )
+        config.settings.trading_mode = "paper"
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_allow_shorts = True
+
+        with patch(
+            "app.trading.scheduler.simple_pipeline.trading_now",
+            return_value=window_start,
+        ):
+            scope = pipeline._bounded_paper_route_signal_scope([strategy])
+            decisions = pipeline._paper_route_target_source_decisions(
+                strategies=[strategy],
+                allowed_symbols=set(),
+                positions=[],
+            )
+
+        self.assertEqual(scope, ({"AAPL", "AMZN"}, {"1Sec"}))
+        self.assertEqual([decision.symbol for decision in decisions], ["AAPL", "AMZN"])
+        self.assertEqual(
+            [decision.params["source_decision_mode"] for decision in decisions],
+            ["bounded_paper_route_collection", "bounded_paper_route_collection"],
+        )
+        self.assertTrue(
+            all(decision.params["profit_proof_eligible"] for decision in decisions)
+        )
+        self.assertEqual(
+            decisions[0].params["source_strategy_names"],
+            ["microbar-cross-sectional-pairs-v1"],
+        )
 
     def test_emergency_stop_triggers_on_signal_lag(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
