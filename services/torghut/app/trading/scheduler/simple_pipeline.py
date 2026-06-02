@@ -811,6 +811,38 @@ def _target_probe_symbol_actions(
     }
 
 
+def _target_probe_symbol_quantities(
+    target: Mapping[str, Any],
+    symbols: Sequence[str],
+) -> dict[str, Decimal]:
+    normalized_symbols = [
+        symbol.strip().upper() for symbol in symbols if symbol.strip()
+    ]
+    quantities: dict[str, Decimal] = {}
+    for field in (
+        "paper_route_probe_symbol_quantities",
+        "target_symbol_quantities",
+        "symbol_quantities",
+    ):
+        raw_quantities = target.get(field)
+        if not isinstance(raw_quantities, Mapping):
+            continue
+        for raw_symbol, raw_quantity in cast(
+            Mapping[object, object], raw_quantities
+        ).items():
+            symbol = str(raw_symbol).strip().upper()
+            quantity = _optional_decimal(raw_quantity)
+            if symbol in normalized_symbols and quantity is not None and quantity > 0:
+                quantities.setdefault(symbol, quantity)
+    fallback_quantity = _optional_decimal(
+        target.get("paper_route_probe_target_quantity")
+    ) or _optional_decimal(target.get("target_quantity"))
+    if fallback_quantity is not None and fallback_quantity > 0:
+        for symbol in normalized_symbols:
+            quantities.setdefault(symbol, fallback_quantity)
+    return quantities
+
+
 def _target_pair_balance_state(
     target: Mapping[str, Any],
     symbol_actions: Mapping[str, Literal["buy", "sell"]],
@@ -1886,6 +1918,9 @@ class SimpleTradingPipeline(TradingPipeline):
             return []
         now = trading_now(account_label=self.account_label).astimezone(timezone.utc)
         if not self._is_market_session_open(now):
+            self._record_bounded_target_plan_blocker(
+                reason="paper_route_session_window_not_open"
+            )
             return []
 
         session_open = regular_session_open_utc_for(now)
@@ -3958,6 +3993,13 @@ class SimpleTradingPipeline(TradingPipeline):
             "paper_route_probe_window_end": window_end.isoformat(),
             "paper_route_probe_next_session_max_notional": str(max_notional),
             "paper_route_probe_effective_max_notional": str(max_notional),
+            "paper_route_probe_symbol_quantities": {
+                item_symbol: str(quantity)
+                for item_symbol, quantity in _target_probe_symbol_quantities(
+                    target,
+                    sorted(_target_symbols(target)),
+                ).items()
+            },
             "paper_route_target_plan_source": "external_target_plan_url",
             "paper_route_probe_scope_authority": "external_target_plan",
             "source_decision_mode": ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
@@ -4137,6 +4179,9 @@ class SimpleTradingPipeline(TradingPipeline):
             return []
         now = trading_now(account_label=self.account_label).astimezone(timezone.utc)
         if not self._is_market_session_open(now):
+            self._record_bounded_target_plan_blocker(
+                reason="paper_route_session_window_not_open"
+            )
             return []
         target_symbols, target_plan_error, target_plan_targets = (
             self._external_paper_route_target_probe_symbols_cached()
@@ -4202,6 +4247,7 @@ class SimpleTradingPipeline(TradingPipeline):
             if strategy_symbols:
                 symbols = [symbol for symbol in symbols if symbol in strategy_symbols]
             symbol_actions = _target_probe_symbol_actions(target, symbols)
+            symbol_quantities = _target_probe_symbol_quantities(target, symbols)
             pair_balance_state = _target_pair_balance_state(target, symbol_actions)
             if _target_requires_bounded_sim_collection_gate(
                 target
@@ -4291,6 +4337,11 @@ class SimpleTradingPipeline(TradingPipeline):
                     max_notional=target_cap,
                 )
                 metadata["paper_route_probe_symbol_actions"] = dict(symbol_actions)
+                if symbol_quantities:
+                    metadata["paper_route_probe_symbol_quantities"] = {
+                        item_symbol: str(quantity)
+                        for item_symbol, quantity in symbol_quantities.items()
+                    }
                 metadata["paper_route_probe_pair_balance_required"] = (
                     pair_balance_state != "not_required"
                 )
@@ -4333,6 +4384,16 @@ class SimpleTradingPipeline(TradingPipeline):
                     "paper_route_probe_window_start": window_start.isoformat(),
                     "paper_route_probe_window_end": window_end.isoformat(),
                     "paper_route_probe_symbol_actions": dict(symbol_actions),
+                    **(
+                        {
+                            "paper_route_probe_symbol_quantities": {
+                                item_symbol: str(quantity)
+                                for item_symbol, quantity in symbol_quantities.items()
+                            }
+                        }
+                        if symbol_quantities
+                        else {}
+                    ),
                     "paper_route_probe_pair_balance_state": pair_balance_state,
                     "paper_route_probe_leg_action": action,
                     "live_capital_routing_enabled": False,
@@ -4391,7 +4452,7 @@ class SimpleTradingPipeline(TradingPipeline):
                         event_ts=now,
                         timeframe=timeframe,
                         action=action,
-                        qty=Decimal("1"),
+                        qty=symbol_quantities.get(symbol, Decimal("1")),
                         order_type="market",
                         time_in_force="day",
                         rationale="external paper-route target plan source decision",

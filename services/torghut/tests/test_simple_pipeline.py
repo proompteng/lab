@@ -15,6 +15,7 @@ from app.trading.scheduler.simple_pipeline import (
     _bounded_sim_collection_metadata_from_decision,
     _quote_snapshot_matches_symbol,
     _target_metadata_quote_snapshot,
+    _target_probe_symbol_quantities,
 )
 from app.trading.runtime_window_import import (
     _runtime_promotion_blocking_reasons,
@@ -358,6 +359,15 @@ def test_bounded_sim_collection_blocks_missing_source_lineage_prerequisites() ->
     assert "bounded_sim_collection_evidence_collection_not_ready" in blockers
     assert "bounded_sim_collection_source_decision_not_ready" in blockers
     assert "source_strategy_missing" in blockers
+
+
+def test_target_probe_symbol_quantities_apply_target_quantity_fallback() -> None:
+    quantities = _target_probe_symbol_quantities(
+        {"target_quantity": "3"},
+        ["AAPL", "AMZN"],
+    )
+
+    assert quantities == {"AAPL": Decimal("3"), "AMZN": Decimal("3")}
 
 
 def _routeability_decision(
@@ -862,6 +872,7 @@ def test_bounded_source_collection_authorizes_after_runtime_account_audit_readba
             paper_route_probe_window_end="2026-06-01T20:00:00+00:00",
             paper_route_probe_next_session_max_notional="25",
             paper_route_probe_symbol_actions={"AAPL": "buy", "AMZN": "sell"},
+            paper_route_probe_symbol_quantities={"AAPL": "2", "AMZN": "1"},
             evidence_collection_ok=False,
             canary_collection_authorized=False,
             bounded_evidence_collection_authorized=False,
@@ -912,8 +923,16 @@ def test_bounded_source_collection_authorizes_after_runtime_account_audit_readba
         )
 
         assert {decision.symbol for decision in decisions} == {"AAPL", "AMZN"}
+        assert {decision.symbol: decision.qty for decision in decisions} == {
+            "AAPL": Decimal("2"),
+            "AMZN": Decimal("1"),
+        }
         for decision in decisions:
             metadata = decision.params["paper_route_target_plan_source_decision"]
+            assert metadata["paper_route_probe_symbol_quantities"] == {
+                "AAPL": "2",
+                "AMZN": "1",
+            }
             assert metadata["bounded_evidence_collection_authorized"] is True
             assert metadata["bounded_live_paper_collection_authorized"] is True
             assert metadata["canary_collection_authorized"] is True
@@ -934,6 +953,47 @@ def test_bounded_source_collection_authorizes_after_runtime_account_audit_readba
         settings.trading_mode = trading_mode_before
         settings.trading_simple_paper_route_probe_enabled = probe_enabled_before
         settings.trading_allow_shorts = allow_shorts_before
+
+
+def test_bounded_source_collection_blocks_closed_session_with_explicit_reason(
+    monkeypatch,
+) -> None:
+    trading_mode_before = settings.trading_mode
+    probe_enabled_before = settings.trading_simple_paper_route_probe_enabled
+    try:
+        settings.trading_mode = "paper"
+        settings.trading_simple_paper_route_probe_enabled = True
+        now = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
+        pipeline = object.__new__(SimpleTradingPipeline)
+        pipeline.account_label = "TORGHUT_SIM"
+        pipeline.state = SimpleNamespace()
+        pipeline._is_market_session_open = lambda _now: False
+        pipeline._external_paper_route_target_probe_symbols_cached = lambda: (
+            {"AAPL", "AMZN"},
+            None,
+            [_bounded_hpairs_target()],
+        )
+        monkeypatch.setattr(
+            "app.trading.scheduler.simple_pipeline.trading_now",
+            lambda account_label=None: now,
+        )
+
+        decisions = pipeline._paper_route_target_source_decisions(
+            strategies=[],
+            allowed_symbols={"AAPL", "AMZN"},
+            positions=[],
+            session=None,
+        )
+
+        assert decisions == []
+        blocker = pipeline.state.last_bounded_evidence_collection_blocker
+        assert blocker["reason"] == "paper_route_session_window_not_open"
+        assert blocker["blockers"] == ["paper_route_session_window_not_open"]
+        assert blocker["account_label"] == "TORGHUT_SIM"
+        assert blocker["target_count"] == 0
+    finally:
+        settings.trading_mode = trading_mode_before
+        settings.trading_simple_paper_route_probe_enabled = probe_enabled_before
 
 
 def test_bounded_sim_collection_accepts_declared_paper_account_alias() -> None:

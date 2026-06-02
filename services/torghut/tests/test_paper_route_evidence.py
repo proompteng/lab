@@ -36,6 +36,7 @@ from app.trading.paper_route_evidence import (
     _next_regular_equities_session_window,
     _normalized_open_positions,
     _paper_route_probe_summary,
+    _paper_route_probe_symbol_quantities,
     _pair_probe_balance_state,
     _runtime_ledger_bucket_evidence_grade,
     _runtime_ledger_non_evidence_diagnostic_summary,
@@ -45,6 +46,9 @@ from app.trading.paper_route_evidence import (
     _target_audit_fail_closed,
     build_paper_route_evidence_audit,
     build_paper_route_target_plan_payload,
+)
+from app.trading.paper_route_target_plan import (
+    materialize_bounded_paper_route_target_plan,
 )
 
 
@@ -71,6 +75,20 @@ class TestPaperRouteEvidenceAudit(TestCase):
 
         self.assertEqual(actions, {"AAPL": "buy", "AMZN": "sell"})
         self.assertEqual(_pair_probe_balance_state(actions), "balanced")
+
+    def test_probe_symbol_quantities_preserve_explicit_values_before_fallback(
+        self,
+    ) -> None:
+        quantities = _paper_route_probe_symbol_quantities(
+            {
+                "paper_route_probe_symbol_quantities": {"AAPL": "0.5"},
+                "target_symbol_quantities": {"AAPL": "0.8", "AMZN": "0.7"},
+                "target_quantity": "2",
+            },
+            ["AAPL", "AMZN"],
+        )
+
+        self.assertEqual(quantities, {"AAPL": "0.5", "AMZN": "0.7"})
 
     def test_account_contamination_reason_reports_mixed_foreign_and_unlinked(
         self,
@@ -1538,6 +1556,57 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(clean_readiness["state"], "clean")
         self.assertEqual(clean_readiness["clean_target_count"], 1)
         self.assertEqual(clean_readiness["blockers"], [])
+
+    def test_clean_hpairs_target_plan_materializes_nonzero_source_decisions(
+        self,
+    ) -> None:
+        generated_at = datetime(2026, 5, 26, 13, 35, tzinfo=timezone.utc)
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            session.add(
+                Strategy(
+                    name="paper-route-candidate-v1",
+                    description="clean materialization source strategy",
+                    enabled=True,
+                    base_timeframe="1Sec",
+                    universe_type="static",
+                    universe_symbols=["AAPL", "AMZN"],
+                )
+            )
+            self._add_account_position_snapshot(
+                session,
+                account_label="TORGHUT_SIM",
+                as_of=window_start - timedelta(minutes=5),
+                positions=[],
+            )
+            session.commit()
+
+            payload = self._build_basic_paper_route_target_plan(
+                session,
+                generated_at=generated_at,
+            )
+            plan = payload["next_paper_route_runtime_window_targets"]
+            target = plan["targets"][0]
+            self.assertEqual(
+                target["paper_route_probe_symbol_quantities"],
+                {"AAPL": "1", "AMZN": "1"},
+            )
+            self.assertFalse(target["promotion_allowed"])
+            self.assertFalse(target["final_promotion_allowed"])
+
+            materialized = materialize_bounded_paper_route_target_plan(
+                session,
+                plan,
+                generated_at=generated_at,
+                bounded_notional_limit=Decimal("25"),
+            )
+
+        self.assertEqual(materialized["materialized_decision_count"], 2)
+        self.assertEqual(materialized["route_submission_count"], 2)
+        self.assertEqual(materialized["blocked_target_count"], 0)
+        self.assertFalse(materialized["promotion_allowed"])
+        self.assertFalse(materialized["final_promotion_allowed"])
+        self.assertFalse(materialized["live_capital_routing_enabled"])
 
     def test_older_contaminated_window_does_not_poison_later_clean_target_window(
         self,
