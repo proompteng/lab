@@ -190,9 +190,15 @@ def test_handoff_builds_non_promotional_runtime_window_target(
     assert target["strategy_family"] == "microbar_cross_sectional_pairs"
     assert target["strategy_name"] == "microbar-cross-sectional-pairs-v1"
     assert target["dataset_snapshot_ref"] == "snapshot-1"
-    assert target["runtime_ledger_artifact_refs"] == [str(artifact_path.resolve())]
-    assert target["runtime_ledger_artifact_row_count"] == 6
-    assert target["runtime_ledger_artifact_fill_count"] == 2
+    assert target["exact_replay_ledger_artifact_refs"] == [
+        str(artifact_path.resolve())
+    ]
+    assert target["exact_replay_ledger_artifact_row_count"] == 6
+    assert target["exact_replay_ledger_artifact_fill_count"] == 2
+    assert "runtime_ledger_artifact_ref" not in target
+    assert "runtime_ledger_artifact_refs" not in target
+    assert "runtime_ledger_artifact_row_count" not in target
+    assert "runtime_ledger_artifact_fill_count" not in target
     assert target["replay_window_weekday_count"] == 5
     assert target["replay_min_window_weekday_count"] == 20
     assert target["replay_target_net_pnl_per_day"] == "500"

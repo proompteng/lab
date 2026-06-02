@@ -54,6 +54,8 @@ RUNTIME_WINDOW_TARGET_METADATA_KEYS = (
     "exact_replay_ledger_artifact_ref",
     "runtime_ledger_artifact_row_count",
     "runtime_ledger_artifact_fill_count",
+    "exact_replay_ledger_artifact_row_count",
+    "exact_replay_ledger_artifact_fill_count",
     "runtime_ledger_target_metadata_blockers",
     "runtime_ledger_bucket_ref",
     "dependency_quorum_decision",
@@ -2075,14 +2077,12 @@ def _offline_replay_artifact_refs(item: Mapping[str, Any]) -> list[str]:
 def _offline_replay_exact_artifact_refs(item: Mapping[str, Any]) -> list[str]:
     refs: list[str] = []
     metadata = _as_dict(item.get("target_metadata"))
-    for key in ("exact_replay_ledger_artifact_ref", "runtime_ledger_artifact_ref"):
-        ref = _as_text(metadata.get(key))
-        if ref is not None and ref not in refs:
+    ref = _as_text(metadata.get("exact_replay_ledger_artifact_ref"))
+    if ref is not None:
+        refs.append(ref)
+    for ref in _as_text_list(metadata.get("exact_replay_ledger_artifact_refs")):
+        if ref not in refs:
             refs.append(ref)
-    for key in ("exact_replay_ledger_artifact_refs", "runtime_ledger_artifact_refs"):
-        for ref in _as_text_list(metadata.get(key)):
-            if ref not in refs:
-                refs.append(ref)
     return refs
 
 

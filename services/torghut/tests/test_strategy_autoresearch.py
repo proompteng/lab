@@ -771,8 +771,12 @@ class TestStrategyAutoresearch(TestCase):
                 target["exact_replay_ledger_artifact_row_count"],
                 "6",
             )
-            self.assertNotIn("runtime_ledger_artifact_refs", target)
+            self.assertEqual(
+                target["exact_replay_ledger_artifact_fill_count"],
+                "2",
+            )
             self.assertNotIn("runtime_ledger_artifact_ref", target)
+            self.assertNotIn("runtime_ledger_artifact_refs", target)
             self.assertNotIn("runtime_ledger_artifact_row_count", target)
             self.assertNotIn("runtime_ledger_artifact_fill_count", target)
             self.assertFalse(target["promotion_allowed"])
@@ -800,7 +804,6 @@ class TestStrategyAutoresearch(TestCase):
             artifact_path.parent.mkdir(parents=True)
             artifact_path.write_text("{}", encoding="utf-8")
             absolute_path = root / "absolute-exact-replay-ledger.json"
-            relative_runtime_ref = "runtime-ledger.json"
             result_path = experiment_root / "result.json"
             result_path.write_text(
                 json.dumps(
@@ -813,7 +816,7 @@ class TestStrategyAutoresearch(TestCase):
                                     "",
                                 ],
                                 "nested": {
-                                    "runtime_ledger_artifact_ref": relative_runtime_ref,
+                                    "runtime_ledger_artifact_ref": "runtime-ledger.json",
                                     "runtime_ledger_artifact_refs": "scalar-runtime-ledger.json",
                                 },
                             }
