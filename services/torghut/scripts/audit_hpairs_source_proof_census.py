@@ -79,6 +79,10 @@ SOURCE_REFS_MISSING = "source_refs_missing"
 OPEN_POSITIONS = "open_positions"
 AUTHORITY_DISTRIBUTION_MISSING = "authority_distribution_missing"
 CANDIDATE_CONFIG_MISMATCH_BLOCKER = "candidate_config_mismatch"
+SOURCE_ACCOUNT_ALIAS_ONLY_SOURCE_PROOF_BLOCKER = (
+    "source_account_alias_only_source_proof"
+)
+SOURCE_ACCOUNT_CANONICAL_REF_MISMATCH_BLOCKER = "source_account_canonical_ref_mismatch"
 LADDER_PASS = "pass"
 LADDER_MISSING = "missing"
 LADDER_BLOCKED = "blocked"
@@ -96,6 +100,8 @@ _SOURCE_REF_BLOCKERS = frozenset(
         RUNTIME_LEDGER_SOURCE_MATERIALIZATION_MISSING_BLOCKER,
         RUNTIME_LEDGER_AUTHORITY_CLASS_MISSING_BLOCKER,
         ORDER_FEED_SOURCE_WINDOW_GAP_BLOCKER,
+        SOURCE_ACCOUNT_ALIAS_ONLY_SOURCE_PROOF_BLOCKER,
+        SOURCE_ACCOUNT_CANONICAL_REF_MISMATCH_BLOCKER,
     }
 )
 _DISTRIBUTION_BLOCKERS = frozenset(
@@ -653,7 +659,7 @@ def _source_event_row_matches_identity(
         return True
     if _row_has_any_ref(row, "alpaca_order_id", "client_order_id"):
         return False
-    return _row_aliases_target_account(row, identity.account_label)
+    return False
 
 
 def _source_window_row_matches_identity(
@@ -678,7 +684,7 @@ def _source_window_row_matches_identity(
         return True
     if _row_has_any_ref(row, "id", "source_window_id"):
         return False
-    return _row_aliases_target_account(row, identity.account_label)
+    return False
 
 
 def _ledger_row_matches_identity(
@@ -727,6 +733,263 @@ def _row_ref_matches(
 
 def _row_has_any_ref(row: Mapping[str, object], *keys: str) -> bool:
     return any(_text(row.get(key)) is not None for key in keys)
+
+
+def _source_event_ref_diagnostics(
+    events: Sequence[Mapping[str, object]],
+    *,
+    executions: Sequence[Mapping[str, object]],
+    trade_decisions: Sequence[Mapping[str, object]],
+) -> dict[str, int]:
+    execution_ids = _row_ids(executions)
+    decision_ids = _row_ids(trade_decisions)
+    execution_decision_ids = _unique_row_value_map(
+        executions, key="id", value_key="trade_decision_id"
+    )
+    execution_ids_by_order_id = _unique_row_value_map(
+        executions, key="alpaca_order_id", value_key="id"
+    )
+    execution_ids_by_client_order_id = _unique_row_value_map(
+        executions, key="client_order_id", value_key="id"
+    )
+    decisions_by_client_order_id = _unique_row_value_map(
+        trade_decisions, key="decision_hash", value_key="id"
+    )
+    diagnostics = {
+        "direct_execution_ref_count": 0,
+        "direct_trade_decision_ref_count": 0,
+        "effective_execution_ref_count": 0,
+        "effective_trade_decision_ref_count": 0,
+        "broker_order_link_count": 0,
+        "client_order_link_count": 0,
+    }
+    for row in events:
+        direct_execution_id = _text(row.get("execution_id"))
+        direct_decision_id = _text(row.get("trade_decision_id")) or _text(
+            row.get("decision_id")
+        )
+        linked_execution_id = _linked_execution_id(
+            row,
+            execution_ids_by_order_id=execution_ids_by_order_id,
+            execution_ids_by_client_order_id=execution_ids_by_client_order_id,
+        )
+        linked_decision_id = (
+            execution_decision_ids.get(linked_execution_id)
+            if linked_execution_id is not None
+            else None
+        )
+        client_decision_id = decisions_by_client_order_id.get(
+            _text(row.get("client_order_id")) or ""
+        )
+        if direct_execution_id is not None:
+            diagnostics["direct_execution_ref_count"] += 1
+        if direct_decision_id is not None:
+            diagnostics["direct_trade_decision_ref_count"] += 1
+        if _row_ref_matches(row, "alpaca_order_id", set(execution_ids_by_order_id)):
+            diagnostics["broker_order_link_count"] += 1
+        if _row_ref_matches(
+            row, "client_order_id", set(execution_ids_by_client_order_id)
+        ) or _row_ref_matches(
+            row, "client_order_id", set(decisions_by_client_order_id)
+        ):
+            diagnostics["client_order_link_count"] += 1
+        if (
+            direct_execution_id is not None
+            and (not execution_ids or direct_execution_id in execution_ids)
+        ) or linked_execution_id is not None:
+            diagnostics["effective_execution_ref_count"] += 1
+        if (
+            (
+                direct_decision_id is not None
+                and (not decision_ids or direct_decision_id in decision_ids)
+            )
+            or (
+                linked_decision_id is not None
+                and (not decision_ids or linked_decision_id in decision_ids)
+            )
+            or (
+                client_decision_id is not None
+                and (not decision_ids or client_decision_id in decision_ids)
+            )
+        ):
+            diagnostics["effective_trade_decision_ref_count"] += 1
+    return diagnostics
+
+
+def _effective_linked_order_event_fill_count(
+    events: Sequence[Mapping[str, object]],
+    *,
+    executions: Sequence[Mapping[str, object]],
+    trade_decisions: Sequence[Mapping[str, object]],
+) -> int:
+    count = 0
+    for row in events:
+        ref_diagnostics = _source_event_ref_diagnostics(
+            [row], executions=executions, trade_decisions=trade_decisions
+        )
+        if (
+            _fill_event(row)
+            and ref_diagnostics["effective_execution_ref_count"] == 1
+            and ref_diagnostics["effective_trade_decision_ref_count"] == 1
+            and _text(row.get("source_window_id")) is not None
+            and _event_source_offset_present(row)
+            and _event_quantity_present(row)
+            and _decimal(row.get("avg_fill_price")) > 0
+            and _decimal(row.get("filled_notional_delta")) > 0
+        ):
+            count += 1
+    return count
+
+
+def _linked_execution_id(
+    row: Mapping[str, object],
+    *,
+    execution_ids_by_order_id: Mapping[str, str],
+    execution_ids_by_client_order_id: Mapping[str, str],
+) -> str | None:
+    alpaca_order_id = _text(row.get("alpaca_order_id"))
+    if alpaca_order_id is not None:
+        execution_id = execution_ids_by_order_id.get(alpaca_order_id)
+        if execution_id is not None:
+            return execution_id
+    client_order_id = _text(row.get("client_order_id"))
+    if client_order_id is not None:
+        return execution_ids_by_client_order_id.get(client_order_id)
+    return None
+
+
+def _unique_row_value_map(
+    rows: Sequence[Mapping[str, object]],
+    *,
+    key: str,
+    value_key: str,
+) -> dict[str, str]:
+    values_by_key: dict[str, set[str]] = {}
+    for row in rows:
+        map_key = _text(row.get(key))
+        map_value = _text(row.get(value_key))
+        if map_key is None or map_value is None:
+            continue
+        values_by_key.setdefault(map_key, set()).add(map_value)
+    return {
+        map_key: next(iter(map_values))
+        for map_key, map_values in values_by_key.items()
+        if len(map_values) == 1
+    }
+
+
+def _source_account_event_scope_diagnostics(
+    rows: Sequence[Mapping[str, object]],
+    *,
+    source_account_label: str,
+    target_account_label: str,
+    canonical_decision_ids: set[str],
+    canonical_execution_ids: set[str],
+    canonical_order_ids: set[str],
+    canonical_client_order_ids: set[str],
+) -> dict[str, int]:
+    diagnostics = {"alias_only_count": 0, "canonical_ref_mismatch_count": 0}
+    if source_account_label == target_account_label:
+        return diagnostics
+    for row in rows:
+        if _row_account_label(row) != source_account_label:
+            continue
+        has_matching_ref = (
+            _row_ref_matches(row, "trade_decision_id", canonical_decision_ids)
+            or _row_ref_matches(row, "decision_id", canonical_decision_ids)
+            or _row_ref_matches(row, "execution_id", canonical_execution_ids)
+            or _row_ref_matches(row, "alpaca_order_id", canonical_order_ids)
+            or _row_ref_matches(row, "client_order_id", canonical_client_order_ids)
+        )
+        has_any_supported_ref = _row_has_any_ref(
+            row,
+            "trade_decision_id",
+            "decision_id",
+            "execution_id",
+            "alpaca_order_id",
+            "client_order_id",
+        )
+        if _source_event_has_canonical_ref_mismatch(
+            row,
+            canonical_decision_ids=canonical_decision_ids,
+            canonical_execution_ids=canonical_execution_ids,
+            canonical_order_ids=canonical_order_ids,
+            canonical_client_order_ids=canonical_client_order_ids,
+        ):
+            diagnostics["canonical_ref_mismatch_count"] += 1
+        elif (
+            not has_matching_ref
+            and not has_any_supported_ref
+            and _row_aliases_target_account(row, target_account_label)
+        ):
+            diagnostics["alias_only_count"] += 1
+    return diagnostics
+
+
+def _source_account_window_scope_diagnostics(
+    rows: Sequence[Mapping[str, object]],
+    *,
+    source_account_label: str,
+    target_account_label: str,
+    canonical_source_window_ids: set[str],
+) -> dict[str, int]:
+    diagnostics = {"alias_only_count": 0, "canonical_ref_mismatch_count": 0}
+    if source_account_label == target_account_label:
+        return diagnostics
+    for row in rows:
+        if _row_account_label(row) != source_account_label:
+            continue
+        has_matching_ref = _row_ref_matches(
+            row, "id", canonical_source_window_ids
+        ) or _row_ref_matches(row, "source_window_id", canonical_source_window_ids)
+        has_any_supported_ref = _row_has_any_ref(row, "id", "source_window_id")
+        if _source_window_has_canonical_ref_mismatch(
+            row, canonical_source_window_ids=canonical_source_window_ids
+        ):
+            diagnostics["canonical_ref_mismatch_count"] += 1
+        elif (
+            not has_matching_ref
+            and not has_any_supported_ref
+            and _row_aliases_target_account(row, target_account_label)
+        ):
+            diagnostics["alias_only_count"] += 1
+    return diagnostics
+
+
+def _source_event_has_canonical_ref_mismatch(
+    row: Mapping[str, object],
+    *,
+    canonical_decision_ids: set[str],
+    canonical_execution_ids: set[str],
+    canonical_order_ids: set[str],
+    canonical_client_order_ids: set[str],
+) -> bool:
+    return (
+        _row_ref_mismatches(row, "trade_decision_id", canonical_decision_ids)
+        or _row_ref_mismatches(row, "decision_id", canonical_decision_ids)
+        or _row_ref_mismatches(row, "execution_id", canonical_execution_ids)
+        or _row_ref_mismatches(row, "alpaca_order_id", canonical_order_ids)
+        or _row_ref_mismatches(row, "client_order_id", canonical_client_order_ids)
+    )
+
+
+def _source_window_has_canonical_ref_mismatch(
+    row: Mapping[str, object],
+    *,
+    canonical_source_window_ids: set[str],
+) -> bool:
+    return _row_ref_mismatches(
+        row, "id", canonical_source_window_ids
+    ) or _row_ref_mismatches(row, "source_window_id", canonical_source_window_ids)
+
+
+def _row_ref_mismatches(
+    row: Mapping[str, object],
+    key: str,
+    candidates: set[str],
+) -> bool:
+    value = _text(row.get(key))
+    return value is not None and value not in candidates
 
 
 def _payload_identifier_values(
@@ -838,6 +1101,11 @@ def _daily_payload(
         rows.execution_order_events, day, "event_ts", fallback_key="created_at"
     )
     day_tca_metrics = _rows_on_day(rows.execution_tca_metrics, day, "computed_at")
+    event_ref_diagnostics = _source_event_ref_diagnostics(
+        day_events,
+        executions=rows.executions,
+        trade_decisions=rows.trade_decisions,
+    )
     return {
         "trading_day": day,
         "trade_decision_count": len(
@@ -849,15 +1117,29 @@ def _daily_payload(
         ),
         "execution_order_event_count": len(day_events),
         "fill_lifecycle_event_count": sum(1 for row in day_events if _fill_event(row)),
-        "linked_order_event_fill_count": sum(
-            1 for row in day_events if _linked_order_event_fill(row)
+        "linked_order_event_fill_count": _effective_linked_order_event_fill_count(
+            day_events,
+            executions=rows.executions,
+            trade_decisions=rows.trade_decisions,
         ),
-        "execution_order_events_with_execution_ref_count": sum(
-            1 for row in day_events if _text(row.get("execution_id")) is not None
-        ),
-        "execution_order_events_with_trade_decision_ref_count": sum(
-            1 for row in day_events if _text(row.get("trade_decision_id")) is not None
-        ),
+        "execution_order_events_with_execution_ref_count": event_ref_diagnostics[
+            "effective_execution_ref_count"
+        ],
+        "execution_order_events_with_direct_execution_ref_count": event_ref_diagnostics[
+            "direct_execution_ref_count"
+        ],
+        "execution_order_events_with_trade_decision_ref_count": event_ref_diagnostics[
+            "effective_trade_decision_ref_count"
+        ],
+        "execution_order_events_with_direct_trade_decision_ref_count": event_ref_diagnostics[
+            "direct_trade_decision_ref_count"
+        ],
+        "execution_order_events_with_broker_order_link_count": event_ref_diagnostics[
+            "broker_order_link_count"
+        ],
+        "execution_order_events_with_client_order_link_count": event_ref_diagnostics[
+            "client_order_link_count"
+        ],
         "execution_order_events_with_filled_notional_delta_count": sum(
             1 for row in day_events if _decimal(row.get("filled_notional_delta")) > 0
         ),
@@ -918,6 +1200,11 @@ def _totals(
     explicit_cost_runtime_ledger_bucket_count = _int(
         aggregate.get("explicit_cost_bucket_count")
     )
+    event_ref_diagnostics = _source_event_ref_diagnostics(
+        rows.execution_order_events,
+        executions=rows.executions,
+        trade_decisions=rows.trade_decisions,
+    )
     return {
         "trade_decision_count": len(rows.trade_decisions),
         "matched_trade_decision_count": len(rows.trade_decisions),
@@ -929,19 +1216,29 @@ def _totals(
         "fill_lifecycle_event_count": sum(
             1 for row in rows.execution_order_events if _fill_event(row)
         ),
-        "linked_order_event_fill_count": sum(
-            1 for row in rows.execution_order_events if _linked_order_event_fill(row)
+        "linked_order_event_fill_count": _effective_linked_order_event_fill_count(
+            rows.execution_order_events,
+            executions=rows.executions,
+            trade_decisions=rows.trade_decisions,
         ),
-        "execution_order_events_with_execution_ref_count": sum(
-            1
-            for row in rows.execution_order_events
-            if _text(row.get("execution_id")) is not None
-        ),
-        "execution_order_events_with_trade_decision_ref_count": sum(
-            1
-            for row in rows.execution_order_events
-            if _text(row.get("trade_decision_id")) is not None
-        ),
+        "execution_order_events_with_execution_ref_count": event_ref_diagnostics[
+            "effective_execution_ref_count"
+        ],
+        "execution_order_events_with_direct_execution_ref_count": event_ref_diagnostics[
+            "direct_execution_ref_count"
+        ],
+        "execution_order_events_with_trade_decision_ref_count": event_ref_diagnostics[
+            "effective_trade_decision_ref_count"
+        ],
+        "execution_order_events_with_direct_trade_decision_ref_count": event_ref_diagnostics[
+            "direct_trade_decision_ref_count"
+        ],
+        "execution_order_events_with_broker_order_link_count": event_ref_diagnostics[
+            "broker_order_link_count"
+        ],
+        "execution_order_events_with_client_order_link_count": event_ref_diagnostics[
+            "client_order_link_count"
+        ],
         "execution_order_events_with_filled_notional_delta_count": sum(
             1
             for row in rows.execution_order_events
@@ -1030,6 +1327,22 @@ def _totals(
         "candidate_mismatched_runtime_ledger_bucket_count": _int(
             candidate_config_match.get("mismatched_runtime_ledger_bucket_count")
         ),
+        "source_account_alias_only_order_event_count": _int(
+            candidate_config_match.get("source_account_alias_only_order_event_count")
+        ),
+        "source_account_canonical_ref_mismatch_order_event_count": _int(
+            candidate_config_match.get(
+                "source_account_canonical_ref_mismatch_order_event_count"
+            )
+        ),
+        "source_account_alias_only_source_window_count": _int(
+            candidate_config_match.get("source_account_alias_only_source_window_count")
+        ),
+        "source_account_canonical_ref_mismatch_source_window_count": _int(
+            candidate_config_match.get(
+                "source_account_canonical_ref_mismatch_source_window_count"
+            )
+        ),
     }
 
 
@@ -1043,6 +1356,40 @@ def _candidate_config_match(
     scoped_rows = _authority_scope_rows(rows, identity)
     scoped_order_event_ids = _row_ids(scoped_rows.execution_order_events)
     scoped_source_window_ids = _row_ids(scoped_rows.order_feed_source_windows)
+    source_account_label = _source_account_label(identity)
+    ledger_decision_ids = _payload_identifier_values(
+        scoped_rows.runtime_ledger_buckets,
+        "trade_decision_ids",
+        "decision_ids",
+        "decision_hashes",
+    )
+    ledger_execution_ids = _payload_identifier_values(
+        scoped_rows.runtime_ledger_buckets, "execution_ids"
+    )
+    ledger_source_window_ids = _payload_identifier_values(
+        scoped_rows.runtime_ledger_buckets,
+        "source_window_ids",
+        "runtime_ledger_source_window_ids",
+    )
+    source_account_event_diagnostics = _source_account_event_scope_diagnostics(
+        rows.execution_order_events,
+        source_account_label=source_account_label,
+        target_account_label=identity.account_label,
+        canonical_decision_ids=_row_ids(scoped_rows.trade_decisions)
+        | ledger_decision_ids,
+        canonical_execution_ids=_row_ids(scoped_rows.executions) | ledger_execution_ids,
+        canonical_order_ids=_row_text_values(scoped_rows.executions, "alpaca_order_id"),
+        canonical_client_order_ids=_row_text_values(
+            scoped_rows.executions, "client_order_id"
+        )
+        | _row_text_values(scoped_rows.trade_decisions, "decision_hash"),
+    )
+    source_account_window_diagnostics = _source_account_window_scope_diagnostics(
+        rows.order_feed_source_windows,
+        source_account_label=source_account_label,
+        target_account_label=identity.account_label,
+        canonical_source_window_ids=scoped_source_window_ids | ledger_source_window_ids,
+    )
     trade_decision_mismatches = sum(
         1
         for row in rows.trade_decisions
@@ -1105,6 +1452,18 @@ def _candidate_config_match(
         "execution_order_event_mismatch_count": order_event_mismatches,
         "execution_tca_metric_mismatch_count": tca_metric_mismatches,
         "order_feed_source_window_mismatch_count": source_window_mismatches,
+        "source_account_alias_only_order_event_count": source_account_event_diagnostics[
+            "alias_only_count"
+        ],
+        "source_account_canonical_ref_mismatch_order_event_count": source_account_event_diagnostics[
+            "canonical_ref_mismatch_count"
+        ],
+        "source_account_alias_only_source_window_count": source_account_window_diagnostics[
+            "alias_only_count"
+        ],
+        "source_account_canonical_ref_mismatch_source_window_count": source_account_window_diagnostics[
+            "canonical_ref_mismatch_count"
+        ],
         "matched_runtime_ledger_bucket_count": max(
             0, runtime_ledger_bucket_count - len(ledger_mismatches)
         ),
@@ -1125,6 +1484,17 @@ def _census_blockers(
         blockers.append("source_proof_census_read_error")
     if _int(totals.get("candidate_config_mismatch_count")) > 0:
         blockers.append(CANDIDATE_CONFIG_MISMATCH_BLOCKER)
+    if (
+        _int(totals.get("source_account_alias_only_order_event_count")) > 0
+        or _int(totals.get("source_account_alias_only_source_window_count")) > 0
+    ):
+        blockers.append(SOURCE_ACCOUNT_ALIAS_ONLY_SOURCE_PROOF_BLOCKER)
+    if (
+        _int(totals.get("source_account_canonical_ref_mismatch_order_event_count")) > 0
+        or _int(totals.get("source_account_canonical_ref_mismatch_source_window_count"))
+        > 0
+    ):
+        blockers.append(SOURCE_ACCOUNT_CANONICAL_REF_MISMATCH_BLOCKER)
     if _int(totals.get("trade_decision_count")) <= 0:
         blockers.extend(
             [
@@ -1257,6 +1627,22 @@ def _blocker_ladder(
                 "mismatched_runtime_ledger_bucket_count": _int(
                     totals.get("candidate_mismatched_runtime_ledger_bucket_count")
                 ),
+                "source_account_alias_only_order_event_count": _int(
+                    totals.get("source_account_alias_only_order_event_count")
+                ),
+                "source_account_canonical_ref_mismatch_order_event_count": _int(
+                    totals.get(
+                        "source_account_canonical_ref_mismatch_order_event_count"
+                    )
+                ),
+                "source_account_alias_only_source_window_count": _int(
+                    totals.get("source_account_alias_only_source_window_count")
+                ),
+                "source_account_canonical_ref_mismatch_source_window_count": _int(
+                    totals.get(
+                        "source_account_canonical_ref_mismatch_source_window_count"
+                    )
+                ),
                 "observed_stage": observed_stage,
             },
             next_action="rerun the read-only census with the intended H-PAIRS candidate/config and paper account",
@@ -1349,6 +1735,8 @@ def _blocker_ladder(
                 RUNTIME_LEDGER_SOURCE_REFS_MISSING_BLOCKER,
                 RUNTIME_LEDGER_SOURCE_OFFSETS_MISSING_BLOCKER,
                 ORDER_FEED_SOURCE_WINDOW_GAP_BLOCKER,
+                SOURCE_ACCOUNT_ALIAS_ONLY_SOURCE_PROOF_BLOCKER,
+                SOURCE_ACCOUNT_CANONICAL_REF_MISMATCH_BLOCKER,
             },
             present=_int(totals.get("source_window_count")) > 0
             and _int(totals.get("execution_order_events_with_source_window_count"))
