@@ -6071,20 +6071,7 @@ def _runtime_observation_contract_payload(
 def _runtime_observation_has_ledger_profit_proof(
     runtime_observation_payload: Mapping[str, Any],
 ) -> bool:
-    if bool(runtime_observation_payload.get('runtime_ledger_profit_proof_present')):
-        return True
-    artifact_fill_count = _decimal_or_zero(
-        runtime_observation_payload.get('runtime_ledger_artifact_fill_count')
-    )
-    artifact_row_count = _decimal_or_zero(
-        runtime_observation_payload.get('runtime_ledger_artifact_row_count')
-    )
-    artifact_tca_row_count = _decimal_or_zero(
-        runtime_observation_payload.get('runtime_ledger_artifact_tca_row_count')
-    )
-    return artifact_fill_count > 0 and (
-        artifact_row_count > 0 or artifact_tca_row_count > 0
-    )
+    return bool(runtime_observation_payload.get('runtime_ledger_profit_proof_present'))
 
 
 def _resolve_hypothesis_window_evidence(
