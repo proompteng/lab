@@ -9,6 +9,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -159,6 +160,72 @@ def assert_paper_base_url(base_url: str) -> None:
     hostname = (urllib.parse.urlparse(base_url).hostname or "").lower()
     if hostname != PAPER_ALPACA_HOST:
         raise RuntimeError(f"protective preflight requires Alpaca paper API host {PAPER_ALPACA_HOST}; got {hostname}")
+
+
+def account_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes"}
+    return bool(value)
+
+
+def parse_account_decimal(value: Any) -> Decimal | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return Decimal(text)
+    except InvalidOperation:
+        return None
+
+
+def parse_account_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        return None
+
+
+def account_summary(account: dict[str, Any]) -> dict[str, Any]:
+    daytrading_buying_power = account.get("daytrading_buying_power") or account.get("daytrade_buying_power")
+    return {
+        "id": account.get("id"),
+        "equity": account.get("equity"),
+        "cash": account.get("cash"),
+        "buying_power": account.get("buying_power"),
+        "daytrading_buying_power": daytrading_buying_power,
+        "daytrade_count": account.get("daytrade_count"),
+        "pattern_day_trader": account_bool(account.get("pattern_day_trader", False)),
+        "trading_blocked": account_bool(account.get("trading_blocked", False)),
+        "account_blocked": account_bool(account.get("account_blocked", False)),
+    }
+
+
+def entry_ineligible_smoke_reasons(account: dict[str, Any]) -> list[str]:
+    daytrading_buying_power = account.get("daytrading_buying_power") or account.get("daytrade_buying_power")
+    daytrading_buying_power_value = parse_account_decimal(daytrading_buying_power)
+    daytrade_count = parse_account_int(account.get("daytrade_count"))
+    reasons: list[str] = []
+    if account_bool(account.get("account_blocked", False)) or account_bool(account.get("trading_blocked", False)):
+        reasons.append("account_or_trading_blocked")
+    if daytrading_buying_power_value is not None and daytrading_buying_power_value <= 0:
+        reasons.append("daytrading_buying_power_not_positive")
+    if (
+        daytrade_count is not None
+        and daytrade_count >= 4
+        and daytrading_buying_power_value is not None
+        and daytrading_buying_power_value <= 0
+    ):
+        reasons.append("pdt_daytrade_count_at_or_above_four_without_dtbp")
+    return reasons
 
 
 def record_order(
@@ -415,6 +482,31 @@ def run_preflight(args: argparse.Namespace) -> dict[str, Any]:
         return report
 
     alpaca = AlpacaClient(base_url=args.alpaca_base_url, timeout_seconds=args.timeout_seconds)
+    account = alpaca.get("/v2/account")
+    account_payload = account if isinstance(account, dict) else {}
+    report["account"] = account_summary(account_payload)
+    entry_blockers = (
+        entry_ineligible_smoke_reasons(account_payload) if isinstance(account, dict) else ["account_read_invalid"]
+    )
+    if entry_blockers:
+        report["ok"] = True
+        report["mode"] = "entry_ineligible_smoke_skipped"
+        report["skipReason"] = "entry_ineligible_for_intraday_equity_smoke"
+        report["entryBlockers"] = entry_blockers
+        append_event(
+            synthesis,
+            session_id=args.synthesis_session_id,
+            seq=args.event_seq_base + 1,
+            event_type="protective_preflight_skipped",
+            payload={
+                "clientOrderId": payload["client_order_id"],
+                "symbol": payload["symbol"],
+                "skipReason": report["skipReason"],
+                "entryBlockers": entry_blockers,
+                "account": report["account"],
+            },
+        )
+        return report
     config_before = alpaca.get("/v2/account/configurations")
     report["accountConfigurationBefore"] = config_before
     if args.ensure_dtbp_entry and config_before.get("dtbp_check") != "entry":

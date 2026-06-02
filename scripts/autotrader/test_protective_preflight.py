@@ -80,5 +80,77 @@ class SmokeExposureReadbackTest(unittest.TestCase):
         self.assertEqual(fake_alpaca.open_order_reads, 2)
 
 
+class EntryGateTest(unittest.TestCase):
+    def test_skips_submitted_smoke_when_account_is_entry_ineligible(self) -> None:
+        class FakeAlpaca:
+            def __init__(self, *, base_url: str | None, timeout_seconds: float) -> None:
+                self.base_url = base_url
+                self.timeout_seconds = timeout_seconds
+                self.calls: list[tuple[str, str]] = []
+
+            def get(self, path: str) -> dict[str, object]:
+                self.calls.append(("GET", path))
+                if path == "/v2/account":
+                    return {
+                        "id": "paper-account",
+                        "equity": "29989.14",
+                        "cash": "29989.14",
+                        "buying_power": "59978.28",
+                        "daytrading_buying_power": "0",
+                        "daytrade_count": 5,
+                    }
+                raise AssertionError(f"unexpected GET {path}")
+
+            def patch(self, path: str, payload: dict[str, object]) -> dict[str, object]:
+                raise AssertionError(f"unexpected PATCH {path}")
+
+            def post(self, path: str, payload: dict[str, object]) -> dict[str, object]:
+                raise AssertionError(f"unexpected POST {path}")
+
+            def delete(self, path: str) -> dict[str, object]:
+                raise AssertionError(f"unexpected DELETE {path}")
+
+        fake_alpaca = FakeAlpaca(base_url=None, timeout_seconds=10.0)
+        args = protective_preflight.build_parser().parse_args(
+            [
+                "--submit-smoke",
+                "--client-order-id",
+                "autonomous-trader-test-protective-preflight-0001",
+            ]
+        )
+
+        with patch.object(protective_preflight, "AlpacaClient", lambda **kwargs: fake_alpaca):
+            report = protective_preflight.run_preflight(args)
+
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["mode"], "entry_ineligible_smoke_skipped")
+        self.assertFalse(report["submitted"])
+        self.assertEqual(report["skipReason"], "entry_ineligible_for_intraday_equity_smoke")
+        self.assertEqual(
+            report["entryBlockers"],
+            [
+                "daytrading_buying_power_not_positive",
+                "pdt_daytrade_count_at_or_above_four_without_dtbp",
+            ],
+        )
+        self.assertEqual(fake_alpaca.calls, [("GET", "/v2/account")])
+
+    def test_skips_submitted_smoke_when_account_read_shape_is_invalid(self) -> None:
+        class FakeAlpaca:
+            def get(self, path: str) -> list[object]:
+                if path == "/v2/account":
+                    return []
+                raise AssertionError(f"unexpected GET {path}")
+
+        args = protective_preflight.build_parser().parse_args(["--submit-smoke"])
+
+        with patch.object(protective_preflight, "AlpacaClient", lambda **kwargs: FakeAlpaca()):
+            report = protective_preflight.run_preflight(args)
+
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["mode"], "entry_ineligible_smoke_skipped")
+        self.assertEqual(report["entryBlockers"], ["account_read_invalid"])
+
+
 if __name__ == "__main__":
     unittest.main()
