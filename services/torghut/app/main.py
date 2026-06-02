@@ -2342,7 +2342,7 @@ def _resolve_universe_resolver_for_readiness(scheduler: TradingScheduler) -> Any
     return None
 
 
-_ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS = 750
+_ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS = 150
 
 
 def _execute_readiness_account_scope_query(
@@ -2613,7 +2613,6 @@ def _evaluate_database_contract(session: Session) -> dict[str, object]:
 
     try:
         schema_status = check_schema_current(session)
-        account_scope_status = _check_account_scope_invariants_bounded(session)
     except SQLAlchemyError as exc:
         return {
             "ok": False,
@@ -2639,14 +2638,38 @@ def _evaluate_database_contract(session: Session) -> dict[str, object]:
             "account_scope_errors": [str(exc)],
         }
 
+    try:
+        account_scope_status = _check_account_scope_invariants_bounded(session)
+    except (SQLAlchemyError, RuntimeError) as exc:
+        account_scope_status = {
+            "account_scope_ready": False,
+            "account_scope_errors": [str(exc)],
+            "account_scope_check_mode": "bounded_catalog",
+            "account_scope_check_failed": True,
+        }
+
     account_scope_checks = dict(account_scope_status)
     account_scope_warnings: list[str] = []
     if not settings.trading_multi_account_enabled:
+        raw_account_scope_errors = [
+            str(error)
+            for error in cast(
+                list[object],
+                account_scope_checks.get("account_scope_errors", []),
+            )
+        ]
         account_scope_checks["account_scope_ready"] = True
         account_scope_checks["account_scope_errors"] = []
         account_scope_warnings.append(
             "account scope checks are bypassed when trading_multi_account_enabled is false"
         )
+        if account_scope_checks.get("account_scope_check_failed"):
+            account_scope_checks["account_scope_bypassed_errors"] = (
+                raw_account_scope_errors
+            )
+            account_scope_warnings.append(
+                "account scope catalog check failed but is non-blocking while trading_multi_account_enabled is false"
+            )
 
     schema_current = bool(schema_status.get("schema_current"))
     account_scope_ready = bool(account_scope_checks.get("account_scope_ready"))

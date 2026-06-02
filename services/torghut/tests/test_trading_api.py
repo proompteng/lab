@@ -1959,16 +1959,62 @@ class TestTradingApi(TestCase):
         self,
         _mock_check: object,
     ) -> None:
-        with patch(
-            "app.main._check_account_scope_invariants_bounded",
-            side_effect=SQLAlchemyError("canceling statement due to statement timeout"),
-        ):
-            payload = main_module._evaluate_database_contract(object())  # type: ignore[arg-type]
+        original_multi = settings.trading_multi_account_enabled
+        settings.trading_multi_account_enabled = True
+        try:
+            with patch(
+                "app.main._check_account_scope_invariants_bounded",
+                side_effect=SQLAlchemyError(
+                    "canceling statement due to statement timeout"
+                ),
+            ):
+                payload = main_module._evaluate_database_contract(object())  # type: ignore[arg-type]
+        finally:
+            settings.trading_multi_account_enabled = original_multi
 
         self.assertFalse(payload["ok"])
         self.assertFalse(payload["account_scope_ready"])
         self.assertIn("statement timeout", payload["account_scope_errors"][0])
-        self.assertEqual(payload["schema_current"], False)
+        self.assertEqual(payload["schema_current"], True)
+
+    @patch(
+        "app.main.check_schema_current",
+        return_value={
+            "schema_current": True,
+            "current_heads": ["0011_execution_tca_simulator_divergence"],
+            "expected_heads": ["0011_execution_tca_simulator_divergence"],
+            "schema_head_signature": "7f8e4d0",
+            "schema_missing_heads": [],
+            "schema_unexpected_heads": [],
+            "schema_head_count_expected": 1,
+            "schema_head_count_current": 1,
+            "schema_head_delta_count": 0,
+        },
+    )
+    def test_database_contract_bypasses_account_scope_timeout_when_disabled(
+        self,
+        _mock_check: object,
+    ) -> None:
+        original_multi = settings.trading_multi_account_enabled
+        settings.trading_multi_account_enabled = False
+        try:
+            with patch(
+                "app.main._check_account_scope_invariants_bounded",
+                side_effect=SQLAlchemyError(
+                    "canceling statement due to statement timeout"
+                ),
+            ):
+                payload = main_module._evaluate_database_contract(object())  # type: ignore[arg-type]
+        finally:
+            settings.trading_multi_account_enabled = original_multi
+
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["account_scope_ready"])
+        self.assertEqual(payload["account_scope_errors"], [])
+        self.assertIn(
+            "account scope catalog check failed but is non-blocking",
+            " ".join(payload["account_scope_warnings"]),
+        )
 
     @patch(
         "app.main.check_schema_current",
