@@ -552,6 +552,17 @@ class TestVerifyTradingReadiness(TestCase):
             result["runtime_ledger_proof_packet"]["schema_version"],
             verifier.RUNTIME_LEDGER_PROOF_PACKET_SCHEMA_VERSION,
         )
+        self.assertEqual(
+            result["runtime_ledger_proof_packet"]["proof_mode"], "authority"
+        )
+        self.assertTrue(result["runtime_ledger_proof_packet"]["final_authority_ok"])
+        self.assertFalse(
+            result["runtime_ledger_proof_packet"]["evidence_collection_ok"]
+        )
+        self.assertTrue(result["runtime_ledger_proof_packet"]["promotion_allowed"])
+        self.assertTrue(
+            result["runtime_ledger_proof_packet"]["final_promotion_allowed"]
+        )
 
     def test_tigerbeetle_parity_can_be_required_as_accounting_only_gate(
         self,
@@ -651,7 +662,10 @@ class TestVerifyTradingReadiness(TestCase):
             "implicit_default_final_authority": False,
         }
         packet["final_authority_ok"] = False
+        packet["evidence_collection_only"] = True
         packet["capital_promotion_allowed"] = False
+        packet["promotion_allowed"] = False
+        packet["final_promotion_allowed"] = False
         packet["evidence_collection_ok"] = True
         packet["next_action"] = "rerun_proof_packet_in_authority_mode"
         packet["promotion_authority"] = {
@@ -672,7 +686,67 @@ class TestVerifyTradingReadiness(TestCase):
         self.assertEqual(observed["proof_mode"], "smoke")
         self.assertFalse(observed["authority_allowed"])
         self.assertFalse(observed["mode_contract_allows_authority"])
+        packet_summary = result["runtime_ledger_proof_packet"]
+        self.assertEqual(packet_summary["proof_mode"], "smoke")
+        self.assertEqual(
+            packet_summary["proof_mode_contract"]["authority_scope"],
+            "plumbing_only",
+        )
+        self.assertFalse(packet_summary["final_authority_ok"])
+        self.assertTrue(packet_summary["evidence_collection_ok"])
+        self.assertFalse(packet_summary["promotion_allowed"])
+        self.assertFalse(packet_summary["final_promotion_allowed"])
         self.assertEqual(result["next_action"], "rerun_proof_packet_in_authority_mode")
+
+    def test_runtime_ledger_proof_packet_readback_separates_probation_collection(
+        self,
+    ) -> None:
+        proof_packet = _runtime_ledger_proof_packet()
+        proof_packet["proof_mode"] = "probation"
+        proof_packet["proof_mode_contract"] = {
+            "proof_mode": "probation",
+            "default_proof_mode": "smoke",
+            "authority_scope": "bounded_evidence_collection_only",
+            "mode_can_grant_final_authority": False,
+            "mode_can_grant_promotion_authority": False,
+            "requires_explicit_authority_mode_for_final_promotion": True,
+            "implicit_default_final_authority": False,
+        }
+        proof_packet["final_authority_ok"] = False
+        proof_packet["evidence_collection_only"] = True
+        proof_packet["evidence_collection_ok"] = True
+        proof_packet["canary_collection_authorized"] = True
+        proof_packet["promotion_allowed"] = False
+        proof_packet["capital_promotion_allowed"] = False
+        proof_packet["final_promotion_allowed"] = False
+        proof_packet["next_action"] = "rerun_proof_packet_in_authority_mode"
+        proof_packet["promotion_authority"] = {
+            "allowed": False,
+            "reason": "runtime_ledger_proof_mode_not_authority",
+            "blocking_reasons": ["runtime_ledger_proof_mode_not_authority"],
+            "failed_checks": ["runtime_ledger_proof_mode_authority_required"],
+        }
+
+        result = evaluate_trading_readiness(
+            _ready_status(),
+            runtime_ledger_proof_packet=proof_packet,
+            require_runtime_ledger_proof_packet=True,
+        )
+
+        self.assertFalse(result["ok"])
+        packet_summary = result["runtime_ledger_proof_packet"]
+        self.assertEqual(packet_summary["proof_mode"], "probation")
+        self.assertEqual(
+            packet_summary["proof_mode_contract"]["authority_scope"],
+            "bounded_evidence_collection_only",
+        )
+        self.assertFalse(packet_summary["final_authority_ok"])
+        self.assertTrue(packet_summary["evidence_collection_only"])
+        self.assertTrue(packet_summary["evidence_collection_ok"])
+        self.assertTrue(packet_summary["canary_collection_authorized"])
+        self.assertFalse(packet_summary["promotion_allowed"])
+        self.assertFalse(packet_summary["capital_promotion_allowed"])
+        self.assertFalse(packet_summary["final_promotion_allowed"])
 
     def test_runtime_ledger_proof_packet_requires_explicit_authority_mode_contract(
         self,
