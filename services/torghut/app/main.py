@@ -1501,24 +1501,47 @@ def _evaluate_trading_health_payload_bounded(
         include_database_contract=include_database_contract,
         allow_stale_dependency_cache=allow_stale_dependency_cache,
     )
+    callback_future: Future[tuple[dict[str, object], int]] | None = None
+    cached_result: tuple[dict[str, object], int] | None = None
     with _TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
         future = _TRADING_HEALTH_SURFACE_EVALUATIONS.get(cache_key)
-        if future is None or future.done():
+        if future is not None and future.done():
+            cache_entry = _TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.get(cache_key)
+            _TRADING_HEALTH_SURFACE_EVALUATIONS.pop(cache_key, None)
+            if cache_entry is not None:
+                payload = deepcopy(cast(dict[str, object], cache_entry["payload"]))
+                status_value = cache_entry.get("status_code")
+                status_code = status_value if isinstance(status_value, int) else 503
+                refresh_future = _TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR.submit(
+                    _evaluate_trading_health_payload,
+                    include_database_contract=include_database_contract,
+                    allow_stale_dependency_cache=allow_stale_dependency_cache,
+                )
+                _TRADING_HEALTH_SURFACE_EVALUATIONS[cache_key] = refresh_future
+                callback_future = refresh_future
+                cached_result = (payload, status_code)
+            else:
+                future = None
+        if future is None and cached_result is None:
             future = _TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR.submit(
                 _evaluate_trading_health_payload,
                 include_database_contract=include_database_contract,
                 allow_stale_dependency_cache=allow_stale_dependency_cache,
             )
             _TRADING_HEALTH_SURFACE_EVALUATIONS[cache_key] = future
-            future.add_done_callback(
-                lambda completed, key=cache_key: (
-                    _record_trading_health_surface_completion(
-                        key,
-                        completed,
-                    )
-                )
-            )
+            callback_future = future
 
+    if callback_future is not None:
+        callback_future.add_done_callback(
+            lambda completed, key=cache_key: _record_trading_health_surface_completion(
+                key,
+                completed,
+            )
+        )
+    if cached_result is not None:
+        return cached_result
+
+    assert future is not None
     timeout_seconds = max(0.1, _TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS)
     try:
         payload, status_code = future.result(timeout=timeout_seconds)
@@ -6384,6 +6407,8 @@ def _fetch_paper_route_target_plan_url(
             }
         if not parsed.hostname:
             return {"load_error": "paper_route_target_plan_invalid_host"}
+        if _paper_route_target_plan_url_points_to_self(parsed):
+            return {"load_error": "paper_route_target_plan_self_reference"}
 
         path = parsed.path or "/"
         if parsed.query:
@@ -6458,6 +6483,42 @@ def _fetch_paper_route_target_plan_url(
         result = dict(result)
         result["fetch_attempts"] = max_attempts
     return result
+
+
+def _paper_route_target_plan_url_points_to_self(parsed: Any) -> bool:
+    path = str(getattr(parsed, "path", "") or "").rstrip("/")
+    if path != "/trading/paper-route-target-plan":
+        return False
+    hostname = str(getattr(parsed, "hostname", "") or "").strip().lower()
+    if not hostname:
+        return False
+
+    self_hosts = {
+        "localhost",
+        "127.0.0.1",
+        "::1",
+        "torghut",
+        "torghut.torghut",
+        "torghut.torghut.svc",
+        "torghut.torghut.svc.cluster.local",
+        "torghut-sim",
+        "torghut-sim.torghut",
+        "torghut-sim.torghut.svc",
+        "torghut-sim.torghut.svc.cluster.local",
+    }
+    service_name = os.getenv("K_SERVICE", "").strip().lower()
+    namespace = os.getenv("POD_NAMESPACE", os.getenv("NAMESPACE", "")).strip().lower()
+    if service_name:
+        self_hosts.add(service_name)
+        if namespace:
+            self_hosts.update(
+                {
+                    f"{service_name}.{namespace}",
+                    f"{service_name}.{namespace}.svc",
+                    f"{service_name}.{namespace}.svc.cluster.local",
+                }
+            )
+    return hostname in self_hosts
 
 
 def _load_external_paper_route_target_plan() -> dict[str, Any]:
