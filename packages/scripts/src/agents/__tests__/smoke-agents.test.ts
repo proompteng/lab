@@ -634,6 +634,7 @@ describe('synthesis autonomous trader provider', () => {
     expect(objectAt(objectAt(templateSpec, 'goal'), 'objective')).toContain('dedicated Synthesis Alpaca paper account')
     expect(objectAt(parameters, 'mode')).toBe('market-open')
     expect(objectAt(parameters, 'synthesisSessionMode')).toBe('market_open')
+    expect(objectAt(parameters, 'brokerMutationEnabled')).toBe('true')
     expect(objectAt(parameters, 'accountType')).toBe('paper')
     expect(objectAt(parameters, 'targetEquityUsd')).toBe('500000')
     expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_MODE')).toBe('{{parameters.mode}}')
@@ -642,7 +643,9 @@ describe('synthesis autonomous trader provider', () => {
     )
     expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_TARGET_EQUITY_USD')).toBe('{{parameters.targetEquityUsd}}')
     expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_ACCOUNT_TYPE')).toBe('{{parameters.accountType}}')
-    expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED')).toBe('true')
+    expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED')).toBe(
+      '{{parameters.brokerMutationEnabled}}',
+    )
     expect(
       (secretEnv ?? [])
         .filter(
@@ -680,6 +683,7 @@ describe('synthesis autonomous trader provider', () => {
     expect(objectAt(objectAt(scheduleSpec, 'targetRef'), 'name')).toBe('autonomous-trader-scorecard-readback-template')
     expect(objectAt(parameters, 'mode')).toBe('scorecard-readback')
     expect(objectAt(parameters, 'synthesisSessionMode')).toBe('scorecard_readback')
+    expect(objectAt(parameters, 'brokerMutationEnabled')).toBe('false')
     expect(objectAt(goal, 'objective')).toContain('reads finalized Synthesis scorecards before candidate grading')
     expect(Object.hasOwn(goal, 'tokenBudget')).toBe(false)
     expect(secrets).toContain('synthesis-env')
@@ -866,7 +870,9 @@ describe('synthesis autonomous trader provider', () => {
     expect(objectAt(codexConfig, 'content')).toContain('command = "/usr/bin/python3"')
     expect(objectAt(codexConfig, 'content')).toContain('args = ["-u", "/root/alpaca-mcp-stdio-bridge.py"]')
     expect(objectAt(codexConfig, 'content')).toContain('startup_timeout_sec = 60.0')
-    expect(objectAt(codexConfig, 'content')).toContain('AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED = "true"')
+    expect(objectAt(codexConfig, 'content')).toContain(
+      'AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED = "{{ env.AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED }}"',
+    )
     expect(objectAt(bridge, 'content')).toContain('Content-Length:')
     expect(objectAt(bridge, 'content')).toContain('/usr/local/bin/alpaca-mcp-server')
     expect(objectAt(bridge, 'content')).toContain('--transport')

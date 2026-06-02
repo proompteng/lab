@@ -33,6 +33,7 @@ spec:
     head: codex/synthesis-autonomous-trader-scorecard-readback
     mode: scorecard-readback
     synthesisSessionMode: scorecard_readback
+    brokerMutationEnabled: "false"
     accountType: paper
     targetEquityUsd: "500000"
     marketOpenTimezone: America/New_York
