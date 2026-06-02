@@ -4683,6 +4683,208 @@ class TestPaperRouteEvidenceAudit(TestCase):
         )
         self.assertIn("source_reject_spread_bps_exceeded", import_audit["blockers"])
 
+    def test_hpairs_zero_activity_diagnostics_report_market_window_blocker(
+        self,
+    ) -> None:
+        generated_at = datetime(2026, 5, 26, 12, 0, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            session.add(
+                Strategy(
+                    name="microbar-cross-sectional-pairs-v1",
+                    description="H-PAIRS paper route source strategy",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL", "AMZN"],
+                    created_at=generated_at,
+                    updated_at=generated_at,
+                )
+            )
+            session.commit()
+
+            payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "paper_route_probe_only",
+                    "blocked_reasons": [],
+                    "promotion_eligible_total": 0,
+                    "dependency_quorum_decision": "allow",
+                    "continuity_ok": True,
+                    "continuity_reason": "expected_market_closed_staleness",
+                    "drift_ok": True,
+                    "drift_reason": "drift_live_promotion_eligible",
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "target_count": 1,
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-PAIRS-01",
+                                "candidate_id": "c88421d619759b2cfaa6f4d0",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_cross_sectional_pairs",
+                                "strategy_name": "microbar-cross-sectional-pairs-v1",
+                                "account_label": "TORGHUT_SIM",
+                                "source_kind": "paper_route_probe_runtime_observed",
+                                "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
+                                "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                                "paper_probation_authorized": True,
+                                "source_collection_authorized": True,
+                                "promotion_allowed": False,
+                                "final_promotion_authorized": False,
+                                "max_notional": "0",
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "summary": {
+                        "paper_route_probe_eligible_symbols": ["AAPL", "AMZN"],
+                        "paper_route_probe_active_symbols": [],
+                    },
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": False,
+                        "next_session_max_notional": "25",
+                        "eligible_symbol_count": 2,
+                        "eligible_symbols": ["AAPL", "AMZN"],
+                        "blocking_reasons": ["market_session_closed"],
+                    },
+                },
+                generated_at=generated_at,
+            )
+
+        diagnostics = payload["summary"]["hpairs_zero_activity_diagnostics"]
+        self.assertEqual(
+            diagnostics["schema_version"],
+            "torghut.hpairs-zero-activity-diagnostics.v1",
+        )
+        self.assertEqual(diagnostics["state"], "no_market_window")
+        self.assertTrue(diagnostics["reason_flags"]["no_market_window"])
+        self.assertFalse(
+            diagnostics["reason_flags"]["no_candidate_target_materialization"]
+        )
+        self.assertFalse(diagnostics["reason_flags"]["paper_route_disabled"])
+        self.assertEqual(diagnostics["counts"]["hpairs_target_count"], 1)
+        self.assertEqual(diagnostics["counts"]["hpairs_symbol_count"], 2)
+        self.assertEqual(diagnostics["counts"]["hpairs_decision_count"], 0)
+        self.assertFalse(diagnostics["safe_to_promote"])
+        self.assertFalse(
+            diagnostics["proof_semantics"]["synthetic_orders_or_fills"]
+        )
+
+    def test_hpairs_zero_activity_diagnostics_surface_route_vetoes(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            session.add(
+                Strategy(
+                    name="microbar-cross-sectional-pairs-v1",
+                    description="H-PAIRS paper route source strategy",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL", "AMZN"],
+                    created_at=window_start,
+                    updated_at=window_start,
+                )
+            )
+            session.add(
+                RejectedSignalOutcomeEvent(
+                    event_id="hpairs-reject-aapl",
+                    source="quote_quality_gate",
+                    paper_source="paper-arxiv-2605.12151",
+                    paper_claim_id="rejection-event-outcome-labels",
+                    account_label="TORGHUT_SIM",
+                    symbol="AAPL",
+                    event_ts=window_start + timedelta(minutes=20),
+                    timeframe="1Sec",
+                    seq="1",
+                    reject_reason="spread_bps_exceeded",
+                    spread_bps=Decimal("51.35410106"),
+                    outcome_label_status="pending",
+                    counterfactual_required=True,
+                    required_outcome_fields_json=[
+                        "counterfactual_return",
+                        "route_tca",
+                        "post_cost_net_pnl",
+                        "executable_quote",
+                    ],
+                    event_payload_json={"event_id": "hpairs-reject-aapl"},
+                )
+            )
+            self._add_flat_account_start_snapshot(
+                session,
+                account_label="TORGHUT_SIM",
+                window_start=window_start,
+            )
+            session.commit()
+
+            payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "paper_route_probe_only",
+                    "blocked_reasons": [],
+                    "promotion_eligible_total": 0,
+                    "dependency_quorum_decision": "allow",
+                    "continuity_ok": True,
+                    "continuity_reason": "signals_present",
+                    "drift_ok": True,
+                    "drift_reason": "drift_live_promotion_eligible",
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "target_count": 1,
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-PAIRS-01",
+                                "candidate_id": "c88421d619759b2cfaa6f4d0",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_cross_sectional_pairs",
+                                "strategy_name": "microbar-cross-sectional-pairs-v1",
+                                "account_label": "TORGHUT_SIM",
+                                "source_kind": "paper_route_probe_runtime_observed",
+                                "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
+                                "window_start": window_start.isoformat(),
+                                "window_end": window_end.isoformat(),
+                                "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                                "paper_probation_authorized": True,
+                                "source_collection_authorized": True,
+                                "promotion_allowed": False,
+                                "final_promotion_authorized": False,
+                                "max_notional": "0",
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "summary": {
+                        "paper_route_probe_eligible_symbols": ["AAPL", "AMZN"],
+                        "paper_route_probe_active_symbols": ["AAPL", "AMZN"],
+                    },
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": True,
+                        "next_session_max_notional": "25",
+                        "eligible_symbol_count": 2,
+                    },
+                },
+                generated_at=datetime(2026, 5, 26, 21, 0, tzinfo=timezone.utc),
+            )
+
+        diagnostics = payload["summary"]["hpairs_zero_activity_diagnostics"]
+        self.assertTrue(diagnostics["reason_flags"]["route_veto"])
+        self.assertIn("source_reject_spread_bps_exceeded", diagnostics["blockers"])
+        self.assertEqual(diagnostics["counts"]["hpairs_decision_count"], 0)
+        self.assertEqual(diagnostics["counts"]["hpairs_submitted_order_count"], 0)
+        self.assertFalse(diagnostics["safe_to_promote"])
+
     def test_source_activity_is_bound_to_target_window_end(self) -> None:
         window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
         window_end = datetime(2026, 5, 26, 20, tzinfo=timezone.utc)
