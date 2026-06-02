@@ -36,6 +36,10 @@ The `torghut-paper-account-flatten` CronJob runs both before the regular session
 The post-close run is part of the paper-route proof lane: it persists the flat account snapshot required before the
 21:23 UTC renewal/import conductor can turn a closed paper-route window into authority-checkable runtime-ledger evidence.
 
+The live TigerBeetle journal CronJob uses small supervised source slices. Keep the execution batch and order-event
+max-batch settings conservative enough to finish under the watchdog; failed slices do not grant accounting authority and
+slow the backlog drain that feeds runtime-ledger proof.
+
 Trigger a simulation run via Argo:
 
 The proof packet separates post-cost proof authority from live capital promotion

@@ -54,6 +54,7 @@ class RunTigerBeetleJournalCronTest(TestCase):
         self.assertTrue(commands[0].allow_data_quality_degraded)
         self.assertEqual(commands[1].batch_size, 5)
         self.assertEqual(commands[2].batch_size, 5)
+        self.assertEqual(commands[2].max_batches, 2)
         self.assertEqual(commands[3].source, SOURCE_TYPE_RUNTIME_LEDGER_BUCKET)
         self.assertFalse(commands[3].skip_reconcile)
 

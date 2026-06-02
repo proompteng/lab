@@ -1529,7 +1529,7 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertNotIn("SIM_DB_DSN", live_env)
         live_args = "\n".join(str(item) for item in live_container.get("args", []))
         self.assertIn("--preset live", live_args)
-        self.assertIn("--execution-batch-size 10", live_args)
+        self.assertIn("--execution-batch-size 5", live_args)
         self.assertNotIn("--dsn-env DB_DSN", live_args)
         self.assertNotIn("--dsn-env SIM_DB_DSN", live_args)
         self.assertNotIn("--account-label TORGHUT_SIM", live_args)
