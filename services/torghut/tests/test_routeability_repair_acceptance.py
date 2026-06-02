@@ -156,8 +156,8 @@ def test_routeability_acceptance_ledger_projects_all_doc185_lots_at_zero_notiona
     assert (
         ledger["profit_repair_settlement_ref"] == "profit-repair-settlement-ledger:test"
     )
-    assert ledger["summary"]["lot_count"] == 7
-    assert ledger["summary"]["zero_notional_lot_count"] == 7
+    assert ledger["summary"]["lot_count"] == 8
+    assert ledger["summary"]["zero_notional_lot_count"] == 8
 
     lots = cast(list[Mapping[str, Any]], ledger["lots"])
     assert {lot["paper_notional_limit"] for lot in lots} == {"0"}
@@ -172,6 +172,7 @@ def test_routeability_acceptance_ledger_projects_all_doc185_lots_at_zero_notiona
         "forecast_and_promotion_repair",
         "submit_gate_hold",
         "torghut_admission_witness",
+        "source_identity_match",
     }
 
 
@@ -305,6 +306,11 @@ def test_probing_route_rows_keep_routeability_unsettled_until_tca_acceptance() -
             "admission_ref": "jangar-routeability:ready",
             "decision": "allow",
             "state": "current",
+            "account_label": "PA3SX7FYNUTF",
+            "window": "15m",
+            "trading_mode": "live",
+            "symbols": ["AAPL"],
+            "hypothesis_ids": ["H-AAPL"],
             "reason_codes": [],
         },
     )
@@ -376,13 +382,18 @@ def test_all_receipts_must_settle_before_accepting_routeable_candidates() -> Non
             "admission_ref": "jangar-routeability:ready",
             "decision": "allow",
             "state": "current",
+            "account_label": "PA3SX7FYNUTF",
+            "window": "15m",
+            "trading_mode": "live",
+            "symbols": ["AAPL"],
+            "hypothesis_ids": ["H-AAPL"],
             "reason_codes": [],
         },
     )
 
     assert ledger["aggregate_state"] == "accepted"
     assert ledger["accepted_routeable_candidate_count"] == 1
-    assert ledger["summary"]["accepted_lot_count"] == 7
+    assert ledger["summary"]["accepted_lot_count"] == 8
 
 
 def test_blocked_autoresearch_portfolios_keep_promotion_repair_unsettled() -> None:
@@ -425,3 +436,158 @@ def test_blocked_autoresearch_portfolios_keep_promotion_repair_unsettled() -> No
         "autoresearch_portfolio_candidates_blocked"
         in promotion_lot["blocking_reason_codes"]
     )
+
+
+def _hpairs_ready_ledger(**overrides: object) -> dict[str, object]:
+    ready = {
+        "account_label": "TORGHUT_SIM",
+        "window": "15m",
+        "trading_mode": "paper",
+        "torghut_revision": "torghut-hpairs",
+        "revenue_repair_digest_ref": "/trading/revenue-repair/hpairs",
+        "consumer_evidence_receipt": {
+            "receipt_id": "torghut-consumer-evidence:hpairs-ready",
+            "fresh_until": "2026-05-08T12:33:00+00:00",
+            "forecast_registry_state": "ready",
+            "reason_codes": [],
+        },
+        "proof_floor_receipt": {
+            "schema_version": "torghut.profitability-proof-floor.v1",
+            "account_label": "TORGHUT_SIM",
+            "route_state": "paper_candidate",
+            "capital_state": "paper_allowed",
+            "max_notional": "25",
+            "blocking_reasons": [],
+            "proof_dimensions": [
+                {
+                    "dimension": "alpha_readiness",
+                    "state": "pass",
+                    "source_ref": {"promotion_eligible_total": 1},
+                }
+            ],
+        },
+        "capital_reentry_cohort_ledger": {"ledger_id": "capital-reentry:hpairs"},
+        "quality_adjusted_profit_frontier": {
+            "frontier_id": "quality-frontier:hpairs-ready",
+            "blocked_capital_surfaces": [],
+        },
+        "profit_repair_settlement_ledger": {"ledger_id": "profit-repair:hpairs"},
+        "route_reacquisition_board": {
+            "account_label": "TORGHUT_SIM",
+            "trading_mode": "paper",
+            "summary": {"capital_eligible_symbol_count": 1},
+            "rows": [
+                {
+                    "symbol": "AAPL",
+                    "state": "routeable",
+                    "hypothesis_ids": ["H-PAIRS-01"],
+                    "avg_abs_slippage_bps": "4",
+                    "slippage_guardrail_bps": "8",
+                    "source_metadata": {
+                        "account_label": "TORGHUT_SIM",
+                        "symbol": "AAPL",
+                        "hypothesis_id": "H-PAIRS-01",
+                        "candidate_id": "candidate-hpairs",
+                        "source_manifest_ref": "runtime-manifest:H-PAIRS-01",
+                    },
+                }
+            ],
+        },
+        "live_submission_gate": {"allowed": True, "reason": "ready"},
+        "quant_evidence": {
+            "ok": True,
+            "status": "healthy",
+            "latest_metrics_count": 144,
+            "stage_count": 3,
+        },
+        "market_context_status": {"status": "healthy", "last_domain_states": {}},
+        "torghut_routeability_admission_ref": {
+            "admission_ref": "jangar-routeability:hpairs-ready",
+            "decision": "allow",
+            "state": "current",
+            "account_label": "TORGHUT_SIM",
+            "window": "15m",
+            "trading_mode": "paper",
+            "symbols": ["AAPL"],
+            "hypothesis_ids": ["H-PAIRS-01"],
+            "candidate_ids": ["candidate-hpairs"],
+            "source_manifest_refs": ["runtime-manifest:H-PAIRS-01"],
+            "reason_codes": [],
+        },
+        "now": NOW,
+    }
+    ready.update(overrides)
+    return build_routeability_repair_acceptance_ledger(**ready)
+
+
+def test_clean_hpairs_torghut_sim_routeability_accepts_collection_only() -> None:
+    ledger = _hpairs_ready_ledger()
+    source_lot = _lot(ledger, "source_identity_match")
+
+    assert ledger["aggregate_state"] == "accepted"
+    assert ledger["accepted_routeable_candidate_count"] == 1
+    assert ledger["promotion_authority"] is False
+    assert (
+        ledger["rollback_target"]["routeability_acceptance_consumption_enabled"]
+        is False
+    )
+    assert source_lot["current_state"] == "accepted"
+    assert source_lot["blocking_reason_codes"] == []
+    assert source_lot["paper_notional_limit"] == "0"
+    assert source_lot["live_notional_limit"] == "0"
+
+
+def test_routeability_source_identity_account_mismatch_blocks_acceptance() -> None:
+    ledger = _hpairs_ready_ledger(
+        torghut_routeability_admission_ref={
+            "admission_ref": "jangar-routeability:wrong-account",
+            "decision": "allow",
+            "state": "current",
+            "account_label": "PA3SX7FYNUTF",
+            "window": "15m",
+            "trading_mode": "paper",
+            "symbols": ["AAPL"],
+            "hypothesis_ids": ["H-PAIRS-01"],
+            "candidate_ids": ["candidate-hpairs"],
+            "source_manifest_refs": ["runtime-manifest:H-PAIRS-01"],
+            "reason_codes": [],
+        }
+    )
+    source_lot = _lot(ledger, "source_identity_match")
+
+    assert ledger["aggregate_state"] == "repairing"
+    assert ledger["accepted_routeable_candidate_count"] == 0
+    assert (
+        "route_identity_admission_account_mismatch"
+        in source_lot["blocking_reason_codes"]
+    )
+
+
+def test_routeability_source_identity_symbol_and_candidate_mismatch_blocks() -> None:
+    ledger = _hpairs_ready_ledger(
+        torghut_routeability_admission_ref={
+            "admission_ref": "jangar-routeability:wrong-lineage",
+            "decision": "allow",
+            "state": "current",
+            "account_label": "TORGHUT_SIM",
+            "window": "15m",
+            "trading_mode": "paper",
+            "symbols": ["MSFT"],
+            "hypothesis_ids": ["H-PAIRS-01"],
+            "candidate_ids": ["candidate-other"],
+            "source_manifest_refs": ["runtime-manifest:H-PAIRS-01"],
+            "reason_codes": [],
+        }
+    )
+    source_lot = _lot(ledger, "source_identity_match")
+
+    assert ledger["accepted_routeable_candidate_count"] == 0
+    assert (
+        "route_identity_admission_symbol_scope_mismatch"
+        in source_lot["blocking_reason_codes"]
+    )
+    assert (
+        "route_identity_candidate_lineage_mismatch"
+        in source_lot["blocking_reason_codes"]
+    )
+    assert ledger["promotion_authority"] is False
