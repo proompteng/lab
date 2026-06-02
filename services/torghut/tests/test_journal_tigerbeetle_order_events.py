@@ -4,9 +4,10 @@ import argparse
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
@@ -280,7 +281,12 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
             account_label="paper",
             batch_size=500,
             max_batches=1,
+            event_scan_limit=None,
             fail_on_degraded=True,
+            skip_reconcile=False,
+            sources="all",
+            supervised_worker=False,
+            supervise_timeout_seconds=0.0,
         )
 
         payload = script._payload(
@@ -295,6 +301,61 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
         self.assertEqual(payload["status"], "degraded")
         self.assertEqual(payload["failed"], 0)
         self.assertTrue(payload["fail_on_degraded"])
+
+    def test_supervised_worker_timeout_emits_degraded_payload(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        with (
+            patch.dict(os.environ, {"DB_DSN": "sqlite+pysqlite:///:memory:"}),
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "journal_tigerbeetle_order_events.py",
+                    "--dsn-env",
+                    "DB_DSN",
+                    "--sources",
+                    "execution",
+                    "--batch-size",
+                    "50",
+                    "--max-batches",
+                    "1",
+                    "--fail-on-degraded",
+                    "--json",
+                    "--supervise-timeout-seconds",
+                    "0.01",
+                ],
+            ),
+            patch(
+                "scripts.journal_tigerbeetle_order_events.subprocess.run",
+                side_effect=subprocess.TimeoutExpired(
+                    cmd=["python", "journal_tigerbeetle_order_events.py"],
+                    timeout=0.01,
+                ),
+            ) as run_mock,
+            redirect_stdout(stdout),
+            redirect_stderr(stderr),
+        ):
+            exit_code = script.main()
+
+        self.assertEqual(exit_code, 1)
+        payload = json.loads(stdout.getvalue())
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], "degraded")
+        self.assertTrue(payload["stopped_early"])
+        self.assertEqual(
+            payload["stop_reasons"],
+            ["tigerbeetle_journal_worker_timeout"],
+        )
+        self.assertEqual(payload["failed"], 1)
+        self.assertEqual(
+            payload["reconciliation"]["reason"],
+            "tigerbeetle_journal_worker_timeout",
+        )
+        self.assertIn("supervised_worker_timeout", stderr.getvalue())
+        self.assertIn("--supervised-worker", run_mock.call_args.args[0])
+        self.assertEqual(run_mock.call_args.kwargs["timeout"], 0.01)
 
     def test_process_rows_attaches_runtime_bucket_journal_payload(self) -> None:
         settings_obj = Settings(TORGHUT_TIGERBEETLE_ENABLED=True)

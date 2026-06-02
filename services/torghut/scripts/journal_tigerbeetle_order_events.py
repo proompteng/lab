@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -111,6 +112,21 @@ def _parse_args() -> argparse.Namespace:
         type=int,
         default=100,
         help="Emit stderr progress every N processed source rows; set 0 to disable.",
+    )
+    parser.add_argument(
+        "--supervise-timeout-seconds",
+        type=float,
+        default=0.0,
+        help=(
+            "Run the journal worker in a child process and kill it after this "
+            "deadline. This bounds native TigerBeetle client calls that cannot "
+            "be interrupted safely from a Python thread."
+        ),
+    )
+    parser.add_argument(
+        "--supervised-worker",
+        action="store_true",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--json", action="store_true")
@@ -500,6 +516,10 @@ def _payload(
         "event_scan_limit": getattr(args, "event_scan_limit", None),
         "sources": list(_parse_sources(getattr(args, "sources", "all"))),
         "skip_reconcile": bool(getattr(args, "skip_reconcile", False)),
+        "supervised_worker": bool(getattr(args, "supervised_worker", False)),
+        "supervise_timeout_seconds": float(
+            getattr(args, "supervise_timeout_seconds", 0.0) or 0.0
+        ),
         "stopped_early": bool(stop_reasons),
         "stop_reasons": stop_reasons,
         "started_at": started_at.isoformat(),
@@ -513,6 +533,98 @@ def _payload(
     }
 
 
+def _supervised_timeout_payload(
+    *,
+    args: argparse.Namespace,
+    started_at: datetime,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    stop_reason = "tigerbeetle_journal_worker_timeout"
+    batch = {
+        "source": "supervised_worker",
+        "selected": 0,
+        "journaled": 0,
+        "skipped": 0,
+        "failed": 1,
+        "error_counts": {stop_reason: 1},
+        "sample_errors": [
+            {
+                "error_type": "TimeoutExpired",
+                "error": f"journal worker exceeded {timeout_seconds:.3f}s",
+            }
+        ],
+        "stopped_early": True,
+        "stop_reason": stop_reason,
+    }
+    return {
+        "schema_version": "torghut.tigerbeetle-journal-order-events.v1",
+        "ok": False,
+        "status": "degraded",
+        "fail_on_degraded": bool(args.fail_on_degraded),
+        "dry_run": bool(args.dry_run),
+        "dsn_env": args.dsn_env,
+        "account_label": args.account_label,
+        "batch_size": max(1, min(int(args.batch_size), 5000)),
+        "max_batches": max(1, int(args.max_batches)),
+        "event_scan_limit": getattr(args, "event_scan_limit", None),
+        "sources": list(_parse_sources(getattr(args, "sources", "all"))),
+        "skip_reconcile": bool(getattr(args, "skip_reconcile", False)),
+        "supervised_worker": False,
+        "supervise_timeout_seconds": timeout_seconds,
+        "stopped_early": True,
+        "stop_reasons": [stop_reason],
+        "started_at": started_at.isoformat(),
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+        "selected": 0,
+        "journaled": 0,
+        "skipped": 0,
+        "failed": 1,
+        "batches": [batch],
+        "reconciliation": {
+            "ok": False,
+            "status": "skipped",
+            "reason": stop_reason,
+        },
+    }
+
+
+def _supervised_worker_argv() -> list[str]:
+    return [
+        sys.executable,
+        os.path.abspath(__file__),
+        *sys.argv[1:],
+        "--supervised-worker",
+    ]
+
+
+def _run_supervised_worker(args: argparse.Namespace, *, started_at: datetime) -> int:
+    timeout_seconds = max(float(args.supervise_timeout_seconds), 0.001)
+    try:
+        completed = subprocess.run(
+            _supervised_worker_argv(),
+            check=False,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired:
+        _emit_progress(
+            "supervised_worker_timeout",
+            timeout_seconds=timeout_seconds,
+            sources=list(_parse_sources(getattr(args, "sources", "all"))),
+        )
+        payload = _supervised_timeout_payload(
+            args=args,
+            started_at=started_at,
+            timeout_seconds=timeout_seconds,
+        )
+        print(
+            json.dumps(payload, separators=(",", ":"))
+            if args.json
+            else json.dumps(payload, indent=2)
+        )
+        return 1 if args.fail_on_degraded else 0
+    return int(completed.returncode)
+
+
 def main() -> int:
     args = _parse_args()
     dsn = os.environ.get(str(args.dsn_env).strip())
@@ -520,6 +632,11 @@ def main() -> int:
         raise SystemExit(f"missing DSN env var: {args.dsn_env}")
 
     started_at = datetime.now(timezone.utc)
+    if float(getattr(args, "supervise_timeout_seconds", 0.0) or 0.0) > 0 and not bool(
+        getattr(args, "supervised_worker", False)
+    ):
+        return _run_supervised_worker(args, started_at=started_at)
+
     batch_size = max(1, min(int(args.batch_size), 5000))
     max_batches = max(1, int(args.max_batches))
     try:

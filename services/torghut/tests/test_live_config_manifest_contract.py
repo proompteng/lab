@@ -1502,6 +1502,7 @@ class TestLiveConfigManifestContract(TestCase):
             )
             self.assertEqual(args.count("--skip-reconcile"), 1)
             self.assertEqual(args.count("--fail-on-degraded"), 2)
+            self.assertEqual(args.count("--supervise-timeout-seconds 45"), 2)
             self.assertIn("--json", args)
             security_context = cast(
                 Mapping[str, object],
