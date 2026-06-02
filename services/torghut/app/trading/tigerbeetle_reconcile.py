@@ -303,16 +303,36 @@ def _source_ref_exists(
     source_type: str,
     source_id: str,
     transfer_kind: str,
+    source_pk: UUID | None = None,
 ) -> bool:
+    source_clauses = [
+        (TigerBeetleTransferRef.source_type == source_type)
+        & (TigerBeetleTransferRef.source_id == source_id)
+    ]
+    if source_pk is not None:
+        if source_type == SOURCE_TYPE_EXECUTION:
+            source_clauses.append(
+                (TigerBeetleTransferRef.source_type == source_type)
+                & (TigerBeetleTransferRef.execution_id == source_pk)
+            )
+        elif source_type == SOURCE_TYPE_EXECUTION_TCA_METRIC:
+            source_clauses.append(
+                (TigerBeetleTransferRef.source_type == source_type)
+                & (TigerBeetleTransferRef.execution_tca_metric_id == source_pk)
+            )
+        elif source_type == SOURCE_TYPE_RUNTIME_LEDGER_BUCKET:
+            source_clauses.append(
+                (TigerBeetleTransferRef.source_type == source_type)
+                & (TigerBeetleTransferRef.runtime_ledger_bucket_id == source_pk)
+            )
     return (
         session.scalar(
             select(TigerBeetleTransferRef.id)
             .where(
                 TigerBeetleTransferRef.cluster_id
                 == settings_obj.tigerbeetle_cluster_id,
-                TigerBeetleTransferRef.source_type == source_type,
-                TigerBeetleTransferRef.source_id == source_id,
                 TigerBeetleTransferRef.transfer_kind == transfer_kind,
+                or_(*source_clauses),
             )
             .limit(1)
         )
@@ -411,10 +431,6 @@ def _archived_source_amount_micros(ref: TigerBeetleTransferRef) -> Decimal | Non
     if ref.source_type not in {SOURCE_TYPE_EXECUTION, SOURCE_TYPE_EXECUTION_TCA_METRIC}:
         return None
     payload = _payload_mapping(ref)
-    if ":" not in str(ref.source_id or "") and not payload.get(
-        "source_economic_fingerprint"
-    ):
-        return None
     raw_amount = payload.get("amount_source")
     if raw_amount is None:
         return None
@@ -422,6 +438,17 @@ def _archived_source_amount_micros(ref: TigerBeetleTransferRef) -> Decimal | Non
         return _usd_to_micros(Decimal(str(raw_amount)))
     except (InvalidOperation, ValueError):
         return None
+
+
+def _legacy_unversioned_source_ref(ref: TigerBeetleTransferRef) -> bool:
+    if ref.source_type not in {SOURCE_TYPE_EXECUTION, SOURCE_TYPE_EXECUTION_TCA_METRIC}:
+        return False
+    payload = _payload_mapping(ref)
+    return (
+        ":" not in str(ref.source_id or "")
+        and payload.get("amount_source") is None
+        and payload.get("source_economic_fingerprint") is None
+    )
 
 
 def _expected_source_amount_micros(
@@ -862,6 +889,9 @@ def _latest_run_payload(
         "source_amount_mismatch_count": _payload_int(
             payload, "source_amount_mismatch_count"
         ),
+        "legacy_source_amount_unverifiable_count": _payload_int(
+            payload, "legacy_source_amount_unverifiable_count"
+        ),
         "runtime_ledger_checked_transfer_count": _payload_int(
             payload, "runtime_ledger_checked_transfer_count"
         ),
@@ -913,6 +943,10 @@ def _latest_run_payload(
         "mismatched_refs": payload.get("mismatched_refs") or [],
         "missing_source_rows": payload.get("missing_source_rows") or [],
         "unlinked_refs": payload.get("unlinked_refs") or [],
+        "legacy_source_amount_unverifiable_refs": payload.get(
+            "legacy_source_amount_unverifiable_refs"
+        )
+        or [],
         "blocker_details": payload.get("blocker_details") or {},
         "ref_counts": payload.get("ref_counts") or {},
         "started_at": row.started_at.isoformat(),
@@ -965,6 +999,7 @@ def reconcile_tigerbeetle_transfers(
     mismatched_transfer_count = 0
     source_row_missing_count = 0
     source_amount_mismatch_count = 0
+    legacy_source_amount_unverifiable_count = 0
     runtime_ledger_checked_transfer_count = 0
     runtime_ledger_signed_transfer_count = 0
     runtime_ledger_missing_signed_ref_count = 0
@@ -978,6 +1013,7 @@ def reconcile_tigerbeetle_transfers(
     missing_transfer_refs: list[dict[str, object]] = []
     missing_source_rows: list[dict[str, object]] = []
     unlinked_refs: list[dict[str, object]] = []
+    legacy_source_amount_unverifiable_refs: list[dict[str, object]] = []
 
     transfer_lookup: dict[str, object] = {}
     owned_client = client is None
@@ -1133,17 +1169,31 @@ def reconcile_tigerbeetle_transfers(
                         ),
                     )
             elif ref.amount != expected_source_amount:
-                source_amount_mismatch_count += 1
-                blockers.append(BLOCKER_SOURCE_AMOUNT_MISMATCH)
-                _append_sample(
-                    mismatched_refs,
-                    _ref_sample(
-                        ref,
-                        blocker=BLOCKER_SOURCE_AMOUNT_MISMATCH,
-                        reason="source_amount_micros_differs_from_transfer_ref",
-                        actual=actual,
-                    ),
-                )
+                if _legacy_unversioned_source_ref(ref):
+                    legacy_source_amount_unverifiable_count += 1
+                    _append_sample(
+                        legacy_source_amount_unverifiable_refs,
+                        _ref_sample(
+                            ref,
+                            blocker="tigerbeetle_legacy_source_amount_unverifiable",
+                            reason=(
+                                "legacy_source_ref_lacks_revision_or_archived_amount"
+                            ),
+                            actual=actual,
+                        ),
+                    )
+                else:
+                    source_amount_mismatch_count += 1
+                    blockers.append(BLOCKER_SOURCE_AMOUNT_MISMATCH)
+                    _append_sample(
+                        mismatched_refs,
+                        _ref_sample(
+                            ref,
+                            blocker=BLOCKER_SOURCE_AMOUNT_MISMATCH,
+                            reason="source_amount_micros_differs_from_transfer_ref",
+                            actual=actual,
+                        ),
+                    )
         if ref.source_type == SOURCE_TYPE_RUNTIME_LEDGER_BUCKET:
             runtime_ledger_checked_transfer_count += 1
             source_uuid = _uuid_or_none(ref.source_id)
@@ -1241,6 +1291,7 @@ def reconcile_tigerbeetle_transfers(
             source_type=SOURCE_TYPE_EXECUTION,
             source_id=str(execution.id),
             transfer_kind=TRANSFER_KIND_EXECUTION_FILL,
+            source_pk=execution.id,
         ):
             continue
         unlinked_execution_count += 1
@@ -1277,6 +1328,7 @@ def reconcile_tigerbeetle_transfers(
             source_type=SOURCE_TYPE_EXECUTION_TCA_METRIC,
             source_id=execution_tca_metric_source_id(metric),
             transfer_kind=TRANSFER_KIND_EXECUTION_COST,
+            source_pk=metric.id,
         ):
             continue
         unlinked_cost_count += 1
@@ -1313,6 +1365,7 @@ def reconcile_tigerbeetle_transfers(
             source_type=SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
             source_id=str(bucket.id),
             transfer_kind=TRANSFER_KIND_RUNTIME_NET_PNL,
+            source_pk=bucket.id,
         ):
             continue
         unlinked_runtime_ledger_count += 1
@@ -1391,6 +1444,9 @@ def reconcile_tigerbeetle_transfers(
         "source_row_missing_count": source_row_missing_count,
         "missing_source_row_count": source_row_missing_count,
         "source_amount_mismatch_count": source_amount_mismatch_count,
+        "legacy_source_amount_unverifiable_count": (
+            legacy_source_amount_unverifiable_count
+        ),
         "runtime_ledger_checked_transfer_count": runtime_ledger_checked_transfer_count,
         "runtime_ledger_signed_transfer_count": runtime_ledger_signed_transfer_count,
         "runtime_ledger_ref_count": _payload_int(
@@ -1436,11 +1492,17 @@ def reconcile_tigerbeetle_transfers(
         "mismatched_refs": mismatched_refs,
         "missing_source_rows": missing_source_rows,
         "unlinked_refs": unlinked_refs,
+        "legacy_source_amount_unverifiable_refs": (
+            legacy_source_amount_unverifiable_refs
+        ),
         "blocker_details": {
             "missing_transfer_refs": missing_transfer_refs,
             "mismatched_refs": mismatched_refs,
             "missing_source_rows": missing_source_rows,
             "unlinked_refs": unlinked_refs,
+            "legacy_source_amount_unverifiable_refs": (
+                legacy_source_amount_unverifiable_refs
+            ),
         },
         "blockers": unique_blockers,
     }
