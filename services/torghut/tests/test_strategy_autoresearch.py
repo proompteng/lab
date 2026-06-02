@@ -264,7 +264,7 @@ class TestStrategyAutoresearch(TestCase):
         blocker_names = {item["blocker"] for item in missing_handoff_blockers}
         self.assertIn("hypothesis_manifest_missing", blocker_names)
         self.assertIn("runtime_harness_metadata_missing", blocker_names)
-        self.assertIn("runtime_ledger_artifact_ref_missing", blocker_names)
+        self.assertIn("exact_replay_ledger_artifact_ref_missing", blocker_names)
         missing_history_blockers = runner._exact_replay_runtime_window_blockers(
             best_exact_replay_ledger_candidate={"candidate_id": "candidate-1"},
             history_row=None,
@@ -709,11 +709,8 @@ class TestStrategyAutoresearch(TestCase):
                             "runtime_family": "microbar_cross_sectional_pairs",
                             "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
                             "exact_replay_ledger_artifact_ref": str(artifact_path),
-                            "runtime_ledger_artifact_ref": str(artifact_path),
                             "exact_replay_ledger_artifact_row_count": "6",
                             "exact_replay_ledger_artifact_fill_count": "2",
-                            "runtime_ledger_artifact_row_count": "6",
-                            "runtime_ledger_artifact_fill_count": "2",
                         }
                     ],
                     manifest=manifest,
@@ -771,9 +768,13 @@ class TestStrategyAutoresearch(TestCase):
                 artifact_path.resolve(strict=False),
             )
             self.assertEqual(
-                target["runtime_ledger_artifact_row_count"],
+                target["exact_replay_ledger_artifact_row_count"],
                 "6",
             )
+            self.assertNotIn("runtime_ledger_artifact_refs", target)
+            self.assertNotIn("runtime_ledger_artifact_ref", target)
+            self.assertNotIn("runtime_ledger_artifact_row_count", target)
+            self.assertNotIn("runtime_ledger_artifact_fill_count", target)
             self.assertFalse(target["promotion_allowed"])
             self.assertFalse(target["final_promotion_authorized"])
             self.assertEqual(
@@ -833,8 +834,6 @@ class TestStrategyAutoresearch(TestCase):
                 (
                     artifact_path,
                     absolute_path,
-                    experiment_root / relative_runtime_ref,
-                    experiment_root / "scalar-runtime-ledger.json",
                 ),
             )
 
