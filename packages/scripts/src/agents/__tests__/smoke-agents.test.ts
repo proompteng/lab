@@ -815,7 +815,9 @@ describe('autonomous trader provider', () => {
     expect(bootstrapContent).toContain(
       'analysis_context_path="${ANALYSIS_CONTEXT_PATH:-${work_dir}/analysis-context.json}"',
     )
-    expect(bootstrapContent).toContain('fetch --prune origin refs/heads/main:refs/remotes/origin/main')
+    expect(bootstrapContent).toContain('analysis_fetch_timeout_seconds="${ANALYSIS_FETCH_TIMEOUT_SECONDS:-180}"')
+    expect(bootstrapContent).toContain('fetch --prune --filter=blob:none --depth="${analysis_fetch_depth}"')
+    expect(bootstrapContent).toContain('fetch --filter=blob:none --deepen="${analysis_fetch_deepen}"')
     expect(bootstrapContent).toContain(
       'analysis_main_sha="$(git -C "${analysis_dir}" rev-parse refs/remotes/origin/main^{commit})"',
     )
