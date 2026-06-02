@@ -4788,6 +4788,19 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             queue_payload["proof_semantics"]["label"],
             fast_replay.FAST_REPLAY_PROOF_SEMANTICS_LABEL,
         )
+        self.assertEqual(
+            queue_payload["discovery_stage_semantics"]["preview_only_status"],
+            "preview_only_ranked",
+        )
+        self.assertEqual(
+            queue_payload["discovery_stage_semantics"]["exact_replay_qualified_status"],
+            "exact_replay_qualified_frontier",
+        )
+        self.assertFalse(
+            queue_payload["discovery_stage_semantics"][
+                "preview_output_can_authorize_promotion"
+            ]
+        )
         self.assertTrue(queue_payload["prefilter_only"])
         self.assertFalse(queue_payload["proof_authority"])
         self.assertFalse(queue_payload["promotion_allowed"])
@@ -4819,6 +4832,10 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(
             queue_payload["target_queue"]["status"],
             "sim_target_queue_ready_live_paper_blocked",
+        )
+        self.assertEqual(
+            queue_payload["target_queue"]["candidate_stage"],
+            "bounded_sim_evidence_collection_candidate",
         )
         self.assertEqual(
             queue_payload["replay_tape"]["feature_schema_hash"],
@@ -4854,6 +4871,18 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             ],
         )
         first_entry = queue_payload["entries"][0]
+        self.assertEqual(
+            first_entry["discovery_stage_metadata"]["preview_status"],
+            "preview_only_ranked",
+        )
+        self.assertTrue(
+            first_entry["discovery_stage_metadata"]["exact_replay_qualified"]
+        )
+        self.assertEqual(
+            first_entry["discovery_stage_metadata"]["evidence_collection_status"],
+            "bounded_sim_evidence_collection_candidate",
+        )
+        self.assertFalse(first_entry["discovery_stage_metadata"]["promotion_allowed"])
         self.assertIn("observed_post_cost_expectancy_bps", first_entry)
         self.assertIn("required_daily_notional", first_entry)
         self.assertFalse(first_entry["proof_authority"])
@@ -4895,6 +4924,17 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(
             first_entry["exact_replay_handoff_lineage"]["lineage_hash"],
             first_entry["handoff_lineage_hash"],
+        )
+        self.assertEqual(
+            first_entry["exact_replay_handoff_lineage"]["discovery_stage_metadata"][
+                "evidence_collection_status"
+            ],
+            "bounded_sim_evidence_collection_candidate",
+        )
+        self.assertFalse(
+            first_entry["exact_replay_handoff_lineage"]["discovery_stage_metadata"][
+                "final_promotion_allowed"
+            ]
         )
         self.assertEqual(
             first_entry["exact_replay_handoff_lineage"]["replay_tape"][
@@ -5024,6 +5064,18 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         updated_row = updated_selection["rows"][0]
         self.assertFalse(updated_row["selected_for_replay"])
         self.assertTrue(updated_row["fast_replay_exact_replay_selection_blocked"])
+        self.assertEqual(
+            updated_row["fast_replay_discovery_stage_metadata"]["exact_replay_status"],
+            "not_exact_replay_qualified",
+        )
+        self.assertFalse(
+            updated_row["fast_replay_discovery_stage_metadata"][
+                "evidence_collection_candidate"
+            ]
+        )
+        self.assertFalse(
+            updated_row["fast_replay_discovery_stage_metadata"]["promotion_allowed"]
+        )
         self.assertIn(
             "cost_lineage_spread_missing",
             updated_row["fast_replay_exact_replay_selection_blockers"],
@@ -5123,6 +5175,18 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             ["exact-frontier-a", "exact-frontier-c"],
         )
         self.assertEqual(queue_payload["dedupe_policy"]["status"], "enabled")
+        self.assertEqual(
+            queue_payload["entries"][0]["discovery_stage_metadata"][
+                "exact_replay_status"
+            ],
+            "exact_replay_qualified_frontier",
+        )
+        self.assertEqual(
+            queue_payload["entries"][0]["exact_replay_handoff_lineage"][
+                "discovery_stage_metadata"
+            ]["evidence_collection_status"],
+            "bounded_sim_evidence_collection_candidate",
+        )
         self.assertFalse(queue_payload["dedupe_policy"]["proof_authority"])
         self.assertFalse(queue_payload["dedupe_policy"]["promotion_allowed"])
         self.assertFalse(queue_payload["dedupe_policy"]["final_authority_ok"])
@@ -5286,7 +5350,8 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         manifest_payload = preview.to_manifest_payload()
 
         self.assertEqual(
-            row_payload["schema_version"], "torghut.fast-replay-preview-row.v6"
+            row_payload["schema_version"],
+            fast_replay.FAST_REPLAY_PREVIEW_ROW_SCHEMA_VERSION,
         )
         self.assertEqual(manifest_payload["status"], "preview_only")
         self.assertFalse(manifest_payload["promotion_proof"])

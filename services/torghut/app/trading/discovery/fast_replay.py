@@ -22,8 +22,8 @@ from app.trading.discovery.microstructure_prefilter import (
 from app.trading.discovery.replay_tape import ReplayTapeManifest
 from app.trading.models import SignalEnvelope
 
-FAST_REPLAY_PREVIEW_SCHEMA_VERSION = "torghut.fast-replay-preview.v5"
-FAST_REPLAY_PREVIEW_ROW_SCHEMA_VERSION = "torghut.fast-replay-preview-row.v6"
+FAST_REPLAY_PREVIEW_SCHEMA_VERSION = "torghut.fast-replay-preview.v6"
+FAST_REPLAY_PREVIEW_ROW_SCHEMA_VERSION = "torghut.fast-replay-preview-row.v7"
 FAST_REPLAY_PROOF_SEMANTICS_LABEL = (
     "preview_ranking_only_exact_replay_and_runtime_ledger_required"
 )
@@ -114,6 +114,14 @@ class FastReplayPreviewRow:
         frontier_selection_blockers = _frontier_selection_blockers_for_row(
             self, exact_replay_selection_blockers=exact_replay_selection_blockers
         )
+        exact_replay_qualified = self.selected and not exact_replay_selection_blockers
+        discovery_stage_metadata = _discovery_stage_metadata(
+            selected=self.selected,
+            exact_replay_qualified=exact_replay_qualified,
+            evidence_collection_candidate=exact_replay_qualified,
+            frontier_bucket=self.frontier_bucket,
+            blockers=frontier_selection_blockers or exact_replay_selection_blockers,
+        )
         lineage_blockers = _lineage_blockers_for_row(self)
         risk_flags = _risk_flags_for_row(self, lineage_blockers=lineage_blockers)
         prefilter_capacity_lineage = _mapping(
@@ -155,6 +163,7 @@ class FastReplayPreviewRow:
             ),
             "exploration_score": str(self.exploration_score),
             "frontier_bucket": self.frontier_bucket,
+            "discovery_stage_metadata": discovery_stage_metadata,
             "candidate_frontier_hash": self.candidate_frontier_hash,
             "exact_replay_frontier_key": self.exact_replay_frontier_key,
             "frontier_dedupe_status": self.frontier_dedupe_status,
@@ -168,8 +177,9 @@ class FastReplayPreviewRow:
                 "reason_code": self.selection_reason,
                 "blockers": list(frontier_selection_blockers),
                 "rank": self.rank,
-                "exact_replay_enqueue_allowed": self.selected,
-                "bounded_sim_evidence_enqueue_allowed": self.selected,
+                "exact_replay_enqueue_allowed": exact_replay_qualified,
+                "bounded_sim_evidence_enqueue_allowed": exact_replay_qualified,
+                "discovery_stage_metadata": discovery_stage_metadata,
                 "resource_scope": "local_offline_bounded_queue_metadata_only",
                 "proof_source": "prefilter_only",
                 "prefilter_only": True,
@@ -329,6 +339,7 @@ class FastReplayPreviewResult:
             "selected_candidate_spec_ids": list(self.selected_candidate_spec_ids),
             "selected_candidate_spec_count": len(self.selected_candidate_spec_ids),
             "selected_row_count": self.selected_row_count,
+            "discovery_stage_semantics": _discovery_stage_semantics(),
             "frontier_dedupe_policy": {
                 "schema_version": "torghut.fast-replay-frontier-dedupe-policy.v1",
                 "status": "enabled",
@@ -382,9 +393,10 @@ class FastReplayPreviewResult:
                 "row_symbols": list(self.replay_tape_manifest.row_symbols),
             },
             "bounded_sim_target_queue": {
-                "schema_version": "torghut.fast-replay-bounded-sim-target-queue.v1",
+                "schema_version": "torghut.fast-replay-bounded-sim-target-queue.v2",
                 "status": "metadata_only_not_dispatched",
                 "queue_scope": "offline_preview_to_exact_replay_or_bounded_sim_handoff",
+                "discovery_stage_semantics": _discovery_stage_semantics(),
                 "selected_candidate_spec_ids": list(self.selected_candidate_spec_ids),
                 "target_candidate_cap": self.exact_replay_candidate_cap,
                 "enqueue_candidate_count": len(self.selected_candidate_spec_ids),
@@ -1098,6 +1110,63 @@ def _frontier_selection_blockers_for_row(
     if row.selection_reason == "fast_replay_frontier_lineage_blocked":
         return tuple(exact_replay_selection_blockers)
     return ()
+
+
+def _discovery_stage_semantics() -> dict[str, Any]:
+    return {
+        "schema_version": "torghut.hpairs-discovery-stage-semantics.v1",
+        "preview_only_status": "preview_only_ranked",
+        "exact_replay_qualified_status": "exact_replay_qualified_frontier",
+        "evidence_collection_candidate_status": (
+            "bounded_sim_evidence_collection_candidate"
+        ),
+        "authority": "candidate_discovery_only",
+        "preview_output_can_authorize_promotion": False,
+        "exact_replay_frontier_can_authorize_promotion": False,
+        "requires_runtime_ledger_for_promotion": True,
+        "requires_live_paper_evidence_for_final_promotion": True,
+        "promotion_allowed": False,
+        "final_promotion_allowed": False,
+        "final_authority_ok": False,
+    }
+
+
+def _discovery_stage_metadata(
+    *,
+    selected: bool,
+    exact_replay_qualified: bool,
+    evidence_collection_candidate: bool,
+    frontier_bucket: str,
+    blockers: Sequence[str],
+) -> dict[str, Any]:
+    return {
+        "schema_version": "torghut.hpairs-discovery-stage-metadata.v1",
+        "preview_status": "preview_only_ranked",
+        "preview_only": True,
+        "exact_replay_status": (
+            "exact_replay_qualified_frontier"
+            if exact_replay_qualified
+            else "not_exact_replay_qualified"
+        ),
+        "exact_replay_qualified": exact_replay_qualified,
+        "evidence_collection_status": (
+            "bounded_sim_evidence_collection_candidate"
+            if evidence_collection_candidate
+            else "not_evidence_collection_candidate"
+        ),
+        "evidence_collection_candidate": evidence_collection_candidate,
+        "selected_for_bounded_frontier": selected,
+        "frontier_bucket": frontier_bucket,
+        "blockers": list(blockers),
+        "authority": "candidate_discovery_only",
+        "resource_scope": "local_offline_bounded_queue_metadata_only",
+        "promotion_proof": False,
+        "proof_authority": False,
+        "promotion_authority": False,
+        "promotion_allowed": False,
+        "final_promotion_allowed": False,
+        "final_authority_ok": False,
+    }
 
 
 def _row_exact_replay_selection_blocked(row: FastReplayPreviewRow) -> bool:
