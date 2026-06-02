@@ -5,16 +5,20 @@ metadata:
   namespace: synthesis
   annotations:
     agents.proompteng.ai/template: "true"
+    autonomous-trader.proompteng.ai/deployment-color: blue
+    autonomous-trader.proompteng.ai/deployment-role: scorecard-readback
   labels:
     app.kubernetes.io/part-of: synthesis
     app.kubernetes.io/component: autonomous-trader
+    autonomous-trader.proompteng.ai/deployment-color: blue
+    autonomous-trader.proompteng.ai/deployment-role: scorecard-readback
 spec:
   agentRef:
-    name: autonomous-trader-agent
+    name: autonomous-trader-readback-agent
   implementationSpecRef:
-    name: autonomous-trader-v1
+    name: autonomous-trader-readback-v1
   goal:
-    objective: Prove the next autonomous-trader AgentRun reads finalized Synthesis scorecards before candidate grading, without broker mutations.
+    objective: Run deterministic autonomous-trader scorecard readback, safe flat-session reconciliation, and report writing without Codex, analysis clone, candidate scanning, or Alpaca broker mutations.
   vcsRef:
     name: github
   vcsPolicy:
@@ -41,8 +45,6 @@ spec:
   secrets:
     - autonomous-trader-alpaca-mcp
     - agents-artifacts
-    - codex-auth
-    - github-token
     - synthesis-env
   workload:
     volumes:

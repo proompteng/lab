@@ -13,9 +13,13 @@ resources:
   - autonomous-trader-serviceaccount.yaml
   - autonomous-trader-versioncontrolprovider.yaml
   - autonomous-trader-agentprovider.yaml
+  - autonomous-trader-readback-agentprovider.yaml
   - autonomous-trader-agent.yaml
+  - autonomous-trader-readback-agent.yaml
   - autonomous-trader-secretbinding.yaml
+  - autonomous-trader-readback-secretbinding.yaml
   - autonomous-trader-implspec.yaml
+  - autonomous-trader-readback-implspec.yaml
   - autonomous-trader-agentrun-template.yaml
   - autonomous-trader-schedule.yaml
   - autonomous-trader-market-open-recovery-20260602.yaml

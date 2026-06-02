@@ -1,0 +1,29 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: ImplementationSpec
+metadata:
+  name: autonomous-trader-readback-v1
+  namespace: synthesis
+  annotations:
+    autonomous-trader.proompteng.ai/deployment-color: blue
+    autonomous-trader.proompteng.ai/deployment-role: scorecard-readback
+  labels:
+    app.kubernetes.io/part-of: synthesis
+    app.kubernetes.io/component: autonomous-trader
+    autonomous-trader.proompteng.ai/deployment-color: blue
+    autonomous-trader.proompteng.ai/deployment-role: scorecard-readback
+spec:
+  summary: Deterministic autonomous-trader scorecard readback and flat-session reconciliation runner
+  source:
+    provider: custom
+    externalId: autonomous-trader-readback-v1
+  labels:
+    - synthesis
+    - autonomous-trader
+    - scorecard-readback
+    - paper-trading
+  acceptanceCriteria:
+    - Run only in `scorecard-readback` mode with Alpaca broker mutations disabled.
+    - Read broker state and Synthesis scorecards, finalize stale flat sessions only when broker state is flat, and write `report.md`.
+    - Do not clone the analysis repo, run Codex, scan candidates, or submit Alpaca broker mutations.
+  text: |-
+    Execute the autonomous-trader scorecard readback helper directly. This runner is deterministic: it reads Alpaca broker state, reads Synthesis autotrader scorecards, safely reconciles stale flat sessions when enabled, finalizes the readback session, and writes `report.md`. It must not run Codex, clone analysis, scan candidates, or mutate Alpaca.

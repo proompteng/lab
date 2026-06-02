@@ -1,10 +1,9 @@
-apiVersion: schedules.proompteng.ai/v1alpha1
-kind: Schedule
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: Agent
 metadata:
-  name: autonomous-trader-scorecard-readback
+  name: autonomous-trader-readback-agent
   namespace: synthesis
   annotations:
-    argocd.argoproj.io/sync-options: Prune=false
     autonomous-trader.proompteng.ai/deployment-color: blue
     autonomous-trader.proompteng.ai/deployment-role: scorecard-readback
   labels:
@@ -13,9 +12,12 @@ metadata:
     autonomous-trader.proompteng.ai/deployment-color: blue
     autonomous-trader.proompteng.ai/deployment-role: scorecard-readback
 spec:
-  cron: "20 16 * * 1-5"
-  timezone: America/New_York
-  targetRef:
-    apiVersion: agents.proompteng.ai/v1alpha1
-    kind: AgentRun
-    name: autonomous-trader-scorecard-readback-template
+  providerRef:
+    name: autonomous-trader-readback-runner
+  security:
+    allowedSecrets:
+      - autonomous-trader-alpaca-mcp
+      - agents-artifacts
+      - synthesis-env
+    allowedServiceAccounts:
+      - agents-sa
