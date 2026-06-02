@@ -131,6 +131,9 @@ PAPER_ROUTE_EVIDENCE_DB_UNAVAILABLE_BLOCKER = "paper_route_evidence_db_unavailab
 PAPER_ROUTE_TARGET_ACCOUNT_AUDIT_UNAVAILABLE_BLOCKER = (
     "paper_route_target_account_audit_unavailable"
 )
+HPAIRS_ZERO_ACTIVITY_DIAGNOSTICS_SCHEMA_VERSION = (
+    "torghut.hpairs-zero-activity-diagnostics.v1"
+)
 PAPER_ROUTE_ACCOUNT_STATE_DISCARD_BLOCKERS = frozenset(
     {
         "paper_route_account_window_start_not_flat",
@@ -1026,6 +1029,10 @@ def _target_is_hpairs(target: Mapping[str, object]) -> bool:
     for key in ("hypothesis_id", "source_manifest_ref"):
         value = (_safe_text(target.get(key)) or "").lower()
         if "h-pairs" in value or "h_pairs" in value:
+            return True
+    for key in ("strategy_family", "strategy_name", "runtime_strategy_name", "strategy_id"):
+        value = (_safe_text(target.get(key)) or "").lower().replace("-", "_")
+        if "microbar_cross_sectional_pairs" in value:
             return True
     return False
 
@@ -4910,6 +4917,344 @@ def _target_evidence_readback_diagnostics(
     }
 
 
+def _collect_hpairs_zero_activity_texts(*values: object) -> list[str]:
+    texts: list[str] = []
+    for value in values:
+        if isinstance(value, Mapping):
+            for item in cast(Mapping[object, object], value).values():
+                texts.extend(_collect_hpairs_zero_activity_texts(item))
+            continue
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+            for item in cast(Sequence[object], value):
+                texts.extend(_collect_hpairs_zero_activity_texts(item))
+            continue
+        text = _safe_text(value)
+        if text and text not in texts:
+            texts.append(text)
+    return texts
+
+
+def _hpairs_zero_activity_reason_flags(
+    *,
+    blockers: Sequence[str],
+    probe: Mapping[str, object],
+    runtime_window_import_audit: Mapping[str, object],
+    hpairs_target_count: int,
+    hpairs_symbol_count: int,
+    hpairs_source_decision_ready_count: int,
+    hpairs_decision_count: int,
+    hpairs_runtime_bucket_count: int,
+) -> dict[str, bool]:
+    normalized = {blocker.lower() for blocker in blockers}
+    session_state = (_safe_text(runtime_window_import_audit.get("session_state")) or "").lower()
+    audit_state = (_safe_text(runtime_window_import_audit.get("state")) or "").lower()
+    import_ready = bool(runtime_window_import_audit.get("import_ready"))
+    no_market_window = bool(
+        {
+            "paper_route_session_window_not_open",
+            "paper_route_session_window_closed",
+            "paper_route_session_window_not_closed",
+            "paper_route_session_settlement_pending",
+            "market_session_closed",
+        }
+        & normalized
+    ) or session_state in {
+        "waiting_for_session_open",
+        "collecting_session_evidence",
+        "window_closed_settlement_pending",
+    }
+    no_candidate_target_materialization = hpairs_target_count <= 0
+    no_symbols = hpairs_symbol_count <= 0 or bool(
+        {
+            "paper_route_probe_symbol_missing",
+            "paper_route_hpairs_aapl_amzn_legs_missing",
+            "paper_route_hpairs_aapl_leg_missing",
+            "paper_route_hpairs_amzn_leg_missing",
+        }
+        & normalized
+    )
+    stale_quotes = any("stale_quote" in blocker or "quote_stale" in blocker for blocker in normalized)
+    route_veto = any(
+        token in blocker
+        for blocker in normalized
+        for token in (
+            "source_reject_",
+            "quote_quality",
+            "missing_executable_quote",
+            "spread_bps_exceeded",
+            "fillability",
+            "routeability",
+            "paper_route_submit_blocked",
+        )
+    )
+    risk_veto = any(
+        token in blocker
+        for blocker in normalized
+        for token in (
+            "risk",
+            "buying_power",
+            "notional",
+            "short",
+            "kill_switch",
+            "account_contamination",
+            "open_exposure",
+            "position",
+            "firewall",
+        )
+    )
+    paper_route_disabled = (
+        not bool(probe.get("configured_enabled"))
+        or "paper_route_probe_disabled" in normalized
+    )
+    strategy_not_scheduled = hpairs_target_count > 0 and (
+        hpairs_source_decision_ready_count <= 0
+        or bool(
+            {
+                "source_strategy_lookup_missing",
+                "source_strategy_missing",
+                "source_strategy_disabled",
+                "source_strategy_universe_excludes_probe_symbols",
+            }
+            & normalized
+        )
+    )
+    source_ledger_import_not_running = (
+        import_ready
+        and hpairs_decision_count > 0
+        and hpairs_runtime_bucket_count <= 0
+    ) or audit_state in {
+        "import_due_runtime_ledger_missing",
+        "import_due_runtime_ledger_not_materialized",
+    }
+    return {
+        "no_market_window": no_market_window,
+        "no_candidate_target_materialization": no_candidate_target_materialization,
+        "no_symbols": no_symbols,
+        "stale_quotes": stale_quotes,
+        "route_veto": route_veto,
+        "risk_veto": risk_veto,
+        "paper_route_disabled": paper_route_disabled,
+        "strategy_not_scheduled": strategy_not_scheduled,
+        "source_ledger_import_not_running": source_ledger_import_not_running,
+    }
+
+
+def _hpairs_zero_activity_state(reason_flags: Mapping[str, bool]) -> str:
+    for state, flag_name in (
+        ("paper_route_disabled", "paper_route_disabled"),
+        ("no_candidate_target_materialization", "no_candidate_target_materialization"),
+        ("no_symbols", "no_symbols"),
+        ("no_market_window", "no_market_window"),
+        ("strategy_not_scheduled", "strategy_not_scheduled"),
+        ("risk_veto", "risk_veto"),
+        ("stale_quotes", "stale_quotes"),
+        ("route_veto", "route_veto"),
+        ("source_ledger_import_not_running", "source_ledger_import_not_running"),
+    ):
+        if bool(reason_flags.get(flag_name)):
+            return state
+    return "activity_path_clear_or_waiting_for_source_events"
+
+
+def _hpairs_zero_activity_diagnostics(
+    *,
+    generated_at: datetime,
+    probe: Mapping[str, object],
+    next_targets: Mapping[str, object],
+    runtime_window_import_audit: Mapping[str, object],
+    target_audits: Sequence[Mapping[str, object]],
+    runtime_window_import_target_audits: Sequence[Mapping[str, object]],
+) -> dict[str, object]:
+    plan_targets = [
+        target
+        for target in _as_mapping_items(next_targets.get("targets"))
+        if _target_is_hpairs(target)
+    ]
+    skipped_targets = [
+        target
+        for target in _as_mapping_items(next_targets.get("skipped_targets"))
+        if _target_is_hpairs(target)
+    ]
+    hpairs_audits: list[Mapping[str, object]] = []
+    seen_audit_keys: set[tuple[object, ...]] = set()
+    for audit in [*target_audits, *runtime_window_import_target_audits]:
+        target = _as_mapping(audit.get("target"))
+        if not _target_is_hpairs(target):
+            continue
+        audit_key = (
+            _safe_text(target.get("hypothesis_id")),
+            _safe_text(target.get("candidate_id")),
+            _safe_text(target.get("window_start")),
+            _safe_text(target.get("window_end")),
+            tuple(_unique_text_items(target.get("paper_route_probe_symbols"))),
+        )
+        if audit_key in seen_audit_keys:
+            continue
+        seen_audit_keys.add(audit_key)
+        hpairs_audits.append(audit)
+    hpairs_target_count = len(plan_targets) if plan_targets else len(hpairs_audits)
+    hpairs_symbol_count = len(
+        {
+            symbol
+            for target in plan_targets
+            for symbol in _unique_text_items(target.get("paper_route_probe_symbols"))
+        }
+    )
+    hpairs_source_decision_ready_count = sum(
+        int(bool(_as_mapping(target.get("source_decision_readiness")).get("ready")))
+        for target in plan_targets
+    )
+    hpairs_decision_count = sum(
+        _safe_int(_as_mapping(audit.get("source_activity")).get("decision_count"))
+        for audit in hpairs_audits
+    )
+    hpairs_submitted_order_count = sum(
+        _safe_int(
+            _as_mapping(audit.get("source_activity")).get("submitted_order_count")
+            or _as_mapping(audit.get("source_activity")).get("execution_count")
+        )
+        for audit in hpairs_audits
+    )
+    hpairs_order_event_count = sum(
+        _safe_int(_as_mapping(audit.get("source_activity")).get("order_event_count"))
+        for audit in hpairs_audits
+    )
+    hpairs_fill_count = sum(
+        _safe_int(
+            _as_mapping(audit.get("source_activity")).get("filled_execution_count")
+        )
+        + _safe_int(
+            _as_mapping(audit.get("source_activity")).get("fill_order_event_count")
+        )
+        + _safe_int(
+            _as_mapping(audit.get("source_activity")).get(
+                "complete_fill_order_event_count"
+            )
+        )
+        for audit in hpairs_audits
+    )
+    hpairs_runtime_bucket_count = sum(
+        _safe_int(_as_mapping(audit.get("runtime_ledger")).get("bucket_count"))
+        for audit in hpairs_audits
+    )
+    hpairs_evidence_grade_runtime_bucket_count = sum(
+        _safe_int(
+            _as_mapping(audit.get("runtime_ledger")).get(
+                "evidence_grade_bucket_count"
+            )
+        )
+        for audit in hpairs_audits
+    )
+    audit_diagnostics = _as_mapping(runtime_window_import_audit.get("diagnostics"))
+    blockers = _unique_text_items(
+        [
+            *_collect_hpairs_zero_activity_texts(probe.get("blocking_reasons")),
+            *_collect_hpairs_zero_activity_texts(
+                runtime_window_import_audit.get("blockers"),
+                runtime_window_import_audit.get("target_blockers"),
+                audit_diagnostics,
+            ),
+            *_collect_hpairs_zero_activity_texts(
+                [
+                    _as_mapping(target.get("source_decision_readiness")).get(
+                        "blockers"
+                    )
+                    for target in plan_targets
+                ],
+                [
+                    target.get("bounded_evidence_collection_blockers")
+                    for target in plan_targets
+                ],
+                [
+                    target.get("paper_route_session_collection_blockers")
+                    for target in plan_targets
+                ],
+                [target.get("paper_route_hpairs_symbol_blockers") for target in plan_targets],
+                [target.get("candidate_blockers") for target in plan_targets],
+                [target.get("runtime_window_import_health_gate_blockers") for target in plan_targets],
+                [target.get("runtime_window_import_promotion_blockers") for target in plan_targets],
+                [
+                    target.get("missing_or_blocking_fields")
+                    for target in skipped_targets
+                ],
+                [target.get("reason") for target in skipped_targets],
+            ),
+            *_collect_hpairs_zero_activity_texts(
+                [
+                    _as_mapping(audit.get("source_activity")).get("missing_reasons")
+                    for audit in hpairs_audits
+                ],
+                [
+                    _as_mapping(audit.get("source_activity")).get(
+                        "source_lifecycle_blockers"
+                    )
+                    for audit in hpairs_audits
+                ],
+                [
+                    _as_mapping(audit.get("rejected_signal_activity")).get(
+                        "blocking_reasons"
+                    )
+                    for audit in hpairs_audits
+                ],
+                [
+                    _as_mapping(audit.get("runtime_ledger")).get("blockers")
+                    for audit in hpairs_audits
+                ],
+                [
+                    _as_mapping(audit.get("evidence_readback")).get("blockers")
+                    for audit in hpairs_audits
+                ],
+            ),
+        ]
+    )
+    reason_flags = _hpairs_zero_activity_reason_flags(
+        blockers=blockers,
+        probe=probe,
+        runtime_window_import_audit=runtime_window_import_audit,
+        hpairs_target_count=hpairs_target_count,
+        hpairs_symbol_count=hpairs_symbol_count,
+        hpairs_source_decision_ready_count=hpairs_source_decision_ready_count,
+        hpairs_decision_count=hpairs_decision_count,
+        hpairs_runtime_bucket_count=hpairs_runtime_bucket_count,
+    )
+    session_window = _as_mapping(runtime_window_import_audit.get("session_window"))
+    return {
+        "schema_version": HPAIRS_ZERO_ACTIVITY_DIAGNOSTICS_SCHEMA_VERSION,
+        "generated_at": _isoformat(generated_at),
+        "state": _hpairs_zero_activity_state(reason_flags),
+        "reason_flags": reason_flags,
+        "blockers": blockers,
+        "counts": {
+            "hpairs_target_count": hpairs_target_count,
+            "hpairs_skipped_target_count": len(skipped_targets),
+            "hpairs_symbol_count": hpairs_symbol_count,
+            "hpairs_source_decision_ready_count": hpairs_source_decision_ready_count,
+            "hpairs_decision_count": hpairs_decision_count,
+            "hpairs_submitted_order_count": hpairs_submitted_order_count,
+            "hpairs_order_event_count": hpairs_order_event_count,
+            "hpairs_fill_evidence_count": hpairs_fill_count,
+            "hpairs_runtime_bucket_count": hpairs_runtime_bucket_count,
+            "hpairs_evidence_grade_runtime_bucket_count": (
+                hpairs_evidence_grade_runtime_bucket_count
+            ),
+        },
+        "market_window": {
+            "state": _safe_text(runtime_window_import_audit.get("session_state"))
+            or _safe_text(runtime_window_import_audit.get("state")),
+            "start": _safe_text(session_window.get("start")),
+            "end": _safe_text(session_window.get("end")),
+            "import_ready": bool(runtime_window_import_audit.get("import_ready")),
+            "next_action": _safe_text(runtime_window_import_audit.get("next_action")),
+        },
+        "safe_to_promote": False,
+        "proof_semantics": {
+            "synthetic_decisions": False,
+            "synthetic_orders_or_fills": False,
+            "relaxes_profitability_gate": False,
+        },
+    }
+
+
 def _evidence_window_contract(
     *,
     target: Mapping[str, object],
@@ -6935,6 +7280,14 @@ def build_paper_route_evidence_audit(
             for source in _unique_text_items(limits.get("truncated_sources"))
         }
     )
+    hpairs_zero_activity_diagnostics = _hpairs_zero_activity_diagnostics(
+        generated_at=resolved_generated_at,
+        probe=probe,
+        next_targets=next_targets,
+        runtime_window_import_audit=runtime_window_import_audit,
+        target_audits=target_audits,
+        runtime_window_import_target_audits=runtime_window_import_target_audits,
+    )
     return {
         "schema_version": PAPER_ROUTE_EVIDENCE_SCHEMA_VERSION,
         "generated_at": _isoformat(resolved_generated_at),
@@ -7183,6 +7536,7 @@ def build_paper_route_evidence_audit(
                 "blockers": summary_blockers,
             },
             "runtime_window_import_audit_state": runtime_window_import_audit["state"],
+            "hpairs_zero_activity_diagnostics": hpairs_zero_activity_diagnostics,
             "blockers": summary_blockers,
         },
         "targets": target_audits,
