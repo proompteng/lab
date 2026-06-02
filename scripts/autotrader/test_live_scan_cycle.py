@@ -318,6 +318,130 @@ class LiveScanCycleTest(unittest.TestCase):
         self.assertEqual(recorded[1]["status"], "blocked")
         self.assertEqual(recorded[1]["noTradeReason"], "no_confirmed_setup")
 
+    def test_records_account_gate_to_synthesis(self) -> None:
+        class FakeSynthesis:
+            def __init__(self) -> None:
+                self.posts: list[tuple[str, dict[str, object]]] = []
+
+            def post(self, path: str, payload: dict[str, object]) -> object:
+                self.posts.append((path, payload))
+                if path.endswith("/risk-checks"):
+                    return {"riskCheck": {"id": "risk-1"}}
+                if path.endswith("/status"):
+                    return {"status": {"sessionId": "session-1"}}
+                raise AssertionError(f"unexpected Synthesis path {path}")
+
+        gate = live_scan_cycle.summarize_account_gate(
+            raw_account={
+                "id": "paper-account",
+                "equity": "29989.14",
+                "buying_power": "59978.28",
+                "daytrading_buying_power": "0",
+                "daytrade_count": 5,
+            },
+            raw_positions=[],
+            raw_orders=[],
+        )
+        synthesis = FakeSynthesis()
+
+        recorded = live_scan_cycle.record_account_gate(
+            synthesis=synthesis,  # type: ignore[arg-type]
+            session_id="session-1",
+            cycle=7,
+            gate=gate,
+        )
+
+        self.assertEqual(recorded["riskCheckId"], "risk-1")
+        self.assertEqual(
+            recorded["blocker"],
+            "daytrading_buying_power_not_positive;pdt_daytrade_count_at_or_above_four_without_dtbp",
+        )
+        self.assertEqual([path for path, _ in synthesis.posts], ["/api/autotrader/risk-checks", "/api/autotrader/status"])
+        risk_payload = synthesis.posts[0][1]
+        status_payload = synthesis.posts[1][1]
+        self.assertEqual(risk_payload["idempotencyKey"], "account-gate-cycle-7")
+        self.assertFalse(risk_payload["passed"])
+        self.assertEqual(status_payload["phase"], "idle")
+        self.assertEqual(status_payload["currentAction"], "account gate blocked new entries; monitoring only")
+        self.assertEqual(status_payload["equity"], "29989.14")
+        self.assertEqual(status_payload["daytradeBuyingPower"], "0")
+
+    def test_run_cycle_respects_account_gate_and_skips_scan_when_monitor_only(self) -> None:
+        case = self
+
+        class FakeAlpaca:
+            def __init__(self, *, timeout_seconds: float) -> None:
+                self.timeout_seconds = timeout_seconds
+
+            def trading_get(self, path: str, query: dict[str, str] | None = None) -> object:
+                if path == "/v2/account":
+                    return {
+                        "id": "paper-account",
+                        "equity": "29989.14",
+                        "buying_power": "59978.28",
+                        "daytrading_buying_power": "0",
+                        "daytrade_count": "5",
+                    }
+                if path == "/v2/positions":
+                    case.assertIsNone(query)
+                    return []
+                if path == "/v2/orders":
+                    case.assertEqual(query, {"status": "open", "nested": "true"})
+                    return []
+                raise AssertionError(f"unexpected trading path {path}")
+
+            def data_get(self, path: str, query: dict[str, str]) -> object:
+                raise AssertionError(f"scanner data fetch should be skipped: {path} {query}")
+
+        class FakeSynthesis:
+            def __init__(self, *, base_url: str | None, timeout_seconds: float) -> None:
+                self.base_url = base_url
+                self.timeout_seconds = timeout_seconds
+                self.posts: list[tuple[str, dict[str, object]]] = []
+
+            def get(self, path: str, query: dict[str, str]) -> object:
+                raise AssertionError(f"scorecard fetch should be skipped: {path} {query}")
+
+            def post(self, path: str, payload: dict[str, object]) -> object:
+                self.posts.append((path, payload))
+                if path.endswith("/risk-checks"):
+                    return {"riskCheck": {"id": "risk-1"}}
+                if path.endswith("/status"):
+                    return {"status": {"sessionId": "session-1"}}
+                raise AssertionError(f"unexpected Synthesis path {path}")
+
+        with tempfile.TemporaryDirectory() as directory:
+            args = live_scan_cycle.build_parser().parse_args(
+                [
+                    "--work-dir",
+                    directory,
+                    "--watchlist",
+                    "NVDA",
+                    "--session-id",
+                    "session-1",
+                    "--record-tickets",
+                    "--respect-account-gate",
+                ]
+            )
+            with (
+                patch.object(live_scan_cycle, "AlpacaRestClient", FakeAlpaca),
+                patch.object(live_scan_cycle, "SynthesisClient", FakeSynthesis),
+                patch.object(
+                    live_scan_cycle,
+                    "run_stock_analysis_scan",
+                    lambda **_: (_ for _ in ()).throw(AssertionError("scanner should be skipped")),
+                ),
+            ):
+                summary = live_scan_cycle.run_cycle(args)
+
+            self.assertEqual(summary["mode"], "cycle")
+            self.assertEqual(summary["action"], "monitor_only")
+            self.assertTrue(summary["skipFullScan"])
+            self.assertEqual(summary["resultCount"], 0)
+            self.assertEqual(summary["recordedTickets"], [])
+            self.assertEqual(summary["recordedAccountGate"]["riskCheckId"], "risk-1")
+            self.assertTrue((Path(directory) / "cycle-1").exists())
+
     def test_run_cycle_returns_summary_without_summary_file(self) -> None:
         case = self
 
