@@ -155,14 +155,44 @@ class LiveScanCycleTest(unittest.TestCase):
                 "daytrading_buying_power": "0",
                 "daytrade_count": 5,
             },
-            raw_positions=[{"symbol": "AAPL", "qty": "1"}],
-            raw_orders=[],
+            raw_positions=[
+                {
+                    "symbol": "AAPL",
+                    "qty": "1",
+                    "market_value": "180.50",
+                    "avg_entry_price": "179.00",
+                    "unrealized_pl": "1.50",
+                }
+            ],
+            raw_orders=[
+                {
+                    "id": "order-1",
+                    "client_order_id": "agent-AAPL-protect",
+                    "symbol": "AAPL",
+                    "status": "new",
+                }
+            ],
         )
 
         self.assertEqual(summary["action"], "manage_existing_broker_state")
-        self.assertFalse(summary["skipFullScan"])
+        self.assertTrue(summary["skipFullScan"])
         self.assertTrue(summary["hasOpenBrokerState"])
         self.assertEqual(summary["openPositionCount"], 1)
+        self.assertEqual(summary["openOrderCount"], 1)
+        self.assertEqual(
+            summary["openPositions"][0],
+            {
+                "symbol": "AAPL",
+                "assetClass": None,
+                "side": None,
+                "qty": "1",
+                "marketValue": "180.50",
+                "avgEntryPrice": "179.00",
+                "currentPrice": None,
+                "unrealizedPnl": "1.50",
+            },
+        )
+        self.assertEqual(summary["openOrders"][0]["clientOrderId"], "agent-AAPL-protect")
 
     def test_run_account_gate_fetches_only_broker_state(self) -> None:
         case = self
@@ -441,6 +471,81 @@ class LiveScanCycleTest(unittest.TestCase):
             self.assertEqual(summary["recordedTickets"], [])
             self.assertEqual(summary["recordedAccountGate"]["riskCheckId"], "risk-1")
             self.assertTrue((Path(directory) / "cycle-1").exists())
+
+    def test_run_cycle_respects_account_gate_and_skips_scan_when_managing_existing_state(self) -> None:
+        case = self
+
+        class FakeAlpaca:
+            def __init__(self, *, timeout_seconds: float) -> None:
+                self.timeout_seconds = timeout_seconds
+
+            def trading_get(self, path: str, query: dict[str, str] | None = None) -> object:
+                if path == "/v2/account":
+                    return {
+                        "id": "paper-account",
+                        "equity": "29989.14",
+                        "buying_power": "59978.28",
+                        "daytrading_buying_power": "0",
+                        "daytrade_count": "5",
+                    }
+                if path == "/v2/positions":
+                    case.assertIsNone(query)
+                    return [{"symbol": "NVDA", "qty": "2", "market_value": "240.00"}]
+                if path == "/v2/orders":
+                    case.assertEqual(query, {"status": "open", "nested": "true"})
+                    return [{"id": "order-1", "client_order_id": "agent-NVDA-protect", "symbol": "NVDA"}]
+                raise AssertionError(f"unexpected trading path {path}")
+
+            def data_get(self, path: str, query: dict[str, str]) -> object:
+                raise AssertionError(f"scanner data fetch should be skipped: {path} {query}")
+
+        class FakeSynthesis:
+            def __init__(self, *, base_url: str | None, timeout_seconds: float) -> None:
+                self.base_url = base_url
+                self.timeout_seconds = timeout_seconds
+                self.posts: list[tuple[str, dict[str, object]]] = []
+
+            def get(self, path: str, query: dict[str, str]) -> object:
+                raise AssertionError(f"scorecard fetch should be skipped: {path} {query}")
+
+            def post(self, path: str, payload: dict[str, object]) -> object:
+                self.posts.append((path, payload))
+                if path.endswith("/risk-checks"):
+                    return {"riskCheck": {"id": "risk-1"}}
+                if path.endswith("/status"):
+                    return {"status": {"sessionId": "session-1"}}
+                raise AssertionError(f"unexpected Synthesis path {path}")
+
+        with tempfile.TemporaryDirectory() as directory:
+            args = live_scan_cycle.build_parser().parse_args(
+                [
+                    "--work-dir",
+                    directory,
+                    "--watchlist",
+                    "NVDA",
+                    "--session-id",
+                    "session-1",
+                    "--record-tickets",
+                    "--respect-account-gate",
+                ]
+            )
+            with (
+                patch.object(live_scan_cycle, "AlpacaRestClient", FakeAlpaca),
+                patch.object(live_scan_cycle, "SynthesisClient", FakeSynthesis),
+                patch.object(
+                    live_scan_cycle,
+                    "run_stock_analysis_scan",
+                    lambda **_: (_ for _ in ()).throw(AssertionError("scanner should be skipped")),
+                ),
+            ):
+                summary = live_scan_cycle.run_cycle(args)
+
+            self.assertEqual(summary["action"], "manage_existing_broker_state")
+            self.assertTrue(summary["skipFullScan"])
+            self.assertEqual(summary["resultCount"], 0)
+            self.assertEqual(summary["recordedTickets"], [])
+            self.assertEqual(summary["accountGate"]["openPositions"][0]["symbol"], "NVDA")
+            self.assertEqual(summary["accountGate"]["openOrders"][0]["clientOrderId"], "agent-NVDA-protect")
 
     def test_run_cycle_returns_summary_without_summary_file(self) -> None:
         case = self

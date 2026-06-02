@@ -13,7 +13,7 @@ import urllib.request
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 from protective_preflight import assert_paper_base_url, normalize_alpaca_base_url
@@ -224,6 +224,46 @@ def list_payload(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
 
 
+def summarized_position(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {"raw": value}
+    return {
+        "symbol": value.get("symbol"),
+        "assetClass": value.get("asset_class") or value.get("assetClass"),
+        "side": value.get("side"),
+        "qty": numeric_text(value.get("qty")),
+        "marketValue": numeric_text(value.get("market_value") or value.get("marketValue")),
+        "avgEntryPrice": numeric_text(value.get("avg_entry_price") or value.get("avgEntryPrice")),
+        "currentPrice": numeric_text(value.get("current_price") or value.get("currentPrice")),
+        "unrealizedPnl": numeric_text(value.get("unrealized_pl") or value.get("unrealizedPnl")),
+    }
+
+
+def summarized_order(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {"raw": value}
+    legs = value.get("legs")
+    return {
+        "id": value.get("id"),
+        "clientOrderId": value.get("client_order_id") or value.get("clientOrderId"),
+        "symbol": value.get("symbol"),
+        "side": value.get("side"),
+        "qty": numeric_text(value.get("qty")),
+        "filledQty": numeric_text(value.get("filled_qty") or value.get("filledQty")),
+        "type": value.get("type"),
+        "orderClass": value.get("order_class") or value.get("orderClass"),
+        "status": value.get("status"),
+        "limitPrice": numeric_text(value.get("limit_price") or value.get("limitPrice")),
+        "stopPrice": numeric_text(value.get("stop_price") or value.get("stopPrice")),
+        "submittedAt": value.get("submitted_at") or value.get("submittedAt"),
+        "legCount": len(legs) if isinstance(legs, list) else 0,
+    }
+
+
+def summarize_records(values: list[Any], summarize: Callable[[Any], dict[str, Any]], limit: int = 20) -> list[dict[str, Any]]:
+    return [summarize(value) for value in values[:limit]]
+
+
 def account_gate_action(account: dict[str, Any], positions: list[Any], orders: list[Any]) -> str:
     eligibility = account.get("intraday_equity_entry")
     entry_allowed = isinstance(eligibility, dict) and eligibility.get("status") == "allowed"
@@ -250,9 +290,11 @@ def summarize_account_gate(
         "account": account,
         "openPositionCount": len(positions),
         "openOrderCount": len(orders),
+        "openPositions": summarize_records(positions, summarized_position),
+        "openOrders": summarize_records(orders, summarized_order),
         "hasOpenBrokerState": bool(positions or orders),
         "action": action,
-        "skipFullScan": action == "monitor_only",
+        "skipFullScan": action != "scan",
     }
 
 
