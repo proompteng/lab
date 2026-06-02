@@ -998,6 +998,60 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
             },
         )
 
+    def test_source_batch_can_commit_successful_rows_individually(self) -> None:
+        class FakeNested:
+            def __enter__(self) -> None:
+                return None
+
+            def __exit__(self, *args: object) -> bool:
+                del args
+                return False
+
+        class FakeSession:
+            commits = 0
+            expunges = 0
+
+            def begin_nested(self) -> FakeNested:
+                return FakeNested()
+
+            def commit(self) -> None:
+                self.commits += 1
+
+            def expunge_all(self) -> None:
+                self.expunges += 1
+
+        session = FakeSession()
+        rows = [SimpleNamespace(id="first"), SimpleNamespace(id="second")]
+        stderr = io.StringIO()
+
+        with redirect_stderr(stderr):
+            batch = script._journal_source_batch(
+                session,
+                args=argparse.Namespace(
+                    dry_run=False,
+                    progress_interval=1,
+                    commit_each_row=True,
+                ),
+                source=script.SOURCE_TYPE_EXECUTION,
+                rows=rows,
+                journal_one=lambda row: object(),
+            )
+
+        self.assertEqual(batch["journaled"], 2)
+        self.assertEqual(batch["failed"], 0)
+        self.assertEqual(session.commits, 2)
+        self.assertEqual(session.expunges, 2)
+        events = [
+            json.loads(line) for line in stderr.getvalue().splitlines() if line.strip()
+        ]
+        row_start_events = [
+            event for event in events if event["event"] == "source_row_start"
+        ]
+        self.assertEqual(
+            [event["row_id"] for event in row_start_events],
+            ["first", "second"],
+        )
+
     def test_select_unlinked_events_filters_to_journalable_account_rows(self) -> None:
         settings_obj = Settings(TORGHUT_TIGERBEETLE_ENABLED=True)
         with Session(self.engine) as session:

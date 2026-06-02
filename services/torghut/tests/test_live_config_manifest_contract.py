@@ -1531,13 +1531,29 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertNotIn("SIM_DB_DSN", live_env)
         live_args = "\n".join(str(item) for item in live_container.get("args", []))
         self.assertIn("--preset live", live_args)
-        self.assertIn("--execution-batch-size 25", live_args)
+        self.assertIn("--execution-batch-size 5", live_args)
         self.assertIn("--supervise-timeout-seconds 45", live_args)
         self.assertNotIn("--dsn-env DB_DSN", live_args)
         self.assertNotIn("--dsn-env SIM_DB_DSN", live_args)
         self.assertNotIn("--account-label TORGHUT_SIM", live_args)
         self.assertNotIn("--batch-size", live_args)
         self.assertNotIn("--max-batches", live_args)
+        live_execution_commands = [
+            command
+            for command in tigerbeetle_journal_runner._live_commands(
+                execution_batch_size=5
+            )
+            if command.source == tigerbeetle_journal_runner.SOURCE_TYPE_EXECUTION
+        ]
+        self.assertEqual(len(live_execution_commands), 1)
+        live_execution_command = live_execution_commands[0]
+        self.assertEqual(live_execution_command.batch_size, 5)
+        self.assertEqual(
+            live_execution_command.repeat_count,
+            tigerbeetle_journal_runner.LIVE_EXECUTION_SLICE_COUNT,
+        )
+        self.assertTrue(live_execution_command.commit_each_row)
+        self.assertEqual(live_execution_command.progress_interval, 1)
         live_order_event_commands = [
             command
             for command in tigerbeetle_journal_runner._live_commands(
