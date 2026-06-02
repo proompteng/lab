@@ -633,8 +633,18 @@ describe('autonomous trader provider', () => {
     ).find((manifest) => objectAt(manifest, 'kind') === 'ConfigMap')
     const envTemplate = objectAt(objectAt(provider, 'spec'), 'envTemplate')
     const secretEnv = objectAt(objectAt(provider, 'spec'), 'secretEnv') as Record<string, unknown>[] | undefined
+    const kustomizationPatches = objectAt(kustomization, 'patches') as Record<string, unknown>[] | undefined
     const deploymentColorKey = 'autonomous-trader.proompteng.ai/deployment-color'
     const deploymentRoleKey = 'autonomous-trader.proompteng.ai/deployment-role'
+    const syncOptionsKey = 'argocd.argoproj.io/sync-options'
+    const handoffPatch = (kustomizationPatches ?? []).find(
+      (patch) =>
+        objectAt(objectAt(patch, 'target'), 'labelSelector') === 'app.kubernetes.io/component=autonomous-trader',
+    )
+    const handoffPatchManifest = parseAllDocuments(String(objectAt(handoffPatch, 'patch') ?? ''))[0]?.toJSON() as
+      | Record<string, unknown>
+      | undefined
+    const handoffPatchAnnotations = objectAt(objectAt(handoffPatchManifest, 'metadata'), 'annotations')
     const marketOpenLanes = [
       {
         color: 'blue',
@@ -688,6 +698,19 @@ describe('autonomous trader provider', () => {
     expect(resources).toContain('autonomous-trader-readback-secretbinding.yaml')
     expect(resources).toContain('autonomous-trader-readback-implspec.yaml')
     expect(resources).toContain('autonomous-trader-stale-session-reconcile-20260602.yaml')
+    expect(objectAt(handoffPatchAnnotations, syncOptionsKey)).toBe('Prune=false')
+    for (const path of [
+      'argocd/applications/synthesis/agents-domain/autonomous-trader-dedicated-alpaca-mcp-sealedsecret.yaml',
+      'argocd/applications/synthesis/agents-domain/autonomous-trader-agents-artifacts-sealedsecret.yaml',
+      'argocd/applications/synthesis/agents-domain/autonomous-trader-codex-auth-sealedsecret.yaml',
+      'argocd/applications/synthesis/agents-domain/autonomous-trader-github-token-sealedsecret.yaml',
+    ]) {
+      const sealedSecret = readYamlObjects(path).find((manifest) => objectAt(manifest, 'kind') === 'SealedSecret')
+      const labels = objectAt(objectAt(sealedSecret, 'metadata'), 'labels')
+
+      expect(objectAt(labels, 'app.kubernetes.io/component')).toBe('autonomous-trader')
+      expect(objectAt(labels, 'app.kubernetes.io/part-of')).toBe('synthesis')
+    }
     expect(
       existsSync(
         resolve(process.cwd(), 'argocd/applications/synthesis/agents-domain/autonomous-trader-agentrun-template.yaml'),

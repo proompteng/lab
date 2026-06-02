@@ -32,3 +32,13 @@ resources:
   - autonomous-trader-green-schedule.yaml
   - autonomous-trader-scorecard-readback-template.yaml
   - autonomous-trader-scorecard-readback-schedule.yaml
+patches:
+  - target:
+      labelSelector: app.kubernetes.io/component=autonomous-trader
+    patch: |-
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: not-used
+        annotations:
+          argocd.argoproj.io/sync-options: Prune=false
