@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import json
 from types import SimpleNamespace
@@ -393,6 +393,103 @@ def _complete_runtime_ledger_bucket(**overrides: object) -> dict[str, object]:
     }
     payload.update(overrides)
     return payload
+
+
+def _runtime_split_ts(minutes: int) -> datetime:
+    return datetime(2026, 5, 21, 14, 30, tzinfo=timezone.utc) + timedelta(
+        minutes=minutes
+    )
+
+
+def _source_backed_runtime_split_rows(
+    *,
+    include_execution_economics: bool = True,
+    include_order_lifecycle: bool = True,
+    include_submitted_lifecycle: bool = True,
+) -> tuple[list[dict[str, object]], list[dict[str, object]], list[dict[str, object]]]:
+    common: dict[str, object] = {
+        "account_label": "paper",
+        "strategy_id": "strategy-1",
+        "symbol": "NVDA",
+        "lineage_hash": "lineage",
+        "source_decision_mode": "strategy_signal_paper",
+    }
+    decision_rows = [
+        {
+            **common,
+            "trade_decision_id": "decision-buy",
+            "computed_at": _runtime_split_ts(0),
+            "decision_hash": "decision-buy",
+            "decision_json": {"source_decision_mode": "strategy_signal_paper"},
+        },
+        {
+            **common,
+            "trade_decision_id": "decision-sell",
+            "computed_at": _runtime_split_ts(10),
+            "decision_hash": "decision-sell",
+            "decision_json": {"source_decision_mode": "strategy_signal_paper"},
+        },
+    ]
+    order_rows: list[dict[str, object]] = []
+    if include_order_lifecycle:
+        for side, order_id, decision_id, minute, offset, is_fill in (
+            ("buy", "order-buy", "decision-buy", 1, 100, False),
+            ("buy", "order-buy", "decision-buy", 2, 101, True),
+            ("sell", "order-sell", "decision-sell", 11, 102, False),
+            ("sell", "order-sell", "decision-sell", 12, 103, True),
+        ):
+            if not include_submitted_lifecycle and not is_fill:
+                continue
+            event_name = "fill" if is_fill else "new"
+            order_rows.append(
+                {
+                    **common,
+                    "trade_decision_id": decision_id,
+                    "event_ts": _runtime_split_ts(minute),
+                    "event_type": event_name,
+                    "order_status": "filled" if is_fill else "new",
+                    "side": side,
+                    "alpaca_order_id": order_id,
+                    "client_order_id": order_id,
+                    "execution_order_event_id": f"event-{event_name}-{order_id}",
+                    "source_window_id": f"window-{event_name}-{order_id}",
+                    "source_topic": "alpaca.trade_updates",
+                    "source_partition": 0,
+                    "source_offset": offset,
+                    "source": "order_feed_lifecycle",
+                    "execution_policy_hash": "policy",
+                    "cost_model_hash": "cost-model",
+                    "lineage_hash": "lineage",
+                }
+            )
+
+    execution_rows: list[dict[str, object]] = []
+    if include_execution_economics:
+        for side, order_id, decision_id, execution_id, minute, price in (
+            ("buy", "order-buy", "decision-buy", "execution-buy", 2, "100"),
+            ("sell", "order-sell", "decision-sell", "execution-sell", 12, "101"),
+        ):
+            execution_rows.append(
+                {
+                    **common,
+                    "trade_decision_id": decision_id,
+                    "computed_at": _runtime_split_ts(minute),
+                    "execution_event_at": _runtime_split_ts(minute),
+                    "execution_created_at": _runtime_split_ts(minute),
+                    "execution_id": execution_id,
+                    "side": side,
+                    "filled_qty": "1",
+                    "avg_fill_price": price,
+                    "cost_amount": "0.01",
+                    "cost_basis": "broker_reported_commission_and_fees",
+                    "alpaca_order_id": order_id,
+                    "client_order_id": order_id,
+                    "execution_policy_hash": "policy",
+                    "cost_model_hash": "cost-model",
+                    "lineage_hash": "lineage",
+                }
+            )
+    return decision_rows, order_rows, execution_rows
 
 
 class TestImportHypothesisRuntimeWindows(TestCase):
@@ -1045,6 +1142,214 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             },
         )
         self.assertEqual(_runtime_ledger_bucket_profit_proof_blockers(bucket), [])
+
+    def test_source_backed_lifecycle_without_costs_uses_execution_economics_for_authority(
+        self,
+    ) -> None:
+        decision_rows, order_rows, execution_rows = _source_backed_runtime_split_rows()
+        order_rows.append(
+            {
+                "trade_decision_id": "unrelated-decision",
+                "event_ts": _runtime_split_ts(3),
+                "event_type": "new",
+                "symbol": "TSLA",
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "decision_hash": "unrelated-decision",
+                "alpaca_order_id": "unrelated-order",
+                "execution_order_event_id": "event-unrelated-order",
+                "source_window_id": "window-unrelated-order",
+                "source_topic": "alpaca.trade_updates",
+                "source_partition": 0,
+                "source_offset": 900,
+                "source_decision_mode": "strategy_signal_paper",
+                "lineage_hash": "lineage",
+            }
+        )
+
+        rows = _build_realized_strategy_pnl_rows(
+            execution_rows,
+            decision_lifecycle_rows=decision_rows,
+            order_lifecycle_rows=order_rows,
+            allow_authoritative_runtime_ledger_materialization=True,
+        )
+
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertTrue(row["authoritative"])
+        self.assertEqual(row["runtime_ledger_blockers"], [])
+        self.assertEqual(
+            row["authority_reason"], "event_sourced_runtime_ledger_profit_proof"
+        )
+        bucket = row["runtime_ledger_bucket"]
+        assert isinstance(bucket, dict)
+        self.assertTrue(bucket["order_feed_lifecycle_complete"])
+        self.assertTrue(bucket["execution_economics_complete"])
+        self.assertEqual(bucket["source_materialization"], "source_execution_lifecycle")
+        self.assertEqual(
+            bucket["authority_class"],
+            "source_execution_lifecycle_materialized_runtime_ledger",
+        )
+        self.assertEqual(
+            bucket["source_row_counts"],
+            {
+                "execution_order_events": 4,
+                "executions": 2,
+                "order_feed_source_windows": 4,
+                "trade_decisions": 2,
+            },
+        )
+        self.assertEqual(
+            bucket["cost_basis_counts"], {"broker_reported_commission_and_fees": 2}
+        )
+
+    def test_source_backed_lifecycle_only_blocks_missing_execution_economics(
+        self,
+    ) -> None:
+        decision_rows, order_rows, _execution_rows = _source_backed_runtime_split_rows(
+            include_execution_economics=False
+        )
+        order_rows.append(
+            {
+                "trade_decision_id": "unrelated-decision",
+                "event_ts": _runtime_split_ts(3),
+                "event_type": "new",
+                "symbol": "NVDA",
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "decision_hash": "unrelated-decision",
+                "alpaca_order_id": "unrelated-order",
+                "execution_order_event_id": "event-unrelated-order",
+                "source_window_id": "window-unrelated-order",
+                "source_topic": "alpaca.trade_updates",
+                "source_partition": 0,
+                "source_offset": 901,
+                "source_decision_mode": "strategy_signal_paper",
+                "lineage_hash": "lineage",
+            }
+        )
+
+        rows = _build_realized_strategy_pnl_rows(
+            [],
+            decision_lifecycle_rows=decision_rows,
+            order_lifecycle_rows=order_rows,
+            allow_authoritative_runtime_ledger_materialization=True,
+        )
+
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertFalse(row["authoritative"])
+        bucket = row["runtime_ledger_bucket"]
+        assert isinstance(bucket, dict)
+        self.assertTrue(bucket["order_feed_lifecycle_complete"])
+        self.assertFalse(bucket["execution_economics_complete"])
+        self.assertIn("execution_economics_missing", row["runtime_ledger_blockers"])
+        self.assertIn("runtime_fills_missing", row["runtime_ledger_blockers"])
+        self.assertNotIn("order_feed_lifecycle_missing", row["runtime_ledger_blockers"])
+
+    def test_execution_economics_without_order_lifecycle_blocks_missing_lifecycle(
+        self,
+    ) -> None:
+        decision_rows, _order_rows, execution_rows = _source_backed_runtime_split_rows(
+            include_order_lifecycle=False
+        )
+
+        rows = _build_realized_strategy_pnl_rows(
+            execution_rows,
+            decision_lifecycle_rows=decision_rows,
+            order_lifecycle_rows=[],
+            allow_authoritative_runtime_ledger_materialization=True,
+        )
+
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertFalse(row["authoritative"])
+        bucket = row["runtime_ledger_bucket"]
+        assert isinstance(bucket, dict)
+        self.assertFalse(bucket["order_feed_lifecycle_complete"])
+        self.assertTrue(bucket["execution_economics_complete"])
+        self.assertIn("order_feed_lifecycle_missing", row["runtime_ledger_blockers"])
+        self.assertIn(
+            "order_feed_fill_lifecycle_missing", row["runtime_ledger_blockers"]
+        )
+        self.assertNotIn("execution_economics_missing", row["runtime_ledger_blockers"])
+
+    def test_order_feed_fill_without_submitted_lifecycle_blocks_lifecycle_contract(
+        self,
+    ) -> None:
+        decision_rows, order_rows, execution_rows = _source_backed_runtime_split_rows(
+            include_submitted_lifecycle=False
+        )
+
+        rows = _build_realized_strategy_pnl_rows(
+            execution_rows,
+            decision_lifecycle_rows=decision_rows,
+            order_lifecycle_rows=order_rows,
+            allow_authoritative_runtime_ledger_materialization=True,
+        )
+
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertFalse(row["authoritative"])
+        bucket = row["runtime_ledger_bucket"]
+        assert isinstance(bucket, dict)
+        self.assertFalse(bucket["order_feed_lifecycle_complete"])
+        self.assertTrue(bucket["execution_economics_complete"])
+        self.assertIn("order_feed_lifecycle_missing", row["runtime_ledger_blockers"])
+        self.assertIn(
+            "submitted_order_lifecycle_missing", row["runtime_ledger_blockers"]
+        )
+        self.assertIn("fill_order_submission_missing", row["runtime_ledger_blockers"])
+
+    def test_carry_in_lifecycle_only_filters_mismatched_decision_rows(
+        self,
+    ) -> None:
+        decision_rows, order_rows, execution_rows = _source_backed_runtime_split_rows()
+
+        rows = _build_realized_strategy_pnl_rows(
+            execution_rows,
+            decision_lifecycle_rows=decision_rows,
+            order_lifecycle_rows=order_rows,
+            carry_in_decision_lifecycle_rows=[
+                {
+                    "trade_decision_id": "carry-decision",
+                    "computed_at": _runtime_split_ts(-2),
+                    "event_type": "decision",
+                    "symbol": "NVDA",
+                    "account_label": "paper",
+                    "strategy_id": "strategy-1",
+                    "decision_hash": "carry-decision",
+                    "decision_json": {"source_decision_mode": "strategy_signal_paper"},
+                    "source_decision_mode": "strategy_signal_paper",
+                    "lineage_hash": "lineage",
+                },
+            ],
+            carry_in_order_lifecycle_rows=[
+                {
+                    "trade_decision_id": "other-carry-decision",
+                    "event_ts": _runtime_split_ts(-1),
+                    "event_type": "new",
+                    "symbol": "NVDA",
+                    "account_label": "paper",
+                    "strategy_id": "strategy-1",
+                    "decision_hash": "other-carry-decision",
+                    "alpaca_order_id": "carry-unrelated-order",
+                    "execution_order_event_id": "event-carry-unrelated-order",
+                    "source_window_id": "window-carry-unrelated-order",
+                    "source_topic": "alpaca.trade_updates",
+                    "source_partition": 0,
+                    "source_offset": 902,
+                    "source_decision_mode": "strategy_signal_paper",
+                    "lineage_hash": "lineage",
+                },
+            ],
+            allow_authoritative_runtime_ledger_materialization=True,
+        )
+
+        self.assertEqual(len(rows), 1)
+        bucket = rows[0]["runtime_ledger_bucket"]
+        assert isinstance(bucket, dict)
+        self.assertNotIn("window-carry-unrelated-order", bucket["source_window_ids"])
 
     def test_runtime_ledger_source_context_merges_gap_metadata(self) -> None:
         bucket = _with_runtime_ledger_source_authority_context(
@@ -2931,6 +3236,25 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "source_partition": 0,
                     "source_offset": 200,
                     "source_window_id": "source-window-fill-buy",
+                },
+                {
+                    "execution_order_event_id": "event-unrelated-carry-in",
+                    "trade_decision_id": "decision-unrelated-id",
+                    "execution_id": "execution-unrelated",
+                    "event_ts": datetime(2026, 3, 6, 14, 35, 2, tzinfo=timezone.utc),
+                    "event_type": "new",
+                    "symbol": "TSLA",
+                    "account_label": "TORGHUT_SIM",
+                    "strategy_id": "microbar-cross-sectional-pairs-v1",
+                    "decision_hash": "decision-unrelated",
+                    "alpaca_order_id": "order-unrelated",
+                    "execution_policy_hash": "policy-unrelated",
+                    "lineage_hash": "lineage-sha",
+                    "source_topic": "alpaca.trade_updates",
+                    "source_partition": 0,
+                    "source_offset": 999,
+                    "source_decision_mode": "strategy_signal_paper",
+                    "source_window_id": "source-window-unrelated-carry-in",
                 },
             ],
             allow_authoritative_runtime_ledger_materialization=True,
@@ -7184,6 +7508,19 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             ],
             [
                 order_event_row(
+                    "event-new-sell",
+                    "decision-sell-id",
+                    "execution-sell",
+                    datetime(2026, 3, 6, 14, 39, 1, tzinfo=timezone.utc),
+                    "new",
+                    "sell",
+                    "1",
+                    "101",
+                    "order-sell",
+                    "decision-sell",
+                    201,
+                ),
+                order_event_row(
                     "event-fill-sell",
                     "decision-sell-id",
                     "execution-sell",
@@ -7195,7 +7532,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "order-sell",
                     "decision-sell",
                     202,
-                )
+                ),
             ],
             [
                 decision_row(
@@ -7219,6 +7556,19 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             ],
             [
                 order_event_row(
+                    "event-new-buy",
+                    "decision-buy-id",
+                    "execution-buy",
+                    datetime(2026, 3, 6, 14, 34, 1, tzinfo=timezone.utc),
+                    "new",
+                    "buy",
+                    "1",
+                    "100",
+                    "order-buy",
+                    "decision-buy",
+                    199,
+                ),
+                order_event_row(
                     "event-fill-buy",
                     "decision-buy-id",
                     "execution-buy",
@@ -7230,7 +7580,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "order-buy",
                     "decision-buy",
                     200,
-                )
+                ),
             ],
             [],
             [],
@@ -7286,10 +7636,10 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             diagnostics["carry_in_fill_execution_rows_after_lineage_filter"], 1
         )
         self.assertEqual(
-            diagnostics["carry_in_order_lifecycle_rows_before_lineage_filter"], 1
+            diagnostics["carry_in_order_lifecycle_rows_before_lineage_filter"], 2
         )
         self.assertEqual(
-            diagnostics["carry_in_order_lifecycle_rows_after_lineage_filter"], 1
+            diagnostics["carry_in_order_lifecycle_rows_after_lineage_filter"], 2
         )
         self.assertEqual(
             diagnostics["carry_in_fill_order_lifecycle_rows_before_lineage_filter"], 1
@@ -7308,7 +7658,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         assert isinstance(bucket, dict)
         self.assertEqual(bucket["closed_trade_count"], 1)
         self.assertEqual(bucket["open_position_count"], 0)
-        self.assertEqual(bucket["source_window_start"], "2026-03-06T14:35:00+00:00")
+        self.assertEqual(bucket["source_window_start"], "2026-03-06T14:34:01+00:00")
         self.assertEqual(
             bucket["source_window_end"], "2026-03-06T14:40:00.000001+00:00"
         )
