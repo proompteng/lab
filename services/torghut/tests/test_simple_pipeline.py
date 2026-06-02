@@ -1394,6 +1394,36 @@ def test_target_plan_fetch_error_without_config_does_not_reserve_paper_account(
         settings.trading_paper_route_target_plan_url = target_plan_url_before
 
 
+def test_empty_target_plan_symbols_do_not_reserve_account(
+    monkeypatch,
+) -> None:
+    trading_mode_before = settings.trading_mode
+    probe_enabled_before = settings.trading_simple_paper_route_probe_enabled
+    try:
+        settings.trading_mode = "paper"
+        settings.trading_simple_paper_route_probe_enabled = True
+        now = datetime(2026, 6, 1, 18, 0, tzinfo=timezone.utc)
+        pipeline = object.__new__(SimpleTradingPipeline)
+        pipeline.account_label = "TORGHUT_SIM"
+        pipeline._is_market_session_open = lambda _now: True
+        pipeline._external_paper_route_target_probe_symbols_cached = lambda: (
+            set(),
+            None,
+            [],
+        )
+        monkeypatch.setattr(
+            "app.trading.scheduler.simple_pipeline.trading_now",
+            lambda account_label=None: now,
+        )
+
+        assert not pipeline._paper_route_target_plan_reserves_account(
+            allowed_symbols={"AAPL", "AMZN"},
+        )
+    finally:
+        settings.trading_mode = trading_mode_before
+        settings.trading_simple_paper_route_probe_enabled = probe_enabled_before
+
+
 def test_target_account_audit_unavailable_still_scopes_signal_ingest(
     monkeypatch,
 ) -> None:
