@@ -1614,7 +1614,7 @@ class TestTradingApi(TestCase):
                 self.statements.append(sql)
                 if "SET LOCAL statement_timeout" in sql:
                     return FakeResult([])
-                if "information_schema.columns" in sql:
+                if "FROM pg_catalog.pg_class" in sql and "pg_attribute" in sql:
                     return FakeResult(
                         [
                             {
@@ -1699,6 +1699,7 @@ class TestTradingApi(TestCase):
         joined_sql = "\n".join(fake_session.statements)
         self.assertIn("SET LOCAL statement_timeout", joined_sql)
         self.assertNotIn("pg_type", joined_sql)
+        self.assertNotIn("information_schema.columns", joined_sql)
 
     def test_bounded_account_scope_invariants_reports_legacy_indexes(self) -> None:
         class FakeResult:
@@ -1720,7 +1721,7 @@ class TestTradingApi(TestCase):
                 sql = str(statement)
                 if "SET LOCAL statement_timeout" in sql:
                     return FakeResult([])
-                if "information_schema.columns" in sql:
+                if "FROM pg_catalog.pg_class" in sql and "pg_attribute" in sql:
                     return FakeResult(
                         [
                             {
