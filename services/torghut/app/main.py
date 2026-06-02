@@ -247,9 +247,7 @@ _paper_route_target_plan_success_cache: tuple[dict[str, Any], float] | None = No
 class _TradingStatusReadBudget:
     def __init__(self, *, max_seconds: float | None = None):
         configured_seconds = (
-            _TRADING_STATUS_READ_BUDGET_SECONDS
-            if max_seconds is None
-            else max_seconds
+            _TRADING_STATUS_READ_BUDGET_SECONDS if max_seconds is None else max_seconds
         )
         self.max_seconds = max(0.0, float(configured_seconds))
         self._started_at = time.monotonic()
@@ -1939,10 +1937,15 @@ def _check_account_scope_invariants_bounded(session: Session) -> dict[str, objec
     column_rows = _execute_readiness_account_scope_query(
         session,
         """
-        SELECT table_name, column_name
-        FROM information_schema.columns
-        WHERE table_schema = current_schema()
-          AND table_name IN :table_names
+        SELECT tbl.relname AS table_name, att.attname AS column_name
+        FROM pg_catalog.pg_class tbl
+        JOIN pg_catalog.pg_namespace ns ON ns.oid = tbl.relnamespace
+        JOIN pg_catalog.pg_attribute att ON att.attrelid = tbl.oid
+        WHERE ns.nspname = current_schema()
+          AND tbl.relname IN :table_names
+          AND tbl.relkind IN ('r', 'p')
+          AND att.attnum > 0
+          AND NOT att.attisdropped
         """,
         table_names=table_names,
     )
