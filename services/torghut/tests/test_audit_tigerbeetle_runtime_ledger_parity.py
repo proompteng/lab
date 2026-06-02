@@ -5,7 +5,7 @@ import io
 import os
 import sys
 from contextlib import redirect_stdout
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import TracebackType
 from unittest import TestCase
@@ -20,6 +20,7 @@ from app.models import (
     Execution,
     ExecutionTCAMetric,
     StrategyRuntimeLedgerBucket,
+    TigerBeetleReconciliationRun,
     TigerBeetleTransferRef,
     coerce_json_payload,
 )
@@ -38,6 +39,7 @@ from app.trading.tigerbeetle_runtime_ledger_parity import (
     BLOCKER_AMOUNT_MISMATCH,
     BLOCKER_CANDIDATE_MISMATCH,
     BLOCKER_ENTRY_MISSING,
+    BLOCKER_RECONCILIATION_MISSING,
     BLOCKER_TRANSFER_MISSING,
     BLOCKER_TRANSFER_SHAPE_MISMATCH,
     PARITY_STATUS_BLOCKED,
@@ -45,9 +47,11 @@ from app.trading.tigerbeetle_runtime_ledger_parity import (
     PARITY_STATUS_OPTIONAL_DEGRADED,
     PARITY_STATUS_PASS,
     BLOCKER_RECONCILIATION_NOT_OK,
+    BLOCKER_RECONCILIATION_STALE,
     audit_tigerbeetle_runtime_ledger_parity,
     tigerbeetle_runtime_ledger_parity_blockers,
 )
+from app.trading.tigerbeetle_reconcile import reconcile_tigerbeetle_transfers
 from scripts import audit_tigerbeetle_runtime_ledger_parity as audit_script
 from scripts.audit_tigerbeetle_runtime_ledger_parity import main as audit_main
 
@@ -221,6 +225,11 @@ class TestAuditTigerBeetleRuntimeLedgerParity(TestCase):
             _seed_sources(session)
             client = FakeTigerBeetleClient()
             _journal_all(session, client)
+            reconcile_tigerbeetle_transfers(
+                session,
+                settings_obj=_settings(required=True),
+                client=client,
+            )
 
             payload = audit_tigerbeetle_runtime_ledger_parity(
                 session,
@@ -248,6 +257,22 @@ class TestAuditTigerBeetleRuntimeLedgerParity(TestCase):
         self.assertFalse(read_only["generates_proof"])
         self.assertFalse(read_only["synthesizes_fills"])
         self.assertFalse(read_only["overrides_runtime_ledger_authority"])
+        self.assertFalse(payload["promotion_authority"])
+        self.assertTrue(payload["reconciliation_ok"])
+        self.assertFalse(payload["reconciliation_stale"])
+        samples = payload["samples"]
+        assert isinstance(samples, list)
+        runtime_sample = next(
+            sample for sample in samples if sample["family"] == "runtime_net_pnl"
+        )
+        self.assertFalse(runtime_sample["promotion_authority"])
+        self.assertIn(
+            "postgres:strategy_runtime_ledger_buckets:",
+            str(runtime_sample["source_refs"]),
+        )
+        self.assertTrue(str(runtime_sample["runtime_ledger_net_pnl_transfer_ref"]))
+        self.assertEqual(runtime_sample["signed_amount_micros"], "4250000")
+        self.assertEqual(runtime_sample["pnl_direction"], "profit")
 
     def test_missing_tigerbeetle_entries_are_optional_degraded_when_not_required(
         self,
@@ -280,6 +305,82 @@ class TestAuditTigerBeetleRuntimeLedgerParity(TestCase):
         self.assertTrue(payload["required"])
         self.assertEqual(payload["parity_status"], PARITY_STATUS_BLOCKED)
         self.assertIn(BLOCKER_ENTRY_MISSING, payload["blockers"])
+        self.assertIn(BLOCKER_RECONCILIATION_MISSING, payload["blockers"])
+
+    def test_stale_reconciliation_blocks_required_parity(self) -> None:
+        with Session(self.engine) as session:
+            _seed_sources(session)
+            client = FakeTigerBeetleClient()
+            _journal_all(session, client)
+            stale_at = datetime.now(timezone.utc) - timedelta(hours=2)
+            session.add(
+                TigerBeetleReconciliationRun(
+                    cluster_id=_settings(required=True).tigerbeetle_cluster_id,
+                    started_at=stale_at,
+                    finished_at=stale_at,
+                    status="ok",
+                    checked_transfer_count=3,
+                    missing_transfer_count=0,
+                    mismatched_transfer_count=0,
+                    source_missing_count=0,
+                    payload_json={
+                        "blockers": [],
+                        "reconciliation_max_age_seconds": 60,
+                    },
+                )
+            )
+            session.flush()
+
+            payload = audit_tigerbeetle_runtime_ledger_parity(
+                session,
+                settings_obj=Settings(
+                    TORGHUT_TIGERBEETLE_ENABLED=True,
+                    TORGHUT_TIGERBEETLE_JOURNAL_ENABLED=True,
+                    TORGHUT_TIGERBEETLE_REQUIRED=True,
+                    TORGHUT_TIGERBEETLE_RECONCILE_REQUIRED=True,
+                    TORGHUT_TIGERBEETLE_RECONCILE_MAX_AGE_SECONDS=60,
+                ),
+                client=client,
+            )
+
+        self.assertFalse(payload["ok"])
+        self.assertFalse(payload["reconciliation_ok"])
+        self.assertTrue(payload["reconciliation_stale"])
+        self.assertIn(BLOCKER_RECONCILIATION_STALE, payload["blockers"])
+
+    def test_missing_runtime_ledger_ref_blocks_required_parity(self) -> None:
+        with Session(self.engine) as session:
+            _seed_sources(session)
+            client = FakeTigerBeetleClient()
+            execution = session.execute(select(Execution)).scalar_one()
+            metric = session.execute(select(ExecutionTCAMetric)).scalar_one()
+            journal = TigerBeetleLedgerJournal(
+                settings_obj=_settings(required=True),
+                client=client,
+            )
+            journal.journal_execution(session, execution)
+            journal.journal_execution_tca_metric(session, metric)
+            reconcile_tigerbeetle_transfers(
+                session,
+                settings_obj=_settings(required=True),
+                client=client,
+            )
+
+            payload = audit_tigerbeetle_runtime_ledger_parity(
+                session,
+                settings_obj=_settings(required=True),
+                client=client,
+            )
+
+        self.assertFalse(payload["ok"])
+        self.assertIn(BLOCKER_ENTRY_MISSING, payload["blockers"])
+        samples = payload["samples"]
+        assert isinstance(samples, list)
+        runtime_sample = next(
+            sample for sample in samples if sample["family"] == "runtime_net_pnl"
+        )
+        self.assertEqual(runtime_sample["status"], "missing_ref")
+        self.assertFalse(runtime_sample["promotion_authority"])
 
     def test_amount_mismatch_blocks_required_parity(self) -> None:
         with Session(self.engine) as session:
@@ -488,6 +589,22 @@ class TestAuditTigerBeetleRuntimeLedgerParity(TestCase):
                 BLOCKER_ENTRY_MISSING,
                 "tigerbeetle_postgres_ref_mismatch",
                 BLOCKER_RECONCILIATION_NOT_OK,
+            ],
+        )
+        self.assertEqual(
+            tigerbeetle_runtime_ledger_parity_blockers(
+                {
+                    "required": True,
+                    "reconciliation_ok": False,
+                    "reconciliation_stale": True,
+                    "latest_reconciliation": None,
+                    "blockers": [],
+                }
+            ),
+            [
+                BLOCKER_RECONCILIATION_MISSING,
+                BLOCKER_RECONCILIATION_NOT_OK,
+                BLOCKER_RECONCILIATION_STALE,
             ],
         )
 

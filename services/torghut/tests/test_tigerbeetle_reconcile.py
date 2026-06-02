@@ -388,7 +388,9 @@ class TestTigerBeetleReconcile(TestCase):
             )
             session.add(event)
             session.flush()
-            plan = build_order_event_transfer_plan(session, event, settings_obj=_settings())
+            plan = build_order_event_transfer_plan(
+                session, event, settings_obj=_settings()
+            )
             self.assertIsNotNone(plan)
             assert plan is not None
             transfer = plan.transfer_spec
@@ -462,7 +464,9 @@ class TestTigerBeetleReconcile(TestCase):
             _payload_string_list({"account_ids": ["11", None, 12]}, "account_ids"),
             ["11", "12"],
         )
-        self.assertEqual(_payload_string_list({"account_ids": "11"}, "account_ids"), ["11"])
+        self.assertEqual(
+            _payload_string_list({"account_ids": "11"}, "account_ids"), ["11"]
+        )
 
         ref = TigerBeetleTransferRef(
             cluster_id=2001,
@@ -541,6 +545,13 @@ class TestTigerBeetleReconcile(TestCase):
             self.assertEqual(payload["runtime_ledger_signed_transfer_count"], 2)
             self.assertEqual(payload["runtime_ledger_missing_signed_ref_count"], 0)
             self.assertEqual(payload["runtime_ledger_missing_account_ref_count"], 0)
+            self.assertFalse(payload["promotion_authority"])
+            self.assertFalse(payload["overrides_runtime_ledger_authority"])
+            self.assertFalse(payload["reconciliation_stale"])
+            freshness = payload["reconciliation_freshness"]
+            assert isinstance(freshness, dict)
+            self.assertEqual(freshness["age_seconds"], 0)
+            self.assertFalse(freshness["stale"])
             ref_counts = payload["ref_counts"]
             assert isinstance(ref_counts, dict)
             self.assertEqual(ref_counts["runtime_ledger_signed_ref_count"], 2)
@@ -1212,10 +1223,16 @@ class TestTigerBeetleReconcile(TestCase):
         self.assertEqual(payload["transfer_ref_count"], 2)
         self.assertEqual(payload["runtime_ledger_ref_count"], 5)
         self.assertEqual(payload["runtime_ledger_signed_ref_count"], 4)
+        self.assertFalse(payload["promotion_authority"])
+        self.assertFalse(payload["overrides_runtime_ledger_authority"])
+        self.assertIn("reconciliation_freshness", payload)
         self.assertEqual(payload["mismatched_ref_count"], 1)
         self.assertEqual(payload["missing_source_row_count"], 3)
         self.assertEqual(payload["unlinked_order_event_ref_count"], 4)
-        self.assertEqual(payload["mismatched_refs"], [{"blocker": BLOCKER_CODE_MISMATCH, "row_id": "ref-1"}])
+        self.assertEqual(
+            payload["mismatched_refs"],
+            [{"blocker": BLOCKER_CODE_MISMATCH, "row_id": "ref-1"}],
+        )
         self.assertEqual(
             payload["ref_counts"],
             {
@@ -1239,11 +1256,7 @@ class TestTigerBeetleReconcile(TestCase):
         self.assertIsNone(_uuid_or_none(None))
         self.assertIsNone(_uuid_or_none("not-a-uuid"))
         self.assertEqual(
-            str(
-                _uuid_or_none(
-                    "6f767a53-6b44-428a-bd85-2f662642f637:revision"
-                )
-            ),
+            str(_uuid_or_none("6f767a53-6b44-428a-bd85-2f662642f637:revision")),
             "6f767a53-6b44-428a-bd85-2f662642f637",
         )
         self.assertIsNone(_usd_to_micros(None))
