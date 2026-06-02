@@ -15,7 +15,7 @@ from app.trading.zero_notional_repair_executor import (
 NOW = datetime(2026, 5, 13, 0, 20, tzinfo=timezone.utc)
 
 
-def _frontier(action: str = "refresh_stale_market_context_domains") -> dict[str, Any]:
+def _frontier(action: str = "renew_empirical_proof_jobs") -> dict[str, Any]:
     return {
         "schema_version": "torghut.profit-freshness-frontier.v1",
         "frontier_id": "profit-freshness-frontier:test",
@@ -30,9 +30,9 @@ def _frontier(action: str = "refresh_stale_market_context_domains") -> dict[str,
                 "lot_id": "profit-freshness-repair-lot:test",
                 "candidate_id": "candidate-a",
                 "hypothesis_id": "H-AAPL",
-                "blocked_dimension": "market_context",
+                "blocked_dimension": "empirical_proof",
                 "zero_notional_action": action,
-                "before_refs": ["market_context:AAPL"],
+                "before_refs": ["empirical:H-AAPL"],
                 "paper_notional_limit": "0",
                 "live_notional_limit": "0",
                 "state": "selected_zero_notional_repair",
@@ -50,10 +50,10 @@ def _dispatch_ticket(
         "ticket_id": "repair-lot-dispatch-ticket:test",
         "admission_receipt_id": "repair-bid-admission-receipt:test",
         "torghut_lot_id": lot_id,
-        "lot_class": "market_context_refresh",
+        "lot_class": "empirical_replay",
         "target_value_gate": "zero_notional_or_stale_evidence_rate",
         "dedupe_key": "torghut-repair:test",
-        "required_output_receipt": "torghut.market-context-current-receipt.v1",
+        "required_output_receipt": "torghut.empirical-proof-refresh-receipt.v1",
         "launch_allowed": True,
         "launch_reason": "current_zero_notional_compacted_lot",
         "stop_conditions": ["fresh_until_expired", "dedupe_key_became_active"],
@@ -68,18 +68,16 @@ def _dispatch_ticket(
 
 
 def _freshness_carry_ledger(
-    dimension_id: str = "market_context",
+    dimension_id: str = "empirical",
     *,
     dispatchable: bool = True,
 ) -> dict[str, object]:
     output_receipt_by_dimension = {
         "empirical": "torghut.empirical-proof-refresh-receipt.v1",
-        "market_context": "torghut.market-context-freshness-receipt.v1",
         "tca": "torghut.execution-tca-refresh-receipt.v1",
     }
     value_gate_by_dimension = {
         "empirical": "post_cost_daily_net_pnl",
-        "market_context": "zero_notional_or_stale_evidence_rate",
         "tca": "fill_tca_or_slippage_quality",
     }
     return {
@@ -126,17 +124,17 @@ def test_dry_run_receipt_keeps_selected_repair_zero_notional() -> None:
     assert receipt["order_submission_enabled"] is False
     assert receipt["paper_notional_limit"] == "0"
     assert receipt["live_notional_limit"] == "0"
-    assert receipt["before_refs"] == ["market_context:AAPL"]
+    assert receipt["before_refs"] == ["empirical:H-AAPL"]
     assert receipt["value_gate"] == "zero_notional_or_stale_evidence_rate"
     assert receipt["freshness_carry_ledger_ref"] == "freshness-carry-ledger:test"
     assert receipt["freshness_citation_required"] is True
     assert receipt["freshness_citation_state"] == "cited"
-    assert receipt["freshness_dimension_id"] == "market_context"
+    assert receipt["freshness_dimension_id"] == "empirical"
     assert receipt["freshness_repair_proof_slo_ref"] == (
-        "freshness-repair-slo:market_context"
+        "freshness-repair-slo:empirical"
     )
     assert receipt["freshness_required_output_receipts"] == [
-        "torghut.market-context-freshness-receipt.v1"
+        "torghut.empirical-proof-refresh-receipt.v1"
     ]
     assert receipt["requires_repair_lot_dispatch_ticket"] is True
     assert receipt["repair_lot_dispatch_ticket_ref"] is None
@@ -173,6 +171,23 @@ def test_execute_runs_allowlisted_tca_runner_without_widening_notional() -> None
     assert receipt["capital_behavior_changed"] is False
     assert receipt["paper_notional_limit"] == "0"
     assert receipt["live_notional_limit"] == "0"
+
+
+def test_retired_market_context_action_is_unsupported() -> None:
+    receipt = build_zero_notional_repair_execution_receipt(
+        account_label="paper",
+        trading_mode="live",
+        torghut_revision="torghut-00320",
+        source_commit="abc123",
+        profit_freshness_frontier=_frontier("refresh_stale_market_context_domains"),
+        execute=False,
+        now=NOW,
+    )
+
+    assert receipt["execution_state"] == "unsupported_action"
+    assert receipt["command_exit_code"] == 78
+    assert receipt["executor"] is None
+    assert receipt["order_submission_enabled"] is False
 
 
 def test_execute_runs_allowlisted_drift_runner_without_widening_notional() -> None:
@@ -375,10 +390,10 @@ def test_runner_required_action_does_not_call_runner_without_dispatch_ticket() -
         trading_mode="live",
         torghut_revision="torghut-00320",
         source_commit="abc123",
-        profit_freshness_frontier=_frontier("refresh_stale_market_context_domains"),
+        profit_freshness_frontier=_frontier("renew_empirical_proof_jobs"),
         execute=True,
         runners={
-            "refresh_stale_market_context_domains": lambda repair: (
+            "renew_empirical_proof_jobs": lambda repair: (
                 called.append(repair)
                 or {
                     "execution_state": "executed",
@@ -405,17 +420,17 @@ def test_runner_required_action_executes_with_matching_dispatch_ticket() -> None
         trading_mode="live",
         torghut_revision="torghut-00320",
         source_commit="abc123",
-        profit_freshness_frontier=_frontier("refresh_stale_market_context_domains"),
+        profit_freshness_frontier=_frontier("renew_empirical_proof_jobs"),
         execute=True,
         repair_lot_dispatch_ticket=_dispatch_ticket(),
         freshness_carry_ledger=_freshness_carry_ledger(),
         runners={
-            "refresh_stale_market_context_domains": lambda repair: (
+            "renew_empirical_proof_jobs": lambda repair: (
                 called.append(repair)
                 or {
                     "execution_state": "executed",
                     "command_exit_code": 0,
-                    "after_refs": ["market_context:AAPL:refreshed"],
+                    "after_refs": ["empirical:H-AAPL:renewed"],
                 }
             ),
         },
@@ -427,7 +442,7 @@ def test_runner_required_action_executes_with_matching_dispatch_ticket() -> None
     ]
     assert receipt["execution_state"] == "executed"
     assert receipt["command_exit_code"] == 0
-    assert receipt["after_refs"] == ["market_context:AAPL:refreshed"]
+    assert receipt["after_refs"] == ["empirical:H-AAPL:renewed"]
     assert receipt["requires_repair_lot_dispatch_ticket"] is True
     assert (
         receipt["repair_lot_dispatch_ticket_ref"] == "repair-lot-dispatch-ticket:test"
@@ -438,7 +453,7 @@ def test_runner_required_action_executes_with_matching_dispatch_ticket() -> None
     )
     assert receipt["repair_lot_dispatch_ticket_launch_allowed"] is True
     assert receipt["freshness_citation_state"] == "cited"
-    assert receipt["freshness_dimension_id"] == "market_context"
+    assert receipt["freshness_dimension_id"] == "empirical"
     assert receipt["freshness_repair_proof_slo_dispatchable"] is True
     assert receipt["paper_notional_limit"] == "0"
     assert receipt["live_notional_limit"] == "0"
@@ -453,7 +468,7 @@ def test_runner_required_action_rejects_mismatched_dispatch_ticket() -> None:
         trading_mode="live",
         torghut_revision="torghut-00320",
         source_commit="abc123",
-        profit_freshness_frontier=_frontier("refresh_stale_market_context_domains"),
+        profit_freshness_frontier=_frontier("renew_empirical_proof_jobs"),
         execute=True,
         repair_lot_dispatch_ticket=_dispatch_ticket(
             "profit-freshness-repair-lot:other",
@@ -464,7 +479,7 @@ def test_runner_required_action_rejects_mismatched_dispatch_ticket() -> None:
             },
         ),
         runners={
-            "refresh_stale_market_context_domains": lambda repair: (
+            "renew_empirical_proof_jobs": lambda repair: (
                 called.append(repair)
                 or {
                     "execution_state": "executed",
@@ -498,7 +513,7 @@ def test_runner_required_action_rejects_malformed_dispatch_ticket() -> None:
         trading_mode="live",
         torghut_revision="torghut-00320",
         source_commit="abc123",
-        profit_freshness_frontier=_frontier("refresh_stale_market_context_domains"),
+        profit_freshness_frontier=_frontier("renew_empirical_proof_jobs"),
         execute=True,
         repair_lot_dispatch_ticket={
             "schema_version": "jangar.repair-lot-dispatch-ticket.v0",
@@ -511,7 +526,7 @@ def test_runner_required_action_rejects_malformed_dispatch_ticket() -> None:
             "max_runtime_seconds": "not-a-ttl",
         },
         runners={
-            "refresh_stale_market_context_domains": lambda repair: (
+            "renew_empirical_proof_jobs": lambda repair: (
                 called.append(repair)
                 or {
                     "execution_state": "executed",

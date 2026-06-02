@@ -36,17 +36,14 @@ _ACTION_CLASS_DECISIONS = {
 _RECEIPTS_BY_REPAIR_CLASS = {
     "route_rehab": [
         "torghut.execution-tca-current-receipt.v1",
-        "torghut.market-context-current-receipt.v1",
         "torghut.alpha-readiness-current-receipt.v1",
     ],
     "scoped_proof_refill": [
         "torghut.execution-tca-current-receipt.v1",
         "torghut.route-universe-current-receipt.v1",
-        "torghut.market-context-current-receipt.v1",
     ],
     "missing_symbol_breadth_probe": [
         "torghut.route-coverage-current-receipt.v1",
-        "torghut.market-context-current-receipt.v1",
     ],
     "alpha_window_evidence_refill": [
         "torghut.alpha-readiness-current-receipt.v1",

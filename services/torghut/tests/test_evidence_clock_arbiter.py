@@ -142,6 +142,31 @@ def test_all_current_clocks_mint_routeable_candidate_with_zero_notional() -> Non
     assert exchange["routeable_candidates"][0]["candidate_id"] == "candidate-micro"
     assert exchange["routeable_candidates"][0]["max_notional"] == "0"
     assert exchange["zero_notional_repair_lots"] == []
+    assert _clock(arbiter, "postgres_tca")["state"] == "current"
+    assert all(clock["name"] != "market_context" for clock in arbiter["clocks"])
+
+
+def test_stale_market_context_is_diagnostic_not_routeability_clock() -> None:
+    arbiter, exchange = _build(
+        market_context_status={
+            "status": "degraded",
+            "last_updated_at": (NOW - timedelta(days=2)).isoformat(),
+            "last_domain_states": {
+                "technicals": {"state": "stale"},
+                "regime": {"state": "stale"},
+            },
+            "blocking_reasons": ["market_context_technicals_stale"],
+        }
+    )
+
+    assert arbiter["routeable_candidate_count"] == 1
+    assert exchange["routeable_candidates"][0]["candidate_id"] == "candidate-micro"
+    assert exchange["zero_notional_repair_lots"] == []
+    assert all(clock["name"] != "market_context" for clock in arbiter["clocks"])
+    assert all(
+        lot["repair_class"] != "market_context_domain_refresh"
+        for lot in exchange["zero_notional_repair_lots"]
+    )
 
 
 def test_fresh_clickhouse_cannot_mint_candidate_when_postgres_tca_is_stale() -> None:

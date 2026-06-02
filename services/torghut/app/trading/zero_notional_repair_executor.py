@@ -24,13 +24,6 @@ _ALLOWLIST: Mapping[str, Mapping[str, object]] = {
         "value_gate": "zero_notional_or_stale_evidence_rate",
         "rollback_path": "cancel empirical renewal run and keep stale proof lot queued at max_notional=0",
     },
-    "refresh_stale_market_context_domains": {
-        "executor": "market_context_refresh",
-        "runner_required": True,
-        "requires_torghut_admission": True,
-        "value_gate": "zero_notional_or_stale_evidence_rate",
-        "rollback_path": "discard refreshed context receipt and keep prior last-good context decision",
-    },
     "recompute_route_tca_and_fill_quality": {
         "executor": "route_tca_recompute",
         "runner_required": False,
@@ -55,7 +48,6 @@ _ALLOWLIST: Mapping[str, Mapping[str, object]] = {
 }
 _FRESHNESS_DIMENSION_BY_ACTION: Mapping[str, str] = {
     "renew_empirical_proof_jobs": "empirical",
-    "refresh_stale_market_context_domains": "market_context",
     "recompute_route_tca_and_fill_quality": "tca",
 }
 

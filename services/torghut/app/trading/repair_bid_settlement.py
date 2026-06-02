@@ -94,15 +94,6 @@ _ALPHA_READINESS_STRIKE_REASONS = {
 _PROFIT_FRESHNESS_REPAIR_PRIORITY = 99
 _ZERO_NOTIONAL_TEXT = {"", "0", "0.0", "0.00", "0.0000"}
 _PROFIT_FRESHNESS_ACTION_CONTRACTS: Mapping[str, Mapping[str, object]] = {
-    "refresh_stale_market_context_domains": {
-        "lot_class": "market_context_refresh",
-        "target_value_gate": "zero_notional_or_stale_evidence_rate",
-        "required_output_receipt": "torghut.market-context-freshness-receipt.v1",
-        "validation_command": (
-            "pytest services/torghut/tests/test_zero_notional_repair_executor.py "
-            "-k dispatch_ticket"
-        ),
-    },
     "renew_empirical_proof_jobs": {
         "lot_class": "empirical_replay",
         "target_value_gate": "zero_notional_or_stale_evidence_rate",

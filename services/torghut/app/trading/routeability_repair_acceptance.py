@@ -9,13 +9,6 @@ from hashlib import sha256
 import json
 from typing import Any, cast
 
-from .market_context_domains import (
-    ACTIVE_MARKET_CONTEXT_DOMAINS,
-    active_market_context_reasons,
-    is_active_market_context_domain,
-)
-
-
 ROUTEABILITY_REPAIR_ACCEPTANCE_LEDGER_SCHEMA_VERSION = (
     "torghut.routeability-repair-acceptance-ledger.v1"
 )
@@ -33,10 +26,6 @@ _FORECAST_READY = {
     "pass",
     "ready",
     "shadow_ready",
-}
-_MARKET_STALE_COUNT_FIELDS = {
-    "technicals": "stale_technicals_count",
-    "regime": "stale_regime_count",
 }
 _PROMOTION_FRAGMENTS = (
     "autoresearch",
@@ -479,62 +468,6 @@ def _quant_blockers(quant_evidence: Mapping[str, Any]) -> list[str]:
     )
 
 
-def _market_domain_states(
-    market_context_status: Mapping[str, Any],
-) -> Mapping[str, Any]:
-    for field in ("last_domain_states", "domain_states", "domains"):
-        domains = _mapping(market_context_status.get(field))
-        if domains:
-            return domains
-    health = _mapping(market_context_status.get("health"))
-    return _mapping(health.get("domain_states"))
-
-
-def _market_context_blockers(market_context_status: Mapping[str, Any]) -> list[str]:
-    if not market_context_status:
-        return ["market_context_missing"]
-    blockers = active_market_context_reasons(
-        [
-            *_strings(market_context_status.get("blocking_reasons")),
-            *_strings(market_context_status.get("reason_codes")),
-        ]
-    )
-    health = _mapping(market_context_status.get("health"))
-    status = _text(
-        health.get("status")
-        or market_context_status.get("status")
-        or market_context_status.get("state")
-        or market_context_status.get("last_reason")
-    ).lower()
-    if status and status not in _ACCEPTED_STATES and status != "fresh":
-        blockers.append(f"market_context_{status}")
-
-    stale_domains = [
-        domain
-        for domain in _strings(
-            market_context_status.get("stale_domains")
-            or market_context_status.get("market_context_stale_domains")
-        )
-        if is_active_market_context_domain(domain)
-    ]
-    for domain_name, raw_domain in _market_domain_states(market_context_status).items():
-        if not is_active_market_context_domain(domain_name):
-            continue
-        domain = _mapping(raw_domain)
-        domain_status = _text(domain.get("status") or domain.get("state")).lower()
-        if domain.get("stale") is True or domain_status in {
-            "degraded",
-            "missing",
-            "stale",
-        }:
-            stale_domains.append(str(domain_name))
-    for domain_name, field_name in _MARKET_STALE_COUNT_FIELDS.items():
-        if _int(market_context_status.get(field_name)) > 0:
-            stale_domains.append(domain_name)
-    blockers.extend([f"market_context_{domain}_stale" for domain in stale_domains])
-    return _unique(blockers)
-
-
 def _alpha_blockers(
     *,
     proof_floor_receipt: Mapping[str, Any],
@@ -787,6 +720,7 @@ def build_routeability_repair_acceptance_ledger(
     """Build an observe-only acceptance ledger for routeability repair lots."""
 
     observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    _ = market_context_status
     generated_at = observed_at.isoformat()
     account = account_label or _text(proof_floor_receipt.get("account_label")) or None
     route_rows = _rows(route_reacquisition_board)
@@ -796,7 +730,6 @@ def build_routeability_repair_acceptance_ledger(
         if _row_state(row) in {"blocked", "missing", "probing"}
     ]
     alpha_rows = [row for row in route_rows if _strings(row.get("hypothesis_ids"))]
-    market_blockers = _market_context_blockers(market_context_status)
     quant_blockers = _quant_blockers(quant_evidence)
     alpha_blockers = _alpha_blockers(
         proof_floor_receipt=proof_floor_receipt,
@@ -844,22 +777,6 @@ def build_routeability_repair_acceptance_ledger(
             acceptance_condition="scoped quant latest metrics and pipeline stages are current",
             next_repair_action="refresh_scoped_quant_pipeline_stage_receipts",
             rollback_trigger="routeability acceptance counts a candidate while scoped quant stages are missing",
-        ),
-        _lot(
-            account=account,
-            window=window,
-            trading_mode=trading_mode,
-            lot_type="market_context_domain_repair",
-            value_gate="zero_notional_or_stale_evidence_rate",
-            expected_gate_delta="retire_stale_market_context_domains",
-            required_receipts=["market_context_domain_receipt"],
-            blockers=market_blockers,
-            acceptance_condition=(
-                f"{', '.join(ACTIVE_MARKET_CONTEXT_DOMAINS)} domains are fresh or not required"
-            ),
-            next_repair_action="refresh_stale_market_context_domains",
-            rollback_trigger="market-context repair accepts a stale domain",
-            symbols=_symbols(route_repair_rows),
         ),
         _lot(
             account=account,

@@ -185,6 +185,11 @@ def test_profit_carry_passports_cover_named_repair_hypotheses() -> None:
         "torghut.hypothesis-window-evidence-current-receipt.v1",
     ]
     assert all(
+        "torghut.market-context-current-receipt.v1"
+        not in passport["required_receipts"]
+        for passport in passports.values()
+    )
+    assert all(
         passport["schema_version"] == PROFIT_CARRY_PASSPORT_SCHEMA_VERSION
         and passport["max_notional"] == "0"
         and passport["required_receipts"]

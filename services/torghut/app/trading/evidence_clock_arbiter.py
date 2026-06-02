@@ -322,55 +322,6 @@ def _quant_clock(quant_evidence: Mapping[str, Any]) -> dict[str, object]:
     )
 
 
-def _market_context_clock(
-    market_context_status: Mapping[str, Any],
-) -> dict[str, object]:
-    if not market_context_status:
-        return _clock(
-            name="market_context",
-            state="missing",
-            affected_value_gates=[
-                "zero_notional_or_stale_evidence_rate",
-                "routeable_candidate_count",
-            ],
-            reason_codes=["market_context_missing"],
-        )
-    reasons = [
-        *_strings(market_context_status.get("blocking_reasons")),
-        *_strings(market_context_status.get("reason_codes")),
-        *_strings(market_context_status.get("stale_domains")),
-        *_strings(market_context_status.get("market_context_stale_domains")),
-    ]
-    status = _state_from_status(market_context_status)
-    if status in _BAD_STATES:
-        reasons.append(f"market_context_{status}")
-    domains = _mapping(
-        market_context_status.get("last_domain_states")
-        or market_context_status.get("domain_states")
-        or market_context_status.get("domains")
-    )
-    for domain_name, raw_domain in domains.items():
-        domain = _mapping(raw_domain)
-        domain_status = _state_from_status(domain)
-        if domain_status in _BAD_STATES or _bool(domain.get("stale")):
-            reasons.append(f"market_context_{domain_name}_stale")
-    return _clock(
-        name="market_context",
-        state="current" if not reasons else "stale",
-        affected_value_gates=[
-            "zero_notional_or_stale_evidence_rate",
-            "routeable_candidate_count",
-        ],
-        reason_codes=reasons,
-        as_of=_timestamp_from(
-            market_context_status, "updated_at", "last_updated_at", "last_snapshot_at"
-        ),
-        source_ref=market_context_status.get("receipt_id")
-        or market_context_status.get("bundle_id"),
-        details={"status": status},
-    )
-
-
 def _tca_clock(
     tca_summary: Mapping[str, Any],
     *,
@@ -745,7 +696,6 @@ def _repair_class_for_clock(clock_name: str) -> str:
     return {
         "clickhouse_ta": "market_data_clock_refresh",
         "torghut_quant": "quant_ingestion_repair",
-        "market_context": "market_context_domain_refresh",
         "postgres_tca": "execution_tca_refresh",
         "empirical_replay": "empirical_job_refresh",
         "hypothesis_lineage": "promotion_candidate_generation",
@@ -910,6 +860,7 @@ def build_evidence_clock_arbiter_and_exchange(
     """Build shadow-only clock and candidate projections from existing payloads."""
 
     observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    _ = market_context_status
     clocks = [
         _clickhouse_ta_clock(
             _mapping(clickhouse_ta_status),
@@ -917,7 +868,6 @@ def build_evidence_clock_arbiter_and_exchange(
             max_age_seconds=max_clock_age_seconds,
         ),
         _quant_clock(quant_evidence),
-        _market_context_clock(market_context_status),
         _tca_clock(tca_summary, now=observed_at, max_age_seconds=max_clock_age_seconds),
         _empirical_clock(empirical_jobs_status),
         _hypothesis_clock(hypothesis_payload),

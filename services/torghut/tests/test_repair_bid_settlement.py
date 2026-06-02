@@ -278,6 +278,41 @@ def test_profit_freshness_selected_repair_becomes_ticketable_zero_notional_lot()
             "frontier_id": "profit-freshness-frontier:test",
             "selected_zero_notional_repairs": [
                 {
+                    "lot_id": "profit-freshness-repair-lot:empirical",
+                    "candidate_id": "chip-paper-microbar-composite@execution-proof",
+                    "blocked_dimension": "empirical_proof",
+                    "zero_notional_action": "renew_empirical_proof_jobs",
+                    "before_refs": ["empirical:INTC"],
+                    "paper_notional_limit": "0",
+                    "live_notional_limit": "0",
+                    "state": "selected_zero_notional_repair",
+                }
+            ],
+        },
+    )
+    lots_by_id = {lot["lot_id"]: lot for lot in ledger["compacted_lots"]}
+    profit_lot = lots_by_id["profit-freshness-repair-lot:empirical"]
+
+    assert profit_lot["lot_class"] == "empirical_replay"
+    assert profit_lot["target_value_gate"] == "zero_notional_or_stale_evidence_rate"
+    assert (
+        profit_lot["required_output_receipt"]
+        == "torghut.empirical-proof-refresh-receipt.v1"
+    )
+    assert profit_lot["state"] == "selected"
+    assert profit_lot["dispatchable"] is True
+    assert profit_lot["max_notional"] == "0"
+    assert "profit-freshness-repair-lot:empirical" in ledger["selected_lot_ids"]
+    assert "profit-freshness-repair-lot:empirical" in ledger["dispatchable_lot_ids"]
+    assert ledger["max_notional"] == "0"
+
+
+def test_retired_market_context_profit_freshness_repair_is_not_ticketable() -> None:
+    ledger = _build(
+        profit_freshness_frontier={
+            "frontier_id": "profit-freshness-frontier:test",
+            "selected_zero_notional_repairs": [
+                {
                     "lot_id": "profit-freshness-repair-lot:market-context",
                     "candidate_id": "chip-paper-microbar-composite@execution-proof",
                     "blocked_dimension": "market_context",
@@ -290,23 +325,10 @@ def test_profit_freshness_selected_repair_becomes_ticketable_zero_notional_lot()
             ],
         },
     )
-    lots_by_id = {lot["lot_id"]: lot for lot in ledger["compacted_lots"]}
-    profit_lot = lots_by_id["profit-freshness-repair-lot:market-context"]
 
-    assert profit_lot["lot_class"] == "market_context_refresh"
-    assert profit_lot["target_value_gate"] == "zero_notional_or_stale_evidence_rate"
-    assert (
-        profit_lot["required_output_receipt"]
-        == "torghut.market-context-freshness-receipt.v1"
-    )
-    assert profit_lot["state"] == "selected"
-    assert profit_lot["dispatchable"] is True
-    assert profit_lot["max_notional"] == "0"
-    assert "profit-freshness-repair-lot:market-context" in ledger["selected_lot_ids"]
-    assert (
-        "profit-freshness-repair-lot:market-context" in ledger["dispatchable_lot_ids"]
-    )
-    assert ledger["max_notional"] == "0"
+    assert "profit-freshness-repair-lot:market-context" not in {
+        lot["lot_id"] for lot in ledger["compacted_lots"]
+    }
 
 
 def test_profit_freshness_nonzero_repair_is_not_compacted_for_dispatch() -> None:
@@ -316,8 +338,8 @@ def test_profit_freshness_nonzero_repair_is_not_compacted_for_dispatch() -> None
             "selected_zero_notional_repairs": [
                 {
                     "lot_id": "profit-freshness-repair-lot:nonzero",
-                    "blocked_dimension": "market_context",
-                    "zero_notional_action": "refresh_stale_market_context_domains",
+                    "blocked_dimension": "empirical_proof",
+                    "zero_notional_action": "renew_empirical_proof_jobs",
                     "paper_notional_limit": "10",
                     "live_notional_limit": "0",
                     "state": "selected_zero_notional_repair",

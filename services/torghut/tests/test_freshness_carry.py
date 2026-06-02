@@ -287,10 +287,26 @@ def test_malformed_freshness_inputs_are_repair_only_with_typed_reasons() -> None
     assert _dimension(ledger, "tca")["state"] == "missing"
     assert "tca_computed_at_missing" in _dimension(ledger, "tca")["stale_reason_codes"]
     assert _dimension(ledger, "empirical")["state"] == "stale"
-    assert _dimension(ledger, "market_context")["state"] == "stale"
+    market_dimension = _dimension(ledger, "market_context")
+    assert market_dimension["state"] == "stale"
+    assert market_dimension["required_repair_receipt"] is None
     assert (
         "market_context_health_error"
-        in _dimension(ledger, "market_context")["stale_reason_codes"]
+        in market_dimension["stale_reason_codes"]
+    )
+    assert not any(
+        slo["target_dimension_id"] == "market_context"
+        for slo in ledger["repair_proof_slos"]
+    )
+    assert {
+        "value_gate": "diagnostic",
+        "dimension_id": "market_context",
+        "state": "stale",
+        "capital_effect": "no_capital_change",
+    } in ledger["value_gate_impacts"]
+    assert (
+        "market_context"
+        not in ledger["capital_posture"]["non_current_dimension_ids"]
     )
     assert _dimension(ledger, "quant_evidence")["state"] == "stale"
     assert _dimension(ledger, "source_serving")["state"] == "unknown"
