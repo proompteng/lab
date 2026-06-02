@@ -37,9 +37,8 @@ _LIFECYCLE_EVENTS = (
     | _REJECTED_ORDER_EVENTS
     | _UNFILLED_ORDER_EVENTS
 )
-_TCA_PNL_BASES = frozenset(
+_NON_RUNTIME_PNL_TCA_BASIS_ALIASES = frozenset(
     {
-        "tca_shortfall_proxy",
         "tca_shortfall",
         "shortfall_proxy",
         "realized_pnl_proxy_from_tca_shortfall",
@@ -1311,13 +1310,24 @@ def _has_tca_pnl_shortcut(row: RuntimeLedgerFill | Mapping[str, object]) -> bool
             "cost_basis",
         )
     )
-    if basis is not None and basis.lower().replace("-", "_") in _TCA_PNL_BASES:
+    if basis is not None and _basis_claims_tca_pnl_shortcut(basis):
         return True
     return (
         _row_value(row, "post_cost_expectancy_bps") is not None
         and _row_value(row, "shortfall_notional", "realized_pnl_proxy_notional")
         is not None
     )
+
+
+def _basis_claims_tca_pnl_shortcut(basis: str) -> bool:
+    normalized = basis.lower().replace("-", "_")
+    if normalized in _NON_RUNTIME_PNL_TCA_BASIS_ALIASES:
+        return True
+    tokens = {token for token in normalized.split("_") if token}
+    return (
+        ("tca" in tokens or "shortfall" in tokens)
+        and ("proxy" in tokens or "estimate" in tokens)
+    ) or ("realized" in tokens and "pnl" in tokens and "proxy" in tokens)
 
 
 def _tigerbeetle_journal_blockers(

@@ -594,6 +594,39 @@ class TestRuntimeWindowImport(TestCase):
             {"realized_strategy_pnl": 1},
         )
 
+    def test_build_observed_runtime_buckets_marks_missing_post_cost_basis(
+        self,
+    ) -> None:
+        buckets = build_observed_runtime_buckets(
+            bucket_ranges=[
+                (
+                    datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc),
+                    datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc),
+                    6,
+                )
+            ],
+            decision_times=[datetime(2026, 3, 6, 14, 35, tzinfo=timezone.utc)],
+            execution_times=[datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc)],
+            tca_rows=[
+                {
+                    "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
+                    "abs_slippage_bps": Decimal("4"),
+                    "post_cost_expectancy_bps": Decimal("50"),
+                    "post_cost_promotion_eligible": True,
+                }
+            ],
+            continuity_ok=True,
+            drift_ok=True,
+            dependency_quorum_decision="allow",
+        )
+
+        self.assertEqual(buckets[0].post_cost_expectancy_bps, Decimal("0"))
+        self.assertEqual(buckets[0].post_cost_promotion_sample_count, 0)
+        self.assertEqual(
+            buckets[0].post_cost_basis_counts,
+            {"post_cost_basis_missing": 1},
+        )
+
     def test_build_observed_runtime_buckets_requires_runtime_ledger_bucket_for_pnl_basis(
         self,
     ) -> None:
@@ -2754,7 +2787,9 @@ class TestRuntimeWindowImport(TestCase):
             summary["promotion_blocking_reasons"],
         )
 
-    def test_persist_observed_runtime_windows_blocks_tca_proxy_expectancy(self) -> None:
+    def test_persist_observed_runtime_windows_blocks_tca_shortfall_expectancy(
+        self,
+    ) -> None:
         buckets = build_observed_runtime_buckets(
             bucket_ranges=[
                 (
@@ -2781,14 +2816,14 @@ class TestRuntimeWindowImport(TestCase):
                     "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
                     "abs_slippage_bps": Decimal("4"),
                     "post_cost_expectancy_bps": Decimal("80"),
-                    "post_cost_expectancy_basis": "tca_shortfall_proxy",
+                    "post_cost_expectancy_basis": "broker_tca_shortfall_estimate",
                     "post_cost_promotion_eligible": False,
                 },
                 {
                     "computed_at": datetime(2026, 3, 6, 15, 6, tzinfo=timezone.utc),
                     "abs_slippage_bps": Decimal("5"),
                     "post_cost_expectancy_bps": Decimal("80"),
-                    "post_cost_expectancy_basis": "tca_shortfall_proxy",
+                    "post_cost_expectancy_basis": "broker_tca_shortfall_estimate",
                     "post_cost_promotion_eligible": False,
                 },
             ],
@@ -2800,8 +2835,8 @@ class TestRuntimeWindowImport(TestCase):
         with self.session_local() as session:
             summary = persist_observed_runtime_windows(
                 session=session,
-                run_id="import-live-tca-proxy",
-                candidate_id="cand-tca-proxy",
+                run_id="import-live-tca-shortfall",
+                candidate_id="cand-tca-shortfall",
                 hypothesis_id="H-CONT-01",
                 observed_stage="live",
                 strategy_family="intraday_continuation",
@@ -2813,7 +2848,10 @@ class TestRuntimeWindowImport(TestCase):
 
         self.assertEqual(summary["promotion_allowed"], False)
         self.assertEqual(summary["post_cost_promotion_sample_count"], 0)
-        self.assertEqual(summary["post_cost_basis_counts"], {"tca_shortfall_proxy": 2})
+        self.assertEqual(
+            summary["post_cost_basis_counts"],
+            {"broker_tca_shortfall_estimate": 2},
+        )
         self.assertIn(
             "post_cost_pnl_basis_missing",
             summary["promotion_blocking_reasons"],
@@ -2912,7 +2950,7 @@ class TestRuntimeWindowImport(TestCase):
                     "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
                     "abs_slippage_bps": Decimal("4"),
                     "post_cost_expectancy_bps": Decimal("80"),
-                    "post_cost_expectancy_basis": "tca_shortfall_proxy",
+                    "post_cost_expectancy_basis": "broker_tca_shortfall_estimate",
                     "post_cost_promotion_eligible": True,
                 }
             ],
@@ -2923,7 +2961,10 @@ class TestRuntimeWindowImport(TestCase):
 
         self.assertEqual(buckets[0].post_cost_promotion_sample_count, 0)
         self.assertEqual(buckets[0].post_cost_expectancy_bps, Decimal("0"))
-        self.assertEqual(buckets[0].post_cost_basis_counts, {"tca_shortfall_proxy": 1})
+        self.assertEqual(
+            buckets[0].post_cost_basis_counts,
+            {"broker_tca_shortfall_estimate": 1},
+        )
 
     def test_persist_observed_runtime_windows_skips_idle_buckets(self) -> None:
         buckets = build_observed_runtime_buckets(

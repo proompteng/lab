@@ -57,7 +57,6 @@ POST_COST_BASIS_RUNTIME_LEDGER = POST_COST_PNL_BASIS
 POST_COST_BASIS_EXECUTION_RECONSTRUCTION = (
     "execution_reconstructed_pnl_after_explicit_costs"
 )
-POST_COST_BASIS_TCA_PROXY = "tca_shortfall_proxy"
 RUNTIME_LEDGER_ARTIFACT_SCHEMAS = frozenset(
     {
         EXACT_REPLAY_LEDGER_SCHEMA_VERSION,
@@ -1583,6 +1582,18 @@ def _execution_query_row(row: Sequence[object]) -> dict[str, object]:
 
 def _execution_query_row_has_time(row: Sequence[object]) -> bool:
     return (row[3] if len(row) >= 19 else row[1]) is not None
+
+
+def _execution_query_row_has_tca_ref(row: Mapping[str, object]) -> bool:
+    return (
+        _first_text(
+            row,
+            "execution_tca_metric_id",
+            "execution_tca_metric_ref",
+            "execution_tca_id",
+        )
+        is not None
+    )
 
 
 def _source_window_query_context(
@@ -3512,17 +3523,14 @@ def _source_activity_diagnostics_blockers(
     order_query_count = _nonnegative_int(
         diagnostics.get("order_lifecycle_rows_before_lineage_filter")
     )
-    tca_query_count = _nonnegative_int(
-        diagnostics.get("tca_rows_before_lineage_filter")
-    )
     decision_lineage_count = _nonnegative_int(
         diagnostics.get("decision_rows_after_lineage_filter")
     )
     execution_lineage_count = _nonnegative_int(
         diagnostics.get("execution_rows_after_lineage_filter")
     )
-    tca_lineage_count = _nonnegative_int(
-        diagnostics.get("tca_rows_after_lineage_filter")
+    execution_tca_lineage_count = _nonnegative_int(
+        diagnostics.get("execution_tca_rows_after_lineage_filter")
     )
     source_bucket_count = _nonnegative_int(
         diagnostics.get("runtime_ledger_source_bucket_count")
@@ -3540,18 +3548,14 @@ def _source_activity_diagnostics_blockers(
     else:
         strategy_unlinked_fill_lifecycle_count = unlinked_fill_lifecycle_count
 
-    if (
-        decision_query_count
-        or execution_query_count
-        or order_query_count
-        or tca_query_count
-    ) and not (decision_lineage_count or execution_lineage_count or tca_lineage_count):
+    if (decision_query_count or execution_query_count or order_query_count) and not (
+        decision_lineage_count or execution_lineage_count
+    ):
         add("source_lineage_filter_excluded_activity")
     elif not (
         decision_query_count
         or execution_query_count
         or order_query_count
-        or tca_query_count
         or source_bucket_count
     ):
         add("strategy_account_symbol_window_source_activity_missing")
@@ -3560,7 +3564,7 @@ def _source_activity_diagnostics_blockers(
         add("execution_rows_missing_for_matched_decisions")
     if execution_lineage_count > 0 and order_query_count <= 0:
         add(ORDER_FEED_FILL_LIFECYCLE_MISSING_BLOCKER)
-    if execution_lineage_count > 0 and tca_lineage_count <= 0:
+    if execution_lineage_count > 0 and execution_tca_lineage_count <= 0:
         add("execution_tca_rows_missing")
     if strategy_unlinked_fill_lifecycle_count > 0:
         add(ORDER_FEED_UNLINKED_FILL_LIFECYCLE_PRESENT_BLOCKER)
@@ -5177,6 +5181,11 @@ def _query_timestamps(
                 source_activity_diagnostics[
                     "fill_execution_rows_before_lineage_filter"
                 ] = sum(1 for row in execution_rows if _execution_row_has_fill(row))
+                source_activity_diagnostics[
+                    "execution_tca_rows_before_lineage_filter"
+                ] = sum(
+                    1 for row in execution_rows if _execution_query_row_has_tca_ref(row)
+                )
             execution_rows = [
                 row
                 for row in execution_rows
@@ -5194,6 +5203,11 @@ def _query_timestamps(
                 source_activity_diagnostics[
                     "fill_execution_rows_after_lineage_filter"
                 ] = sum(1 for row in execution_rows if _execution_row_has_fill(row))
+                source_activity_diagnostics[
+                    "execution_tca_rows_after_lineage_filter"
+                ] = sum(
+                    1 for row in execution_rows if _execution_query_row_has_tca_ref(row)
+                )
             execution_rows = _attach_source_lineage_context(
                 execution_rows,
                 candidate_id=candidate_id,
@@ -5494,6 +5508,13 @@ def _query_timestamps(
                         for row in carry_in_execution_rows
                         if _execution_row_has_fill(row)
                     )
+                    source_activity_diagnostics[
+                        "carry_in_execution_tca_rows_before_lineage_filter"
+                    ] = sum(
+                        1
+                        for row in carry_in_execution_rows
+                        if _execution_query_row_has_tca_ref(row)
+                    )
                 carry_in_execution_rows = [
                     row
                     for row in carry_in_execution_rows
@@ -5514,6 +5535,13 @@ def _query_timestamps(
                         1
                         for row in carry_in_execution_rows
                         if _execution_row_has_fill(row)
+                    )
+                    source_activity_diagnostics[
+                        "carry_in_execution_tca_rows_after_lineage_filter"
+                    ] = sum(
+                        1
+                        for row in carry_in_execution_rows
+                        if _execution_query_row_has_tca_ref(row)
                     )
                 carry_in_execution_rows = _attach_source_lineage_context(
                     carry_in_execution_rows,
@@ -5855,88 +5883,7 @@ def _query_timestamps(
                         "event_fingerprint",
                     )
                 unlinked_order_lifecycle_rows = strategy_unlinked_order_lifecycle_rows
-            cur.execute(
-                f"""
-                select
-                    coalesce(
-                        e.order_feed_last_event_ts,
-                        e.last_update_at,
-                        e.updated_at,
-                        e.created_at
-                    ) as execution_event_at,
-                    t.computed_at as tca_computed_at,
-                    abs(coalesce(t.realized_shortfall_bps, t.slippage_bps)) as abs_slippage_bps,
-                    (-coalesce(t.realized_shortfall_bps, t.slippage_bps)) as post_cost_expectancy_bps,
-                    d.decision_hash,
-                    d.decision_json
-                from execution_tca_metrics t
-                join executions e on e.id = t.execution_id
-                join trade_decisions d on d.id = e.trade_decision_id
-                join strategies s on s.id = d.strategy_id
-                where s.name = any(%s)
-                  and d.alpaca_account_label = %s
-                  and coalesce(t.alpaca_account_label, e.alpaca_account_label, d.alpaca_account_label) = %s
-                  and coalesce(
-                        e.order_feed_last_event_ts,
-                        e.last_update_at,
-                        e.updated_at,
-                        e.created_at
-                      ) >= %s
-                  and coalesce(
-                        e.order_feed_last_event_ts,
-                        e.last_update_at,
-                        e.updated_at,
-                        e.created_at
-                      ) < %s
-                  {execution_symbol_clause}
-                order by coalesce(
-                    e.order_feed_last_event_ts,
-                    e.last_update_at,
-                    e.updated_at,
-                    e.created_at
-                )
-                """,
-                (
-                    strategy_names,
-                    canonical_account_label,
-                    canonical_account_label,
-                    window_start,
-                    window_end,
-                    *execution_symbol_params,
-                ),
-            )
-            tca_rows = [
-                {
-                    "computed_at": row[0],
-                    "tca_computed_at": row[1],
-                    "abs_slippage_bps": row[2] or Decimal("0"),
-                    "post_cost_expectancy_bps": row[3] or Decimal("0"),
-                    "decision_hash": row[4],
-                    "decision_json": row[5],
-                    "post_cost_expectancy_basis": POST_COST_BASIS_TCA_PROXY,
-                    "post_cost_promotion_eligible": False,
-                }
-                for row in cur.fetchall()
-                if row[0] is not None
-            ]
             if source_activity_diagnostics is not None:
-                source_activity_diagnostics["tca_rows_before_lineage_filter"] = len(
-                    tca_rows
-                )
-            tca_rows = [
-                row
-                for row in tca_rows
-                if _source_row_matches_lineage(
-                    row,
-                    candidate_id=candidate_id,
-                    hypothesis_id=hypothesis_id,
-                    require_source_lineage=require_source_lineage,
-                )
-            ]
-            if source_activity_diagnostics is not None:
-                source_activity_diagnostics["tca_rows_after_lineage_filter"] = len(
-                    tca_rows
-                )
                 lifecycle_blockers = _order_feed_fill_lifecycle_blockers(
                     execution_rows=execution_rows,
                     order_lifecycle_rows=order_lifecycle_rows,
@@ -6035,8 +5982,8 @@ def _source_activity_missing_summary(
         "window_start": window_start.isoformat(),
         "window_end": window_end.isoformat(),
         "remediation": (
-            "Run live-paper replay or route/TCA repair until the source database contains "
-            "execution-eligible trade_decisions, executions, or TCA rows for this target "
+            "Run live-paper replay or route repair until the source database contains "
+            "execution-eligible trade_decisions, executions, and source-backed runtime-ledger rows for this target "
             "before importing promotion evidence."
         ),
     }
