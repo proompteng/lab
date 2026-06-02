@@ -83,6 +83,7 @@ _PROFITABILITY_PROOF_FLOOR_TCA_MAX_AGE_SECONDS = 86_400
 _SIMPLE_MARKET_CONTEXT_RETRY_INTERVAL = timedelta(seconds=30)
 _PAPER_ROUTE_PROBE_QTY_STEP = Decimal("0.0001")
 _REGULAR_SESSION_MINUTES = 390
+_PAPER_ROUTE_TARGET_PLAN_FETCH_ATTEMPTS = 3
 _PAPER_ROUTE_TARGET_PLAN_CACHE_SECONDS = 60
 _PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS = 600
 _PAPER_ROUTE_TARGET_PROFIT_PROOF_EXPOSURE_LOOKBACK = timedelta(days=7)
@@ -1226,6 +1227,36 @@ class SimpleTradingPipeline(TradingPipeline):
             len(batch.fallback_signals),
         )
 
+    def _record_bounded_target_plan_blocker(
+        self,
+        *,
+        reason: str,
+        symbols: set[str] | None = None,
+        targets: Sequence[Mapping[str, Any]] | None = None,
+    ) -> None:
+        normalized_reason = reason.strip() or "paper_route_target_plan_unavailable"
+        blocker = {
+            "blockers": [normalized_reason],
+            "reason": normalized_reason,
+            "account_label": self.account_label,
+            "source": "external_target_plan_url",
+            "target_plan_url_configured": bool(
+                str(settings.trading_paper_route_target_plan_url or "").strip()
+            ),
+            "target_symbols": sorted(symbols or set()),
+            "target_count": len(targets or []),
+            "fetch_attempts": _PAPER_ROUTE_TARGET_PLAN_FETCH_ATTEMPTS,
+        }
+        setattr(self.state, "last_bounded_evidence_collection_blocker", blocker)
+        logger.warning(
+            "Blocking bounded paper-route evidence decisions because target plan is unavailable account_label=%s reason=%s symbols=%s target_count=%s attempts=%s",
+            self.account_label,
+            normalized_reason,
+            ",".join(sorted(symbols or set())) or "*",
+            len(targets or []),
+            _PAPER_ROUTE_TARGET_PLAN_FETCH_ATTEMPTS,
+        )
+
     def _bounded_paper_route_signal_scope(
         self,
         strategies: Sequence[Strategy],
@@ -1240,7 +1271,20 @@ class SimpleTradingPipeline(TradingPipeline):
         target_symbols, target_plan_error, targets = (
             self._external_paper_route_target_probe_symbols_cached()
         )
-        if target_plan_error or not target_symbols:
+        if target_plan_error:
+            self._record_bounded_target_plan_blocker(
+                reason=target_plan_error,
+                symbols=target_symbols,
+                targets=targets,
+            )
+            return None
+        if not target_symbols:
+            if str(settings.trading_paper_route_target_plan_url or "").strip():
+                self._record_bounded_target_plan_blocker(
+                    reason="paper_route_target_plan_probe_symbols_missing",
+                    symbols=target_symbols,
+                    targets=targets,
+                )
             return None
 
         symbols: set[str] = set()
@@ -3214,7 +3258,7 @@ class SimpleTradingPipeline(TradingPipeline):
         plan = fetch_paper_route_target_plan_url(
             url,
             timeout_seconds=settings.trading_paper_route_target_plan_timeout_seconds,
-            attempts=2,
+            attempts=_PAPER_ROUTE_TARGET_PLAN_FETCH_ATTEMPTS,
             retry_backoff_seconds=0.25,
         )
         load_error = str(plan.get("load_error") or "").strip()
@@ -3591,7 +3635,20 @@ class SimpleTradingPipeline(TradingPipeline):
         target_symbols, target_plan_error, target_plan_targets = (
             self._external_paper_route_target_probe_symbols_cached()
         )
-        if target_plan_error or not target_symbols:
+        if target_plan_error:
+            self._record_bounded_target_plan_blocker(
+                reason=target_plan_error,
+                symbols=target_symbols,
+                targets=target_plan_targets,
+            )
+            return []
+        if not target_symbols:
+            if str(settings.trading_paper_route_target_plan_url or "").strip():
+                self._record_bounded_target_plan_blocker(
+                    reason="paper_route_target_plan_probe_symbols_missing",
+                    symbols=target_symbols,
+                    targets=target_plan_targets,
+                )
             return []
 
         normalized_allowed = {
