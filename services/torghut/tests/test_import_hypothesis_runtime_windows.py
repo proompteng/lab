@@ -948,12 +948,18 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             authority_class=None,
             authority_reason=None,
         )
+        missing_reason = _complete_runtime_ledger_bucket(authority_reason=None)
 
         self.assertIn(
             "runtime_ledger_authority_class_missing",
             _runtime_ledger_bucket_profit_proof_blockers(missing_marker),
         )
         self.assertFalse(_runtime_ledger_bucket_profit_proof_present(missing_marker))
+        self.assertIn(
+            "runtime_ledger_authority_class_missing",
+            _runtime_ledger_bucket_profit_proof_blockers(missing_reason),
+        )
+        self.assertFalse(_runtime_ledger_bucket_profit_proof_present(missing_reason))
 
     def test_runtime_ledger_profit_proof_requires_explicit_cost_basis_and_amount(
         self,

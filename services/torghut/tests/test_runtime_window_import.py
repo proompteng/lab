@@ -957,6 +957,7 @@ class TestRuntimeWindowImport(TestCase):
                 "source_offsets",
                 "source_materialization",
                 "authority_class",
+                "authority_reason",
             }
         }
         row = StrategyRuntimeLedgerBucket(
@@ -990,6 +991,8 @@ class TestRuntimeWindowImport(TestCase):
         self.assertFalse(_persisted_runtime_ledger_bucket_evidence_grade(row))
         row.payload_json = source_backed_payload
         self.assertTrue(_persisted_runtime_ledger_bucket_evidence_grade(row))
+        row.payload_json = {**source_backed_payload, "authority_reason": None}
+        self.assertFalse(_persisted_runtime_ledger_bucket_evidence_grade(row))
 
     def test_runtime_window_import_readback_normalizes_source_offsets(
         self,
@@ -1840,6 +1843,9 @@ class TestRuntimeWindowImport(TestCase):
         self.assertIn("postgres:trade_decisions", readback["source_refs"])
         self.assertIn(
             "runtime_order_feed_execution_source", readback["authority_classes"]
+        )
+        self.assertIn(
+            "event_sourced_runtime_ledger_profit_proof", readback["authority_reasons"]
         )
         self.assertEqual(summary["proof_status"], "ok")
         self.assertEqual(summary["proof_blockers"], [])

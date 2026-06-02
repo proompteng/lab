@@ -27,8 +27,7 @@ from app.trading.runtime_ledger import (
     build_runtime_ledger_buckets,
 )
 from app.trading.runtime_ledger_source_authority import (
-    runtime_ledger_promotion_source_authority_blockers,
-    runtime_ledger_promotion_source_authority_present,
+    runtime_ledger_promotion_source_authority_blockers as _base_runtime_ledger_promotion_source_authority_blockers,
 )
 from app.trading.runtime_cost_authority import (
     cost_basis_counts_have_non_promotion_grade_costs,
@@ -81,6 +80,18 @@ EXACT_REPLAY_ARTIFACT_AUTHORITY_BLOCKERS = (
 RUNTIME_LEDGER_SOURCE_WINDOW_MISSING_BLOCKER = "runtime_ledger_source_window_missing"
 RUNTIME_LEDGER_CARRY_IN_LOOKBACK = timedelta(days=5)
 RUNTIME_LEDGER_SOURCE_REFS_MISSING_BLOCKER = "runtime_ledger_source_refs_missing"
+RUNTIME_LEDGER_AUTHORITY_CLASS_MISSING_BLOCKER = (
+    "runtime_ledger_authority_class_missing"
+)
+_RUNTIME_LEDGER_PROMOTION_GRADE_AUTHORITY_MARKERS = frozenset(
+    {
+        "runtime_order_feed_execution_source",
+        "event_sourced_runtime_ledger_profit_proof",
+        "source_execution_runtime_ledger_materialized",
+        "execution_order_events_runtime_ledger",
+        "source_execution_lifecycle_materialized_runtime_ledger",
+    }
+)
 _RUNTIME_LEDGER_DECISION_EVENTS = frozenset(
     {"decision", "trade_decision", "signal_decision"}
 )
@@ -314,6 +325,39 @@ def _decimal_or_none(value: Any) -> Decimal | None:
 def _text_or_none(value: Any) -> str | None:
     text = str(value or "").strip()
     return text or None
+
+
+def _promotion_grade_runtime_ledger_authority_marker_present(
+    bucket: Mapping[str, object],
+    key: str,
+) -> bool:
+    marker = _text_or_none(bucket.get(key))
+    return (
+        marker is not None
+        and marker in _RUNTIME_LEDGER_PROMOTION_GRADE_AUTHORITY_MARKERS
+    )
+
+
+def runtime_ledger_promotion_source_authority_blockers(
+    bucket: Mapping[str, object],
+) -> list[str]:
+    blockers = _base_runtime_ledger_promotion_source_authority_blockers(bucket)
+    if not (
+        _promotion_grade_runtime_ledger_authority_marker_present(
+            bucket, "authority_class"
+        )
+        and _promotion_grade_runtime_ledger_authority_marker_present(
+            bucket, "authority_reason"
+        )
+    ):
+        blockers.append(RUNTIME_LEDGER_AUTHORITY_CLASS_MISSING_BLOCKER)
+    return list(dict.fromkeys(blockers))
+
+
+def runtime_ledger_promotion_source_authority_present(
+    bucket: Mapping[str, object],
+) -> bool:
+    return not runtime_ledger_promotion_source_authority_blockers(bucket)
 
 
 def _row_payloads(row: Mapping[str, object]) -> list[Mapping[str, object]]:

@@ -48,7 +48,7 @@ from .runtime_decision_authority import (
 from .runtime_ledger_proof_policy import runtime_ledger_proof_policy_from_env
 from .runtime_ledger_source_authority import (
     build_runtime_ledger_profit_distance_readback,
-    runtime_ledger_promotion_source_authority_blockers,
+    runtime_ledger_promotion_source_authority_blockers as _base_runtime_ledger_promotion_source_authority_blockers,
 )
 from .tigerbeetle_journal import (
     TIGERBEETLE_BLOCKER_JOURNAL_DISABLED,
@@ -105,6 +105,18 @@ RUNTIME_LEDGER_BUCKET_SCHEMAS = frozenset(
     {
         EXACT_REPLAY_LEDGER_SCHEMA_VERSION,
         "torghut.runtime-ledger-bucket.v1",
+    }
+)
+RUNTIME_LEDGER_AUTHORITY_CLASS_MISSING_BLOCKER = (
+    "runtime_ledger_authority_class_missing"
+)
+_RUNTIME_LEDGER_PROMOTION_GRADE_AUTHORITY_MARKERS = frozenset(
+    {
+        "runtime_order_feed_execution_source",
+        "event_sourced_runtime_ledger_profit_proof",
+        "source_execution_runtime_ledger_materialized",
+        "execution_order_events_runtime_ledger",
+        "source_execution_lifecycle_materialized_runtime_ledger",
     }
 )
 
@@ -189,6 +201,33 @@ def _text(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _promotion_grade_runtime_ledger_authority_marker_present(
+    bucket: Mapping[str, Any],
+    key: str,
+) -> bool:
+    marker = _text(bucket.get(key))
+    return (
+        marker is not None
+        and marker in _RUNTIME_LEDGER_PROMOTION_GRADE_AUTHORITY_MARKERS
+    )
+
+
+def runtime_ledger_promotion_source_authority_blockers(
+    bucket: Mapping[str, Any],
+) -> list[str]:
+    blockers = _base_runtime_ledger_promotion_source_authority_blockers(bucket)
+    if not (
+        _promotion_grade_runtime_ledger_authority_marker_present(
+            bucket, "authority_class"
+        )
+        and _promotion_grade_runtime_ledger_authority_marker_present(
+            bucket, "authority_reason"
+        )
+    ):
+        blockers.append(RUNTIME_LEDGER_AUTHORITY_CLASS_MISSING_BLOCKER)
+    return list(dict.fromkeys(blockers))
 
 
 def _post_cost_expectancy_basis(value: Any) -> str:
@@ -1537,6 +1576,7 @@ def _runtime_window_import_readback_from_rows(
     source_offsets: list[dict[str, Any]] = []
     source_offset_keys: set[tuple[str, str, str]] = set()
     authority_classes: list[str] = []
+    authority_reasons: list[str] = []
     source_materializations: list[str] = []
     cost_basis_counts: Counter[str] = Counter()
     blockers: list[str] = []
@@ -1622,6 +1662,11 @@ def _runtime_window_import_readback_from_rows(
             if authority_class not in authority_classes:
                 authority_classes.append(authority_class)
         if (
+            authority_reason := _text(payload_json.get("authority_reason"))
+        ) is not None:
+            if authority_reason not in authority_reasons:
+                authority_reasons.append(authority_reason)
+        if (
             source_materialization := _text(payload_json.get("source_materialization"))
         ) is not None:
             if source_materialization not in source_materializations:
@@ -1688,6 +1733,7 @@ def _runtime_window_import_readback_from_rows(
         "trade_decision_ids": trade_decision_ids,
         "source_offsets": source_offsets,
         "authority_classes": authority_classes,
+        "authority_reasons": authority_reasons,
         "source_materializations": source_materializations,
         "cost_basis_counts": dict(sorted(cost_basis_counts.items())),
         "runtime_ledger_blockers": blockers,

@@ -1221,6 +1221,15 @@ _RUNTIME_LEDGER_PROMOTION_GRADE_SOURCE_MATERIALIZATIONS = frozenset(
         "source_execution_lifecycle",
     }
 )
+_RUNTIME_LEDGER_PROMOTION_GRADE_AUTHORITY_MARKERS = frozenset(
+    {
+        "runtime_order_feed_execution_source",
+        "event_sourced_runtime_ledger_profit_proof",
+        "source_execution_runtime_ledger_materialized",
+        "execution_order_events_runtime_ledger",
+        "source_execution_lifecycle_materialized_runtime_ledger",
+    }
+)
 _RUNTIME_LEDGER_NON_AUTHORITY_MATERIALIZATION_MARKERS = frozenset(
     {
         "aggregate_only",
@@ -1240,6 +1249,27 @@ def _runtime_ledger_non_authority_marker_present(value: object) -> bool:
     return any(
         marker in normalized
         for marker in _RUNTIME_LEDGER_NON_AUTHORITY_MATERIALIZATION_MARKERS
+    )
+
+
+def _runtime_ledger_readback_authority_markers_present(
+    *,
+    authority_classes: Sequence[str],
+    authority_reasons: Sequence[str],
+) -> bool:
+    return (
+        any(
+            authority_class in _RUNTIME_LEDGER_PROMOTION_GRADE_AUTHORITY_MARKERS
+            for authority_class in authority_classes
+        )
+        and any(
+            authority_reason in _RUNTIME_LEDGER_PROMOTION_GRADE_AUTHORITY_MARKERS
+            for authority_reason in authority_reasons
+        )
+        and not any(
+            _runtime_ledger_non_authority_marker_present(marker)
+            for marker in [*authority_classes, *authority_reasons]
+        )
     )
 
 
@@ -1392,7 +1422,12 @@ def _runtime_import_readback_blockers(
             blockers.append("runtime_ledger_source_offsets_missing")
         if not _text_list(readback.get("source_materializations")):
             blockers.append("runtime_ledger_source_materialization_missing")
-        if not _text_list(readback.get("authority_classes")):
+        authority_classes = _text_list(readback.get("authority_classes"))
+        authority_reasons = _text_list(readback.get("authority_reasons"))
+        if not _runtime_ledger_readback_authority_markers_present(
+            authority_classes=authority_classes,
+            authority_reasons=authority_reasons,
+        ):
             blockers.append("runtime_ledger_authority_class_missing")
         cost_amount = _decimal(readback.get("runtime_ledger_cost_amount"))
         if cost_amount is None or (
