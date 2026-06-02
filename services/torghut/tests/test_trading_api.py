@@ -215,6 +215,14 @@ class _ExecuteResult:
         return _MappingRows(self._rows)
 
 
+class _ScalarExecuteResult:
+    def __init__(self, rows: list[object]) -> None:
+        self._rows = rows
+
+    def scalars(self) -> Iterator[object]:
+        return iter(self._rows)
+
+
 class _OptionsFreshnessSession:
     def __init__(self) -> None:
         self.calls: list[tuple[str, object | None]] = []
@@ -460,6 +468,22 @@ class _PostgresReadinessSession:
 
     def rollback(self) -> None:
         self.rollback_count += 1
+
+
+class _PostgresRuntimeLedgerPortfolioSummarySession:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def get_bind(self) -> object:
+        return SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+
+    def execute(self, statement: object, params: object | None = None) -> object:
+        _ = params
+        statement_text = str(statement)
+        self.calls.append(statement_text)
+        if statement_text.startswith("SET LOCAL"):
+            return _ExecuteResult([])
+        return _ScalarExecuteResult([])
 
 
 class TestTradingApi(TestCase):
@@ -802,6 +826,22 @@ class TestTradingApi(TestCase):
         )
         self.assertEqual(payload["query_limit"], 200)
         self.assertEqual(rollback.call_count, 1)
+
+    def test_daily_runtime_ledger_portfolio_summary_uses_status_timeout(
+        self,
+    ) -> None:
+        fake_session = _PostgresRuntimeLedgerPortfolioSummarySession()
+
+        payload = _daily_runtime_ledger_portfolio_summary(
+            session=fake_session,  # type: ignore[arg-type]
+            account_label="TORGHUT_SIM",
+            stage_scope="paper",
+            observed_at=datetime(2026, 6, 1, 12, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(payload["bucket_count"], 0)
+        self.assertEqual(fake_session.calls[0], "SET LOCAL statement_timeout = 500")
+        self.assertNotIn("statement_timeout = 5000", "\n".join(fake_session.calls))
 
     def test_options_catalog_freshness_summary_caches_unavailable_route_scope(
         self,
