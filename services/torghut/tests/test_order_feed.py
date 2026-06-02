@@ -3203,6 +3203,11 @@ class TestOrderFeed(TestCase):
         self.assertEqual(source_window.status_reason, "malformed_json")
         self.assertEqual(source_window.malformed_count, 1)
         self.assertEqual(source_window.dropped_count, 1)
+        self.assertEqual(source_window.classification_counts, {"malformed_json": 1})
+        self.assertEqual(
+            source_window.payload_json["classification_counts"],
+            source_window.classification_counts,
+        )
         self.assertFalse(source_window.payload_json["source_coverage_complete"])
         self.assertFalse(source_window.payload_json["promotion_authority_eligible"])
         self.assertEqual(
@@ -3237,6 +3242,14 @@ class TestOrderFeed(TestCase):
         self.assertEqual(source_window.status_reason, "missing_trade_update_payload")
         self.assertEqual(source_window.missing_payload_count, 1)
         self.assertEqual(source_window.dropped_count, 1)
+        self.assertEqual(
+            source_window.classification_counts,
+            {"missing_trade_update_payload": 1},
+        )
+        self.assertEqual(
+            source_window.payload_json["classification_counts"],
+            source_window.classification_counts,
+        )
 
     def test_out_of_scope_account_is_durably_classified(self) -> None:
         record = FakeRecord(
@@ -3270,6 +3283,14 @@ class TestOrderFeed(TestCase):
         self.assertEqual(source_window.status, "dropped")
         self.assertEqual(source_window.status_reason, "out_of_scope_account")
         self.assertEqual(source_window.out_of_scope_account_count, 1)
+        self.assertEqual(
+            source_window.classification_counts,
+            {"out_of_scope_account": 1},
+        )
+        self.assertEqual(
+            source_window.payload_json["classification_counts"],
+            source_window.classification_counts,
+        )
 
     def test_out_of_scope_account_without_source_position_is_not_committed(
         self,
@@ -3698,6 +3719,18 @@ class TestOrderFeed(TestCase):
         self.assertEqual(source_window.inserted_count, 1)
         self.assertEqual(source_window.unlinked_execution_count, 1)
         self.assertEqual(source_window.unlinked_decision_count, 1)
+        self.assertEqual(
+            source_window.classification_counts,
+            {
+                "inserted": 1,
+                "unlinked_execution": 1,
+                "unlinked_decision": 1,
+            },
+        )
+        self.assertEqual(
+            source_window.payload_json["classification_counts"],
+            source_window.classification_counts,
+        )
         self.assertEqual(
             source_window.payload_json["linked_refs"],
             {
