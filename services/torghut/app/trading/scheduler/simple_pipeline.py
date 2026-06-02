@@ -4587,7 +4587,16 @@ class SimpleTradingPipeline(TradingPipeline):
         target_symbols, target_plan_error, target_plan_targets = (
             self._external_paper_route_target_probe_symbols_cached()
         )
-        if target_plan_error or not target_symbols:
+        if target_plan_error:
+            if str(settings.trading_paper_route_target_plan_url or "").strip():
+                self._record_bounded_target_plan_blocker(
+                    reason=target_plan_error,
+                    symbols=target_symbols,
+                    targets=target_plan_targets,
+                )
+                return True
+            return False
+        if not target_symbols:
             return False
         normalized_allowed = {
             symbol.strip().upper() for symbol in allowed_symbols if symbol.strip()
