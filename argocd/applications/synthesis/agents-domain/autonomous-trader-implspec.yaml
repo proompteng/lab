@@ -60,6 +60,7 @@ spec:
        - `python3 /workspace/lab/scripts/autotrader/protective_preflight.py --self-test`
        - `python3 /workspace/lab/scripts/autotrader/synthesis_autotrader_client.py --self-test`
        - `python3 /workspace/lab/scripts/autotrader/live_scan_cycle.py --self-test`
+       - `python3 /workspace/lab/scripts/autotrader/strategy_order_guard.py --self-test`
     7. Verify Synthesis exposes `autotrader_start_session`, `autotrader_upsert_status`, `autotrader_append_event`, `autotrader_create_trade_ticket`, `autotrader_record_risk_check`, `autotrader_record_order`, `autotrader_record_fill`, `autotrader_record_position_snapshot`, `autotrader_finalize_session`, and `autotrader_get_scorecard`.
     8. Call `autotrader_start_session` before scanning and use the returned `sessionId` for every Synthesis write.
 
@@ -74,12 +75,13 @@ spec:
     2. Reconcile open orders and absorb external account or position changes as current state.
     3. Call `autotrader_get_scorecard` before ranking candidates and include scorecard influence in Synthesis ticket/risk/status payloads.
     4. Run `python3 /workspace/lab/scripts/autotrader/live_scan_cycle.py` for scanner input assembly, Alpaca readback, scorecard readback, and daytrading scan output. Use its printed summary and `cycleDir` for the next action: protected entry, managed exit/reduce/hedge/flatten, or no-trade. Do not hand-build scanner JSON unless this helper fails and the failure is recorded.
-    5. Record every selected or blocked candidate with `autotrader_create_trade_ticket`, `autotrader_record_risk_check`, and `autotrader_append_event`.
+    5. Record every selected or blocked candidate with `autotrader_create_trade_ticket`, `autotrader_record_risk_check`, and `autotrader_append_event`; use the returned trade-ticket UUID for linked risk/order writes, not the ticket idempotency key.
     6. Submit only when the ticket records setup type, setup grade, expected R, fat-pitch flag, thesis, entry, invalidation, exit logic, sizing, max loss, liquidity, and reconciliation plan.
-    7. Before every Alpaca mutation, write the planned order with `autotrader_record_order`, use an AgentRun-prefixed deterministic `client_order_id` when supported, and then reconcile by broker order id plus client order id before any next action.
-    8. After broker-changing action, external account change, order reconciliation, or fill reconciliation, refresh broker account/positions and call `autotrader_upsert_status` before scanning or submitting another order.
-    9. Emit heartbeat output at least every 60 seconds while waiting.
-    10. If the selected action is wait, stand down, monitor, manage existing brackets, or continue monitoring, write Synthesis status/event plus a `report.md` checkpoint with `terminal_reason: running`, sleep no more than 60 seconds, and immediately begin the next cycle. A `running` report is a checkpoint, not completion.
+    7. Before any non-smoke strategy entry, run `python3 /workspace/lab/scripts/autotrader/strategy_order_guard.py --symbol SYMBOL --side SIDE --entry-limit ENTRY --take-profit-limit TARGET --stop-loss-stop STOP`. If `allowed=false`, record the guard reason through Synthesis ticket/risk/event/status and do not submit the broker order.
+    8. Before every Alpaca mutation, write the planned order with `autotrader_record_order`, use an AgentRun-prefixed deterministic `client_order_id` when supported, and then reconcile by broker order id plus client order id before any next action.
+    9. After broker-changing action, external account change, order reconciliation, or fill reconciliation, refresh broker account/positions and call `autotrader_upsert_status` before scanning or submitting another order.
+    10. Emit heartbeat output at least every 60 seconds while waiting.
+    11. If the selected action is wait, stand down, monitor, manage existing brackets, or continue monitoring, write Synthesis status/event plus a `report.md` checkpoint with `terminal_reason: running`, sleep no more than 60 seconds, and immediately begin the next cycle. A `running` report is a checkpoint, not completion.
 
     Protective order rules:
     - The smoke is execution-path proof, not a strategy trade: use a tiny non-marketable bracket or OTO order, record before submit, reconcile, cancel if accepted/open, and update Synthesis for accepted, canceled, rejected, or blocked states.
