@@ -1523,8 +1523,7 @@ def _target_identity(
     *,
     probe: Mapping[str, object],
 ) -> dict[str, object]:
-    source_promotion_allowed = bool(target.get("promotion_allowed"))
-    source_final_promotion_allowed = bool(
+    stripped_source_promotion_authority = bool(target.get("promotion_allowed")) or bool(
         target.get("final_promotion_allowed")
         or target.get("final_promotion_authorized")
     )
@@ -1601,8 +1600,7 @@ def _target_identity(
         ),
         "capital_promotion_allowed": False,
         "final_authority_ok": False,
-        "source_promotion_allowed": source_promotion_allowed,
-        "source_final_promotion_allowed": source_final_promotion_allowed,
+        "stripped_source_promotion_authority": stripped_source_promotion_authority,
         "promotion_allowed": False,
         "final_promotion_allowed": False,
         "max_notional": _safe_text(target.get("max_notional")) or "0",
@@ -5428,9 +5426,7 @@ def _readiness_blockers(
     }
     if not bool(target.get("promotion_allowed")):
         blockers.add("paper_probation_evidence_collection_only")
-    if bool(target.get("source_promotion_allowed")) or bool(
-        target.get("source_final_promotion_allowed")
-    ):
+    if bool(target.get("stripped_source_promotion_authority")):
         blockers.add("paper_route_evidence_audit_stripped_promotion_authority")
     if not bool(probe.get("configured_enabled")):
         blockers.add("paper_route_probe_disabled")
@@ -6403,11 +6399,8 @@ def _target_audit(
                 "allowed": False,
                 "final_authority_ok": False,
                 "reason": "paper_route_evidence_audit_observability_only",
-                "source_promotion_allowed": bool(
-                    target.get("source_promotion_allowed")
-                ),
-                "source_final_promotion_allowed": bool(
-                    target.get("source_final_promotion_allowed")
+                "stripped_source_promotion_authority": bool(
+                    target.get("stripped_source_promotion_authority")
                 ),
                 "blockers": blockers,
             },
@@ -6645,11 +6638,8 @@ def _database_unavailable_target_audit(
                 "allowed": False,
                 "final_authority_ok": False,
                 "reason": "paper_route_evidence_audit_observability_only",
-                "source_promotion_allowed": bool(
-                    target.get("source_promotion_allowed")
-                ),
-                "source_final_promotion_allowed": bool(
-                    target.get("source_final_promotion_allowed")
+                "stripped_source_promotion_authority": bool(
+                    target.get("stripped_source_promotion_authority")
                 ),
                 "blockers": blockers,
             },
@@ -7929,9 +7919,9 @@ def build_paper_route_target_plan_payload(
                 "schema_version": _safe_text(plan.get("schema_version")),
                 "target_count": _safe_int(plan.get("target_count") or len(targets)),
                 "skipped_target_count": _safe_int(plan.get("skipped_target_count")),
-                "source_promotion_allowed": bool(plan.get("promotion_allowed")),
-                "source_final_promotion_allowed": bool(
-                    plan.get("final_promotion_allowed")
+                "stripped_source_promotion_authority": bool(
+                    plan.get("promotion_allowed")
+                    or plan.get("final_promotion_allowed")
                     or plan.get("final_promotion_authorized")
                 ),
                 "promotion_allowed": False,
@@ -8230,9 +8220,9 @@ def build_paper_route_evidence_audit(
                 "schema_version": _safe_text(plan.get("schema_version")),
                 "target_count": _safe_int(plan.get("target_count") or len(targets)),
                 "skipped_target_count": _safe_int(plan.get("skipped_target_count")),
-                "source_promotion_allowed": bool(plan.get("promotion_allowed")),
-                "source_final_promotion_allowed": bool(
-                    plan.get("final_promotion_allowed")
+                "stripped_source_promotion_authority": bool(
+                    plan.get("promotion_allowed")
+                    or plan.get("final_promotion_allowed")
                     or plan.get("final_promotion_authorized")
                 ),
                 "promotion_allowed": False,
@@ -8371,21 +8361,11 @@ def build_paper_route_evidence_audit(
                 )
                 for audit in target_audits
             ),
-            "source_promotion_allowed_count": sum(
+            "stripped_source_promotion_authority_count": sum(
                 int(
                     bool(
                         _as_mapping(_as_mapping(audit.get("target"))).get(
-                            "source_promotion_allowed"
-                        )
-                    )
-                )
-                for audit in target_audits
-            ),
-            "source_final_promotion_allowed_count": sum(
-                int(
-                    bool(
-                        _as_mapping(_as_mapping(audit.get("target"))).get(
-                            "source_final_promotion_allowed"
+                            "stripped_source_promotion_authority"
                         )
                     )
                 )
