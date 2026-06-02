@@ -280,11 +280,66 @@ def _hash_count(value: Any) -> int:
     return sum(1 for key in mapping.keys() if str(key).strip())
 
 
+def _positive_count_mapping_present(value: Any) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    for item in cast(Mapping[object, object], value).values():
+        try:
+            parsed = Decimal(str(item))
+        except Exception:
+            continue
+        if parsed.is_finite() and parsed > 0:
+            return True
+    return False
+
+
+def _runtime_ledger_explicit_costs_present(bucket: Mapping[str, Any]) -> bool:
+    """Require explicit cost amount and cost basis for promotion-grade proof."""
+
+    cost_amount = _optional_decimal(
+        bucket.get("cost_amount")
+        if bucket.get("cost_amount") is not None
+        else bucket.get("runtime_ledger_cost_amount")
+    )
+    if cost_amount is None or cost_amount < 0:
+        return False
+    if is_non_promotion_grade_runtime_cost_basis(bucket.get("cost_basis")):
+        return False
+    if cost_basis_counts_have_non_promotion_grade_costs(
+        bucket.get("cost_basis_counts")
+    ) or cost_basis_counts_have_non_promotion_grade_costs(
+        bucket.get("post_cost_basis_counts")
+    ):
+        return False
+    if _positive_count_mapping_present(bucket.get("cost_basis_counts")):
+        return True
+    if _positive_count_mapping_present(bucket.get("post_cost_basis_counts")):
+        return True
+    return (
+        _text(
+            bucket.get("cost_basis")
+            or bucket.get("cost_source")
+            or bucket.get("fee_basis")
+            or bucket.get("commission_basis")
+            or bucket.get("broker_fee_basis")
+        )
+        is not None
+    )
+
+
 def _persisted_runtime_ledger_bucket_evidence_grade(
     row: StrategyRuntimeLedgerBucket,
 ) -> bool:
     blockers = _string_list(row.blockers_json)
     payload_json = _mapping(row.payload_json)
+    cost_payload = {
+        **payload_json,
+        "cost_amount": (
+            payload_json.get("cost_amount")
+            if payload_json.get("cost_amount") is not None
+            else row.cost_amount
+        ),
+    }
     return (
         row.pnl_basis == POST_COST_PNL_BASIS
         and int(row.fill_count or 0) > 0
@@ -296,6 +351,7 @@ def _persisted_runtime_ledger_bucket_evidence_grade(
         and _hash_count(row.execution_policy_hash_counts) > 0
         and _hash_count(row.cost_model_hash_counts) > 0
         and _hash_count(row.lineage_hash_counts) > 0
+        and _runtime_ledger_explicit_costs_present(cost_payload)
         and not cost_basis_counts_have_non_promotion_grade_costs(
             payload_json.get("cost_basis_counts")
         )
@@ -338,6 +394,8 @@ def _runtime_ledger_bucket_blockers(bucket: Mapping[str, Any]) -> list[str]:
         blockers.append("unclosed_position")
     if filled_notional is None or filled_notional <= 0:
         blockers.append("filled_notional_missing")
+    if not _runtime_ledger_explicit_costs_present(bucket):
+        blockers.append("runtime_ledger_explicit_costs_missing")
     if cost_amount is None or cost_amount < 0:
         blockers.append("explicit_cost_missing")
     non_promotion_grade_cost_basis = is_non_promotion_grade_runtime_cost_basis(
@@ -1472,8 +1530,15 @@ def _runtime_window_import_readback_from_rows(
         if _persisted_runtime_ledger_bucket_evidence_grade(row)
     ]
     source_refs: list[str] = []
+    source_window_ids: list[str] = []
+    execution_order_event_ids: list[str] = []
+    execution_ids: list[str] = []
+    trade_decision_ids: list[str] = []
+    source_offsets: list[dict[str, Any]] = []
+    source_offset_keys: set[tuple[str, str, str]] = set()
     authority_classes: list[str] = []
     source_materializations: list[str] = []
+    cost_basis_counts: Counter[str] = Counter()
     blockers: list[str] = []
     source_authority_blockers: list[str] = []
     source_authority_bucket_count = 0
@@ -1491,6 +1556,68 @@ def _runtime_window_import_readback_from_rows(
         for ref in _string_list(payload_json.get("source_refs")):
             if ref not in source_refs:
                 source_refs.append(ref)
+        for key, target in (
+            ("source_window_ids", source_window_ids),
+            ("source_window_refs", source_window_ids),
+            ("runtime_ledger_source_window_ids", source_window_ids),
+            ("runtime_ledger_source_window_refs", source_window_ids),
+            ("source_window_id", source_window_ids),
+            ("source_window_ref", source_window_ids),
+            ("runtime_ledger_source_window_id", source_window_ids),
+            ("runtime_ledger_source_window_ref", source_window_ids),
+            ("execution_order_event_ids", execution_order_event_ids),
+            ("execution_order_event_refs", execution_order_event_ids),
+            ("runtime_ledger_execution_order_event_ids", execution_order_event_ids),
+            ("execution_order_event_id", execution_order_event_ids),
+            ("execution_order_event_ref", execution_order_event_ids),
+            ("execution_ids", execution_ids),
+            ("execution_refs", execution_ids),
+            ("execution_id", execution_ids),
+            ("execution_ref", execution_ids),
+            ("trade_decision_ids", trade_decision_ids),
+            ("trade_decision_refs", trade_decision_ids),
+            ("trade_decision_id", trade_decision_ids),
+            ("trade_decision_ref", trade_decision_ids),
+            ("decision_ids", trade_decision_ids),
+            ("decision_id", trade_decision_ids),
+        ):
+            for value in _string_list(payload_json.get(key)) or [
+                item for item in [_text(payload_json.get(key))] if item is not None
+            ]:
+                if value not in target:
+                    target.append(value)
+        raw_source_offsets: object = payload_json.get("source_offsets")
+        source_offset_items: Sequence[object]
+        if isinstance(raw_source_offsets, Mapping):
+            source_offset_items = [cast(object, raw_source_offsets)]
+        elif isinstance(raw_source_offsets, Sequence) and not isinstance(
+            raw_source_offsets,
+            (str, bytes, bytearray),
+        ):
+            source_offset_items = cast(Sequence[object], raw_source_offsets)
+        else:
+            source_offset_items = ()
+        for raw_offset in source_offset_items:
+            if not isinstance(raw_offset, Mapping):
+                continue
+            typed_offset = cast(Mapping[str, Any], raw_offset)
+            topic = _text(typed_offset.get("topic"))
+            partition: Any = typed_offset.get("partition")
+            source_offset: Any = typed_offset.get("offset")
+            if topic is None or partition is None or source_offset is None:
+                continue
+            offset_key = (topic, str(partition), str(source_offset))
+            if offset_key not in source_offset_keys:
+                source_offsets.append(
+                    {
+                        "topic": topic,
+                        "partition": partition,
+                        "offset": source_offset,
+                    }
+                )
+                source_offset_keys.add(offset_key)
+        for key, value in _mapping(payload_json.get("cost_basis_counts")).items():
+            cost_basis_counts[key] += _observation_int(value)
         if (authority_class := _text(payload_json.get("authority_class"))) is not None:
             if authority_class not in authority_classes:
                 authority_classes.append(authority_class)
@@ -1553,8 +1680,16 @@ def _runtime_window_import_readback_from_rows(
             for row in evidence_grade_ledger_rows
         ],
         "source_refs": source_refs,
+        "source_window_ids": source_window_ids,
+        "runtime_ledger_source_window_ids": source_window_ids,
+        "execution_order_event_ids": execution_order_event_ids,
+        "runtime_ledger_execution_order_event_ids": execution_order_event_ids,
+        "execution_ids": execution_ids,
+        "trade_decision_ids": trade_decision_ids,
+        "source_offsets": source_offsets,
         "authority_classes": authority_classes,
         "source_materializations": source_materializations,
+        "cost_basis_counts": dict(sorted(cost_basis_counts.items())),
         "runtime_ledger_blockers": blockers,
         "runtime_ledger_profit_distance_readback": build_runtime_ledger_profit_distance_readback(
             summary={

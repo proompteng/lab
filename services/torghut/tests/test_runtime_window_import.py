@@ -79,6 +79,7 @@ def _runtime_ledger_bucket(**overrides: object) -> dict[str, object]:
         "pnl_basis": "realized_strategy_pnl_after_explicit_costs",
         "execution_policy_hash_counts": {"policy-sha": 2},
         "cost_model_hash_counts": {"cost-sha": 2},
+        "cost_basis_counts": {"broker_reported_commission_and_fees": 2},
         "lineage_hash_counts": {"lineage-sha": 2},
         "source_decision_mode_counts": {"strategy_signal_paper": 2},
         "profit_proof_eligible": True,
@@ -845,7 +846,11 @@ class TestRuntimeWindowImport(TestCase):
                 )
 
                 self.assertEqual(
-                    blockers, ["runtime_ledger_cost_basis_non_promotion_grade"]
+                    blockers,
+                    [
+                        "runtime_ledger_explicit_costs_missing",
+                        "runtime_ledger_cost_basis_non_promotion_grade",
+                    ],
                 )
 
         self.assertFalse(
@@ -2313,6 +2318,22 @@ class TestRuntimeWindowImport(TestCase):
             "runtime_ledger_authority_class_missing",
             _runtime_ledger_bucket_blockers(bucket),
         )
+
+    def test_runtime_ledger_bucket_requires_explicit_cost_basis_and_amount(
+        self,
+    ) -> None:
+        for bucket in (
+            _runtime_ledger_bucket(cost_amount=None),
+            _runtime_ledger_bucket(cost_basis_counts={}, cost_basis=None),
+            _runtime_ledger_bucket(
+                cost_basis_counts={"modeled_paper_cost_budget": 2},
+                cost_basis=None,
+            ),
+        ):
+            self.assertIn(
+                "runtime_ledger_explicit_costs_missing",
+                _runtime_ledger_bucket_blockers(bucket),
+            )
 
     def test_persist_observed_runtime_windows_allows_authority_grade_live_ledger(
         self,

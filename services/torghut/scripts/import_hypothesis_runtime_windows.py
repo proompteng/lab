@@ -952,6 +952,51 @@ def _mapping_hash_count(value: object) -> int:
     return sum(1 for key in value.keys() if str(key).strip())
 
 
+def _positive_count_mapping_present(value: object) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    for item in cast(Mapping[object, object], value).values():
+        try:
+            parsed = Decimal(str(item))
+        except Exception:
+            continue
+        if parsed.is_finite() and parsed > 0:
+            return True
+    return False
+
+
+def _runtime_ledger_explicit_costs_present(bucket: Mapping[str, object]) -> bool:
+    cost_amount = _decimal_or_none(
+        bucket.get("cost_amount")
+        if bucket.get("cost_amount") is not None
+        else bucket.get("runtime_ledger_cost_amount")
+    )
+    if cost_amount is None or cost_amount < 0:
+        return False
+    if is_non_promotion_grade_runtime_cost_basis(bucket.get("cost_basis")):
+        return False
+    if cost_basis_counts_have_non_promotion_grade_costs(
+        bucket.get("cost_basis_counts")
+    ) or cost_basis_counts_have_non_promotion_grade_costs(
+        bucket.get("post_cost_basis_counts")
+    ):
+        return False
+    if _positive_count_mapping_present(bucket.get("cost_basis_counts")):
+        return True
+    if _positive_count_mapping_present(bucket.get("post_cost_basis_counts")):
+        return True
+    return (
+        _text_or_none(
+            bucket.get("cost_basis")
+            or bucket.get("cost_source")
+            or bucket.get("fee_basis")
+            or bucket.get("commission_basis")
+            or bucket.get("broker_fee_basis")
+        )
+        is not None
+    )
+
+
 def _runtime_ledger_bucket_profit_proof_blockers(
     bucket: Mapping[str, object],
 ) -> list[str]:
@@ -989,6 +1034,8 @@ def _runtime_ledger_bucket_profit_proof_blockers(
         add("unclosed_position")
     if filled_notional is None or filled_notional <= 0:
         add("filled_notional_missing")
+    if not _runtime_ledger_explicit_costs_present(bucket):
+        add("runtime_ledger_explicit_costs_missing")
     if cost_amount is None or cost_amount < 0:
         add(
             "runtime_ledger_cost_amount_missing"
