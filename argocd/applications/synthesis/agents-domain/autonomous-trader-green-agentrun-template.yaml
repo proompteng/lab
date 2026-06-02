@@ -37,7 +37,7 @@ spec:
     head: codex/synthesis-autonomous-trader-session-green
     mode: market-open
     synthesisSessionMode: market_open
-    brokerMutationEnabled: "true"
+    brokerMutationEnabled: "false"
     accountType: paper
     targetEquityUsd: "500000"
     marketOpenTimezone: America/New_York

@@ -706,7 +706,7 @@ describe('autonomous trader provider', () => {
       expect(objectAt(templateAnnotations, deploymentRoleKey)).toBe(role)
       expect(objectAt(parameters, 'mode')).toBe('market-open')
       expect(objectAt(parameters, 'synthesisSessionMode')).toBe('market_open')
-      expect(objectAt(parameters, 'brokerMutationEnabled')).toBe('true')
+      expect(objectAt(parameters, 'brokerMutationEnabled')).toBe(role === 'active' ? 'true' : 'false')
       expect(objectAt(parameters, 'accountType')).toBe('paper')
       expect(objectAt(parameters, 'targetEquityUsd')).toBe('500000')
     }
