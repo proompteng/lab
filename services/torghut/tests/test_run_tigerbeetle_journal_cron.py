@@ -46,7 +46,7 @@ class RunTigerBeetleJournalCronTest(TestCase):
             "SIM_DB_DSN",
         )
 
-    def test_default_live_execution_batch_size_drains_source_ref_backlog(self) -> None:
+    def test_default_live_execution_slices_drain_source_ref_backlog(self) -> None:
         with patch(
             "scripts.run_tigerbeetle_journal_cron.sys.argv",
             [
@@ -63,9 +63,13 @@ class RunTigerBeetleJournalCronTest(TestCase):
             if item.source == SOURCE_TYPE_EXECUTION
         ]
 
-        self.assertEqual(runner.LIVE_EXECUTION_BATCH_SIZE, 25)
+        self.assertEqual(runner.LIVE_EXECUTION_BATCH_SIZE, 5)
+        self.assertEqual(runner.LIVE_EXECUTION_SLICE_COUNT, 5)
         self.assertEqual(command.batch_size, runner.LIVE_EXECUTION_BATCH_SIZE)
         self.assertEqual(command.max_batches, 1)
+        self.assertEqual(command.repeat_count, runner.LIVE_EXECUTION_SLICE_COUNT)
+        self.assertTrue(command.commit_each_row)
+        self.assertEqual(command.progress_interval, 1)
         self.assertTrue(command.skip_reconcile)
         self.assertTrue(command.allow_data_quality_degraded)
 
@@ -75,6 +79,9 @@ class RunTigerBeetleJournalCronTest(TestCase):
         self.assertEqual(commands[0].source, SOURCE_TYPE_EXECUTION)
         self.assertEqual(commands[0].batch_size, 10)
         self.assertEqual(commands[0].max_batches, 1)
+        self.assertEqual(commands[0].repeat_count, runner.LIVE_EXECUTION_SLICE_COUNT)
+        self.assertTrue(commands[0].commit_each_row)
+        self.assertEqual(commands[0].progress_interval, 1)
         self.assertTrue(commands[0].skip_reconcile)
         self.assertTrue(commands[0].allow_data_quality_degraded)
         self.assertEqual(commands[1].source, SOURCE_TYPE_EXECUTION_TCA_METRIC)
@@ -356,11 +363,53 @@ class RunTigerBeetleJournalCronTest(TestCase):
             exit_code = runner.main()
 
         self.assertEqual(exit_code, 1)
-        self.assertEqual(len(observed), 4)
+        self.assertEqual(len(observed), 8)
         first_argv = observed[0][0]
         self.assertEqual(first_argv[first_argv.index("--batch-size") + 1], "5000")
+        self.assertIn("--commit-each-row", first_argv)
+        self.assertEqual(first_argv[first_argv.index("--progress-interval") + 1], "1")
         self.assertEqual(
             first_argv[first_argv.index("--supervise-timeout-seconds") + 1],
             "0.001",
         )
+        self.assertEqual(
+            [source for _, source, _ in observed[: runner.LIVE_EXECUTION_SLICE_COUNT]],
+            [SOURCE_TYPE_EXECUTION] * runner.LIVE_EXECUTION_SLICE_COUNT,
+        )
         self.assertTrue(all(json_output for _, _, json_output in observed))
+
+    def test_main_stops_repeated_execution_slices_after_failure(self) -> None:
+        observed: list[str] = []
+
+        def fake_run(argv: list[str], *, source: str, json_output: bool) -> int:
+            del argv, json_output
+            observed.append(source)
+            return 1 if source == SOURCE_TYPE_EXECUTION else 0
+
+        with (
+            patch(
+                "scripts.run_tigerbeetle_journal_cron._parse_args",
+                return_value=argparse.Namespace(
+                    preset="live",
+                    execution_batch_size=runner.LIVE_EXECUTION_BATCH_SIZE,
+                    supervise_timeout_seconds=45,
+                    json=True,
+                ),
+            ),
+            patch(
+                "scripts.run_tigerbeetle_journal_cron._run_command",
+                side_effect=fake_run,
+            ),
+        ):
+            exit_code = runner.main()
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(
+            observed,
+            [
+                SOURCE_TYPE_EXECUTION,
+                SOURCE_TYPE_EXECUTION_TCA_METRIC,
+                SOURCE_TYPE_EXECUTION_ORDER_EVENT,
+                SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+            ],
+        )

@@ -140,6 +140,15 @@ def _parse_args() -> argparse.Namespace:
         help="Emit stderr progress every N processed source rows; set 0 to disable.",
     )
     parser.add_argument(
+        "--commit-each-row",
+        action="store_true",
+        help=(
+            "Commit each successfully journaled source row before moving to the "
+            "next row. This keeps scheduled catch-up progress durable when a "
+            "later native TigerBeetle call has to be killed by the supervisor."
+        ),
+    )
+    parser.add_argument(
         "--supervise-timeout-seconds",
         type=float,
         default=0.0,
@@ -449,6 +458,12 @@ def _journal_source_batch(
         selected=len(rows),
     )
     for row in rows:
+        if progress_interval == 1:
+            _emit_progress(
+                "source_row_start",
+                source=source,
+                row_id=str(getattr(row, "id", "unknown")),
+            )
         try:
             if args.dry_run:
                 batch["journaled"] = int(batch["journaled"]) + 1
@@ -463,6 +478,9 @@ def _journal_source_batch(
                 ):
                     _attach_runtime_bucket_journal_payload(row, ref)
                 batch["journaled"] = int(batch["journaled"]) + 1
+                if bool(getattr(args, "commit_each_row", False)):
+                    session.commit()
+                    _reset_session_identity_map(session)
         except Exception as exc:
             batch["failed"] = int(batch["failed"]) + 1
             error_counts = batch["error_counts"]
@@ -661,6 +679,7 @@ def _payload(
         "reconcile_empty_selection": bool(
             getattr(args, "reconcile_empty_selection", False)
         ),
+        "commit_each_row": bool(getattr(args, "commit_each_row", False)),
         "supervised_worker": bool(getattr(args, "supervised_worker", False)),
         "supervise_timeout_seconds": float(
             getattr(args, "supervise_timeout_seconds", 0.0) or 0.0

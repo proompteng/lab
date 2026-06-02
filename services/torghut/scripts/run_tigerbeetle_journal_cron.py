@@ -27,7 +27,8 @@ from scripts import journal_tigerbeetle_order_events as journal_script  # noqa: 
 LIVE_ORDER_EVENT_BATCH_SIZE = 1
 LIVE_ORDER_EVENT_MAX_BATCHES = 1
 LIVE_ORDER_EVENT_SCAN_LIMIT = 250
-LIVE_EXECUTION_BATCH_SIZE = 25
+LIVE_EXECUTION_BATCH_SIZE = 5
+LIVE_EXECUTION_SLICE_COUNT = 5
 LIVE_TCA_METRIC_BATCH_SIZE = 5
 LIVE_TCA_METRIC_MAX_BATCHES = 1
 
@@ -44,6 +45,9 @@ class JournalCronCommand:
     skip_reconcile: bool = False
     reconcile_empty_selection: bool = False
     allow_data_quality_degraded: bool = False
+    commit_each_row: bool = False
+    progress_interval: int | None = None
+    repeat_count: int = 1
 
 
 def _parse_args() -> argparse.Namespace:
@@ -72,6 +76,9 @@ def _live_commands(*, execution_batch_size: int) -> list[JournalCronCommand]:
             reconcile_limit=1000,
             skip_reconcile=True,
             allow_data_quality_degraded=True,
+            commit_each_row=True,
+            progress_interval=1,
+            repeat_count=LIVE_EXECUTION_SLICE_COUNT,
         ),
         JournalCronCommand(
             source=SOURCE_TYPE_EXECUTION_TCA_METRIC,
@@ -183,6 +190,10 @@ def _argv_for_command(
     argv.append("--fail-on-degraded")
     if command.allow_data_quality_degraded:
         argv.append("--allow-data-quality-degraded")
+    if command.commit_each_row:
+        argv.append("--commit-each-row")
+    if command.progress_interval is not None:
+        argv.extend(["--progress-interval", str(max(0, command.progress_interval))])
     argv.extend(["--supervise-timeout-seconds", str(supervise_timeout_seconds)])
     if json_output:
         argv.append("--json")
@@ -280,19 +291,21 @@ def main() -> int:
     args = _parse_args()
     exit_code = 0
     for command in _commands_for_preset(args):
-        command_exit_code = _run_command(
-            _argv_for_command(
-                command,
-                json_output=bool(args.json),
-                supervise_timeout_seconds=max(
-                    float(args.supervise_timeout_seconds), 0.001
+        for _ in range(max(1, int(command.repeat_count))):
+            command_exit_code = _run_command(
+                _argv_for_command(
+                    command,
+                    json_output=bool(args.json),
+                    supervise_timeout_seconds=max(
+                        float(args.supervise_timeout_seconds), 0.001
+                    ),
                 ),
-            ),
-            source=command.source,
-            json_output=bool(args.json),
-        )
-        if command_exit_code:
-            exit_code = 1
+                source=command.source,
+                json_output=bool(args.json),
+            )
+            if command_exit_code:
+                exit_code = 1
+                break
     return exit_code
 
 
