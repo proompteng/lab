@@ -26,7 +26,7 @@ spec:
     - Use available Alpaca paper-account instruments and operations when justified by current account and market state.
     - Use stock/ETF bracket, OTO, or OCO protective order classes when feasible; otherwise record the exact managed-exit fallback.
     - Use AgentRun-owned deterministic client order ids for every broker mutation, including entries, exits, risk reductions, flattens, cancels, and replacements.
-    - Publish operator-visible status through Synthesis MCP autotrader tables; feed items are milestone summaries only.
+    - Publish operator-visible status through Synthesis MCP autotrader tables only.
     - Keep market-open runs active until market close, 500000 USD equity, or an unrecoverable blocker.
     - "Treat `terminal_reason: running`, `phase: manage`, `next_action: continue_monitoring`, and any open protected position as non-terminal checkpoints that require another market-open cycle."
     - In dry-run mode, never call Alpaca order submission, cancel, replace, or close-position tools; still write scanner, no-trade, risk, status, and scorecard state to Synthesis.
@@ -58,12 +58,12 @@ spec:
     6. Verify paper account routing, Alpaca account/config/clock/calendar/tools/positions/orders, stock protective fields (`order_class`, `take_profit_limit_price`, `stop_loss_stop_price`, `stop_loss_limit_price`), and helper self-tests:
        - `python3 /workspace/lab/scripts/autotrader/protective_preflight.py --self-test`
        - `python3 /workspace/lab/scripts/autotrader/synthesis_autotrader_client.py --self-test`
-    7. Verify Synthesis exposes `autotrader_start_session`, `autotrader_upsert_status`, `autotrader_append_event`, `autotrader_create_trade_ticket`, `autotrader_record_risk_check`, `autotrader_record_order`, `autotrader_record_fill`, `autotrader_record_position_snapshot`, `autotrader_finalize_session`, `autotrader_get_scorecard`, and `synthesis_submit_item`.
+    7. Verify Synthesis exposes `autotrader_start_session`, `autotrader_upsert_status`, `autotrader_append_event`, `autotrader_create_trade_ticket`, `autotrader_record_risk_check`, `autotrader_record_order`, `autotrader_record_fill`, `autotrader_record_position_snapshot`, `autotrader_finalize_session`, and `autotrader_get_scorecard`.
     8. Call `autotrader_start_session` before scanning and use the returned `sessionId` for every Synthesis write.
 
     Mode behavior:
-    - `dry-run`: do one read-only Alpaca preflight plus one scanner/ticket/risk/status pass; call `autotrader_get_scorecard` before grading; do not call Alpaca submit/cancel/replace/close-position tools or `synthesis_submit_item`; finalize with `dry_run_complete`, write `report.md`, call `update_goal complete` if available, and stop.
-    - `scorecard-readback`: do not mutate Alpaca and do not call `synthesis_submit_item`; read latest finalized market session state, call `autotrader_get_scorecard` before scanner/candidate grading, record proof through Synthesis status/events, finalize with `scorecard_readback_waiting` or `scorecard_readback_complete`, write `report.md`, call `update_goal complete` if available, and stop.
+    - `dry-run`: do one read-only Alpaca preflight plus one scanner/ticket/risk/status pass; call `autotrader_get_scorecard` before grading; do not call Alpaca submit/cancel/replace/close-position tools; finalize with `dry_run_complete`, write `report.md`, call `update_goal complete` if available, and stop.
+    - `scorecard-readback`: do not mutate Alpaca; read latest finalized market session state, call `autotrader_get_scorecard` before scanner/candidate grading, record proof through Synthesis status/events, finalize with `scorecard_readback_waiting` or `scorecard_readback_complete`, write `report.md`, call `update_goal complete` if available, and stop.
     - `preflight`: perform readiness checks and, only if safe, one tiny non-marketable paper bracket or OTO proof that is reconciled by id/client id and canceled; record exact Alpaca rejection/blockers.
     - `market-open`: wait for regular market open, run exactly one bounded paper-order smoke when the paper account is operable, run protective preflight before non-smoke entries, then keep cycling until market close, 500000 USD equity, or hard unrecoverable account/order/visibility state. Preflight success, smoke success, no-trade, rejected candidates, rejected orders, quiet market state, active monitoring, and protected open positions are not terminal. Do not call `update_goal complete` and do not send a final assistant response while the market is open and the session is only `running`.
 
@@ -92,9 +92,7 @@ spec:
     Synthesis visibility:
     - Write each cycle through Synthesis autotrader MCP: status, events, tickets, risk checks, orders, fills, position snapshots, scorecards, and finalization.
     - If Synthesis MCP fails due to proxy/transport fetch failure, retry once, then use `python3 /workspace/lab/scripts/autotrader/synthesis_autotrader_client.py` for the same operation. Do not take new risk if MCP and direct HTTP visibility both fail.
-    - Use `synthesis_submit_item` only for high-signal milestone summaries; strict payloads must include `title`, `synthesis`, `takeaways`, `whyValuable`, `sourcePosts`, `dedupeKey`, `score`, and `confidence`.
-    - Do not set `runId` on `synthesis_submit_item` from `AGENT_RUN_NAME` or autotrader session id. Link milestones by source URL, dedupe key, title, and synthesis text instead.
-    - Feed posting is best-effort only and must never block finalization, reconciliation, risk exits, or dry-run completion.
+    - Do not create feed posts during trading. The autotrader tables are the status, decision, risk, order, fill, position, and scorecard surfaces.
 
     Stop and report:
     - Retry transient Alpaca MCP reads up to 3 times with backoff and record `mcp_retry`.

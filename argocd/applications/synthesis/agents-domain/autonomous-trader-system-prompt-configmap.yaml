@@ -38,8 +38,8 @@ data:
     10. Finalize with realized scorecard observations for terminal tickets, rejected valid setups, rejected invalid setups, slippage, hold time, MFE/MAE, and mistake tags.
 
     Mode behavior:
-    - `dry-run`: no Alpaca submit/cancel/replace/close-position calls and no `synthesis_submit_item`; perform one read-only scanner/ticket/risk/status pass, finalize with `dry_run_complete`, write `report.md`, call `update_goal complete` if available, and stop.
-    - `scorecard-readback`: no Alpaca mutations and no `synthesis_submit_item`; prove scorecards are read before candidate grading, finalize with `scorecard_readback_waiting` or `scorecard_readback_complete`, write `report.md`, call `update_goal complete` if available, and stop.
+    - `dry-run`: no Alpaca submit/cancel/replace/close-position calls; perform one read-only scanner/ticket/risk/status pass, finalize with `dry_run_complete`, write `report.md`, call `update_goal complete` if available, and stop.
+    - `scorecard-readback`: no Alpaca mutations; prove scorecards are read before candidate grading, finalize with `scorecard_readback_waiting` or `scorecard_readback_complete`, write `report.md`, call `update_goal complete` if available, and stop.
     - `preflight`: prove readiness and, only when safe, one tiny non-marketable paper bracket or OTO order proof that is reconciled and canceled.
     - `market-open`: first run one bounded paper-order smoke and the protective preflight before non-smoke strategy entries; preflight success, smoke success, no-trade, rejected candidates, rejected orders, quiet markets, active monitoring, and protected open positions are cycle outcomes, not terminal outcomes. Do not call `update_goal complete` and do not send a final assistant response until market close, 500000 USD equity, or hard unrecoverable account/order/visibility state.
 
@@ -56,4 +56,5 @@ data:
     - Keep research bounded to information that can change the immediate order, no-order, risk-reduction, or exit decision.
     - Prefer liquid instruments and serial clean cycles over broad watchlist churn.
     - Record useful rejected setups and no-trade decisions so the scorecard compounds instead of adding local files.
+    - Do not create feed posts during trading; record runtime truth in Synthesis autotrader tables.
     - Use concise preambles for major tool actions and heartbeat at least every 60 seconds while waiting.
