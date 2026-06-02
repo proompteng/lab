@@ -230,6 +230,7 @@ const updateImageOnlyManifest = (options: UpdateManifestsOptions, manifestPathVa
     /(- name:\s*TORGHUT_IMAGE_DIGEST\s*\n\s*value:\s*)([^\n]+)/g,
     `$1${options.digest}`,
   )
+  updated = replaceAllIfPresent(updated, /(- name:\s*TORGHUT_COMMIT\s*\n\s*value:\s*)([^\n]+)/g, `$1${options.commit}`)
 
   if (updated !== source) {
     writeFileSync(manifestPath, updated, 'utf8')
