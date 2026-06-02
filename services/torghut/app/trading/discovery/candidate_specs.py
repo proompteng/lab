@@ -5664,6 +5664,13 @@ class CandidateSpec:
             "hard_vetoes": dict(self.hard_vetoes),
             "expected_failure_modes": list(self.expected_failure_modes),
             "promotion_contract": dict(self.promotion_contract),
+            "candidate_authority": "discovery_probation_input_only",
+            "promotion_proof": False,
+            "proof_authority": False,
+            "promotion_authority": False,
+            "promotion_allowed": False,
+            "final_promotion_allowed": False,
+            "final_authority_ok": False,
         }
 
     def to_vnext_experiment_payload(

@@ -4627,6 +4627,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             [spec["candidate_spec_id"] for spec in selected_specs],
             ["spec-nvda-continuation"],
         )
+        self.assertFalse(selected_specs[0]["promotion_allowed"])
+        self.assertFalse(selected_specs[0]["final_promotion_allowed"])
+        self.assertFalse(selected_specs[0]["final_authority_ok"])
         self.assertFalse(selection["replay_tape_preview"]["promotion_proof"])
         self.assertIn(
             "exact_replay_required", selection["replay_tape_preview"]["blockers"]
@@ -4650,6 +4653,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertFalse(nvda_row["fast_replay_proof_authority"])
         self.assertFalse(nvda_row["fast_replay_promotion_allowed"])
         self.assertFalse(nvda_row["fast_replay_final_promotion_allowed"])
+        self.assertFalse(nvda_row["fast_replay_final_authority_ok"])
         aapl_row = next(
             row
             for row in selection["rows"]
@@ -4763,8 +4767,10 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertFalse(queue_payload["proof_authority"])
         self.assertFalse(queue_payload["promotion_allowed"])
         self.assertFalse(queue_payload["final_promotion_allowed"])
+        self.assertFalse(queue_payload["final_authority_ok"])
         self.assertFalse(queue_payload["proof_semantics"]["promotion_allowed"])
         self.assertFalse(queue_payload["proof_semantics"]["final_promotion_allowed"])
+        self.assertFalse(queue_payload["proof_semantics"]["final_authority_ok"])
         self.assertEqual(
             queue_payload["runner_policy"]["default_shard_timeout_seconds"], 900
         )
@@ -4774,6 +4780,17 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             queue_payload["runner_policy"]["default_parallel_frontier_candidate_cap"],
             6,
         )
+        command_policy = queue_payload["exact_replay_command_policy"]
+        self.assertEqual(command_policy["generation_scope"], "bounded_frontier_only")
+        self.assertEqual(command_policy["max_exact_replay_candidates"], 6)
+        self.assertEqual(command_policy["effective_exact_replay_candidate_cap"], 6)
+        self.assertEqual(command_policy["max_local_workers"], 2)
+        self.assertEqual(command_policy["shard_timeout_seconds"], 900)
+        self.assertFalse(command_policy["proof_packet_upload_allowed"])
+        self.assertFalse(command_policy["db_writes_allowed"])
+        self.assertFalse(command_policy["kubernetes_fanout_allowed"])
+        self.assertFalse(command_policy["promotion_writes_allowed"])
+        self.assertFalse(command_policy["final_authority_ok"])
         self.assertEqual(
             queue_payload["target_queue"]["status"],
             "sim_target_queue_ready_live_paper_blocked",
@@ -4872,12 +4889,16 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertFalse(
             first_entry["exact_replay_handoff_lineage"]["final_promotion_allowed"]
         )
+        self.assertFalse(
+            first_entry["exact_replay_handoff_lineage"]["final_authority_ok"]
+        )
         self.assertEqual(
             first_entry["adv_capacity_context"]["status"], "missing_source_backed_adv"
         )
         self.assertIn("source_backed_adv_missing", first_entry["lineage_blockers"])
         self.assertFalse(first_entry["promotion_allowed"])
         self.assertFalse(first_entry["final_promotion_allowed"])
+        self.assertFalse(first_entry["final_authority_ok"])
         self.assertIn("hpairs_microstructure_prefilter", first_entry)
         self.assertEqual(
             first_entry["hpairs_microstructure_prefilter"]["proof_source"],
@@ -5079,7 +5100,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(queue_payload["dedupe_policy"]["status"], "enabled")
         self.assertFalse(queue_payload["dedupe_policy"]["proof_authority"])
         self.assertFalse(queue_payload["dedupe_policy"]["promotion_allowed"])
+        self.assertFalse(queue_payload["dedupe_policy"]["final_authority_ok"])
         self.assertFalse(queue_payload["promotion_allowed"])
+        self.assertFalse(queue_payload["final_authority_ok"])
         self.assertEqual(
             queue_payload["entries"][0]["exact_replay_handoff_lineage"][
                 "exact_replay_frontier_key"
@@ -5238,10 +5261,11 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         manifest_payload = preview.to_manifest_payload()
 
         self.assertEqual(
-            row_payload["schema_version"], "torghut.fast-replay-preview-row.v5"
+            row_payload["schema_version"], "torghut.fast-replay-preview-row.v6"
         )
         self.assertEqual(manifest_payload["status"], "preview_only")
         self.assertFalse(manifest_payload["promotion_proof"])
+        self.assertFalse(manifest_payload["final_authority_ok"])
         self.assertEqual(
             row_payload["proof_semantics_label"],
             fast_replay.FAST_REPLAY_PROOF_SEMANTICS_LABEL,
@@ -5257,6 +5281,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertIn("conformal_tail_risk", manifest_payload["implemented_mechanisms"])
         self.assertEqual(row_payload["proof_source"], "prefilter_only")
         self.assertFalse(row_payload["final_promotion_allowed"])
+        self.assertFalse(row_payload["final_authority_ok"])
         self.assertIn("hpairs_microstructure_prefilter", row_payload)
         self.assertEqual(
             row_payload["hpairs_microstructure_prefilter"]["proof_source"],
