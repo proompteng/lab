@@ -689,7 +689,7 @@ class TestLiveConfigManifestContract(TestCase):
         )
         self.assertEqual(
             sim_env.get("TRADING_PAPER_ROUTE_TARGET_PLAN_URL"),
-            "http://torghut.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
         )
         self.assertEqual(
             sim_env.get("TRADING_PAPER_ROUTE_TARGET_PLAN_TIMEOUT_SECONDS"),
