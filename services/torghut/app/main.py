@@ -6789,6 +6789,39 @@ def _empty_tigerbeetle_ref_counts(
     }
 
 
+def _latest_reconciliation_ref_counts(
+    latest_reconciliation: Mapping[str, object] | None,
+) -> dict[str, object] | None:
+    if latest_reconciliation is None:
+        return None
+    raw_ref_counts = latest_reconciliation.get("ref_counts")
+    if not isinstance(raw_ref_counts, Mapping):
+        return None
+    ref_counts = dict(cast(Mapping[str, object], raw_ref_counts))
+    required_keys = (
+        "account_ref_count",
+        "transfer_ref_count",
+        "runtime_ledger_ref_count",
+        "runtime_ledger_signed_ref_count",
+        "runtime_ledger_missing_signed_ref_count",
+        "runtime_ledger_missing_account_ref_count",
+    )
+    if not all(key in ref_counts for key in required_keys):
+        return None
+    ref_counts.setdefault("schema_version", "torghut.tigerbeetle-ref-counts.v1")
+    ref_counts["source"] = "latest_tigerbeetle_reconciliation"
+    ref_counts["source_reconciliation_status"] = latest_reconciliation.get("status")
+    ref_counts["source_reconciliation_ok"] = bool(latest_reconciliation.get("ok"))
+    ref_counts["source_reconciliation_age_seconds"] = latest_reconciliation.get(
+        "age_seconds"
+    )
+    ref_counts["source_reconciliation_stale"] = bool(
+        latest_reconciliation.get("reconciliation_stale")
+    )
+    ref_counts["bounded_status_live_query_skipped"] = True
+    return ref_counts
+
+
 def _unavailable_tigerbeetle_reconciliation_payload(
     *,
     reason_codes: Sequence[str],
@@ -6845,25 +6878,29 @@ def _build_tigerbeetle_ledger_status(session: Session) -> dict[str, object]:
 
     ref_counts: dict[str, object]
     ref_counts_available = True
-    try:
-        _apply_status_read_statement_timeout(session, milliseconds=750)
-        ref_counts = tigerbeetle_ref_counts(
-            session,
-            cluster_id=settings.tigerbeetle_cluster_id,
-            full_ref_scan=False,
-        )
-    except SQLAlchemyError as exc:
-        logger.warning("TigerBeetle ref-count status unavailable: %s", exc)
-        session.rollback()
-        ref_counts_available = False
-        reason_codes = ["tigerbeetle_ref_counts_unavailable"]
-        if _sqlalchemy_error_indicates_statement_timeout(exc):
-            reason_codes.append("tigerbeetle_ref_counts_query_timeout")
-        blockers.extend(reason_codes)
-        ref_counts = _empty_tigerbeetle_ref_counts(
-            reason_codes=reason_codes,
-            last_error=str(exc),
-        )
+    latest_ref_counts = _latest_reconciliation_ref_counts(latest_reconciliation)
+    if latest_ref_counts is not None:
+        ref_counts = latest_ref_counts
+    else:
+        try:
+            _apply_status_read_statement_timeout(session, milliseconds=750)
+            ref_counts = tigerbeetle_ref_counts(
+                session,
+                cluster_id=settings.tigerbeetle_cluster_id,
+                full_ref_scan=False,
+            )
+        except SQLAlchemyError as exc:
+            logger.warning("TigerBeetle ref-count status unavailable: %s", exc)
+            session.rollback()
+            ref_counts_available = False
+            reason_codes = ["tigerbeetle_ref_counts_unavailable"]
+            if _sqlalchemy_error_indicates_statement_timeout(exc):
+                reason_codes.append("tigerbeetle_ref_counts_query_timeout")
+            blockers.extend(reason_codes)
+            ref_counts = _empty_tigerbeetle_ref_counts(
+                reason_codes=reason_codes,
+                last_error=str(exc),
+            )
     runtime_ledger_ref_count = _tigerbeetle_status_int(
         ref_counts.get("runtime_ledger_ref_count")
     )

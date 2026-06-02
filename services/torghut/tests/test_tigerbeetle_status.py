@@ -93,6 +93,48 @@ class TestTigerBeetleStatus(TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(ref_counts_mock.call_args.kwargs["full_ref_scan"], False)
 
+    def test_status_reuses_latest_reconciliation_ref_counts(self) -> None:
+        latest_reconciliation = {
+            "ok": True,
+            "status": "ok",
+            "age_seconds": 12,
+            "reconciliation_stale": False,
+            "blockers": [],
+            "ref_counts": {
+                "schema_version": "torghut.tigerbeetle-ref-counts.v1",
+                "cluster_id": 2001,
+                "account_ref_count": 54_129,
+                "transfer_ref_count": 28_993,
+                "by_source_type": {"strategy_runtime_ledger_bucket": 26},
+                "runtime_ledger_ref_count": 26,
+                "runtime_ledger_signed_ref_count": 26,
+                "runtime_ledger_missing_signed_ref_count": 0,
+                "runtime_ledger_missing_account_ref_count": 0,
+                "source_materialization": {},
+            },
+        }
+
+        with Session(self.engine) as session:
+            with (
+                patch(
+                    "app.main.latest_tigerbeetle_reconciliation_payload",
+                    return_value=latest_reconciliation,
+                ),
+                patch("app.main.tigerbeetle_ref_counts") as ref_counts_mock,
+            ):
+                payload = _build_tigerbeetle_ledger_status(session)
+
+        ref_counts_mock.assert_not_called()
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["claimed_by_runtime_evidence"])
+        self.assertEqual(payload["runtime_ledger_ref_count"], 26)
+        ref_counts = payload["ref_counts"]
+        self.assertIsInstance(ref_counts, dict)
+        assert isinstance(ref_counts, dict)
+        self.assertEqual(ref_counts["source"], "latest_tigerbeetle_reconciliation")
+        self.assertTrue(ref_counts["bounded_status_live_query_skipped"])
+        self.assertNotIn("tigerbeetle_ref_counts_unavailable", payload["blockers"])
+
     def test_ref_count_failure_degrades_without_status_exception(self) -> None:
         with Session(self.engine) as session:
             with patch(
