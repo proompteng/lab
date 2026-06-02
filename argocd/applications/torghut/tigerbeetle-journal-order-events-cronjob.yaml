@@ -55,51 +55,11 @@ spec:
                 - |
                   set -euo pipefail
                   cd /app
-                  status=0
-                  /opt/venv/bin/python scripts/journal_tigerbeetle_order_events.py \
-                    --dsn-env DB_DSN \
-                    --sources execution \
-                    --batch-size 5 \
-                    --max-batches 1 \
-                    --reconcile-limit 1000 \
-                    --skip-reconcile \
-                    --fail-on-degraded \
-                    --allow-data-quality-degraded \
+                  exec /opt/venv/bin/python scripts/run_tigerbeetle_journal_cron.py \
+                    --preset live \
+                    --execution-batch-size 10 \
                     --supervise-timeout-seconds 45 \
-                    --json || status=1
-                  /opt/venv/bin/python scripts/journal_tigerbeetle_order_events.py \
-                    --dsn-env DB_DSN \
-                    --sources execution_tca_metric \
-                    --batch-size 5 \
-                    --max-batches 3 \
-                    --reconcile-limit 1000 \
-                    --skip-reconcile \
-                    --fail-on-degraded \
-                    --supervise-timeout-seconds 45 \
-                    --json || status=1
-                  /opt/venv/bin/python scripts/journal_tigerbeetle_order_events.py \
-                    --dsn-env DB_DSN \
-                    --sources execution_order_event \
-                    --batch-size 5 \
-                    --max-batches 3 \
-                    --event-scan-limit 250 \
-                    --reconcile-limit 1000 \
-                    --skip-reconcile \
-                    --fail-on-degraded \
-                    --allow-data-quality-degraded \
-                    --supervise-timeout-seconds 45 \
-                    --json || status=1
-                  /opt/venv/bin/python scripts/journal_tigerbeetle_order_events.py \
-                    --dsn-env DB_DSN \
-                    --sources strategy_runtime_ledger_bucket \
-                    --batch-size 5 \
-                    --max-batches 1 \
-                    --reconcile-limit 1000 \
-                    --fail-on-degraded \
-                    --allow-data-quality-degraded \
-                    --supervise-timeout-seconds 45 \
-                    --json || status=1
-                  exit "$status"
+                    --json
               env:
                 - name: DB_DSN
                   valueFrom:
@@ -184,55 +144,10 @@ spec:
                 - |
                   set -euo pipefail
                   cd /app
-                  status=0
-                  /opt/venv/bin/python scripts/journal_tigerbeetle_order_events.py \
-                    --dsn-env SIM_DB_DSN \
-                    --account-label TORGHUT_SIM \
-                    --sources execution \
-                    --batch-size 5 \
-                    --max-batches 1 \
-                    --reconcile-limit 500 \
-                    --skip-reconcile \
-                    --fail-on-degraded \
-                    --allow-data-quality-degraded \
+                  exec /opt/venv/bin/python scripts/run_tigerbeetle_journal_cron.py \
+                    --preset sim \
                     --supervise-timeout-seconds 45 \
-                    --json || status=1
-                  /opt/venv/bin/python scripts/journal_tigerbeetle_order_events.py \
-                    --dsn-env SIM_DB_DSN \
-                    --account-label TORGHUT_SIM \
-                    --sources execution_tca_metric \
-                    --batch-size 5 \
-                    --max-batches 1 \
-                    --reconcile-limit 500 \
-                    --skip-reconcile \
-                    --fail-on-degraded \
-                    --supervise-timeout-seconds 45 \
-                    --json || status=1
-                  /opt/venv/bin/python scripts/journal_tigerbeetle_order_events.py \
-                    --dsn-env SIM_DB_DSN \
-                    --account-label TORGHUT_SIM \
-                    --sources execution_order_event \
-                    --batch-size 5 \
-                    --max-batches 1 \
-                    --event-scan-limit 300 \
-                    --reconcile-limit 500 \
-                    --skip-reconcile \
-                    --fail-on-degraded \
-                    --allow-data-quality-degraded \
-                    --supervise-timeout-seconds 45 \
-                    --json || status=1
-                  /opt/venv/bin/python scripts/journal_tigerbeetle_order_events.py \
-                    --dsn-env SIM_DB_DSN \
-                    --account-label TORGHUT_SIM \
-                    --sources strategy_runtime_ledger_bucket \
-                    --batch-size 5 \
-                    --max-batches 1 \
-                    --reconcile-limit 500 \
-                    --fail-on-degraded \
-                    --allow-data-quality-degraded \
-                    --supervise-timeout-seconds 45 \
-                    --json || status=1
-                  exit "$status"
+                    --json
               env:
                 - name: TORGHUT_SIM_DB_HOST
                   valueFrom:

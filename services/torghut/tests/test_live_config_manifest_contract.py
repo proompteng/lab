@@ -1494,22 +1494,14 @@ class TestLiveConfigManifestContract(TestCase):
             )
             self.assertEqual(value_env["PYTHONUNBUFFERED"], "1")
             args = "\n".join(str(item) for item in container.get("args", []))
-            self.assertIn("scripts/journal_tigerbeetle_order_events.py", args)
+            self.assertIn("scripts/run_tigerbeetle_journal_cron.py", args)
+            self.assertNotIn("scripts/journal_tigerbeetle_order_events.py", args)
             self.assertNotIn("scripts/repair_order_feed_source_windows.py", args)
-            self.assertEqual(
-                args.count("scripts/journal_tigerbeetle_order_events.py"),
-                4,
-            )
-            self.assertIn("status=0", args)
-            self.assertEqual(args.count("|| status=1"), 4)
-            self.assertIn('exit "$status"', args)
-            self.assertIn("--sources execution", args)
-            self.assertIn("--sources execution_tca_metric", args)
-            self.assertIn("--sources execution_order_event", args)
-            self.assertIn("--sources strategy_runtime_ledger_bucket", args)
-            self.assertEqual(args.count("--skip-reconcile"), 3)
-            self.assertEqual(args.count("--fail-on-degraded"), 4)
-            self.assertEqual(args.count("--supervise-timeout-seconds 45"), 4)
+            self.assertNotIn("status=0", args)
+            self.assertNotIn("|| status=1", args)
+            self.assertNotIn('exit "$status"', args)
+            self.assertIn("--preset", args)
+            self.assertIn("--supervise-timeout-seconds 45", args)
             self.assertIn("--json", args)
             security_context = cast(
                 Mapping[str, object],
@@ -1536,15 +1528,13 @@ class TestLiveConfigManifestContract(TestCase):
         )
         self.assertNotIn("SIM_DB_DSN", live_env)
         live_args = "\n".join(str(item) for item in live_container.get("args", []))
-        self.assertIn("--dsn-env DB_DSN", live_args)
-        self.assertEqual(live_args.count("--dsn-env DB_DSN"), 4)
+        self.assertIn("--preset live", live_args)
+        self.assertIn("--execution-batch-size 10", live_args)
+        self.assertNotIn("--dsn-env DB_DSN", live_args)
         self.assertNotIn("--dsn-env SIM_DB_DSN", live_args)
         self.assertNotIn("--account-label TORGHUT_SIM", live_args)
-        self.assertEqual(live_args.count("--batch-size 5"), 4)
-        self.assertEqual(live_args.count("--max-batches 3"), 2)
-        self.assertEqual(live_args.count("--max-batches 1"), 2)
-        self.assertIn("--event-scan-limit 250", live_args)
-        self.assertIn("--reconcile-limit 1000", live_args)
+        self.assertNotIn("--batch-size", live_args)
+        self.assertNotIn("--max-batches", live_args)
 
         sim_env = {
             item.get("name"): item
@@ -1568,15 +1558,13 @@ class TestLiveConfigManifestContract(TestCase):
                 {"name": "torghut-db-app", "key": key},
             )
         sim_args = "\n".join(str(item) for item in sim_container.get("args", []))
-        self.assertIn("--dsn-env SIM_DB_DSN", sim_args)
-        self.assertIn("--account-label TORGHUT_SIM", sim_args)
-        self.assertEqual(sim_args.count("--dsn-env SIM_DB_DSN"), 4)
-        self.assertEqual(sim_args.count("--account-label TORGHUT_SIM"), 4)
-        self.assertEqual(sim_args.count("--batch-size 5"), 4)
-        self.assertIn("--max-batches 1", sim_args)
-        self.assertNotIn("--max-batches 4", sim_args)
-        self.assertIn("--event-scan-limit 300", sim_args)
-        self.assertIn("--reconcile-limit 500", sim_args)
+        self.assertIn("--preset sim", sim_args)
+        self.assertNotIn("--dsn-env SIM_DB_DSN", sim_args)
+        self.assertNotIn("--account-label TORGHUT_SIM", sim_args)
+        self.assertNotIn("--batch-size", sim_args)
+        self.assertNotIn("--max-batches", sim_args)
+        self.assertNotIn("--event-scan-limit", sim_args)
+        self.assertNotIn("--reconcile-limit", sim_args)
 
     def test_empirical_promotion_renewal_imports_authoritative_sim_paper_plan_and_sim_db(
         self,

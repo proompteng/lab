@@ -4,7 +4,6 @@ import argparse
 import io
 import json
 import os
-import re
 import subprocess
 import sys
 import tempfile
@@ -46,6 +45,7 @@ from app.trading.tigerbeetle_client import (
     TigerBeetleClientTimeoutError,
 )
 from scripts import journal_tigerbeetle_order_events as script
+from scripts import run_tigerbeetle_journal_cron as cron_runner
 
 
 def _add_order_event(
@@ -708,16 +708,24 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
             Path(__file__).resolve().parents[3]
             / "argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml"
         ).read_text()
-        for cronjob_name in (
-            "torghut-tigerbeetle-journal-order-events-live",
-            "torghut-tigerbeetle-journal-order-events-sim",
-        ):
+        cases = {
+            "torghut-tigerbeetle-journal-order-events-live": (
+                "--preset live",
+                cron_runner._live_commands(execution_batch_size=10),
+            ),
+            "torghut-tigerbeetle-journal-order-events-sim": (
+                "--preset sim",
+                cron_runner._sim_commands(),
+            ),
+        }
+        for cronjob_name, (preset_arg, commands) in cases.items():
             section = manifest.split(f"name: {cronjob_name}", 1)[1]
             if "---" in section:
                 section = section.split("---", 1)[0]
-            source_args = re.findall(r"--sources ([a-z_]+)", section)
+            self.assertIn("scripts/run_tigerbeetle_journal_cron.py", section)
+            self.assertIn(preset_arg, section)
             self.assertEqual(
-                source_args,
+                [command.source for command in commands],
                 [
                     script.SOURCE_TYPE_EXECUTION,
                     script.SOURCE_TYPE_EXECUTION_TCA_METRIC,
@@ -726,13 +734,25 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
                 ],
             )
             self.assertNotIn("execution,execution_tca_metric", section)
-            self.assertEqual(section.count("--supervise-timeout-seconds 45"), 4)
-            runtime_section = section.split(
-                "--sources strategy_runtime_ledger_bucket",
-                1,
-            )[1]
-            self.assertIn("--fail-on-degraded", runtime_section)
-            self.assertIn("--allow-data-quality-degraded", runtime_section)
+            self.assertEqual(section.count("--supervise-timeout-seconds 45"), 1)
+            command_argvs = [
+                cron_runner._argv_for_command(
+                    command,
+                    json_output=True,
+                    supervise_timeout_seconds=45.0,
+                )
+                for command in commands
+            ]
+            source_args = [argv[argv.index("--sources") + 1] for argv in command_argvs]
+            self.assertEqual(source_args, [command.source for command in commands])
+            self.assertTrue(all("," not in source for source in source_args))
+            runtime_argv = command_argvs[-1]
+            self.assertEqual(
+                runtime_argv[runtime_argv.index("--sources") + 1],
+                script.SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+            )
+            self.assertIn("--fail-on-degraded", runtime_argv)
+            self.assertIn("--allow-data-quality-degraded", runtime_argv)
 
     def test_process_rows_attaches_runtime_bucket_journal_payload(self) -> None:
         settings_obj = Settings(
