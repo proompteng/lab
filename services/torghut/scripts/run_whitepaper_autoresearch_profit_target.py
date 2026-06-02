@@ -94,8 +94,8 @@ from app.trading.runtime_ledger import (
 from app.trading.discovery.replay_tape import (
     ReplayTapeManifest,
     build_source_query_digest,
-    materialize_signal_tape,
     load_replay_tape,
+    materialize_signal_tape,
     slice_tape_by_symbols,
     slice_tape_by_window,
     validate_tape_freshness,
@@ -633,6 +633,14 @@ def _parse_args() -> argparse.Namespace:
         type=Path,
         default=None,
         help="Optional manifest path for --replay-tape-path.",
+    )
+    parser.add_argument(
+        "--replay-tape-dataset-snapshot-ref",
+        default="",
+        help=(
+            "Expected replay-tape dataset snapshot when reusing a tape. "
+            "If set, fast-preview reuse fails closed when the manifest identity differs."
+        ),
     )
     parser.add_argument(
         "--replay-tape-preview-top-k",
@@ -6561,6 +6569,7 @@ def _apply_fast_replay_preview_narrowing(
 
     start_date = _fast_replay_preview_date_arg(args, "full_window_start_date")
     end_date = _fast_replay_preview_date_arg(args, "full_window_end_date")
+    requested_symbols = _candidate_universe_symbols_from_args(args)
     tape = load_replay_tape(
         Path(tape_path).resolve(),
         manifest_path=(
@@ -6573,8 +6582,24 @@ def _apply_fast_replay_preview_narrowing(
         tape.manifest,
         start_date=start_date,
         end_date=end_date,
-        symbols=_candidate_universe_symbols_from_args(args),
+        symbols=requested_symbols,
         allow_stale_tape=bool(getattr(args, "allow_stale_tape", False)),
+        require_exact_cache_identity=True,
+        expected_dataset_snapshot_ref=(
+            str(getattr(args, "replay_tape_dataset_snapshot_ref", "") or "").strip()
+            or None
+        ),
+        expected_source_query_digest=_materialized_replay_tape_source_query_digest(
+            args=args,
+            symbols=requested_symbols,
+            start_date=start_date,
+            end_date=end_date,
+        ),
+        expected_feature_schema_hash=_materialized_replay_tape_feature_schema_hash(
+            args
+        ),
+        expected_cost_model_hash=_materialized_replay_tape_cost_model_hash(args),
+        expected_strategy_family=_materialized_replay_tape_strategy_family(args),
     )
     selected_rows = slice_tape_by_symbols(
         slice_tape_by_window(
@@ -6582,7 +6607,7 @@ def _apply_fast_replay_preview_narrowing(
             start_date=start_date,
             end_date=end_date,
         ),
-        symbols=_candidate_universe_symbols_from_args(args),
+        symbols=requested_symbols,
     )
     preview = build_fast_replay_preview(
         specs=specs,
@@ -7325,6 +7350,7 @@ def _maybe_materialize_epoch_replay_tape(
             **vars(args),
             "replay_tape_path": tape_path,
             "replay_tape_manifest": manifest_path,
+            "replay_tape_dataset_snapshot_ref": manifest.dataset_snapshot_ref,
         }
     )
     return updated_args, receipt

@@ -36,7 +36,6 @@ from app.trading.discovery import fast_replay
 from app.trading.discovery.replay_tape import (
     REPLAY_TAPE_MANIFEST_SCHEMA_VERSION,
     ReplayTapeManifest,
-    build_source_query_digest,
     materialize_signal_tape,
 )
 from app.trading.discovery.evidence_bundles import evidence_bundle_blockers
@@ -4582,6 +4581,16 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 + "\n",
                 encoding="utf-8",
             )
+            args = self._args(output_dir)
+            args.candidate_specs = [specs_path]
+            args.seed_recent_whitepapers = False
+            args.replay_mode = "real"
+            args.selection_only = True
+            args.replay_tape_path = tape_path
+            args.replay_tape_preview_top_k = 1
+            args.symbols = "NVDA"
+            args.replay_tape_dataset_snapshot_ref = "preview-snapshot"
+            requested_symbols = runner._candidate_universe_symbols_from_args(args)
             materialize_signal_tape(
                 rows=[
                     SignalEnvelope(
@@ -4611,19 +4620,21 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 ],
                 tape_path=tape_path,
                 dataset_snapshot_ref="preview-snapshot",
-                symbols=("NVDA",),
+                symbols=requested_symbols,
                 start_date=date(2026, 2, 23),
                 end_date=date(2026, 2, 27),
-                source_query_digest=build_source_query_digest({"query": "preview"}),
+                source_query_digest=runner._materialized_replay_tape_source_query_digest(
+                    args=args,
+                    symbols=requested_symbols,
+                    start_date=date(2026, 2, 23),
+                    end_date=date(2026, 2, 27),
+                ),
+                feature_schema_hash=runner._materialized_replay_tape_feature_schema_hash(
+                    args
+                ),
+                cost_model_hash=runner._materialized_replay_tape_cost_model_hash(args),
+                strategy_family=runner._materialized_replay_tape_strategy_family(args),
             )
-            args = self._args(output_dir)
-            args.candidate_specs = [specs_path]
-            args.seed_recent_whitepapers = False
-            args.replay_mode = "real"
-            args.selection_only = True
-            args.replay_tape_path = tape_path
-            args.replay_tape_preview_top_k = 1
-            args.symbols = "NVDA"
 
             payload = runner.run_whitepaper_autoresearch_profit_target(args)
 
@@ -4712,7 +4723,28 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 )
                 for index, symbol in enumerate(["NVDA", "AAPL", "INTC"] * 3)
             ]
-            source_query_digest = build_source_query_digest({"window": "frontier"})
+            args = self._args(output_dir)
+            args.replay_mode = "real"
+            args.full_window_start_date = "2026-02-23"
+            args.full_window_end_date = "2026-02-23"
+            args.symbols = "NVDA,AAPL,INTC"
+            args.replay_tape_path = tape_path
+            args.replay_tape_preview_top_k = 8
+            args.replay_tape_exact_candidate_cap = 99
+            args.replay_tape_dataset_snapshot_ref = "frontier-preview"
+            args.allow_unsafe_replay_tape_exact_cap_override = True
+            requested_symbols = runner._candidate_universe_symbols_from_args(args)
+            source_query_digest = runner._materialized_replay_tape_source_query_digest(
+                args=args,
+                symbols=requested_symbols,
+                start_date=date(2026, 2, 23),
+                end_date=date(2026, 2, 23),
+            )
+            feature_schema_hash = runner._materialized_replay_tape_feature_schema_hash(
+                args
+            )
+            cost_model_hash = runner._materialized_replay_tape_cost_model_hash(args)
+            strategy_family = runner._materialized_replay_tape_strategy_family(args)
             materialize_signal_tape(
                 rows=rows,
                 tape_path=tape_path,
@@ -4721,9 +4753,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 start_date=date(2026, 2, 23),
                 end_date=date(2026, 2, 23),
                 source_query_digest=source_query_digest,
-                feature_schema_hash="feature-schema-frontier",
-                cost_model_hash="cost-model-frontier",
-                strategy_family="hpairs-frontier-family",
+                feature_schema_hash=feature_schema_hash,
+                cost_model_hash=cost_model_hash,
+                strategy_family=strategy_family,
                 source_table_versions={"signals": "v1"},
             )
             specs = [
@@ -4733,15 +4765,6 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 )
                 for index in range(8)
             ]
-            args = self._args(output_dir)
-            args.replay_mode = "real"
-            args.full_window_start_date = "2026-02-23"
-            args.full_window_end_date = "2026-02-23"
-            args.symbols = "NVDA,AAPL,INTC"
-            args.replay_tape_path = tape_path
-            args.replay_tape_preview_top_k = 8
-            args.replay_tape_exact_candidate_cap = 99
-            args.allow_unsafe_replay_tape_exact_cap_override = True
             candidate_selection = {
                 "schema_version": "torghut.whitepaper-autoresearch-selection.v1",
                 "budget": {"selected_count": len(specs)},
@@ -4773,13 +4796,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         preview_validation = updated_selection["replay_tape_preview"]["validation"]
         self.assertEqual(preview_validation["source_query_digest"], source_query_digest)
-        self.assertEqual(
-            preview_validation["feature_schema_hash"], "feature-schema-frontier"
-        )
-        self.assertEqual(preview_validation["cost_model_hash"], "cost-model-frontier")
-        self.assertEqual(
-            preview_validation["strategy_family"], "hpairs-frontier-family"
-        )
+        self.assertEqual(preview_validation["feature_schema_hash"], feature_schema_hash)
+        self.assertEqual(preview_validation["cost_model_hash"], cost_model_hash)
+        self.assertEqual(preview_validation["strategy_family"], strategy_family)
         self.assertEqual(preview_validation["cache_identity"]["status"], "complete")
         queue_payload = updated_selection["bounded_sim_target_queue"]
         self.assertEqual(queue_payload["exact_replay_candidate_count"], 6)
@@ -4849,13 +4868,13 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertEqual(
             queue_payload["replay_tape"]["feature_schema_hash"],
-            "feature-schema-frontier",
+            feature_schema_hash,
         )
         self.assertEqual(
-            queue_payload["replay_tape"]["cost_model_hash"], "cost-model-frontier"
+            queue_payload["replay_tape"]["cost_model_hash"], cost_model_hash
         )
         self.assertEqual(
-            queue_payload["replay_tape"]["strategy_family"], "hpairs-frontier-family"
+            queue_payload["replay_tape"]["strategy_family"], strategy_family
         )
         self.assertEqual(
             queue_payload["replay_tape"]["source_query_digest"], source_query_digest
@@ -4903,7 +4922,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertEqual(
             first_entry["reproducibility_metadata"]["feature_schema_hash"],
-            "feature-schema-frontier",
+            feature_schema_hash,
         )
         self.assertEqual(
             first_entry["reproducibility_metadata"]["source_query_digest"],
@@ -4956,7 +4975,7 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             first_entry["exact_replay_handoff_lineage"]["replay_tape"][
                 "cost_model_hash"
             ],
-            "cost-model-frontier",
+            cost_model_hash,
         )
         self.assertFalse(
             first_entry["exact_replay_handoff_lineage"]["promotion_allowed"]
@@ -4995,6 +5014,91 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             first_entry["hpairs_microstructure_prefilter"],
         )
 
+    def test_fast_replay_preview_rejects_replay_tape_cache_identity_mismatch(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "epoch"
+            output_dir.mkdir()
+            tape_path = Path(tmpdir) / "tape.jsonl"
+            args = self._args(output_dir)
+            args.replay_mode = "real"
+            args.full_window_start_date = "2026-02-23"
+            args.full_window_end_date = "2026-02-23"
+            args.symbols = "NVDA,AAPL"
+            args.replay_tape_path = tape_path
+            args.replay_tape_preview_top_k = 2
+            args.replay_tape_dataset_snapshot_ref = "frontier-preview"
+            requested_symbols = runner._candidate_universe_symbols_from_args(args)
+            materialize_signal_tape(
+                rows=[
+                    SignalEnvelope(
+                        event_ts=datetime(2026, 2, 23, 14, 30, tzinfo=timezone.utc),
+                        symbol="NVDA",
+                        timeframe="1Min",
+                        seq=1,
+                        source="ta",
+                        payload={
+                            "price": Decimal("100"),
+                            "spread_bps": Decimal("2"),
+                            "ofi": Decimal("0.20"),
+                            "microbar_volume": Decimal("100000"),
+                        },
+                    ),
+                    SignalEnvelope(
+                        event_ts=datetime(2026, 2, 23, 14, 31, tzinfo=timezone.utc),
+                        symbol="AAPL",
+                        timeframe="1Min",
+                        seq=2,
+                        source="ta",
+                        payload={
+                            "price": Decimal("101"),
+                            "spread_bps": Decimal("2"),
+                            "ofi": Decimal("0.20"),
+                            "microbar_volume": Decimal("100000"),
+                        },
+                    ),
+                ],
+                tape_path=tape_path,
+                dataset_snapshot_ref="frontier-preview",
+                symbols=requested_symbols,
+                start_date=date(2026, 2, 23),
+                end_date=date(2026, 2, 23),
+                source_query_digest=runner._materialized_replay_tape_source_query_digest(
+                    args=args,
+                    symbols=requested_symbols,
+                    start_date=date(2026, 2, 23),
+                    end_date=date(2026, 2, 23),
+                ),
+                feature_schema_hash="stale-feature-schema",
+                cost_model_hash=runner._materialized_replay_tape_cost_model_hash(args),
+                strategy_family=runner._materialized_replay_tape_strategy_family(args),
+            )
+            spec = self._candidate_spec("spec-frontier-0")
+            candidate_selection = {
+                "schema_version": "torghut.whitepaper-autoresearch-selection.v1",
+                "budget": {"selected_count": 1},
+                "selected_candidate_spec_ids": [spec.candidate_spec_id],
+                "rows": [
+                    {
+                        "candidate_spec_id": spec.candidate_spec_id,
+                        "selected_for_replay": True,
+                        "selection_reason": "test",
+                    }
+                ],
+            }
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "replay_tape_cache_identity_mismatch:.*feature_schema_hash",
+            ):
+                runner._apply_fast_replay_preview_narrowing(
+                    args=args,
+                    output_dir=output_dir,
+                    specs=[spec],
+                    candidate_selection=candidate_selection,
+                )
+
     def test_fast_replay_preview_does_not_backfill_lineage_blocked_candidates(
         self,
     ) -> None:
@@ -5013,14 +5117,33 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 )
                 for index in range(3)
             ]
+            args = self._args(output_dir)
+            args.replay_mode = "real"
+            args.full_window_start_date = "2026-02-23"
+            args.full_window_end_date = "2026-02-23"
+            args.symbols = "NVDA"
+            args.replay_tape_path = tape_path
+            args.replay_tape_preview_top_k = 1
+            args.replay_tape_dataset_snapshot_ref = "blocked-preview"
+            requested_symbols = runner._candidate_universe_symbols_from_args(args)
             materialize_signal_tape(
                 rows=rows,
                 tape_path=tape_path,
                 dataset_snapshot_ref="blocked-preview",
-                symbols=("NVDA",),
+                symbols=requested_symbols,
                 start_date=date(2026, 2, 23),
                 end_date=date(2026, 2, 23),
-                source_query_digest=build_source_query_digest({"window": "blocked"}),
+                source_query_digest=runner._materialized_replay_tape_source_query_digest(
+                    args=args,
+                    symbols=requested_symbols,
+                    start_date=date(2026, 2, 23),
+                    end_date=date(2026, 2, 23),
+                ),
+                feature_schema_hash=runner._materialized_replay_tape_feature_schema_hash(
+                    args
+                ),
+                cost_model_hash=runner._materialized_replay_tape_cost_model_hash(args),
+                strategy_family=runner._materialized_replay_tape_strategy_family(args),
             )
             base_spec = self._candidate_spec("spec-lineage-blocked")
             spec = replace(
@@ -5031,13 +5154,6 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                     "universe_symbols": ["NVDA"],
                 },
             )
-            args = self._args(output_dir)
-            args.replay_mode = "real"
-            args.full_window_start_date = "2026-02-23"
-            args.full_window_end_date = "2026-02-23"
-            args.symbols = "NVDA"
-            args.replay_tape_path = tape_path
-            args.replay_tape_preview_top_k = 1
             candidate_selection = {
                 "schema_version": "torghut.whitepaper-autoresearch-selection.v1",
                 "budget": {"selected_count": 1},
@@ -5616,6 +5732,13 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             root = Path(tmpdir)
             output_dir = root / "epoch"
             tape_path = root / "preview-tape.jsonl"
+            args = self._args(output_dir)
+            args.replay_tape_preview_top_k = 1
+            args.full_window_start_date = "2026-02-23"
+            args.full_window_end_date = "2026-02-27"
+            args.symbols = "NVDA"
+            args.replay_tape_dataset_snapshot_ref = "preview-snapshot"
+            requested_symbols = runner._candidate_universe_symbols_from_args(args)
             materialize_signal_tape(
                 rows=[
                     SignalEnvelope(
@@ -5630,10 +5753,20 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 ],
                 tape_path=tape_path,
                 dataset_snapshot_ref="preview-snapshot",
-                symbols=("NVDA",),
+                symbols=requested_symbols,
                 start_date=date(2026, 2, 23),
                 end_date=date(2026, 2, 27),
-                source_query_digest=build_source_query_digest({"query": "preview"}),
+                source_query_digest=runner._materialized_replay_tape_source_query_digest(
+                    args=args,
+                    symbols=requested_symbols,
+                    start_date=date(2026, 2, 23),
+                    end_date=date(2026, 2, 27),
+                ),
+                feature_schema_hash=runner._materialized_replay_tape_feature_schema_hash(
+                    args
+                ),
+                cost_model_hash=runner._materialized_replay_tape_cost_model_hash(args),
+                strategy_family=runner._materialized_replay_tape_strategy_family(args),
             )
             spec = self._candidate_spec("spec-preview-fallback")
             selection = {
@@ -5646,8 +5779,6 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 ],
                 "budget": {"selected_count": 1},
             }
-            args = self._args(output_dir)
-            args.replay_tape_preview_top_k = 1
             with self.assertRaisesRegex(
                 ValueError, "fast_replay_preview_requires_real_replay"
             ):

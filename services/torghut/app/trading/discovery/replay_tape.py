@@ -597,6 +597,15 @@ def validate_tape_freshness(
     end_date: date,
     symbols: Sequence[str] = (),
     allow_stale_tape: bool = False,
+    require_exact_cache_identity: bool = False,
+    expected_dataset_snapshot_ref: str | None = None,
+    expected_source_query_digest: str | None = None,
+    expected_feature_schema_hash: str | None = None,
+    expected_cost_model_hash: str | None = None,
+    expected_strategy_family: str | None = None,
+    expected_replay_cache_key: str | None = None,
+    expected_feature_versions: Mapping[str, str] | None = None,
+    expected_source_table_versions: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     reasons: list[str] = []
     if manifest.start_date > start_date or manifest.end_date < end_date:
@@ -658,6 +667,26 @@ def validate_tape_freshness(
             "symbol_trading_days_missing:" + ",".join(missing_symbol_trading_days)
         )
 
+    cache_identity_reasons = _replay_tape_cache_identity_mismatch_reasons(
+        manifest,
+        start_date=start_date,
+        end_date=end_date,
+        symbols=tuple(sorted(requested_symbols)),
+        require_exact_cache_identity=require_exact_cache_identity,
+        expected_dataset_snapshot_ref=expected_dataset_snapshot_ref,
+        expected_source_query_digest=expected_source_query_digest,
+        expected_feature_schema_hash=expected_feature_schema_hash,
+        expected_cost_model_hash=expected_cost_model_hash,
+        expected_strategy_family=expected_strategy_family,
+        expected_replay_cache_key=expected_replay_cache_key,
+        expected_feature_versions=expected_feature_versions,
+        expected_source_table_versions=expected_source_table_versions,
+    )
+    if cache_identity_reasons:
+        raise ValueError(
+            "replay_tape_cache_identity_mismatch:" + ";".join(cache_identity_reasons)
+        )
+
     if reasons and not allow_stale_tape:
         raise ValueError(f"replay_tape_stale:{';'.join(reasons)}")
     return {
@@ -696,6 +725,125 @@ def validate_tape_freshness(
             missing_symbol_trading_days=missing_symbol_trading_days,
         ),
     }
+
+
+def _replay_tape_cache_identity_mismatch_reasons(
+    manifest: ReplayTapeManifest,
+    *,
+    start_date: date,
+    end_date: date,
+    symbols: Sequence[str],
+    require_exact_cache_identity: bool,
+    expected_dataset_snapshot_ref: str | None,
+    expected_source_query_digest: str | None,
+    expected_feature_schema_hash: str | None,
+    expected_cost_model_hash: str | None,
+    expected_strategy_family: str | None,
+    expected_replay_cache_key: str | None,
+    expected_feature_versions: Mapping[str, str] | None,
+    expected_source_table_versions: Mapping[str, str] | None,
+) -> list[str]:
+    reasons: list[str] = []
+    requested_symbols = _normalize_symbols(symbols)
+
+    if require_exact_cache_identity:
+        diagnostics = manifest.cache_identity_diagnostics()
+        raw_missing_components = diagnostics.get("missing_components", ())
+        missing_component_values: Sequence[Any] = ()
+        if isinstance(raw_missing_components, Sequence) and not isinstance(
+            raw_missing_components, (str, bytes, bytearray)
+        ):
+            missing_component_values = cast(Sequence[Any], raw_missing_components)
+        missing_components = tuple(
+            str(component) for component in missing_component_values if str(component)
+        )
+        if missing_components:
+            reasons.append("missing_components:" + ",".join(sorted(missing_components)))
+        if manifest.start_date != start_date or manifest.end_date != end_date:
+            reasons.append(
+                "date_range:"
+                f"{manifest.start_date.isoformat()}..{manifest.end_date.isoformat()}"
+                f"!={start_date.isoformat()}..{end_date.isoformat()}"
+            )
+        if requested_symbols and tuple(manifest.symbols) != requested_symbols:
+            reasons.append(
+                "symbol_universe:"
+                f"{','.join(manifest.symbols)}!={','.join(requested_symbols)}"
+            )
+        recomputed_cache_key = build_replay_tape_cache_key(
+            dataset_snapshot_ref=manifest.dataset_snapshot_ref,
+            symbols=manifest.symbols,
+            start_date=manifest.start_date,
+            end_date=manifest.end_date,
+            source_query_digest=manifest.source_query_digest,
+            feature_schema_hash=manifest.feature_schema_hash,
+            cost_model_hash=manifest.cost_model_hash,
+            strategy_family=manifest.strategy_family,
+            feature_versions=manifest.feature_versions,
+            source_table_versions=manifest.source_table_versions,
+        )
+        if manifest.replay_cache_key != recomputed_cache_key:
+            reasons.append(
+                f"replay_cache_key:{manifest.replay_cache_key}!={recomputed_cache_key}"
+            )
+
+    def append_string_mismatch(
+        component: str,
+        observed: str,
+        expected: str | None,
+    ) -> None:
+        if expected is None:
+            return
+        expected_value = str(expected or "")
+        if str(observed or "") != expected_value:
+            reasons.append(f"{component}:{observed}!={expected_value}")
+
+    append_string_mismatch(
+        "dataset_snapshot_ref",
+        manifest.dataset_snapshot_ref,
+        expected_dataset_snapshot_ref,
+    )
+    append_string_mismatch(
+        "source_query_digest",
+        manifest.source_query_digest,
+        expected_source_query_digest,
+    )
+    append_string_mismatch(
+        "feature_schema_hash",
+        manifest.feature_schema_hash,
+        expected_feature_schema_hash,
+    )
+    append_string_mismatch(
+        "cost_model_hash",
+        manifest.cost_model_hash,
+        expected_cost_model_hash,
+    )
+    append_string_mismatch(
+        "strategy_family",
+        manifest.strategy_family,
+        expected_strategy_family,
+    )
+    append_string_mismatch(
+        "replay_cache_key",
+        manifest.replay_cache_key,
+        expected_replay_cache_key,
+    )
+
+    if expected_feature_versions is not None:
+        expected_versions = _string_mapping(expected_feature_versions)
+        if dict(manifest.feature_versions) != expected_versions:
+            reasons.append(
+                "feature_versions:"
+                f"{dict(manifest.feature_versions)}!={expected_versions}"
+            )
+    if expected_source_table_versions is not None:
+        expected_table_versions = dict(expected_source_table_versions)
+        if dict(manifest.source_table_versions) != expected_table_versions:
+            reasons.append(
+                "source_table_versions:"
+                f"{dict(manifest.source_table_versions)}!={expected_table_versions}"
+            )
+    return reasons
 
 
 def slice_tape_by_window(
