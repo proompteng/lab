@@ -442,8 +442,7 @@ def _build_bucket(
                     for row in lifecycle_rows
                     if row.event_type in _FILL_EVENTS
                     and (
-                        row.order_feed_lifecycle_source
-                        or not source_lifecycle_present
+                        row.order_feed_lifecycle_source or not source_lifecycle_present
                     )
                 ],
                 usable_fills=all_usable_fills,
@@ -456,7 +455,7 @@ def _build_bucket(
                 lineage_hash_counter=lineage_hash_counter,
             )
         )
-        blockers.extend(_source_materialization_blockers(lifecycle_rows))
+    blockers.extend(_source_materialization_blockers(lifecycle_rows))
 
     unique_blockers = _dedupe(blockers)
     post_cost_expectancy_bps: Decimal | None = None
@@ -817,7 +816,7 @@ def _normalize_fill_row(
     )
     source_offset_present = _source_offset_present(row)
     source_materialization = _coerce_text(
-        _row_value(row, "source_materialization", "source")
+        _row_value(row, "source_materialization", "authority_class", "source")
     )
     order_id = _coerce_text(
         _row_value(
@@ -872,7 +871,10 @@ def _normalize_fill_row(
             blockers.append("side_missing_or_invalid")
         if filled_qty is None:
             blockers.append("filled_qty_missing_or_non_positive")
-        if order_feed_source_fill and fill_quantity_basis not in _DELTA_FILL_QUANTITY_BASES:
+        if (
+            order_feed_source_fill
+            and fill_quantity_basis not in _DELTA_FILL_QUANTITY_BASES
+        ):
             blockers.append("fill_quantity_delta_basis_missing")
         elif (
             order_feed_source_fill
@@ -1095,7 +1097,9 @@ def _source_offset_present(row: RuntimeLedgerFill | Mapping[str, object]) -> boo
 def _is_non_promotion_runtime_source_row(
     row: RuntimeLedgerFill | Mapping[str, object],
 ) -> bool:
-    promotion_authority = _row_value(row, "promotion_authority", "promotion_authority_eligible")
+    promotion_authority = _row_value(
+        row, "promotion_authority", "promotion_authority_eligible"
+    )
     if promotion_authority is False:
         return True
     for key in (
@@ -1207,7 +1211,8 @@ def _tigerbeetle_journal_blockers(
     )
     if (
         status is not None
-        and status.lower().replace("-", "_") not in _TIGERBEETLE_JOURNAL_SUCCESS_STATUSES
+        and status.lower().replace("-", "_")
+        not in _TIGERBEETLE_JOURNAL_SUCCESS_STATUSES
     ):
         blockers.append(_TIGERBEETLE_EXECUTION_COST_JOURNAL_FAILURE_BLOCKER)
     return _dedupe(blockers)

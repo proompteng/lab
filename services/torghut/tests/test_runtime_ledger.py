@@ -780,7 +780,9 @@ def test_order_feed_source_fill_requires_delta_basis() -> None:
     assert "runtime_fills_missing" in bucket.blockers
 
 
-def test_order_feed_lifecycle_fill_without_execution_economics_is_not_pnl_proof() -> None:
+def test_order_feed_lifecycle_fill_without_execution_economics_is_not_pnl_proof() -> (
+    None
+):
     bucket = build_runtime_ledger_buckets(
         [
             {
@@ -825,7 +827,9 @@ def test_order_feed_lifecycle_fill_without_execution_economics_is_not_pnl_proof(
     assert "explicit_cost_missing" not in bucket.blockers
 
 
-def test_execution_economics_with_linked_order_feed_lifecycle_satisfies_runtime_inputs() -> None:
+def test_execution_economics_with_linked_order_feed_lifecycle_satisfies_runtime_inputs() -> (
+    None
+):
     bucket = build_runtime_ledger_buckets(
         [
             {
@@ -1418,6 +1422,13 @@ def test_order_feed_source_fill_accepts_authority_class_marker() -> None:
                 "event_type": "fill",
                 "executed_at": _ts(1),
                 "authority_class": "source_execution_lifecycle_materialized_runtime_ledger",
+                "execution_order_event_id": "event-buy",
+                "execution_id": "execution-buy",
+                "trade_decision_id": "decision-buy",
+                "source_window_id": "window-buy",
+                "source_topic": "alpaca.trade_updates",
+                "source_partition": 0,
+                "source_offset": 7,
                 "account_label": "paper",
                 "strategy_id": "strategy-1",
                 "symbol": "NVDA",
@@ -1433,6 +1444,13 @@ def test_order_feed_source_fill_accepts_authority_class_marker() -> None:
                 "event_type": "fill",
                 "executed_at": _ts(2),
                 "authority_class": "source_execution_lifecycle_materialized_runtime_ledger",
+                "execution_order_event_id": "event-sell",
+                "execution_id": "execution-sell",
+                "trade_decision_id": "decision-sell",
+                "source_window_id": "window-sell",
+                "source_topic": "alpaca.trade_updates",
+                "source_partition": 0,
+                "source_offset": 8,
                 "account_label": "paper",
                 "strategy_id": "strategy-1",
                 "symbol": "NVDA",
@@ -1450,6 +1468,54 @@ def test_order_feed_source_fill_accepts_authority_class_marker() -> None:
     assert bucket.fill_count == 2
     assert bucket.closed_trade_count == 1
     assert bucket.filled_notional == Decimal("201")
+
+
+def test_promotion_authority_class_requires_source_refs_without_lifecycle_gate() -> (
+    None
+):
+    bucket = _bucket(
+        [
+            {
+                "event_type": "fill",
+                "executed_at": _ts(1),
+                "authority_class": "source_execution_lifecycle_materialized_runtime_ledger",
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "symbol": "NVDA",
+                "side": "buy",
+                "filled_qty": "1",
+                "filled_qty_delta": "1",
+                "fill_quantity_basis": "cumulative_to_delta",
+                "avg_fill_price": "100",
+                "cost_amount": "0",
+                "cost_basis": "broker_reported_zero_cost",
+            },
+            {
+                "event_type": "fill",
+                "executed_at": _ts(2),
+                "authority_class": "source_execution_lifecycle_materialized_runtime_ledger",
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "symbol": "NVDA",
+                "side": "sell",
+                "filled_qty": "1",
+                "filled_qty_delta": "1",
+                "fill_quantity_basis": "cumulative_to_delta",
+                "avg_fill_price": "101",
+                "cost_amount": "0",
+                "cost_basis": "broker_reported_zero_cost",
+            },
+        ]
+    )
+
+    assert bucket.fill_count == 2
+    assert bucket.closed_trade_count == 1
+    assert bucket.post_cost_expectancy_bps is None
+    assert "runtime_ledger_execution_order_event_refs_missing" in bucket.blockers
+    assert "runtime_ledger_trade_decision_refs_missing" in bucket.blockers
+    assert "runtime_ledger_execution_refs_missing" in bucket.blockers
+    assert "runtime_ledger_source_window_ids_missing" in bucket.blockers
+    assert "runtime_ledger_source_offsets_missing" in bucket.blockers
 
 
 def test_fill_quantity_basis_aliases_are_normalized() -> None:
