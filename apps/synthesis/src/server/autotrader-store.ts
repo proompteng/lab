@@ -627,7 +627,7 @@ class InMemoryAutotraderStore implements AutotraderStore {
       status: this.statuses.get(sessionId) ?? null,
       events: [...this.events.values()]
         .filter((event) => event.sessionId === sessionId)
-        .sort((left, right) => left.seq - right.seq),
+        .sort((left, right) => Date.parse(left.occurredAt) - Date.parse(right.occurredAt) || left.seq - right.seq),
       tradeTickets: sessionTickets,
       riskChecks: [...this.riskChecks.values()].filter((riskCheck) => riskCheck.sessionId === sessionId),
       orders: [...this.orders.values()].filter((order) => order.sessionId === sessionId),
@@ -1537,7 +1537,10 @@ class PostgresAutotraderStore implements AutotraderStore {
       exampleResult,
     ] = await Promise.all([
       this.pool.query<StatusRow>(`SELECT * FROM autotrader.status WHERE session_id = $1`, [sessionId]),
-      this.pool.query<EventRow>(`SELECT * FROM autotrader.events WHERE session_id = $1 ORDER BY seq ASC`, [sessionId]),
+      this.pool.query<EventRow>(
+        `SELECT * FROM autotrader.events WHERE session_id = $1 ORDER BY occurred_at ASC, seq ASC`,
+        [sessionId],
+      ),
       this.pool.query<TicketRow>(
         `SELECT * FROM autotrader.trade_tickets WHERE session_id = $1 ORDER BY created_at ASC`,
         [sessionId],

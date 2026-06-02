@@ -416,11 +416,26 @@ describe('synthesis REST auth', () => {
         body: JSON.stringify({
           sessionId,
           seq: 3,
+          occurredAt: '2026-05-29T15:00:00Z',
           eventType: 'no_trade_decision',
           symbol: 'AMD',
           setupType: 'vwap_reclaim',
           setupGrade: 'C',
           payload: { reason: 'wide spread' },
+        }),
+      }),
+    )
+    await handleAutotraderAppendEvent(
+      new Request('http://synthesis.test/api/autotrader/events', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          sessionId,
+          seq: 100,
+          occurredAt: '2026-05-29T13:30:00Z',
+          eventType: 'protective_preflight_started',
+          severity: 'info',
+          payload: { reason: 'preflight helper reserved high sequence numbers' },
         }),
       }),
     )
@@ -503,7 +518,10 @@ describe('synthesis REST auth', () => {
     expect(detailPayload.session.closingEquity).toBe('38025')
     expect(detailPayload.status.phase).toBe('no_trade')
     expect(detailPayload.status.currentAction).toContain('standing down')
-    expect(detailPayload.events[0].eventType).toBe('no_trade_decision')
+    expect(detailPayload.events.map((event: { eventType: string }) => event.eventType)).toEqual([
+      'protective_preflight_started',
+      'no_trade_decision',
+    ])
     expect(detailPayload.tradeTickets[0].noTradeReason).toBe('C setup blocked')
     expect(detailPayload.setupExamples[0]).toMatchObject({
       ticketId: ticketPayload.ticket.id,
