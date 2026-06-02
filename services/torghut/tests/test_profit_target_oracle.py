@@ -1334,7 +1334,9 @@ class TestProfitTargetOracle(TestCase):
         self.assertIn("portfolio_post_cost_net_pnl_basis_failed", result["blockers"])
         self.assertIn("portfolio_post_cost_net_pnl_source_failed", result["blockers"])
 
-    def test_profit_target_oracle_accepts_runtime_ledger_aliases(self) -> None:
+    def test_profit_target_oracle_rejects_runtime_ledger_artifact_aliases(
+        self,
+    ) -> None:
         scorecard = {
             key: value
             for key, value in _passing_scorecard().items()
@@ -1353,7 +1355,10 @@ class TestProfitTargetOracle(TestCase):
             target_net_pnl_per_day=Decimal("500"),
         )
 
-        self.assertTrue(result["passed"])
+        self.assertFalse(result["passed"])
+        self.assertIn("exact_replay_ledger_artifact_present_failed", result["blockers"])
+        self.assertIn("exact_replay_ledger_artifact_row_count_failed", result["blockers"])
+        self.assertIn("exact_replay_ledger_artifact_fill_count_failed", result["blockers"])
 
     def test_profit_target_oracle_rejects_capital_unsafe_replay(self) -> None:
         result = evaluate_profit_target_oracle(
