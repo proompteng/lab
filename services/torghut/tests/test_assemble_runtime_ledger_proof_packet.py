@@ -369,7 +369,7 @@ def _runtime_import(
         "promotion_allowed": authoritative,
         "runtime_observation": {
             "authoritative": authoritative,
-            "authority_reason": "runtime_ledger_profit_proof_present"
+            "authority_reason": "runtime_ledger_profit_proof"
             if authoritative
             else "runtime_without_runtime_ledger_profit_proof",
             "runtime_ledger_profit_proof_present": authoritative,
@@ -2997,6 +2997,42 @@ class TestRuntimeLedgerProofPacket(TestCase):
         self.assertIn(
             "runtime_window_import_runtime_ledger_materialization_missing",
             result["promotion_authority"]["blocking_reasons"],
+        )
+
+    def test_packet_does_not_count_authority_reason_as_profit_proof(self) -> None:
+        runtime_import = _runtime_import(authoritative=False)
+        observation = runtime_import["imports"][0]["summary"]["runtime_observation"]
+        assert isinstance(observation, dict)
+        observation.update(
+            {
+                "authoritative": True,
+                "authority_reason": "runtime_ledger_profit_proof",
+                "runtime_ledger_profit_proof_present": False,
+                "runtime_ledger_tca_profit_proof_count": 0,
+                "runtime_ledger_source_bucket_profit_proof_count": 0,
+                "runtime_ledger_durable_bucket_profit_proof_count": 0,
+            }
+        )
+
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            proof_mode="authority",
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=runtime_import,
+            completion_status=_completion(),
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        materialization = result["evidence"]["runtime_window_import"]["materialization"]
+        self.assertFalse(result["ok"])
+        self.assertEqual(materialization["runtime_ledger_profit_proof_count"], 0)
+        self.assertEqual(
+            materialization["authoritative_runtime_ledger_profit_proof_count"],
+            0,
+        )
+        self.assertIn(
+            "runtime_window_import_target_profit_proof_missing",
+            materialization["unmaterialized_targets"][0]["blockers"],
         )
 
     def test_packet_blocks_runtime_import_without_materialized_runtime_ledger(

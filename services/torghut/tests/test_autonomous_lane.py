@@ -143,7 +143,7 @@ class TestAutonomousLane(TestCase):
         )
         self.assertFalse(qualification["qualified_runtime_observation"])
 
-    def test_runtime_observation_evidence_keeps_simulation_replay_only_with_ledger_profit_proof(
+    def test_runtime_observation_evidence_keeps_artifact_counts_diagnostic_only(
         self,
     ) -> None:
         provenance, maturity, capital_stage, qualification = (
@@ -168,7 +168,7 @@ class TestAutonomousLane(TestCase):
         self.assertEqual(capital_stage, "shadow")
         self.assertEqual(
             qualification["runtime_observation_has_runtime_ledger_profit_proof"],
-            True,
+            False,
         )
         self.assertFalse(qualification["qualified_runtime_observation"])
         self.assertEqual(

@@ -1538,10 +1538,6 @@ def _runtime_import_materialization_summary(
         "runtime_ledger_durable_bucket_profit_proof_count": 0,
         "runtime_ledger_artifact_tca_row_count": 0,
     }
-    profit_proof_authority_reasons = {
-        "runtime_ledger_profit_proof",
-        "runtime_ledger_profit_proof_present",
-    }
     for item in items:
         summary = _mapping(item.get("summary"))
         observation = _mapping(summary.get("runtime_observation"))
@@ -1571,14 +1567,8 @@ def _runtime_import_materialization_summary(
         durable_profit_proof_count = _int(
             observation.get("runtime_ledger_durable_bucket_profit_proof_count")
         )
-        authority_reason_implies_profit_proof = (
-            authority_reason in profit_proof_authority_reasons
-        )
         profit_proof_count = max(
-            1
-            if _bool(observation.get("runtime_ledger_profit_proof_present"))
-            or authority_reason_implies_profit_proof
-            else 0,
+            1 if _bool(observation.get("runtime_ledger_profit_proof_present")) else 0,
             tca_profit_proof_count,
             source_profit_proof_count,
             durable_profit_proof_count,

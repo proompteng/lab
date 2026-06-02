@@ -3502,7 +3502,7 @@ class TestRuntimeWindowImport(TestCase):
                 buckets=buckets,
                 runtime_observation_payload={
                     "runtime_ledger_profit_proof_present": True,
-                    "promotion_authority": "runtime_ledger_profit_proof_present",
+                    "promotion_authority": "runtime_ledger",
                 },
             )
             session.commit()
