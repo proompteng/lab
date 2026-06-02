@@ -32,8 +32,8 @@ data:
     1. Run `/usr/bin/env bash /root/bootstrap-analysis-daytrading.sh`. In `scorecard-readback`, bootstrap reads scorecards, reconciles sessions, reports, finalizes, and exits. Other modes read bootstrap docs and self-test helpers.
     2. Preflight Alpaca account/config/clock/tools/positions/orders and Synthesis tools. If account/trading is blocked, `daytrading_buying_power <= 0`, or scanner input says `intraday_equity_entry.status=blocked`, record Synthesis risk/status, skip new entries and smoke orders, and monitor read-only until state changes or close. Exits/protection stay allowed.
     3. Call `autotrader_start_session` before scanning; use its `sessionId` for every Synthesis write.
-    4. Each cycle: run `python3 /workspace/lab/scripts/autotrader/live_scan_cycle.py --account-gate-only`. If `skipFullScan=true`, record monitor status and skip tickets. Otherwise run `python3 /workspace/lab/scripts/autotrader/live_scan_cycle.py --session-id "$sessionId" --record-tickets`; helper reads scorecards, scans, records tickets, and returns ticket IDs.
-    5. Do not recreate helper tickets. Use returned `ticketId` in risk/order writes; trust helper `noTradeReason` for blocked tickets.
+    4. Each cycle: run `python3 /workspace/lab/scripts/autotrader/live_scan_cycle.py --session-id "$sessionId" --record-tickets --respect-account-gate`; helper records gate status/risk, scans only when eligible, records tickets, and returns one outcome.
+    5. If helper returns `skipFullScan=true`, do not scan, recreate tickets, or smoke orders. Otherwise use returned `ticketId` in risk/order writes and trust helper `noTradeReason`.
     6. Before any strategy entry, run `python3 /workspace/lab/scripts/autotrader/strategy_order_guard.py`; if `allowed=false`, record and do not submit.
     7. Before Alpaca mutation, record planned risk/order in Synthesis and use an AgentRun-prefixed deterministic `client_order_id` when supported.
     8. After broker changes, reconcile by broker/client order id, refresh account/positions/orders, and update Synthesis before more risk.

@@ -256,6 +256,98 @@ def summarize_account_gate(
     }
 
 
+def fetch_broker_state(alpaca: AlpacaRestClient) -> dict[str, Any]:
+    return {
+        "account": alpaca.trading_get("/v2/account"),
+        "positions": alpaca.trading_get("/v2/positions"),
+        "orders": alpaca.trading_get("/v2/orders", {"status": "open", "nested": "true"}),
+    }
+
+
+def summarize_broker_state(raw_broker_state: dict[str, Any]) -> dict[str, Any]:
+    account = raw_broker_state.get("account")
+    if not isinstance(account, dict):
+        raise ValueError("broker account state must be an object")
+    return summarize_account_gate(
+        raw_account=account,
+        raw_positions=raw_broker_state.get("positions"),
+        raw_orders=raw_broker_state.get("orders"),
+    )
+
+
+def account_gate_blocker(gate: dict[str, Any]) -> str | None:
+    account = gate.get("account")
+    eligibility = account.get("intraday_equity_entry") if isinstance(account, dict) else None
+    reasons = eligibility.get("reasons") if isinstance(eligibility, dict) else None
+    if isinstance(reasons, list) and reasons:
+        return ";".join(str(reason) for reason in reasons if str(reason))
+    action = optional_text(gate.get("action"))
+    if action and action != "scan":
+        return action
+    return None
+
+
+def account_gate_status_phase(gate: dict[str, Any]) -> str:
+    action = gate.get("action")
+    if action == "scan":
+        return "scan"
+    if action == "manage_existing_broker_state":
+        return "manage"
+    return "idle"
+
+
+def account_gate_current_action(gate: dict[str, Any]) -> str:
+    action = gate.get("action")
+    if action == "scan":
+        return "account gate passed; scanning live candidates"
+    if action == "manage_existing_broker_state":
+        return "account gate blocked new entries; managing existing broker state"
+    return "account gate blocked new entries; monitoring only"
+
+
+def record_account_gate(
+    *,
+    synthesis: SynthesisClient,
+    session_id: str,
+    cycle: int,
+    gate: dict[str, Any],
+) -> dict[str, Any]:
+    if not session_id.strip():
+        raise ValueError("session id is required when recording account gate")
+    account = gate.get("account") if isinstance(gate.get("account"), dict) else {}
+    blocker = account_gate_blocker(gate)
+    risk = synthesis.post(
+        "/api/autotrader/risk-checks",
+        {
+            "sessionId": session_id,
+            "idempotencyKey": f"account-gate-cycle-{cycle}",
+            "checkType": "intraday_equity_entry",
+            "passed": gate.get("action") == "scan",
+            "reason": blocker or "account_gate_passed",
+            "payload": gate,
+        },
+    )
+    status = synthesis.post(
+        "/api/autotrader/status",
+        {
+            "sessionId": session_id,
+            "cycle": cycle,
+            "phase": account_gate_status_phase(gate),
+            "equity": numeric_text(account.get("equity")),
+            "buyingPower": numeric_text(account.get("buying_power")),
+            "daytradeBuyingPower": numeric_text(account.get("daytrading_buying_power")),
+            "currentAction": account_gate_current_action(gate),
+            "blocker": blocker,
+            "payload": {"accountGate": gate},
+        },
+    )
+    return {
+        "statusId": status.get("status", {}).get("sessionId") if isinstance(status, dict) else None,
+        "riskCheckId": risk.get("riskCheck", {}).get("id") if isinstance(risk, dict) else None,
+        "blocker": blocker,
+    }
+
+
 def format_latest_quotes(payload: dict[str, Any], symbols: list[str]) -> dict[str, Any]:
     raw_quotes = payload.get("quotes") if isinstance(payload, dict) else None
     if not isinstance(raw_quotes, dict):
@@ -343,10 +435,15 @@ def fetch_scan_inputs(
     end: str,
     feed: str,
     scorecard_limit: int,
+    broker_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    account = format_account(alpaca.trading_get("/v2/account"))
-    positions = alpaca.trading_get("/v2/positions")
-    orders = alpaca.trading_get("/v2/orders", {"status": "open", "nested": "true"})
+    raw_broker_state = broker_state or fetch_broker_state(alpaca)
+    raw_account = raw_broker_state.get("account")
+    if not isinstance(raw_account, dict):
+        raise ValueError("broker account state must be an object")
+    positions = raw_broker_state.get("positions")
+    orders = raw_broker_state.get("orders")
+    account = format_account(raw_account)
     bars = alpaca.data_get(
         "/stocks/bars",
         {
@@ -578,6 +675,36 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
     start = args.start or market_open_start(now)
     alpaca = AlpacaRestClient(timeout_seconds=args.timeout_seconds)
     synthesis = SynthesisClient(base_url=args.synthesis_base_url, timeout_seconds=args.timeout_seconds)
+    broker_state: dict[str, Any] | None = None
+    gate: dict[str, Any] | None = None
+    recorded_account_gate: dict[str, Any] | None = None
+    if args.respect_account_gate:
+        broker_state = fetch_broker_state(alpaca)
+        gate = summarize_broker_state(broker_state)
+        if args.session_id:
+            recorded_account_gate = record_account_gate(
+                synthesis=synthesis,
+                session_id=args.session_id,
+                cycle=cycle,
+                gate=gate,
+            )
+        if gate.get("skipFullScan"):
+            removed_cycle_dirs = prune_old_cycle_dirs(work_dir, args.retain_cycles)
+            return {
+                "ok": True,
+                "mode": "cycle",
+                "cycle": cycle,
+                "cycleDir": str(cycle_dir),
+                "retainedCycles": args.retain_cycles,
+                "removedCycleDirs": removed_cycle_dirs,
+                "accountGate": gate,
+                "recordedAccountGate": recorded_account_gate,
+                "recordedTickets": [],
+                "resultCount": 0,
+                "topResults": [],
+                "action": gate.get("action"),
+                "skipFullScan": True,
+            }
     inputs = fetch_scan_inputs(
         alpaca=alpaca,
         synthesis=synthesis,
@@ -586,6 +713,7 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
         end=end,
         feed=args.feed,
         scorecard_limit=args.scorecard_limit,
+        broker_state=broker_state,
     )
     for name, payload in inputs.items():
         write_json(cycle_dir / name, payload)
@@ -613,16 +741,17 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
             scan=scan,
             limit=args.max_recorded_tickets,
         )
+    if gate is not None:
+        summary["accountGate"] = gate
+        summary["recordedAccountGate"] = recorded_account_gate
+        summary["action"] = gate.get("action")
+        summary["skipFullScan"] = False
     return summary
 
 
 def run_account_gate(args: argparse.Namespace) -> dict[str, Any]:
     alpaca = AlpacaRestClient(timeout_seconds=args.timeout_seconds)
-    return summarize_account_gate(
-        raw_account=alpaca.trading_get("/v2/account"),
-        raw_positions=alpaca.trading_get("/v2/positions"),
-        raw_orders=alpaca.trading_get("/v2/orders", {"status": "open", "nested": "true"}),
-    )
+    return summarize_broker_state(fetch_broker_state(alpaca))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -641,6 +770,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--retain-cycles", type=int, default=5)
     parser.add_argument("--session-id")
     parser.add_argument("--record-tickets", action="store_true")
+    parser.add_argument("--respect-account-gate", action="store_true")
     parser.add_argument("--max-recorded-tickets", type=int, default=10)
     parser.add_argument("--self-test", action="store_true")
     parser.add_argument("--account-gate-only", action="store_true")
@@ -653,6 +783,8 @@ def main(argv: list[str] | None = None) -> int:
         payload = {
             "ok": True,
             "accountGateOnly": True,
+            "recordTickets": True,
+            "respectAccountGate": True,
             "defaultWatchlist": list(DEFAULT_WATCHLIST),
             "stockAnalysisCli": stock_analysis_cli_path(args.stock_analysis_cli),
         }
