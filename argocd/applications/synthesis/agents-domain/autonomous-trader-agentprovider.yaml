@@ -82,11 +82,13 @@ spec:
     ANALYSIS_REPO_DIR: /workspace/analysis
     ANALYSIS_REPO_URL: https://github.com/gregkonush/analysis.git
     ANALYSIS_REQUIRED_COMMIT: 56be940b69bf1a56578040eda9bf2e3699c5220e
+    ANALYSIS_CONTEXT_PATH: /tmp/autonomous-trader-work/analysis-context.json
     AUTONOMOUS_TRADER_ARTIFACT_DIR: /workspace/.agentrun/autonomous-trader
     AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED: "{{parameters.brokerMutationEnabled}}"
     AUTONOMOUS_TRADER_MODE: "{{parameters.mode}}"
     AUTONOMOUS_TRADER_SYNTHESIS_SESSION_MODE: "{{parameters.synthesisSessionMode}}"
     AUTONOMOUS_TRADER_TARGET_EQUITY_USD: "{{parameters.targetEquityUsd}}"
+    AUTONOMOUS_TRADER_WORK_DIR: /tmp/autonomous-trader-work
     CODEX_CONFIG: /root/.codex/config.toml
     CODEX_LOG_LEVEL: info
     CODEX_MARKET_CONTEXT_ATTEMPT_TIMEOUT_SECONDS: "900"
@@ -151,12 +153,16 @@ spec:
         set -euo pipefail
 
         artifact_dir="${AUTONOMOUS_TRADER_ARTIFACT_DIR:-/workspace/.agentrun/autonomous-trader}"
+        work_dir="${AUTONOMOUS_TRADER_WORK_DIR:-/tmp/autonomous-trader-work}"
         analysis_dir="${ANALYSIS_REPO_DIR:-/workspace/analysis}"
         analysis_repo_url="${ANALYSIS_REPO_URL:-https://github.com/gregkonush/analysis.git}"
         required_commit="${ANALYSIS_REQUIRED_COMMIT:-56be940b69bf1a56578040eda9bf2e3699c5220e}"
+        analysis_context_path="${ANALYSIS_CONTEXT_PATH:-${work_dir}/analysis-context.json}"
+        analysis_bootstrap_status_path="${ANALYSIS_BOOTSTRAP_STATUS_PATH:-${work_dir}/analysis-bootstrap.json}"
         python_bin="${PYTHON_BIN:-python3}"
 
         mkdir -p "${artifact_dir}"
+        mkdir -p "${work_dir}"
         bootstrap_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
         if [ ! -e "${artifact_dir}/report.md" ]; then
@@ -202,29 +208,29 @@ spec:
         analysis_head="$(git -C "${analysis_dir}" rev-parse HEAD)"
         if ! git -C "${analysis_dir}" merge-base --is-ancestor "${required_commit}" HEAD; then
           printf '{"ok":false,"reason":"analysis_repo_stale","analysis_head":"%s","required_commit":"%s"}\n' \
-            "${analysis_head}" "${required_commit}" > "${artifact_dir}/analysis-bootstrap.json"
+            "${analysis_head}" "${required_commit}" > "${analysis_bootstrap_status_path}"
           exit 42
         fi
 
         analysis_python="${python_bin}"
         install_method="pythonpath"
-        rm -rf "${artifact_dir}/analysis-venv"
+        rm -rf "${work_dir}/analysis-venv"
         if PYTHONPATH="${analysis_dir}/src" "${python_bin}" -m stock_analysis daytrading-import-smoke; then
           install_method="preinstalled-pythonpath"
         elif command -v uv >/dev/null 2>&1; then
-          if uv venv --seed --python "${python_bin}" "${artifact_dir}/analysis-venv"; then
-            uv pip install --python "${artifact_dir}/analysis-venv/bin/python" -e "${analysis_dir}[daytrading]"
-            analysis_python="${artifact_dir}/analysis-venv/bin/python"
+          if uv venv --seed --python "${python_bin}" "${work_dir}/analysis-venv"; then
+            uv pip install --python "${work_dir}/analysis-venv/bin/python" -e "${analysis_dir}[daytrading]"
+            analysis_python="${work_dir}/analysis-venv/bin/python"
             install_method="uv-venv"
           else
             printf 'analysis bootstrap warning: uv venv unavailable, trying python venv\n' >&2
-            rm -rf "${artifact_dir}/analysis-venv"
+            rm -rf "${work_dir}/analysis-venv"
           fi
         fi
-        if [ "${install_method}" = "pythonpath" ] && "${python_bin}" -m venv "${artifact_dir}/analysis-venv"; then
-          "${artifact_dir}/analysis-venv/bin/python" -m pip install --upgrade pip
-          "${artifact_dir}/analysis-venv/bin/python" -m pip install -e "${analysis_dir}[daytrading]"
-          analysis_python="${artifact_dir}/analysis-venv/bin/python"
+        if [ "${install_method}" = "pythonpath" ] && "${python_bin}" -m venv "${work_dir}/analysis-venv"; then
+          "${work_dir}/analysis-venv/bin/python" -m pip install --upgrade pip
+          "${work_dir}/analysis-venv/bin/python" -m pip install -e "${analysis_dir}[daytrading]"
+          analysis_python="${work_dir}/analysis-venv/bin/python"
           install_method="python-venv"
         elif [ "${install_method}" = "pythonpath" ]; then
           printf 'analysis bootstrap warning: venv unavailable, continuing with PYTHONPATH source checkout\n' >&2
@@ -252,13 +258,13 @@ spec:
         "${analysis_cli}" daytrading-import-smoke
         "${analysis_cli}" daytrading-context \
           --repo-root "${analysis_dir}" \
-          --output "${artifact_dir}/analysis-context.json"
+          --output "${analysis_context_path}"
         "${analysis_cli}" daytrading-validate-context \
-          "${artifact_dir}/analysis-context.json"
+          "${analysis_context_path}"
 
         printf '{"ok":true,"analysis_head":"%s","required_commit":"%s","context_path":"%s","analysis_cli":"%s","install_method":"%s","started_at":"%s","finished_at":"%s"}\n' \
-          "${analysis_head}" "${required_commit}" "${artifact_dir}/analysis-context.json" "${analysis_cli}" "${install_method}" "${bootstrap_started_at}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-          > "${artifact_dir}/analysis-bootstrap.json"
+          "${analysis_head}" "${required_commit}" "${analysis_context_path}" "${analysis_cli}" "${install_method}" "${bootstrap_started_at}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+          > "${analysis_bootstrap_status_path}"
     - path: /root/alpaca-mcp-stdio-bridge.py
       content: |-
         import json

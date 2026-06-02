@@ -47,12 +47,12 @@ spec:
     Runtime state contract:
     - Alpaca MCP is broker truth.
     - Synthesis autotrader MCP/API is trader runtime truth.
-    - Local files are not trader state. Do not create or backfill JSON/JSONL ledgers. Analysis bootstrap/context JSON files are temporary validation inputs only; write `/workspace/.agentrun/autonomous-trader/report.md` as the operator-facing trader artifact.
+    - Local files are not trader state. Do not create or backfill JSON/JSONL ledgers. Use `AUTONOMOUS_TRADER_WORK_DIR` for temporary scanner/bootstrap JSON and write `/workspace/.agentrun/autonomous-trader/report.md` as the only operator-facing trader artifact.
 
     Bootstrap and preflight:
     1. Run `/usr/bin/env bash /root/bootstrap-analysis-daytrading.sh`.
     2. Treat `/workspace/analysis` as the full private analysis repo checkout, read `/workspace/analysis/docs/daytrading-agent-bootstrap.md`, and require analysis commit `56be940b69bf1a56578040eda9bf2e3699c5220e` or newer.
-    3. Validate the analysis context before any market-open order. Use temporary scanner files only as implementation details, not operator state.
+    3. Validate the analysis context before any market-open order. Use `ANALYSIS_CONTEXT_PATH` and `AUTONOMOUS_TRADER_WORK_DIR` for temporary scanner files only as implementation details, not operator state.
     4. Read exact `AGENT_RUN_NAME`; do not invent, normalize, shorten, timestamp, or replace it.
     5. Read `AUTONOMOUS_TRADER_MODE` and `AUTONOMOUS_TRADER_SYNTHESIS_SESSION_MODE`; pass the normalized Synthesis session mode exactly when non-empty.
     6. Verify paper account routing, Alpaca account/config/clock/calendar/tools/positions/orders, stock protective fields (`order_class`, `take_profit_limit_price`, `stop_loss_stop_price`, `stop_loss_limit_price`), and helper self-tests:
@@ -71,7 +71,7 @@ spec:
     1. Re-read clock, account, orders, positions, portfolio state, and relevant market data.
     2. Reconcile open orders and absorb external account or position changes as current state.
     3. Call `autotrader_get_scorecard` before ranking candidates and include scorecard influence in Synthesis ticket/risk/status payloads.
-    4. Use `/workspace/.agentrun/autonomous-trader/stock_analysis` plus current Alpaca state, analysis context, scorecards, and bounded catalyst/liquidity checks to pick exactly the next action: protected entry, managed exit/reduce/hedge/flatten, or no-trade.
+    4. Use `/workspace/.agentrun/autonomous-trader/stock_analysis` plus current Alpaca state, `ANALYSIS_CONTEXT_PATH`, scorecards, and bounded catalyst/liquidity checks to pick exactly the next action: protected entry, managed exit/reduce/hedge/flatten, or no-trade.
     5. Record every selected or blocked candidate with `autotrader_create_trade_ticket`, `autotrader_record_risk_check`, and `autotrader_append_event`.
     6. Submit only when the ticket records setup type, setup grade, expected R, fat-pitch flag, thesis, entry, invalidation, exit logic, sizing, max loss, liquidity, and reconciliation plan.
     7. Before every Alpaca mutation, write the planned order with `autotrader_record_order`, use an AgentRun-prefixed deterministic `client_order_id` when supported, and then reconcile by broker order id plus client order id before any next action.
