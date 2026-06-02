@@ -66,7 +66,7 @@ def _run_with_timeout(
         return cast(_T, value)
     if isinstance(value, BaseException):
         raise value
-    raise RuntimeError(f"tigerbeetle_{operation_name}_failed")
+    raise RuntimeError(f"tigerbeetle_{operation_name}_failed")  # pragma: no cover
 
 
 @dataclass(frozen=True)
