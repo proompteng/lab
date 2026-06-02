@@ -41,6 +41,7 @@ from ..runtime_decision_authority import (
     normalize_source_decision_mode,
     source_decision_mode_is_profit_proof_eligible,
 )
+from ..runtime_strategy_resolution import strategy_names_from_strategy_id
 from ..session_context import regular_session_open_utc_for
 from ..simple_risk import (
     position_qty_for_symbol,
@@ -198,7 +199,8 @@ def _target_plan_lineage(
             continue
         candidate_id = _safe_text(target.get("candidate_id"))
         hypothesis_id = _safe_text(target.get("hypothesis_id"))
-        strategy_name = _safe_text(target.get("strategy_name"))
+        target_strategy_names = _target_lineage_strategy_names(target)
+        strategy_name = target_strategy_names[0] if target_strategy_names else None
         item = {
             key: value
             for key, value in {
@@ -214,14 +216,29 @@ def _target_plan_lineage(
             candidate_ids.append(candidate_id)
         if hypothesis_id and hypothesis_id not in hypothesis_ids:
             hypothesis_ids.append(hypothesis_id)
-        if strategy_name and strategy_name not in strategy_names:
-            strategy_names.append(strategy_name)
+        for target_strategy_name in target_strategy_names:
+            if target_strategy_name not in strategy_names:
+                strategy_names.append(target_strategy_name)
     return {
         "paper_route_probe_lineage_targets": lineage_targets,
         "source_candidate_ids": candidate_ids,
         "source_hypothesis_ids": hypothesis_ids,
         "source_strategy_names": strategy_names,
     }
+
+
+def _target_lineage_strategy_names(target: Mapping[str, Any]) -> list[str]:
+    names: list[str] = []
+    for value in (
+        target.get("strategy_name"),
+        target.get("runtime_strategy_name"),
+    ):
+        _merge_unique_texts(names, _lineage_text_values(value))
+    for resolved_name in strategy_names_from_strategy_id(target.get("strategy_id")):
+        _merge_unique_texts(names, [resolved_name])
+    if not names:
+        _merge_unique_texts(names, _lineage_text_values(target.get("strategy_id")))
+    return names
 
 
 def _bounded_sim_collection_blockers(
@@ -255,6 +272,7 @@ def _bounded_sim_collection_blockers(
         _safe_text(target.get("runtime_strategy_name"))
         or _safe_text(target.get("strategy_name"))
         or _lineage_text_values(target.get("source_strategy_names"))
+        or strategy_names_from_strategy_id(target.get("strategy_id"))
     ):
         blockers.append("bounded_sim_collection_runtime_strategy_missing")
     if _safe_text(target.get("source_manifest_ref")) is None:
@@ -490,13 +508,30 @@ def _bounded_sim_collection_metadata_from_decision(
 
 def _target_lookup_names(target: Mapping[str, Any]) -> list[str]:
     names: list[str] = []
+    strategy_id = target.get("strategy_id")
     for value in (
-        target.get("strategy_id"),
+        strategy_id,
         target.get("runtime_strategy_name"),
         target.get("strategy_name"),
         target.get("strategy_lookup_names"),
     ):
         _merge_unique_texts(names, _lineage_text_values(value))
+    for resolved_name in strategy_names_from_strategy_id(strategy_id):
+        _merge_unique_texts(names, [resolved_name])
+    return names
+
+
+def _strategy_lookup_names(strategy: Strategy) -> list[str]:
+    names: list[str] = []
+    _merge_unique_texts(names, _lineage_text_values(str(strategy.id)))
+    _merge_unique_texts(names, _lineage_text_values(strategy.name))
+
+    metadata = extract_catalog_metadata(strategy.description)
+    for key in ("strategy_id", "runtime_strategy_name", "strategy_name"):
+        _merge_unique_texts(names, _lineage_text_values(metadata.get(key)))
+    declared_strategy_id = metadata.get("strategy_id")
+    for resolved_name in strategy_names_from_strategy_id(declared_strategy_id):
+        _merge_unique_texts(names, [resolved_name])
     return names
 
 
@@ -3316,11 +3351,19 @@ class SimpleTradingPipeline(TradingPipeline):
         target: Mapping[str, Any],
         strategies: Sequence[Strategy],
     ) -> Strategy | None:
-        lookup_names = set(_target_lookup_names(target))
+        lookup_names = {
+            value.strip().lower()
+            for value in _target_lookup_names(target)
+            if value.strip()
+        }
         if not lookup_names:
             return None
         for strategy in strategies:
-            if str(strategy.id) in lookup_names or strategy.name in lookup_names:
+            if any(
+                candidate.strip().lower() in lookup_names
+                for candidate in _strategy_lookup_names(strategy)
+                if candidate.strip()
+            ):
                 return strategy
         return None
 
@@ -4117,8 +4160,7 @@ class SimpleTradingPipeline(TradingPipeline):
             str(decision.strategy_id).strip(),
         }
         if strategy is not None:
-            candidate_names.add(str(strategy.id))
-            candidate_names.add(str(strategy.name))
+            candidate_names.update(_strategy_lookup_names(strategy))
         return any(
             candidate.strip().lower() in lookup_names
             for candidate in candidate_names

@@ -156,6 +156,29 @@ def test_collection_disabled_fixture_classifies_evidence_collection_disabled(
     ]
 
 
+def test_zero_runtime_materialization_classifies_materialize_runtime_buckets(
+    tmp_path: Path,
+) -> None:
+    fixture = _base_fixture()
+    fixture["observed"] = {
+        "hpairs_decisions": 0,
+        "hpairs_order_events": 0,
+        "hpairs_runtime_buckets": 0,
+        "recent_window": "2026-06-01T14:00:00Z/PT30M",
+    }
+
+    report = _run_fixture(tmp_path, fixture)
+
+    assert report["next_action"] == "materialize_runtime_buckets"
+    assert "runtime_materialization_missing" in report["blocker_codes"]
+    assert report["runtime_materialization_status"]["zero_fields"] == [
+        "decision_count",
+        "order_event_count",
+        "runtime_bucket_count",
+    ]
+    assert report["ready_to_submit_sim_order"] is False
+
+
 def test_missing_drift_checks_fixture_classifies_materialize_drift_checks(
     tmp_path: Path,
 ) -> None:
@@ -352,6 +375,19 @@ def test_symbol_fallback_from_features_and_unsupported_symbol_universe() -> None
     assert (
         "unsupported_symbol_universe_inputs" in report_without_symbols["blocker_codes"]
     )
+
+
+def test_paper_route_probe_symbols_drive_market_data_liveness() -> None:
+    fixture = _base_fixture()
+    target = fixture["target"]
+    assert isinstance(target, dict)
+    target.pop("symbols")
+    target["paper_route_probe_symbols"] = ["amzn", "aapl"]
+
+    report = audit.build_liveness_report(fixture, _expectations())
+
+    assert report["symbol_universe"]["symbols"] == ["AAPL", "AMZN"]
+    assert report["next_action"] == "ready_to_submit_sim_order"
 
 
 def test_helper_normalizers_cover_non_fixture_shapes(tmp_path: Path) -> None:
