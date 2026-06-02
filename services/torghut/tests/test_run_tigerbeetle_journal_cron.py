@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import io
 import json
 import subprocess
@@ -15,6 +16,34 @@ from scripts import run_tigerbeetle_journal_cron as runner
 
 
 class RunTigerBeetleJournalCronTest(TestCase):
+    def test_parse_args_and_preset_commands_clamp_live_batch_size(self) -> None:
+        with patch(
+            "scripts.run_tigerbeetle_journal_cron.sys.argv",
+            [
+                "run_tigerbeetle_journal_cron.py",
+                "--preset",
+                "live",
+                "--execution-batch-size",
+                "0",
+                "--supervise-timeout-seconds",
+                "3.5",
+                "--json",
+            ],
+        ):
+            args = runner._parse_args()
+
+        self.assertEqual(args.preset, "live")
+        self.assertTrue(args.json)
+        self.assertEqual(args.supervise_timeout_seconds, 3.5)
+        self.assertEqual(
+            runner._commands_for_preset(args)[0].batch_size,
+            1,
+        )
+        self.assertEqual(
+            runner._commands_for_preset(argparse.Namespace(preset="sim"))[0].dsn_env,
+            "SIM_DB_DSN",
+        )
+
     def test_live_preset_raises_only_execution_batch_size(self) -> None:
         commands = runner._live_commands(execution_batch_size=10)
 
@@ -104,6 +133,20 @@ class RunTigerBeetleJournalCronTest(TestCase):
             "journal_command_payload_exit_mismatch",
         )
 
+    def test_success_with_clean_payload_returns_zero(self) -> None:
+        self.assertEqual(
+            runner._normalize_command_returncode(
+                returncode=0,
+                payload={"exit_nonzero": False},
+                source=SOURCE_TYPE_EXECUTION,
+                json_output=True,
+            ),
+            0,
+        )
+
+    def test_payload_exit_nonzero_fails_closed_without_payload(self) -> None:
+        self.assertTrue(runner._payload_exit_nonzero(None))
+
     def test_json_mode_requires_payload(self) -> None:
         stderr = io.StringIO()
         with redirect_stderr(stderr):
@@ -161,3 +204,37 @@ class RunTigerBeetleJournalCronTest(TestCase):
             json.loads(stderr.getvalue())["event"],
             "journal_command_exit_mismatch_normalized",
         )
+
+    def test_main_runs_all_commands_and_clamps_timeout_and_batch_size(self) -> None:
+        observed: list[tuple[list[str], str, bool]] = []
+
+        def fake_run(argv: list[str], *, source: str, json_output: bool) -> int:
+            observed.append((argv, source, json_output))
+            return 1 if source == SOURCE_TYPE_RUNTIME_LEDGER_BUCKET else 0
+
+        with (
+            patch(
+                "scripts.run_tigerbeetle_journal_cron._parse_args",
+                return_value=argparse.Namespace(
+                    preset="live",
+                    execution_batch_size=50_000,
+                    supervise_timeout_seconds=0,
+                    json=True,
+                ),
+            ),
+            patch(
+                "scripts.run_tigerbeetle_journal_cron._run_command",
+                side_effect=fake_run,
+            ),
+        ):
+            exit_code = runner.main()
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(len(observed), 4)
+        first_argv = observed[0][0]
+        self.assertEqual(first_argv[first_argv.index("--batch-size") + 1], "5000")
+        self.assertEqual(
+            first_argv[first_argv.index("--supervise-timeout-seconds") + 1],
+            "0.001",
+        )
+        self.assertTrue(all(json_output for _, _, json_output in observed))
