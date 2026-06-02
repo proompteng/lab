@@ -681,7 +681,7 @@ def test_tca_shortfall_rows_do_not_count_as_strategy_pnl() -> None:
                 "symbol": "NVDA",
                 "shortfall_notional": "-120.50",
                 "post_cost_expectancy_bps": "32.5",
-                "post_cost_expectancy_basis": "tca_shortfall_proxy",
+                "post_cost_expectancy_basis": "broker_tca_shortfall_estimate",
                 "filled_notional": "10000",
             }
         ]

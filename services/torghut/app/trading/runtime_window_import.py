@@ -237,7 +237,7 @@ def runtime_ledger_promotion_source_authority_blockers(
 def _post_cost_expectancy_basis(value: Any) -> str:
     text = _text(value)
     if text is None:
-        return "tca_shortfall_proxy"
+        return "post_cost_basis_missing"
     return text.lower().replace("-", "_")
 
 

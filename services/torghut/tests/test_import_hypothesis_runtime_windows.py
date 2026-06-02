@@ -20,7 +20,6 @@ from scripts.import_hypothesis_runtime_windows import (
     EXECUTION_ELIGIBLE_DECISION_STATUSES,
     POST_COST_BASIS_EXECUTION_RECONSTRUCTION,
     POST_COST_BASIS_RUNTIME_LEDGER,
-    POST_COST_BASIS_TCA_PROXY,
     _alpaca_2026_equity_fee_schedule_hash,
     _build_realized_strategy_pnl_rows,
     _execution_signed_qty,
@@ -118,6 +117,7 @@ class _FakeCursor:
                     "alpaca-order-1",
                     "client-order-1",
                     "filled",
+                    "tca-id-1",
                 )
             ],
             [
@@ -152,16 +152,6 @@ class _FakeCursor:
                         "cost_model_hash": "cost-sha",
                         "lineage_hash": "lineage-sha",
                     },
-                )
-            ],
-            [
-                (
-                    datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
-                    datetime(2026, 3, 6, 15, 5, tzinfo=timezone.utc),
-                    Decimal("1.25"),
-                    Decimal("0.50"),
-                    "decision-sha",
-                    {},
                 )
             ],
         ]
@@ -574,7 +564,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
                     "abs_slippage_bps": Decimal("4"),
                     "post_cost_expectancy_bps": Decimal("12"),
-                    "post_cost_expectancy_basis": POST_COST_BASIS_TCA_PROXY,
+                    "post_cost_expectancy_basis": "broker_tca_shortfall_estimate",
                     "post_cost_promotion_eligible": False,
                 }
             ],
@@ -7139,24 +7129,14 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(
             executions, [datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc)]
         )
-        self.assertEqual(len(tca_rows), 2)
-        self.assertEqual(tca_rows[0]["abs_slippage_bps"], Decimal("1.25"))
-        self.assertEqual(tca_rows[0]["post_cost_expectancy_bps"], Decimal("0.50"))
+        self.assertEqual(len(tca_rows), 1)
         self.assertEqual(
-            tca_rows[0]["computed_at"],
-            datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
-        )
-        self.assertEqual(
-            tca_rows[0]["tca_computed_at"],
-            datetime(2026, 3, 6, 15, 5, tzinfo=timezone.utc),
-        )
-        self.assertEqual(
-            tca_rows[0]["post_cost_expectancy_basis"], POST_COST_BASIS_TCA_PROXY
+            tca_rows[0]["post_cost_expectancy_basis"],
+            POST_COST_BASIS_EXECUTION_RECONSTRUCTION,
         )
         self.assertEqual(tca_rows[0]["post_cost_promotion_eligible"], False)
-        self.assertEqual(tca_rows[1]["post_cost_promotion_eligible"], False)
-        self.assertIn("unclosed_position", tca_rows[1]["runtime_ledger_blockers"])
-        self.assertEqual(len(cursor.executed), 4)
+        self.assertIn("unclosed_position", tca_rows[0]["runtime_ledger_blockers"])
+        self.assertEqual(len(cursor.executed), 3)
         decision_query, decision_params = cursor.executed[0]
         self.assertIn("s.name = any(%s)", decision_query)
         self.assertIn("d.status = any(%s)", decision_query)
@@ -7169,7 +7149,6 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             list(EXECUTION_ELIGIBLE_DECISION_STATUSES),
         )
         order_event_query, _ = cursor.executed[2]
-        tca_query, _ = cursor.executed[3]
         execution_query, _ = cursor.executed[1]
         self.assertIn("left join execution_tca_metrics", execution_query)
         self.assertIn("e.alpaca_account_label = %s", execution_query)
@@ -7187,26 +7166,13 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertIn("coalesce(oe.event_ts, oe.created_at) < %s", order_event_query)
         self.assertNotIn("and d.created_at >= %s", order_event_query)
         self.assertNotIn("and d.created_at < %s", order_event_query)
-        self.assertIn("as execution_event_at", tca_query)
-        self.assertIn("t.computed_at as tca_computed_at", tca_query)
-        self.assertIn(
-            "coalesce(t.alpaca_account_label, e.alpaca_account_label, d.alpaca_account_label) = %s",
-            tca_query,
-        )
-        self.assertIn("e.order_feed_last_event_ts", tca_query)
-        self.assertIn("e.last_update_at", tca_query)
-        self.assertIn("e.updated_at", tca_query)
-        self.assertIn("e.created_at", tca_query)
-        self.assertNotIn("t.computed_at >= %s", tca_query)
-        self.assertNotIn("t.computed_at < %s", tca_query)
-        self.assertNotIn("and d.created_at >= %s", tca_query)
-        self.assertNotIn("and d.created_at < %s", tca_query)
         self.assertEqual(diagnostics["decision_rows_before_lineage_filter"], 1)
         self.assertEqual(diagnostics["decision_rows_after_lineage_filter"], 1)
         self.assertEqual(diagnostics["execution_rows_before_lineage_filter"], 1)
         self.assertEqual(diagnostics["execution_rows_after_lineage_filter"], 1)
+        self.assertEqual(diagnostics["execution_tca_rows_before_lineage_filter"], 1)
+        self.assertEqual(diagnostics["execution_tca_rows_after_lineage_filter"], 1)
         self.assertEqual(diagnostics["order_lifecycle_rows_before_lineage_filter"], 1)
-        self.assertEqual(diagnostics["tca_rows_before_lineage_filter"], 1)
 
     def test_query_timestamps_records_unattributed_fill_lifecycle_diagnostics(
         self,
@@ -7260,7 +7226,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 source_activity_diagnostics=diagnostics,
             )
 
-        self.assertEqual(len(cursor.executed), 5)
+        self.assertEqual(len(cursor.executed), 4)
         unlinked_query, unlinked_params = cursor.executed[3]
         self.assertIn("from execution_order_events oe", unlinked_query)
         self.assertIn("left join lateral", unlinked_query)
@@ -7491,7 +7457,6 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         decision_params = cursor.executed[0][1]
         execution_params = cursor.executed[1][1]
         order_event_query, order_event_params = cursor.executed[2]
-        tca_params = cursor.executed[3][1]
         self.assertEqual(decision_params[1], "TORGHUT_SIM")
         self.assertEqual(execution_params[1], "TORGHUT_SIM")
         self.assertEqual(execution_params[2], "TORGHUT_SIM")
@@ -7507,11 +7472,9 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 "PA3SX7FYNUTF",
             ),
         )
-        self.assertEqual(tca_params[1], "TORGHUT_SIM")
-        self.assertEqual(tca_params[2], "TORGHUT_SIM")
         self.assertEqual(diagnostics["account_label"], "TORGHUT_SIM")
         self.assertEqual(diagnostics["source_account_label"], "PA3SX7FYNUTF")
-        runtime_bucket = tca_rows[1]["runtime_ledger_bucket"]
+        runtime_bucket = tca_rows[0]["runtime_ledger_bucket"]
         self.assertEqual(runtime_bucket["account_label"], "TORGHUT_SIM")
         self.assertEqual(runtime_bucket["source_account_label"], "PA3SX7FYNUTF")
         self.assertEqual(
@@ -7736,7 +7699,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 source_activity_diagnostics=diagnostics,
             )
 
-        self.assertEqual(len(cursor.executed), 8)
+        self.assertEqual(len(cursor.executed), 7)
         carry_decision_query, carry_decision_params = cursor.executed[3]
         carry_execution_query, carry_execution_params = cursor.executed[4]
         carry_order_query, carry_order_params = cursor.executed[5]
@@ -7837,7 +7800,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                     "execution_rows_before_lineage_filter": 1,
                     "execution_rows_after_lineage_filter": 1,
                     "order_lifecycle_rows_before_lineage_filter": 1,
-                    "tca_rows_after_lineage_filter": 1,
+                    "execution_tca_rows_after_lineage_filter": 1,
                     "runtime_ledger_source_bucket_count": 1,
                     "runtime_ledger_source_bucket_profit_proof_count": 0,
                     "runtime_ledger_source_bucket_profit_proof_blockers": [
@@ -7873,12 +7836,11 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 symbols=[" aapl ", "AAPL"],
             )
 
-        self.assertEqual(len(cursor.executed), 5)
+        self.assertEqual(len(cursor.executed), 4)
         decision_query, decision_params = cursor.executed[0]
         execution_query, execution_params = cursor.executed[1]
         order_event_query, order_event_params = cursor.executed[2]
         unlinked_query, unlinked_params = cursor.executed[3]
-        tca_query, tca_params = cursor.executed[4]
         self.assertIn("upper(d.symbol) = any(%s)", decision_query)
         self.assertEqual(decision_params[-1], ["AAPL"])
         self.assertIn("upper(d.symbol) = any(%s)", execution_query)
@@ -7901,9 +7863,6 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertIn("d_match.decision_hash = oe.client_order_id", unlinked_query)
         self.assertIn("upper(oe.symbol) = any(%s)", unlinked_query)
         self.assertEqual(unlinked_params[-1], ["AAPL"])
-        self.assertIn("upper(d.symbol) = any(%s)", tca_query)
-        self.assertIn("upper(e.symbol) = any(%s)", tca_query)
-        self.assertEqual(tca_params[-2:], (["AAPL"], ["AAPL"]))
 
     def test_query_timestamps_requires_source_lineage_for_candidate_import(
         self,
@@ -8065,14 +8024,17 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(
             executions, [datetime(2026, 3, 6, 14, 35, 30, tzinfo=timezone.utc)]
         )
-        proxy_rows = [
-            row
-            for row in tca_rows
-            if row.get("post_cost_expectancy_basis") == POST_COST_BASIS_TCA_PROXY
-        ]
-        self.assertEqual(len(proxy_rows), 1)
-        self.assertEqual(proxy_rows[0]["decision_hash"], "decision-matched")
-        self.assertEqual(proxy_rows[0]["post_cost_expectancy_bps"], Decimal("0.50"))
+        self.assertTrue(tca_rows)
+        self.assertTrue(
+            all(
+                row.get("post_cost_expectancy_basis")
+                in {
+                    POST_COST_BASIS_RUNTIME_LEDGER,
+                    POST_COST_BASIS_EXECUTION_RECONSTRUCTION,
+                }
+                for row in tca_rows
+            )
+        )
 
     def test_query_timestamps_requires_strategy_name_candidates(self) -> None:
         window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)

@@ -2444,7 +2444,7 @@ class TestSubmissionCouncil(TestCase):
             slippage_budget_bps="12",
             payload_json={
                 "post_cost_promotion_sample_count": 0,
-                "post_cost_basis_counts": {"tca_shortfall_proxy": 3},
+                "post_cost_basis_counts": {"broker_tca_shortfall_estimate": 3},
             },
         )
 

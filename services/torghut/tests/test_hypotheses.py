@@ -1037,7 +1037,7 @@ class TestHypothesisReadiness(TestCase):
                         "submitted_order_count": 45,
                         "post_cost_expectancy_bps": "8",
                         "ledger_schema_version": "unknown",
-                        "pnl_basis": "tca_shortfall_proxy",
+                        "pnl_basis": "broker_tca_shortfall_estimate",
                         "execution_policy_hash_counts": {},
                         "cost_model_hash_counts": {},
                         "lineage_hash_counts": {},
