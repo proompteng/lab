@@ -18,6 +18,7 @@ resources:
   - autonomous-trader-implspec.yaml
   - autonomous-trader-agentrun-template.yaml
   - autonomous-trader-schedule.yaml
+  - autonomous-trader-market-open-recovery-20260602.yaml
   - autonomous-trader-green-agentrun-template.yaml
   - autonomous-trader-green-schedule.yaml
   - autonomous-trader-scorecard-readback-template.yaml
