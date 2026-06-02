@@ -4992,9 +4992,129 @@ class TestTradingApi(TestCase):
             "readyz_evaluation_timeout",
             payload["dependencies"]["health_evaluation"]["reason_codes"],
         )
+        self.assertIsInstance(payload["dependencies"]["postgres"], dict)
+        self.assertFalse(payload["dependencies"]["postgres"]["ok"])
+        self.assertIsInstance(payload["dependencies"]["database"], dict)
+        self.assertFalse(payload["dependencies"]["database"]["ok"])
+        self.assertIsInstance(payload["scheduler"], dict)
         self.assertFalse(payload["live_submission_gate"]["allowed"])
         self.assertFalse(payload["live_submission_gate"]["promotion_authority"])
         self.assertFalse(payload["live_submission_gate"]["final_authority_ok"])
+
+    def test_readyz_timeout_uses_cached_dependency_contract_shape(self) -> None:
+        original_timeout = main_module._TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS
+        main_module._TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = 0.01
+        health_cache_key = main_module._trading_health_surface_cache_key(
+            include_database_contract=True,
+            allow_stale_dependency_cache=True,
+        )
+        dependency_cache_key = _readiness_dependency_cache_key(True)
+        checked_at = datetime.now(timezone.utc)
+        _TRADING_DEPENDENCY_HEALTH_CACHE[dependency_cache_key] = {
+            "checked_at": checked_at,
+            "dependencies": {
+                "postgres": {"ok": True, "detail": "ok"},
+                "clickhouse": {"ok": True, "detail": "ok"},
+                "alpaca": {"ok": True, "detail": "ok"},
+                "tigerbeetle": {
+                    "ok": True,
+                    "blockers": ["tigerbeetle_runtime_ledger_signed_refs_missing"],
+                },
+                "database": {
+                    "ok": True,
+                    "detail": "ok",
+                    "account_scope_errors": [],
+                },
+            },
+        }
+        with main_module._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+            main_module._TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
+            main_module._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.pop(
+                health_cache_key,
+                None,
+            )
+
+        def _slow_health_payload(**_kwargs: object) -> tuple[dict[str, object], int]:
+            time.sleep(0.2)
+            return ({"status": "ok", "live_submission_gate": {"allowed": True}}, 200)
+
+        try:
+            with patch(
+                "app.main._evaluate_trading_health_payload",
+                side_effect=_slow_health_payload,
+            ):
+                response = self.client.get("/readyz")
+            time.sleep(0.25)
+        finally:
+            main_module._TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = original_timeout
+            with main_module._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+                main_module._TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
+                main_module._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
+
+        self.assertEqual(response.status_code, 503)
+        payload = response.json()
+        dependencies = payload["dependencies"]
+        self.assertEqual(payload["reason"], "readyz_evaluation_timeout")
+        self.assertTrue(dependencies["postgres"]["ok"])
+        self.assertTrue(dependencies["clickhouse"]["ok"])
+        self.assertTrue(dependencies["database"]["ok"])
+        self.assertEqual(dependencies["database"]["account_scope_errors"], [])
+        self.assertEqual(
+            dependencies["tigerbeetle"]["blockers"],
+            ["tigerbeetle_runtime_ledger_signed_refs_missing"],
+        )
+        self.assertTrue(dependencies["readiness_cache"]["cache_used"])
+        self.assertTrue(
+            dependencies["readiness_cache"]["health_surface_timeout_fallback"]
+        )
+        self.assertIsInstance(payload["scheduler"], dict)
+        self.assertFalse(payload["live_submission_gate"]["promotion_authority"])
+        self.assertFalse(payload["live_submission_gate"]["final_authority_ok"])
+        self.assertFalse(payload["live_submission_gate"]["final_promotion_allowed"])
+
+    def test_timeout_live_gate_records_live_mode_blockers(self) -> None:
+        original = {
+            "trading_mode": settings.trading_mode,
+            "trading_enabled": settings.trading_enabled,
+            "trading_kill_switch_enabled": settings.trading_kill_switch_enabled,
+            "trading_pipeline_mode": settings.trading_pipeline_mode,
+            "trading_simple_submit_enabled": settings.trading_simple_submit_enabled,
+        }
+        try:
+            settings.trading_mode = "live"
+            settings.trading_enabled = False
+            settings.trading_kill_switch_enabled = True
+            settings.trading_pipeline_mode = "simple"
+            settings.trading_simple_submit_enabled = False
+
+            gate = main_module._minimal_health_surface_timeout_live_submission_gate(
+                reason_code="readyz_evaluation_timeout",
+                detail="readyz evaluation exceeded 3.0s",
+            )
+        finally:
+            settings.trading_mode = original["trading_mode"]
+            settings.trading_enabled = original["trading_enabled"]
+            settings.trading_kill_switch_enabled = original[
+                "trading_kill_switch_enabled"
+            ]
+            settings.trading_pipeline_mode = original["trading_pipeline_mode"]
+            settings.trading_simple_submit_enabled = original[
+                "trading_simple_submit_enabled"
+            ]
+
+        self.assertFalse(gate["allowed"])
+        self.assertEqual(gate["reason"], "trading_disabled")
+        self.assertEqual(
+            gate["blocked_reasons"],
+            [
+                "trading_disabled",
+                "kill_switch_enabled",
+                "simple_submit_disabled",
+            ],
+        )
+        self.assertFalse(gate["promotion_authority"])
+        self.assertFalse(gate["final_authority_ok"])
+        self.assertFalse(gate["final_promotion_allowed"])
 
     def test_trading_health_timeout_uses_cached_blockers_fail_closed(self) -> None:
         original_timeout = main_module._TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS

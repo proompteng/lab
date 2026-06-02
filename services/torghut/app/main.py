@@ -972,6 +972,20 @@ def _cached_trading_health_surface_payload(
     return payload, checked_at
 
 
+def _cached_readiness_dependencies_for_health_surface(
+    *,
+    include_database_contract: bool,
+) -> tuple[dict[str, object], datetime] | None:
+    cache_key = _readiness_dependency_cache_key(include_database_contract)
+    with _TRADING_DEPENDENCY_HEALTH_CACHE_LOCK:
+        cache_entry = _TRADING_DEPENDENCY_HEALTH_CACHE.get(cache_key)
+        if cache_entry is None:
+            return None
+        dependencies = deepcopy(cast(dict[str, object], cache_entry["dependencies"]))
+        checked_at = cast(datetime, cache_entry["checked_at"])
+    return dependencies, checked_at
+
+
 def _fail_closed_health_evaluation_gate(
     *,
     reason_code: str,
@@ -991,30 +1005,167 @@ def _fail_closed_health_evaluation_gate(
     }
 
 
+def _health_surface_timeout_dependency_placeholder(
+    *,
+    reason_code: str,
+    detail: str,
+) -> dict[str, object]:
+    return {
+        "ok": False,
+        "detail": detail,
+        "reason": reason_code,
+        "reason_codes": [reason_code],
+    }
+
+
+def _minimal_health_surface_timeout_live_submission_gate(
+    *,
+    reason_code: str,
+    detail: str,
+) -> dict[str, object]:
+    blocked_reasons: list[str] = []
+    if settings.trading_mode == "live":
+        if not settings.trading_enabled:
+            blocked_reasons.append("trading_disabled")
+        if settings.trading_kill_switch_enabled:
+            blocked_reasons.append("kill_switch_enabled")
+        if (
+            settings.trading_pipeline_mode == "simple"
+            and not settings.trading_simple_submit_enabled
+        ):
+            blocked_reasons.append("simple_submit_disabled")
+
+    reason = blocked_reasons[0] if blocked_reasons else reason_code
+
+    return {
+        "allowed": False,
+        "promotion_authority": False,
+        "promotion_authority_ok": False,
+        "final_authority_ok": False,
+        "final_promotion_allowed": False,
+        "final_promotion_authorized": False,
+        "reason": reason,
+        "reason_codes": blocked_reasons or [reason_code],
+        "blocked_reasons": blocked_reasons or [reason_code],
+        "detail": detail if reason == reason_code else reason,
+        "capital_stage": "shadow",
+        "capital_state": "observe",
+        "health_evaluation_timeout": {
+            "ok": False,
+            "reason": reason_code,
+            "reason_codes": [reason_code],
+            "detail": detail,
+        },
+    }
+
+
+def _minimal_health_surface_timeout_proof_floor() -> dict[str, object]:
+    return {
+        "route_state": "repair_only",
+        "capital_state": "zero_notional",
+        "promotion_authority": False,
+        "final_authority_ok": False,
+        "final_promotion_allowed": False,
+        "final_promotion_authorized": False,
+    }
+
+
+def _minimal_health_surface_timeout_payload(
+    *,
+    include_database_contract: bool,
+    reason_code: str,
+    detail: str,
+) -> dict[str, object]:
+    cached_dependencies = _cached_readiness_dependencies_for_health_surface(
+        include_database_contract=include_database_contract,
+    )
+    if cached_dependencies is None:
+        dependencies: dict[str, object] = {}
+        unavailable_detail = f"not evaluated before {reason_code}"
+        for dependency_name in ("postgres", "clickhouse", "alpaca", "tigerbeetle"):
+            dependencies[dependency_name] = (
+                _health_surface_timeout_dependency_placeholder(
+                    reason_code=reason_code,
+                    detail=unavailable_detail,
+                )
+            )
+        if include_database_contract:
+            dependencies["database"] = _health_surface_timeout_dependency_placeholder(
+                reason_code=reason_code,
+                detail=unavailable_detail,
+            )
+    else:
+        dependencies, checked_at = cached_dependencies
+        now = datetime.now(timezone.utc)
+        cache_age_seconds = round(max(0.0, (now - checked_at).total_seconds()), 3)
+        cache_ttl_seconds = settings.trading_readiness_dependency_cache_ttl_seconds
+        dependencies["readiness_cache"] = {
+            "checked_at": checked_at.isoformat(),
+            "cache_ttl_seconds": cache_ttl_seconds,
+            "cache_stale_tolerance_seconds": settings.trading_readiness_dependency_cache_stale_tolerance_seconds,
+            "cache_used": True,
+            "cache_age_seconds": cache_age_seconds,
+            "cache_stale": cache_age_seconds > cache_ttl_seconds,
+            "health_surface_timeout_fallback": True,
+        }
+
+    dependencies["health_evaluation"] = {
+        "ok": False,
+        "detail": detail,
+        "reason_codes": [reason_code],
+    }
+    scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
+    if scheduler is None:
+        scheduler = TradingScheduler()
+        app.state.trading_scheduler = scheduler
+    _scheduler_ok, scheduler_payload = _evaluate_scheduler_status(scheduler)
+    live_submission_gate = _minimal_health_surface_timeout_live_submission_gate(
+        reason_code=reason_code,
+        detail=detail,
+    )
+    proof_floor = _minimal_health_surface_timeout_proof_floor()
+    live_mode = settings.trading_mode == "live"
+    dependencies["live_submission_gate"] = {
+        "ok": bool(live_submission_gate.get("allowed", False)),
+        "detail": str(live_submission_gate.get("reason") or reason_code),
+        "capital_stage": live_submission_gate.get("capital_stage"),
+    }
+    dependencies["profitability_proof_floor"] = {
+        "ok": False if live_mode else True,
+        "detail": str(proof_floor.get("route_state") or "repair_only"),
+        "capital_state": proof_floor.get("capital_state"),
+        "required": live_mode,
+    }
+    return cast(
+        dict[str, object],
+        _strip_promotion_authority_claims_for_readiness(
+            {
+                "status": "degraded",
+                "reason": reason_code,
+                "reason_codes": [reason_code],
+                "scheduler": scheduler_payload,
+                "dependencies": dependencies,
+                "live_submission_gate": live_submission_gate,
+                "proof_floor": proof_floor,
+            }
+        ),
+    )
+
+
 def _health_surface_timeout_fallback_payload(
     *,
     cache_key: str,
+    include_database_contract: bool,
     reason_code: str,
     detail: str,
 ) -> dict[str, object]:
     cached = _cached_trading_health_surface_payload(cache_key)
     if cached is None:
-        return {
-            "status": "degraded",
-            "reason": reason_code,
-            "reason_codes": [reason_code],
-            "dependencies": {
-                "health_evaluation": {
-                    "ok": False,
-                    "detail": detail,
-                    "reason_codes": [reason_code],
-                }
-            },
-            "live_submission_gate": _fail_closed_health_evaluation_gate(
-                reason_code=reason_code,
-                detail=detail,
-            ),
-        }
+        return _minimal_health_surface_timeout_payload(
+            include_database_contract=include_database_contract,
+            reason_code=reason_code,
+            detail=detail,
+        )
 
     payload, checked_at = cached
     payload["status"] = "degraded"
@@ -1096,6 +1247,7 @@ def _evaluate_trading_health_payload_bounded(
         return (
             _health_surface_timeout_fallback_payload(
                 cache_key=cache_key,
+                include_database_contract=include_database_contract,
                 reason_code=reason_code,
                 detail=detail,
             ),
@@ -1107,6 +1259,7 @@ def _evaluate_trading_health_payload_bounded(
         return (
             _health_surface_timeout_fallback_payload(
                 cache_key=cache_key,
+                include_database_contract=include_database_contract,
                 reason_code=reason_code,
                 detail=str(exc),
             ),
@@ -3466,9 +3619,11 @@ def trading_status() -> dict[str, object]:
         live_submission_gate=live_submission_gate,
     )
     route_claim_symbols = _route_claim_symbols(profit_signal_quorum)
-    options_catalog_freshness_skip_reason = status_read_budget.skip_reason_if_unavailable(
-        "options_catalog_freshness",
-        min_remaining_seconds=2.0,
+    options_catalog_freshness_skip_reason = (
+        status_read_budget.skip_reason_if_unavailable(
+            "options_catalog_freshness",
+            min_remaining_seconds=2.0,
+        )
     )
     if options_catalog_freshness_skip_reason is not None:
         options_catalog_freshness = _budget_exhausted_options_catalog_freshness_payload(
