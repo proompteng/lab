@@ -5507,7 +5507,25 @@ def _check_tigerbeetle_protocol_health() -> dict[str, object]:
         health = check_tigerbeetle_health(settings)
         payload = health.as_dict()
         payload["protocol_ok"] = True
+        payload["protocol_probe_skipped"] = False
         return payload
+
+    replica_addresses = [
+        item.strip()
+        for item in settings.tigerbeetle_replica_addresses.split(",")
+        if item.strip()
+    ]
+    if not (settings.tigerbeetle_required or settings.tigerbeetle_reconcile_required):
+        return {
+            "enabled": True,
+            "required": settings.tigerbeetle_required,
+            "ok": True,
+            "protocol_ok": False,
+            "protocol_probe_skipped": True,
+            "cluster_id": settings.tigerbeetle_cluster_id,
+            "replica_addresses": replica_addresses,
+            "last_error": None,
+        }
 
     timeout_seconds = max(0.1, float(settings.tigerbeetle_health_timeout_seconds))
     executor = ThreadPoolExecutor(max_workers=1)
@@ -5520,12 +5538,9 @@ def _check_tigerbeetle_protocol_health() -> dict[str, object]:
             "required": settings.tigerbeetle_required,
             "ok": not settings.tigerbeetle_required,
             "protocol_ok": False,
+            "protocol_probe_skipped": False,
             "cluster_id": settings.tigerbeetle_cluster_id,
-            "replica_addresses": [
-                item.strip()
-                for item in settings.tigerbeetle_replica_addresses.split(",")
-                if item.strip()
-            ],
+            "replica_addresses": replica_addresses,
             "last_error": (
                 f"TimeoutError: tigerbeetle protocol health timed out after "
                 f"{timeout_seconds:.2f}s"
@@ -5537,6 +5552,7 @@ def _check_tigerbeetle_protocol_health() -> dict[str, object]:
     payload = health.as_dict()
     protocol_ok = bool(payload.get("ok"))
     payload["protocol_ok"] = protocol_ok
+    payload["protocol_probe_skipped"] = False
     payload["ok"] = protocol_ok or not settings.tigerbeetle_required
     return payload
 
@@ -5623,7 +5639,11 @@ def _build_tigerbeetle_ledger_status(session: Session) -> dict[str, object]:
         ref_counts.get("runtime_ledger_missing_account_ref_count")
     )
     claimed_by_runtime_evidence = runtime_ledger_ref_count > 0
-    if settings.tigerbeetle_enabled and not bool(protocol.get("protocol_ok")):
+    if (
+        settings.tigerbeetle_enabled
+        and not bool(protocol.get("protocol_ok"))
+        and not bool(protocol.get("protocol_probe_skipped"))
+    ):
         blockers.append("tigerbeetle_protocol_unhealthy")
     reconciliation_ok = True
     reconciliation_required = bool(
@@ -5686,6 +5706,7 @@ def _build_tigerbeetle_ledger_status(session: Session) -> dict[str, object]:
         "reconciliation_required": reconciliation_required,
         "ok": protocol_gate_ok and reconcile_gate_ok,
         "protocol_ok": bool(protocol.get("protocol_ok")),
+        "protocol_probe_skipped": bool(protocol.get("protocol_probe_skipped")),
         "reconciliation_ok": reconciliation_ok,
         "reconciliation_age_seconds": reconciliation_age_seconds,
         "reconciliation_max_age_seconds": reconciliation_max_age_seconds,
