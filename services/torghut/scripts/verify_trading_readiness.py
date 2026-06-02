@@ -1826,11 +1826,20 @@ def evaluate_trading_readiness(
             "required": require_runtime_ledger_proof_packet,
             "schema_version": _text(packet_summary.get("schema_version")),
             "proof_mode": _text(packet_summary.get("proof_mode")),
+            "proof_mode_contract": dict(
+                _mapping(packet_summary.get("proof_mode_contract"))
+            ),
             "final_authority_ok": packet_summary.get("final_authority_ok"),
+            "evidence_collection_only": packet_summary.get("evidence_collection_only"),
+            "evidence_collection_ok": packet_summary.get("evidence_collection_ok"),
+            "canary_collection_authorized": packet_summary.get(
+                "canary_collection_authorized"
+            ),
+            "promotion_allowed": packet_summary.get("promotion_allowed"),
             "capital_promotion_allowed": packet_summary.get(
                 "capital_promotion_allowed"
             ),
-            "evidence_collection_ok": packet_summary.get("evidence_collection_ok"),
+            "final_promotion_allowed": packet_summary.get("final_promotion_allowed"),
             "next_action": _text(packet_summary.get("next_action")),
         },
         "tigerbeetle_parity": {
