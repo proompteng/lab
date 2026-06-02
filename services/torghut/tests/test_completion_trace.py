@@ -126,6 +126,7 @@ def _runtime_ledger_source_authority_payload(
         'source_offsets': source_offsets,
         'source_materialization': 'execution_order_events',
         'authority_class': 'runtime_order_feed_execution_source',
+        'authority_reason': 'event_sourced_runtime_ledger_profit_proof',
     }
     if cost_basis is not None:
         payload['cost_basis'] = cost_basis

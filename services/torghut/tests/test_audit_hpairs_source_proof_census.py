@@ -59,6 +59,7 @@ def _source_payload(day_index: int) -> dict[str, object]:
         ],
         "source_materialization": "execution_order_events",
         "authority_class": "runtime_order_feed_execution_source",
+        "authority_reason": "event_sourced_runtime_ledger_profit_proof",
         "order_feed_lifecycle_complete": True,
         "execution_economics_complete": True,
         "cost_basis_counts": {"explicit_broker_fee_runtime": 1},
