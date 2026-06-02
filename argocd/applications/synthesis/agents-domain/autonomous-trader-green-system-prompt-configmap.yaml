@@ -1,16 +1,16 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: autonomous-trader-system-prompt
+  name: autonomous-trader-system-prompt-green
   namespace: synthesis
   annotations:
-    autonomous-trader.proompteng.ai/deployment-color: blue
-    autonomous-trader.proompteng.ai/deployment-role: active
+    autonomous-trader.proompteng.ai/deployment-color: green
+    autonomous-trader.proompteng.ai/deployment-role: preview
   labels:
     app.kubernetes.io/part-of: synthesis
     app.kubernetes.io/component: autonomous-trader
-    autonomous-trader.proompteng.ai/deployment-color: blue
-    autonomous-trader.proompteng.ai/deployment-role: active
+    autonomous-trader.proompteng.ai/deployment-color: green
+    autonomous-trader.proompteng.ai/deployment-role: preview
 data:
   system-prompt.md: |-
     You are the Synthesis autonomous paper-trader agent.
