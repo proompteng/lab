@@ -5986,7 +5986,7 @@ class TestTradingApi(TestCase):
         self.assertGreaterEqual(evaluation["metrics"]["total_reviews"], 1)
         hypotheses = payload["hypotheses"]
         self.assertTrue(hypotheses["registry_loaded"])
-        self.assertEqual(len(hypotheses["items"]), 6)
+        self.assertEqual(len(hypotheses["items"]), 5)
         self.assertEqual(hypotheses["dependency_quorum"]["decision"], "allow")
         self.assertEqual(
             hypotheses["dependency_quorum"]["reasons"],
@@ -6008,9 +6008,9 @@ class TestTradingApi(TestCase):
         self.assertIn("universe_fail_safe_blocked", control_plane_contract)
         self.assertIn("domain_telemetry_event_total", control_plane_contract)
         self.assertIn("domain_telemetry_dropped_total", control_plane_contract)
-        self.assertEqual(control_plane_contract["alpha_readiness_hypotheses_total"], 6)
+        self.assertEqual(control_plane_contract["alpha_readiness_hypotheses_total"], 5)
         self.assertEqual(control_plane_contract["alpha_readiness_blocked_total"], 4)
-        self.assertEqual(control_plane_contract["alpha_readiness_shadow_total"], 2)
+        self.assertEqual(control_plane_contract["alpha_readiness_shadow_total"], 1)
         self.assertIn(control_plane_contract["active_capital_stage"], {"shadow", None})
         self.assertIn("critical_toggle_parity", control_plane_contract)
         self.assertIn(
@@ -7841,13 +7841,13 @@ class TestTradingApi(TestCase):
             "torghut.quant-producer.v1",
         )
         self.assertEqual(
-            payload["control_plane_contract"]["alpha_readiness_hypotheses_total"], 6
+            payload["control_plane_contract"]["alpha_readiness_hypotheses_total"], 5
         )
         self.assertEqual(
             payload["control_plane_contract"]["alpha_readiness_blocked_total"], 4
         )
         self.assertEqual(
-            payload["control_plane_contract"]["alpha_readiness_shadow_total"], 2
+            payload["control_plane_contract"]["alpha_readiness_shadow_total"], 1
         )
         self.assertIn("critical_toggle_parity", payload["control_plane_contract"])
         self.assertIn("active_revision", payload["build"])
@@ -7892,15 +7892,15 @@ class TestTradingApi(TestCase):
                 metrics_payload,
             )
             self.assertIn(
-                'torghut_trading_hypothesis_state_total{state="shadow"} 2',
+                'torghut_trading_hypothesis_state_total{state="shadow"} 1',
                 metrics_payload,
             )
             self.assertIn(
-                'torghut_trading_hypothesis_capital_stage_total{stage="shadow"} 6',
+                'torghut_trading_hypothesis_capital_stage_total{stage="shadow"} 5',
                 metrics_payload,
             )
             self.assertIn(
-                "torghut_trading_alpha_readiness_hypotheses_total 6",
+                "torghut_trading_alpha_readiness_hypotheses_total 5",
                 metrics_payload,
             )
             self.assertIn("torghut_trading_llm_runtime_fallback_ratio", metrics_payload)
