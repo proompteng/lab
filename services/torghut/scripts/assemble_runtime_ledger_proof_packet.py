@@ -220,6 +220,8 @@ def _hpairs_source_proof_census_status(
             "authority_source": False,
             "promotion_allowed": False,
             "final_authority_ok": False,
+            "runtime_authority_final_ok": False,
+            "census_ready": False,
             "blockers": [],
             "attachment_blockers": ["hpairs_source_proof_census_missing"],
             "blocker_ladder": [],
@@ -237,6 +239,8 @@ def _hpairs_source_proof_census_status(
     attachment_blockers = _hpairs_source_proof_census_attachment_blockers(payload)
     _extend_unique(blockers, attachment_blockers)
     next_blocker = _mapping(verdict.get("next_blocker"))
+    runtime_authority_final_ok = bool(runtime_authority.get("final_authority_ok"))
+    census_ready = bool(verdict.get("authority_candidate_ready")) and not blockers
     return {
         "schema_version": HPAIRS_SOURCE_PROOF_CENSUS_STATUS_SCHEMA_VERSION,
         "present": True,
@@ -248,8 +252,9 @@ def _hpairs_source_proof_census_status(
         "classification": verdict.get("classification"),
         "authority_candidate_ready": bool(verdict.get("authority_candidate_ready")),
         "promotion_allowed": False,
-        "final_authority_ok": bool(runtime_authority.get("final_authority_ok"))
-        and not blockers,
+        "final_authority_ok": False,
+        "runtime_authority_final_ok": runtime_authority_final_ok,
+        "census_ready": census_ready,
         "blockers": blockers,
         "attachment_blockers": attachment_blockers,
         "missing_requirement_categories": dict(
@@ -2861,9 +2866,8 @@ def build_runtime_ledger_proof_packet(
         hpairs_source_proof_census_status.get("blockers")
     )
     hpairs_census_present = bool(hpairs_source_proof_census_status.get("present"))
-    hpairs_census_ok = (not hpairs_census_present) or (
-        not hpairs_census_blockers
-        and bool(hpairs_source_proof_census_status.get("final_authority_ok"))
+    hpairs_census_ok = (not hpairs_census_present) or bool(
+        hpairs_source_proof_census_status.get("census_ready")
     )
     _check(
         checks,

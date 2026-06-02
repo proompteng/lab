@@ -808,6 +808,32 @@ class TestRuntimeLedgerProofPacket(TestCase):
             census_status["next_blocker"]["step"], "submitted_orders_present"
         )
 
+    def test_hpairs_source_proof_census_ready_status_does_not_grant_authority(
+        self,
+    ) -> None:
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(blockers=["live_gate_blocked"]),
+            proof_mode="authority",
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=_runtime_import(),
+            completion_status=_completion(),
+            hpairs_source_proof_census=_hpairs_source_proof_census(),
+            min_runtime_ledger_net_pnl=Decimal("500"),
+            min_runtime_ledger_daily_net_pnl=Decimal("500"),
+            min_runtime_ledger_trading_days=1,
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        census_status = result["evidence"]["hpairs_source_proof_census"]
+        self.assertTrue(census_status["present"])
+        self.assertTrue(census_status["census_ready"])
+        self.assertTrue(census_status["runtime_authority_final_ok"])
+        self.assertFalse(census_status["promotion_allowed"])
+        self.assertFalse(census_status["final_authority_ok"])
+        self.assertFalse(result["final_authority_ok"])
+        self.assertFalse(result["promotion_allowed"])
+        self.assertIn("live_gate_blocked", result["authority_blockers"])
+
     def test_hpairs_source_proof_census_attachment_blockers_block_authority(
         self,
     ) -> None:
