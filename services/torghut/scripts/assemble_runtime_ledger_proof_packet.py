@@ -43,6 +43,9 @@ STATUS_ENDPOINT = "/trading/status"
 PAPER_ROUTE_EVIDENCE_ENDPOINT = "/trading/paper-route-evidence"
 COMPLETION_DOC29_ENDPOINT = "/trading/completion/doc29"
 ARTIFACT_SCHEMA_VERSION = "torghut.runtime-ledger-proof-packet-artifact.v1"
+HPAIRS_SOURCE_PROOF_CENSUS_STATUS_SCHEMA_VERSION = (
+    "torghut.hpairs-source-proof-census-status.v1"
+)
 CAPITAL_PROMOTION_STATUS_BLOCKERS = frozenset(
     {
         "alpha_hypothesis_not_promotion_eligible",
@@ -203,6 +206,83 @@ def _text_list(value: object) -> list[str]:
         if text and text not in items:
             items.append(text)
     return items
+
+
+def _hpairs_source_proof_census_status(
+    census: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    payload = _mapping(census)
+    if not payload:
+        return {
+            "schema_version": HPAIRS_SOURCE_PROOF_CENSUS_STATUS_SCHEMA_VERSION,
+            "present": False,
+            "non_authority_status_only": True,
+            "authority_source": False,
+            "promotion_allowed": False,
+            "final_authority_ok": False,
+            "blockers": [],
+            "attachment_blockers": ["hpairs_source_proof_census_missing"],
+            "blocker_ladder": [],
+            "next_blocker": {
+                "step": "hpairs_source_proof_census",
+                "status": "missing",
+                "blocker_codes": ["hpairs_source_proof_census_missing"],
+                "next_action": "attach a fresh read-only H-PAIRS source-proof census artifact",
+            },
+        }
+    verdict = _mapping(payload.get("verdict"))
+    runtime_authority = _mapping(payload.get("runtime_authority"))
+    blockers = _text_list(payload.get("blockers"))
+    _extend_unique(blockers, _text_list(runtime_authority.get("blockers")))
+    attachment_blockers = _hpairs_source_proof_census_attachment_blockers(payload)
+    _extend_unique(blockers, attachment_blockers)
+    next_blocker = _mapping(verdict.get("next_blocker"))
+    return {
+        "schema_version": HPAIRS_SOURCE_PROOF_CENSUS_STATUS_SCHEMA_VERSION,
+        "present": True,
+        "non_authority_status_only": True,
+        "authority_source": False,
+        "source_schema_version": payload.get("schema_version"),
+        "identity": dict(_mapping(payload.get("identity"))),
+        "window": dict(_mapping(payload.get("window"))),
+        "classification": verdict.get("classification"),
+        "authority_candidate_ready": bool(verdict.get("authority_candidate_ready")),
+        "promotion_allowed": False,
+        "final_authority_ok": bool(runtime_authority.get("final_authority_ok"))
+        and not blockers,
+        "blockers": blockers,
+        "attachment_blockers": attachment_blockers,
+        "missing_requirement_categories": dict(
+            _mapping(payload.get("missing_requirement_categories"))
+        ),
+        "missing_source_ref_categories": dict(
+            _mapping(payload.get("missing_source_ref_categories"))
+        ),
+        "blocker_ladder": list(_sequence(payload.get("blocker_ladder"))),
+        "next_blocker": dict(next_blocker) if next_blocker else None,
+        "next_action": verdict.get("next_action"),
+        "totals": dict(_mapping(payload.get("totals"))),
+    }
+
+
+def _hpairs_source_proof_census_attachment_blockers(
+    payload: Mapping[str, Any],
+) -> list[str]:
+    blockers: list[str] = []
+    if _text(payload.get("schema_version")) != "torghut.hpairs-source-proof-census.v1":
+        blockers.append("hpairs_source_proof_census_schema_mismatch")
+    source = _mapping(payload.get("source"))
+    if source.get("read_only") is not True:
+        blockers.append("hpairs_source_proof_census_not_read_only")
+    if source.get("writes_proof") is not False:
+        blockers.append("hpairs_source_proof_census_writes_proof")
+    if source.get("modifies_rows") is not False:
+        blockers.append("hpairs_source_proof_census_modifies_rows")
+    if source.get("replay_outputs_count_as_runtime_proof") is not False:
+        blockers.append("hpairs_source_proof_census_replay_outputs_claim_runtime_proof")
+    if source.get("synthetic_proof_created") is not False:
+        blockers.append("hpairs_source_proof_census_synthetic_proof_created")
+    return blockers
 
 
 def _source_offsets(value: object) -> list[dict[str, object]]:
@@ -1896,6 +1976,7 @@ def build_runtime_ledger_proof_packet(
     paper_route_evidence: Mapping[str, Any] | None = None,
     runtime_window_import: Mapping[str, Any] | None = None,
     completion_status: Mapping[str, Any] | None = None,
+    hpairs_source_proof_census: Mapping[str, Any] | None = None,
     min_runtime_ledger_net_pnl: Decimal = (
         DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.min_net_pnl_after_costs
     ),
@@ -2738,6 +2819,44 @@ def build_runtime_ledger_proof_packet(
     )
     _extend_unique(blockers, risk_blockers)
 
+    hpairs_source_proof_census_status = _hpairs_source_proof_census_status(
+        hpairs_source_proof_census
+    )
+    hpairs_census_blockers = _text_list(
+        hpairs_source_proof_census_status.get("blockers")
+    )
+    hpairs_census_present = bool(hpairs_source_proof_census_status.get("present"))
+    hpairs_census_ok = (not hpairs_census_present) or (
+        not hpairs_census_blockers
+        and bool(hpairs_source_proof_census_status.get("final_authority_ok"))
+    )
+    _check(
+        checks,
+        "hpairs_source_proof_census_status",
+        passed=hpairs_census_ok,
+        observed=hpairs_source_proof_census_status,
+        expected=(
+            "attached read-only H-PAIRS source-proof census with no blockers; "
+            "census is evidence/status only and cannot grant authority by itself"
+        ),
+        blockers=hpairs_census_blockers
+        or (
+            []
+            if hpairs_census_ok or not hpairs_census_present
+            else ["hpairs_source_proof_census_not_ready"]
+        ),
+        status="non_authority_evidence_status",
+    )
+    _extend_unique(
+        blockers,
+        hpairs_census_blockers
+        or (
+            []
+            if hpairs_census_ok or not hpairs_census_present
+            else ["hpairs_source_proof_census_not_ready"]
+        ),
+    )
+
     tigerbeetle_status = _mapping(
         status.get("tigerbeetle_ledger") or status.get("tigerbeetle")
     )
@@ -3040,6 +3159,7 @@ def build_runtime_ledger_proof_packet(
                 "strategy_runtime_ledger_bucket_refs": ledger_refs,
                 "unbacked_metric_window_refs": unbacked_refs,
             },
+            "hpairs_source_proof_census": hpairs_source_proof_census_status,
         },
     }
 
@@ -3085,6 +3205,15 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--runtime-window-import-url",
         help="URL returning runtime-window import JSON output.",
+    )
+    parser.add_argument(
+        "--hpairs-source-proof-census-file",
+        type=Path,
+        help="Path to a read-only audit_hpairs_source_proof_census.py JSON artifact.",
+    )
+    parser.add_argument(
+        "--hpairs-source-proof-census-url",
+        help="URL returning a read-only H-PAIRS source-proof census JSON artifact.",
     )
     parser.add_argument(
         "--completion-file",
@@ -3237,6 +3366,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         url=args.runtime_window_import_url,
         timeout_seconds=args.timeout_seconds,
     )
+    hpairs_source_proof_census = _load_optional_json_object(
+        path=args.hpairs_source_proof_census_file,
+        url=args.hpairs_source_proof_census_url,
+        timeout_seconds=args.timeout_seconds,
+    )
     completion_status = _load_optional_json_object(
         path=args.completion_file,
         url=args.completion_url,
@@ -3249,6 +3383,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         proof_mode=args.proof_mode,
         paper_route_evidence=paper_route_evidence,
         runtime_window_import=runtime_window_import,
+        hpairs_source_proof_census=hpairs_source_proof_census,
         completion_status=completion_status,
         min_runtime_ledger_net_pnl=min_net_pnl,
         min_runtime_ledger_daily_net_pnl=min_daily_net_pnl,
@@ -3279,6 +3414,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             "runtime_window_import_source": _source_kind(
                 args.runtime_window_import_file,
                 args.runtime_window_import_url,
+            ),
+            "hpairs_source_proof_census_source": _source_kind(
+                args.hpairs_source_proof_census_file,
+                args.hpairs_source_proof_census_url,
             ),
             "completion_source": _source_kind(
                 args.completion_file, args.completion_url

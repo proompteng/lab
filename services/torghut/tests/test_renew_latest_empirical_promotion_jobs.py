@@ -13,6 +13,7 @@ from app.trading.runtime_window_import import (
     build_observed_runtime_buckets,
     persist_observed_runtime_windows,
 )
+from scripts import renew_latest_empirical_promotion_jobs as renew
 
 
 def _runtime_pnl_basis() -> dict[str, object]:
@@ -120,6 +121,119 @@ class TestRenewLatestEmpiricalPromotionJobsRuntimeLedger(TestCase):
             bind=engine, expire_on_commit=False, future=True
         )
 
+    def test_hpairs_source_proof_census_status_is_non_authority_renewal_evidence(
+        self,
+    ) -> None:
+        status = renew._hpairs_source_proof_census_status(
+            {
+                "schema_version": "torghut.hpairs-source-proof-census.v1",
+                "identity": {"hypothesis_id": "H-PAIRS-01"},
+                "window": {},
+                "source": {
+                    "kind": "fixture_json",
+                    "read_only": True,
+                    "writes_proof": False,
+                    "modifies_rows": False,
+                    "runtime_stage": "paper",
+                    "replay_outputs_count_as_runtime_proof": False,
+                    "synthetic_proof_created": False,
+                },
+                "runtime_authority": {
+                    "final_authority_ok": False,
+                    "blockers": ["runtime_ledger_source_materialization_missing"],
+                },
+                "missing_requirement_categories": {
+                    "submitted_orders": False,
+                    "filled_notional": False,
+                },
+                "missing_source_ref_categories": {
+                    "runtime_ledger_source_materialization_missing": True,
+                },
+                "blocker_ladder": [
+                    {
+                        "step": "runtime_ledger_source_materialization_present",
+                        "status": "blocked",
+                        "blocker_codes": [
+                            "runtime_ledger_source_materialization_missing"
+                        ],
+                    }
+                ],
+                "blockers": ["runtime_ledger_source_materialization_missing"],
+                "verdict": {
+                    "classification": "source_refs_missing",
+                    "authority_candidate_ready": False,
+                    "next_blocker": {
+                        "step": "runtime_ledger_source_materialization_present"
+                    },
+                    "next_action": "backfill runtime-ledger source refs",
+                },
+                "totals": {"runtime_ledger_source_materialization_count": 0},
+            }
+        )
+
+        self.assertTrue(status["present"])
+        self.assertTrue(status["non_authority_status_only"])
+        self.assertFalse(status["promotion_allowed"])
+        self.assertFalse(status["final_authority_ok"])
+        self.assertEqual(
+            status["blockers"],
+            ["runtime_ledger_source_materialization_missing"],
+        )
+        self.assertEqual(
+            status["next_blocker"]["step"],
+            "runtime_ledger_source_materialization_present",
+        )
+
+    def test_hpairs_source_proof_census_attachment_blockers_block_renewal_authority(
+        self,
+    ) -> None:
+        status = renew._hpairs_source_proof_census_status(
+            {
+                "schema_version": "torghut.hpairs-source-proof-census.v0",
+                "identity": {"hypothesis_id": "H-PAIRS-01"},
+                "window": {},
+                "source": {
+                    "kind": "fixture_json",
+                    "read_only": False,
+                    "writes_proof": True,
+                    "modifies_rows": True,
+                    "runtime_stage": "paper",
+                    "replay_outputs_count_as_runtime_proof": True,
+                    "synthetic_proof_created": True,
+                },
+                "runtime_authority": {
+                    "final_authority_ok": True,
+                    "blockers": [],
+                },
+                "missing_requirement_categories": {},
+                "missing_source_ref_categories": {},
+                "blocker_ladder": [],
+                "blockers": [],
+                "verdict": {
+                    "classification": "authority_candidate_ready",
+                    "authority_candidate_ready": True,
+                    "next_blocker": None,
+                    "next_action": "assemble authority proof packet",
+                },
+                "totals": {},
+            }
+        )
+
+        blockers = [
+            "hpairs_source_proof_census_schema_mismatch",
+            "hpairs_source_proof_census_not_read_only",
+            "hpairs_source_proof_census_writes_proof",
+            "hpairs_source_proof_census_modifies_rows",
+            "hpairs_source_proof_census_replay_outputs_claim_runtime_proof",
+            "hpairs_source_proof_census_synthetic_proof_created",
+        ]
+        self.assertTrue(status["present"])
+        self.assertFalse(status["promotion_allowed"])
+        self.assertFalse(status["final_authority_ok"])
+        self.assertEqual(status["attachment_blockers"], blockers)
+        for blocker in blockers:
+            self.assertIn(blocker, status["blockers"])
+
     def test_runtime_bucket_materialization_rerun_is_idempotent_for_same_scope(
         self,
     ) -> None:
@@ -162,14 +276,14 @@ class TestRenewLatestEmpiricalPromotionJobsRuntimeLedger(TestCase):
                 },
             )
             session.commit()
-            rows = (
-                session.execute(select(StrategyRuntimeLedgerBucket))
-                .scalars()
-                .all()
-            )
+            rows = session.execute(select(StrategyRuntimeLedgerBucket)).scalars().all()
 
-        self.assertEqual(first_summary["current_runtime_ledger_bucket_replacement_count"], 0)
-        self.assertEqual(second_summary["current_runtime_ledger_bucket_replacement_count"], 1)
+        self.assertEqual(
+            first_summary["current_runtime_ledger_bucket_replacement_count"], 0
+        )
+        self.assertEqual(
+            second_summary["current_runtime_ledger_bucket_replacement_count"], 1
+        )
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0].account_label, "TORGHUT_SIM")
         self.assertEqual(
@@ -240,7 +354,9 @@ class TestRenewLatestEmpiricalPromotionJobsRuntimeLedger(TestCase):
                 .all()
             )
 
-        self.assertEqual([row.account_label for row in rows], ["TORGHUT_SIM", "TORGHUT_SIM_ALT"])
+        self.assertEqual(
+            [row.account_label for row in rows], ["TORGHUT_SIM", "TORGHUT_SIM_ALT"]
+        )
         self.assertEqual(
             [row.observed_stage for row in rows],
             ["paper", "paper"],
