@@ -16,7 +16,7 @@ spec:
       key: system-prompt.md
   security:
     allowedSecrets:
-      - alpaca-mcp
+      - autonomous-trader-alpaca-mcp
       - agents-artifacts
       - codex-auth
       - github-token

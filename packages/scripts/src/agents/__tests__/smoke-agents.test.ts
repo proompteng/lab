@@ -595,7 +595,7 @@ describe('scheduled AgentRun templates', () => {
 })
 
 describe('synthesis autonomous trader provider', () => {
-  it('keeps the market-open trader schedule suspended while the paper account is shared', () => {
+  it('runs the market-open trader on its dedicated paper account', () => {
     const kustomization = readYamlObjects('argocd/applications/synthesis/agents-domain/kustomization.yaml')[0]
     const resources = objectAt(kustomization, 'resources') as string[] | undefined
     const provider = readYamlObjects(
@@ -608,12 +608,15 @@ describe('synthesis autonomous trader provider', () => {
       'argocd/applications/synthesis/agents-domain/autonomous-trader-agentrun-template.yaml',
     ).find((manifest) => objectAt(manifest, 'kind') === 'AgentRun')
     const envTemplate = objectAt(objectAt(provider, 'spec'), 'envTemplate')
+    const secretEnv = objectAt(objectAt(provider, 'spec'), 'secretEnv') as Record<string, unknown>[] | undefined
     const scheduleSpec = objectAt(schedule, 'spec')
     const templateSpec = objectAt(template, 'spec')
     const parameters = objectAt(templateSpec, 'parameters')
     const annotations = objectAt(objectAt(schedule, 'metadata'), 'annotations')
     const overallTimeoutSeconds = Number(objectAt(envTemplate, 'CODEX_MARKET_CONTEXT_OVERALL_TIMEOUT_SECONDS'))
 
+    expect(resources).toContain('autonomous-trader-dedicated-alpaca-mcp-sealedsecret.yaml')
+    expect(resources).not.toContain('autonomous-trader-alpaca-mcp-sealedsecret.yaml')
     expect(resources).toContain('autonomous-trader-schedule.yaml')
     expect(resources).toContain('autonomous-trader-agentrun-template.yaml')
     expect(
@@ -622,16 +625,15 @@ describe('synthesis autonomous trader provider', () => {
       ),
     ).toBe(true)
     expect(objectAt(scheduleSpec, 'cron')).toBe('15 9 * * 1-5')
-    expect(objectAt(scheduleSpec, 'suspend')).toBe(true)
+    expect(objectAt(scheduleSpec, 'suspend')).toBe(false)
     expect(objectAt(scheduleSpec, 'timezone')).toBe('America/New_York')
     expect(objectAt(objectAt(scheduleSpec, 'targetRef'), 'name')).toBe('autonomous-trader-template')
-    expect(objectAt(annotations, 'proompteng.ai/account-isolation-mode')).toBe(
-      'suspended-until-dedicated-paper-account',
-    )
-    expect(objectAt(objectAt(templateSpec, 'goal'), 'objective')).toContain('market-open autonomous trader suspended')
-    expect(objectAt(objectAt(templateSpec, 'goal'), 'objective')).toContain('do not mutate broker state')
-    expect(objectAt(parameters, 'mode')).toBe('dry-run')
-    expect(objectAt(parameters, 'synthesisSessionMode')).toBe('dry_run')
+    expect(objectAt(annotations, 'proompteng.ai/account-isolation-mode')).toBeUndefined()
+    expect(objectAt(annotations, 'proompteng.ai/suspension-reason')).toBeUndefined()
+    expect(objectAt(objectAt(templateSpec, 'goal'), 'objective')).toContain('Reach 500000 USD account equity')
+    expect(objectAt(objectAt(templateSpec, 'goal'), 'objective')).toContain('dedicated Synthesis Alpaca paper account')
+    expect(objectAt(parameters, 'mode')).toBe('market-open')
+    expect(objectAt(parameters, 'synthesisSessionMode')).toBe('market_open')
     expect(objectAt(parameters, 'accountType')).toBe('paper')
     expect(objectAt(parameters, 'targetEquityUsd')).toBe('500000')
     expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_MODE')).toBe('{{parameters.mode}}')
@@ -640,7 +642,23 @@ describe('synthesis autonomous trader provider', () => {
     )
     expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_TARGET_EQUITY_USD')).toBe('{{parameters.targetEquityUsd}}')
     expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_ACCOUNT_TYPE')).toBe('{{parameters.accountType}}')
-    expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED')).toBe('false')
+    expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED')).toBe('true')
+    expect(
+      (secretEnv ?? [])
+        .filter(
+          (entry) =>
+            String(objectAt(entry, 'name') ?? '').includes('ALPACA') ||
+            String(objectAt(entry, 'name') ?? '').includes('APCA'),
+        )
+        .map((entry) => objectAt(entry, 'secretName')),
+    ).toEqual([
+      'autonomous-trader-alpaca-mcp',
+      'autonomous-trader-alpaca-mcp',
+      'autonomous-trader-alpaca-mcp',
+      'autonomous-trader-alpaca-mcp',
+      'autonomous-trader-alpaca-mcp',
+      'autonomous-trader-alpaca-mcp',
+    ])
     expect(overallTimeoutSeconds).toBeGreaterThanOrEqual(32400)
   })
 
@@ -665,7 +683,8 @@ describe('synthesis autonomous trader provider', () => {
     expect(objectAt(goal, 'objective')).toContain('reads finalized Synthesis scorecards before candidate grading')
     expect(Object.hasOwn(goal, 'tokenBudget')).toBe(false)
     expect(secrets).toContain('synthesis-env')
-    expect(secrets).toContain('alpaca-mcp')
+    expect(secrets).toContain('autonomous-trader-alpaca-mcp')
+    expect(secrets).not.toContain('alpaca-mcp')
   })
 
   it('preinstalls day-trading Python dependencies in the Codex runner image', () => {
@@ -1006,6 +1025,12 @@ describe('synthesis autonomous trader provider', () => {
     expect(objectAt(objectAt(objectAt(agent, 'spec'), 'security'), 'allowedSecrets')).toContain('synthesis-env')
     expect(objectAt(objectAt(secretBinding, 'spec'), 'allowedSecrets')).toContain('synthesis-env')
     expect(objectAt(objectAt(template, 'spec'), 'secrets')).toContain('synthesis-env')
+    expect(objectAt(objectAt(objectAt(agent, 'spec'), 'security'), 'allowedSecrets')).toContain(
+      'autonomous-trader-alpaca-mcp',
+    )
+    expect(objectAt(objectAt(objectAt(agent, 'spec'), 'security'), 'allowedSecrets')).not.toContain('alpaca-mcp')
+    expect(objectAt(objectAt(secretBinding, 'spec'), 'allowedSecrets')).toContain('autonomous-trader-alpaca-mcp')
+    expect(objectAt(objectAt(secretBinding, 'spec'), 'allowedSecrets')).not.toContain('alpaca-mcp')
   })
 
   it('bridges Codex framed MCP stdio to Alpaca newline stdio', () => {
@@ -1036,14 +1061,14 @@ describe('synthesis autonomous trader provider', () => {
     expect(objectAt(codexConfig, 'content')).toContain('command = "/usr/bin/python3"')
     expect(objectAt(codexConfig, 'content')).toContain('args = ["-u", "/root/alpaca-mcp-stdio-bridge.py"]')
     expect(objectAt(codexConfig, 'content')).toContain('startup_timeout_sec = 60.0')
-    expect(objectAt(codexConfig, 'content')).toContain('AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED = "false"')
+    expect(objectAt(codexConfig, 'content')).toContain('AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED = "true"')
     expect(objectAt(bridge, 'content')).toContain('Content-Length:')
     expect(objectAt(bridge, 'content')).toContain('/usr/local/bin/alpaca-mcp-server')
     expect(objectAt(bridge, 'content')).toContain('--transport')
     expect(objectAt(bridge, 'content')).toContain('stdio')
     expect(objectAt(bridge, 'content')).toContain('MUTATION_TOOL_PREFIXES')
     expect(objectAt(bridge, 'content')).toContain('should_block_client_message')
-    expect(objectAt(bridge, 'content')).toContain('blocked_shared_torghut_proof_account')
+    expect(objectAt(bridge, 'content')).toContain('broker_mutation_gate_disabled')
   })
 })
 
