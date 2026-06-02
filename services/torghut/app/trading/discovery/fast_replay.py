@@ -45,6 +45,21 @@ FAST_REPLAY_FRONTIER_IDENTITY_SCHEMA_VERSION = (
 FAST_REPLAY_EXACT_FRONTIER_KEY_SCHEMA_VERSION = (
     "torghut.fast-replay-exact-frontier-key.v1"
 )
+FAST_REPLAY_EXACT_SELECTION_SOURCE_INPUT_BLOCKERS = frozenset(
+    (
+        "missing_price_return_microbar_fields",
+        "missing_ofi_or_depth_fields",
+        "missing_spread_fields",
+        "missing_volume_fields",
+    )
+)
+FAST_REPLAY_EXACT_SELECTION_IMPACT_CAPACITY_BLOCKERS = frozenset(
+    (
+        "candidate_notional_missing",
+        "median_price_missing",
+        "median_volume_missing",
+    )
+)
 
 
 @dataclass(frozen=True)
@@ -92,6 +107,7 @@ class FastReplayPreviewRow:
             observed_post_cost_expectancy_bps
         )
         notional_blocked = required_daily_notional is None
+        exact_replay_selection_blockers = _exact_replay_selection_blockers_for_row(self)
         lineage_blockers = _lineage_blockers_for_row(self)
         risk_flags = _risk_flags_for_row(self, lineage_blockers=lineage_blockers)
         prefilter_capacity_lineage = _mapping(
@@ -144,9 +160,7 @@ class FastReplayPreviewRow:
                 "candidate_frontier_hash": self.candidate_frontier_hash,
                 "exact_replay_frontier_key": self.exact_replay_frontier_key,
                 "duplicate_of_candidate_spec_id": self.duplicate_of_candidate_spec_id,
-                "duplicate_candidate_spec_ids": list(
-                    self.duplicate_candidate_spec_ids
-                ),
+                "duplicate_candidate_spec_ids": list(self.duplicate_candidate_spec_ids),
                 "dedupe_scope": "same_replay_tape_cache_and_execution_identity",
                 "proof_source": "prefilter_only",
                 "prefilter_only": True,
@@ -183,6 +197,8 @@ class FastReplayPreviewRow:
                 "blocked": notional_blocked,
                 "prefilter_only": True,
             },
+            "exact_replay_selection_blocked": bool(exact_replay_selection_blockers),
+            "exact_replay_selection_blockers": list(exact_replay_selection_blockers),
             "cost_impact_lineage": {
                 "status": "preview_prefilter_only",
                 "source": "manifest_verified_replay_tape",
@@ -252,6 +268,11 @@ class FastReplayPreviewResult:
                 "exploitation_slots": FAST_REPLAY_DEFAULT_EXPLOITATION_COUNT,
                 "exploration_slots": FAST_REPLAY_DEFAULT_EXPLORATION_COUNT,
                 "broad_cluster_fanout_allowed": False,
+                "lineage_filter": "block_exact_replay_selection_when_local_cost_or_capacity_inputs_are_missing",
+                "lineage_filter_blockers": sorted(
+                    FAST_REPLAY_EXACT_SELECTION_SOURCE_INPUT_BLOCKERS
+                    | FAST_REPLAY_EXACT_SELECTION_IMPACT_CAPACITY_BLOCKERS
+                ),
             },
             "whitepaper_mechanisms": list(FAST_REPLAY_WHITEPAPER_MECHANISMS),
             "implemented_mechanisms": {
@@ -806,7 +827,11 @@ def _mark_frontier_duplicates(
 
 
 def _frontier_dedupe_key(row: FastReplayPreviewRow) -> str:
-    return row.exact_replay_frontier_key or row.candidate_frontier_hash or row.candidate_spec_id
+    return (
+        row.exact_replay_frontier_key
+        or row.candidate_frontier_hash
+        or row.candidate_spec_id
+    )
 
 
 def _row_frontier_duplicate_filtered(row: FastReplayPreviewRow) -> bool:
@@ -826,6 +851,7 @@ def _select_frontier_buckets(
         if row.selection_reason != "insufficient_replay_tape_rows"
         and not _row_explicitly_non_hpairs(row)
         and not _row_frontier_duplicate_filtered(row)
+        and not _row_exact_replay_selection_blocked(row)
     ]
     selected: dict[str, str] = {}
     for row in eligible[:exploitation_count]:
@@ -840,8 +866,10 @@ def _select_frontier_buckets(
         if len(selected) >= exact_replay_candidate_cap:
             break
         selected[row.candidate_spec_id] = "exploration"
-    if not selected and ranked_rows:
-        selected[ranked_rows[0].candidate_spec_id] = "exploitation_backfill"
+    if not selected:
+        for row in eligible:
+            selected[row.candidate_spec_id] = "exploitation_backfill"
+            break
     return selected
 
 
@@ -852,6 +880,10 @@ def _row_with_rank_and_selection(
     selection_reason = row.selection_reason
     if selected:
         selection_reason = f"fast_replay_frontier_{frontier_bucket}_selected"
+    elif not _row_frontier_duplicate_filtered(
+        row
+    ) and _row_exact_replay_selection_blocked(row):
+        selection_reason = "fast_replay_frontier_lineage_blocked"
     return FastReplayPreviewRow(
         candidate_spec_id=row.candidate_spec_id,
         rank=rank,
@@ -936,6 +968,58 @@ def _row_with_frontier_dedupe(
         duplicate_of_candidate_spec_id=duplicate_of_candidate_spec_id,
         duplicate_candidate_spec_ids=duplicate_candidate_spec_ids,
     )
+
+
+def _row_exact_replay_selection_blocked(row: FastReplayPreviewRow) -> bool:
+    return bool(_exact_replay_selection_blockers_for_row(row))
+
+
+def _exact_replay_selection_blockers_for_row(
+    row: FastReplayPreviewRow,
+) -> tuple[str, ...]:
+    """Block exact-replay handoff when local cost/capacity lineage is incomplete.
+
+    Source-backed ADV remains a downstream promotion-authority blocker. This
+    preview filter blocks only missing local replay-tape inputs that would make
+    the bounded exact-replay frontier ranking cost- or capacity-blind.
+    """
+
+    blockers: set[str] = set()
+    source_input_blockers = set(
+        _string_tuple(row.microstructure_prefilter.get("source_input_blockers"))
+    )
+    blockers.update(
+        source_input_blockers & FAST_REPLAY_EXACT_SELECTION_SOURCE_INPUT_BLOCKERS
+    )
+    if row.avg_abs_return_bps > 0:
+        blockers.discard("missing_price_return_microbar_fields")
+    if row.ofi_pressure_score != 0:
+        blockers.discard("missing_ofi_or_depth_fields")
+    if row.median_spread_bps > 0:
+        blockers.discard("missing_spread_fields")
+    if row.square_root_impact_capacity_penalty_bps > 0:
+        blockers.discard("missing_volume_fields")
+    impact_capacity_lineage = _mapping(
+        row.microstructure_prefilter.get("impact_capacity_lineage")
+    )
+    impact_blockers = set(_string_tuple(impact_capacity_lineage.get("blockers")))
+    blockers.update(
+        impact_blockers & FAST_REPLAY_EXACT_SELECTION_IMPACT_CAPACITY_BLOCKERS
+    )
+    if str(impact_capacity_lineage.get("status") or "") == "missing_inputs":
+        blockers.add("impact_capacity_lineage_missing_inputs")
+    if "missing_spread_fields" in source_input_blockers:
+        if row.median_spread_bps <= 0:
+            blockers.add("cost_lineage_spread_missing")
+    if (
+        "missing_volume_fields" in source_input_blockers
+        or "median_volume_missing" in impact_blockers
+    ):
+        if row.square_root_impact_capacity_penalty_bps <= 0:
+            blockers.add("adv_capacity_lineage_volume_missing")
+    if "candidate_notional_missing" in impact_blockers:
+        blockers.add("candidate_notional_lineage_missing")
+    return tuple(sorted(blockers))
 
 
 def _ofi_decay_score(values: NDArray[np.float64]) -> float:
@@ -1401,6 +1485,7 @@ def _lineage_blockers_for_row(row: FastReplayPreviewRow) -> tuple[str, ...]:
         "exact_replay_required",
         "live_paper_runtime_ledger_required",
     ]
+    blockers.extend(_exact_replay_selection_blockers_for_row(row))
     if _observed_post_cost_expectancy_bps(row) <= 0:
         blockers.append("positive_post_cost_expectancy_missing")
         blockers.append("target_implied_notional_blocked_non_positive_expectancy")
@@ -1437,6 +1522,13 @@ def _mapping(value: Any) -> dict[str, Any]:
         return {}
     mapping = cast(Mapping[Any, Any], value)
     return {str(key): item for key, item in mapping.items()}
+
+
+def _string_tuple(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        return ()
+    sequence = cast(Sequence[Any], value)
+    return tuple(str(item) for item in sequence if str(item).strip())
 
 
 def _stable_hash(payload: Mapping[str, Any]) -> str:

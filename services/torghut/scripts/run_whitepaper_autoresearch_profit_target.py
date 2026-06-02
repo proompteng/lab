@@ -6604,7 +6604,7 @@ def _apply_fast_replay_preview_narrowing(
         for candidate_spec_id in preview.selected_candidate_spec_ids
         if candidate_spec_id in spec_by_id
     ]
-    if not narrowed_specs and specs:
+    if not narrowed_specs and specs and not preview.rows:
         narrowed_specs = [specs[0]]
 
     selected_ids = {spec.candidate_spec_id for spec in narrowed_specs}
@@ -6654,6 +6654,15 @@ def _apply_fast_replay_preview_narrowing(
             )
             updated["fast_replay_target_implied_notional_context"] = preview_row.get(
                 "target_implied_notional_context"
+            )
+            updated["fast_replay_exact_replay_selection_blocked"] = preview_row.get(
+                "exact_replay_selection_blocked"
+            )
+            updated["fast_replay_exact_replay_selection_blockers"] = list(
+                cast(
+                    Sequence[Any],
+                    preview_row.get("exact_replay_selection_blockers") or (),
+                )
             )
             updated["fast_replay_cost_impact_lineage"] = preview_row.get(
                 "cost_impact_lineage"
@@ -6890,6 +6899,15 @@ def _bounded_sim_target_queue_metadata(
                 "required_daily_notional": row.get("required_daily_notional"),
                 "target_implied_notional_context": row.get(
                     "target_implied_notional_context"
+                ),
+                "exact_replay_selection_blocked": row.get(
+                    "exact_replay_selection_blocked"
+                ),
+                "exact_replay_selection_blockers": list(
+                    cast(
+                        Sequence[Any],
+                        row.get("exact_replay_selection_blockers") or (),
+                    )
                 ),
                 "reproducibility_metadata": {
                     "dataset_snapshot_ref": replay_tape_manifest.dataset_snapshot_ref,
