@@ -763,7 +763,7 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
                 runtime_argv[runtime_argv.index("--sources") + 1],
                 script.SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
             )
-            self.assertIn("--reconcile-empty-selection", runtime_argv)
+            self.assertNotIn("--reconcile-empty-selection", runtime_argv)
             self.assertIn("--fail-on-degraded", runtime_argv)
             self.assertIn("--allow-data-quality-degraded", runtime_argv)
 
