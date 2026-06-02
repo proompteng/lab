@@ -84,6 +84,7 @@ spec:
     ANALYSIS_REQUIRED_COMMIT: 56be940b69bf1a56578040eda9bf2e3699c5220e
     AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED: "{{parameters.brokerMutationEnabled}}"
     AUTONOMOUS_TRADER_MODE: "{{parameters.mode}}"
+    AUTONOMOUS_TRADER_SESSION_RECONCILE_ENABLED: "{{parameters.sessionReconcileEnabled}}"
     AUTONOMOUS_TRADER_SYNTHESIS_SESSION_MODE: "{{parameters.synthesisSessionMode}}"
     AUTONOMOUS_TRADER_TARGET_EQUITY_USD: "{{parameters.targetEquityUsd}}"
     AUTONOMOUS_TRADER_WORK_DIR: /tmp/autonomous-trader-work
@@ -167,6 +168,18 @@ spec:
 
         if [ ! -e "${report_path}" ]; then
           printf '# Autonomous Trader Report\n\nstatus: bootstrapping\n' > "${report_path}"
+        fi
+
+        reconcile_enabled="$(printf '%s' "${AUTONOMOUS_TRADER_SESSION_RECONCILE_ENABLED:-false}" | tr '[:upper:]' '[:lower:]')"
+        if [ "${reconcile_enabled}" = "true" ] || [ "${reconcile_enabled}" = "1" ] || [ "${reconcile_enabled}" = "yes" ]; then
+          if "${python_bin}" /workspace/lab/scripts/autotrader/session_reconciler.py \
+            --finalize-stale-flat \
+            --limit 50 \
+            --grace-minutes 5; then
+            printf '\nsession_reconciliation: completed\n' >> "${report_path}"
+          else
+            printf '\nsession_reconciliation: failed_or_unavailable\n' >> "${report_path}"
+          fi
         fi
 
         git_auth=()
