@@ -135,7 +135,16 @@ def _fetch_paper_route_target_plan_url_once(
         timeout=max(float(timeout_seconds), 0.1),
     )
     try:
-        connection.request("GET", path, headers={"Accept": "application/json"})
+        host_header = parsed.netloc or parsed.hostname
+        connection.request(
+            "GET",
+            path,
+            headers={
+                "Accept": "application/json",
+                "Connection": "close",
+                "Host": host_header,
+            },
+        )
         response = connection.getresponse()
         if response.status < 200 or response.status >= 300:
             return {
