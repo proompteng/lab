@@ -1841,7 +1841,7 @@ class TestTradingApi(TestCase):
             routeability["schema_version"],
             "torghut.routeability-repair-acceptance-ledger.v1",
         )
-        self.assertEqual(routeability["summary"]["zero_notional_lot_count"], 7)
+        self.assertEqual(routeability["summary"]["zero_notional_lot_count"], 8)
         self.assertEqual(routeability["accepted_routeable_candidate_count"], 0)
         clearinghouse = payload["route_evidence_clearinghouse_packet"]
         self.assertEqual(
@@ -2807,7 +2807,7 @@ class TestTradingApi(TestCase):
             "torghut.routeability-repair-acceptance-ledger.v1",
         )
         self.assertEqual(status_routeability["accepted_routeable_candidate_count"], 0)
-        self.assertEqual(status_routeability["summary"]["zero_notional_lot_count"], 7)
+        self.assertEqual(status_routeability["summary"]["zero_notional_lot_count"], 8)
         self.assertEqual(
             health_routeability["schema_version"],
             status_routeability["schema_version"],
