@@ -56,7 +56,9 @@ class RunTigerBeetleJournalCronTest(TestCase):
         self.assertEqual(commands[1].batch_size, 5)
         self.assertEqual(commands[2].source, SOURCE_TYPE_EXECUTION_ORDER_EVENT)
         self.assertEqual(commands[2].batch_size, runner.LIVE_ORDER_EVENT_BATCH_SIZE)
+        self.assertEqual(commands[2].batch_size, 1)
         self.assertEqual(commands[2].max_batches, runner.LIVE_ORDER_EVENT_MAX_BATCHES)
+        self.assertEqual(commands[2].max_batches, 1)
         self.assertLessEqual(commands[2].max_batches, 2)
         self.assertEqual(
             commands[2].event_scan_limit,
@@ -88,6 +90,8 @@ class RunTigerBeetleJournalCronTest(TestCase):
             str(runner.LIVE_ORDER_EVENT_MAX_BATCHES),
         )
         self.assertLessEqual(int(argv[argv.index("--max-batches") + 1]), 2)
+        self.assertEqual(int(argv[argv.index("--batch-size") + 1]), 1)
+        self.assertEqual(int(argv[argv.index("--max-batches") + 1]), 1)
         self.assertEqual(
             argv[argv.index("--event-scan-limit") + 1],
             str(runner.LIVE_ORDER_EVENT_SCAN_LIMIT),

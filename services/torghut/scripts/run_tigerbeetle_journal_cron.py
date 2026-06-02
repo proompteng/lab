@@ -24,8 +24,8 @@ from app.trading.tigerbeetle_journal import (  # noqa: E402
 )
 from scripts import journal_tigerbeetle_order_events as journal_script  # noqa: E402
 
-LIVE_ORDER_EVENT_BATCH_SIZE = 5
-LIVE_ORDER_EVENT_MAX_BATCHES = 2
+LIVE_ORDER_EVENT_BATCH_SIZE = 1
+LIVE_ORDER_EVENT_MAX_BATCHES = 1
 LIVE_ORDER_EVENT_SCAN_LIMIT = 250
 
 
