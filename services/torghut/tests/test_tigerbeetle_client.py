@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import socket
 import sys
+import time
 from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import patch
@@ -11,6 +12,8 @@ from app.trading.tigerbeetle_client import (
     FakeTigerBeetleClient,
     HEALTH_PROBE_ACCOUNT_ID,
     RealTigerBeetleClient,
+    TigerBeetleClientTimeoutError,
+    _run_with_timeout,
     check_tigerbeetle_health,
     create_tigerbeetle_client,
     parse_replica_addresses,
@@ -158,7 +161,149 @@ class TestTigerBeetleClient(TestCase):
         cls.assert_called_once_with(
             cluster_id=77,
             replica_addresses=["tb-0:3000", "tb-1:3000"],
+            rpc_timeout_seconds=settings.tigerbeetle_rpc_timeout_seconds,
         )
+
+    def test_timeout_helper_propagates_operation_errors(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "rpc failed"):
+            _run_with_timeout(
+                operation_name="lookup_accounts",
+                timeout_seconds=1.0,
+                operation=lambda: (_ for _ in ()).throw(RuntimeError("rpc failed")),
+            )
+
+    def test_real_client_times_out_blocked_account_rpc(self) -> None:
+        class _BlockingSync:
+            def __init__(self, *, cluster_id: int, replica_addresses: str) -> None:
+                del cluster_id, replica_addresses
+
+            def create_accounts(self, accounts: list[object]) -> list[object]:
+                del accounts
+                time.sleep(0.2)
+                return []
+
+        fake_module = SimpleNamespace(
+            ClientSync=_BlockingSync,
+            Account=_Event,
+            Transfer=_Event,
+        )
+        with (
+            patch.dict(sys.modules, {"tigerbeetle": fake_module}),
+            patch(
+                "app.trading.tigerbeetle_client.socket.getaddrinfo",
+                return_value=[
+                    (
+                        socket.AF_INET,
+                        socket.SOCK_STREAM,
+                        6,
+                        "",
+                        ("10.99.251.1", 3000),
+                    )
+                ],
+            ),
+        ):
+            client = RealTigerBeetleClient(
+                cluster_id=2001,
+                replica_addresses=[
+                    "torghut-tigerbeetle.torghut.svc.cluster.local:3000"
+                ],
+                rpc_timeout_seconds=0.01,
+            )
+            account = TigerBeetleAccountSpec(
+                account_id=11,
+                account_key="cash:paper:usd",
+                ledger=LEDGER_USD_MICRO,
+                code=1001,
+                account_label="paper",
+            )
+
+            with self.assertRaisesRegex(
+                TigerBeetleClientTimeoutError,
+                "tigerbeetle_create_accounts_timeout",
+            ):
+                client.create_accounts([account])
+
+    def test_real_client_times_out_blocked_health_lookup(self) -> None:
+        class _BlockingHealthSync:
+            def __init__(self, *, cluster_id: int, replica_addresses: str) -> None:
+                del cluster_id, replica_addresses
+
+            def lookup_accounts(self, ids: list[int]) -> list[object]:
+                del ids
+                time.sleep(0.2)
+                return []
+
+        fake_module = SimpleNamespace(
+            ClientSync=_BlockingHealthSync,
+            Account=_Event,
+            Transfer=_Event,
+        )
+        with (
+            patch.dict(sys.modules, {"tigerbeetle": fake_module}),
+            patch(
+                "app.trading.tigerbeetle_client.socket.getaddrinfo",
+                return_value=[
+                    (
+                        socket.AF_INET,
+                        socket.SOCK_STREAM,
+                        6,
+                        "",
+                        ("10.99.251.1", 3000),
+                    )
+                ],
+            ),
+        ):
+            client = RealTigerBeetleClient(
+                cluster_id=2001,
+                replica_addresses=[
+                    "torghut-tigerbeetle.torghut.svc.cluster.local:3000"
+                ],
+                rpc_timeout_seconds=0.01,
+            )
+
+            with self.assertRaisesRegex(
+                TigerBeetleClientTimeoutError,
+                "tigerbeetle_lookup_accounts_timeout",
+            ):
+                client.nop()
+
+    def test_real_client_times_out_blocked_connect(self) -> None:
+        class _BlockingConnectSync:
+            def __init__(self, *, cluster_id: int, replica_addresses: str) -> None:
+                del cluster_id, replica_addresses
+                time.sleep(0.2)
+
+        fake_module = SimpleNamespace(
+            ClientSync=_BlockingConnectSync,
+            Account=_Event,
+            Transfer=_Event,
+        )
+        with (
+            patch.dict(sys.modules, {"tigerbeetle": fake_module}),
+            patch(
+                "app.trading.tigerbeetle_client.socket.getaddrinfo",
+                return_value=[
+                    (
+                        socket.AF_INET,
+                        socket.SOCK_STREAM,
+                        6,
+                        "",
+                        ("10.99.251.1", 3000),
+                    )
+                ],
+            ),
+        ):
+            with self.assertRaisesRegex(
+                TigerBeetleClientTimeoutError,
+                "tigerbeetle_connect_timeout",
+            ):
+                RealTigerBeetleClient(
+                    cluster_id=2001,
+                    replica_addresses=[
+                        "torghut-tigerbeetle.torghut.svc.cluster.local:3000"
+                    ],
+                    rpc_timeout_seconds=0.01,
+                )
 
     def test_real_client_converts_domain_specs_to_official_events(self) -> None:
         instances: list[object] = []

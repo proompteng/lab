@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import ipaddress
+import queue
 import socket
-from collections.abc import Sequence
+import threading
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol, cast
+from typing import Any, Protocol, TypeVar, cast
 
 from app.config import Settings
 from app.trading.tigerbeetle_ledger_model import (
@@ -15,6 +17,7 @@ from app.trading.tigerbeetle_ledger_model import (
 )
 
 HEALTH_PROBE_ACCOUNT_ID = 1
+_T = TypeVar("_T")
 
 
 class TigerBeetleClientProtocol(Protocol):
@@ -27,6 +30,43 @@ class TigerBeetleClientProtocol(Protocol):
     def create_transfers(self, transfers: Sequence[object]) -> Sequence[object]: ...
 
     def lookup_transfers(self, ids: Sequence[int]) -> Sequence[object]: ...
+
+
+class TigerBeetleClientTimeoutError(TimeoutError):
+    """Raised when the synchronous TigerBeetle client exceeds its RPC deadline."""
+
+
+def _run_with_timeout(
+    *,
+    operation_name: str,
+    timeout_seconds: float,
+    operation: Callable[[], _T],
+) -> _T:
+    result_queue: queue.Queue[tuple[bool, _T | BaseException]] = queue.Queue(maxsize=1)
+
+    def run_operation() -> None:
+        try:
+            result_queue.put((True, operation()), block=False)
+        except BaseException as exc:
+            result_queue.put((False, exc), block=False)
+
+    thread = threading.Thread(
+        target=run_operation,
+        name=f"torghut-tigerbeetle-{operation_name}",
+        daemon=True,
+    )
+    thread.start()
+    try:
+        ok, value = result_queue.get(timeout=max(float(timeout_seconds), 0.001))
+    except queue.Empty as exc:
+        raise TigerBeetleClientTimeoutError(
+            f"tigerbeetle_{operation_name}_timeout:{timeout_seconds:.3f}s"
+        ) from exc
+    if ok:
+        return cast(_T, value)
+    if isinstance(value, BaseException):
+        raise value
+    raise RuntimeError(f"tigerbeetle_{operation_name}_failed")  # pragma: no cover
 
 
 @dataclass(frozen=True)
@@ -112,16 +152,27 @@ def resolve_replica_addresses(replica_addresses: Sequence[str]) -> list[str]:
 class RealTigerBeetleClient:
     """Small wrapper around the official synchronous TigerBeetle client."""
 
-    def __init__(self, *, cluster_id: int, replica_addresses: Sequence[str]) -> None:
+    def __init__(
+        self,
+        *,
+        cluster_id: int,
+        replica_addresses: Sequence[str],
+        rpc_timeout_seconds: float = 10.0,
+    ) -> None:
         import tigerbeetle as tb
 
         # The official client validates endpoint syntax before dialing and
         # accepts IP endpoints, not Kubernetes DNS service names.
         official_addresses = resolve_replica_addresses(replica_addresses)
         self._tb: Any = tb
-        self._client: Any = tb.ClientSync(
-            cluster_id=cluster_id,
-            replica_addresses=",".join(official_addresses),
+        self._rpc_timeout_seconds = max(float(rpc_timeout_seconds), 0.001)
+        self._client: Any = _run_with_timeout(
+            operation_name="connect",
+            timeout_seconds=self._rpc_timeout_seconds,
+            operation=lambda: tb.ClientSync(
+                cluster_id=cluster_id,
+                replica_addresses=",".join(official_addresses),
+            ),
         )
 
     def close(self) -> None:
@@ -137,7 +188,7 @@ class RealTigerBeetleClient:
         # The Python client does not expose TigerBeetle's internal NOP request.
         # A one-id account lookup is read-only but still proves client/server
         # protocol connectivity through the official public API.
-        self._client.lookup_accounts([HEALTH_PROBE_ACCOUNT_ID])
+        self.lookup_accounts([HEALTH_PROBE_ACCOUNT_ID])
 
     def _account_event(self, account: object) -> object:
         if not isinstance(account, TigerBeetleAccountSpec):
@@ -177,20 +228,36 @@ class RealTigerBeetleClient:
         )
 
     def create_accounts(self, accounts: Sequence[object]) -> Sequence[object]:
-        return self._client.create_accounts(
-            [self._account_event(item) for item in accounts]
+        return _run_with_timeout(
+            operation_name="create_accounts",
+            timeout_seconds=self._rpc_timeout_seconds,
+            operation=lambda: self._client.create_accounts(
+                [self._account_event(item) for item in accounts]
+            ),
         )
 
     def lookup_accounts(self, ids: Sequence[int]) -> Sequence[object]:
-        return self._client.lookup_accounts(list(ids))
+        return _run_with_timeout(
+            operation_name="lookup_accounts",
+            timeout_seconds=self._rpc_timeout_seconds,
+            operation=lambda: self._client.lookup_accounts(list(ids)),
+        )
 
     def create_transfers(self, transfers: Sequence[object]) -> Sequence[object]:
-        return self._client.create_transfers(
-            [self._transfer_event(item) for item in transfers]
+        return _run_with_timeout(
+            operation_name="create_transfers",
+            timeout_seconds=self._rpc_timeout_seconds,
+            operation=lambda: self._client.create_transfers(
+                [self._transfer_event(item) for item in transfers]
+            ),
         )
 
     def lookup_transfers(self, ids: Sequence[int]) -> Sequence[object]:
-        return self._client.lookup_transfers(list(ids))
+        return _run_with_timeout(
+            operation_name="lookup_transfers",
+            timeout_seconds=self._rpc_timeout_seconds,
+            operation=lambda: self._client.lookup_transfers(list(ids)),
+        )
 
 
 class FakeTigerBeetleClient:
@@ -238,6 +305,7 @@ def create_tigerbeetle_client(settings: Settings) -> RealTigerBeetleClient:
         replica_addresses=parse_replica_addresses(
             settings.tigerbeetle_replica_addresses
         ),
+        rpc_timeout_seconds=settings.tigerbeetle_rpc_timeout_seconds,
     )
 
 

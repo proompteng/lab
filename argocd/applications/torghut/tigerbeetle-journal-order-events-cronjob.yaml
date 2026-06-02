@@ -127,6 +127,8 @@ spec:
                   value: torghut-tigerbeetle.torghut.svc.cluster.local:3000
                 - name: TORGHUT_TIGERBEETLE_HEALTH_TIMEOUT_SECONDS
                   value: "5"
+                - name: TORGHUT_TIGERBEETLE_RPC_TIMEOUT_SECONDS
+                  value: "10"
                 - name: TORGHUT_TIGERBEETLE_JOURNAL_ENABLED
                   value: "true"
                 - name: TORGHUT_TIGERBEETLE_RECONCILE_REQUIRED
