@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -107,7 +108,12 @@ _AUTORESEARCH_PORTFOLIO_READY_STATUSES = (
 )
 _RUNTIME_LEDGER_REPAIR_SCAN_LIMIT = 256
 _RUNTIME_LEDGER_REPAIR_CANDIDATE_LIMIT = 8
-_RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_MS = 500
+_RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_DEFAULT_MS = 2500
+_RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_MIN_MS = 500
+_RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_MAX_MS = 10000
+_RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_ENV = (
+    "TORGHUT_RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_MS"
+)
 _RUNTIME_LEDGER_SUMMARY_PER_HYPOTHESIS_LIMIT = 16
 _PROMOTION_TABLE_COUNT_SCAN_LIMIT = 1000
 _PROMOTION_PORTFOLIO_READY_SCAN_LIMIT = 256
@@ -135,7 +141,23 @@ def _maybe_set_runtime_ledger_status_statement_timeout(session: Session) -> None
         except Exception:
             pass
     session.execute(
-        text(f"SET LOCAL statement_timeout = {_RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_MS}")
+        text(
+            f"SET LOCAL statement_timeout = {_runtime_ledger_status_query_timeout_ms()}"
+        )
+    )
+
+
+def _runtime_ledger_status_query_timeout_ms() -> int:
+    raw_timeout = os.getenv(_RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_ENV)
+    if raw_timeout is None:
+        return _RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_DEFAULT_MS
+    try:
+        timeout_ms = int(raw_timeout)
+    except ValueError:
+        return _RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_DEFAULT_MS
+    return min(
+        _RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_MAX_MS,
+        max(_RUNTIME_LEDGER_STATUS_QUERY_TIMEOUT_MIN_MS, timeout_ms),
     )
 
 
