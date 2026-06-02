@@ -7152,53 +7152,57 @@ class TestPaperRouteEvidenceAudit(TestCase):
                 )
             session.commit()
 
-            payload = build_paper_route_evidence_audit(
-                session,
-                live_submission_gate={
-                    "allowed": False,
-                    "reason": "paper_route_probe_only",
-                    "blocked_reasons": [],
-                    "promotion_eligible_total": 0,
-                    "runtime_ledger_paper_probation_import_plan": {
-                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
-                        "target_count": 1,
-                        "targets": [
-                            {
-                                "hypothesis_id": "H-SCOPED-SOURCE",
-                                "candidate_id": "candidate-scoped-source",
-                                "observed_stage": "paper",
-                                "strategy_family": "microbar_pairs",
-                                "strategy_name": strategy_name,
-                                "account_label": "paper",
-                                "source_manifest_ref": "config/trading/hypotheses/h-scoped-source.json",
-                                "window_start": window_start.isoformat(),
-                                "window_end": window_end.isoformat(),
-                                "paper_probation_authorized": True,
-                                "paper_probation_satisfied_for_bounded_live_paper_collection": True,
-                                "promotion_allowed": False,
-                                "final_promotion_authorized": False,
-                                "max_notional": "0",
-                            }
-                        ],
+            with patch(
+                "app.trading.paper_route_evidence.settings.trading_account_label",
+                "other-paper",
+            ):
+                payload = build_paper_route_evidence_audit(
+                    session,
+                    live_submission_gate={
+                        "allowed": False,
+                        "reason": "paper_route_probe_only",
+                        "blocked_reasons": [],
+                        "promotion_eligible_total": 0,
+                        "runtime_ledger_paper_probation_import_plan": {
+                            "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                            "target_count": 1,
+                            "targets": [
+                                {
+                                    "hypothesis_id": "H-SCOPED-SOURCE",
+                                    "candidate_id": "candidate-scoped-source",
+                                    "observed_stage": "paper",
+                                    "strategy_family": "microbar_pairs",
+                                    "strategy_name": strategy_name,
+                                    "account_label": "paper",
+                                    "source_manifest_ref": "config/trading/hypotheses/h-scoped-source.json",
+                                    "window_start": window_start.isoformat(),
+                                    "window_end": window_end.isoformat(),
+                                    "paper_probation_authorized": True,
+                                    "paper_probation_satisfied_for_bounded_live_paper_collection": True,
+                                    "promotion_allowed": False,
+                                    "final_promotion_authorized": False,
+                                    "max_notional": "0",
+                                }
+                            ],
+                        },
                     },
-                },
-                route_reacquisition_book={
-                    "schema_version": "torghut.route-reacquisition-book.v1",
-                    "state": "repair_only",
-                    "summary": {
-                        "paper_route_probe_eligible_symbols": ["AAPL"],
-                        "paper_route_probe_active_symbols": [],
+                    route_reacquisition_book={
+                        "schema_version": "torghut.route-reacquisition-book.v1",
+                        "state": "repair_only",
+                        "summary": {
+                            "paper_route_probe_eligible_symbols": ["AAPL"],
+                            "paper_route_probe_active_symbols": [],
+                        },
+                        "paper_route_probe": {
+                            "configured_enabled": True,
+                            "active": False,
+                            "next_session_max_notional": "25",
+                            "eligible_symbol_count": 1,
+                            "blocking_reasons": ["market_session_closed"],
+                        },
                     },
-                    "paper_route_probe": {
-                        "configured_enabled": True,
-                        "active": False,
-                        "next_session_max_notional": "25",
-                        "eligible_symbol_count": 1,
-                        "blocking_reasons": ["market_session_closed"],
-                    },
-                },
-                generated_at=window_start - timedelta(days=2),
-            )
+                    generated_at=window_start - timedelta(days=2),
+                )
 
         source_activity = payload["targets"][0]["source_activity"]
         self.assertEqual(source_activity["account_label"], "paper")
@@ -7210,6 +7214,35 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertIn(
             "source_decisions_missing",
             payload["targets"][0]["readiness"]["evidence_collection_blockers"],
+        )
+        account_diagnostics = payload["targets"][0][
+            "source_activity_account_diagnostics"
+        ]
+        self.assertTrue(account_diagnostics["diagnostic_only"])
+        self.assertEqual(
+            account_diagnostics["readiness_authority"],
+            "not_used_for_import_or_promotion_readiness",
+        )
+        self.assertFalse(account_diagnostics["target_scope_activity_present"])
+        self.assertTrue(account_diagnostics["configured_account_activity_present"])
+        self.assertTrue(account_diagnostics["alternate_account_activity_present"])
+        self.assertTrue(
+            account_diagnostics["alternate_account_target_strategy_activity_present"]
+        )
+        self.assertIn(
+            "source_activity_on_non_target_account",
+            account_diagnostics["scope_mismatch_reasons"],
+        )
+        configured_account_summary = next(
+            item
+            for item in account_diagnostics["account_summaries"]
+            if item["account_label"] == "other-paper"
+        )
+        self.assertEqual(configured_account_summary["decision_count"], 1)
+        self.assertEqual(configured_account_summary["execution_count"], 1)
+        self.assertEqual(configured_account_summary["tca_sample_count"], 1)
+        self.assertEqual(
+            configured_account_summary["target_strategy_decision_count"], 1
         )
 
     def test_builder_joins_source_activity_runtime_ledger_and_decisions(self) -> None:

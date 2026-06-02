@@ -19,6 +19,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from ..config import settings
 from ..models import (
     Execution,
     ExecutionOrderEvent,
@@ -137,6 +138,9 @@ HPAIRS_ZERO_ACTIVITY_DIAGNOSTICS_SCHEMA_VERSION = (
 )
 SOURCE_LINEAGE_OBSERVATION_SCHEMA_VERSION = (
     "torghut.paper-route-source-lineage-observation.v1"
+)
+SOURCE_ACTIVITY_ACCOUNT_DIAGNOSTICS_SCHEMA_VERSION = (
+    "torghut.paper-route-source-activity-account-diagnostics.v1"
 )
 HPAIRS_CURRENT_COLLECTION_PREREQUISITE_BLOCKERS = frozenset(
     {
@@ -3406,6 +3410,485 @@ def _source_activity_readback_state(
     return "no_source_activity"
 
 
+def _source_activity_account_diagnostic_labels(
+    target: Mapping[str, Any],
+) -> list[str]:
+    return _unique_text_items(
+        [
+            target.get("account_label"),
+            target.get("source_account_label"),
+            target.get("configured_trading_account_label"),
+            settings.trading_account_label,
+        ]
+    )
+
+
+def _source_activity_account_diagnostics(
+    session: Session,
+    *,
+    target: Mapping[str, Any],
+    probe: Mapping[str, object],
+    strategy_lookup_names: Sequence[str],
+    window_start: datetime,
+    window_end: datetime,
+) -> dict[str, object]:
+    target_account_label = _safe_text(target.get("account_label"))
+    source_account_label = _safe_text(target.get("source_account_label"))
+    configured_account_label = _safe_text(
+        target.get("configured_trading_account_label")
+    ) or _safe_text(settings.trading_account_label)
+    account_labels = _source_activity_account_diagnostic_labels(target)
+    target_strategy_names = _strategy_lookup_names(
+        target.get("strategy_name"),
+        target.get("runtime_strategy_name"),
+        strategy_lookup_names,
+    )
+    symbol_filters = [
+        str(item).strip().upper()
+        for item in _target_probe_symbols(target, probe)
+        if str(item).strip()
+    ]
+
+    def unavailable(error: BaseException) -> dict[str, object]:
+        return {
+            "schema_version": SOURCE_ACTIVITY_ACCOUNT_DIAGNOSTICS_SCHEMA_VERSION,
+            "available": False,
+            "diagnostic_only": True,
+            "readiness_authority": "not_used_for_import_or_promotion_readiness",
+            "target_account_label": target_account_label,
+            "source_account_label": source_account_label,
+            "configured_trading_account_label": configured_account_label,
+            "account_labels": account_labels,
+            "strategy_lookup_names": target_strategy_names,
+            "symbols": symbol_filters,
+            "account_summaries": [],
+            "strategy_summaries": [],
+            "scope_mismatch_reasons": [
+                "source_activity_account_diagnostics_unavailable"
+            ],
+            "error": {
+                "type": type(error).__name__,
+                "message": str(error),
+            },
+        }
+
+    if not account_labels:
+        return {
+            "schema_version": SOURCE_ACTIVITY_ACCOUNT_DIAGNOSTICS_SCHEMA_VERSION,
+            "available": True,
+            "diagnostic_only": True,
+            "readiness_authority": "not_used_for_import_or_promotion_readiness",
+            "target_account_label": target_account_label,
+            "source_account_label": source_account_label,
+            "configured_trading_account_label": configured_account_label,
+            "account_labels": [],
+            "strategy_lookup_names": target_strategy_names,
+            "symbols": symbol_filters,
+            "account_summaries": [],
+            "strategy_summaries": [],
+            "target_scope_activity_present": False,
+            "configured_account_activity_present": False,
+            "alternate_account_activity_present": False,
+            "alternate_account_target_strategy_activity_present": False,
+            "alternate_account_non_target_strategy_activity_present": False,
+            "scope_mismatch_reasons": ["source_activity_account_scope_missing"],
+        }
+
+    account_summaries: dict[str, dict[str, Any]] = {
+        label: cast(
+            dict[str, Any],
+            {
+                "account_label": label,
+                "decision_count": 0,
+                "execution_count": 0,
+                "order_event_count": 0,
+                "tca_sample_count": 0,
+                "target_strategy_decision_count": 0,
+                "target_strategy_execution_count": 0,
+                "target_strategy_order_event_count": 0,
+                "target_strategy_tca_sample_count": 0,
+                "non_target_strategy_decision_count": 0,
+                "decision_status_counts": {},
+                "strategy_names": [],
+                "_last_activity_at": None,
+            },
+        )
+        for label in account_labels
+    }
+    strategy_summaries: dict[tuple[str, str], dict[str, Any]] = {}
+
+    def bump_last_activity(summary: dict[str, Any], value: object) -> None:
+        activity_at = _parse_datetime(value)
+        if activity_at is None:
+            return
+        current = summary.get("_last_activity_at")
+        if not isinstance(current, datetime) or activity_at > current:
+            summary["_last_activity_at"] = activity_at
+
+    def strategy_summary(
+        account_label: str, strategy_name: str | None
+    ) -> dict[str, Any]:
+        strategy_key = strategy_name or ""
+        key = (account_label, strategy_key)
+        summary = strategy_summaries.get(key)
+        if summary is None:
+            summary = cast(
+                dict[str, Any],
+                {
+                    "account_label": account_label,
+                    "strategy_name": strategy_key or None,
+                    "target_strategy": strategy_key in target_strategy_names,
+                    "decision_count": 0,
+                    "execution_count": 0,
+                    "order_event_count": 0,
+                    "tca_sample_count": 0,
+                    "decision_status_counts": {},
+                    "_last_activity_at": None,
+                },
+            )
+            strategy_summaries[key] = summary
+        return summary
+
+    def bump(
+        *,
+        account_label: object,
+        strategy_name: object,
+        field: str,
+        count: object,
+        last_activity_at: object,
+        decision_status: object = None,
+    ) -> None:
+        account = _safe_text(account_label)
+        if account is None:
+            return
+        strategy = _safe_text(strategy_name)
+        amount = _safe_int(count)
+        if amount <= 0:
+            return
+        account_summary = account_summaries.setdefault(
+            account,
+            cast(
+                dict[str, Any],
+                {
+                    "account_label": account,
+                    "decision_count": 0,
+                    "execution_count": 0,
+                    "order_event_count": 0,
+                    "tca_sample_count": 0,
+                    "target_strategy_decision_count": 0,
+                    "target_strategy_execution_count": 0,
+                    "target_strategy_order_event_count": 0,
+                    "target_strategy_tca_sample_count": 0,
+                    "non_target_strategy_decision_count": 0,
+                    "decision_status_counts": {},
+                    "strategy_names": [],
+                    "_last_activity_at": None,
+                },
+            ),
+        )
+        account_summary[field] = _safe_int(account_summary.get(field)) + amount
+        strategy_names = _unique_text_items(account_summary.get("strategy_names"))
+        if strategy is not None and strategy not in strategy_names:
+            strategy_names.append(strategy)
+            account_summary["strategy_names"] = strategy_names
+        is_target_strategy = strategy in target_strategy_names if strategy else False
+        if is_target_strategy:
+            target_field = f"target_strategy_{field}"
+            account_summary[target_field] = (
+                _safe_int(account_summary.get(target_field)) + amount
+            )
+        elif field == "decision_count":
+            account_summary["non_target_strategy_decision_count"] = (
+                _safe_int(account_summary.get("non_target_strategy_decision_count"))
+                + amount
+            )
+        status = _safe_text(decision_status)
+        if field == "decision_count" and status is not None:
+            status_counts = _as_mapping(account_summary.get("decision_status_counts"))
+            status_counts[status] = _safe_int(status_counts.get(status)) + amount
+            account_summary["decision_status_counts"] = status_counts
+        bump_last_activity(account_summary, last_activity_at)
+
+        per_strategy = strategy_summary(account, strategy)
+        per_strategy[field] = _safe_int(per_strategy.get(field)) + amount
+        if field == "decision_count" and status is not None:
+            strategy_status_counts = _as_mapping(
+                per_strategy.get("decision_status_counts")
+            )
+            strategy_status_counts[status] = (
+                _safe_int(strategy_status_counts.get(status)) + amount
+            )
+            per_strategy["decision_status_counts"] = strategy_status_counts
+        bump_last_activity(per_strategy, last_activity_at)
+
+    try:
+        _maybe_set_paper_route_audit_statement_timeout(session)
+        decision_stmt = (
+            select(
+                TradeDecision.alpaca_account_label,
+                Strategy.name,
+                TradeDecision.status,
+                func.count(TradeDecision.id),
+                func.max(TradeDecision.created_at),
+            )
+            .join(Strategy, TradeDecision.strategy_id == Strategy.id)
+            .where(TradeDecision.alpaca_account_label.in_(account_labels))
+            .where(TradeDecision.created_at >= window_start)
+            .where(TradeDecision.created_at <= window_end)
+            .group_by(
+                TradeDecision.alpaca_account_label,
+                Strategy.name,
+                TradeDecision.status,
+            )
+        )
+        if symbol_filters:
+            decision_stmt = decision_stmt.where(
+                TradeDecision.symbol.in_(symbol_filters)
+            )
+        for (
+            account_label,
+            strategy_name,
+            status,
+            count,
+            last_activity_at,
+        ) in session.execute(decision_stmt):
+            bump(
+                account_label=account_label,
+                strategy_name=strategy_name,
+                field="decision_count",
+                count=count,
+                last_activity_at=last_activity_at,
+                decision_status=status,
+            )
+
+        execution_activity_ts = _execution_activity_timestamp()
+        execution_stmt = (
+            select(
+                Execution.alpaca_account_label,
+                Strategy.name,
+                func.count(Execution.id),
+                func.max(execution_activity_ts),
+            )
+            .outerjoin(
+                TradeDecision,
+                Execution.trade_decision_id == TradeDecision.id,
+            )
+            .outerjoin(Strategy, TradeDecision.strategy_id == Strategy.id)
+            .where(Execution.alpaca_account_label.in_(account_labels))
+            .where(execution_activity_ts >= window_start)
+            .where(execution_activity_ts <= window_end)
+            .group_by(Execution.alpaca_account_label, Strategy.name)
+        )
+        if symbol_filters:
+            execution_stmt = execution_stmt.where(Execution.symbol.in_(symbol_filters))
+        for account_label, strategy_name, count, last_activity_at in session.execute(
+            execution_stmt
+        ):
+            bump(
+                account_label=account_label,
+                strategy_name=strategy_name,
+                field="execution_count",
+                count=count,
+                last_activity_at=last_activity_at,
+            )
+
+        order_event_activity_ts = _order_event_activity_timestamp()
+        order_event_stmt = (
+            select(
+                ExecutionOrderEvent.alpaca_account_label,
+                Strategy.name,
+                func.count(ExecutionOrderEvent.id),
+                func.max(order_event_activity_ts),
+            )
+            .outerjoin(
+                TradeDecision,
+                ExecutionOrderEvent.trade_decision_id == TradeDecision.id,
+            )
+            .outerjoin(Strategy, TradeDecision.strategy_id == Strategy.id)
+            .where(ExecutionOrderEvent.alpaca_account_label.in_(account_labels))
+            .where(order_event_activity_ts >= window_start)
+            .where(order_event_activity_ts <= window_end)
+            .group_by(ExecutionOrderEvent.alpaca_account_label, Strategy.name)
+        )
+        if symbol_filters:
+            order_event_stmt = order_event_stmt.where(
+                ExecutionOrderEvent.symbol.in_(symbol_filters)
+            )
+        for account_label, strategy_name, count, last_activity_at in session.execute(
+            order_event_stmt
+        ):
+            bump(
+                account_label=account_label,
+                strategy_name=strategy_name,
+                field="order_event_count",
+                count=count,
+                last_activity_at=last_activity_at,
+            )
+
+        tca_stmt = (
+            select(
+                ExecutionTCAMetric.alpaca_account_label,
+                Strategy.name,
+                func.count(ExecutionTCAMetric.id),
+                func.max(ExecutionTCAMetric.computed_at),
+            )
+            .outerjoin(Strategy, ExecutionTCAMetric.strategy_id == Strategy.id)
+            .where(ExecutionTCAMetric.alpaca_account_label.in_(account_labels))
+            .where(ExecutionTCAMetric.computed_at >= window_start)
+            .where(ExecutionTCAMetric.computed_at <= window_end)
+            .group_by(ExecutionTCAMetric.alpaca_account_label, Strategy.name)
+        )
+        if symbol_filters:
+            tca_stmt = tca_stmt.where(ExecutionTCAMetric.symbol.in_(symbol_filters))
+        for account_label, strategy_name, count, last_activity_at in session.execute(
+            tca_stmt
+        ):
+            bump(
+                account_label=account_label,
+                strategy_name=strategy_name,
+                field="tca_sample_count",
+                count=count,
+                last_activity_at=last_activity_at,
+            )
+    except SQLAlchemyError as exc:
+        _rollback_paper_route_audit_session(session)
+        return unavailable(exc)
+
+    account_results: list[dict[str, object]] = []
+    for summary in account_summaries.values():
+        result = {
+            key: value for key, value in summary.items() if not key.startswith("_")
+        }
+        result["last_activity_at"] = _isoformat(
+            cast(datetime | None, summary.get("_last_activity_at"))
+        )
+        account_results.append(result)
+    strategy_results: list[dict[str, object]] = []
+    for summary in strategy_summaries.values():
+        result = {
+            key: value for key, value in summary.items() if not key.startswith("_")
+        }
+        result["last_activity_at"] = _isoformat(
+            cast(datetime | None, summary.get("_last_activity_at"))
+        )
+        strategy_results.append(result)
+
+    def activity_total(summary: Mapping[str, object]) -> int:
+        return (
+            _safe_int(summary.get("decision_count"))
+            + _safe_int(summary.get("execution_count"))
+            + _safe_int(summary.get("order_event_count"))
+            + _safe_int(summary.get("tca_sample_count"))
+        )
+
+    account_results.sort(
+        key=lambda item: (
+            activity_total(item),
+            _safe_text(item.get("account_label")) or "",
+        ),
+        reverse=True,
+    )
+    strategy_results.sort(
+        key=lambda item: (
+            activity_total(item),
+            _safe_text(item.get("account_label")) or "",
+            _safe_text(item.get("strategy_name")) or "",
+        ),
+        reverse=True,
+    )
+
+    target_account_summary = _as_mapping(
+        account_summaries.get(target_account_label)
+        if target_account_label is not None
+        else None
+    )
+    configured_account_summary = _as_mapping(
+        account_summaries.get(configured_account_label)
+        if configured_account_label is not None
+        else None
+    )
+    target_scope_activity_present = activity_total(target_account_summary) > 0 and (
+        _safe_int(target_account_summary.get("target_strategy_decision_count")) > 0
+        or _safe_int(target_account_summary.get("target_strategy_execution_count")) > 0
+        or _safe_int(target_account_summary.get("target_strategy_order_event_count"))
+        > 0
+        or _safe_int(target_account_summary.get("target_strategy_tca_sample_count")) > 0
+    )
+    configured_account_activity_present = (
+        configured_account_label is not None
+        and activity_total(configured_account_summary) > 0
+    )
+    alternate_account_activity_present = any(
+        _safe_text(summary.get("account_label")) != target_account_label
+        and activity_total(summary) > 0
+        for summary in account_results
+    )
+    alternate_account_target_strategy_activity_present = any(
+        _safe_text(summary.get("account_label")) != target_account_label
+        and (
+            _safe_int(summary.get("target_strategy_decision_count")) > 0
+            or _safe_int(summary.get("target_strategy_execution_count")) > 0
+            or _safe_int(summary.get("target_strategy_order_event_count")) > 0
+            or _safe_int(summary.get("target_strategy_tca_sample_count")) > 0
+        )
+        for summary in account_results
+    )
+    alternate_account_non_target_strategy_activity_present = any(
+        _safe_text(summary.get("account_label")) != target_account_label
+        and _safe_int(summary.get("non_target_strategy_decision_count")) > 0
+        for summary in account_results
+    )
+    scope_mismatch_reasons = _unique_text_items(
+        [
+            *(
+                ["target_strategy_activity_missing"]
+                if not target_scope_activity_present
+                else []
+            ),
+            *(
+                ["source_activity_on_non_target_account"]
+                if alternate_account_activity_present
+                else []
+            ),
+            *(
+                ["alternate_account_target_strategy_activity_present"]
+                if alternate_account_target_strategy_activity_present
+                else []
+            ),
+            *(
+                ["non_target_strategy_activity_present"]
+                if alternate_account_non_target_strategy_activity_present
+                else []
+            ),
+        ]
+    )
+
+    return {
+        "schema_version": SOURCE_ACTIVITY_ACCOUNT_DIAGNOSTICS_SCHEMA_VERSION,
+        "available": True,
+        "diagnostic_only": True,
+        "readiness_authority": "not_used_for_import_or_promotion_readiness",
+        "target_account_label": target_account_label,
+        "source_account_label": source_account_label,
+        "configured_trading_account_label": configured_account_label,
+        "account_labels": account_labels,
+        "strategy_lookup_names": target_strategy_names,
+        "symbols": symbol_filters,
+        "target_scope_activity_present": target_scope_activity_present,
+        "configured_account_activity_present": configured_account_activity_present,
+        "alternate_account_activity_present": alternate_account_activity_present,
+        "alternate_account_target_strategy_activity_present": (
+            alternate_account_target_strategy_activity_present
+        ),
+        "alternate_account_non_target_strategy_activity_present": (
+            alternate_account_non_target_strategy_activity_present
+        ),
+        "scope_mismatch_reasons": scope_mismatch_reasons,
+        "account_summaries": account_results[:PAPER_ROUTE_SOURCE_ACTIVITY_REF_LIMIT],
+        "strategy_summaries": strategy_results[:PAPER_ROUTE_SOURCE_ACTIVITY_REF_LIMIT],
+    }
+
+
 def _strategy_source_activity(
     session: Session,
     *,
@@ -6281,6 +6764,14 @@ def _target_audit(
             error_source=error_source,
             error=exc,
         )
+    source_activity_account_diagnostics = _source_activity_account_diagnostics(
+        session,
+        target=target,
+        probe=probe,
+        strategy_lookup_names=strategy_lookup_names,
+        window_start=window_start,
+        window_end=window_end,
+    )
     account_contamination = _account_contamination_audit(
         session,
         account_label=cast(str | None, target.get("account_label")),
@@ -6373,6 +6864,7 @@ def _target_audit(
             "end": _isoformat(window_end),
         },
         "source_activity": source_activity,
+        "source_activity_account_diagnostics": source_activity_account_diagnostics,
         "account_contamination": account_contamination,
         "account_state": account_state,
         "account_close_state": account_close_state,
@@ -6977,6 +7469,9 @@ def _runtime_window_target_blockers(
     for audit in target_audits:
         target = _as_mapping(audit.get("target"))
         source_activity = _as_mapping(audit.get("source_activity"))
+        source_activity_account_diagnostics = _as_mapping(
+            audit.get("source_activity_account_diagnostics")
+        )
         account_contamination = _as_mapping(audit.get("account_contamination"))
         account_state = _as_mapping(audit.get("account_state"))
         evidence_window_contract = _as_mapping(audit.get("evidence_window_contract"))
@@ -7067,6 +7562,9 @@ def _runtime_window_target_blockers(
                     ),
                     "last_tca_at": _safe_text(source_activity.get("last_tca_at")),
                 },
+                "source_activity_account_diagnostics": (
+                    source_activity_account_diagnostics
+                ),
                 "account_contamination": {
                     "contaminated": bool(account_contamination.get("contaminated")),
                     "order_event_count": _safe_int(
