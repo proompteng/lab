@@ -626,9 +626,11 @@ def _source_event_row_matches_identity(
     target_account_label: str,
     canonical_decision_ids: set[str],
     canonical_execution_ids: set[str],
-    canonical_order_ids: set[str],
-    canonical_client_order_ids: set[str],
+    canonical_order_ids: set[str] | None = None,
+    canonical_client_order_ids: set[str] | None = None,
 ) -> bool:
+    canonical_order_ids = canonical_order_ids or set()
+    canonical_client_order_ids = canonical_client_order_ids or set()
     account_label = _row_account_label(row)
     if account_label in (None, target_account_label):
         return True
@@ -1734,7 +1736,7 @@ def _order_event_row(row: ExecutionOrderEvent) -> dict[str, object]:
         "filled_qty_delta": row.filled_qty_delta,
         "avg_fill_price": row.avg_fill_price,
         "filled_notional_delta": row.filled_notional_delta,
-        "raw_event": row.raw_event,
+        "raw_event": getattr(row, "raw_event", None),
         "execution_id": str(row.execution_id) if row.execution_id is not None else None,
         "trade_decision_id": str(row.trade_decision_id)
         if row.trade_decision_id is not None
