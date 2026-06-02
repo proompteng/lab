@@ -878,9 +878,30 @@ def _add_runtime_ledger_proof_packet_check(
     packet = _mapping(runtime_ledger_proof_packet)
     authority = _mapping(packet.get("promotion_authority"))
     capital_authority = _mapping(packet.get("capital_promotion_authority"))
+    target = _mapping(packet.get("target"))
     proof_mode_contract = _mapping(packet.get("proof_mode_contract"))
     schema_version = _text(packet.get("schema_version"))
     proof_mode = _text(packet.get("proof_mode"))
+    target_min_trading_days = _int(target.get("min_runtime_ledger_trading_days"))
+    target_min_net_pnl = _decimal(target.get("min_runtime_ledger_net_pnl_after_costs"))
+    target_min_daily_net_pnl = _decimal(
+        target.get("min_runtime_ledger_daily_net_pnl_after_costs")
+    )
+    target_source_proof_required = (
+        target.get("source_backed_runtime_ledger_proof_required") is True
+    )
+    target_non_empty_source_refs_required = (
+        target.get("non_empty_runtime_ledger_source_refs_required") is True
+    )
+    authority_target_contract_ok = (
+        target_min_trading_days >= 20
+        and target_min_net_pnl is not None
+        and target_min_net_pnl >= Decimal("10000")
+        and target_min_daily_net_pnl is not None
+        and target_min_daily_net_pnl >= Decimal("500")
+        and target_source_proof_required
+        and target_non_empty_source_refs_required
+    )
     allowed = authority.get("allowed") is True
     mode_contract_allows_authority = (
         proof_mode_contract.get("mode_can_grant_final_authority") is True
@@ -895,6 +916,7 @@ def _add_runtime_ledger_proof_packet_check(
         packet.get("ok") is True
         and proof_mode == "authority"
         and mode_contract_allows_authority
+        and authority_target_contract_ok
         and packet.get("final_authority_ok") is True
         and packet.get("promotion_allowed") is True
         and packet.get("capital_promotion_allowed") is True
@@ -912,6 +934,7 @@ def _add_runtime_ledger_proof_packet_check(
             "proof_mode": proof_mode,
             "proof_mode_contract": dict(proof_mode_contract),
             "mode_contract_allows_authority": mode_contract_allows_authority,
+            "authority_target_contract_ok": authority_target_contract_ok,
             "final_authority_ok": packet.get("final_authority_ok"),
             "promotion_allowed": packet.get("promotion_allowed"),
             "capital_promotion_allowed": packet.get("capital_promotion_allowed"),
@@ -933,17 +956,36 @@ def _add_runtime_ledger_proof_packet_check(
                 for check in _sequence(authority.get("failed_checks"))
                 if _text(check)
             ],
+            "target": dict(target),
+            "min_runtime_ledger_trading_days": target_min_trading_days,
+            "min_runtime_ledger_net_pnl_after_costs": _text(
+                target.get("min_runtime_ledger_net_pnl_after_costs")
+            ),
+            "min_runtime_ledger_daily_net_pnl_after_costs": _text(
+                target.get("min_runtime_ledger_daily_net_pnl_after_costs")
+            ),
+            "source_backed_runtime_ledger_proof_required": (
+                target_source_proof_required
+            ),
+            "non_empty_runtime_ledger_source_refs_required": (
+                target_non_empty_source_refs_required
+            ),
         },
         expected={
             "schema_version": RUNTIME_LEDGER_PROOF_PACKET_SCHEMA_VERSION,
             "ok": True,
             "proof_mode": "authority",
             "proof_mode_contract.mode_can_grant_final_authority": True,
+            "authority_target_contract_ok": True,
             "final_authority_ok": True,
             "promotion_allowed": True,
             "capital_promotion_allowed": True,
             "final_promotion_allowed": True,
             "promotion_authority.allowed": True,
+            "target.min_runtime_ledger_trading_days": 20,
+            "target.min_runtime_ledger_daily_net_pnl_after_costs": "500",
+            "target.source_backed_runtime_ledger_proof_required": True,
+            "target.non_empty_runtime_ledger_source_refs_required": True,
         },
     )
 
@@ -1829,6 +1871,32 @@ def evaluate_trading_readiness(
             "proof_mode_contract": dict(
                 _mapping(packet_summary.get("proof_mode_contract"))
             ),
+            "target": dict(_mapping(packet_summary.get("target"))),
+            "min_runtime_ledger_trading_days": _mapping(
+                packet_summary.get("target")
+            ).get("min_runtime_ledger_trading_days"),
+            "min_runtime_ledger_net_pnl_after_costs": _mapping(
+                packet_summary.get("target")
+            ).get("min_runtime_ledger_net_pnl_after_costs"),
+            "min_runtime_ledger_daily_net_pnl_after_costs": _mapping(
+                packet_summary.get("target")
+            ).get("min_runtime_ledger_daily_net_pnl_after_costs"),
+            "source_backed_runtime_ledger_proof_required": _mapping(
+                packet_summary.get("target")
+            ).get("source_backed_runtime_ledger_proof_required"),
+            "non_empty_runtime_ledger_source_refs_required": _mapping(
+                packet_summary.get("target")
+            ).get("non_empty_runtime_ledger_source_refs_required"),
+            "blockers": [
+                _text(blocker)
+                for blocker in _sequence(packet_summary.get("blockers"))
+                if _text(blocker)
+            ],
+            "authority_blockers": [
+                _text(blocker)
+                for blocker in _sequence(packet_summary.get("authority_blockers"))
+                if _text(blocker)
+            ],
             "final_authority_ok": packet_summary.get("final_authority_ok"),
             "evidence_collection_only": packet_summary.get("evidence_collection_only"),
             "evidence_collection_ok": packet_summary.get("evidence_collection_ok"),
