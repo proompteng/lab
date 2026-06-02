@@ -343,7 +343,7 @@ class TestCompletionTrace(TestCase):
         self.assertEqual(gate['status'], 'satisfied')
         self.assertEqual(gate['latest_run'], 'sim-2026-03-06-full-day')
 
-    def test_doc29_completion_status_all_satisfied_sets_final_authority(self) -> None:
+    def test_doc29_completion_status_all_satisfied_stays_status_only(self) -> None:
         with self.session_local() as session:
             with patch(
                 'app.trading.completion.load_doc29_completion_matrix',
@@ -362,11 +362,19 @@ class TestCompletionTrace(TestCase):
                 )
 
         self.assertTrue(status['summary']['all_satisfied'])
-        self.assertTrue(status['promotion_authority']['capital_promotion_allowed'])
-        self.assertTrue(status['promotion_authority']['promotion_allowed'])
-        self.assertTrue(status['promotion_authority']['final_authority_ok'])
-        self.assertTrue(status['promotion_authority']['final_promotion_allowed'])
-        self.assertEqual(status['promotion_authority']['final_promotion_blockers'], [])
+        self.assertTrue(status['promotion_authority']['completion_trace_all_satisfied'])
+        self.assertEqual(
+            status['promotion_authority']['authority_source'],
+            'completion_trace_status_only',
+        )
+        self.assertFalse(status['promotion_authority']['capital_promotion_allowed'])
+        self.assertFalse(status['promotion_authority']['promotion_allowed'])
+        self.assertFalse(status['promotion_authority']['final_authority_ok'])
+        self.assertFalse(status['promotion_authority']['final_promotion_allowed'])
+        self.assertEqual(
+            status['promotion_authority']['final_promotion_blockers'],
+            ['completion_trace_not_runtime_ledger_authority'],
+        )
 
     def test_doc29_completion_status_derives_empirical_jobs_gate(self) -> None:
         with self.session_local() as session:
@@ -797,11 +805,19 @@ class TestCompletionTrace(TestCase):
             '24',
         )
         self.assertTrue(status['summary']['all_satisfied'])
-        self.assertTrue(status['promotion_authority']['final_authority_ok'])
-        self.assertTrue(status['promotion_authority']['capital_promotion_allowed'])
-        self.assertTrue(status['promotion_authority']['promotion_allowed'])
-        self.assertTrue(status['promotion_authority']['final_promotion_allowed'])
-        self.assertEqual(status['promotion_authority']['final_promotion_blockers'], [])
+        self.assertTrue(status['promotion_authority']['completion_trace_all_satisfied'])
+        self.assertEqual(
+            status['promotion_authority']['authority_source'],
+            'completion_trace_status_only',
+        )
+        self.assertFalse(status['promotion_authority']['final_authority_ok'])
+        self.assertFalse(status['promotion_authority']['capital_promotion_allowed'])
+        self.assertFalse(status['promotion_authority']['promotion_allowed'])
+        self.assertFalse(status['promotion_authority']['final_promotion_allowed'])
+        self.assertEqual(
+            status['promotion_authority']['final_promotion_blockers'],
+            ['completion_trace_not_runtime_ledger_authority'],
+        )
 
     def test_runtime_ledger_daily_summary_falls_back_to_bucket_rows(self) -> None:
         first = _runtime_ledger_bucket(
