@@ -17,6 +17,7 @@ from app.trading.discovery.replay_tape import (
     REPLAY_TAPE_MANIFEST_SCHEMA_VERSION,
     ReplayTapeCoverageError,
     ReplayTapeManifest,
+    build_hpairs_replay_tape_feature_schema_hash,
     build_replay_tape_cache_identity_diagnostics,
     build_replay_tape_cache_key,
     build_source_query_digest,
@@ -221,9 +222,33 @@ class TestReplayTape(TestCase):
             hpairs_features["ofi_decay_memory"],
             {"half_life_12": "0.21", "half_life_3": "0.55"},
         )
+        self.assertEqual(
+            hpairs_features["feature_schema_hash"],
+            build_hpairs_replay_tape_feature_schema_hash(),
+        )
+        self.assertEqual(
+            hpairs_features["ofi_memory_regime_slices"]["schema_version"],
+            "torghut.hpairs-ofi-memory-regime-slices.v1",
+        )
+        self.assertEqual(
+            hpairs_features["ofi_memory_regime_slices"]["horizons"]["short"],
+            "0.42",
+        )
+        self.assertEqual(
+            hpairs_features["ofi_memory_regime_slices"]["regime_bucket"],
+            "stress_veto_window",
+        )
         self.assertEqual(hpairs_features["cluster_lob"]["label"], "directional")
         self.assertEqual(
             hpairs_features["cluster_lob"]["bucket"], "aggressive_buy_pressure"
+        )
+        self.assertEqual(
+            hpairs_features["cluster_lob"]["behavior_bucket"],
+            "aggressive_buy_pressure",
+        )
+        self.assertEqual(
+            hpairs_features["cluster_lob"]["quote_behavior_bucket"],
+            "quote_depth_missing",
         )
         self.assertEqual(
             hpairs_features["regime_tags"], ["opening_drive", "tight_spread"]
@@ -288,7 +313,93 @@ class TestReplayTape(TestCase):
             hpairs_features["stress_tags"],
             ["fed", "macro_announcement_window"],
         )
+        self.assertEqual(
+            hpairs_features["cluster_lob"]["bucket"],
+            "unknown",
+        )
+        self.assertEqual(
+            hpairs_features["ofi_memory_regime_slices"]["horizons"]["instant"],
+            "0.44",
+        )
         self.assertFalse(hpairs_features["proof_authority"])
+
+    def test_hpairs_replay_tape_features_are_deterministic_and_hashable(
+        self,
+    ) -> None:
+        def signal(seq: int) -> SignalEnvelope:
+            return SignalEnvelope(
+                event_ts=datetime(2026, 3, 26, 14, 31, seq, tzinfo=timezone.utc),
+                symbol="NVDA",
+                timeframe="1Sec",
+                seq=seq,
+                source="ta",
+                payload={
+                    "price": Decimal("900.10"),
+                    "event_type": "cancel",
+                    "bid_size": Decimal("900"),
+                    "ask_size": Decimal("100"),
+                    "ofi_horizons": {
+                        "36_events": Decimal("0.10"),
+                        "3_events": Decimal("0.40"),
+                    },
+                    "ofi_decay_memory": {"half_life_3": Decimal("0.30")},
+                    "regime_tags": ["opening_drive"],
+                },
+                ingest_ts=datetime(2026, 3, 26, 14, 32, tzinfo=timezone.utc),
+            )
+
+        with TemporaryDirectory() as tmpdir:
+            first_path = Path(tmpdir) / "first.jsonl"
+            second_path = Path(tmpdir) / "second.jsonl"
+            materialize_signal_tape(
+                rows=[signal(1)],
+                tape_path=first_path,
+                dataset_snapshot_ref="snapshot-hpairs-deterministic",
+                symbols=("NVDA",),
+                start_date=date(2026, 3, 26),
+                end_date=date(2026, 3, 26),
+                source_query_digest=build_source_query_digest(
+                    {"window": "hpairs-deterministic"}
+                ),
+                feature_schema_hash=build_hpairs_replay_tape_feature_schema_hash(),
+            )
+            materialize_signal_tape(
+                rows=[signal(1)],
+                tape_path=second_path,
+                dataset_snapshot_ref="snapshot-hpairs-deterministic",
+                symbols=("NVDA",),
+                start_date=date(2026, 3, 26),
+                end_date=date(2026, 3, 26),
+                source_query_digest=build_source_query_digest(
+                    {"window": "hpairs-deterministic"}
+                ),
+                feature_schema_hash=build_hpairs_replay_tape_feature_schema_hash(),
+            )
+            first_row = json.loads(first_path.read_text(encoding="utf-8"))
+            second_row = json.loads(second_path.read_text(encoding="utf-8"))
+            first_manifest = load_replay_tape(first_path).manifest
+
+        self.assertEqual(first_row["hpairs_features"], second_row["hpairs_features"])
+        self.assertEqual(
+            first_row["hpairs_features"]["feature_schema_hash"],
+            build_hpairs_replay_tape_feature_schema_hash(),
+        )
+        self.assertEqual(
+            first_row["hpairs_features"]["cluster_lob"]["bucket"],
+            "liquidity_withdrawal",
+        )
+        self.assertEqual(
+            first_row["hpairs_features"]["cluster_lob"]["quote_behavior_bucket"],
+            "bid_depth_dominant",
+        )
+        self.assertEqual(
+            first_row["hpairs_features"]["ofi_memory_regime_slices"]["regime_bucket"],
+            "positive_ofi_shock",
+        )
+        self.assertEqual(
+            first_manifest.feature_schema_hash,
+            build_hpairs_replay_tape_feature_schema_hash(),
+        )
 
     def test_materialize_signal_tape_skips_nyse_full_day_holidays(self) -> None:
         with TemporaryDirectory() as tmpdir:

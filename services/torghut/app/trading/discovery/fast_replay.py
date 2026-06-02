@@ -367,6 +367,7 @@ class _SymbolTapeStats:
     spread_tail_bps: float
     ofi_pressure_score: float
     ofi_decay_score: float
+    ofi_memory_regime_score: float
     microprice_bias_bps: float
     median_volume: float
     median_price: float
@@ -529,6 +530,11 @@ def _build_symbol_stats(rows: Sequence[SignalEnvelope]) -> dict[str, _SymbolTape
             ofi for row in ordered if (ofi := _extract_ofi_pressure(row)) is not None
         ]
         ofi_array = np.asarray(ofi_values, dtype=np.float64)
+        ofi_memory_regime_values = [
+            score
+            for row in ordered
+            if (score := _extract_ofi_memory_regime_score(row)) is not None
+        ]
         microprice_bias_values = [
             bias
             for row in ordered
@@ -553,7 +559,15 @@ def _build_symbol_stats(rows: Sequence[SignalEnvelope]) -> dict[str, _SymbolTape
             if spread_values
             else 0.0,
             ofi_pressure_score=float(np.mean(ofi_values)) if ofi_values else 0.0,
-            ofi_decay_score=_ofi_decay_score(ofi_array),
+            ofi_decay_score=_combined_ofi_decay_score(
+                ofi_array=ofi_array,
+                ofi_memory_regime_values=ofi_memory_regime_values,
+            ),
+            ofi_memory_regime_score=(
+                float(np.mean(ofi_memory_regime_values))
+                if ofi_memory_regime_values
+                else 0.0
+            ),
             microprice_bias_bps=(
                 float(np.mean(microprice_bias_values))
                 if microprice_bias_values
@@ -1034,6 +1048,26 @@ def _ofi_decay_score(values: NDArray[np.float64]) -> float:
     return float(np.clip(0.65 * short + 0.35 * long, -1.0, 1.0))
 
 
+def _combined_ofi_decay_score(
+    *,
+    ofi_array: NDArray[np.float64],
+    ofi_memory_regime_values: Sequence[float],
+) -> float:
+    tape_score = _ofi_decay_score(ofi_array)
+    if not ofi_memory_regime_values:
+        return tape_score
+    memory_score = float(
+        np.clip(
+            np.mean(np.asarray(ofi_memory_regime_values, dtype=np.float64)),
+            -1.0,
+            1.0,
+        )
+    )
+    if ofi_array.size == 0:
+        return memory_score
+    return float(np.clip(0.55 * tape_score + 0.45 * memory_score, -1.0, 1.0))
+
+
 def _ewma_last(values: NDArray[np.float64], *, half_life: float) -> float:
     if values.size == 0:
         return 0.0
@@ -1339,7 +1373,39 @@ def _extract_ofi_pressure(signal: SignalEnvelope) -> float | None:
         if -1.0 <= mean_value <= 1.0:
             return mean_value
         return float(np.tanh(mean_value / 100.0))
+    hpairs_memory_regime = _mapping(
+        _hpairs_replay_tape_features(signal).get("ofi_memory_regime_slices")
+    )
+    hpairs_memory_horizons = _mapping(hpairs_memory_regime.get("horizons"))
+    memory_values: list[float] = []
+    for horizon in ("instant", "short", "medium", "long"):
+        value = _float_or_none(hpairs_memory_horizons.get(horizon))
+        if value is not None:
+            memory_values.append(value)
+    if memory_values:
+        mean_value = float(np.mean(np.asarray(memory_values, dtype=np.float64)))
+        if -1.0 <= mean_value <= 1.0:
+            return mean_value
+        return float(np.tanh(mean_value / 100.0))
     return _extract_quote_depth_imbalance(signal)
+
+
+def _extract_ofi_memory_regime_score(signal: SignalEnvelope) -> float | None:
+    hpairs_features = _hpairs_replay_tape_features(signal)
+    memory_regime = _mapping(hpairs_features.get("ofi_memory_regime_slices"))
+    for key in ("directional_alignment_score", "memory_score", "shock_score"):
+        value = _float_or_none(memory_regime.get(key))
+        if value is not None:
+            return float(np.clip(value, -1.0, 1.0))
+    decay_memory = _mapping(hpairs_features.get("ofi_decay_memory"))
+    values = [
+        value
+        for item in decay_memory.values()
+        if (value := _float_or_none(item)) is not None
+    ]
+    if not values:
+        return None
+    return float(np.clip(np.mean(np.asarray(values, dtype=np.float64)), -1.0, 1.0))
 
 
 def _extract_quote_depth_imbalance(signal: SignalEnvelope) -> float | None:

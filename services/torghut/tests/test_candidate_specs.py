@@ -373,6 +373,29 @@ class TestCandidateSpecs(TestCase):
             "0.60",
         )
         self.assertTrue(specs[0].promotion_contract["requires_lob_event_stream_parity"])
+        hpairs_specs = [
+            spec
+            for spec in specs
+            if spec.family_template_id == "microbar_cross_sectional_pairs_v1"
+        ]
+        self.assertGreater(len(hpairs_specs), 0)
+        replay_tape_contract = hpairs_specs[0].feature_contract[
+            "hpairs_replay_tape_feature_contract"
+        ]
+        self.assertEqual(
+            replay_tape_contract["feature_schema_version"],
+            "torghut.hpairs-replay-tape-features.v1",
+        )
+        self.assertRegex(
+            replay_tape_contract["feature_schema_hash"],
+            r"^[0-9a-f]{64}$",
+        )
+        self.assertEqual(
+            replay_tape_contract["ofi_memory_regime_slices"],
+            ["instant", "short", "medium", "long"],
+        )
+        self.assertFalse(replay_tape_contract["promotion_authority"])
+        self.assertFalse(replay_tape_contract["runtime_ledger_authority"])
 
     def test_nonlinear_market_impact_claim_adds_route_tca_contract(self) -> None:
         cards = build_hypothesis_cards(
