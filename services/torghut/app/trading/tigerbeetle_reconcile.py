@@ -877,6 +877,8 @@ def _latest_run_payload(
         "authority": "accounting_parity_only",
         "promotion_authority": False,
         "overrides_runtime_ledger_authority": False,
+        "client_lookup_ok": bool(payload.get("client_lookup_ok", row.status == "ok")),
+        "client_error": payload.get("client_error"),
         "account_ref_count": account_ref_count,
         "transfer_ref_count": transfer_ref_count,
         "checked_transfer_count": row.checked_transfer_count,
@@ -1016,6 +1018,8 @@ def reconcile_tigerbeetle_transfers(
     legacy_source_amount_unverifiable_refs: list[dict[str, object]] = []
 
     transfer_lookup: dict[str, object] = {}
+    client_lookup_ok = True
+    client_error: str | None = None
     owned_client = client is None
     tb_client: TigerBeetleClientProtocol | None = None
     try:
@@ -1029,7 +1033,9 @@ def reconcile_tigerbeetle_transfers(
                 for item in looked_up
                 if (lookup_key := _transfer_lookup_key(item)) is not None
             }
-    except Exception:
+    except Exception as exc:
+        client_lookup_ok = False
+        client_error = f"{type(exc).__name__}: {exc}"
         blockers.append(BLOCKER_CLIENT_UNAVAILABLE)
     finally:
         if owned_client and tb_client is not None:
@@ -1051,85 +1057,90 @@ def reconcile_tigerbeetle_transfers(
                     reason="stable_ref_payload_does_not_match_transfer_ref_identity",
                 ),
             )
-        actual = transfer_lookup.get(ref_transfer_id)
-        if actual is None:
-            missing_transfer_count += 1
-            blockers.append(BLOCKER_TRANSFER_MISSING)
-            _append_sample(
-                missing_transfer_refs,
-                _ref_sample(
-                    ref,
-                    blocker=BLOCKER_TRANSFER_MISSING,
-                    reason="transfer_ref_not_found_in_tigerbeetle_lookup",
-                ),
-            )
-            continue
-        if Decimal(str(_attr(actual, "amount"))) != ref.amount:
-            mismatched_transfer_count += 1
-            blockers.append(BLOCKER_AMOUNT_MISMATCH)
-            _append_sample(
-                mismatched_refs,
-                _ref_sample(
-                    ref,
-                    blocker=BLOCKER_AMOUNT_MISMATCH,
-                    reason="actual_amount_micros_differs_from_transfer_ref",
-                    actual=actual,
-                ),
-            )
-        if int(str(_attr(actual, "code"))) != ref.code:
-            mismatched_transfer_count += 1
-            blockers.append(BLOCKER_CODE_MISMATCH)
-            _append_sample(
-                mismatched_refs,
-                _ref_sample(
-                    ref,
-                    blocker=BLOCKER_CODE_MISMATCH,
-                    reason="actual_code_differs_from_transfer_ref",
-                    actual=actual,
-                ),
-            )
-        if int(str(_attr(actual, "ledger"))) != ref.ledger:
-            mismatched_transfer_count += 1
-            blockers.append(BLOCKER_LEDGER_MISMATCH)
-            _append_sample(
-                mismatched_refs,
-                _ref_sample(
-                    ref,
-                    blocker=BLOCKER_LEDGER_MISMATCH,
-                    reason="actual_ledger_differs_from_transfer_ref",
-                    actual=actual,
-                ),
-            )
-        debit_account_id = _payload_value(ref, "debit_account_id")
-        if debit_account_id is not None and _u128_text(
-            _attr(actual, "debit_account_id")
-        ) != _u128_text(debit_account_id):
-            mismatched_transfer_count += 1
-            blockers.append(BLOCKER_DEBIT_ACCOUNT_MISMATCH)
-            _append_sample(
-                mismatched_refs,
-                _ref_sample(
-                    ref,
-                    blocker=BLOCKER_DEBIT_ACCOUNT_MISMATCH,
-                    reason="actual_debit_account_differs_from_transfer_ref_payload",
-                    actual=actual,
-                ),
-            )
-        credit_account_id = _payload_value(ref, "credit_account_id")
-        if credit_account_id is not None and _u128_text(
-            _attr(actual, "credit_account_id")
-        ) != _u128_text(credit_account_id):
-            mismatched_transfer_count += 1
-            blockers.append(BLOCKER_CREDIT_ACCOUNT_MISMATCH)
-            _append_sample(
-                mismatched_refs,
-                _ref_sample(
-                    ref,
-                    blocker=BLOCKER_CREDIT_ACCOUNT_MISMATCH,
-                    reason="actual_credit_account_differs_from_transfer_ref_payload",
-                    actual=actual,
-                ),
-            )
+        actual = transfer_lookup.get(ref_transfer_id) if client_lookup_ok else None
+        if client_lookup_ok:
+            if actual is None:
+                missing_transfer_count += 1
+                blockers.append(BLOCKER_TRANSFER_MISSING)
+                _append_sample(
+                    missing_transfer_refs,
+                    _ref_sample(
+                        ref,
+                        blocker=BLOCKER_TRANSFER_MISSING,
+                        reason="transfer_ref_not_found_in_tigerbeetle_lookup",
+                    ),
+                )
+                continue
+            if Decimal(str(_attr(actual, "amount"))) != ref.amount:
+                mismatched_transfer_count += 1
+                blockers.append(BLOCKER_AMOUNT_MISMATCH)
+                _append_sample(
+                    mismatched_refs,
+                    _ref_sample(
+                        ref,
+                        blocker=BLOCKER_AMOUNT_MISMATCH,
+                        reason="actual_amount_micros_differs_from_transfer_ref",
+                        actual=actual,
+                    ),
+                )
+            if int(str(_attr(actual, "code"))) != ref.code:
+                mismatched_transfer_count += 1
+                blockers.append(BLOCKER_CODE_MISMATCH)
+                _append_sample(
+                    mismatched_refs,
+                    _ref_sample(
+                        ref,
+                        blocker=BLOCKER_CODE_MISMATCH,
+                        reason="actual_code_differs_from_transfer_ref",
+                        actual=actual,
+                    ),
+                )
+            if int(str(_attr(actual, "ledger"))) != ref.ledger:
+                mismatched_transfer_count += 1
+                blockers.append(BLOCKER_LEDGER_MISMATCH)
+                _append_sample(
+                    mismatched_refs,
+                    _ref_sample(
+                        ref,
+                        blocker=BLOCKER_LEDGER_MISMATCH,
+                        reason="actual_ledger_differs_from_transfer_ref",
+                        actual=actual,
+                    ),
+                )
+            debit_account_id = _payload_value(ref, "debit_account_id")
+            if debit_account_id is not None and _u128_text(
+                _attr(actual, "debit_account_id")
+            ) != _u128_text(debit_account_id):
+                mismatched_transfer_count += 1
+                blockers.append(BLOCKER_DEBIT_ACCOUNT_MISMATCH)
+                _append_sample(
+                    mismatched_refs,
+                    _ref_sample(
+                        ref,
+                        blocker=BLOCKER_DEBIT_ACCOUNT_MISMATCH,
+                        reason=(
+                            "actual_debit_account_differs_from_transfer_ref_payload"
+                        ),
+                        actual=actual,
+                    ),
+                )
+            credit_account_id = _payload_value(ref, "credit_account_id")
+            if credit_account_id is not None and _u128_text(
+                _attr(actual, "credit_account_id")
+            ) != _u128_text(credit_account_id):
+                mismatched_transfer_count += 1
+                blockers.append(BLOCKER_CREDIT_ACCOUNT_MISMATCH)
+                _append_sample(
+                    mismatched_refs,
+                    _ref_sample(
+                        ref,
+                        blocker=BLOCKER_CREDIT_ACCOUNT_MISMATCH,
+                        reason=(
+                            "actual_credit_account_differs_from_transfer_ref_payload"
+                        ),
+                        actual=actual,
+                    ),
+                )
         if not _ref_matches_expected_event(
             session,
             ref,
@@ -1202,7 +1213,7 @@ def reconcile_tigerbeetle_transfers(
                 if source_uuid is not None
                 else None
             )
-            if bucket is not None:
+            if bucket is not None and actual is not None:
                 direction_matches, metadata_matches = (
                     _runtime_ledger_ref_matches_expected_bucket(ref, actual, bucket)
                 )
@@ -1434,6 +1445,8 @@ def reconcile_tigerbeetle_transfers(
         "authority": "accounting_parity_only",
         "promotion_authority": False,
         "overrides_runtime_ledger_authority": False,
+        "client_lookup_ok": client_lookup_ok,
+        "client_error": client_error,
         "account_ref_count": _payload_int(ref_counts, "account_ref_count"),
         "transfer_ref_count": _payload_int(ref_counts, "transfer_ref_count"),
         "checked_transfer_count": checked_transfer_count,

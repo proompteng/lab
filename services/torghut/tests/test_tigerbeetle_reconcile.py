@@ -1453,6 +1453,11 @@ class TestTigerBeetleReconcile(TestCase):
 
             self.assertFalse(payload["ok"])
             self.assertIn(BLOCKER_CLIENT_UNAVAILABLE, payload["blockers"])
+            self.assertNotIn(BLOCKER_TRANSFER_MISSING, payload["blockers"])
+            self.assertFalse(payload["client_lookup_ok"])
+            self.assertIn("RuntimeError: lookup failed", str(payload["client_error"]))
+            self.assertEqual(payload["missing_transfer_count"], 0)
+            self.assertEqual(payload["missing_transfer_refs"], [])
 
     def test_latest_reconciliation_payload_normalizes_blockers(self) -> None:
         with Session(self.engine) as session:
@@ -1468,6 +1473,8 @@ class TestTigerBeetleReconcile(TestCase):
                     source_missing_count=0,
                     payload_json={
                         "blockers": [BLOCKER_CODE_MISMATCH, 7],
+                        "client_lookup_ok": False,
+                        "client_error": "RuntimeError: lookup failed",
                         "mismatched_ref_count": 1,
                         "missing_source_row_count": 3,
                         "unlinked_order_event_ref_count": 4,
@@ -1511,6 +1518,8 @@ class TestTigerBeetleReconcile(TestCase):
         self.assertEqual(payload["runtime_ledger_signed_ref_count"], 4)
         self.assertFalse(payload["promotion_authority"])
         self.assertFalse(payload["overrides_runtime_ledger_authority"])
+        self.assertFalse(payload["client_lookup_ok"])
+        self.assertEqual(payload["client_error"], "RuntimeError: lookup failed")
         self.assertIn("reconciliation_freshness", payload)
         self.assertEqual(payload["mismatched_ref_count"], 1)
         self.assertEqual(payload["missing_source_row_count"], 3)
