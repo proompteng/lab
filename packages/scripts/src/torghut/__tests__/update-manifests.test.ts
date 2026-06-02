@@ -124,6 +124,42 @@ spec:
       'utf8',
     )
   }
+  writeFileSync(
+    tigerBeetleJournalOrderEventsManifestPath,
+    `apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: torghut-tigerbeetle-journal-order-events-live
+spec:
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: journal-order-events-live
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:1111111111111111111111111111111111111111111111111111111111111111
+              env:
+                - name: TORGHUT_IMAGE_DIGEST
+                  value: sha256:1111111111111111111111111111111111111111111111111111111111111111
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: torghut-tigerbeetle-journal-order-events-sim
+spec:
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: journal-order-events-sim
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:1111111111111111111111111111111111111111111111111111111111111111
+              env:
+                - name: TORGHUT_IMAGE_DIGEST
+                  value: sha256:1111111111111111111111111111111111111111111111111111111111111111
+`,
+    'utf8',
+  )
   for (const path of [optionsCatalogManifestPath, optionsEnricherManifestPath]) {
     writeFileSync(
       path,
@@ -310,6 +346,16 @@ describe('update-manifests', () => {
       )
       expect(manifest).toContain('value: sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e')
     }
+    expect(
+      tigerBeetleJournalOrderEventsManifest.match(
+        /image: registry\.ide-newton\.ts\.net\/lab\/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e/g,
+      )?.length,
+    ).toBe(2)
+    expect(
+      tigerBeetleJournalOrderEventsManifest.match(
+        /value: sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e/g,
+      )?.length,
+    ).toBe(2)
     for (const manifest of [optionsCatalogManifest, optionsEnricherManifest]) {
       expect(manifest).toContain(
         'image: registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',

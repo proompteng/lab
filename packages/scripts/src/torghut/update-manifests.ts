@@ -122,6 +122,14 @@ const replaceIfPresent = (source: string, pattern: RegExp, replacement: string):
   return source.replace(pattern, replacement)
 }
 
+const replaceAllIfPresent = (source: string, pattern: RegExp, replacement: string): string => {
+  if (!pattern.test(source)) {
+    return source
+  }
+  pattern.lastIndex = 0
+  return source.replace(pattern, replacement)
+}
+
 const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 const upsertKnativeRolloutTimestamp = (source: string, rolloutTimestamp: string): string => {
@@ -212,10 +220,14 @@ const updateImageOnlyManifest = (options: UpdateManifestsOptions, manifestPathVa
   const source = readFileSync(manifestPath, 'utf8')
   const imageRef = `${options.imageName}@${options.digest}`
 
-  let updated = replaceSingle(source, /(\n\s*image:\s*)([^\n]+)/, `$1${imageRef}`, label)
-  updated = replaceIfPresent(
+  const imagePattern = new RegExp(
+    `(\\n\\s*image:\\s*)${escapeRegex(options.imageName)}(?:@sha256:[0-9a-f]{64}|:[^\\s\\n]+)?`,
+    'g',
+  )
+  let updated = replaceSingle(source, imagePattern, `$1${imageRef}`, label)
+  updated = replaceAllIfPresent(
     updated,
-    /(- name:\s*TORGHUT_IMAGE_DIGEST\s*\n\s*value:\s*)([^\n]+)/,
+    /(- name:\s*TORGHUT_IMAGE_DIGEST\s*\n\s*value:\s*)([^\n]+)/g,
     `$1${options.digest}`,
   )
 
