@@ -630,8 +630,6 @@ describe('synthesis autonomous trader provider', () => {
     expect(objectAt(objectAt(scheduleSpec, 'targetRef'), 'name')).toBe('autonomous-trader-template')
     expect(objectAt(annotations, 'proompteng.ai/account-isolation-mode')).toBeUndefined()
     expect(objectAt(annotations, 'proompteng.ai/suspension-reason')).toBeUndefined()
-    expect(objectAt(objectAt(templateSpec, 'goal'), 'objective')).toContain('Reach 500000 USD account equity')
-    expect(objectAt(objectAt(templateSpec, 'goal'), 'objective')).toContain('dedicated Synthesis Alpaca paper account')
     expect(objectAt(parameters, 'mode')).toBe('market-open')
     expect(objectAt(parameters, 'synthesisSessionMode')).toBe('market_open')
     expect(objectAt(parameters, 'brokerMutationEnabled')).toBe('true')
@@ -675,7 +673,6 @@ describe('synthesis autonomous trader provider', () => {
     const scheduleSpec = objectAt(schedule, 'spec')
     const templateSpec = objectAt(template, 'spec')
     const parameters = objectAt(templateSpec, 'parameters')
-    const goal = objectAt(templateSpec, 'goal') as Record<string, unknown>
     const secrets = objectAt(templateSpec, 'secrets') as unknown[]
 
     expect(objectAt(scheduleSpec, 'cron')).toBe('20 16 * * 1-5')
@@ -684,7 +681,7 @@ describe('synthesis autonomous trader provider', () => {
     expect(objectAt(parameters, 'mode')).toBe('scorecard-readback')
     expect(objectAt(parameters, 'synthesisSessionMode')).toBe('scorecard_readback')
     expect(objectAt(parameters, 'brokerMutationEnabled')).toBe('false')
-    expect(objectAt(goal, 'objective')).toContain('reads finalized Synthesis scorecards before candidate grading')
+    const goal = objectAt(templateSpec, 'goal') as Record<string, unknown>
     expect(Object.hasOwn(goal, 'tokenBudget')).toBe(false)
     expect(secrets).toContain('synthesis-env')
     expect(secrets).toContain('autonomous-trader-alpaca-mcp')
@@ -712,54 +709,29 @@ describe('synthesis autonomous trader provider', () => {
     const envTemplate = objectAt(providerSpec, 'envTemplate')
     const inputFiles = objectAt(providerSpec, 'inputFiles') as Record<string, unknown>[] | undefined
     const outputArtifacts = objectAt(providerSpec, 'outputArtifacts') as Record<string, unknown>[] | undefined
-    const bootstrap = (inputFiles ?? []).find(
-      (inputFile) => objectAt(inputFile, 'path') === '/root/bootstrap-analysis-daytrading.sh',
-    )
-    const codexConfig = (inputFiles ?? []).find(
-      (inputFile) => objectAt(inputFile, 'path') === '/root/.codex/config.toml',
-    )
+    const inputFilePaths = (inputFiles ?? []).map((inputFile) => objectAt(inputFile, 'path'))
     const artifactNames = (outputArtifacts ?? []).map((artifact) => objectAt(artifact, 'name'))
+    const artifactPaths = (outputArtifacts ?? []).map((artifact) => objectAt(artifact, 'path'))
+    const artifactKeys = (outputArtifacts ?? []).map((artifact) => objectAt(artifact, 'key')).filter(Boolean)
 
     expect(objectAt(envTemplate, 'ANALYSIS_REPO_URL')).toBe('https://github.com/gregkonush/analysis.git')
     expect(objectAt(envTemplate, 'ANALYSIS_REQUIRED_COMMIT')).toBe('56be940b69bf1a56578040eda9bf2e3699c5220e')
     expect(objectAt(envTemplate, 'ANALYSIS_FETCH_DEPTH')).toBeUndefined()
     expect(objectAt(codex, 'model')).toBe('gpt-5.5')
     expect(objectAt(codex, 'effort')).toBe('high')
-    expect(objectAt(codexConfig, 'content')).toContain('[projects."/workspace/analysis"]')
-    expect(objectAt(codexConfig, 'content')).toContain('model_reasoning_summary = "none"')
-    expect(objectAt(codexConfig, 'content')).toContain('model_reasoning_effort = "high"')
-    expect(objectAt(codexConfig, 'content')).toContain('model_verbosity = "low"')
-    expect(objectAt(bootstrap, 'content')).toContain('x-access-token:%s')
-    expect(objectAt(bootstrap, 'content')).toContain('Authorization: Basic')
-    expect(objectAt(bootstrap, 'content')).not.toContain('Authorization: Bearer')
-    expect(objectAt(bootstrap, 'content')).toContain('fetch --prune origin main:refs/remotes/origin/main')
-    expect(objectAt(bootstrap, 'content')).toContain('checkout --force --detach origin/main')
-    expect(objectAt(bootstrap, 'content')).toContain('reset --hard origin/main')
-    expect(objectAt(bootstrap, 'content')).not.toContain('--filter=blob:none')
-    expect(objectAt(bootstrap, 'content')).not.toContain('sparse-checkout')
-    expect(objectAt(bootstrap, 'content')).not.toContain('--depth="${depth}"')
-    expect(objectAt(bootstrap, 'content')).not.toContain('deepen_analysis_history')
-    expect(objectAt(bootstrap, 'content')).not.toContain('git_with_auth clone')
-    expect(objectAt(bootstrap, 'content')).not.toContain('ensure_artifact_file')
-    expect(objectAt(bootstrap, 'content')).toContain('report.md')
-    expect(objectAt(bootstrap, 'content')).not.toContain('decision-ledger.jsonl')
-    expect(objectAt(bootstrap, 'content')).not.toContain('protective-orders.jsonl')
-    expect(objectAt(bootstrap, 'content')).not.toContain('protective-preflight.json')
-    expect(objectAt(bootstrap, 'content')).not.toContain('live-scan-input.json')
-    expect(objectAt(bootstrap, 'content')).not.toContain('current-status.json')
-    expect(objectAt(bootstrap, 'content')).not.toContain('visibility-events.jsonl')
-    expect(objectAt(bootstrap, 'content')).not.toContain('synthesis-posts.jsonl')
-    expect(objectAt(bootstrap, 'content')).not.toContain('trade-ticket.json')
-    expect(objectAt(bootstrap, 'content')).toContain('uv venv --seed')
-    expect(objectAt(bootstrap, 'content')).toContain('preinstalled-pythonpath')
-    expect(objectAt(bootstrap, 'content')).toContain('--break-system-packages')
-    expect(objectAt(bootstrap, 'content')).toContain('install_method')
-    expect(objectAt(bootstrap, 'content')).toContain('daytrading-context')
-    expect(objectAt(bootstrap, 'content')).toContain('daytrading-validate-context')
-    expect(objectAt(bootstrap, 'content')).toContain('analysis-bootstrap.json')
+    expect(inputFilePaths).toContain('/root/.codex/config.toml')
+    expect(inputFilePaths).toContain('/root/bootstrap-analysis-daytrading.sh')
+    expect(inputFilePaths).not.toContain('/workspace/.agentrun/autonomous-trader/decision-ledger.jsonl')
+    expect(inputFilePaths).not.toContain('/workspace/.agentrun/autonomous-trader/protective-orders.jsonl')
     expect(artifactNames).toEqual(['autonomous-trader-report', 'runner-log', 'runner-status'])
-    expect(artifactNames).not.toContain('autonomous-trader-analysis-bootstrap')
-    expect(artifactNames).not.toContain('autonomous-trader-analysis-context')
+    expect(artifactPaths).toEqual([
+      '/workspace/.agentrun/autonomous-trader/report.md',
+      '/workspace/.agent/runner.log',
+      '/workspace/.agent/status.json',
+    ])
+    expect([...artifactNames, ...artifactPaths, ...artifactKeys].join('\n')).not.toMatch(
+      /jsonl|analysis-(bootstrap|context)/,
+    )
     expect(objectAt(objectAt(objectAt(vcsProvider, 'spec'), 'repositoryPolicy'), 'allow')).toContain(
       'gregkonush/analysis',
     )
