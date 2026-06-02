@@ -541,12 +541,46 @@ def _runtime_ledger_ref_coverage(
         .all()
     )
     if not full_ref_scan:
+        runtime_refs = sample_refs
+        exact_ref_coverage = runtime_ref_count <= len(runtime_refs)
+        current_runtime_refs: list[TigerBeetleTransferRef] = []
+        signed_refs: list[TigerBeetleTransferRef] = []
+        signed_bucket_ids: set[str] = set()
+        if exact_ref_coverage:
+            current_bucket_ids = {
+                str(bucket_id)
+                for bucket_id in session.execute(
+                    select(StrategyRuntimeLedgerBucket.id).where(
+                        (StrategyRuntimeLedgerBucket.net_strategy_pnl_after_costs != 0)
+                        | (StrategyRuntimeLedgerBucket.cost_amount != 0)
+                    )
+                ).scalars()
+            }
+            current_runtime_refs = [
+                ref
+                for ref in runtime_refs
+                if (
+                    ref.runtime_ledger_bucket_id is not None
+                    and str(ref.runtime_ledger_bucket_id) in current_bucket_ids
+                )
+                or (ref.source_id is not None and ref.source_id in current_bucket_ids)
+            ]
+            signed_refs = [
+                ref
+                for ref in current_runtime_refs
+                if _runtime_ledger_ref_is_signed(ref)
+            ]
+            signed_bucket_ids = {
+                str(ref.runtime_ledger_bucket_id or ref.source_id)
+                for ref in signed_refs
+                if ref.runtime_ledger_bucket_id is not None or ref.source_id
+            }
         runtime_source_ids = [
-            str(ref.source_id) for ref in sample_refs if ref.source_id is not None
+            str(ref.source_id) for ref in runtime_refs if ref.source_id is not None
         ]
-        runtime_transfer_ids = [str(ref.transfer_id) for ref in sample_refs]
+        runtime_transfer_ids = [str(ref.transfer_id) for ref in runtime_refs]
         runtime_account_ids: list[str] = []
-        for ref in sample_refs:
+        for ref in current_runtime_refs if exact_ref_coverage else runtime_refs:
             for account_id in _runtime_ledger_payload_account_ids(ref):
                 if account_id not in runtime_account_ids:
                     runtime_account_ids.append(account_id)
@@ -568,24 +602,35 @@ def _runtime_ledger_ref_coverage(
             for account_id in runtime_account_ids
             if account_id not in account_ref_ids
         ]
-        return {
-            "runtime_ledger_required_bucket_count": required_runtime_bucket_count,
-            "runtime_ledger_ref_count": runtime_ref_count,
-            "runtime_ledger_signed_ref_count": 0,
-            "runtime_ledger_missing_signed_ref_count": max(
+        missing_signed_ref_count = (
+            max(
+                required_runtime_bucket_count - len(signed_bucket_ids),
+                len(current_runtime_refs) - len(signed_refs),
+                0,
+            )
+            if exact_ref_coverage
+            else max(
                 required_runtime_bucket_count,
                 runtime_ref_count,
                 0,
-            ),
+            )
+        )
+        return {
+            "runtime_ledger_required_bucket_count": required_runtime_bucket_count,
+            "runtime_ledger_ref_count": runtime_ref_count,
+            "runtime_ledger_signed_ref_count": len(signed_refs),
+            "runtime_ledger_missing_signed_ref_count": missing_signed_ref_count,
             "runtime_ledger_account_ref_count": len(runtime_account_ids)
             - len(missing_account_ids),
             "runtime_ledger_missing_account_ref_count": len(missing_account_ids),
             "runtime_ledger_missing_account_ids": missing_account_ids[:sample_limit],
             "runtime_ledger_source_ids": runtime_source_ids,
             "runtime_ledger_transfer_ids": runtime_transfer_ids,
-            "runtime_ledger_signed_bucket_ids": [],
-            "runtime_ledger_ref_coverage_bounded": True,
-            "runtime_ledger_ref_sample_size": len(sample_refs),
+            "runtime_ledger_signed_bucket_ids": sorted(signed_bucket_ids)[
+                :sample_limit
+            ],
+            "runtime_ledger_ref_coverage_bounded": not exact_ref_coverage,
+            "runtime_ledger_ref_sample_size": len(runtime_refs),
         }
 
     runtime_refs = sample_refs
