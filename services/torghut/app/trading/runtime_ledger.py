@@ -105,6 +105,19 @@ _SOURCE_REF_BLOCKER_EXECUTION_ORDER_EVENT_MISSING = (
     "runtime_ledger_execution_order_event_refs_missing"
 )
 _SOURCE_REF_BLOCKER_SOURCE_OFFSETS_MISSING = "runtime_ledger_source_offsets_missing"
+_SOURCE_REF_BLOCKER_SOURCE_MATERIALIZATION_MISSING = (
+    "runtime_ledger_source_materialization_missing"
+)
+_SOURCE_REF_BLOCKER_AUTHORITY_CLASS_MISSING = "runtime_ledger_authority_class_missing"
+_PROMOTION_GRADE_AUTHORITY_CLASSES = frozenset(
+    {
+        "runtime_order_feed_execution_source",
+        "event_sourced_runtime_ledger_profit_proof",
+        "source_execution_runtime_ledger_materialized",
+        "execution_order_events_runtime_ledger",
+        "source_execution_lifecycle_materialized_runtime_ledger",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -197,6 +210,7 @@ class _NormalizedFill:
     source_window_id: str | None = None
     source_offset_present: bool = False
     source_materialization: str | None = None
+    authority_class: str | None = None
 
     @property
     def is_usable_fill(self) -> bool:
@@ -601,10 +615,14 @@ def _source_materialization_blockers(
 
     blockers: list[str] = []
     for row in lifecycle_rows:
-        if row.source_materialization not in _PROMOTION_GRADE_SOURCE_MATERIALIZATIONS:
+        if not _row_requires_promotion_source_authority(row):
             continue
         if row.event_type not in _SUBMITTED_ORDER_EVENTS | _FILL_EVENTS:
             continue
+        if row.source_materialization not in _PROMOTION_GRADE_SOURCE_MATERIALIZATIONS:
+            blockers.append(_SOURCE_REF_BLOCKER_SOURCE_MATERIALIZATION_MISSING)
+        if row.authority_class not in _PROMOTION_GRADE_AUTHORITY_CLASSES:
+            blockers.append(_SOURCE_REF_BLOCKER_AUTHORITY_CLASS_MISSING)
         if row.execution_order_event_id is None:
             blockers.append(_SOURCE_REF_BLOCKER_EXECUTION_ORDER_EVENT_MISSING)
         if row.decision_id is None:
@@ -616,6 +634,21 @@ def _source_materialization_blockers(
         if not row.source_offset_present:
             blockers.append(_SOURCE_REF_BLOCKER_SOURCE_OFFSETS_MISSING)
     return _dedupe(blockers)
+
+
+def _row_requires_promotion_source_authority(row: _NormalizedFill) -> bool:
+    """Return true for source rows that claim promotion-grade runtime authority.
+
+    Lifecycle-only ``order_feed_lifecycle`` rows can prove order state without
+    economics or promotion authority. Rows that claim a promotion source
+    materialization or authority marker must carry both the marker and all
+    source refs before a bucket can become authority.
+    """
+
+    return (
+        row.source_materialization in _PROMOTION_GRADE_SOURCE_MATERIALIZATIONS
+        or row.authority_class in _PROMOTION_GRADE_AUTHORITY_CLASSES
+    )
 
 
 def _apply_fill_to_position(
@@ -816,8 +849,9 @@ def _normalize_fill_row(
     )
     source_offset_present = _source_offset_present(row)
     source_materialization = _coerce_text(
-        _row_value(row, "source_materialization", "authority_class", "source")
+        _row_value(row, "source_materialization", "source")
     )
+    authority_class = _coerce_text(_row_value(row, "authority_class"))
     order_id = _coerce_text(
         _row_value(
             row,
@@ -916,6 +950,7 @@ def _normalize_fill_row(
         source_window_id=source_window_id,
         source_offset_present=source_offset_present,
         source_materialization=source_materialization,
+        authority_class=authority_class,
         execution_policy_hash=execution_policy_hash,
         cost_model_hash=cost_model_hash,
         lineage_hash=lineage_hash,

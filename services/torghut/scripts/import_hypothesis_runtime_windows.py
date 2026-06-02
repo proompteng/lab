@@ -2464,6 +2464,7 @@ def _runtime_lifecycle_ledger_row(
     if _source_authority_order_event_row(row):
         ledger_row["source"] = "execution_order_event"
         ledger_row["source_materialization"] = "execution_order_events"
+        ledger_row["authority_class"] = "runtime_order_feed_execution_source"
         for key in (
             "execution_order_event_id",
             "execution_id",
