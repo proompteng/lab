@@ -1565,6 +1565,23 @@ class PostgresAutotraderStore implements AutotraderStore {
   ) {
     const key = scorecardKeyFor(observation)
     const example = exampleFromObservation(sessionId, observation)
+    await client.query(
+      `INSERT INTO autotrader.scorecards (
+        key, symbol, setup_type, setup_grade, regime, time_bucket, updated_at, last_session_id
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7::timestamptz, $8)
+      ON CONFLICT (key) DO NOTHING`,
+      [
+        key,
+        normalizedSymbol(observation.symbol),
+        observation.setupType,
+        observation.setupGrade,
+        observation.regime,
+        observation.timeBucket,
+        nowIso(),
+        sessionId,
+      ],
+    )
     const insertExampleResult = await client.query(
       `INSERT INTO autotrader.setup_examples (
         id, scorecard_key, session_id, ticket_id, symbol, setup_type, setup_grade, regime, time_bucket, outcome,
