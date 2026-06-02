@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import argparse
 from datetime import datetime, timezone
 from decimal import Decimal
 from unittest import TestCase
+from unittest.mock import patch
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
@@ -119,6 +121,54 @@ class TestRenewLatestEmpiricalPromotionJobsRuntimeLedger(TestCase):
         Base.metadata.create_all(engine)
         self.session_local = sessionmaker(
             bind=engine, expire_on_commit=False, future=True
+        )
+
+    def test_explicit_live_target_does_not_suppress_paper_plan_target(self) -> None:
+        paper_target = renew.RuntimeWindowImportTarget(
+            hypothesis_id="H-PAIRS-01",
+            candidate_id="c88421d619759b2cfaa6f4d0",
+            observed_stage="paper",
+            strategy_family="microbar_cross_sectional_pairs",
+            source_dsn_env="SIM_DB_DSN",
+            target_dsn_env="SIM_DB_DSN",
+            strategy_name="microbar-cross-sectional-pairs-v1",
+            account_label="TORGHUT_SIM",
+            dataset_snapshot_ref="portfolio-profit-autoresearch-500-v1",
+            source_manifest_ref="config/trading/hypotheses/h-pairs-01.json",
+            source_kind="paper_runtime_observed",
+            delay_adjusted_depth_stress_report_ref="",
+        )
+        args = argparse.Namespace(
+            runtime_window_target=[
+                (
+                    "hypothesis_id=H-PAIRS-01,"
+                    "candidate_id=c88421d619759b2cfaa6f4d0,"
+                    "observed_stage=live,"
+                    "strategy_family=microbar_cross_sectional_pairs,"
+                    "strategy_name=microbar-cross-sectional-pairs-v1,"
+                    "account_label=PA3SX7FYNUTF,"
+                    "source_account_label=PA3SX7FYNUTF,"
+                    "source_dsn_env=DB_DSN,"
+                    "target_dsn_env=DB_DSN,"
+                    "source_kind=live_runtime_observed,"
+                    "source_manifest_ref=config/trading/hypotheses/h-pairs-01.json"
+                )
+            ],
+            runtime_window_target_plan_required=False,
+            runtime_window_target_plan_exclusive=True,
+            runtime_window_targets_from_latest_autoresearch=False,
+            runtime_window_targets_from_registry=False,
+        )
+
+        with patch.object(
+            renew, "_runtime_window_plan_targets", return_value=[paper_target]
+        ):
+            targets = renew._runtime_window_targets(args)
+
+        self.assertEqual(len(targets), 2)
+        self.assertEqual(
+            {(target.observed_stage, target.account_label) for target in targets},
+            {("live", "PA3SX7FYNUTF"), ("paper", "TORGHUT_SIM")},
         )
 
     def test_hpairs_source_proof_census_status_is_non_authority_renewal_evidence(

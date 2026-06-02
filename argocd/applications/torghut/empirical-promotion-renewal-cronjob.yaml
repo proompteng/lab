@@ -61,6 +61,7 @@ spec:
                     --output-dir /tmp/torghut-empirical-renewal \
                     --strategy-spec-ref microbar_cross_sectional_pairs_v1@research \
                     --runtime-window-import \
+                    --runtime-window-target hypothesis_id=H-PAIRS-01,candidate_id=c88421d619759b2cfaa6f4d0,observed_stage=live,strategy_family=microbar_cross_sectional_pairs,strategy_name=microbar-cross-sectional-pairs-v1,account_label=PA3SX7FYNUTF,source_account_label=PA3SX7FYNUTF,source_dsn_env=DB_DSN,target_dsn_env=DB_DSN,source_kind=live_runtime_observed,source_manifest_ref=config/trading/hypotheses/h-pairs-01.json \
                     --runtime-window-target-plan-url http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan \
                     --runtime-window-target-plan-url http://torghut.torghut.svc.cluster.local/trading/status \
                     --runtime-window-target-plan-url-timeout-seconds 45 \
