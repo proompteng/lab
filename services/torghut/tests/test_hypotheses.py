@@ -34,7 +34,6 @@ _MANIFEST_CANDIDATE_IDS = {
     "H-CONT-01": "chip-paper-microbar-composite@execution-proof",
     "H-MICRO-01": "chip-paper-microbar-composite@execution-proof",
     "H-PAIRS-01": "c88421d619759b2cfaa6f4d0",
-    "H-REV-01": "chip-paper-microbar-composite@execution-proof",
     "H-TSMOM-01": "spec-83161ae16d17828eabcc58cc",
     "H-TSMOM-LIQ-01": "H-TSMOM-LIQ-01",
 }
@@ -43,7 +42,6 @@ _MANIFEST_STRATEGY_FAMILIES = {
     "H-CONT-01": "intraday_continuation",
     "H-MICRO-01": "microstructure_breakout",
     "H-PAIRS-01": "microbar_cross_sectional_pairs",
-    "H-REV-01": "event_reversion",
     "H-TSMOM-01": "intraday_tsmom_consistent",
     "H-TSMOM-LIQ-01": "intraday_tsmom_consistent",
 }
@@ -368,12 +366,10 @@ class TestHypothesisReadiness(TestCase):
 
         micro = next(item for item in statuses if item["hypothesis_id"] == "H-MICRO-01")
         cont = next(item for item in statuses if item["hypothesis_id"] == "H-CONT-01")
-        rev = next(item for item in statuses if item["hypothesis_id"] == "H-REV-01")
         self.assertNotIn("signal_lag_exceeded", cont["reasons"])
         self.assertNotIn("feature_rows_missing", micro["reasons"])
         self.assertNotIn("required_feature_set_unavailable", micro["reasons"])
         self.assertNotIn("signal_lag_exceeded", micro["reasons"])
-        self.assertNotIn("signal_lag_exceeded", rev["reasons"])
         self.assertEqual(cont["observed"]["signal_lag_seconds"], None)
         self.assertEqual(cont["observed"]["feature_batch_rows_total"], 12)
 
@@ -428,7 +424,6 @@ class TestHypothesisReadiness(TestCase):
             },
             runtime_ledger_summary=_runtime_ledger_summary(
                 "H-CONT-01",
-                "H-REV-01",
                 submitted_order_count=45,
             ),
             market_context_status={"last_freshness_seconds": 60},
@@ -441,12 +436,10 @@ class TestHypothesisReadiness(TestCase):
         )
 
         cont = next(item for item in statuses if item["hypothesis_id"] == "H-CONT-01")
-        rev = next(item for item in statuses if item["hypothesis_id"] == "H-REV-01")
         self.assertEqual(cont["state"], "canary_live")
         self.assertEqual(cont["capital_stage"], "0.25x canary")
         self.assertEqual(cont["capital_multiplier"], "0.25")
         self.assertTrue(cont["promotion_eligible"])
-        self.assertEqual(rev["state"], "canary_live")
         self.assertEqual(cont["observed"]["tca_age_minutes"], 10)
 
     def test_compile_hypothesis_runtime_statuses_requires_live_runtime_ledger_profit_authority(
@@ -1100,7 +1093,7 @@ class TestHypothesisReadiness(TestCase):
                 "items": [
                     "ignored",
                     {
-                        "hypothesis_id": "H-REV-01",
+                        "hypothesis_id": "H-IGNORED-01",
                         "observed_stage": "live",
                     },
                     {
@@ -2089,7 +2082,6 @@ class TestHypothesisReadiness(TestCase):
             runtime_ledger_summary=_runtime_ledger_summary(
                 "H-CONT-01",
                 "H-MICRO-01",
-                "H-REV-01",
                 "H-BREAKOUT-01",
                 submitted_order_count=120,
                 post_cost_expectancy_bps="12",
@@ -2105,7 +2097,6 @@ class TestHypothesisReadiness(TestCase):
         )
 
         cont = next(item for item in statuses if item["hypothesis_id"] == "H-CONT-01")
-        rev = next(item for item in statuses if item["hypothesis_id"] == "H-REV-01")
         self.assertNotIn("signal_lag_exceeded", cont["reasons"])
         self.assertNotIn("tca_evidence_stale", cont["reasons"])
         self.assertIn("slippage_budget_exceeded", cont["reasons"])
@@ -2114,10 +2105,6 @@ class TestHypothesisReadiness(TestCase):
         self.assertIn(
             "closed_session_runtime_ledger_evidence_hold",
             cont["informational_reasons"],
-        )
-        self.assertNotIn("market_context_stale", rev["reasons"])
-        self.assertIn(
-            "closed_session_market_context_hold", rev["informational_reasons"]
         )
         self.assertEqual(cont["observed"]["market_session_open"], False)
 
@@ -2130,9 +2117,73 @@ class TestHypothesisReadiness(TestCase):
                 message="ok",
             ),
         )
-        self.assertEqual(summary["reason_totals"]["slippage_budget_exceeded"], 2)
+        self.assertEqual(summary["reason_totals"]["slippage_budget_exceeded"], 1)
         self.assertEqual(
-            summary["informational_reason_totals"]["closed_session_signal_hold"], 6
+            summary["informational_reason_totals"]["closed_session_signal_hold"], 5
+        )
+
+    def test_compile_hypothesis_runtime_statuses_reports_closed_session_market_context_hold_for_context_manifest(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "h-context-01.json").write_text(
+                json.dumps(
+                    _hypothesis_manifest_payload(
+                        hypothesis_id="H-CONTEXT-01",
+                        lane_id="context-dependent",
+                        strategy_family="context_dependent",
+                        required_dependency_capabilities=["market_context_freshness"],
+                        candidate_id="candidate-context",
+                        strategy_id="context_strategy@paper",
+                        max_market_context_freshness_seconds=120,
+                    )
+                ),
+                encoding="utf-8",
+            )
+            settings.trading_hypothesis_registry_path = str(root)
+            registry = load_hypothesis_registry()
+
+            statuses = compile_hypothesis_runtime_statuses(
+                registry=registry,
+                state=_state(
+                    feature_rows=5,
+                    drift_checks=3,
+                    evidence_checks=2,
+                    signal_lag_seconds=15,
+                    evidence_report={
+                        "ok": True,
+                        "checked_at": "2026-03-06T15:45:00+00:00",
+                    },
+                ),
+                tca_summary={
+                    "order_count": 120,
+                    "avg_abs_slippage_bps": 4,
+                    "avg_realized_shortfall_bps": -12,
+                    "last_computed_at": "2026-03-06T15:00:00+00:00",
+                },
+                runtime_ledger_summary=_runtime_ledger_summary(
+                    "H-CONTEXT-01",
+                    candidate_id="candidate-context",
+                    submitted_order_count=120,
+                    post_cost_expectancy_bps="12",
+                ),
+                market_context_status={"last_freshness_seconds": 10_000},
+                jangar_dependency_quorum=JangarDependencyQuorumStatus(
+                    decision="allow",
+                    reasons=[],
+                    message="ok",
+                ),
+                now=datetime(2026, 3, 6, 23, 0, tzinfo=timezone.utc),
+                market_session_open=False,
+            )
+
+        context_status = statuses[0]
+        self.assertEqual(context_status["hypothesis_id"], "H-CONTEXT-01")
+        self.assertNotIn("market_context_stale", context_status["reasons"])
+        self.assertIn(
+            "closed_session_market_context_hold",
+            context_status["informational_reasons"],
         )
 
     def test_compile_hypothesis_runtime_statuses_isolates_dependency_capabilities_between_hypotheses(
@@ -2313,12 +2364,12 @@ class TestHypothesisReadiness(TestCase):
             ),
         )
 
-        self.assertEqual(summary["hypotheses_total"], 6)
+        self.assertEqual(summary["hypotheses_total"], 5)
         self.assertEqual(
             summary["candidate_dossier_version"],
             "torghut.hypothesis-candidate-dossier.v1",
         )
-        self.assertEqual(len(summary["ranked_candidates"]), 6)
+        self.assertEqual(len(summary["ranked_candidates"]), 5)
         self.assertIsNotNone(summary["selected_candidate"])
         self.assertEqual(summary["selected_candidate"]["hypothesis_id"], "H-MICRO-01")
         self.assertEqual(
@@ -2329,8 +2380,8 @@ class TestHypothesisReadiness(TestCase):
             summary["selected_candidate"]["next_blocker"],
             "delay_adjusted_depth_stress_missing",
         )
-        self.assertEqual(summary["state_totals"], {"blocked": 4, "shadow": 2})
-        self.assertEqual(summary["capital_stage_totals"], {"shadow": 6})
+        self.assertEqual(summary["state_totals"], {"blocked": 4, "shadow": 1})
+        self.assertEqual(summary["capital_stage_totals"], {"shadow": 5})
         self.assertEqual(summary["promotion_eligible_total"], 0)
         self.assertEqual(summary["rollback_required_total"], 0)
         self.assertEqual(

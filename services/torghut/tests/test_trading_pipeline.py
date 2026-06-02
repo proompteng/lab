@@ -1876,7 +1876,7 @@ class TestTradingPipeline(TestCase):
 
         self.assertEqual(summary.get("promotion_eligible_total"), 1)
         self.assertEqual(
-            summary.get("capital_stage_totals"), {"0.10x canary": 1, "shadow": 5}
+            summary.get("capital_stage_totals"), {"0.10x canary": 1, "shadow": 4}
         )
         items = [
             cast(Mapping[str, object], item)
