@@ -757,13 +757,9 @@ describe('synthesis autonomous trader provider', () => {
     expect(objectAt(bootstrap, 'content')).toContain('daytrading-context')
     expect(objectAt(bootstrap, 'content')).toContain('daytrading-validate-context')
     expect(objectAt(bootstrap, 'content')).toContain('analysis-bootstrap.json')
-    expect(artifactNames).toEqual([
-      'autonomous-trader-report',
-      'autonomous-trader-analysis-bootstrap',
-      'autonomous-trader-analysis-context',
-      'runner-log',
-      'runner-status',
-    ])
+    expect(artifactNames).toEqual(['autonomous-trader-report', 'runner-log', 'runner-status'])
+    expect(artifactNames).not.toContain('autonomous-trader-analysis-bootstrap')
+    expect(artifactNames).not.toContain('autonomous-trader-analysis-context')
     expect(objectAt(objectAt(objectAt(vcsProvider, 'spec'), 'repositoryPolicy'), 'allow')).toContain(
       'gregkonush/analysis',
     )

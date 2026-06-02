@@ -576,12 +576,6 @@ spec:
     - name: autonomous-trader-report
       path: /workspace/.agentrun/autonomous-trader/report.md
       key: synthesis/autonomous-trader/{{ agentRun.name }}/report.md
-    - name: autonomous-trader-analysis-bootstrap
-      path: /workspace/.agentrun/autonomous-trader/analysis-bootstrap.json
-      key: synthesis/autonomous-trader/{{ agentRun.name }}/analysis-bootstrap.json
-    - name: autonomous-trader-analysis-context
-      path: /workspace/.agentrun/autonomous-trader/analysis-context.json
-      key: synthesis/autonomous-trader/{{ agentRun.name }}/analysis-context.json
     - name: runner-log
       path: /workspace/.agent/runner.log
     - name: runner-status
