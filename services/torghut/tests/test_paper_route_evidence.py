@@ -8358,6 +8358,142 @@ class TestPaperRouteEvidenceAudit(TestCase):
             "paper_route_observed_strategy_source_collection",
         )
 
+    def test_observed_strategy_source_collection_plan_limits_targets(self) -> None:
+        target_template = {
+            "hypothesis_id": "H-PAIRS-01",
+            "candidate_id": "candidate-hpairs",
+            "strategy_name": "microbar-cross-sectional-pairs-v1",
+            "window_start": "2026-06-02T13:30:00+00:00",
+            "window_end": "2026-06-02T20:00:00+00:00",
+            "paper_route_account_contamination_state": {
+                "foreign_strategy_counts": {
+                    "intraday-tsmom-profit-v3": 2,
+                    "other-observed-source-strategy": 1,
+                },
+            },
+        }
+
+        plan = paper_route_evidence._observed_strategy_source_collection_import_plan(
+            live_submission_gate={
+                "blocked_reasons": ["runtime_ledger_source_collection_pending"],
+                "runtime_ledger_repair_candidates": [
+                    {
+                        "hypothesis_id": "H-TSMOM-LIQ-01",
+                        "candidate_id": "candidate-tsmom",
+                        "strategy_family": "intraday_tsmom_consistent",
+                        "strategy_name": "intraday-tsmom-profit-v3",
+                        "runtime_strategy_name": "intraday-tsmom-profit-v3",
+                    },
+                    {
+                        "hypothesis_id": "H-OTHER",
+                        "candidate_id": "candidate-other",
+                        "strategy_family": "intraday_other",
+                        "strategy_name": "other-observed-source-strategy",
+                    },
+                ],
+            },
+            candidate_plans=[
+                {
+                    "targets": [
+                        dict(target_template),
+                        {
+                            **target_template,
+                            "candidate_id": "candidate-hpairs-second-window",
+                        },
+                    ],
+                },
+                {"targets": [dict(target_template)]},
+            ],
+            target_limit=1,
+        )
+
+        self.assertEqual(plan["target_count"], 1)
+        target = plan["targets"][0]
+        self.assertEqual(target["candidate_id"], "candidate-tsmom")
+        self.assertEqual(
+            target["source_manifest_ref"],
+            "config/trading/hypotheses/h-tsmom-liq-01.json",
+        )
+        self.assertEqual(
+            target["observed_from_contaminated_target"]["order_event_count"], 2
+        )
+
+    def test_observed_strategy_source_collection_plan_skips_unmapped_noise(
+        self,
+    ) -> None:
+        plan = paper_route_evidence._observed_strategy_source_collection_import_plan(
+            live_submission_gate={
+                "blocked_reasons": ["runtime_ledger_source_collection_pending"],
+                "runtime_ledger_repair_candidates": [
+                    {
+                        "hypothesis_id": "H-TSMOM-LIQ-01",
+                        "candidate_id": "candidate-tsmom",
+                        "strategy_family": "intraday_tsmom_consistent",
+                        "strategy_name": "intraday-tsmom-profit-v3",
+                    }
+                ],
+            },
+            candidate_plans=[
+                {
+                    "targets": [
+                        {
+                            "hypothesis_id": "H-PAIRS-01",
+                            "candidate_id": "candidate-hpairs",
+                            "strategy_name": "microbar-cross-sectional-pairs-v1",
+                            "window_start": "2026-06-02T13:30:00+00:00",
+                            "window_end": "2026-06-02T20:00:00+00:00",
+                            "paper_route_account_contamination_state": {
+                                "foreign_strategy_counts": {
+                                    "missing": 5,
+                                    "unmapped-observed-strategy": 4,
+                                },
+                            },
+                        }
+                    ],
+                }
+            ],
+            target_limit=5,
+        )
+
+        self.assertEqual(plan, {})
+
+    def test_observed_strategy_source_collection_plan_skips_incomplete_candidate(
+        self,
+    ) -> None:
+        plan = paper_route_evidence._observed_strategy_source_collection_import_plan(
+            live_submission_gate={
+                "blocked_reasons": ["runtime_ledger_source_collection_pending"],
+                "runtime_ledger_repair_candidates": [
+                    {
+                        "hypothesis_id": "H-TSMOM-LIQ-01",
+                        "strategy_family": "intraday_tsmom_consistent",
+                        "strategy_name": "intraday-tsmom-profit-v3",
+                    }
+                ],
+            },
+            candidate_plans=[
+                {
+                    "targets": [
+                        {
+                            "hypothesis_id": "H-PAIRS-01",
+                            "candidate_id": "candidate-hpairs",
+                            "strategy_name": "microbar-cross-sectional-pairs-v1",
+                            "window_start": "2026-06-02T13:30:00+00:00",
+                            "window_end": "2026-06-02T20:00:00+00:00",
+                            "paper_route_account_contamination_state": {
+                                "foreign_strategy_counts": {
+                                    "intraday-tsmom-profit-v3": 1,
+                                },
+                            },
+                        }
+                    ],
+                }
+            ],
+            target_limit=5,
+        )
+
+        self.assertEqual(plan, {})
+
     def test_account_contamination_summary_deduplicates_and_caps_order_event_refs(
         self,
     ) -> None:
