@@ -6,7 +6,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from collections.abc import Sequence
+import sys
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, cast
@@ -32,6 +33,7 @@ from app.trading.tigerbeetle_journal import (
     build_order_event_transfer_plan,
     tigerbeetle_runtime_ledger_journal_payload,
 )
+from app.trading.tigerbeetle_client import TigerBeetleClientTimeoutError
 from app.trading.tigerbeetle_ledger_model import (
     TRANSFER_KIND_EXECUTION_COST,
     TRANSFER_KIND_EXECUTION_FILL,
@@ -103,6 +105,12 @@ def _parse_args() -> argparse.Namespace:
         "--fail-on-degraded",
         action="store_true",
         help="Exit non-zero when journaling/reconciliation is degraded.",
+    )
+    parser.add_argument(
+        "--progress-interval",
+        type=int,
+        default=100,
+        help="Emit stderr progress every N processed source rows; set 0 to disable.",
     )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--json", action="store_true")
@@ -324,7 +332,15 @@ def _journal_source_batch(
         "failed": 0,
         "error_counts": {},
         "sample_errors": [],
+        "stopped_early": False,
+        "stop_reason": None,
     }
+    progress_interval = max(0, int(getattr(args, "progress_interval", 100) or 0))
+    _emit_progress(
+        "source_batch_start",
+        source=source,
+        selected=len(rows),
+    )
     for row in rows:
         try:
             if args.dry_run:
@@ -355,7 +371,58 @@ def _journal_source_batch(
                         "error": str(exc),
                     }
                 )
+            if isinstance(exc, TigerBeetleClientTimeoutError):
+                batch["stopped_early"] = True
+                batch["stop_reason"] = "tigerbeetle_rpc_timeout"
+                _emit_progress(
+                    "source_batch_stopped",
+                    source=source,
+                    reason=batch["stop_reason"],
+                    failed=batch["failed"],
+                    journaled=batch["journaled"],
+                    skipped=batch["skipped"],
+                )
+                break
+        processed = (
+            int(batch["journaled"]) + int(batch["skipped"]) + int(batch["failed"])
+        )
+        if progress_interval and processed and processed % progress_interval == 0:
+            _emit_progress(
+                "source_batch_progress",
+                source=source,
+                processed=processed,
+                selected=batch["selected"],
+                journaled=batch["journaled"],
+                skipped=batch["skipped"],
+                failed=batch["failed"],
+            )
+    _emit_progress(
+        "source_batch_complete",
+        source=source,
+        selected=batch["selected"],
+        journaled=batch["journaled"],
+        skipped=batch["skipped"],
+        failed=batch["failed"],
+        stopped_early=batch["stopped_early"],
+        stop_reason=batch["stop_reason"],
+    )
     return batch
+
+
+def _emit_progress(event: str, **fields: object) -> None:
+    payload = {
+        "schema_version": "torghut.tigerbeetle-journal-progress.v1",
+        "event": event,
+        "ts": datetime.now(timezone.utc).isoformat(),
+        **fields,
+    }
+    print(json.dumps(payload, separators=(",", ":")), file=sys.stderr, flush=True)
+
+
+def _batch_requested_stop(batch: Mapping[str, Any]) -> bool:
+    return bool(batch.get("stopped_early")) and bool(
+        str(batch.get("stop_reason") or "")
+    )
 
 
 def _attach_runtime_bucket_journal_payload(
@@ -434,6 +501,11 @@ def _payload(
         else bool(reconciliation.get("ok", reconciliation.get("status") == "ok"))
     )
     status = "ok" if failed == 0 and reconciliation_ok else "degraded"
+    stop_reasons = [
+        str(batch.get("stop_reason"))
+        for batch in batches
+        if str(batch.get("stop_reason") or "").strip()
+    ]
     return {
         "schema_version": "torghut.tigerbeetle-journal-order-events.v1",
         "ok": status == "ok",
@@ -447,6 +519,8 @@ def _payload(
         "event_scan_limit": getattr(args, "event_scan_limit", None),
         "sources": list(_parse_sources(getattr(args, "sources", "all"))),
         "skip_reconcile": bool(getattr(args, "skip_reconcile", False)),
+        "stopped_early": bool(stop_reasons),
+        "stop_reasons": stop_reasons,
         "started_at": started_at.isoformat(),
         "completed_at": datetime.now(timezone.utc).isoformat(),
         "selected": selected,
@@ -486,6 +560,7 @@ def main() -> int:
     )
     batches: list[dict[str, Any]] = []
     reconciliation: dict[str, object] | None = None
+    stop_journaling = False
 
     with (
         session_factory() as session,
@@ -495,7 +570,10 @@ def main() -> int:
     ):
         for _ in range(max_batches):
             batch_lengths: list[int] = []
-            if SOURCE_TYPE_EXECUTION_ORDER_EVENT in enabled_sources:
+            if (
+                SOURCE_TYPE_EXECUTION_ORDER_EVENT in enabled_sources
+                and not stop_journaling
+            ):
                 events = _select_unlinked_events(
                     session,
                     settings_obj=settings_obj,
@@ -520,93 +598,108 @@ def main() -> int:
                     event_batch["scan_failed"] = events.scan_failed
                 batches.append(event_batch)
                 batch_lengths.append(len(events.rows))
-            if SOURCE_TYPE_EXECUTION in enabled_sources:
+                stop_journaling = _batch_requested_stop(event_batch)
+            if SOURCE_TYPE_EXECUTION in enabled_sources and not stop_journaling:
                 executions = _select_unlinked_executions(
                     session,
                     settings_obj=settings_obj,
                     account_label=args.account_label,
                     limit=batch_size,
                 )
-                batches.append(
-                    _journal_source_batch(
+                execution_batch = _journal_source_batch(
+                    session,
+                    args=args,
+                    source=SOURCE_TYPE_EXECUTION,
+                    rows=executions,
+                    journal_one=lambda execution: journal.journal_execution(
                         session,
-                        args=args,
-                        source=SOURCE_TYPE_EXECUTION,
-                        rows=executions,
-                        journal_one=lambda execution: journal.journal_execution(
-                            session,
-                            execution,
-                        ),
-                    )
+                        execution,
+                    ),
                 )
+                batches.append(execution_batch)
                 batch_lengths.append(len(executions))
-            if SOURCE_TYPE_EXECUTION_TCA_METRIC in enabled_sources:
+                stop_journaling = _batch_requested_stop(execution_batch)
+            if (
+                SOURCE_TYPE_EXECUTION_TCA_METRIC in enabled_sources
+                and not stop_journaling
+            ):
                 tca_metrics = _select_unlinked_tca_metrics(
                     session,
                     settings_obj=settings_obj,
                     account_label=args.account_label,
                     limit=batch_size,
                 )
-                batches.append(
-                    _journal_source_batch(
+                tca_batch = _journal_source_batch(
+                    session,
+                    args=args,
+                    source=SOURCE_TYPE_EXECUTION_TCA_METRIC,
+                    rows=tca_metrics,
+                    journal_one=lambda metric: journal.journal_execution_tca_metric(
                         session,
-                        args=args,
-                        source=SOURCE_TYPE_EXECUTION_TCA_METRIC,
-                        rows=tca_metrics,
-                        journal_one=lambda metric: journal.journal_execution_tca_metric(
-                            session,
-                            metric,
-                        ),
-                    )
+                        metric,
+                    ),
                 )
+                batches.append(tca_batch)
                 batch_lengths.append(len(tca_metrics))
-            if SOURCE_TYPE_RUNTIME_LEDGER_BUCKET in enabled_sources:
+                stop_journaling = _batch_requested_stop(tca_batch)
+            if (
+                SOURCE_TYPE_RUNTIME_LEDGER_BUCKET in enabled_sources
+                and not stop_journaling
+            ):
                 runtime_buckets = _select_unlinked_runtime_buckets(
                     session,
                     settings_obj=settings_obj,
                     account_label=args.account_label,
                     limit=batch_size,
                 )
-                batches.append(
-                    _journal_source_batch(
+                runtime_batch = _journal_source_batch(
+                    session,
+                    args=args,
+                    source=SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                    rows=runtime_buckets,
+                    journal_one=lambda bucket: journal.journal_runtime_ledger_bucket(
                         session,
-                        args=args,
-                        source=SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
-                        rows=runtime_buckets,
-                        journal_one=lambda bucket: (
-                            journal.journal_runtime_ledger_bucket(
-                                session,
-                                bucket,
-                            )
-                        ),
-                    )
+                        bucket,
+                    ),
                 )
+                batches.append(runtime_batch)
                 batch_lengths.append(len(runtime_buckets))
+                stop_journaling = _batch_requested_stop(runtime_batch)
             if args.dry_run:
                 session.rollback()
                 _reset_session_identity_map(session)
                 break
-            stable_ref_backfill = journal.backfill_stable_ref_payloads(
-                session,
-                limit=batch_size,
-            )
-            batches.append(
-                {
-                    "source": "tigerbeetle_stable_ref_payload",
-                    "selected": int(stable_ref_backfill["selected"]),
-                    "journaled": int(stable_ref_backfill["updated"]),
-                    "skipped": int(stable_ref_backfill["skipped"]),
-                    "failed": 0,
-                    "error_counts": {},
-                    "sample_errors": [],
-                }
-            )
+            if not stop_journaling:
+                stable_ref_backfill = journal.backfill_stable_ref_payloads(
+                    session,
+                    limit=batch_size,
+                )
+                batches.append(
+                    {
+                        "source": "tigerbeetle_stable_ref_payload",
+                        "selected": int(stable_ref_backfill["selected"]),
+                        "journaled": int(stable_ref_backfill["updated"]),
+                        "skipped": int(stable_ref_backfill["skipped"]),
+                        "failed": 0,
+                        "error_counts": {},
+                        "sample_errors": [],
+                        "stopped_early": False,
+                        "stop_reason": None,
+                    }
+                )
             session.commit()
             _reset_session_identity_map(session)
+            if stop_journaling:
+                reconciliation = {
+                    "ok": False,
+                    "status": "skipped",
+                    "reason": "tigerbeetle_journal_stopped_early",
+                }
+                break
             if batch_lengths and all(length < batch_size for length in batch_lengths):
                 break
 
-        if not args.dry_run and not args.skip_reconcile:
+        if not args.dry_run and not args.skip_reconcile and not stop_journaling:
             reconciliation = reconcile_tigerbeetle_transfers(
                 session,
                 settings_obj=settings_obj,
