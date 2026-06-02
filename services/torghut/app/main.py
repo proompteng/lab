@@ -27,7 +27,6 @@ from urllib.parse import urlencode, urlsplit
 from .alpaca_client import TorghutAlpacaClient
 from .config import settings
 from .db import SessionLocal, check_schema_current, ensure_schema, get_session, ping
-from .db import check_account_scope_invariants
 from .metrics import render_trading_metrics
 from .models import (
     Execution,
@@ -1852,13 +1851,268 @@ def _resolve_universe_resolver_for_readiness(scheduler: TradingScheduler) -> Any
     return None
 
 
+_ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS = 750
+
+
+def _execute_readiness_account_scope_query(
+    session: Session,
+    sql: str,
+    *,
+    table_names: Sequence[str] | None = None,
+) -> list[Mapping[str, object]]:
+    statement = text(sql)
+    params: dict[str, object] = {}
+    if table_names is not None:
+        statement = statement.bindparams(bindparam("table_names", expanding=True))
+        params["table_names"] = list(table_names)
+    return [
+        cast(Mapping[str, object], row)
+        for row in session.execute(statement, params).mappings().all()
+    ]
+
+
+def _check_account_scope_invariants_bounded(session: Session) -> dict[str, object]:
+    """Validate account-scope invariants using bounded catalog reads only.
+
+    SQLAlchemy's generic inspector can reflect PostgreSQL domains while reading
+    unique constraints. In production that path can exceed the readiness
+    statement timeout before /readyz reaches the actual accounting blockers. This
+    helper keeps the same account-scope truth table but queries only the narrow
+    pg_catalog/information_schema rows required by the readiness contract.
+    """
+
+    session.execute(
+        text(f"SET LOCAL statement_timeout = {_ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS}")
+    )
+    required_columns: dict[str, tuple[str, list[str]]] = {
+        "executions_have_account_label": (
+            "executions",
+            ["alpaca_account_label"],
+        ),
+        "trade_decisions_have_account_label": (
+            "trade_decisions",
+            ["alpaca_account_label"],
+        ),
+        "trade_cursor_has_account_label": ("trade_cursor", ["account_label"]),
+        "execution_order_events_have_account_label": (
+            "execution_order_events",
+            ["alpaca_account_label"],
+        ),
+    }
+    table_names = sorted(
+        {table for table, _columns in required_columns.values()}
+        | {"executions", "trade_decisions", "trade_cursor"}
+    )
+
+    column_rows = _execute_readiness_account_scope_query(
+        session,
+        """
+        SELECT table_name, column_name
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name IN :table_names
+        """,
+        table_names=table_names,
+    )
+    columns_by_table: dict[str, set[str]] = {}
+    for row in column_rows:
+        table = str(row["table_name"]).strip().lower()
+        column = str(row["column_name"]).strip().lower()
+        columns_by_table.setdefault(table, set()).add(column)
+
+    unique_index_rows = _execute_readiness_account_scope_query(
+        session,
+        """
+        SELECT
+          tbl.relname AS table_name,
+          idx.relname AS index_name,
+          array_agg(att.attname ORDER BY ord.ordinality) AS column_names
+        FROM pg_catalog.pg_index ix
+        JOIN pg_catalog.pg_class idx ON idx.oid = ix.indexrelid
+        JOIN pg_catalog.pg_class tbl ON tbl.oid = ix.indrelid
+        JOIN pg_catalog.pg_namespace ns ON ns.oid = tbl.relnamespace
+        JOIN unnest(ix.indkey) WITH ORDINALITY AS ord(attnum, ordinality) ON true
+        JOIN pg_catalog.pg_attribute att
+          ON att.attrelid = tbl.oid
+         AND att.attnum = ord.attnum
+        WHERE ns.nspname = current_schema()
+          AND tbl.relname IN :table_names
+          AND ix.indisunique
+          AND ix.indpred IS NULL
+        GROUP BY tbl.relname, idx.relname
+        """,
+        table_names=table_names,
+    )
+    unique_indexes_by_table: dict[str, list[tuple[str, set[str]]]] = {}
+    for row in unique_index_rows:
+        table = str(row["table_name"]).strip().lower()
+        index_name = str(row["index_name"]).strip().lower()
+        raw_columns = cast(Sequence[object], row["column_names"] or [])
+        column_names = {str(column).strip().lower() for column in raw_columns}
+        unique_indexes_by_table.setdefault(table, []).append((index_name, column_names))
+
+    all_index_rows = _execute_readiness_account_scope_query(
+        session,
+        """
+        SELECT tablename AS table_name, indexname AS index_name
+        FROM pg_catalog.pg_indexes
+        WHERE schemaname = current_schema()
+          AND tablename IN :table_names
+        """,
+        table_names=table_names,
+    )
+    index_names_by_table: dict[str, list[str]] = {}
+    for row in all_index_rows:
+        table = str(row["table_name"]).strip().lower()
+        index_name = str(row["index_name"]).strip().lower()
+        index_names_by_table.setdefault(table, []).append(index_name)
+
+    legacy_constraint_rows = _execute_readiness_account_scope_query(
+        session,
+        """
+        SELECT tbl.relname AS table_name, con.conname AS constraint_name
+        FROM pg_catalog.pg_constraint con
+        JOIN pg_catalog.pg_class tbl ON tbl.oid = con.conrelid
+        JOIN pg_catalog.pg_namespace ns ON ns.oid = tbl.relnamespace
+        WHERE ns.nspname = current_schema()
+          AND tbl.relname IN :table_names
+          AND con.contype = 'u'
+        """,
+        table_names=table_names,
+    )
+    legacy_constraints_by_table: dict[str, set[str]] = {}
+    for row in legacy_constraint_rows:
+        table = str(row["table_name"]).strip().lower()
+        constraint_name = str(row["constraint_name"]).strip().lower()
+        legacy_constraints_by_table.setdefault(table, set()).add(constraint_name)
+
+    def _has_columns(table: str, columns: Sequence[str]) -> bool:
+        available = columns_by_table.get(table, set())
+        return all(str(column).strip().lower() in available for column in columns)
+
+    def _has_unique_index(table: str, columns: Sequence[str]) -> bool:
+        expected = {str(column).strip().lower() for column in columns}
+        return any(
+            index_columns == expected
+            for _index_name, index_columns in unique_indexes_by_table.get(table, [])
+        )
+
+    def _named_unique_constraint_present(table: str, names: set[str]) -> bool:
+        normalized_names = {name.strip().lower() for name in names}
+        return bool(
+            legacy_constraints_by_table.get(table, set()).intersection(normalized_names)
+        )
+
+    checks: dict[str, object] = {}
+    errors: list[str] = []
+
+    for key, (table, columns) in required_columns.items():
+        ok = _has_columns(table, columns)
+        checks[key] = ok
+        if not ok:
+            errors.append(f"{table} missing required columns: {columns}")
+
+    checks["execution_has_account_scoped_unique_order_id"] = _has_unique_index(
+        "executions",
+        ["alpaca_account_label", "alpaca_order_id"],
+    )
+    if not checks["execution_has_account_scoped_unique_order_id"]:
+        errors.append(
+            "executions missing unique index on (alpaca_account_label, alpaca_order_id)"
+        )
+
+    checks["execution_has_account_scoped_unique_client_order_id"] = _has_unique_index(
+        "executions",
+        ["alpaca_account_label", "client_order_id"],
+    )
+    if not checks["execution_has_account_scoped_unique_client_order_id"]:
+        errors.append(
+            "executions missing unique index on (alpaca_account_label, client_order_id)"
+        )
+
+    checks["trade_decision_has_account_scoped_unique_decision_hash"] = (
+        _has_unique_index(
+            "trade_decisions",
+            ["alpaca_account_label", "decision_hash"],
+        )
+    )
+    if not checks["trade_decision_has_account_scoped_unique_decision_hash"]:
+        errors.append(
+            "trade_decisions missing unique index on "
+            "(alpaca_account_label, decision_hash)"
+        )
+
+    checks["trade_cursor_has_account_scoped_source_index"] = _has_unique_index(
+        "trade_cursor",
+        ["source", "account_label"],
+    )
+    if not checks["trade_cursor_has_account_scoped_source_index"]:
+        errors.append("trade_cursor missing unique index on (source, account_label)")
+
+    checks["legacy_executions_single_account_order_id_index_detected"] = (
+        _has_unique_index("executions", ["alpaca_order_id"])
+        or _named_unique_constraint_present(
+            "executions",
+            {"executions_alpaca_order_id_key"},
+        )
+    )
+    if checks["legacy_executions_single_account_order_id_index_detected"]:
+        errors.append(
+            "legacy unique constraint/index detected for executions.alpaca_order_id"
+        )
+
+    checks["legacy_executions_single_account_client_order_id_index_detected"] = (
+        _has_unique_index("executions", ["client_order_id"])
+        or _named_unique_constraint_present(
+            "executions",
+            {"executions_client_order_id_key"},
+        )
+    )
+    if checks["legacy_executions_single_account_client_order_id_index_detected"]:
+        errors.append(
+            "legacy unique constraint/index detected for executions.client_order_id"
+        )
+
+    checks["legacy_trade_cursor_source_only_source_index_detected"] = _has_unique_index(
+        "trade_cursor", ["source"]
+    ) or _named_unique_constraint_present(
+        "trade_cursor",
+        {"trade_cursor_source_key"},
+    )
+    if checks["legacy_trade_cursor_source_only_source_index_detected"]:
+        errors.append("legacy unique constraint/index detected for trade_cursor.source")
+
+    checks["legacy_executions_single_account_indexes_present"] = (
+        checks["legacy_executions_single_account_order_id_index_detected"]
+        or checks["legacy_executions_single_account_client_order_id_index_detected"]
+    )
+    checks["legacy_trade_cursor_source_only_index_present"] = checks[
+        "legacy_trade_cursor_source_only_source_index_detected"
+    ]
+    checks["account_scope_ready"] = not errors
+    checks["account_scope_index_names"] = {
+        "execution_indexes": sorted(index_names_by_table.get("executions", [])),
+        "trade_decision_indexes": sorted(
+            index_names_by_table.get("trade_decisions", [])
+        ),
+        "trade_cursor_indexes": sorted(index_names_by_table.get("trade_cursor", [])),
+    }
+    checks["account_scope_errors"] = errors
+    checks["account_scope_check_mode"] = "bounded_catalog"
+
+    if errors and not settings.trading_multi_account_enabled:
+        checks["account_scope_ready"] = True
+        checks["account_scope_errors"] = []
+    return checks
+
+
 def _evaluate_database_contract(session: Session) -> dict[str, object]:
     """Collect schema and account-scope readiness checks used by /readyz and /db-check."""
     checked_at = datetime.now(timezone.utc).isoformat()
 
     try:
         schema_status = check_schema_current(session)
-        account_scope_status = check_account_scope_invariants(session)
+        account_scope_status = _check_account_scope_invariants_bounded(session)
     except SQLAlchemyError as exc:
         return {
             "ok": False,

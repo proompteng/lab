@@ -1393,7 +1393,7 @@ class TestTradingApi(TestCase):
         },
     )
     @patch(
-        "app.main.check_account_scope_invariants",
+        "app.main._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True},
     )
     def test_db_check_reports_schema_heads(
@@ -1447,7 +1447,7 @@ class TestTradingApi(TestCase):
         },
     )
     @patch(
-        "app.main.check_account_scope_invariants",
+        "app.main._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True},
     )
     def test_db_check_schema_lineage_divergence_returns_503_when_override_disabled(
@@ -1500,7 +1500,7 @@ class TestTradingApi(TestCase):
         },
     )
     @patch(
-        "app.main.check_account_scope_invariants",
+        "app.main._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True},
     )
     def test_db_check_schema_lineage_warning_returns_200_when_override_enabled(
@@ -1560,7 +1560,7 @@ class TestTradingApi(TestCase):
         },
     )
     @patch(
-        "app.main.check_account_scope_invariants",
+        "app.main._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True},
     )
     def test_db_check_schema_mismatch_returns_503(
@@ -1590,6 +1590,256 @@ class TestTradingApi(TestCase):
         self.assertEqual(payload["detail"]["schema_head_signature"], "7f8e4d0")
         self.assertIn("checked_at", payload["detail"])
 
+    def test_bounded_account_scope_invariants_uses_catalog_queries(self) -> None:
+        class FakeResult:
+            def __init__(self, rows: list[dict[str, object]]) -> None:
+                self._rows = rows
+
+            def mappings(self) -> "FakeResult":
+                return self
+
+            def all(self) -> list[dict[str, object]]:
+                return self._rows
+
+        class FakeSession:
+            def __init__(self) -> None:
+                self.statements: list[str] = []
+
+            def execute(
+                self,
+                statement: object,
+                _params: dict[str, object] | None = None,
+            ) -> FakeResult:
+                sql = str(statement)
+                self.statements.append(sql)
+                if "SET LOCAL statement_timeout" in sql:
+                    return FakeResult([])
+                if "information_schema.columns" in sql:
+                    return FakeResult(
+                        [
+                            {
+                                "table_name": "executions",
+                                "column_name": "alpaca_account_label",
+                            },
+                            {
+                                "table_name": "trade_decisions",
+                                "column_name": "alpaca_account_label",
+                            },
+                            {
+                                "table_name": "trade_cursor",
+                                "column_name": "account_label",
+                            },
+                            {
+                                "table_name": "execution_order_events",
+                                "column_name": "alpaca_account_label",
+                            },
+                        ]
+                    )
+                if "FROM pg_catalog.pg_index" in sql:
+                    return FakeResult(
+                        [
+                            {
+                                "table_name": "executions",
+                                "index_name": "executions_account_order_uidx",
+                                "column_names": [
+                                    "alpaca_account_label",
+                                    "alpaca_order_id",
+                                ],
+                            },
+                            {
+                                "table_name": "executions",
+                                "index_name": "executions_account_client_uidx",
+                                "column_names": [
+                                    "alpaca_account_label",
+                                    "client_order_id",
+                                ],
+                            },
+                            {
+                                "table_name": "trade_decisions",
+                                "index_name": "trade_decisions_account_hash_uidx",
+                                "column_names": [
+                                    "alpaca_account_label",
+                                    "decision_hash",
+                                ],
+                            },
+                            {
+                                "table_name": "trade_cursor",
+                                "index_name": "trade_cursor_source_account_uidx",
+                                "column_names": ["source", "account_label"],
+                            },
+                        ]
+                    )
+                if "FROM pg_catalog.pg_indexes" in sql:
+                    return FakeResult(
+                        [
+                            {
+                                "table_name": "executions",
+                                "index_name": "executions_account_order_uidx",
+                            },
+                            {
+                                "table_name": "trade_decisions",
+                                "index_name": "trade_decisions_account_hash_uidx",
+                            },
+                            {
+                                "table_name": "trade_cursor",
+                                "index_name": "trade_cursor_source_account_uidx",
+                            },
+                        ]
+                    )
+                if "FROM pg_catalog.pg_constraint" in sql:
+                    return FakeResult([])
+                raise AssertionError(f"unexpected SQL: {sql}")
+
+        fake_session = FakeSession()
+        payload = main_module._check_account_scope_invariants_bounded(fake_session)  # type: ignore[arg-type]
+
+        self.assertTrue(payload["account_scope_ready"])
+        self.assertEqual(payload["account_scope_errors"], [])
+        self.assertEqual(payload["account_scope_check_mode"], "bounded_catalog")
+        joined_sql = "\n".join(fake_session.statements)
+        self.assertIn("SET LOCAL statement_timeout", joined_sql)
+        self.assertNotIn("pg_type", joined_sql)
+
+    def test_bounded_account_scope_invariants_reports_legacy_indexes(self) -> None:
+        class FakeResult:
+            def __init__(self, rows: list[dict[str, object]]) -> None:
+                self._rows = rows
+
+            def mappings(self) -> "FakeResult":
+                return self
+
+            def all(self) -> list[dict[str, object]]:
+                return self._rows
+
+        class FakeSession:
+            def execute(
+                self,
+                statement: object,
+                _params: dict[str, object] | None = None,
+            ) -> FakeResult:
+                sql = str(statement)
+                if "SET LOCAL statement_timeout" in sql:
+                    return FakeResult([])
+                if "information_schema.columns" in sql:
+                    return FakeResult(
+                        [
+                            {
+                                "table_name": "executions",
+                                "column_name": "alpaca_account_label",
+                            },
+                            {
+                                "table_name": "trade_decisions",
+                                "column_name": "alpaca_account_label",
+                            },
+                            {
+                                "table_name": "trade_cursor",
+                                "column_name": "account_label",
+                            },
+                        ]
+                    )
+                if "FROM pg_catalog.pg_index" in sql:
+                    return FakeResult(
+                        [
+                            {
+                                "table_name": "executions",
+                                "index_name": "executions_alpaca_order_id_key",
+                                "column_names": ["alpaca_order_id"],
+                            },
+                            {
+                                "table_name": "executions",
+                                "index_name": "executions_client_order_id_key",
+                                "column_names": ["client_order_id"],
+                            },
+                            {
+                                "table_name": "trade_cursor",
+                                "index_name": "trade_cursor_source_key",
+                                "column_names": ["source"],
+                            },
+                        ]
+                    )
+                if "FROM pg_catalog.pg_indexes" in sql:
+                    return FakeResult(
+                        [
+                            {
+                                "table_name": "executions",
+                                "index_name": "executions_alpaca_order_id_key",
+                            },
+                            {
+                                "table_name": "trade_cursor",
+                                "index_name": "trade_cursor_source_key",
+                            },
+                        ]
+                    )
+                if "FROM pg_catalog.pg_constraint" in sql:
+                    return FakeResult(
+                        [
+                            {
+                                "table_name": "executions",
+                                "constraint_name": "executions_alpaca_order_id_key",
+                            },
+                            {
+                                "table_name": "trade_cursor",
+                                "constraint_name": "trade_cursor_source_key",
+                            },
+                        ]
+                    )
+                raise AssertionError(f"unexpected SQL: {sql}")
+
+        original_multi = settings.trading_multi_account_enabled
+        settings.trading_multi_account_enabled = False
+        try:
+            payload = main_module._check_account_scope_invariants_bounded(FakeSession())  # type: ignore[arg-type]
+        finally:
+            settings.trading_multi_account_enabled = original_multi
+
+        self.assertTrue(payload["account_scope_ready"])
+        self.assertEqual(payload["account_scope_errors"], [])
+        self.assertTrue(
+            payload["legacy_executions_single_account_order_id_index_detected"]
+        )
+        self.assertTrue(
+            payload["legacy_executions_single_account_client_order_id_index_detected"]
+        )
+        self.assertTrue(
+            payload["legacy_trade_cursor_source_only_source_index_detected"]
+        )
+        self.assertFalse(payload["execution_has_account_scoped_unique_order_id"])
+        self.assertFalse(payload["execution_has_account_scoped_unique_client_order_id"])
+        self.assertFalse(
+            payload["trade_decision_has_account_scoped_unique_decision_hash"]
+        )
+        self.assertFalse(payload["trade_cursor_has_account_scoped_source_index"])
+        self.assertFalse(payload["execution_order_events_have_account_label"])
+
+    @patch(
+        "app.main.check_schema_current",
+        return_value={
+            "schema_current": True,
+            "current_heads": ["0011_execution_tca_simulator_divergence"],
+            "expected_heads": ["0011_execution_tca_simulator_divergence"],
+            "schema_head_signature": "7f8e4d0",
+            "schema_missing_heads": [],
+            "schema_unexpected_heads": [],
+            "schema_head_count_expected": 1,
+            "schema_head_count_current": 1,
+            "schema_head_delta_count": 0,
+        },
+    )
+    def test_database_contract_fails_closed_on_account_scope_timeout(
+        self,
+        _mock_check: object,
+    ) -> None:
+        with patch(
+            "app.main._check_account_scope_invariants_bounded",
+            side_effect=SQLAlchemyError("canceling statement due to statement timeout"),
+        ):
+            payload = main_module._evaluate_database_contract(object())  # type: ignore[arg-type]
+
+        self.assertFalse(payload["ok"])
+        self.assertFalse(payload["account_scope_ready"])
+        self.assertIn("statement timeout", payload["account_scope_errors"][0])
+        self.assertEqual(payload["schema_current"], False)
+
     @patch(
         "app.main.check_schema_current",
         return_value={
@@ -1612,7 +1862,7 @@ class TestTradingApi(TestCase):
         settings.trading_multi_account_enabled = True
         try:
             with patch(
-                "app.main.check_account_scope_invariants",
+                "app.main._check_account_scope_invariants_bounded",
                 return_value={
                     "account_scope_ready": False,
                     "account_scope_errors": [
@@ -1655,7 +1905,7 @@ class TestTradingApi(TestCase):
         settings.trading_multi_account_enabled = False
         try:
             with patch(
-                "app.main.check_account_scope_invariants",
+                "app.main._check_account_scope_invariants_bounded",
                 return_value={
                     "account_scope_ready": False,
                     "account_scope_errors": ["legacy unique constraint/index detected"],
@@ -3370,7 +3620,7 @@ class TestTradingApi(TestCase):
                 patch("app.main._check_clickhouse", return_value={"ok": True}),
                 patch("app.main._check_postgres", return_value={"ok": True}),
                 patch(
-                    "app.main.check_account_scope_invariants",
+                    "app.main._check_account_scope_invariants_bounded",
                     return_value={
                         "account_scope_ready": True,
                         "account_scope_errors": [],
@@ -3433,7 +3683,7 @@ class TestTradingApi(TestCase):
     @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
     @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
     @patch(
-        "app.main.check_account_scope_invariants",
+        "app.main._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
@@ -3488,7 +3738,7 @@ class TestTradingApi(TestCase):
     @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
     @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
     @patch(
-        "app.main.check_account_scope_invariants",
+        "app.main._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
@@ -3554,7 +3804,7 @@ class TestTradingApi(TestCase):
     @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
     @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
     @patch(
-        "app.main.check_account_scope_invariants",
+        "app.main._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
@@ -3621,7 +3871,7 @@ class TestTradingApi(TestCase):
     @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
     @patch("app.main._check_postgres", return_value={"ok": True, "detail": "ok"})
     @patch(
-        "app.main.check_account_scope_invariants",
+        "app.main._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
@@ -3692,7 +3942,7 @@ class TestTradingApi(TestCase):
     @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
     @patch("app.main._check_postgres", return_value={"ok": True, "detail": "ok"})
     @patch(
-        "app.main.check_account_scope_invariants",
+        "app.main._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
@@ -3761,7 +4011,7 @@ class TestTradingApi(TestCase):
     @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
     @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
     @patch(
-        "app.main.check_account_scope_invariants",
+        "app.main._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
@@ -3840,7 +4090,7 @@ class TestTradingApi(TestCase):
     @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
     @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
     @patch(
-        "app.main.check_account_scope_invariants",
+        "app.main._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
@@ -4034,7 +4284,7 @@ class TestTradingApi(TestCase):
     @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
     @patch("app.main._check_clickhouse", return_value={"ok": False, "detail": "down"})
     @patch(
-        "app.main.check_account_scope_invariants",
+        "app.main._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
@@ -4076,7 +4326,7 @@ class TestTradingApi(TestCase):
     @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
     @patch("app.main._check_postgres", return_value={"ok": True, "detail": "ok"})
     @patch(
-        "app.main.check_account_scope_invariants",
+        "app.main._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
@@ -4133,7 +4383,7 @@ class TestTradingApi(TestCase):
     @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
     @patch("app.main._check_postgres", return_value={"ok": True, "detail": "ok"})
     @patch(
-        "app.main.check_account_scope_invariants",
+        "app.main._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
@@ -4189,7 +4439,7 @@ class TestTradingApi(TestCase):
     @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
     @patch("app.main._check_clickhouse", return_value={"ok": True, "detail": "ok"})
     @patch(
-        "app.main.check_account_scope_invariants",
+        "app.main._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
@@ -4884,7 +5134,7 @@ class TestTradingApi(TestCase):
     @patch("app.main._check_alpaca", return_value={"ok": True, "detail": "ok"})
     @patch("app.main._check_postgres", return_value={"ok": False, "detail": "down"})
     @patch(
-        "app.main.check_account_scope_invariants",
+        "app.main._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
@@ -4944,7 +5194,7 @@ class TestTradingApi(TestCase):
             )
 
     @patch(
-        "app.main.check_account_scope_invariants",
+        "app.main._check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
@@ -5076,7 +5326,7 @@ class TestTradingApi(TestCase):
             settings.trading_enabled = original
 
     @patch(
-        "app.main.check_account_scope_invariants",
+        "app.main._check_account_scope_invariants_bounded",
         return_value={
             "account_scope_ready": False,
             "account_scope_errors": ["legacy unique index detected"],
