@@ -1382,7 +1382,7 @@ class TestLiveConfigManifestContract(TestCase):
         )
         self.assertEqual(
             spec.get("schedule"),
-            "1,6,11,16,21,26,31,36,41,46,51,56 * * * *",
+            "6,36 * * * *",
         )
         self.assertEqual(spec.get("concurrencyPolicy"), "Forbid")
         self.assertEqual(spec.get("startingDeadlineSeconds"), 300)
@@ -1398,7 +1398,7 @@ class TestLiveConfigManifestContract(TestCase):
             cast(Mapping[str, object], job_spec.get("template", {})),
         )
         pod_spec = cast(Mapping[str, object], template.get("spec", {}))
-        self.assertEqual(job_spec.get("activeDeadlineSeconds"), 1200)
+        self.assertEqual(job_spec.get("activeDeadlineSeconds"), 900)
         self.assertEqual(job_spec.get("backoffLimit"), 0)
         self.assertEqual(pod_spec.get("restartPolicy"), "Never")
         self.assertEqual(pod_spec.get("serviceAccountName"), "torghut-runtime")
