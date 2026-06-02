@@ -2784,7 +2784,16 @@ class TestPortfolioOptimizer(TestCase):
             portfolio.objective_scorecard["profit_target_oracle"]["blockers"],
             [
                 "portfolio_post_cost_net_pnl_per_day_failed",
+                "avg_filled_notional_per_day_failed",
             ],
+        )
+        self.assertEqual(
+            Decimal(
+                portfolio.objective_scorecard["profit_target_oracle"][
+                    "effective_min_avg_filled_notional_per_day"
+                ]
+            ),
+            Decimal("364583.3333333333333333333334"),
         )
 
     def test_optimizer_prefers_lower_concentration_before_raw_pnl_when_blocked(
