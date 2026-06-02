@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -603,6 +604,40 @@ class TestFastReplayPreview(TestCase):
         self.assertEqual(preview.exploitation_candidate_count, 4)
         self.assertEqual(preview.exploration_candidate_count, 2)
         self.assertEqual(preview.exact_replay_candidate_cap, 6)
+        payload = preview.to_manifest_payload()
+        exact_queue = payload["bounded_exact_replay_queue"]
+        self.assertEqual(exact_queue["exact_replay_candidate_cap"], 6)
+        self.assertEqual(exact_queue["enqueue_candidate_count"], 6)
+        self.assertEqual(
+            exact_queue["selected_candidate_spec_ids"],
+            list(preview.selected_candidate_spec_ids),
+        )
+        self.assertEqual(
+            exact_queue["selected_candidate_ids_by_bucket"]["all"],
+            list(preview.selected_candidate_spec_ids),
+        )
+        self.assertEqual(
+            len(exact_queue["selected_candidate_ids_by_bucket"]["exploitation"]),
+            4,
+        )
+        self.assertEqual(
+            len(exact_queue["selected_candidate_ids_by_bucket"]["exploration"]),
+            2,
+        )
+        self.assertEqual(
+            exact_queue["status"],
+            "metadata_only_not_dispatched",
+        )
+        self.assertFalse(exact_queue["command_execution_allowed_here"])
+        self.assertFalse(exact_queue["kubernetes_fanout_allowed"])
+        self.assertFalse(exact_queue["db_writes_allowed"])
+        self.assertFalse(exact_queue["proof_packet_upload_allowed"])
+        self.assertFalse(exact_queue["promotion_allowed"])
+        self.assertFalse(exact_queue["final_authority_ok"])
+        self.assertEqual(
+            payload["selected_candidate_ids_by_bucket"]["all"],
+            list(preview.selected_candidate_spec_ids),
+        )
         self.assertEqual(
             [row.frontier_bucket for row in preview.rows if row.selected],
             [
@@ -839,6 +874,42 @@ class TestFastReplayPreview(TestCase):
         self.assertFalse(
             manifest_payload["throughput_limits"]["kubernetes_fanout_allowed"]
         )
+        exact_queue = manifest_payload["bounded_exact_replay_queue"]
+        self.assertEqual(
+            exact_queue["candidate_command_contract"]["source"],
+            "selected_candidate_spec_ids",
+        )
+        self.assertFalse(
+            exact_queue["candidate_command_contract"]["command_execution_allowed_here"]
+        )
+        self.assertTrue(exact_queue["preview_only"])
+        self.assertTrue(exact_queue["research_ranking_only"])
+        self.assertFalse(exact_queue["promotion_authority"])
+        self.assertFalse(exact_queue["final_authority_ok"])
+
+    def test_frontier_path_has_no_kubernetes_or_database_execution_imports(
+        self,
+    ) -> None:
+        module_path = Path(fast_replay.__file__)
+        parsed = ast.parse(module_path.read_text(encoding="utf-8"))
+        disallowed_import_roots = {
+            "asyncpg",
+            "kubernetes",
+            "psycopg",
+            "psycopg2",
+            "sqlalchemy",
+            "subprocess",
+        }
+        imported_roots: set[str] = set()
+        for node in ast.walk(parsed):
+            if isinstance(node, ast.Import):
+                imported_roots.update(
+                    alias.name.split(".", maxsplit=1)[0] for alias in node.names
+                )
+            elif isinstance(node, ast.ImportFrom) and node.module is not None:
+                imported_roots.add(node.module.split(".", maxsplit=1)[0])
+
+        self.assertTrue(disallowed_import_roots.isdisjoint(imported_roots))
 
     def test_robust_lower_percentile_utility_ranks_ahead_of_mean_only_score(
         self,

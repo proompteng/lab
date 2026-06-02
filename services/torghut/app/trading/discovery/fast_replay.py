@@ -340,6 +340,7 @@ class FastReplayPreviewResult:
     )
 
     def to_manifest_payload(self) -> dict[str, Any]:
+        selected_candidate_ids_by_bucket = _selected_candidate_ids_by_bucket(self.rows)
         return {
             "schema_version": FAST_REPLAY_PREVIEW_SCHEMA_VERSION,
             "status": "preview_only",
@@ -409,6 +410,7 @@ class FastReplayPreviewResult:
             "exploration_candidate_count": self.exploration_candidate_count,
             "input_candidate_count": self.input_candidate_count,
             "selected_candidate_spec_ids": list(self.selected_candidate_spec_ids),
+            "selected_candidate_ids_by_bucket": selected_candidate_ids_by_bucket,
             "selected_candidate_spec_count": len(self.selected_candidate_spec_ids),
             "selected_row_count": self.selected_row_count,
             "discovery_stage_semantics": _discovery_stage_semantics(),
@@ -452,6 +454,44 @@ class FastReplayPreviewResult:
                 "cluster_fanout_allowed": False,
                 "promotion_allowed": False,
             },
+            "bounded_exact_replay_queue": {
+                "schema_version": "torghut.fast-replay-bounded-exact-replay-queue.v1",
+                "status": "metadata_only_not_dispatched",
+                "queue_scope": "offline_preview_to_exact_replay_handoff",
+                "discovery_stage_semantics": _discovery_stage_semantics(),
+                "selected_candidate_spec_ids": list(self.selected_candidate_spec_ids),
+                "selected_candidate_ids_by_bucket": selected_candidate_ids_by_bucket,
+                "exact_replay_candidate_cap": self.exact_replay_candidate_cap,
+                "target_candidate_cap": self.exact_replay_candidate_cap,
+                "enqueue_candidate_count": len(self.selected_candidate_spec_ids),
+                "exploitation_candidate_count": self.exploitation_candidate_count,
+                "exploration_candidate_count": self.exploration_candidate_count,
+                "handoff_contract": (
+                    "selected candidate specs are bounded inputs for a later exact "
+                    "replay worker; this preview path does not dispatch workers"
+                ),
+                "candidate_command_contract": {
+                    "source": "selected_candidate_spec_ids",
+                    "command_materialization": "downstream_exact_replay_runner_only",
+                    "command_execution_allowed_here": False,
+                },
+                "command_execution_allowed_here": False,
+                "broad_cluster_fanout_allowed": False,
+                "kubernetes_fanout_allowed": False,
+                "db_writes_allowed": False,
+                "proof_packet_upload_allowed": False,
+                "exact_replay_required": True,
+                "runtime_ledger_required": True,
+                "source_backed_runtime_ledger_required": True,
+                "preview_only": True,
+                "research_ranking_only": True,
+                "promotion_proof": False,
+                "proof_authority": False,
+                "promotion_authority": False,
+                "promotion_allowed": False,
+                "final_promotion_allowed": False,
+                "final_authority_ok": False,
+            },
             "replay_tape": {
                 "dataset_snapshot_ref": self.replay_tape_manifest.dataset_snapshot_ref,
                 "content_sha256": self.replay_tape_manifest.content_sha256,
@@ -479,6 +519,7 @@ class FastReplayPreviewResult:
                 "queue_scope": "offline_preview_to_exact_replay_or_bounded_sim_handoff",
                 "discovery_stage_semantics": _discovery_stage_semantics(),
                 "selected_candidate_spec_ids": list(self.selected_candidate_spec_ids),
+                "selected_candidate_ids_by_bucket": selected_candidate_ids_by_bucket,
                 "target_candidate_cap": self.exact_replay_candidate_cap,
                 "enqueue_candidate_count": len(self.selected_candidate_spec_ids),
                 "exploitation_candidate_count": self.exploitation_candidate_count,
@@ -1445,6 +1486,32 @@ def _frontier_selection_blockers_for_row(
     if row.selection_reason == "fast_replay_frontier_lineage_blocked":
         return tuple(exact_replay_selection_blockers)
     return ()
+
+
+def _selected_candidate_ids_by_bucket(
+    rows: Sequence[FastReplayPreviewRow],
+) -> dict[str, list[str]]:
+    bucket_order = (
+        "exploitation",
+        "exploration",
+        "exploitation_backfill",
+    )
+    selected_by_bucket = {
+        bucket: [
+            row.candidate_spec_id
+            for row in rows
+            if row.selected and row.frontier_bucket == bucket
+        ]
+        for bucket in bucket_order
+    }
+    return {
+        **selected_by_bucket,
+        "all": [
+            row.candidate_spec_id
+            for row in rows
+            if row.selected and row.frontier_bucket in bucket_order
+        ],
+    }
 
 
 def _discovery_stage_semantics() -> dict[str, Any]:
