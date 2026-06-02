@@ -4771,9 +4771,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(diagnostics["counts"]["hpairs_symbol_count"], 2)
         self.assertEqual(diagnostics["counts"]["hpairs_decision_count"], 0)
         self.assertFalse(diagnostics["safe_to_promote"])
-        self.assertFalse(
-            diagnostics["proof_semantics"]["synthetic_orders_or_fills"]
-        )
+        self.assertFalse(diagnostics["proof_semantics"]["synthetic_orders_or_fills"])
 
     def test_hpairs_zero_activity_diagnostics_surface_route_vetoes(
         self,
@@ -7671,6 +7669,144 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(
             matched_payload["summary"]["target_with_source_activity_count"], 1
         )
+
+    def test_hpairs_audit_surfaces_shared_source_lineage_candidate_mismatch(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, tzinfo=timezone.utc)
+        now = datetime(2026, 5, 26, 21, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            hpairs_strategy = Strategy(
+                name="microbar-cross-sectional-pairs-v1",
+                description="canonical H-PAIRS strategy",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL", "AMZN"],
+                created_at=window_start,
+                updated_at=window_start,
+            )
+            source_strategy = Strategy(
+                name="intraday-tsmom-profit-v3",
+                description="external target-plan source strategy",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL", "AMZN", "INTC", "NVDA"],
+                created_at=window_start,
+                updated_at=window_start,
+            )
+            session.add_all([hpairs_strategy, source_strategy])
+            session.flush()
+            session.add(
+                TradeDecision(
+                    strategy_id=source_strategy.id,
+                    alpaca_account_label="TORGHUT_SIM",
+                    symbol="AAPL",
+                    timeframe="1Min",
+                    decision_json={
+                        "action": "buy",
+                        "qty": "1",
+                        "params": {
+                            "lineage": {
+                                "candidate_id": "candidate-tsmom",
+                                "hypothesis_id": "H-TSMOM-LIQ-01",
+                            },
+                            "paper_route_probe": {
+                                "source_candidate_ids": ["candidate-tsmom"],
+                                "source_hypothesis_ids": [
+                                    "H-PAIRS-01",
+                                    "H-TSMOM-LIQ-01",
+                                ],
+                                "source_strategy_names": [
+                                    "microbar-cross-sectional-pairs-v1",
+                                    "intraday-tsmom-profit-v3",
+                                ],
+                            },
+                        },
+                    },
+                    rationale="shared target-plan row with mismatched candidate",
+                    status="executed",
+                    created_at=window_start + timedelta(minutes=5),
+                    executed_at=window_start + timedelta(minutes=6),
+                )
+            )
+            session.commit()
+
+            payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "paper_route_probe_only",
+                    "blocked_reasons": [],
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "target_count": "1",
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-PAIRS-01",
+                                "candidate_id": "candidate-pairs",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_cross_sectional_pairs",
+                                "strategy_name": "microbar-cross-sectional-pairs-v1",
+                                "strategy_id": (
+                                    "microbar_cross_sectional_pairs_v1@research"
+                                ),
+                                "account_label": "TORGHUT_SIM",
+                                "source_kind": "paper_route_probe_runtime_observed",
+                                "window_start": window_start.isoformat(),
+                                "window_end": window_end.isoformat(),
+                                "paper_probation_authorized": True,
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "summary": {
+                        "paper_route_probe_eligible_symbols": ["AAPL", "AMZN"],
+                        "paper_route_probe_active_symbols": ["AAPL", "AMZN"],
+                    },
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": True,
+                        "effective_max_notional": 25,
+                        "next_session_max_notional": 25,
+                    },
+                },
+                generated_at=now,
+            )
+
+        target = payload["targets"][0]
+        source_activity = target["source_activity"]
+        observation = source_activity["source_lineage_observation"]
+        self.assertEqual(source_activity["raw_decision_count"], 0)
+        self.assertEqual(source_activity["decision_count"], 0)
+        self.assertTrue(source_activity["missing"])
+        self.assertEqual(observation["observed_decision_count"], 1)
+        self.assertEqual(observation["hypothesis_match_decision_count"], 1)
+        self.assertEqual(observation["candidate_match_decision_count"], 0)
+        self.assertEqual(observation["exact_match_decision_count"], 0)
+        self.assertEqual(observation["strategy_names"], ["intraday-tsmom-profit-v3"])
+        self.assertIn(
+            "source_lineage_partial_match_only",
+            source_activity["missing_reasons"],
+        )
+        self.assertIn(
+            "source_candidate_lineage_mismatch_current_activity",
+            source_activity["missing_reasons"],
+        )
+        self.assertIn(
+            "source_strategy_filter_mismatch_current_activity",
+            source_activity["missing_reasons"],
+        )
+        self.assertIn(
+            "source_candidate_lineage_mismatch_current_activity",
+            target["readiness"]["blockers"],
+        )
+        self.assertEqual(payload["summary"]["target_with_source_activity_count"], 0)
 
     def test_next_runtime_window_targets_dedupe_same_execution_source(
         self,

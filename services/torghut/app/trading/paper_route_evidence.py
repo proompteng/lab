@@ -134,6 +134,9 @@ PAPER_ROUTE_TARGET_ACCOUNT_AUDIT_UNAVAILABLE_BLOCKER = (
 HPAIRS_ZERO_ACTIVITY_DIAGNOSTICS_SCHEMA_VERSION = (
     "torghut.hpairs-zero-activity-diagnostics.v1"
 )
+SOURCE_LINEAGE_OBSERVATION_SCHEMA_VERSION = (
+    "torghut.paper-route-source-lineage-observation.v1"
+)
 PAPER_ROUTE_ACCOUNT_STATE_DISCARD_BLOCKERS = frozenset(
     {
         "paper_route_account_window_start_not_flat",
@@ -395,6 +398,97 @@ def _source_lineage_blockers(
         elif hypothesis_id not in hypothesis_values:
             blockers.append("source_hypothesis_lineage_mismatch")
     return blockers
+
+
+def _strategy_name_for_decision(row: TradeDecision) -> str | None:
+    return _safe_text(getattr(getattr(row, "strategy", None), "name", None))
+
+
+def _source_lineage_observation(
+    rows: Sequence[TradeDecision],
+    *,
+    candidate_id: str | None,
+    hypothesis_id: str | None,
+    strategy_filters: Sequence[str],
+) -> dict[str, object]:
+    observed_rows: list[TradeDecision] = []
+    exact_rows: list[TradeDecision] = []
+    candidate_match_rows: list[TradeDecision] = []
+    hypothesis_match_rows: list[TradeDecision] = []
+    candidate_values: set[str] = set()
+    hypothesis_values: set[str] = set()
+    observed_strategy_names: list[str] = []
+    strategy_filter_set = {item for item in strategy_filters if item}
+    strategy_mismatch_count = 0
+    candidate_mismatch_count = 0
+    for row in rows:
+        row_candidate_values = _source_lineage_values(
+            row.decision_json,
+            SOURCE_LINEAGE_CANDIDATE_KEYS,
+        )
+        row_hypothesis_values = _source_lineage_values(
+            row.decision_json,
+            SOURCE_LINEAGE_HYPOTHESIS_KEYS,
+        )
+        candidate_values.update(row_candidate_values)
+        hypothesis_values.update(row_hypothesis_values)
+        candidate_matches = (
+            candidate_id is not None and candidate_id in row_candidate_values
+        )
+        hypothesis_matches = (
+            hypothesis_id is not None and hypothesis_id in row_hypothesis_values
+        )
+        if not candidate_matches and not hypothesis_matches:
+            continue
+        observed_rows.append(row)
+        if candidate_matches:
+            candidate_match_rows.append(row)
+        if hypothesis_matches:
+            hypothesis_match_rows.append(row)
+        if _source_decision_lineage_matches(
+            row,
+            candidate_id=candidate_id,
+            hypothesis_id=hypothesis_id,
+        ):
+            exact_rows.append(row)
+        elif hypothesis_matches and candidate_id is not None:
+            candidate_mismatch_count += 1
+        strategy_name = _strategy_name_for_decision(row)
+        if strategy_name is not None and strategy_name not in observed_strategy_names:
+            observed_strategy_names.append(strategy_name)
+        if strategy_filter_set and strategy_name not in strategy_filter_set:
+            strategy_mismatch_count += 1
+    blockers: list[str] = []
+    if observed_rows and not exact_rows:
+        blockers.append("source_lineage_partial_match_only")
+    if candidate_mismatch_count:
+        blockers.append("source_candidate_lineage_mismatch_current_activity")
+    if strategy_mismatch_count:
+        blockers.append("source_strategy_filter_mismatch_current_activity")
+    return {
+        "schema_version": SOURCE_LINEAGE_OBSERVATION_SCHEMA_VERSION,
+        "enabled": bool(candidate_id or hypothesis_id),
+        "expected_candidate_id": candidate_id,
+        "expected_hypothesis_id": hypothesis_id,
+        "strategy_lookup_names": [item for item in strategy_filters if item],
+        "observed_decision_count": len(observed_rows),
+        "exact_match_decision_count": len(exact_rows),
+        "candidate_match_decision_count": len(candidate_match_rows),
+        "hypothesis_match_decision_count": len(hypothesis_match_rows),
+        "partial_match_decision_count": max(0, len(observed_rows) - len(exact_rows)),
+        "strategy_filter_mismatch_count": strategy_mismatch_count,
+        "candidate_mismatch_count": candidate_mismatch_count,
+        "decision_refs": [
+            str(row.id) for row in observed_rows[:PAPER_ROUTE_SOURCE_ACTIVITY_REF_LIMIT]
+        ],
+        "exact_decision_refs": [
+            str(row.id) for row in exact_rows[:PAPER_ROUTE_SOURCE_ACTIVITY_REF_LIMIT]
+        ],
+        "strategy_names": observed_strategy_names,
+        "candidate_ids": sorted(candidate_values),
+        "hypothesis_ids": sorted(hypothesis_values),
+        "blockers": blockers,
+    }
 
 
 def _target_requires_source_lineage(target: Mapping[str, object]) -> bool:
@@ -1030,7 +1124,12 @@ def _target_is_hpairs(target: Mapping[str, object]) -> bool:
         value = (_safe_text(target.get(key)) or "").lower()
         if "h-pairs" in value or "h_pairs" in value:
             return True
-    for key in ("strategy_family", "strategy_name", "runtime_strategy_name", "strategy_id"):
+    for key in (
+        "strategy_family",
+        "strategy_name",
+        "runtime_strategy_name",
+        "strategy_id",
+    ):
         value = (_safe_text(target.get(key)) or "").lower().replace("-", "_")
         if "microbar_cross_sectional_pairs" in value:
             return True
@@ -2964,6 +3063,26 @@ def _strategy_source_activity(
             missing_reason="source_decisions_unavailable",
         )
     raw_decision_count = len(decision_rows)
+    source_lineage_observation: dict[str, object] = {
+        "schema_version": SOURCE_LINEAGE_OBSERVATION_SCHEMA_VERSION,
+        "enabled": False,
+        "expected_candidate_id": candidate_id,
+        "expected_hypothesis_id": hypothesis_id,
+        "strategy_lookup_names": strategy_filters,
+        "observed_decision_count": 0,
+        "exact_match_decision_count": 0,
+        "candidate_match_decision_count": 0,
+        "hypothesis_match_decision_count": 0,
+        "partial_match_decision_count": 0,
+        "strategy_filter_mismatch_count": 0,
+        "candidate_mismatch_count": 0,
+        "decision_refs": [],
+        "exact_decision_refs": [],
+        "strategy_names": [],
+        "candidate_ids": [],
+        "hypothesis_ids": [],
+        "blockers": [],
+    }
     lineage_blockers = (
         _source_lineage_blockers(
             decision_rows,
@@ -3140,6 +3259,54 @@ def _strategy_source_activity(
             )
     else:
         tca_truncated = False
+    if require_source_lineage and (
+        candidate_id is not None or hypothesis_id is not None
+    ):
+        lineage_stmt = (
+            select(TradeDecision)
+            .where(TradeDecision.created_at >= window_start)
+            .where(TradeDecision.created_at <= window_end)
+        )
+        if account_label:
+            lineage_stmt = lineage_stmt.where(
+                TradeDecision.alpaca_account_label == account_label
+            )
+        if symbol_filters:
+            lineage_stmt = lineage_stmt.where(TradeDecision.symbol.in_(symbol_filters))
+        try:
+            _maybe_set_paper_route_audit_statement_timeout(session)
+            lineage_rows = list(
+                session.execute(
+                    lineage_stmt.order_by(TradeDecision.created_at.desc()).limit(
+                        PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT + 1
+                    )
+                ).scalars()
+            )
+            source_lineage_observation = _source_lineage_observation(
+                lineage_rows[:PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT],
+                candidate_id=candidate_id,
+                hypothesis_id=hypothesis_id,
+                strategy_filters=strategy_filters,
+            )
+        except SQLAlchemyError as exc:
+            _rollback_after_source_activity_error(
+                session,
+                source="trade_decision_source_lineage",
+                exc=exc,
+            )
+            return _unavailable_source_activity(
+                strategy_name=strategy_name,
+                strategy_lookup_names=strategy_filters,
+                account_label=account_label,
+                symbols=symbol_filters,
+                candidate_id=candidate_id,
+                hypothesis_id=hypothesis_id,
+                require_source_lineage=require_source_lineage,
+                source="trade_decision_source_lineage",
+                missing_reason="source_lineage_readback_unavailable",
+                raw_decision_count=raw_decision_count,
+                lineage_matched_decision_count=len(decision_rows),
+            )
     decision_count = len(decision_rows)
     execution_count = len(execution_rows)
     tca_sample_count = len(tca_rows)
@@ -3161,6 +3328,10 @@ def _strategy_source_activity(
     if tca_sample_count <= 0 and complete_fill_order_event_count <= 0:
         missing_reasons.append("source_tca_missing")
     missing_reasons.extend(lineage_blockers)
+    if decision_count <= 0:
+        missing_reasons.extend(
+            _unique_text_items(source_lineage_observation.get("blockers"))
+        )
     if (
         decision_truncated
         or execution_truncated
@@ -3240,6 +3411,7 @@ def _strategy_source_activity(
         "raw_decision_count": raw_decision_count,
         "lineage_matched_decision_count": decision_count,
         "lineage_blockers": lineage_blockers,
+        "source_lineage_observation": source_lineage_observation,
         "decision_refs": decision_refs,
         "execution_refs": execution_refs,
         "order_lifecycle_refs": order_lifecycle_refs,
@@ -4924,7 +5096,9 @@ def _collect_hpairs_zero_activity_texts(*values: object) -> list[str]:
             for item in cast(Mapping[object, object], value).values():
                 texts.extend(_collect_hpairs_zero_activity_texts(item))
             continue
-        if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        if isinstance(value, Sequence) and not isinstance(
+            value, (str, bytes, bytearray)
+        ):
             for item in cast(Sequence[object], value):
                 texts.extend(_collect_hpairs_zero_activity_texts(item))
             continue
@@ -4946,7 +5120,9 @@ def _hpairs_zero_activity_reason_flags(
     hpairs_runtime_bucket_count: int,
 ) -> dict[str, bool]:
     normalized = {blocker.lower() for blocker in blockers}
-    session_state = (_safe_text(runtime_window_import_audit.get("session_state")) or "").lower()
+    session_state = (
+        _safe_text(runtime_window_import_audit.get("session_state")) or ""
+    ).lower()
     audit_state = (_safe_text(runtime_window_import_audit.get("state")) or "").lower()
     import_ready = bool(runtime_window_import_audit.get("import_ready"))
     no_market_window = bool(
@@ -4973,7 +5149,9 @@ def _hpairs_zero_activity_reason_flags(
         }
         & normalized
     )
-    stale_quotes = any("stale_quote" in blocker or "quote_stale" in blocker for blocker in normalized)
+    stale_quotes = any(
+        "stale_quote" in blocker or "quote_stale" in blocker for blocker in normalized
+    )
     route_veto = any(
         token in blocker
         for blocker in normalized
@@ -5019,13 +5197,19 @@ def _hpairs_zero_activity_reason_flags(
         )
     )
     source_ledger_import_not_running = (
-        import_ready
-        and hpairs_decision_count > 0
-        and hpairs_runtime_bucket_count <= 0
+        import_ready and hpairs_decision_count > 0 and hpairs_runtime_bucket_count <= 0
     ) or audit_state in {
         "import_due_runtime_ledger_missing",
         "import_due_runtime_ledger_not_materialized",
     }
+    source_lineage_mismatch = bool(
+        {
+            "source_lineage_partial_match_only",
+            "source_candidate_lineage_mismatch_current_activity",
+            "source_strategy_filter_mismatch_current_activity",
+        }
+        & normalized
+    )
     return {
         "no_market_window": no_market_window,
         "no_candidate_target_materialization": no_candidate_target_materialization,
@@ -5035,6 +5219,7 @@ def _hpairs_zero_activity_reason_flags(
         "risk_veto": risk_veto,
         "paper_route_disabled": paper_route_disabled,
         "strategy_not_scheduled": strategy_not_scheduled,
+        "source_lineage_mismatch": source_lineage_mismatch,
         "source_ledger_import_not_running": source_ledger_import_not_running,
     }
 
@@ -5046,6 +5231,7 @@ def _hpairs_zero_activity_state(reason_flags: Mapping[str, bool]) -> str:
         ("no_symbols", "no_symbols"),
         ("no_market_window", "no_market_window"),
         ("strategy_not_scheduled", "strategy_not_scheduled"),
+        ("source_lineage_mismatch", "source_lineage_mismatch"),
         ("risk_veto", "risk_veto"),
         ("stale_quotes", "stale_quotes"),
         ("route_veto", "route_veto"),
@@ -5139,9 +5325,7 @@ def _hpairs_zero_activity_diagnostics(
     )
     hpairs_evidence_grade_runtime_bucket_count = sum(
         _safe_int(
-            _as_mapping(audit.get("runtime_ledger")).get(
-                "evidence_grade_bucket_count"
-            )
+            _as_mapping(audit.get("runtime_ledger")).get("evidence_grade_bucket_count")
         )
         for audit in hpairs_audits
     )
@@ -5156,9 +5340,7 @@ def _hpairs_zero_activity_diagnostics(
             ),
             *_collect_hpairs_zero_activity_texts(
                 [
-                    _as_mapping(target.get("source_decision_readiness")).get(
-                        "blockers"
-                    )
+                    _as_mapping(target.get("source_decision_readiness")).get("blockers")
                     for target in plan_targets
                 ],
                 [
@@ -5169,10 +5351,19 @@ def _hpairs_zero_activity_diagnostics(
                     target.get("paper_route_session_collection_blockers")
                     for target in plan_targets
                 ],
-                [target.get("paper_route_hpairs_symbol_blockers") for target in plan_targets],
+                [
+                    target.get("paper_route_hpairs_symbol_blockers")
+                    for target in plan_targets
+                ],
                 [target.get("candidate_blockers") for target in plan_targets],
-                [target.get("runtime_window_import_health_gate_blockers") for target in plan_targets],
-                [target.get("runtime_window_import_promotion_blockers") for target in plan_targets],
+                [
+                    target.get("runtime_window_import_health_gate_blockers")
+                    for target in plan_targets
+                ],
+                [
+                    target.get("runtime_window_import_promotion_blockers")
+                    for target in plan_targets
+                ],
                 [
                     target.get("missing_or_blocking_fields")
                     for target in skipped_targets
@@ -5188,6 +5379,14 @@ def _hpairs_zero_activity_diagnostics(
                     _as_mapping(audit.get("source_activity")).get(
                         "source_lifecycle_blockers"
                     )
+                    for audit in hpairs_audits
+                ],
+                [
+                    _as_mapping(
+                        _as_mapping(audit.get("source_activity")).get(
+                            "source_lineage_observation"
+                        )
+                    ).get("blockers")
                     for audit in hpairs_audits
                 ],
                 [
