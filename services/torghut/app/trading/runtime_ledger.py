@@ -72,6 +72,27 @@ _NON_PROMOTION_SOURCE_MARKERS = frozenset(
         "simulation_source_replay_only",
     }
 )
+_SOURCE_DECISION_COLLECTION_MARKERS = frozenset(
+    {
+        "source_decision",
+        "source_decision_mode",
+        "decision_source",
+        "evidence_collection",
+        "evidence_collection_mode",
+        "paper_collection",
+        "probation",
+        "probationary",
+    }
+)
+_EXECUTION_RECONSTRUCTION_MARKERS = frozenset(
+    {
+        "execution_reconstruction",
+        "execution_reconstruction_basis",
+        "execution_reconstructed",
+        "reconstructed_execution",
+        "reconstructed_from_execution",
+    }
+)
 _TIGERBEETLE_EXECUTION_COST_JOURNAL_FAILURE_BLOCKER = (
     "tigerbeetle_execution_cost_journal_failed"
 )
@@ -92,6 +113,7 @@ _DIAGNOSTIC_EXPECTANCY_SUPPRESSING_BLOCKERS = frozenset(
         "side_missing_or_invalid",
         "explicit_cost_missing",
         "cost_basis_missing",
+        "runtime_ledger_expectancy_missing",
         "tca_shortfall_not_runtime_pnl",
         "runtime_ledger_cost_basis_non_promotion_grade",
     }
@@ -362,6 +384,9 @@ def _build_bucket(
     lifecycle_rows = [
         row for row in [*carry_in_rows, *rows] if row.event_type in _LIFECYCLE_EVENTS
     ]
+    source_authority_claimed = any(
+        _row_requires_promotion_source_authority(row) for row in lifecycle_rows
+    )
     decision_count = sum(1 for row in rows if row.event_type in _DECISION_EVENTS)
     submitted_order_count = sum(
         1 for row in rows if row.event_type in _SUBMITTED_ORDER_EVENTS
@@ -438,13 +463,15 @@ def _build_bucket(
         _apply_fill_to_position(state=state, fill=fill, accumulator=accumulator)
 
     open_position_count = sum(1 for state in positions.values() if state.qty != 0)
-    if usable_fills and accumulator.closed_trade_count <= 0:
+    if (
+        usable_fills or source_authority_claimed
+    ) and accumulator.closed_trade_count <= 0:
         blockers.append("closed_round_trip_missing")
     if open_position_count > 0:
         blockers.append("unclosed_position")
     if accumulator.filled_notional <= 0:
         blockers.append("filled_notional_missing")
-    if require_order_lifecycle:
+    if require_order_lifecycle or source_authority_claimed:
         source_lifecycle_present = any(
             row.order_feed_lifecycle_source for row in lifecycle_rows
         )
@@ -486,6 +513,10 @@ def _build_bucket(
         )
     if not unique_blockers and accumulator.filled_notional > 0:
         post_cost_expectancy_bps = diagnostic_closed_trade_expectancy_bps
+    if source_authority_claimed and diagnostic_closed_trade_expectancy_bps is None:
+        unique_blockers = _dedupe(
+            [*unique_blockers, "runtime_ledger_expectancy_missing"]
+        )
 
     return RuntimeLedgerBucket(
         bucket_started_at=bucket_start,
@@ -895,6 +926,7 @@ def _normalize_fill_row(
     blockers: list[str] = []
     if _has_tca_pnl_shortcut(row):
         blockers.append("tca_shortfall_not_runtime_pnl")
+    blockers.extend(_runtime_source_mode_blockers(row))
     if _is_non_promotion_runtime_source_row(row):
         blockers.append("runtime_source_not_promotion_authority")
     blockers.extend(_tigerbeetle_journal_blockers(row))
@@ -1137,6 +1169,8 @@ def _is_non_promotion_runtime_source_row(
     )
     if promotion_authority is False:
         return True
+    if _runtime_source_mode_blockers(row):
+        return True
     for key in (
         "authority_class",
         "authority_reason",
@@ -1156,6 +1190,35 @@ def _is_non_promotion_runtime_source_row(
         if any(marker in normalized for marker in _NON_PROMOTION_SOURCE_MARKERS):
             return True
     return False
+
+
+def _runtime_source_mode_blockers(
+    row: RuntimeLedgerFill | Mapping[str, object],
+) -> list[str]:
+    blockers: list[str] = []
+    for key in (
+        "authority_class",
+        "authority_mode",
+        "authority_reason",
+        "decision_mode",
+        "materialization_mode",
+        "pnl_derivation",
+        "proof_mode",
+        "route_mode",
+        "source",
+        "source_kind",
+        "source_materialization",
+        "source_mode",
+    ):
+        text = _coerce_text(_row_value(row, key))
+        if text is None:
+            continue
+        normalized = text.lower().replace("-", "_").replace(" ", "_")
+        if any(marker in normalized for marker in _SOURCE_DECISION_COLLECTION_MARKERS):
+            blockers.append("source_decision_mode_not_profit_proof_eligible")
+        if any(marker in normalized for marker in _EXECUTION_RECONSTRUCTION_MARKERS):
+            blockers.append("execution_reconstruction_not_runtime_ledger_proof")
+    return _dedupe(blockers)
 
 
 def _is_order_feed_lifecycle_only_row(

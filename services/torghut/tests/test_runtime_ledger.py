@@ -33,6 +33,131 @@ def _assert_decimal_close(actual: Decimal | None, expected: Decimal) -> None:
     assert abs(actual - expected) < Decimal("0.0000000001")
 
 
+def _source_authority_lifecycle_rows(
+    *,
+    include_sell: bool = True,
+    sell_cost_basis: str | None = "broker_reported_commission_and_fees",
+    buy_cost_basis: str | None = "broker_reported_commission_and_fees",
+    buy_notional_delta: str | None = "100",
+    sell_notional_delta: str | None = "101",
+    source_mode: str | None = None,
+    pnl_derivation: str | None = None,
+) -> list[dict[str, object]]:
+    common: dict[str, object] = {
+        "account_label": "paper",
+        "strategy_id": "strategy-1",
+        "symbol": "NVDA",
+        "source_materialization": "execution_order_events",
+        "authority_class": "runtime_order_feed_execution_source",
+        "execution_policy_hash": "policy",
+        "cost_model_hash": "broker-cost-v1",
+        "lineage_hash": "lineage",
+    }
+    if source_mode is not None:
+        common["source_mode"] = source_mode
+    if pnl_derivation is not None:
+        common["pnl_derivation"] = pnl_derivation
+
+    rows: list[dict[str, object]] = [
+        {
+            **common,
+            "event_type": "decision",
+            "executed_at": _ts(0),
+            "decision_id": "decision-buy",
+            "order_id": "order-buy",
+        },
+        {
+            **common,
+            "event_type": "order_submitted",
+            "executed_at": _ts(1),
+            "decision_id": "decision-buy",
+            "order_id": "order-buy",
+            "execution_order_event_id": "event-new-buy",
+            "source_window_id": "window-buy",
+            "source_topic": "alpaca.trade_updates",
+            "source_partition": 0,
+            "source_offset": 6,
+        },
+        {
+            **common,
+            "event_type": "fill",
+            "executed_at": _ts(2),
+            "decision_id": "decision-buy",
+            "order_id": "order-buy",
+            "execution_order_event_id": "event-fill-buy",
+            "execution_id": "execution-buy",
+            "source_window_id": "window-buy",
+            "source_topic": "alpaca.trade_updates",
+            "source_partition": 0,
+            "source_offset": 7,
+            "side": "buy",
+            "filled_qty_delta": "1",
+            "fill_quantity_basis": "cumulative_to_delta",
+            "avg_fill_price": "100",
+            "cost_amount": "0.25",
+            **(
+                {"filled_notional_delta": buy_notional_delta}
+                if buy_notional_delta is not None
+                else {}
+            ),
+            **({"cost_basis": buy_cost_basis} if buy_cost_basis is not None else {}),
+        },
+    ]
+    if include_sell:
+        rows.extend(
+            [
+                {
+                    **common,
+                    "event_type": "decision",
+                    "executed_at": _ts(3),
+                    "decision_id": "decision-sell",
+                    "order_id": "order-sell",
+                },
+                {
+                    **common,
+                    "event_type": "order_submitted",
+                    "executed_at": _ts(4),
+                    "decision_id": "decision-sell",
+                    "order_id": "order-sell",
+                    "execution_order_event_id": "event-new-sell",
+                    "source_window_id": "window-sell",
+                    "source_topic": "alpaca.trade_updates",
+                    "source_partition": 0,
+                    "source_offset": 8,
+                },
+                {
+                    **common,
+                    "event_type": "fill",
+                    "executed_at": _ts(5),
+                    "decision_id": "decision-sell",
+                    "order_id": "order-sell",
+                    "execution_order_event_id": "event-fill-sell",
+                    "execution_id": "execution-sell",
+                    "source_window_id": "window-sell",
+                    "source_topic": "alpaca.trade_updates",
+                    "source_partition": 0,
+                    "source_offset": 9,
+                    "side": "sell",
+                    "filled_qty_delta": "1",
+                    "fill_quantity_basis": "cumulative_to_delta",
+                    "avg_fill_price": "101",
+                    "cost_amount": "0.25",
+                    **(
+                        {"filled_notional_delta": sell_notional_delta}
+                        if sell_notional_delta is not None
+                        else {}
+                    ),
+                    **(
+                        {"cost_basis": sell_cost_basis}
+                        if sell_cost_basis is not None
+                        else {}
+                    ),
+                },
+            ]
+        )
+    return rows
+
+
 def test_closed_round_trip_pnl_uses_net_after_explicit_costs() -> None:
     bucket = _bucket(
         [
@@ -1468,6 +1593,164 @@ def test_order_feed_source_fill_accepts_authority_class_marker() -> None:
     assert bucket.fill_count == 2
     assert bucket.closed_trade_count == 1
     assert bucket.filled_notional == Decimal("201")
+
+
+def test_source_authority_lifecycle_rows_can_be_clean_evidence_candidate() -> None:
+    bucket = build_runtime_ledger_buckets(
+        _source_authority_lifecycle_rows(),
+        bucket_ranges=[(_ts(), _ts(60))],
+    )[0]
+
+    assert bucket.blockers == []
+    assert bucket.fill_count == 2
+    assert bucket.decision_count == 2
+    assert bucket.submitted_order_count == 2
+    assert bucket.closed_trade_count == 1
+    assert bucket.open_position_count == 0
+    assert bucket.filled_notional == Decimal("201")
+    assert bucket.cost_basis_counts == {"broker_reported_commission_and_fees": 2}
+    assert bucket.post_cost_expectancy_bps is not None
+
+
+def test_source_authority_open_position_blocks_final_expectancy() -> None:
+    bucket = build_runtime_ledger_buckets(
+        _source_authority_lifecycle_rows(include_sell=False),
+        bucket_ranges=[(_ts(), _ts(60))],
+    )[0]
+
+    assert bucket.fill_count == 1
+    assert bucket.closed_trade_count == 0
+    assert bucket.open_position_count == 1
+    assert bucket.post_cost_expectancy_bps is None
+    assert "unclosed_position" in bucket.blockers
+    assert "closed_round_trip_missing" in bucket.blockers
+    assert "filled_notional_missing" in bucket.blockers
+    assert "runtime_ledger_expectancy_missing" in bucket.blockers
+
+
+def test_source_authority_missing_closed_round_trip_blocks_bucket() -> None:
+    bucket = build_runtime_ledger_buckets(
+        [
+            row
+            for row in _source_authority_lifecycle_rows(include_sell=True)
+            if row.get("event_type") not in {"fill"}
+        ],
+        bucket_ranges=[(_ts(), _ts(60))],
+    )[0]
+
+    assert bucket.fill_count == 0
+    assert bucket.closed_trade_count == 0
+    assert bucket.post_cost_expectancy_bps is None
+    assert "runtime_fills_missing" in bucket.blockers
+    assert "closed_round_trip_missing" in bucket.blockers
+    assert "runtime_ledger_expectancy_missing" in bucket.blockers
+
+
+def test_source_authority_missing_notional_and_cost_basis_block_expectancy() -> None:
+    bucket = build_runtime_ledger_buckets(
+        _source_authority_lifecycle_rows(
+            buy_notional_delta=None,
+            sell_notional_delta=None,
+            buy_cost_basis=None,
+            sell_cost_basis=None,
+        ),
+        bucket_ranges=[(_ts(), _ts(60))],
+    )[0]
+
+    assert bucket.fill_count == 0
+    assert bucket.filled_notional == Decimal("0")
+    assert bucket.post_cost_expectancy_bps is None
+    assert "filled_notional_missing" in bucket.blockers
+    assert "cost_basis_missing" in bucket.blockers
+    assert "runtime_ledger_expectancy_missing" in bucket.blockers
+
+
+def test_source_authority_requires_closed_lifecycle_even_without_lifecycle_gate() -> (
+    None
+):
+    common = {
+        "event_type": "fill",
+        "source_materialization": "execution_order_events",
+        "authority_class": "runtime_order_feed_execution_source",
+        "account_label": "paper",
+        "strategy_id": "strategy-1",
+        "symbol": "NVDA",
+        "fill_quantity_basis": "cumulative_to_delta",
+        "cost_amount": "0.25",
+        "cost_basis": "broker_reported_commission_and_fees",
+        "execution_policy_hash": "policy",
+        "cost_model_hash": "broker-cost-v1",
+        "lineage_hash": "lineage",
+    }
+    bucket = build_runtime_ledger_buckets(
+        [
+            {
+                **common,
+                "executed_at": _ts(1),
+                "decision_id": "decision-buy",
+                "order_id": "order-buy",
+                "execution_order_event_id": "event-fill-buy",
+                "execution_id": "execution-buy",
+                "source_window_id": "window-buy",
+                "source_topic": "alpaca.trade_updates",
+                "source_partition": 0,
+                "source_offset": 7,
+                "side": "buy",
+                "filled_qty_delta": "1",
+                "avg_fill_price": "100",
+                "filled_notional_delta": "100",
+            },
+            {
+                **common,
+                "executed_at": _ts(2),
+                "decision_id": "decision-sell",
+                "order_id": "order-sell",
+                "execution_order_event_id": "event-fill-sell",
+                "execution_id": "execution-sell",
+                "source_window_id": "window-sell",
+                "source_topic": "alpaca.trade_updates",
+                "source_partition": 0,
+                "source_offset": 8,
+                "side": "sell",
+                "filled_qty_delta": "1",
+                "avg_fill_price": "101",
+                "filled_notional_delta": "101",
+            },
+        ],
+        bucket_ranges=[(_ts(), _ts(60))],
+    )[0]
+
+    assert bucket.closed_trade_count == 1
+    assert bucket.post_cost_expectancy_bps is None
+    assert "runtime_decision_lifecycle_missing" in bucket.blockers
+    assert "submitted_order_lifecycle_missing" in bucket.blockers
+
+
+def test_source_decision_collection_mode_is_not_profit_proof_eligible() -> None:
+    for marker in ("source_decision", "evidence_collection"):
+        bucket = build_runtime_ledger_buckets(
+            _source_authority_lifecycle_rows(source_mode=marker),
+            bucket_ranges=[(_ts(), _ts(60))],
+        )[0]
+
+        assert bucket.fill_count == 0
+        assert bucket.post_cost_expectancy_bps is None
+        assert "source_decision_mode_not_profit_proof_eligible" in bucket.blockers
+        assert "runtime_source_not_promotion_authority" in bucket.blockers
+
+
+def test_execution_reconstruction_rows_do_not_become_runtime_authority() -> None:
+    bucket = build_runtime_ledger_buckets(
+        _source_authority_lifecycle_rows(
+            pnl_derivation="execution_reconstruction_basis"
+        ),
+        bucket_ranges=[(_ts(), _ts(60))],
+    )[0]
+
+    assert bucket.fill_count == 0
+    assert bucket.post_cost_expectancy_bps is None
+    assert "execution_reconstruction_not_runtime_ledger_proof" in bucket.blockers
+    assert "runtime_source_not_promotion_authority" in bucket.blockers
 
 
 def test_promotion_authority_class_requires_source_refs_without_lifecycle_gate() -> (
