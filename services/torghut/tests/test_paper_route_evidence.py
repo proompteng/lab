@@ -8181,6 +8181,319 @@ class TestPaperRouteEvidenceAudit(TestCase):
             "tsmom-AAPL-foreign-linked-1",
         )
 
+    def test_target_plan_uses_observed_foreign_strategy_source_collection(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, tzinfo=timezone.utc)
+        now = datetime(2026, 5, 26, 21, 5, tzinfo=timezone.utc)
+
+        with Session(self.engine) as session:
+            target_strategy = Strategy(
+                name="hpairs-target-observed-contamination-strategy",
+                description="target bounded paper route strategy",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL", "AMZN"],
+                created_at=window_start,
+                updated_at=window_start,
+            )
+            foreign_strategy = Strategy(
+                name="intraday-tsmom-profit-v3",
+                description="observed paper account strategy",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL", "AMZN", "INTC"],
+                created_at=window_start,
+                updated_at=window_start,
+            )
+            session.add_all([target_strategy, foreign_strategy])
+            session.flush()
+            foreign_decision = TradeDecision(
+                strategy_id=foreign_strategy.id,
+                alpaca_account_label="TORGHUT_SIM",
+                symbol="AAPL",
+                timeframe="1Min",
+                decision_json={
+                    "action": "buy",
+                    "qty": "1",
+                    "candidate_id": "candidate-tsmom",
+                    "hypothesis_id": "H-TSMOM-LIQ-01",
+                },
+                rationale="observed foreign source collection fixture",
+                status="executed",
+                created_at=window_start + timedelta(minutes=5),
+                executed_at=window_start + timedelta(minutes=6),
+            )
+            session.add(foreign_decision)
+            session.flush()
+            session.add(
+                ExecutionOrderEvent(
+                    event_fingerprint="observed-tsmom-paper-event",
+                    source_topic="alpaca.trade_updates",
+                    source_partition=0,
+                    source_offset=44,
+                    alpaca_account_label="TORGHUT_SIM",
+                    event_ts=window_start + timedelta(minutes=20),
+                    symbol="AAPL",
+                    alpaca_order_id="observed-tsmom-order-1",
+                    client_order_id="tsmom-AAPL-observed-1",
+                    event_type="fill",
+                    status="filled",
+                    qty=Decimal("1"),
+                    filled_qty=Decimal("1"),
+                    avg_fill_price=Decimal("101"),
+                    raw_event={"source": "foreign_tsmom_strategy"},
+                    execution_id=None,
+                    trade_decision_id=foreign_decision.id,
+                )
+            )
+            self._add_flat_account_start_snapshot(
+                session,
+                account_label="TORGHUT_SIM",
+                window_start=window_start,
+            )
+            session.commit()
+
+            payload = build_paper_route_target_plan_payload(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "paper_route_probe_only",
+                    "blocked_reasons": ["runtime_ledger_source_collection_pending"],
+                    "runtime_ledger_repair_candidates": [
+                        {
+                            "hypothesis_id": "H-TSMOM-LIQ-01",
+                            "candidate_id": "candidate-tsmom",
+                            "observed_stage": "paper",
+                            "strategy_family": "intraday_tsmom_consistent",
+                            "strategy_name": "intraday-tsmom-profit-v3",
+                            "runtime_strategy_name": "intraday-tsmom-profit-v3",
+                            "strategy_id": "intraday_tsmom_v2@research",
+                            "account": "TORGHUT_SIM",
+                            "dataset_snapshot_ref": (
+                                "portfolio-profit-autoresearch-500-v1"
+                            ),
+                            "source_manifest_ref": (
+                                "config/trading/hypotheses/h-tsmom-liq-01.json"
+                            ),
+                            "fill_count": 1,
+                            "submitted_order_count": 1,
+                            "filled_notional": "101",
+                            "reason_codes": [
+                                "runtime_ledger_source_collection_pending",
+                                "closed_round_trip_missing",
+                            ],
+                        }
+                    ],
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": (
+                            "torghut.runtime-ledger-paper-probation-import-plan.v1"
+                        ),
+                        "target_count": "1",
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-PAIRS-01",
+                                "candidate_id": "candidate-hpairs",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_pairs",
+                                "strategy_name": target_strategy.name,
+                                "strategy_id": "hpairs_target_strategy@research",
+                                "account_label": "TORGHUT_SIM",
+                                "source_kind": "paper_route_probe_runtime_observed",
+                                "source_manifest_ref": (
+                                    "config/trading/hypotheses/h-pairs-01.json"
+                                ),
+                                "window_start": window_start.isoformat(),
+                                "window_end": window_end.isoformat(),
+                                "paper_probation_authorized": True,
+                                "paper_probation_satisfied_for_bounded_live_paper_collection": True,
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "summary": {
+                        "paper_route_probe_eligible_symbols": ["AAPL", "AMZN"],
+                        "paper_route_probe_active_symbols": ["AAPL", "AMZN"],
+                    },
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": True,
+                        "effective_max_notional": 25,
+                        "next_session_max_notional": 25,
+                        "eligible_symbols": ["AAPL", "AMZN"],
+                    },
+                },
+                generated_at=now,
+            )
+
+        runtime_plan = payload["runtime_window_import_plan"]
+        self.assertEqual(
+            runtime_plan["source"], "paper_route_observed_strategy_source_collection"
+        )
+        self.assertEqual(runtime_plan["target_count"], 1)
+        target = runtime_plan["targets"][0]
+        self.assertEqual(target["candidate_id"], "candidate-tsmom")
+        self.assertEqual(target["hypothesis_id"], "H-TSMOM-LIQ-01")
+        self.assertEqual(target["runtime_strategy_name"], "intraday-tsmom-profit-v3")
+        self.assertEqual(target["source_account_label"], "TORGHUT_SIM")
+        self.assertEqual(
+            target["source_kind"], "runtime_ledger_source_collection_candidate"
+        )
+        self.assertTrue(target["source_collection_authorized"])
+        self.assertFalse(target["promotion_allowed"])
+        self.assertNotIn("paper_route_probe_symbols", target)
+        self.assertEqual(
+            target["observed_from_contaminated_target"]["strategy_name"],
+            "intraday-tsmom-profit-v3",
+        )
+        self.assertEqual(payload["targets"][0]["candidate_id"], "candidate-tsmom")
+        self.assertEqual(
+            payload["source_runtime_window_import_plan"]["source"],
+            "paper_route_observed_strategy_source_collection",
+        )
+
+    def test_observed_strategy_source_collection_plan_limits_targets(self) -> None:
+        target_template = {
+            "hypothesis_id": "H-PAIRS-01",
+            "candidate_id": "candidate-hpairs",
+            "strategy_name": "microbar-cross-sectional-pairs-v1",
+            "window_start": "2026-06-02T13:30:00+00:00",
+            "window_end": "2026-06-02T20:00:00+00:00",
+            "paper_route_account_contamination_state": {
+                "foreign_strategy_counts": {
+                    "intraday-tsmom-profit-v3": 2,
+                    "other-observed-source-strategy": 1,
+                },
+            },
+        }
+
+        plan = paper_route_evidence._observed_strategy_source_collection_import_plan(
+            live_submission_gate={
+                "blocked_reasons": ["runtime_ledger_source_collection_pending"],
+                "runtime_ledger_repair_candidates": [
+                    {
+                        "hypothesis_id": "H-TSMOM-LIQ-01",
+                        "candidate_id": "candidate-tsmom",
+                        "strategy_family": "intraday_tsmom_consistent",
+                        "strategy_name": "intraday-tsmom-profit-v3",
+                        "runtime_strategy_name": "intraday-tsmom-profit-v3",
+                    },
+                    {
+                        "hypothesis_id": "H-OTHER",
+                        "candidate_id": "candidate-other",
+                        "strategy_family": "intraday_other",
+                        "strategy_name": "other-observed-source-strategy",
+                    },
+                ],
+            },
+            candidate_plans=[
+                {
+                    "targets": [
+                        dict(target_template),
+                        {
+                            **target_template,
+                            "candidate_id": "candidate-hpairs-second-window",
+                        },
+                    ],
+                },
+                {"targets": [dict(target_template)]},
+            ],
+            target_limit=1,
+        )
+
+        self.assertEqual(plan["target_count"], 1)
+        target = plan["targets"][0]
+        self.assertEqual(target["candidate_id"], "candidate-tsmom")
+        self.assertEqual(
+            target["source_manifest_ref"],
+            "config/trading/hypotheses/h-tsmom-liq-01.json",
+        )
+        self.assertEqual(
+            target["observed_from_contaminated_target"]["order_event_count"], 2
+        )
+
+    def test_observed_strategy_source_collection_plan_skips_unmapped_noise(
+        self,
+    ) -> None:
+        plan = paper_route_evidence._observed_strategy_source_collection_import_plan(
+            live_submission_gate={
+                "blocked_reasons": ["runtime_ledger_source_collection_pending"],
+                "runtime_ledger_repair_candidates": [
+                    {
+                        "hypothesis_id": "H-TSMOM-LIQ-01",
+                        "candidate_id": "candidate-tsmom",
+                        "strategy_family": "intraday_tsmom_consistent",
+                        "strategy_name": "intraday-tsmom-profit-v3",
+                    }
+                ],
+            },
+            candidate_plans=[
+                {
+                    "targets": [
+                        {
+                            "hypothesis_id": "H-PAIRS-01",
+                            "candidate_id": "candidate-hpairs",
+                            "strategy_name": "microbar-cross-sectional-pairs-v1",
+                            "window_start": "2026-06-02T13:30:00+00:00",
+                            "window_end": "2026-06-02T20:00:00+00:00",
+                            "paper_route_account_contamination_state": {
+                                "foreign_strategy_counts": {
+                                    "missing": 5,
+                                    "unmapped-observed-strategy": 4,
+                                },
+                            },
+                        }
+                    ],
+                }
+            ],
+            target_limit=5,
+        )
+
+        self.assertEqual(plan, {})
+
+    def test_observed_strategy_source_collection_plan_skips_incomplete_candidate(
+        self,
+    ) -> None:
+        plan = paper_route_evidence._observed_strategy_source_collection_import_plan(
+            live_submission_gate={
+                "blocked_reasons": ["runtime_ledger_source_collection_pending"],
+                "runtime_ledger_repair_candidates": [
+                    {
+                        "hypothesis_id": "H-TSMOM-LIQ-01",
+                        "strategy_family": "intraday_tsmom_consistent",
+                        "strategy_name": "intraday-tsmom-profit-v3",
+                    }
+                ],
+            },
+            candidate_plans=[
+                {
+                    "targets": [
+                        {
+                            "hypothesis_id": "H-PAIRS-01",
+                            "candidate_id": "candidate-hpairs",
+                            "strategy_name": "microbar-cross-sectional-pairs-v1",
+                            "window_start": "2026-06-02T13:30:00+00:00",
+                            "window_end": "2026-06-02T20:00:00+00:00",
+                            "paper_route_account_contamination_state": {
+                                "foreign_strategy_counts": {
+                                    "intraday-tsmom-profit-v3": 1,
+                                },
+                            },
+                        }
+                    ],
+                }
+            ],
+            target_limit=5,
+        )
+
+        self.assertEqual(plan, {})
+
     def test_account_contamination_summary_deduplicates_and_caps_order_event_refs(
         self,
     ) -> None:
