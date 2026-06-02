@@ -902,6 +902,51 @@ class TestRuntimeLedgerProofPacket(TestCase):
         )
         self.assertEqual(result["next_action"], "rerun_proof_packet_in_authority_mode")
 
+    def test_authority_packet_rejects_aggregate_only_runtime_import_materialization(
+        self,
+    ) -> None:
+        runtime_import = _runtime_import()
+        runtime_observation = cast(
+            dict[str, object],
+            cast(dict[str, object], runtime_import["imports"][0])["summary"],
+        )["runtime_observation"]
+        assert isinstance(runtime_observation, dict)
+        runtime_observation.update(
+            {
+                "runtime_ledger_source_execution_materialized_bucket_count": 0,
+                "runtime_ledger_source_materializations": [],
+                "runtime_ledger_materialization_pnl_derivations": [
+                    "aggregate_only_runtime_ledger"
+                ],
+                "runtime_ledger_materialization_authority_reasons": [
+                    "aggregate_only"
+                ],
+            }
+        )
+
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            proof_mode="authority",
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=runtime_import,
+            completion_status=_completion(),
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        self.assertFalse(result["final_authority_ok"], result)
+        self.assertIn(
+            "runtime_window_import_source_execution_materialization_missing",
+            result["authority_blockers"],
+        )
+        self.assertIn(
+            "runtime_window_import_source_materialization_missing",
+            result["authority_blockers"],
+        )
+        self.assertIn(
+            "runtime_window_import_replay_or_artifact_derivation_not_authority",
+            result["authority_blockers"],
+        )
+
     def test_authority_packet_fails_each_mechanical_authority_floor(self) -> None:
         cases = [
             (
@@ -2752,6 +2797,14 @@ class TestRuntimeLedgerProofPacket(TestCase):
                     "runtime_observation": {
                         "authoritative": True,
                         "runtime_ledger_profit_proof_present": True,
+                        "runtime_ledger_tca_profit_proof_count": 1,
+                        "runtime_ledger_source_execution_materialized_bucket_count": 1,
+                        "runtime_ledger_source_materializations": [
+                            "execution_order_events"
+                        ],
+                        "runtime_ledger_materialization_pnl_derivations": [
+                            "execution_order_events_runtime_ledger"
+                        ],
                     },
                     "runtime_materialization_target": {
                         "candidate_id": "c88421d619759b2cfaa6f4d0",
