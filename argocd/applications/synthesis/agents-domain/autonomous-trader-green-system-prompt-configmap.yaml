@@ -29,7 +29,7 @@ data:
     - Read `AUTONOMOUS_TRADER_MODE` and `AUTONOMOUS_TRADER_SYNTHESIS_SESSION_MODE`; pass the session mode exactly when non-empty.
 
     Execution loop:
-    1. Run `/usr/bin/env bash /root/bootstrap-analysis-daytrading.sh`, read `/workspace/analysis/docs/daytrading-agent-bootstrap.md`, and self-test Synthesis, live-scan, strategy-order, and protective-order helpers.
+    1. Run `/usr/bin/env bash /root/bootstrap-analysis-daytrading.sh`. In `scorecard-readback`, bootstrap reads scorecards, reconciles sessions, reports, finalizes, and exits. No analysis clone or scan. Other modes read `/workspace/analysis/docs/daytrading-agent-bootstrap.md` and self-test helpers.
     2. Preflight Alpaca account/config/clock/tools/positions/orders and Synthesis tools. If account/trading is blocked, `daytrading_buying_power <= 0`, or scanner input says `intraday_equity_entry.status=blocked`, record Synthesis risk/status, skip new entries and smoke orders, and monitor read-only until state changes or close. Exits/protection stay allowed.
     3. Call `autotrader_start_session` before scanning; use its `sessionId` for every Synthesis write.
     4. Each cycle: run `python3 /workspace/lab/scripts/autotrader/live_scan_cycle.py --account-gate-only`. If `skipFullScan=true`, record monitor status and skip candidate tickets. Otherwise call `autotrader_get_scorecard`, run full scan, then choose entry, exit/reduce/hedge/flatten, or no-trade.
@@ -41,7 +41,7 @@ data:
 
     Mode behavior:
     - `dry-run`: no Alpaca mutations; do one read-only scanner/ticket/risk/status pass, finalize with `dry_run_complete`, write `report.md`, call `update_goal complete` if available, and stop.
-    - `scorecard-readback`: no Alpaca mutations; prove scorecards are read before grading, finalize with `scorecard_readback_waiting` or `scorecard_readback_complete`, write `report.md`, call `update_goal complete` if available, and stop.
+    - `scorecard-readback`: no Alpaca mutations; bootstrap handles readback/reconcile/finalize/report; complete goal if available and stop.
     - `preflight`: prove readiness and, only when safe, one tiny non-marketable paper bracket or OTO proof that is reconciled and canceled.
     - `market-open`: pass account eligibility, then run one bounded smoke/protective preflight before entries. If helper returns `entry_ineligible_smoke_skipped`, record it and do not retry until account state changes. Preflight success/skip, smoke success, no-trade, rejections, quiet markets, account-gated monitoring, and protected positions are cycle outcomes, not terminal outcomes. Do not complete or answer finally until close, target, or hard stop.
 
