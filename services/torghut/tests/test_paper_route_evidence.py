@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -16,6 +17,7 @@ from app.models import (
     Execution,
     ExecutionOrderEvent,
     ExecutionTCAMetric,
+    OrderFeedSourceWindow,
     PositionSnapshot,
     RejectedSignalOutcomeEvent,
     Strategy,
@@ -36,6 +38,7 @@ from app.trading.paper_route_evidence import (
     _hpairs_zero_activity_reason_flags,
     _next_regular_equities_session_window,
     _normalized_open_positions,
+    _order_event_source_offset_refs,
     _paper_route_probe_summary,
     _paper_route_probe_symbol_quantities,
     _pair_probe_balance_state,
@@ -63,6 +66,125 @@ class TestPaperRouteEvidenceAudit(TestCase):
             poolclass=StaticPool,
         )
         Base.metadata.create_all(self.engine)
+
+    def test_order_event_source_offset_refs_skip_deduplicate_and_limit(self) -> None:
+        rows = [
+            SimpleNamespace(source_topic=None, source_partition=0, source_offset=1),
+            SimpleNamespace(
+                source_topic="trade_updates",
+                source_partition=0,
+                source_offset=1,
+            ),
+            SimpleNamespace(
+                source_topic="trade_updates",
+                source_partition=0,
+                source_offset=1,
+            ),
+        ]
+        rows.extend(
+            SimpleNamespace(
+                source_topic="trade_updates",
+                source_partition=0,
+                source_offset=offset,
+            )
+            for offset in range(2, PAPER_ROUTE_SOURCE_ACTIVITY_REF_LIMIT + 4)
+        )
+
+        refs = _order_event_source_offset_refs(rows)
+
+        self.assertEqual(len(refs), PAPER_ROUTE_SOURCE_ACTIVITY_REF_LIMIT)
+        self.assertEqual(
+            refs[0],
+            {"topic": "trade_updates", "partition": 0, "offset": 1},
+        )
+        self.assertEqual(
+            refs[-1],
+            {
+                "topic": "trade_updates",
+                "partition": 0,
+                "offset": PAPER_ROUTE_SOURCE_ACTIVITY_REF_LIMIT,
+            },
+        )
+
+    def test_source_activity_reports_source_window_query_unavailable(self) -> None:
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        event_at = window_start + timedelta(minutes=15)
+        with Session(self.engine) as session:
+            strategy = Strategy(
+                name="source-window-query-unavailable",
+                enabled=True,
+                base_timeframe="1m",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.flush()
+            decision = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="TORGHUT_SIM",
+                symbol="AAPL",
+                timeframe="1Min",
+                decision_json={
+                    "action": "buy",
+                    "candidate_id": "candidate-source-window-unavailable",
+                    "hypothesis_id": "H-ORDER-FEED",
+                },
+                rationale="source window unavailable fixture",
+                status="executed",
+                created_at=event_at,
+                executed_at=event_at,
+            )
+            session.add(decision)
+            session.flush()
+            session.add(
+                ExecutionOrderEvent(
+                    event_fingerprint="source-window-unavailable-event",
+                    source_topic="trade_updates",
+                    source_partition=0,
+                    source_offset=42,
+                    alpaca_account_label="TORGHUT_SIM",
+                    event_ts=event_at,
+                    symbol="AAPL",
+                    alpaca_order_id="source-window-unavailable-order",
+                    client_order_id="source-window-unavailable-client",
+                    event_type="fill",
+                    status="filled",
+                    raw_event={},
+                    trade_decision_id=decision.id,
+                    source_window_id="00000000-0000-0000-0000-000000000999",
+                    created_at=event_at,
+                )
+            )
+            session.commit()
+            original_execute = session.execute
+
+            def execute_with_source_window_failure(
+                statement: object, *args: object, **kwargs: object
+            ) -> object:
+                if "order_feed_source_windows" in str(statement):
+                    raise SQLAlchemyError("source window table unavailable")
+                return original_execute(statement, *args, **kwargs)
+
+            with patch.object(session, "execute", execute_with_source_window_failure):
+                source_activity = _strategy_source_activity(
+                    session,
+                    strategy_name="source-window-query-unavailable",
+                    account_label="TORGHUT_SIM",
+                    symbols=["AAPL"],
+                    window_start=window_start,
+                    window_end=window_start + timedelta(hours=1),
+                    candidate_id="candidate-source-window-unavailable",
+                    hypothesis_id="H-ORDER-FEED",
+                    require_source_lineage=True,
+                )
+
+        self.assertTrue(source_activity["missing"])
+        self.assertEqual(
+            source_activity["missing_reasons"],
+            ["source_windows_unavailable"],
+        )
+        self.assertEqual(source_activity["raw_decision_count"], 1)
+        self.assertEqual(source_activity["lineage_matched_decision_count"], 1)
 
     def _seed_hpairs_strategy_and_flat_snapshot(
         self,
@@ -5830,6 +5952,34 @@ class TestPaperRouteEvidenceAudit(TestCase):
             )
             session.add(execution)
             session.flush()
+            source_window = OrderFeedSourceWindow(
+                consumer_group="torghut-order-feed",
+                source_topic="trade_updates",
+                source_partition=0,
+                alpaca_account_label="TORGHUT_SIM",
+                assignment_mode="group",
+                collector_identity="test-order-feed",
+                source_revision="alpaca_trade_updates_v1",
+                window_started_at=event_at,
+                window_ended_at=event_at,
+                start_offset=1,
+                end_offset=1,
+                consumed_count=1,
+                inserted_count=1,
+                status="inserted",
+                status_reason="linked_execution_and_decision",
+                payload_json={
+                    "source_ref": {
+                        "topic": "trade_updates",
+                        "partition": 0,
+                        "offset": 1,
+                    },
+                    "source_coverage_complete": True,
+                    "promotion_authority_eligible": False,
+                },
+            )
+            session.add(source_window)
+            session.flush()
             session.add(
                 ExecutionOrderEvent(
                     event_fingerprint="order-feed-fill-event",
@@ -5861,6 +6011,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
                     },
                     execution_id=execution.id,
                     trade_decision_id=decision.id,
+                    source_window_id=source_window.id,
                     created_at=event_at,
                 )
             )
@@ -5931,6 +6082,13 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(source_activity["order_event_count"], 1)
         self.assertEqual(source_activity["fill_order_event_count"], 1)
         self.assertEqual(source_activity["complete_fill_order_event_count"], 1)
+        self.assertEqual(source_activity["source_window_count"], 1)
+        self.assertEqual(source_activity["linked_source_window_count"], 1)
+        self.assertEqual(len(source_activity["source_window_refs"]), 1)
+        self.assertEqual(
+            source_activity["source_offset_refs"],
+            [{"topic": "trade_updates", "partition": 0, "offset": 1}],
+        )
         self.assertEqual(source_activity["last_order_event_at"], event_at.isoformat())
         self.assertEqual(source_activity["missing_reasons"], [])
         self.assertEqual(source_activity["decision_refs"], [decision_ref])
@@ -5938,6 +6096,14 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(len(source_activity["order_lifecycle_refs"]), 1)
         self.assertIn(
             "source_explicit_costs_missing",
+            source_activity["source_reference_blockers"],
+        )
+        self.assertNotIn(
+            "source_window_refs_missing",
+            source_activity["source_reference_blockers"],
+        )
+        self.assertNotIn(
+            "source_offsets_missing",
             source_activity["source_reference_blockers"],
         )
         import_audit = payload["runtime_window_import_audit"]

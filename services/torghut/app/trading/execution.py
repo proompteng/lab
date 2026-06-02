@@ -96,6 +96,96 @@ _RUNTIME_COST_BASIS_KEYS = (
     "commission_basis",
     "broker_fee_basis",
 )
+_BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE = "bounded_paper_route_collection"
+_TARGET_PLAN_SOURCE_DECISION_MODE = "paper_route_target_plan_source_decision"
+_TARGET_PLAN_SOURCE_DECISION_REQUIRED_REFS = (
+    "hypothesis_id",
+    "candidate_id",
+    "runtime_strategy_name",
+    "account_label",
+    "observed_stage",
+)
+
+
+def _mapping_payload(value: object) -> dict[str, Any]:
+    coerced = coerce_json_payload(value)
+    if not isinstance(coerced, Mapping):
+        return {}
+    return {str(key): item for key, item in cast(Mapping[object, Any], coerced).items()}
+
+
+def _target_plan_source_metadata(payload: object) -> dict[str, Any]:
+    payload_mapping = _mapping_payload(payload)
+    params = _mapping_payload(payload_mapping.get("params"))
+    metadata = _mapping_payload(params.get("paper_route_target_plan_source_decision"))
+    if metadata:
+        return metadata
+    return _mapping_payload(params.get("paper_route_target_plan"))
+
+
+def _target_plan_source_decision_mode(payload: object) -> str | None:
+    payload_mapping = _mapping_payload(payload)
+    params = _mapping_payload(payload_mapping.get("params"))
+    metadata = _target_plan_source_metadata(payload_mapping)
+    for item in (
+        params.get("source_decision_mode"),
+        metadata.get("source_decision_mode"),
+        payload_mapping.get("source_decision_mode"),
+    ):
+        text = str(item or "").strip()
+        if text:
+            return text
+    return None
+
+
+def _target_plan_ref_value(payload: object, key: str) -> str | None:
+    payload_mapping = _mapping_payload(payload)
+    params = _mapping_payload(payload_mapping.get("params"))
+    metadata = _target_plan_source_metadata(payload_mapping)
+    for item in (params.get(key), metadata.get(key), payload_mapping.get(key)):
+        text = str(item or "").strip()
+        if text:
+            return text
+    return None
+
+
+def _has_target_plan_source_decision(payload: object) -> bool:
+    metadata = _target_plan_source_metadata(payload)
+    return str(metadata.get("mode") or "").strip() == _TARGET_PLAN_SOURCE_DECISION_MODE
+
+
+def _target_plan_source_decision_needs_refresh(
+    existing_payload: object,
+    new_payload: object,
+) -> bool:
+    """Return true when an idempotent target-plan decision row lacks source refs.
+
+    ``decision_hash`` intentionally ignores telemetry, so a pre-existing planned
+    row can otherwise shadow a newer bounded H-PAIRS target-plan decision that
+    carries the durable hypothesis/candidate/runtime/account/stage refs needed
+    for downstream source evidence.
+    """
+
+    if not _has_target_plan_source_decision(new_payload):
+        return False
+    if (
+        _target_plan_source_decision_mode(new_payload)
+        != _BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE
+    ):
+        return False
+    if not _has_target_plan_source_decision(existing_payload):
+        return True
+    if (
+        _target_plan_source_decision_mode(existing_payload)
+        != _BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE
+    ):
+        return True
+    for key in _TARGET_PLAN_SOURCE_DECISION_REQUIRED_REFS:
+        new_value = _target_plan_ref_value(new_payload, key)
+        existing_value = _target_plan_ref_value(existing_payload, key)
+        if new_value and existing_value != new_value:
+            return True
+    return False
 
 
 class OrderExecutor:
@@ -131,6 +221,19 @@ class OrderExecutor:
         )
         existing = session.execute(stmt).scalar_one_or_none()
         if existing:
+            decision_payload = coerce_json_payload(decision.model_dump(mode="json"))
+            if _target_plan_source_decision_needs_refresh(
+                existing.decision_json,
+                decision_payload,
+            ):
+                existing.decision_json = decision_payload
+                existing.rationale = decision.rationale
+                existing.strategy_id = strategy.id
+                existing.symbol = decision.symbol
+                existing.timeframe = decision.timeframe
+                session.add(existing)
+                session.commit()
+                session.refresh(existing)
             return existing
 
         decision_payload = coerce_json_payload(decision.model_dump(mode="json"))

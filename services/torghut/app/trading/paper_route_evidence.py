@@ -23,6 +23,7 @@ from ..models import (
     Execution,
     ExecutionOrderEvent,
     ExecutionTCAMetric,
+    OrderFeedSourceWindow,
     PositionSnapshot,
     RejectedSignalOutcomeEvent,
     Strategy,
@@ -2970,28 +2971,40 @@ def _unavailable_source_activity(
         "execution_refs": [],
         "order_lifecycle_refs": [],
         "tca_metric_refs": [],
+        "source_window_refs": [],
+        "source_offset_refs": [],
         "source_reference_blockers": [
             "source_execution_refs_missing",
             "source_order_lifecycle_refs_missing",
             "source_explicit_costs_missing",
         ],
+        "source_window_blockers": [],
         "submitted_order_blockers": [
             "source_submitted_orders_missing",
             "source_execution_refs_missing",
         ],
         "decision_count": lineage_matched_decision_count,
+        "source_decision_count": lineage_matched_decision_count,
+        "target_plan_source_decision_count": 0,
+        "source_decision_mode_counts": {},
         "execution_count": 0,
+        "linked_execution_count": 0,
         "filled_execution_count": 0,
         "order_event_count": 0,
+        "linked_order_lifecycle_count": 0,
         "fill_order_event_count": 0,
         "complete_fill_order_event_count": 0,
         "tca_sample_count": 0,
+        "explicit_cost_tca_count": 0,
+        "source_window_count": 0,
+        "linked_source_window_count": 0,
         "readback_state": "query_unavailable",
         "stage_presence": {
             "source_decisions_present": raw_decision_count > 0,
             "submitted_lifecycle_present": False,
             "fills_present": False,
             "source_refs_present": False,
+            "source_windows_present": False,
             "runtime_execution_economics_present": False,
         },
         "query_limits": {
@@ -3096,6 +3109,38 @@ def _source_decision_rejection_summary(
         ],
         "blockers": blockers,
     }
+
+
+def _trade_decision_source_decision_mode(row: TradeDecision) -> str:
+    payload = _as_mapping(row.decision_json)
+    params = _as_mapping(payload.get("params"))
+    metadata = _as_mapping(params.get("paper_route_target_plan_source_decision"))
+    if not metadata:
+        metadata = _as_mapping(params.get("paper_route_target_plan"))
+    mode = (
+        _safe_text(payload.get("source_decision_mode"))
+        or _safe_text(params.get("source_decision_mode"))
+        or _safe_text(metadata.get("source_decision_mode"))
+    )
+    return normalize_source_decision_mode(mode) or "missing"
+
+
+def _trade_decision_is_target_plan_source_decision(row: TradeDecision) -> bool:
+    payload = _as_mapping(row.decision_json)
+    params = _as_mapping(payload.get("params"))
+    metadata = _as_mapping(params.get("paper_route_target_plan_source_decision"))
+    if not metadata:
+        metadata = _as_mapping(params.get("paper_route_target_plan"))
+    return _safe_text(metadata.get("mode")) == "paper_route_target_plan_source_decision"
+
+
+def _source_decision_mode_counts(
+    decision_rows: Sequence[TradeDecision],
+) -> dict[str, int]:
+    counts: Counter[str] = Counter()
+    for row in decision_rows:
+        counts[_trade_decision_source_decision_mode(row)] += 1
+    return dict(sorted(counts.items()))
 
 
 def _source_activity_lifecycle_summary(
@@ -3204,6 +3249,38 @@ def _source_activity_lifecycle_summary(
     }
 
 
+def _order_event_source_offset_refs(
+    order_event_rows: Sequence[ExecutionOrderEvent],
+) -> list[dict[str, object]]:
+    refs: list[dict[str, object]] = []
+    seen: set[tuple[str, int, int]] = set()
+    for row in order_event_rows:
+        topic = _safe_text(row.source_topic)
+        partition = row.source_partition
+        offset = row.source_offset
+        if topic is None or partition is None or offset is None:
+            continue
+        key = (topic, int(partition), int(offset))
+        if key in seen:
+            continue
+        seen.add(key)
+        refs.append(
+            {"topic": topic, "partition": int(partition), "offset": int(offset)}
+        )
+        if len(refs) >= PAPER_ROUTE_SOURCE_ACTIVITY_REF_LIMIT:
+            break
+    return refs
+
+
+def _source_window_refs(
+    source_window_rows: Sequence[OrderFeedSourceWindow],
+) -> list[str]:
+    return [
+        str(row.id)
+        for row in source_window_rows[:PAPER_ROUTE_SOURCE_ACTIVITY_REF_LIMIT]
+    ]
+
+
 def _source_activity_readback_state(
     *,
     decision_count: int,
@@ -3261,26 +3338,38 @@ def _strategy_source_activity(
             "execution_refs": [],
             "order_lifecycle_refs": [],
             "tca_metric_refs": [],
+            "source_window_refs": [],
+            "source_offset_refs": [],
             "source_reference_blockers": [
                 "source_decision_refs_missing",
                 "source_execution_refs_missing",
                 "source_order_lifecycle_refs_missing",
                 "source_explicit_costs_missing",
             ],
+            "source_window_blockers": [],
             "submitted_order_blockers": ["source_submitted_orders_missing"],
             "decision_count": 0,
+            "source_decision_count": 0,
+            "target_plan_source_decision_count": 0,
+            "source_decision_mode_counts": {},
             "execution_count": 0,
+            "linked_execution_count": 0,
             "filled_execution_count": 0,
             "order_event_count": 0,
+            "linked_order_lifecycle_count": 0,
             "fill_order_event_count": 0,
             "complete_fill_order_event_count": 0,
             "tca_sample_count": 0,
+            "explicit_cost_tca_count": 0,
+            "source_window_count": 0,
+            "linked_source_window_count": 0,
             "readback_state": "no_source_activity",
             "stage_presence": {
                 "source_decisions_present": False,
                 "submitted_lifecycle_present": False,
                 "fills_present": False,
                 "source_refs_present": False,
+                "source_windows_present": False,
                 "runtime_execution_economics_present": False,
             },
             "query_limits": {
@@ -3495,6 +3584,45 @@ def _strategy_source_activity(
             )
     else:
         order_event_truncated = False
+    source_window_rows: list[OrderFeedSourceWindow] = []
+    if order_event_rows:
+        source_window_ids = sorted(
+            {
+                row.source_window_id
+                for row in order_event_rows
+                if row.source_window_id is not None
+            }
+        )
+        if source_window_ids:
+            try:
+                _maybe_set_paper_route_audit_statement_timeout(session)
+                source_window_rows = list(
+                    session.execute(
+                        select(OrderFeedSourceWindow)
+                        .where(OrderFeedSourceWindow.id.in_(source_window_ids))
+                        .order_by(OrderFeedSourceWindow.window_ended_at.desc())
+                        .limit(PAPER_ROUTE_SOURCE_ACTIVITY_ROW_LIMIT)
+                    ).scalars()
+                )
+            except SQLAlchemyError as exc:
+                _rollback_after_source_activity_error(
+                    session,
+                    source="order_feed_source_windows",
+                    exc=exc,
+                )
+                return _unavailable_source_activity(
+                    strategy_name=strategy_name,
+                    strategy_lookup_names=strategy_filters,
+                    account_label=account_label,
+                    symbols=symbol_filters,
+                    candidate_id=candidate_id,
+                    hypothesis_id=hypothesis_id,
+                    require_source_lineage=require_source_lineage,
+                    source="order_feed_source_windows",
+                    missing_reason="source_windows_unavailable",
+                    raw_decision_count=raw_decision_count,
+                    lineage_matched_decision_count=len(decision_rows),
+                )
     tca_rows: list[ExecutionTCAMetric] = []
     if decision_ids:
         tca_stmt = (
@@ -3608,6 +3736,19 @@ def _strategy_source_activity(
     complete_fill_order_event_count = sum(
         int(_order_event_has_complete_fill_lifecycle(row)) for row in order_event_rows
     )
+    source_window_count = len(source_window_rows)
+    source_offset_refs = _order_event_source_offset_refs(order_event_rows)
+    source_window_reference_count = len(
+        {
+            row.source_window_id
+            for row in order_event_rows
+            if row.source_window_id is not None
+        }
+    )
+    target_plan_source_decision_count = sum(
+        int(_trade_decision_is_target_plan_source_decision(row))
+        for row in decision_rows
+    )
     decision_rejection_summary = _source_decision_rejection_summary(decision_rows)
     decision_reject_blockers = _unique_text_items(
         decision_rejection_summary.get("blockers")
@@ -3649,6 +3790,7 @@ def _strategy_source_activity(
     tca_metric_refs = [
         str(row.id) for row in tca_rows[:PAPER_ROUTE_SOURCE_ACTIVITY_REF_LIMIT]
     ]
+    source_window_refs = _source_window_refs(source_window_rows)
     source_reference_blockers = _unique_text_items(
         [
             *(["source_decision_refs_missing"] if not decision_refs else []),
@@ -3659,6 +3801,20 @@ def _strategy_source_activity(
                 else []
             ),
             *(["source_explicit_costs_missing"] if not tca_metric_refs else []),
+        ]
+    )
+    source_window_blockers = _unique_text_items(
+        [
+            *(
+                ["source_window_refs_missing"]
+                if order_lifecycle_refs and not source_window_refs
+                else []
+            ),
+            *(
+                ["source_offsets_missing"]
+                if order_lifecycle_refs and not source_offset_refs
+                else []
+            ),
         ]
     )
     submitted_order_blockers = _unique_text_items(
@@ -3727,15 +3883,26 @@ def _strategy_source_activity(
         "execution_refs": execution_refs,
         "order_lifecycle_refs": order_lifecycle_refs,
         "tca_metric_refs": tca_metric_refs,
+        "source_window_refs": source_window_refs,
+        "source_offset_refs": source_offset_refs,
         "source_reference_blockers": source_reference_blockers,
+        "source_window_blockers": source_window_blockers,
         "submitted_order_blockers": submitted_order_blockers,
         "decision_count": decision_count,
+        "source_decision_count": decision_count,
+        "target_plan_source_decision_count": target_plan_source_decision_count,
+        "source_decision_mode_counts": _source_decision_mode_counts(decision_rows),
         "execution_count": execution_count,
+        "linked_execution_count": execution_count,
         "filled_execution_count": filled_execution_count,
         "order_event_count": order_event_count,
+        "linked_order_lifecycle_count": order_event_count,
         "fill_order_event_count": fill_order_event_count,
         "complete_fill_order_event_count": complete_fill_order_event_count,
         "tca_sample_count": tca_sample_count,
+        "explicit_cost_tca_count": tca_sample_count,
+        "source_window_count": source_window_count,
+        "linked_source_window_count": source_window_reference_count,
         "submitted_order_count": execution_count,
         "readback_state": readback_state,
         "stage_presence": {
@@ -3749,7 +3916,10 @@ def _strategy_source_activity(
                 or execution_refs
                 or order_lifecycle_refs
                 or tca_metric_refs
+                or source_window_refs
+                or source_offset_refs
             ),
+            "source_windows_present": source_window_count > 0,
             "runtime_execution_economics_present": tca_sample_count > 0
             or complete_fill_order_event_count > 0,
         },
@@ -5413,11 +5583,15 @@ def _source_activity_stage_diagnostics(
 ) -> dict[str, object]:
     stage_presence = _as_mapping(source_activity.get("stage_presence"))
     decision_count = _safe_int(source_activity.get("decision_count"))
+    target_plan_source_decision_count = _safe_int(
+        source_activity.get("target_plan_source_decision_count")
+    )
     execution_count = _safe_int(
         source_activity.get("submitted_order_count")
         or source_activity.get("execution_count")
     )
     tca_sample_count = _safe_int(source_activity.get("tca_sample_count"))
+    source_window_count = _safe_int(source_activity.get("source_window_count"))
     complete_fill_order_event_count = _safe_int(
         source_activity.get("complete_fill_order_event_count")
     )
@@ -5431,6 +5605,9 @@ def _source_activity_stage_diagnostics(
     source_tca_present = bool(
         stage_presence.get("runtime_execution_economics_present")
     ) or (tca_sample_count > 0 or complete_fill_order_event_count > 0)
+    source_windows_present = bool(stage_presence.get("source_windows_present")) or (
+        source_window_count > 0
+    )
     runtime_ledger_buckets_present = runtime_bucket_count > 0
     blockers = _unique_text_items(
         [
@@ -5447,12 +5624,16 @@ def _source_activity_stage_diagnostics(
     return {
         "schema_version": "torghut.paper-route-source-activity-stage-diagnostics.v1",
         "source_decisions_present": source_decisions_present,
+        "target_plan_source_decisions_present": target_plan_source_decision_count > 0,
         "source_executions_present": source_executions_present,
         "source_tca_present": source_tca_present,
+        "source_windows_present": source_windows_present,
         "runtime_ledger_buckets_present": runtime_ledger_buckets_present,
         "decision_count": decision_count,
+        "target_plan_source_decision_count": target_plan_source_decision_count,
         "execution_count": execution_count,
         "tca_sample_count": tca_sample_count,
+        "source_window_count": source_window_count,
         "runtime_ledger_bucket_count": runtime_bucket_count,
         "blockers": blockers,
     }
