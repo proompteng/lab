@@ -1143,7 +1143,7 @@ class TestLiveConfigManifestContract(TestCase):
 
         self.assertEqual(spec.get("schedule"), "*/5 * * * *")
         self.assertEqual(spec.get("concurrencyPolicy"), "Forbid")
-        self.assertEqual(job_spec.get("activeDeadlineSeconds"), 240)
+        self.assertEqual(job_spec.get("activeDeadlineSeconds"), 900)
         self.assertEqual(pod_spec.get("serviceAccountName"), "torghut-runtime")
         self.assertEqual(
             pod_spec.get("nodeSelector"),
@@ -1186,8 +1186,8 @@ class TestLiveConfigManifestContract(TestCase):
         args = "\n".join(str(item) for item in container.get("args", []))
         self.assertIn("scripts/refresh_execution_tca_metrics.py", args)
         self.assertIn("--older-than-seconds 900", args)
-        self.assertIn("--batch-size 100", args)
-        self.assertIn("--max-batches 3", args)
+        self.assertIn("--batch-size 1000", args)
+        self.assertIn("--max-batches 5", args)
         self.assertIn("--apply", args)
 
     def test_paper_account_flatten_cronjob_can_clean_dirty_paper_proof_account(
