@@ -205,6 +205,35 @@ def _text_list(value: object) -> list[str]:
     return items
 
 
+def _source_offsets(value: object) -> list[dict[str, object]]:
+    raw_items: Sequence[object]
+    if isinstance(value, Mapping):
+        raw_items = [value]
+    else:
+        raw_items = _sequence(value)
+    offsets: list[dict[str, object]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for item in raw_items:
+        offset = _mapping(item)
+        topic = _text(offset.get("topic"))
+        partition = offset.get("partition")
+        source_offset = offset.get("offset")
+        if topic is None or partition is None or source_offset is None:
+            continue
+        key = (topic, str(partition), str(source_offset))
+        if key in seen:
+            continue
+        offsets.append(
+            {
+                "topic": topic,
+                "partition": partition,
+                "offset": source_offset,
+            }
+        )
+        seen.add(key)
+    return offsets
+
+
 def _extend_unique(items: list[str], additions: Sequence[str]) -> None:
     for item in additions:
         text = _text(item)
@@ -1011,6 +1040,22 @@ def _runtime_import_target_materialization_ref(
                 readback.get("evidence_grade_runtime_ledger_bucket_refs")
             ),
             "source_refs": _text_list(readback.get("source_refs")),
+            "source_window_ids": _text_list(
+                readback.get("runtime_ledger_source_window_ids")
+            )
+            or _text_list(readback.get("source_window_ids")),
+            "execution_order_event_ids": _text_list(
+                readback.get("runtime_ledger_execution_order_event_ids")
+            )
+            or _text_list(readback.get("execution_order_event_ids")),
+            "execution_ids": _text_list(readback.get("execution_ids")),
+            "trade_decision_ids": _text_list(readback.get("trade_decision_ids")),
+            "source_offsets": _source_offsets(readback.get("source_offsets")),
+            "authority_classes": _text_list(readback.get("authority_classes")),
+            "source_materializations": _text_list(
+                readback.get("source_materializations")
+            ),
+            "cost_basis_counts": dict(_mapping(readback.get("cost_basis_counts"))),
         }
         profit_distance_readback = _mapping(
             readback.get("runtime_ledger_profit_distance_readback")
@@ -1245,8 +1290,36 @@ def _runtime_import_readback_blockers(
         readback.get("promotion_decision_refs")
     ):
         blockers.append("runtime_window_import_promotion_decision_ref_readback_missing")
-    if profit_proof_count > 0 and not _text_list(readback.get("source_refs")):
-        blockers.append("runtime_window_import_readback_source_refs_missing")
+    if profit_proof_count > 0:
+        if not _text_list(readback.get("source_refs")):
+            blockers.append("runtime_window_import_readback_source_refs_missing")
+            blockers.append("runtime_ledger_source_refs_missing")
+        if not (
+            _text_list(readback.get("runtime_ledger_source_window_ids"))
+            or _text_list(readback.get("source_window_ids"))
+        ):
+            blockers.append("runtime_ledger_source_window_missing")
+        if not (
+            _text_list(readback.get("runtime_ledger_execution_order_event_ids"))
+            or _text_list(readback.get("execution_order_event_ids"))
+        ):
+            blockers.append("runtime_ledger_execution_order_event_refs_missing")
+        if not _text_list(readback.get("execution_ids")):
+            blockers.append("runtime_ledger_execution_refs_missing")
+        if not _text_list(readback.get("trade_decision_ids")):
+            blockers.append("runtime_ledger_trade_decision_refs_missing")
+        if not _source_offsets(readback.get("source_offsets")):
+            blockers.append("runtime_ledger_source_offsets_missing")
+        if not _text_list(readback.get("source_materializations")):
+            blockers.append("runtime_ledger_source_materialization_missing")
+        if not _text_list(readback.get("authority_classes")):
+            blockers.append("runtime_ledger_authority_class_missing")
+        cost_amount = _decimal(readback.get("runtime_ledger_cost_amount"))
+        if cost_amount is None or (
+            not _mapping(readback.get("cost_basis_counts"))
+            and not _mapping(readback.get("runtime_ledger_cost_basis_counts"))
+        ):
+            blockers.append("runtime_ledger_explicit_costs_missing")
     return list(dict.fromkeys(blockers))
 
 

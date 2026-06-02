@@ -858,6 +858,38 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         )
         self.assertFalse(_runtime_ledger_bucket_profit_proof_present(missing_marker))
 
+    def test_runtime_ledger_profit_proof_requires_explicit_cost_basis_and_amount(
+        self,
+    ) -> None:
+        for bucket in (
+            _complete_runtime_ledger_bucket(cost_amount=None),
+            _complete_runtime_ledger_bucket(cost_basis_counts={}, cost_basis=None),
+            _complete_runtime_ledger_bucket(
+                cost_basis_counts={"modeled_paper_cost_budget": 2},
+                cost_basis=None,
+            ),
+            _complete_runtime_ledger_bucket(
+                cost_basis_counts={"broker_reported": "not-a-number"},
+                cost_basis=None,
+            ),
+        ):
+            blockers = _runtime_ledger_bucket_profit_proof_blockers(bucket)
+            self.assertIn("runtime_ledger_explicit_costs_missing", blockers)
+            self.assertFalse(_runtime_ledger_bucket_profit_proof_present(bucket))
+
+        post_cost_basis_bucket = _complete_runtime_ledger_bucket(
+            cost_basis_counts={},
+            post_cost_basis_counts={"broker_reported": 2},
+            cost_basis=None,
+        )
+        self.assertNotIn(
+            "runtime_ledger_explicit_costs_missing",
+            _runtime_ledger_bucket_profit_proof_blockers(post_cost_basis_bucket),
+        )
+        self.assertTrue(
+            _runtime_ledger_bucket_profit_proof_present(post_cost_basis_bucket)
+        )
+
     def test_runtime_ledger_profit_proof_blocks_old_exact_replay_empty_blockers(
         self,
     ) -> None:
@@ -1580,16 +1612,8 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                         "source_decision_mode_counts": {"strategy_signal_paper": 2},
                         "source_window_start": "2026-03-06T14:30:00+00:00",
                         "source_window_end": "2026-03-06T15:00:00+00:00",
-                        "source_refs": [
-                            "postgres:trade_decisions",
-                            "postgres:executions",
-                            "postgres:execution_order_events",
-                        ],
-                        "source_row_counts": {
-                            "trade_decisions": 2,
-                            "executions": 2,
-                            "execution_order_events": 4,
-                        },
+                        "source_refs": [],
+                        "source_row_counts": {},
                         "profit_proof_eligible": True,
                     },
                 )
@@ -1615,6 +1639,10 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         )
         self.assertIn(
             "runtime_ledger_execution_order_event_refs_missing",
+            metadata["runtime_ledger_durable_bucket_profit_proof_blockers"],
+        )
+        self.assertIn(
+            "runtime_ledger_source_refs_missing",
             metadata["runtime_ledger_durable_bucket_profit_proof_blockers"],
         )
         self.assertEqual(rows[0]["post_cost_promotion_eligible"], False)
@@ -1742,6 +1770,46 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(rows[0]["post_cost_promotion_eligible"], False)
         self.assertIn(
             "runtime_ledger_execution_order_event_refs_missing",
+            rows[0]["runtime_ledger_blockers"],
+        )
+
+    def test_runtime_ledger_tca_rows_from_source_dsn_block_no_source_refs(
+        self,
+    ) -> None:
+        cursor = _SourceLedgerCursor()
+        row = list(cursor._results[0][0])
+        payload = dict(cast(Mapping[str, object], row[-1]))
+        payload.update({"source_refs": [], "source_row_counts": {}})
+        row[-1] = payload
+        cursor._results[0] = [tuple(row)]
+        connection = _SourceLedgerConnection(cursor)
+        window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc)
+
+        with patch(
+            "scripts.import_hypothesis_runtime_windows.psycopg.connect",
+            return_value=connection,
+        ):
+            rows, metadata = _runtime_ledger_tca_rows_from_source_dsn(
+                dsn="postgresql://source",
+                candidate_id="H-TSMOM-LIQ-01",
+                hypothesis_id="H-TSMOM-LIQ-01",
+                observed_stage="paper",
+                strategy_names=["intraday-tsmom-profit-v3"],
+                account_label="TORGHUT_SIM",
+                window_start=window_start,
+                window_end=window_end,
+            )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(metadata["runtime_ledger_source_bucket_profit_proof_count"], 0)
+        self.assertIn(
+            "runtime_ledger_source_refs_missing",
+            metadata["runtime_ledger_source_bucket_profit_proof_blockers"],
+        )
+        self.assertEqual(rows[0]["post_cost_promotion_eligible"], False)
+        self.assertIn(
+            "runtime_ledger_source_refs_missing",
             rows[0]["runtime_ledger_blockers"],
         )
 
@@ -5230,6 +5298,62 @@ class TestImportHypothesisRuntimeWindows(TestCase):
                 "runtime_ledger_pnl_basis_not_runtime_ledger",
                 "runtime_ledger_source_materialization_missing",
             ],
+        )
+
+    def test_runtime_ledger_tca_materialization_counts_only_source_backed_proof(
+        self,
+    ) -> None:
+        source_backed_bucket = _complete_runtime_ledger_bucket(
+            source_materialization="source_execution_lifecycle",
+            authoritative=True,
+        )
+        exact_replay_artifact = _complete_runtime_ledger_bucket(
+            source_refs=[],
+            source_row_counts={},
+            source_window_ids=[],
+            trade_decision_ids=[],
+            execution_ids=[],
+            execution_order_event_ids=[],
+            source_offsets=[],
+            source_materialization="exact_replay_artifact",
+            authority_class="exact_replay_artifact_only_not_live",
+            authority_reason="exact_replay_artifact_not_runtime_proof",
+            pnl_derivation="exact_replay_artifact_only_not_live",
+            blockers=["exact_replay_artifact_not_runtime_proof"],
+        )
+
+        metadata = _runtime_ledger_tca_materialization_metadata(
+            [
+                {
+                    "authoritative": True,
+                    "authority_reason": "source_execution_runtime_ledger_materialized",
+                    "runtime_ledger_bucket": source_backed_bucket,
+                },
+                {
+                    "authoritative": False,
+                    "authority_reason": "exact_replay_artifact_not_runtime_proof",
+                    "pnl_derivation": "exact_replay_artifact_only_not_live",
+                    "runtime_ledger_blockers": [
+                        "exact_replay_artifact_not_runtime_proof"
+                    ],
+                    "runtime_ledger_bucket": exact_replay_artifact,
+                },
+            ]
+        )
+
+        self.assertEqual(metadata["runtime_ledger_tca_runtime_bucket_row_count"], 2)
+        self.assertEqual(metadata["runtime_ledger_tca_profit_proof_count"], 1)
+        self.assertEqual(
+            metadata["runtime_ledger_source_execution_materialized_bucket_count"],
+            1,
+        )
+        self.assertIn(
+            "exact_replay_artifact_not_runtime_proof",
+            metadata["runtime_ledger_materialization_blockers"],
+        )
+        self.assertIn(
+            "runtime_ledger_source_refs_missing",
+            metadata["runtime_ledger_profit_proof_blockers"],
         )
 
     def test_build_realized_strategy_pnl_rows_normalizes_nested_runtime_payloads(

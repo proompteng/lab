@@ -284,6 +284,29 @@ def _runtime_import(
             ]
             if authoritative
             else [],
+            "runtime_ledger_source_window_ids": ["source-window-1"]
+            if authoritative
+            else [],
+            "runtime_ledger_execution_order_event_ids": ["event-1"]
+            if authoritative
+            else [],
+            "execution_ids": ["execution-1"] if authoritative else [],
+            "trade_decision_ids": ["decision-1"] if authoritative else [],
+            "source_offsets": [
+                {"topic": "alpaca.trade_updates", "partition": 0, "offset": 42}
+            ]
+            if authoritative
+            else [],
+            "runtime_ledger_cost_amount": "25" if authoritative else "0",
+            "authority_classes": ["runtime_order_feed_execution_source"]
+            if authoritative
+            else [],
+            "source_materializations": ["execution_order_events"]
+            if authoritative
+            else [],
+            "cost_basis_counts": {"broker_reported_commission_and_fees": 1}
+            if authoritative
+            else {},
             "runtime_ledger_profit_distance_readback": {
                 "schema_version": "torghut.runtime-ledger-profit-distance-readback.v1",
                 "required_daily_net_pnl": "500",
@@ -943,6 +966,27 @@ class TestRuntimeLedgerProofPacket(TestCase):
         self.assertIn(
             "runtime_window_import_replay_or_artifact_derivation_not_authority",
             result["authority_blockers"],
+        )
+
+    def test_source_offsets_accept_mapping_and_skip_invalid_or_duplicate_values(
+        self,
+    ) -> None:
+        self.assertEqual(
+            packet._source_offsets(
+                {"topic": "alpaca.trade_updates", "partition": 0, "offset": 42}
+            ),
+            [{"topic": "alpaca.trade_updates", "partition": 0, "offset": 42}],
+        )
+        self.assertEqual(
+            packet._source_offsets(
+                [
+                    {"topic": "alpaca.trade_updates", "partition": 0, "offset": 42},
+                    {"topic": "alpaca.trade_updates", "partition": 0, "offset": 42},
+                    {"topic": "alpaca.trade_updates", "offset": 43},
+                    "alpaca.trade_updates:0:44",
+                ]
+            ),
+            [{"topic": "alpaca.trade_updates", "partition": 0, "offset": 42}],
         )
 
     def test_authority_packet_fails_each_mechanical_authority_floor(self) -> None:
@@ -2275,6 +2319,67 @@ class TestRuntimeLedgerProofPacket(TestCase):
             result["promotion_authority"]["blocking_reasons"],
         )
 
+    def test_packet_blocks_authority_when_runtime_import_readback_lacks_row_refs(
+        self,
+    ) -> None:
+        runtime_import = _runtime_import()
+        target = runtime_import["imports"][0]["summary"][
+            "runtime_materialization_target"
+        ]
+        assert isinstance(target, dict)
+        readback = target["readback"]
+        assert isinstance(readback, dict)
+        readback["runtime_ledger_source_window_ids"] = []
+        readback["runtime_ledger_execution_order_event_ids"] = []
+        readback["execution_ids"] = []
+        readback["trade_decision_ids"] = []
+        readback["source_offsets"] = []
+        readback["source_materializations"] = []
+        readback["authority_classes"] = []
+        readback["runtime_ledger_cost_amount"] = None
+        readback["cost_basis_counts"] = {}
+
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            proof_mode="authority",
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=runtime_import,
+            completion_status=_completion(),
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        materialization = result["evidence"]["runtime_window_import"]["materialization"]
+        self.assertFalse(result["ok"])
+        self.assertFalse(
+            result["checks"]["runtime_window_import_materialization"]["passed"]
+        )
+        self.assertIn(
+            "runtime_ledger_source_window_missing", materialization["blockers"]
+        )
+        self.assertIn(
+            "runtime_ledger_execution_order_event_refs_missing",
+            materialization["blockers"],
+        )
+        self.assertIn(
+            "runtime_ledger_execution_refs_missing", materialization["blockers"]
+        )
+        self.assertIn(
+            "runtime_ledger_trade_decision_refs_missing", materialization["blockers"]
+        )
+        self.assertIn(
+            "runtime_ledger_source_offsets_missing", materialization["blockers"]
+        )
+        self.assertIn(
+            "runtime_ledger_source_materialization_missing",
+            materialization["blockers"],
+        )
+        self.assertIn(
+            "runtime_ledger_authority_class_missing", materialization["blockers"]
+        )
+        self.assertIn(
+            "runtime_ledger_explicit_costs_missing", materialization["blockers"]
+        )
+
     def test_packet_does_not_treat_promotion_only_import_metadata_as_unmaterialized(
         self,
     ) -> None:
@@ -2839,7 +2944,31 @@ class TestRuntimeLedgerProofPacket(TestCase):
                             "evidence_grade_runtime_ledger_bucket_refs": [
                                 "strategy_runtime_ledger_buckets:runtime-ledger-bucket-1"
                             ],
-                            "source_refs": ["postgres:executions"],
+                            "source_refs": [
+                                "postgres:trade_decisions",
+                                "postgres:executions",
+                                "postgres:execution_order_events",
+                                "postgres:order_feed_source_windows",
+                            ],
+                            "runtime_ledger_source_window_ids": ["source-window-1"],
+                            "runtime_ledger_execution_order_event_ids": ["event-1"],
+                            "execution_ids": ["execution-1"],
+                            "trade_decision_ids": ["decision-1"],
+                            "source_offsets": [
+                                {
+                                    "topic": "alpaca.trade_updates",
+                                    "partition": 0,
+                                    "offset": 42,
+                                }
+                            ],
+                            "runtime_ledger_cost_amount": "1250",
+                            "cost_basis_counts": {
+                                "alpaca_2026_equity_fee_schedule": 300
+                            },
+                            "authority_classes": [
+                                "runtime_order_feed_execution_source"
+                            ],
+                            "source_materializations": ["execution_order_events"],
                         },
                     },
                 },

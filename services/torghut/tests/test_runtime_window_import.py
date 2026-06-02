@@ -41,6 +41,7 @@ from app.trading.runtime_window_import import (
     _runtime_ledger_bucket_blockers,
     _runtime_ledger_bucket_payloads,
     _runtime_ledger_daily_summary_from_observed_buckets,
+    _runtime_window_import_readback_from_rows,
     _runtime_window_import_proof_blockers,
     build_observed_runtime_buckets,
     build_regular_session_buckets,
@@ -79,6 +80,7 @@ def _runtime_ledger_bucket(**overrides: object) -> dict[str, object]:
         "pnl_basis": "realized_strategy_pnl_after_explicit_costs",
         "execution_policy_hash_counts": {"policy-sha": 2},
         "cost_model_hash_counts": {"cost-sha": 2},
+        "cost_basis_counts": {"broker_reported_commission_and_fees": 2},
         "lineage_hash_counts": {"lineage-sha": 2},
         "source_decision_mode_counts": {"strategy_signal_paper": 2},
         "profit_proof_eligible": True,
@@ -845,7 +847,11 @@ class TestRuntimeWindowImport(TestCase):
                 )
 
                 self.assertEqual(
-                    blockers, ["runtime_ledger_cost_basis_non_promotion_grade"]
+                    blockers,
+                    [
+                        "runtime_ledger_explicit_costs_missing",
+                        "runtime_ledger_cost_basis_non_promotion_grade",
+                    ],
                 )
 
         self.assertFalse(
@@ -984,6 +990,85 @@ class TestRuntimeWindowImport(TestCase):
         self.assertFalse(_persisted_runtime_ledger_bucket_evidence_grade(row))
         row.payload_json = source_backed_payload
         self.assertTrue(_persisted_runtime_ledger_bucket_evidence_grade(row))
+
+    def test_runtime_window_import_readback_normalizes_source_offsets(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 3, 6, 15, 0, tzinfo=timezone.utc)
+        good_payload = _runtime_ledger_bucket(
+            source_offsets={
+                "topic": "alpaca.trade_updates",
+                "partition": 0,
+                "offset": 100,
+            },
+            cost_basis_counts={"broker_reported_commission_and_fees": "2"},
+        )
+        malformed_payload = _runtime_ledger_bucket(
+            source_offsets=[
+                "alpaca.trade_updates:0:100",
+                {"topic": "alpaca.trade_updates", "offset": 101},
+                {
+                    "topic": "alpaca.trade_updates",
+                    "partition": 0,
+                    "offset": 100,
+                },
+            ],
+            cost_basis_counts={"broker_reported_commission_and_fees": "not-a-number"},
+        )
+        ledger_rows = [
+            StrategyRuntimeLedgerBucket(
+                run_id="readback-source-offsets",
+                candidate_id="cand",
+                hypothesis_id="hyp",
+                observed_stage="paper",
+                bucket_started_at=window_start,
+                bucket_ended_at=window_end,
+                account_label="TORGHUT_SIM",
+                runtime_strategy_name="strategy",
+                fill_count=2,
+                decision_count=2,
+                submitted_order_count=2,
+                closed_trade_count=1,
+                open_position_count=0,
+                filled_notional=Decimal("200"),
+                gross_strategy_pnl=Decimal("1"),
+                cost_amount=Decimal("0.20"),
+                net_strategy_pnl_after_costs=Decimal("0.80"),
+                post_cost_expectancy_bps=Decimal("40"),
+                pnl_basis="realized_strategy_pnl_after_explicit_costs",
+                ledger_schema_version="torghut.runtime-ledger-bucket.v1",
+                execution_policy_hash_counts={"policy-sha": 2},
+                cost_model_hash_counts={"cost-sha": 2},
+                lineage_hash_counts={"lineage-sha": 2},
+                blockers_json=[],
+                payload_json=payload,
+            )
+            for payload in (good_payload, malformed_payload)
+        ]
+
+        readback = _runtime_window_import_readback_from_rows(
+            run_id="readback-source-offsets",
+            candidate_id="cand",
+            hypothesis_id="hyp",
+            observed_stage="paper",
+            window_start=window_start,
+            window_end=window_end,
+            metric_rows=[],
+            promotion_rows=[],
+            ledger_rows=ledger_rows,
+            runtime_ledger_daily_summary={},
+            proof_blocker_codes=[],
+        )
+
+        self.assertEqual(
+            readback["source_offsets"],
+            [{"topic": "alpaca.trade_updates", "partition": 0, "offset": 100}],
+        )
+        self.assertEqual(
+            readback["cost_basis_counts"],
+            {"broker_reported_commission_and_fees": 2},
+        )
 
     def test_runtime_ledger_bucket_payloads_accept_single_bucket_payload(
         self,
@@ -2313,6 +2398,36 @@ class TestRuntimeWindowImport(TestCase):
             "runtime_ledger_authority_class_missing",
             _runtime_ledger_bucket_blockers(bucket),
         )
+
+    def test_runtime_ledger_bucket_requires_explicit_cost_basis_and_amount(
+        self,
+    ) -> None:
+        for bucket in (
+            _runtime_ledger_bucket(cost_amount=None),
+            _runtime_ledger_bucket(cost_basis_counts={}, cost_basis=None),
+            _runtime_ledger_bucket(
+                cost_basis_counts={"modeled_paper_cost_budget": 2},
+                cost_basis=None,
+            ),
+            _runtime_ledger_bucket(cost_basis="modeled_paper_cost_budget"),
+            _runtime_ledger_bucket(
+                cost_basis_counts={"broker_reported_commission_and_fees": "bad"},
+                cost_basis=None,
+            ),
+        ):
+            self.assertIn(
+                "runtime_ledger_explicit_costs_missing",
+                _runtime_ledger_bucket_blockers(bucket),
+            )
+
+        blockers = _runtime_ledger_bucket_blockers(
+            _runtime_ledger_bucket(
+                cost_basis_counts={},
+                post_cost_basis_counts={"broker_reported_commission_and_fees": 2},
+                cost_basis=None,
+            )
+        )
+        self.assertNotIn("runtime_ledger_explicit_costs_missing", blockers)
 
     def test_persist_observed_runtime_windows_allows_authority_grade_live_ledger(
         self,
