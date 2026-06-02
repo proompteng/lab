@@ -305,6 +305,17 @@ def _runtime_ledger_proof_packet(
         "capital_promotion_allowed": allowed,
         "final_promotion_allowed": allowed,
         "evidence_collection_ok": False,
+        "authority_blockers": blocking_reasons,
+        "blockers": blocking_reasons,
+        "target": {
+            "proof_mode": "authority",
+            "final_authority": True,
+            "source_backed_runtime_ledger_proof_required": True,
+            "non_empty_runtime_ledger_source_refs_required": True,
+            "min_runtime_ledger_trading_days": 20,
+            "min_runtime_ledger_net_pnl_after_costs": "10000",
+            "min_runtime_ledger_daily_net_pnl_after_costs": "500",
+        },
         "next_action": "none"
         if allowed
         else "collect_or_improve_post_cost_runtime_profit_evidence",
@@ -559,10 +570,20 @@ class TestVerifyTradingReadiness(TestCase):
         self.assertFalse(
             result["runtime_ledger_proof_packet"]["evidence_collection_ok"]
         )
-        self.assertTrue(result["runtime_ledger_proof_packet"]["promotion_allowed"])
-        self.assertTrue(
-            result["runtime_ledger_proof_packet"]["final_promotion_allowed"]
+        packet_summary = result["runtime_ledger_proof_packet"]
+        self.assertTrue(packet_summary["promotion_allowed"])
+        self.assertTrue(packet_summary["final_promotion_allowed"])
+        self.assertEqual(packet_summary["min_runtime_ledger_trading_days"], 20)
+        self.assertEqual(
+            packet_summary["min_runtime_ledger_daily_net_pnl_after_costs"], "500"
         )
+        self.assertEqual(
+            packet_summary["min_runtime_ledger_net_pnl_after_costs"], "10000"
+        )
+        self.assertTrue(packet_summary["source_backed_runtime_ledger_proof_required"])
+        self.assertTrue(packet_summary["non_empty_runtime_ledger_source_refs_required"])
+        self.assertEqual(packet_summary["blockers"], [])
+        self.assertEqual(packet_summary["authority_blockers"], [])
 
     def test_tigerbeetle_parity_can_be_required_as_accounting_only_gate(
         self,
@@ -765,6 +786,31 @@ class TestVerifyTradingReadiness(TestCase):
         self.assertEqual(observed["proof_mode"], "authority")
         self.assertEqual(observed["proof_mode_contract"], {})
         self.assertFalse(observed["mode_contract_allows_authority"])
+        self.assertIn(
+            "runtime_ledger_proof_packet_authority",
+            result["failed_checks"],
+        )
+
+    def test_runtime_ledger_proof_packet_requires_authority_target_contract(
+        self,
+    ) -> None:
+        packet = _runtime_ledger_proof_packet(allowed=True)
+        target = packet["target"]
+        assert isinstance(target, dict)
+        target["min_runtime_ledger_trading_days"] = 1
+        target["source_backed_runtime_ledger_proof_required"] = False
+
+        result = evaluate_trading_readiness(
+            _ready_status(),
+            runtime_ledger_proof_packet=packet,
+            require_runtime_ledger_proof_packet=True,
+        )
+
+        self.assertFalse(result["ok"])
+        observed = result["checks"]["runtime_ledger_proof_packet_authority"]["observed"]
+        self.assertFalse(observed["authority_target_contract_ok"])
+        self.assertEqual(observed["min_runtime_ledger_trading_days"], 1)
+        self.assertFalse(observed["source_backed_runtime_ledger_proof_required"])
         self.assertIn(
             "runtime_ledger_proof_packet_authority",
             result["failed_checks"],

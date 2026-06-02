@@ -742,6 +742,19 @@ class TestRuntimeLedgerProofPacket(TestCase):
         self.assertEqual(result["schema_version"], packet.SCHEMA_VERSION)
         self.assertEqual(result["verdict"], "promotion_authority_allowed")
         self.assertEqual(result["promotion_authority"]["blocking_reasons"], [])
+        self.assertEqual(result["blockers"], [])
+        self.assertEqual(result["target"]["proof_mode"], "authority")
+        self.assertEqual(result["target"]["min_runtime_ledger_trading_days"], 20)
+        self.assertEqual(
+            result["target"]["min_runtime_ledger_daily_net_pnl_after_costs"], "500"
+        )
+        self.assertEqual(
+            result["target"]["min_runtime_ledger_net_pnl_after_costs"], "10000"
+        )
+        self.assertTrue(result["target"]["source_backed_runtime_ledger_proof_required"])
+        self.assertTrue(
+            result["target"]["non_empty_runtime_ledger_source_refs_required"]
+        )
         self.assertEqual(result["candidate"]["hypothesis_id"], "H-PAIRS-01")
         self.assertEqual(
             result["checks"]["runtime_ledger_post_cost_profit_target"]["observed"][
@@ -1157,6 +1170,13 @@ class TestRuntimeLedgerProofPacket(TestCase):
             ["runtime_ledger_proof_mode_not_authority"],
         )
         self.assertFalse(result["target"]["promotion_allowed"])
+        self.assertFalse(
+            result["target"]["source_backed_runtime_ledger_proof_required"]
+        )
+        self.assertFalse(
+            result["target"]["non_empty_runtime_ledger_source_refs_required"]
+        )
+        self.assertEqual(result["target"]["min_runtime_ledger_trading_days"], 1)
         self.assertEqual(
             result["post_cost_proof_authority"]["blocking_reasons"],
             ["runtime_ledger_proof_mode_not_authority"],

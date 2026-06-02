@@ -3131,6 +3131,9 @@ def build_runtime_ledger_proof_packet(
             "promotion_allowed": False,
             "capital_promotion_allowed": False,
             "final_promotion_allowed": False,
+            "source_backed_runtime_ledger_proof_required": final_authority_mode,
+            "non_empty_runtime_ledger_source_refs_required": final_authority_mode,
+            "runtime_ledger_import_readback_required": final_authority_mode,
             "min_runtime_ledger_net_pnl_after_costs": _decimal_text(
                 min_runtime_ledger_net_pnl
             ),
