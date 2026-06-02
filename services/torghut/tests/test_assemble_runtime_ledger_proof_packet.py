@@ -1135,6 +1135,18 @@ class TestRuntimeLedgerProofPacket(TestCase):
         )
 
         self.assertEqual(result["proof_mode"], "smoke")
+        self.assertEqual(
+            result["proof_mode_contract"],
+            {
+                "proof_mode": "smoke",
+                "default_proof_mode": "smoke",
+                "authority_scope": "plumbing_only",
+                "mode_can_grant_final_authority": False,
+                "mode_can_grant_promotion_authority": False,
+                "requires_explicit_authority_mode_for_final_promotion": True,
+                "implicit_default_final_authority": False,
+            },
+        )
         self.assertTrue(result["ok"], result)
         self.assertFalse(result["final_authority_ok"])
         self.assertFalse(result["promotion_allowed"])
@@ -1378,6 +1390,13 @@ class TestRuntimeLedgerProofPacket(TestCase):
 
         self.assertTrue(result["ok"], result)
         self.assertEqual(result["proof_mode"], "probation")
+        self.assertEqual(
+            result["proof_mode_contract"]["authority_scope"],
+            "bounded_evidence_collection_only",
+        )
+        self.assertFalse(
+            result["proof_mode_contract"]["mode_can_grant_final_authority"]
+        )
         self.assertEqual(
             result["verdict"],
             "probation_proof_satisfied_evidence_collection_only",
@@ -3373,6 +3392,12 @@ class TestRuntimeLedgerProofPacket(TestCase):
             self.assertEqual(exit_code, 0)
             payload = json.loads(output_path.read_text(encoding="utf-8"))
             self.assertEqual(payload["proof_mode"], "smoke")
+            self.assertEqual(
+                payload["proof_mode_contract"]["authority_scope"], "plumbing_only"
+            )
+            self.assertFalse(
+                payload["proof_mode_contract"]["implicit_default_final_authority"]
+            )
             self.assertEqual(
                 payload["verdict"],
                 "smoke_proof_satisfied_evidence_collection_only",

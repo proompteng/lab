@@ -94,6 +94,27 @@ class RuntimeLedgerProofPolicy:
             )
         return payload
 
+    def mode_contract(
+        self,
+        proof_mode: str | None = None,
+    ) -> dict[str, object]:
+        mode = normalize_runtime_ledger_proof_mode(proof_mode or self.proof_mode)
+        authority_scope = {
+            "smoke": "plumbing_only",
+            "probation": "bounded_evidence_collection_only",
+            "authority": "final_promotion_authority_candidate",
+        }[mode]
+        mode_can_grant_final_authority = mode == "authority"
+        return {
+            "proof_mode": mode,
+            "default_proof_mode": DEFAULT_RUNTIME_LEDGER_PROOF_MODE,
+            "authority_scope": authority_scope,
+            "mode_can_grant_final_authority": mode_can_grant_final_authority,
+            "mode_can_grant_promotion_authority": mode_can_grant_final_authority,
+            "requires_explicit_authority_mode_for_final_promotion": True,
+            "implicit_default_final_authority": False,
+        }
+
     def targets_for_mode(self, proof_mode: str) -> dict[str, object]:
         mode = normalize_runtime_ledger_proof_mode(proof_mode)
         min_days = self.min_trading_days
