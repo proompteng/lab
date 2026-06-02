@@ -26,8 +26,8 @@ from app.trading.discovery.microstructure_prefilter import (
 from app.trading.discovery.replay_tape import ReplayTapeManifest
 from app.trading.models import SignalEnvelope
 
-FAST_REPLAY_PREVIEW_SCHEMA_VERSION = "torghut.fast-replay-preview.v7"
-FAST_REPLAY_PREVIEW_ROW_SCHEMA_VERSION = "torghut.fast-replay-preview-row.v8"
+FAST_REPLAY_PREVIEW_SCHEMA_VERSION = "torghut.fast-replay-preview.v8"
+FAST_REPLAY_PREVIEW_ROW_SCHEMA_VERSION = "torghut.fast-replay-preview-row.v9"
 FAST_REPLAY_PROOF_SEMANTICS_LABEL = (
     "preview_ranking_only_exact_replay_and_runtime_ledger_required"
 )
@@ -43,6 +43,8 @@ FAST_REPLAY_WHITEPAPER_MECHANISMS = (
     "macro_news_ofi_stress_veto_if_present",
     "square_root_impact_capacity_prefilter",
     "conformal_tail_risk_prefilter",
+    "bootstrap_lower_percentile_utility_prefilter",
+    "implementation_risk_preview_exact_runtime_parity_reporting",
 )
 FAST_REPLAY_FRONTIER_IDENTITY_SCHEMA_VERSION = (
     "torghut.fast-replay-frontier-identity.v1"
@@ -114,6 +116,8 @@ class FastReplayPreviewRow:
     replay_tape_cache_identity: Mapping[str, Any] = field(
         default_factory=lambda: cast(dict[str, Any], {})
     )
+    robust_lower_percentile_post_cost_utility_bps: Decimal = Decimal("0")
+    bootstrap_lower_percentile_post_cost_utility_bps: Decimal = Decimal("0")
 
     def to_payload(self) -> dict[str, Any]:
         observed_post_cost_expectancy_bps = _observed_post_cost_expectancy_bps(self)
@@ -135,6 +139,12 @@ class FastReplayPreviewRow:
         )
         lineage_blockers = _lineage_blockers_for_row(self)
         risk_flags = _risk_flags_for_row(self, lineage_blockers=lineage_blockers)
+        ranking_only_reasons = _ranking_only_reasons_for_row(
+            self, lineage_blockers=lineage_blockers
+        )
+        risk_veto_reasons = _risk_veto_reasons_for_row(
+            self, risk_flags=risk_flags, lineage_blockers=lineage_blockers
+        )
         prefilter_capacity_lineage = _mapping(
             self.microstructure_prefilter.get("impact_capacity_lineage")
         )
@@ -146,6 +156,13 @@ class FastReplayPreviewRow:
             "candidate_spec_id": self.candidate_spec_id,
             "rank": self.rank,
             "preview_score": str(self.preview_score),
+            "preview_rank_score": str(self.preview_score),
+            "robust_lower_percentile_post_cost_utility_bps": str(
+                self.robust_lower_percentile_post_cost_utility_bps
+            ),
+            "bootstrap_lower_percentile_post_cost_utility_bps": str(
+                self.bootstrap_lower_percentile_post_cost_utility_bps
+            ),
             "selected": self.selected,
             "selection_reason": self.selection_reason,
             "matched_row_count": self.matched_row_count,
@@ -174,6 +191,11 @@ class FastReplayPreviewRow:
             ),
             "exploration_score": str(self.exploration_score),
             "frontier_bucket": self.frontier_bucket,
+            "ranking_only_reasons": list(ranking_only_reasons),
+            "risk_veto_reasons": list(risk_veto_reasons),
+            "exact_replay_required": True,
+            "runtime_ledger_required": True,
+            "source_backed_runtime_ledger_required": True,
             "discovery_stage_metadata": discovery_stage_metadata,
             "candidate_frontier_hash": self.candidate_frontier_hash,
             "exact_replay_frontier_key": self.exact_replay_frontier_key,
@@ -189,6 +211,14 @@ class FastReplayPreviewRow:
                 "reason_code": self.selection_reason,
                 "blockers": list(frontier_selection_blockers),
                 "rank": self.rank,
+                "preview_rank_score": str(self.preview_score),
+                "robust_lower_percentile_post_cost_utility_bps": str(
+                    self.robust_lower_percentile_post_cost_utility_bps
+                ),
+                "ranking_only_reasons": list(ranking_only_reasons),
+                "risk_veto_reasons": list(risk_veto_reasons),
+                "exact_replay_required": True,
+                "runtime_ledger_required": True,
                 "exact_replay_enqueue_allowed": exact_replay_qualified,
                 "bounded_sim_evidence_enqueue_allowed": exact_replay_qualified,
                 "discovery_stage_metadata": discovery_stage_metadata,
@@ -344,6 +374,19 @@ class FastReplayPreviewResult:
                 "macro_news_stress_veto": "penalizes rows carrying macro/news stress fields; absent fields are neutral",
                 "square_root_impact_capacity": "sqrt(notional / tape dollar-volume proxy) capacity prefilter",
                 "conformal_tail_risk": "distribution-free lower-tail signed-return penalty used only for ranking",
+                "bootstrap_robust_optimization": "deterministic lower-percentile bootstrap post-cost utility used only for ranking",
+                "implementation_risk_backtesting": "preview/exact/runtime parity fields are reported as required downstream evidence, not proof",
+            },
+            "ranking_authority_boundary": {
+                "schema_version": "torghut.fast-replay-ranking-authority-boundary.v1",
+                "preview_rank_score_field": "preview_rank_score",
+                "ranking_only_reasons_field": "ranking_only_reasons",
+                "risk_veto_reasons_field": "risk_veto_reasons",
+                "exact_replay_required": True,
+                "runtime_ledger_required": True,
+                "promotion_allowed": False,
+                "ranking_output_can_authorize_promotion": False,
+                "prefilter_only": True,
             },
             "blockers": [
                 "preview_only_not_promotion_proof",
@@ -399,6 +442,15 @@ class FastReplayPreviewResult:
                 "promotion_allowed": False,
                 "final_promotion_allowed": False,
                 "final_authority_ok": False,
+            },
+            "throughput_limits": {
+                "schema_version": "torghut.fast-replay-throughput-limits.v1",
+                "exact_replay_candidate_cap": self.exact_replay_candidate_cap,
+                "max_exact_replay_candidates": FAST_REPLAY_EXACT_REPLAY_CANDIDATE_CAP,
+                "max_local_workers": 2,
+                "kubernetes_fanout_allowed": False,
+                "cluster_fanout_allowed": False,
+                "promotion_allowed": False,
             },
             "replay_tape": {
                 "dataset_snapshot_ref": self.replay_tape_manifest.dataset_snapshot_ref,
@@ -981,8 +1033,25 @@ def _score_candidate_spec(
         median_spread_bps=median_spread_bps,
     )
     conformal_tail_risk_penalty_bps = _conformal_tail_risk_penalty_bps(signed_returns)
+    post_cost_utilities_bps = _post_cost_utility_distribution_bps(
+        signed_returns_bps=signed_returns,
+        median_spread_bps=median_spread_bps,
+        impact_liquidity_penalty_bps=impact_liquidity_penalty_bps,
+        square_root_impact_capacity_penalty_bps=square_root_impact_capacity_penalty_bps,
+    )
+    lower_percentile_post_cost_utility_bps = _lower_percentile_post_cost_utility_bps(
+        post_cost_utilities_bps
+    )
+    bootstrap_lower_percentile_post_cost_utility_bps = (
+        _bootstrap_lower_percentile_post_cost_utility_bps(post_cost_utilities_bps)
+    )
+    robust_lower_percentile_post_cost_utility_bps = min(
+        lower_percentile_post_cost_utility_bps,
+        bootstrap_lower_percentile_post_cost_utility_bps,
+    )
     preview_score = (
-        signed_return_bps
+        robust_lower_percentile_post_cost_utility_bps * 0.65
+        + signed_return_bps * 0.35
         + avg_abs_return_bps * 0.12
         + direction * ofi_pressure_score * 6.0
         + ofi_decay_alignment_score * 8.0
@@ -1064,19 +1133,37 @@ def _score_candidate_spec(
         exact_replay_frontier_key=exact_replay_frontier_key,
         candidate_lineage=_candidate_lineage(spec),
         replay_tape_cache_identity=replay_tape_manifest.cache_identity_diagnostics(),
+        robust_lower_percentile_post_cost_utility_bps=_decimal_from_float(
+            robust_lower_percentile_post_cost_utility_bps
+        ),
+        bootstrap_lower_percentile_post_cost_utility_bps=_decimal_from_float(
+            bootstrap_lower_percentile_post_cost_utility_bps
+        ),
     )
 
 
-def _preview_rank_key(row: FastReplayPreviewRow) -> tuple[bool, float, float, str]:
+def _preview_rank_key(
+    row: FastReplayPreviewRow,
+) -> tuple[bool, float, float, float, str]:
     prefilter_score = _float_or_none(
         row.microstructure_prefilter.get("prefilter_score")
     )
     return (
         row.selection_reason == "insufficient_replay_tape_rows"
         or _row_explicitly_non_hpairs(row),
+        -_risk_adjusted_robust_rank_score(row),
         -float(row.preview_score),
         -(prefilter_score if prefilter_score is not None else float(row.preview_score)),
         row.candidate_spec_id,
+    )
+
+
+def _risk_adjusted_robust_rank_score(row: FastReplayPreviewRow) -> float:
+    return (
+        float(row.robust_lower_percentile_post_cost_utility_bps)
+        - float(row.macro_stress_veto_score) * 25.0
+        - float(row.square_root_impact_capacity_penalty_bps) * 0.15
+        - float(row.conformal_tail_risk_penalty_bps) * 0.10
     )
 
 
@@ -1274,6 +1361,12 @@ def _row_with_rank_and_selection(
         duplicate_candidate_spec_ids=row.duplicate_candidate_spec_ids,
         candidate_lineage=dict(row.candidate_lineage),
         replay_tape_cache_identity=dict(row.replay_tape_cache_identity),
+        robust_lower_percentile_post_cost_utility_bps=(
+            row.robust_lower_percentile_post_cost_utility_bps
+        ),
+        bootstrap_lower_percentile_post_cost_utility_bps=(
+            row.bootstrap_lower_percentile_post_cost_utility_bps
+        ),
     )
 
 
@@ -1325,6 +1418,12 @@ def _row_with_frontier_dedupe(
         duplicate_candidate_spec_ids=duplicate_candidate_spec_ids,
         candidate_lineage=dict(row.candidate_lineage),
         replay_tape_cache_identity=dict(row.replay_tape_cache_identity),
+        robust_lower_percentile_post_cost_utility_bps=(
+            row.robust_lower_percentile_post_cost_utility_bps
+        ),
+        bootstrap_lower_percentile_post_cost_utility_bps=(
+            row.bootstrap_lower_percentile_post_cost_utility_bps
+        ),
     )
 
 
@@ -1455,6 +1554,48 @@ def _exact_replay_selection_blockers_for_row(
     if "candidate_notional_missing" in impact_blockers:
         blockers.add("candidate_notional_lineage_missing")
     return tuple(sorted(blockers))
+
+
+def _post_cost_utility_distribution_bps(
+    *,
+    signed_returns_bps: NDArray[np.float64],
+    median_spread_bps: float,
+    impact_liquidity_penalty_bps: float,
+    square_root_impact_capacity_penalty_bps: float,
+) -> NDArray[np.float64]:
+    if signed_returns_bps.size == 0:
+        return np.asarray([], dtype=np.float64)
+    total_cost_bps = (
+        max(0.0, median_spread_bps)
+        + max(0.0, impact_liquidity_penalty_bps)
+        + max(0.0, square_root_impact_capacity_penalty_bps)
+    )
+    return signed_returns_bps - total_cost_bps
+
+
+def _lower_percentile_post_cost_utility_bps(
+    post_cost_utilities_bps: NDArray[np.float64],
+) -> float:
+    if post_cost_utilities_bps.size == 0:
+        return 0.0
+    percentile = 20.0 if post_cost_utilities_bps.size >= 5 else 10.0
+    return float(np.percentile(post_cost_utilities_bps, percentile))
+
+
+def _bootstrap_lower_percentile_post_cost_utility_bps(
+    post_cost_utilities_bps: NDArray[np.float64],
+) -> float:
+    if post_cost_utilities_bps.size == 0:
+        return 0.0
+    if post_cost_utilities_bps.size == 1:
+        return float(post_cost_utilities_bps[0])
+    sample_count = int(post_cost_utilities_bps.size)
+    replicates: list[float] = []
+    for offset in range(sample_count):
+        indices = (np.arange(sample_count) + offset) % sample_count
+        shifted = post_cost_utilities_bps[indices]
+        replicates.append(float(np.mean(shifted[: max(1, sample_count - 1)])))
+    return float(np.percentile(np.asarray(replicates, dtype=np.float64), 20))
 
 
 def _ofi_decay_score(values: NDArray[np.float64]) -> float:
@@ -2037,6 +2178,51 @@ def _risk_flags_for_row(
     if row.selection_reason == "insufficient_replay_tape_rows":
         flags.add("insufficient_replay_tape_rows")
     return tuple(sorted(flags))
+
+
+def _ranking_only_reasons_for_row(
+    row: FastReplayPreviewRow, *, lineage_blockers: Sequence[str]
+) -> tuple[str, ...]:
+    reasons = {
+        "preview_rank_score_is_prefilter_only",
+        "clusterlob_ofi_regime_news_impact_bootstrap_conformal_features_rank_only",
+        "exact_replay_required_before_any_promotion_claim",
+        "runtime_ledger_required_before_any_profitability_claim",
+    }
+    if row.robust_lower_percentile_post_cost_utility_bps != 0:
+        reasons.add("robust_lower_percentile_post_cost_utility_used_for_ranking")
+    if row.bootstrap_lower_percentile_post_cost_utility_bps != 0:
+        reasons.add("bootstrap_lower_percentile_post_cost_utility_used_for_ranking")
+    if row.macro_stress_veto_score > 0:
+        reasons.add("macro_news_ofi_stress_slice_downranks_only")
+    if row.conformal_tail_risk_penalty_bps > 0:
+        reasons.add("conformal_tail_risk_buffer_downranks_only")
+    if row.square_root_impact_capacity_penalty_bps > 0:
+        reasons.add("square_root_impact_capacity_cap_downranks_only")
+    if row.selection_reason == "insufficient_replay_tape_rows":
+        reasons.add("missing_replay_tape_source_data_explicit_blocker")
+    if lineage_blockers:
+        reasons.add("lineage_blockers_reported_not_fabricated")
+    return tuple(sorted(reasons))
+
+
+def _risk_veto_reasons_for_row(
+    row: FastReplayPreviewRow,
+    *,
+    risk_flags: Sequence[str],
+    lineage_blockers: Sequence[str],
+) -> tuple[str, ...]:
+    vetoes = {str(flag) for flag in risk_flags if str(flag).strip()}
+    vetoes.update(str(blocker) for blocker in lineage_blockers if str(blocker).strip())
+    if row.macro_stress_veto_score > 0:
+        vetoes.add("macro_news_stress_slice_veto_or_downrank")
+    if row.liquidity_regime_score <= 0 and row.matched_row_count > 0:
+        vetoes.add("liquidity_regime_unobserved_or_weak")
+    if row.square_root_impact_capacity_penalty_bps > 0:
+        vetoes.add("square_root_impact_capacity_penalty")
+    if row.robust_lower_percentile_post_cost_utility_bps <= 0:
+        vetoes.add("robust_lower_percentile_post_cost_utility_not_positive")
+    return tuple(sorted(vetoes))
 
 
 def _mapping(value: Any) -> dict[str, Any]:

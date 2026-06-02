@@ -4818,6 +4818,16 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             queue_payload["runner_policy"]["default_parallel_frontier_candidate_cap"],
             6,
         )
+        ranking_boundary = queue_payload["ranking_authority_boundary"]
+        self.assertTrue(ranking_boundary["exact_replay_required"])
+        self.assertTrue(ranking_boundary["runtime_ledger_required"])
+        self.assertFalse(ranking_boundary["ranking_output_can_authorize_promotion"])
+        first_entry = queue_payload["entries"][0]
+        self.assertIn("preview_rank_score", first_entry)
+        self.assertIn("ranking_only_reasons", first_entry)
+        self.assertIn("risk_veto_reasons", first_entry)
+        self.assertTrue(first_entry["exact_replay_required"])
+        self.assertTrue(first_entry["runtime_ledger_required"])
         command_policy = queue_payload["exact_replay_command_policy"]
         self.assertEqual(command_policy["generation_scope"], "bounded_frontier_only")
         self.assertEqual(command_policy["max_exact_replay_candidates"], 6)

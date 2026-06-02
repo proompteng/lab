@@ -776,6 +776,194 @@ class TestFastReplayPreview(TestCase):
             payloads["budget-exhausted"]["frontier_selection"]["final_authority_ok"]
         )
 
+    def test_preview_boundary_fields_are_ranking_only_and_never_authorize_promotion(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            rows = [
+                self._signal(symbol="AAA", offset=1, price="100", ofi="0.40"),
+                self._signal(symbol="AAA", offset=2, price="101", ofi="0.50"),
+                self._signal(symbol="AAA", offset=3, price="102", ofi="0.60"),
+            ]
+            manifest = materialize_signal_tape(
+                rows=rows,
+                tape_path=Path(tmpdir) / "tape.jsonl",
+                dataset_snapshot_ref="snapshot-boundary-fields",
+                symbols=("AAA",),
+                start_date=date(2026, 2, 23),
+                end_date=date(2026, 2, 23),
+                source_query_digest=build_source_query_digest({"window": "boundary"}),
+                feature_schema_hash="feature-boundary",
+                cost_model_hash="cost-boundary",
+                strategy_family="hpairs-boundary",
+            )
+
+        preview = build_fast_replay_preview(
+            specs=(self._spec("spec-boundary", symbols=["AAA"]),),
+            rows=rows,
+            replay_tape_manifest=manifest,
+            top_k=1,
+            min_rows_per_candidate=2,
+        )
+        payload = preview.rows[0].to_payload()
+        manifest_payload = preview.to_manifest_payload()
+
+        self.assertEqual(payload["preview_rank_score"], payload["preview_score"])
+        self.assertTrue(payload["exact_replay_required"])
+        self.assertTrue(payload["runtime_ledger_required"])
+        self.assertIn("ranking_only_reasons", payload)
+        self.assertIn("risk_veto_reasons", payload)
+        self.assertIn(
+            "exact_replay_required_before_any_promotion_claim",
+            payload["ranking_only_reasons"],
+        )
+        self.assertIn(
+            "runtime_ledger_required_before_any_profitability_claim",
+            payload["ranking_only_reasons"],
+        )
+        self.assertFalse(payload["promotion_allowed"])
+        self.assertFalse(payload["frontier_selection"]["promotion_allowed"])
+        self.assertFalse(payload["frontier_selection"]["final_authority_ok"])
+        boundary = manifest_payload["ranking_authority_boundary"]
+        self.assertEqual(boundary["preview_rank_score_field"], "preview_rank_score")
+        self.assertTrue(boundary["exact_replay_required"])
+        self.assertTrue(boundary["runtime_ledger_required"])
+        self.assertFalse(boundary["ranking_output_can_authorize_promotion"])
+        self.assertEqual(
+            manifest_payload["throughput_limits"]["max_exact_replay_candidates"], 6
+        )
+        self.assertLessEqual(
+            manifest_payload["throughput_limits"]["exact_replay_candidate_cap"], 6
+        )
+        self.assertEqual(manifest_payload["throughput_limits"]["max_local_workers"], 2)
+        self.assertFalse(
+            manifest_payload["throughput_limits"]["kubernetes_fanout_allowed"]
+        )
+
+    def test_robust_lower_percentile_utility_ranks_ahead_of_mean_only_score(
+        self,
+    ) -> None:
+        def row(
+            candidate_spec_id: str,
+            *,
+            preview_score: str,
+            robust_utility: str,
+        ) -> fast_replay.FastReplayPreviewRow:
+            return fast_replay.FastReplayPreviewRow(
+                candidate_spec_id=candidate_spec_id,
+                rank=0,
+                preview_score=Decimal(preview_score),
+                selected=False,
+                selection_reason="fast_replay_preview_ranked",
+                matched_row_count=10,
+                matched_symbol_count=1,
+                requested_symbol_count=1,
+                trading_day_count=1,
+                signed_return_bps=Decimal("1"),
+                avg_abs_return_bps=Decimal("0"),
+                median_spread_bps=Decimal("0"),
+                activity_score=Decimal("0"),
+                coverage_score=Decimal("1"),
+                ofi_pressure_score=Decimal("0"),
+                microprice_bias_bps=Decimal("0"),
+                spread_tail_bps=Decimal("0"),
+                return_tail_abs_bps=Decimal("0"),
+                impact_liquidity_penalty_bps=Decimal("0"),
+                cluster_lob_activity_score=Decimal("0"),
+                ofi_decay_alignment_score=Decimal("0"),
+                liquidity_regime_score=Decimal("1"),
+                macro_stress_veto_score=Decimal("0"),
+                conformal_tail_risk_penalty_bps=Decimal("0"),
+                square_root_impact_capacity_penalty_bps=Decimal("0"),
+                exploration_score=Decimal("0"),
+                frontier_bucket="not_selected",
+                microstructure_prefilter={
+                    "is_hpairs_candidate": True,
+                    "proof_source": "prefilter_only",
+                    "promotion_allowed": False,
+                    "final_promotion_allowed": False,
+                },
+                robust_lower_percentile_post_cost_utility_bps=Decimal(robust_utility),
+                bootstrap_lower_percentile_post_cost_utility_bps=Decimal(
+                    robust_utility
+                ),
+            )
+
+        ranked = sorted(
+            (
+                row("mean-only-tail-risk", preview_score="100", robust_utility="-5"),
+                row("robust-frontier", preview_score="50", robust_utility="12"),
+            ),
+            key=fast_replay._preview_rank_key,
+        )
+
+        self.assertEqual(ranked[0].candidate_spec_id, "robust-frontier")
+        payload = ranked[0].to_payload()
+        self.assertEqual(payload["robust_lower_percentile_post_cost_utility_bps"], "12")
+        self.assertIn(
+            "robust_lower_percentile_post_cost_utility_used_for_ranking",
+            payload["ranking_only_reasons"],
+        )
+        self.assertFalse(payload["promotion_allowed"])
+
+    def test_macro_regime_impact_veto_fields_downrank_without_promotion_authority(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            rows = [
+                self._signal(
+                    symbol="AAA", offset=1, price="100", ofi="0.50", stress=True
+                ),
+                self._signal(
+                    symbol="AAA", offset=2, price="101", ofi="0.60", stress=True
+                ),
+                self._signal(
+                    symbol="AAA", offset=3, price="102", ofi="0.70", stress=True
+                ),
+            ]
+            manifest = materialize_signal_tape(
+                rows=rows,
+                tape_path=Path(tmpdir) / "tape.jsonl",
+                dataset_snapshot_ref="snapshot-stress-boundary",
+                symbols=("AAA",),
+                start_date=date(2026, 2, 23),
+                end_date=date(2026, 2, 23),
+                source_query_digest=build_source_query_digest({"window": "stress"}),
+                feature_schema_hash="feature-stress",
+                cost_model_hash="cost-stress",
+                strategy_family="hpairs-stress",
+            )
+
+        preview = build_fast_replay_preview(
+            specs=(
+                self._spec(
+                    "spec-stress-boundary",
+                    symbols=["AAA"],
+                    max_notional_per_trade="2500000",
+                ),
+            ),
+            rows=rows,
+            replay_tape_manifest=manifest,
+            top_k=1,
+            min_rows_per_candidate=2,
+        )
+        payload = preview.rows[0].to_payload()
+
+        self.assertGreater(Decimal(payload["macro_stress_veto_score"]), Decimal("0"))
+        self.assertIn(
+            "macro_news_stress_slice_veto_or_downrank", payload["risk_veto_reasons"]
+        )
+        self.assertIn(
+            "macro_news_ofi_stress_slice_downranks_only",
+            payload["ranking_only_reasons"],
+        )
+        self.assertIn(
+            "square_root_impact_capacity_penalty", payload["risk_veto_reasons"]
+        )
+        self.assertFalse(payload["promotion_allowed"])
+        self.assertFalse(payload["promotion_authority"])
+        self.assertFalse(payload["final_authority_ok"])
+
     def test_missing_cost_capacity_lineage_blocks_exact_replay_selection(
         self,
     ) -> None:
