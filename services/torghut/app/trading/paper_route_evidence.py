@@ -7828,6 +7828,13 @@ def _sanitized_runtime_ledger_source_collection_target(
     }
     if runtime_ledger_bucket_ref := _safe_text(target.get("runtime_ledger_bucket_ref")):
         sanitized["runtime_ledger_bucket_ref"] = runtime_ledger_bucket_ref
+    observed_from_contaminated_target = _as_mapping(
+        target.get("observed_from_contaminated_target")
+    )
+    if observed_from_contaminated_target:
+        sanitized["observed_from_contaminated_target"] = dict(
+            observed_from_contaminated_target
+        )
     if artifact_refs := _unique_text_items(target.get("artifact_refs")):
         sanitized["artifact_refs"] = artifact_refs
     return sanitized
@@ -7874,6 +7881,252 @@ def _runtime_ledger_source_collection_import_plan_for_payload(
         "skipped_target_count": 0,
         "targets": source_targets,
         "skipped_targets": [],
+    }
+
+
+def _hypothesis_manifest_ref(hypothesis_id: object) -> str:
+    text = str(hypothesis_id or "").strip().lower().replace("_", "-")
+    return f"config/trading/hypotheses/{text}.json" if text else ""
+
+
+def _runtime_ledger_repair_candidate_lookup_names(
+    candidate: Mapping[str, Any],
+) -> list[str]:
+    strategy_name = _safe_text(candidate.get("strategy_name"))
+    strategy_id = _safe_text(candidate.get("strategy_id"))
+    runtime_strategy_name = (
+        explicit_runtime_strategy_name_or_family_harness(
+            runtime_strategy_name=candidate.get("runtime_strategy_name"),
+            strategy_name=strategy_name,
+            strategy_id=strategy_id,
+        )
+        or strategy_name
+    )
+    return _strategy_lookup_names(
+        candidate.get("strategy_lookup_names"),
+        runtime_strategy_name,
+        strategy_name,
+        strategy_names_from_strategy_id(strategy_id),
+        derived_strategy_name_from_strategy_id(strategy_id),
+    )
+
+
+def _runtime_ledger_repair_candidates_by_strategy_name(
+    live_submission_gate: Mapping[str, Any],
+) -> dict[str, Mapping[str, Any]]:
+    candidates_by_name: dict[str, Mapping[str, Any]] = {}
+    for candidate in _as_mapping_items(
+        live_submission_gate.get("runtime_ledger_repair_candidates")
+    ):
+        for name in _runtime_ledger_repair_candidate_lookup_names(candidate):
+            candidates_by_name.setdefault(name, candidate)
+    return candidates_by_name
+
+
+def _observed_strategy_source_collection_target(
+    *,
+    candidate: Mapping[str, Any],
+    observed_strategy_name: str,
+    observed_count: int,
+    contaminated_target: Mapping[str, Any],
+) -> dict[str, object] | None:
+    hypothesis_id = _safe_text(candidate.get("hypothesis_id"))
+    candidate_id = _safe_text(candidate.get("candidate_id"))
+    strategy_family = _safe_text(candidate.get("strategy_family"))
+    strategy_id = _safe_text(candidate.get("strategy_id"))
+    strategy_name = (
+        explicit_runtime_strategy_name_or_family_harness(
+            runtime_strategy_name=candidate.get("runtime_strategy_name"),
+            strategy_name=candidate.get("strategy_name"),
+            strategy_id=strategy_id,
+        )
+        or observed_strategy_name
+    )
+    window_start = _safe_text(contaminated_target.get("window_start"))
+    window_end = _safe_text(contaminated_target.get("window_end"))
+    missing = [
+        value
+        for value in (
+            hypothesis_id,
+            candidate_id,
+            strategy_family,
+            strategy_name,
+            window_start,
+            window_end,
+        )
+        if value is None
+    ]
+    if missing:
+        return None
+    target = {
+        **dict(candidate),
+        "hypothesis_id": hypothesis_id,
+        "candidate_id": candidate_id,
+        "observed_stage": "paper",
+        "strategy_family": strategy_family,
+        "strategy_name": strategy_name,
+        "runtime_strategy_name": strategy_name,
+        "strategy_id": strategy_id or "",
+        "strategy_lookup_names": _strategy_lookup_names(
+            candidate.get("strategy_lookup_names"),
+            strategy_name,
+            observed_strategy_name,
+            strategy_names_from_strategy_id(strategy_id),
+            derived_strategy_name_from_strategy_id(strategy_id),
+        ),
+        "account_label": PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
+        "source_account_label": PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
+        "source_dsn_env": "SIM_DB_DSN",
+        "target_dsn_env": "SIM_DB_DSN",
+        "source_manifest_ref": _safe_text(candidate.get("source_manifest_ref"))
+        or _hypothesis_manifest_ref(hypothesis_id),
+        "source_kind": RUNTIME_LEDGER_SOURCE_COLLECTION_SOURCE_KIND,
+        "window_start": window_start,
+        "window_end": window_end,
+        "source_collection_authorized": True,
+        "source_collection_authorization_scope": "source_window_evidence_collection_only",
+        "source_collection_reason_codes": _unique_text_items(
+            [
+                "paper_route_foreign_strategy_source_activity_observed",
+                RUNTIME_LEDGER_SOURCE_COLLECTION_PENDING_BLOCKER,
+                *(_unique_text_items(candidate.get("source_collection_reason_codes"))),
+            ]
+        ),
+        "final_promotion_blockers": list(
+            RUNTIME_LEDGER_SOURCE_COLLECTION_PROMOTION_BLOCKERS
+        ),
+        "candidate_blockers": _unique_text_items(
+            [
+                "paper_route_runtime_ledger_import_pending",
+                "runtime_ledger_source_collection_only",
+                *(_unique_text_items(candidate.get("reason_codes"))),
+                *(_unique_text_items(candidate.get("candidate_blockers"))),
+            ]
+        ),
+        "runtime_ledger_target_metadata_blockers": list(
+            RUNTIME_LEDGER_SOURCE_COLLECTION_PROMOTION_BLOCKERS
+        ),
+        "handoff": RUNTIME_LEDGER_SOURCE_COLLECTION_HANDOFF,
+        "promotion_gate": "runtime_ledger_live_or_live_paper_required",
+        "selected_by": "paper_route_observed_strategy_source_collection",
+        "selection_reason": "foreign_strategy_source_activity_observed_in_paper_route_window",
+        "max_notional": "0",
+        "observed_from_contaminated_target": {
+            "hypothesis_id": _safe_text(contaminated_target.get("hypothesis_id")),
+            "candidate_id": _safe_text(contaminated_target.get("candidate_id")),
+            "strategy_name": observed_strategy_name,
+            "order_event_count": observed_count,
+            "reason": "paper_route_account_contamination_strategy_observed",
+        },
+    }
+    return _sanitized_runtime_ledger_source_collection_target(target)
+
+
+def _observed_strategy_source_collection_import_plan(
+    *,
+    live_submission_gate: Mapping[str, Any],
+    candidate_plans: Sequence[Mapping[str, Any]],
+    target_limit: int,
+) -> dict[str, object]:
+    if not _live_gate_has_source_collection_pending(live_submission_gate):
+        return {}
+    candidates_by_strategy = _runtime_ledger_repair_candidates_by_strategy_name(
+        live_submission_gate
+    )
+    if not candidates_by_strategy:
+        return {}
+    limit = max(0, target_limit)
+    targets: list[dict[str, object]] = []
+    skipped_targets: list[dict[str, object]] = []
+    seen_keys: set[tuple[str, str, str, str, str]] = set()
+    for plan in candidate_plans:
+        if len(targets) >= limit:
+            break
+        for contaminated_target in _as_mapping_items(plan.get("targets")):
+            if len(targets) >= limit:
+                break
+            contamination = _as_mapping(
+                contaminated_target.get("paper_route_account_contamination_state")
+            )
+            foreign_strategy_counts = _as_mapping(
+                contamination.get("foreign_strategy_counts")
+            )
+            if not foreign_strategy_counts:
+                continue
+            sorted_strategy_counts = sorted(
+                (
+                    (str(strategy_name or "").strip(), _safe_int(count))
+                    for strategy_name, count in foreign_strategy_counts.items()
+                ),
+                key=lambda item: (-item[1], item[0]),
+            )
+            for observed_strategy_name, observed_count in sorted_strategy_counts:
+                if len(targets) >= limit:
+                    break
+                if not observed_strategy_name or observed_strategy_name == "missing":
+                    continue
+                candidate = candidates_by_strategy.get(observed_strategy_name)
+                if candidate is None:
+                    skipped_targets.append(
+                        {
+                            "strategy_name": observed_strategy_name,
+                            "window_start": _safe_text(
+                                contaminated_target.get("window_start")
+                            ),
+                            "window_end": _safe_text(
+                                contaminated_target.get("window_end")
+                            ),
+                            "reason": "observed_strategy_repair_candidate_missing",
+                        }
+                    )
+                    continue
+                target = _observed_strategy_source_collection_target(
+                    candidate=candidate,
+                    observed_strategy_name=observed_strategy_name,
+                    observed_count=observed_count,
+                    contaminated_target=contaminated_target,
+                )
+                if target is None:
+                    skipped_targets.append(
+                        {
+                            "strategy_name": observed_strategy_name,
+                            "reason": "observed_strategy_source_collection_target_missing_required_fields",
+                        }
+                    )
+                    continue
+                key = (
+                    str(target.get("hypothesis_id") or ""),
+                    str(target.get("candidate_id") or ""),
+                    str(target.get("runtime_strategy_name") or ""),
+                    str(target.get("window_start") or ""),
+                    str(target.get("window_end") or ""),
+                )
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
+                targets.append(target)
+    if not targets:
+        return {}
+    return {
+        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+        "source": "paper_route_observed_strategy_source_collection",
+        "purpose": "observed_strategy_runtime_ledger_source_collection_import",
+        "proof_mode": "probation",
+        "evidence_collection_ok": True,
+        "paper_probation_satisfied_for_bounded_live_paper_collection": False,
+        "canary_collection_authorized": False,
+        "bounded_live_paper_collection_authorized": False,
+        "capital_promotion_allowed": False,
+        "final_authority_ok": False,
+        "promotion_allowed": False,
+        "final_promotion_authorized": False,
+        "final_promotion_allowed": False,
+        "target_count": len(targets),
+        "paper_probation_target_count": 0,
+        "source_collection_target_count": len(targets),
+        "skipped_target_count": len(skipped_targets),
+        "targets": targets,
+        "skipped_targets": skipped_targets,
     }
 
 
@@ -7924,6 +8177,7 @@ def build_paper_route_target_plan_payload(
     next_clean_after_discard_targets: Mapping[str, Any] = {}
     latest_closed_targets: Mapping[str, Any] = {}
     source_targets: Mapping[str, Any] = source_collection_import_plan
+    observed_strategy_source_targets: Mapping[str, Any] = {}
     latest_closed_runtime_window_import_target_audits: (
         list[dict[str, object]] | None
     ) = None
@@ -8012,6 +8266,20 @@ def build_paper_route_target_plan_payload(
                     target_account_audit_available=target_account_audit_available,
                 )
                 runtime_window_import_plan = next_clean_after_discard_targets
+        observed_strategy_source_targets = (
+            _observed_strategy_source_collection_import_plan(
+                live_submission_gate=live_submission_gate,
+                candidate_plans=(
+                    runtime_window_import_plan,
+                    latest_closed_targets,
+                    next_targets,
+                ),
+                target_limit=target_limit,
+            )
+        )
+        if _as_mapping_items(observed_strategy_source_targets.get("targets")):
+            source_targets = observed_strategy_source_targets
+            runtime_window_import_plan = observed_strategy_source_targets
     runtime_import_readiness = _as_mapping(
         runtime_window_import_plan.get("session_readiness")
     )
@@ -8075,6 +8343,7 @@ def build_paper_route_target_plan_payload(
     )
     effective_target_plan: Mapping[str, Any] = {}
     for candidate_plan in (
+        observed_strategy_source_targets,
         next_clean_after_discard_targets,
         next_targets,
         source_targets,

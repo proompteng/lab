@@ -171,6 +171,82 @@ class TestRenewLatestEmpiricalPromotionJobsRuntimeLedger(TestCase):
             {("live", "PA3SX7FYNUTF"), ("paper", "TORGHUT_SIM")},
         )
 
+    def test_observed_strategy_source_collection_plan_target_parses_for_import(
+        self,
+    ) -> None:
+        plan = renew._runtime_window_target_plan_from_payload(
+            {
+                "runtime_window_import_plan": {
+                    "schema_version": (
+                        "torghut.runtime-ledger-paper-probation-import-plan.v1"
+                    ),
+                    "source": "paper_route_observed_strategy_source_collection",
+                    "targets": [
+                        {
+                            "hypothesis_id": "H-TSMOM-LIQ-01",
+                            "candidate_id": "candidate-tsmom",
+                            "observed_stage": "paper",
+                            "strategy_family": "intraday_tsmom_consistent",
+                            "strategy_name": "intraday-tsmom-profit-v3",
+                            "runtime_strategy_name": "intraday-tsmom-profit-v3",
+                            "strategy_id": "intraday_tsmom_v2@research",
+                            "strategy_lookup_names": [
+                                "intraday-tsmom-profit-v3",
+                                "intraday_tsmom_v2@research",
+                            ],
+                            "account_label": "TORGHUT_SIM",
+                            "source_account_label": "TORGHUT_SIM",
+                            "source_dsn_env": "SIM_DB_DSN",
+                            "target_dsn_env": "SIM_DB_DSN",
+                            "dataset_snapshot_ref": (
+                                "portfolio-profit-autoresearch-500-v1"
+                            ),
+                            "source_manifest_ref": (
+                                "config/trading/hypotheses/h-tsmom-liq-01.json"
+                            ),
+                            "source_kind": (
+                                "runtime_ledger_source_collection_candidate"
+                            ),
+                            "window_start": "2026-05-26T13:30:00+00:00",
+                            "window_end": "2026-05-26T20:00:00+00:00",
+                            "source_collection_authorized": True,
+                            "source_collection_authorization_scope": (
+                                "source_window_evidence_collection_only"
+                            ),
+                            "source_collection_reason_codes": [
+                                "paper_route_foreign_strategy_source_activity_observed"
+                            ],
+                            "promotion_allowed": False,
+                            "final_promotion_allowed": False,
+                            "final_promotion_authorized": False,
+                            "handoff": "runtime_ledger_source_collection_import",
+                            "selected_by": (
+                                "paper_route_observed_strategy_source_collection"
+                            ),
+                        }
+                    ],
+                }
+            }
+        )
+
+        targets = renew._runtime_window_targets_from_plan(
+            plan=plan,
+            ref="observed-plan-fixture",
+            args=argparse.Namespace(),
+        )
+
+        self.assertEqual(len(targets), 1)
+        target = targets[0]
+        self.assertEqual(target.hypothesis_id, "H-TSMOM-LIQ-01")
+        self.assertEqual(target.candidate_id, "candidate-tsmom")
+        self.assertEqual(target.strategy_name, "intraday-tsmom-profit-v3")
+        self.assertEqual(target.source_account_label, "TORGHUT_SIM")
+        self.assertEqual(
+            target.source_kind, "runtime_ledger_source_collection_candidate"
+        )
+        self.assertTrue(target.target_metadata["source_collection_authorized"])
+        self.assertNotIn("paper_route_probe_symbols", target.target_metadata)
+
     def test_hpairs_source_proof_census_status_is_non_authority_renewal_evidence(
         self,
     ) -> None:
