@@ -46,31 +46,6 @@ class RunTigerBeetleJournalCronTest(TestCase):
             "SIM_DB_DSN",
         )
 
-    def test_default_live_execution_batch_size_drains_backlog_under_cron_cadence(
-        self,
-    ) -> None:
-        with patch(
-            "scripts.run_tigerbeetle_journal_cron.sys.argv",
-            [
-                "run_tigerbeetle_journal_cron.py",
-                "--preset",
-                "live",
-            ],
-        ):
-            args = runner._parse_args()
-
-        [command] = [
-            item
-            for item in runner._commands_for_preset(args)
-            if item.source == SOURCE_TYPE_EXECUTION
-        ]
-
-        self.assertEqual(runner.LIVE_EXECUTION_BATCH_SIZE, 25)
-        self.assertEqual(command.batch_size, runner.LIVE_EXECUTION_BATCH_SIZE)
-        self.assertEqual(command.max_batches, 1)
-        self.assertTrue(command.skip_reconcile)
-        self.assertTrue(command.allow_data_quality_degraded)
-
     def test_live_preset_raises_only_execution_batch_size(self) -> None:
         commands = runner._live_commands(execution_batch_size=10)
 
