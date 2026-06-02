@@ -4667,6 +4667,180 @@ class TestPaperRouteEvidenceAudit(TestCase):
             target["paper_route_probe_scope_authority"], "strategy_universe"
         )
 
+    def test_live_target_plan_preserves_source_collection_targets_when_audit_unavailable(
+        self,
+    ) -> None:
+        generated_at = datetime(2026, 6, 2, 15, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            payload = build_paper_route_target_plan_payload(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "source_collection_pending",
+                    "blocked_reasons": ["runtime_ledger_source_collection_pending"],
+                    "promotion_eligible_total": 0,
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "target_count": 1,
+                        "source_collection_target_count": 1,
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-PAIRS-01",
+                                "candidate_id": "c88421d619759b2cfaa6f4d0",
+                                "observed_stage": "paper",
+                                "strategy_family": "microbar_cross_sectional_pairs",
+                                "strategy_name": "microbar-cross-sectional-pairs-v1",
+                                "runtime_strategy_name": (
+                                    "microbar-cross-sectional-pairs-v1"
+                                ),
+                                "strategy_lookup_names": [
+                                    "microbar-cross-sectional-pairs-v1"
+                                ],
+                                "account_label": "TORGHUT_SIM",
+                                "source_account_label": "TORGHUT_REPLAY",
+                                "source_dsn_env": "SIM_DB_DSN",
+                                "target_dsn_env": "SIM_DB_DSN",
+                                "source_kind": (
+                                    "runtime_ledger_source_collection_candidate"
+                                ),
+                                "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
+                                "dataset_snapshot_ref": "portfolio-profit-autoresearch-500-v1",
+                                "window_start": "2026-06-02T13:30:00+00:00",
+                                "window_end": "2026-06-02T20:00:00+00:00",
+                                "source_collection_authorized": True,
+                                "source_collection_reason_codes": [
+                                    "runtime_ledger_source_decisions_missing"
+                                ],
+                                "promotion_allowed": True,
+                                "final_promotion_authorized": True,
+                                "max_notional": "25000",
+                            }
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": False,
+                        "next_session_max_notional": "63180",
+                        "eligible_symbol_count": 0,
+                        "eligible_symbols": [],
+                        "active_symbols": [],
+                        "blocking_reasons": ["market_session_closed"],
+                    },
+                },
+                generated_at=generated_at,
+                include_runtime_window_import_audit=False,
+                target_account_audit_available=False,
+            )
+
+        source_plan = payload["source_runtime_window_import_plan"]
+        self.assertEqual(source_plan["target_count"], 1)
+        source_target = source_plan["targets"][0]
+        self.assertEqual(
+            source_target["source_kind"],
+            "runtime_ledger_source_collection_candidate",
+        )
+        self.assertEqual(
+            source_target["handoff"],
+            "runtime_ledger_source_collection_import",
+        )
+        self.assertTrue(source_target["source_collection_authorized"])
+        self.assertEqual(source_target["source_account_label"], "TORGHUT_REPLAY")
+        self.assertEqual(source_target["max_notional"], "0")
+        self.assertFalse(source_target["promotion_allowed"])
+        self.assertFalse(source_target["final_promotion_allowed"])
+        self.assertTrue(source_target["stripped_source_promotion_authority"])
+
+        gate_plan = payload["live_submission_gate"][
+            "runtime_ledger_paper_probation_import_plan"
+        ]
+        self.assertEqual(gate_plan["source_collection_target_count"], 1)
+        self.assertEqual(len(gate_plan["targets"]), 1)
+        self.assertEqual(
+            gate_plan["targets"][0]["handoff"],
+            "runtime_ledger_source_collection_import",
+        )
+        self.assertFalse(gate_plan["targets"][0]["promotion_allowed"])
+
+        self.assertEqual(payload["target_count"], 1)
+        self.assertEqual(payload["targets"][0]["handoff"], source_target["handoff"])
+        self.assertEqual(payload["summary"]["source_runtime_window_target_count"], 1)
+        self.assertEqual(
+            payload["summary"]["promotion_authority"]["blockers"],
+            ["live_runtime_ledger_required"],
+        )
+
+    def test_source_collection_import_plan_sanitizer_filters_and_preserves_refs(
+        self,
+    ) -> None:
+        live_gate = {
+            "blocked_reasons": ["runtime_ledger_source_collection_pending"],
+        }
+
+        plan = paper_route_evidence._runtime_ledger_source_collection_import_plan_for_payload(
+            plan={
+                "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                "targets": [
+                    {
+                        "hypothesis_id": "H-SKIP",
+                        "candidate_id": "skip-paper-route",
+                        "source_kind": "paper_route_probe_runtime_observed",
+                    },
+                    {
+                        "hypothesis_id": "H-KEEP",
+                        "candidate_id": "keep-source-collection",
+                        "strategy_family": "microbar_cross_sectional_pairs",
+                        "strategy_name": "microbar-cross-sectional-pairs-v1",
+                        "source_collection_authorized": "true",
+                        "runtime_ledger_bucket_ref": (
+                            "strategy_runtime_ledger_buckets:run-1:start:end"
+                        ),
+                        "artifact_refs": [
+                            "runtime-ledger/proof.json",
+                            "",
+                            "runtime-ledger/proof.json",
+                        ],
+                    },
+                    {
+                        "hypothesis_id": "H-LIMIT",
+                        "candidate_id": "limit-source-collection",
+                        "source_kind": "runtime_ledger_source_collection_candidate",
+                    },
+                ],
+            },
+            live_submission_gate=live_gate,
+            target_limit=1,
+        )
+
+        self.assertEqual(plan["target_count"], 1)
+        target = plan["targets"][0]
+        self.assertEqual(target["candidate_id"], "keep-source-collection")
+        self.assertEqual(
+            target["runtime_ledger_bucket_ref"],
+            "strategy_runtime_ledger_buckets:run-1:start:end",
+        )
+        self.assertEqual(target["artifact_refs"], ["runtime-ledger/proof.json"])
+        self.assertEqual(target["max_notional"], "0")
+        self.assertFalse(target["promotion_allowed"])
+
+        empty_plan = paper_route_evidence._runtime_ledger_source_collection_import_plan_for_payload(
+            plan={
+                "targets": [
+                    {
+                        "hypothesis_id": "H-SKIP",
+                        "candidate_id": "skip-paper-route",
+                        "source_kind": "paper_route_probe_runtime_observed",
+                    }
+                ],
+            },
+            live_submission_gate=live_gate,
+            target_limit=10,
+        )
+        self.assertEqual(empty_plan, {})
+
     def test_builder_exports_missing_runtime_window_health_gate_as_blockers(
         self,
     ) -> None:
