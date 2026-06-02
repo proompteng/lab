@@ -71,6 +71,7 @@ from app.trading.scheduler.simple_pipeline import (
     _bounded_sim_collection_blockers,
     _bounded_sim_collection_target_with_runtime_account_audit,
     _bounded_sim_collection_metadata_from_decision,
+    _executable_bid_ask_present,
     _paper_route_probe_entry_metadata,
     _paper_route_probe_lineage_from_params,
     _strategy_signal_paper_entry_metadata,
@@ -3907,38 +3908,11 @@ class TestTradingPipeline(TestCase):
         self.assertEqual(refreshed_snapshot.get("ask"), "190.14")
         self.assertEqual(row.status, "planned")
 
-    def test_paper_route_target_executable_snapshot_skips_quote_refresh(
+    def test_decision_price_uses_existing_executable_quote_without_refetch(
         self,
     ) -> None:
         now = datetime(2026, 6, 1, 14, 0, tzinfo=timezone.utc)
-        decision = StrategyDecision(
-            strategy_id=str(uuid4()),
-            symbol="AAPL",
-            event_ts=now,
-            timeframe="1Min",
-            action="buy",
-            qty=Decimal("1"),
-            rationale="paper-route-target-source",
-            params={
-                "paper_route_target_plan": {"candidate_id": "c88421d619759b2cfaa6f4d0"},
-                "source_decision_mode": ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
-                "price": Decimal("190.12"),
-                "price_snapshot": {
-                    "as_of": now.isoformat(),
-                    "price": "190.12",
-                    "bid": "190.10",
-                    "ask": "190.14",
-                    "spread": "0.04",
-                    "source": "decision_engine_executable_quote",
-                },
-            },
-        )
-        price_fetcher = FakePriceFetcher(
-            Decimal("190.12"),
-            spread=Decimal("0.04"),
-            bid=Decimal("190.10"),
-            ask=Decimal("190.14"),
-        )
+        price_fetcher = FakePriceFetcher(Decimal("190.12"))
         pipeline = SimpleTradingPipeline(
             alpaca_client=FakeAlpacaClient(),
             order_firewall=OrderFirewall(FakeAlpacaClient()),
@@ -3954,22 +3928,20 @@ class TestTradingPipeline(TestCase):
             session_factory=self.session_local,
             price_fetcher=price_fetcher,
         )
-
-        updated, snapshot = pipeline._ensure_decision_price(decision, Decimal("190.12"))
-
-        self.assertIs(updated, decision)
-        self.assertIsNone(snapshot)
-        self.assertEqual(price_fetcher.snapshot_requests, 0)
-
-    def test_executable_quote_payload_detection_handles_params_and_invalid_quotes(
-        self,
-    ) -> None:
-        now = datetime(2026, 6, 1, 14, 0, tzinfo=timezone.utc)
-        base = {
-            "paper_route_target_plan": {"candidate_id": "c88421d619759b2cfaa6f4d0"},
-            "source_decision_mode": ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
-        }
-        direct_quote = StrategyDecision(
+        non_paper_route_decision = StrategyDecision(
+            strategy_id=str(uuid4()),
+            symbol="AAPL",
+            event_ts=now,
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            rationale="strategy-signal",
+            params={
+                "price": Decimal("190.12"),
+                "price_snapshot": {"price": "190.12", "spread": "0.04"},
+            },
+        )
+        nested_quote_decision = StrategyDecision(
             strategy_id=str(uuid4()),
             symbol="AAPL",
             event_ts=now,
@@ -3978,35 +3950,72 @@ class TestTradingPipeline(TestCase):
             qty=Decimal("1"),
             rationale="paper-route-target-source",
             params={
-                **base,
-                "imbalance_bid_px": Decimal("190.10"),
-                "imbalance_ask_px": Decimal("190.14"),
+                "paper_route_target_plan": {"candidate_id": "c88421d619759b2cfaa6f4d0"},
+                "source_decision_mode": ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
+                "price": Decimal("190.12"),
+                "price_snapshot": {
+                    "price": "190.12",
+                    "bid": "190.10",
+                    "ask": "190.14",
+                },
             },
         )
-        non_mapping_snapshot = direct_quote.model_copy(
-            update={"params": {**base, "price_snapshot": "190.12"}}
-        )
-        invalid_quote = direct_quote.model_copy(
+        top_level_quote_decision = nested_quote_decision.model_copy(
             update={
                 "params": {
-                    **base,
-                    "imbalance_bid_px": Decimal("0"),
-                    "imbalance_ask_px": Decimal("190.14"),
+                    "paper_route_target_plan": {
+                        "candidate_id": "c88421d619759b2cfaa6f4d0"
+                    },
+                    "source_decision_mode": ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
+                    "price": Decimal("190.12"),
+                    "imbalance_bid_px": "190.10",
+                    "imbalance_ask_px": "190.14",
                 }
             }
         )
 
-        self.assertTrue(
-            SimpleTradingPipeline._decision_has_executable_quote_payload(direct_quote)
-        )
-        self.assertFalse(
-            SimpleTradingPipeline._decision_has_executable_quote_payload(
-                non_mapping_snapshot
+        for decision in (
+            non_paper_route_decision,
+            nested_quote_decision,
+            top_level_quote_decision,
+        ):
+            prepared, snapshot = pipeline._ensure_decision_price(
+                decision,
+                Decimal("190.12"),
             )
+            self.assertIs(prepared, decision)
+            self.assertIsNone(snapshot)
+
+        self.assertEqual(price_fetcher.snapshot_requests, 0)
+
+    def test_decision_quote_payload_detection_rejects_non_mapping_snapshot(
+        self,
+    ) -> None:
+        decision = StrategyDecision(
+            strategy_id=str(uuid4()),
+            symbol="AAPL",
+            event_ts=datetime(2026, 6, 1, 14, 0, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            rationale="paper-route-target-source",
+            params={
+                "paper_route_target_plan": {"candidate_id": "c88421d619759b2cfaa6f4d0"},
+                "source_decision_mode": ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
+                "price_snapshot": "190.12",
+            },
         )
+
         self.assertFalse(
-            SimpleTradingPipeline._decision_has_executable_quote_payload(invalid_quote)
+            SimpleTradingPipeline._decision_has_executable_quote_payload(decision)
         )
+
+    def test_executable_bid_ask_rejects_crossed_or_missing_quotes(self) -> None:
+        self.assertFalse(
+            _executable_bid_ask_present({"bid": "190.14", "ask": "190.10"})
+        )
+        self.assertFalse(_executable_bid_ask_present({"bid": "190.10"}))
+        self.assertTrue(_executable_bid_ask_present({"bid": "190.10", "ask": "190.14"}))
 
     def test_bounded_collection_contamination_blocker_is_not_hidden_by_quote_readiness(
         self,
