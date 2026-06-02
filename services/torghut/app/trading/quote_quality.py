@@ -11,9 +11,9 @@ from typing import Any, cast
 from .features import extract_executable_price, optional_decimal, payload_value
 from .models import SignalEnvelope
 
-DEFAULT_MAX_EXECUTABLE_SPREAD_BPS = Decimal('50')
-DEFAULT_MAX_QUOTE_MID_JUMP_BPS = Decimal('150')
-DEFAULT_MAX_JUMP_WITH_WIDE_SPREAD_BPS = Decimal('25')
+DEFAULT_MAX_EXECUTABLE_SPREAD_BPS = Decimal("50")
+DEFAULT_MAX_QUOTE_MID_JUMP_BPS = Decimal("150")
+DEFAULT_MAX_JUMP_WITH_WIDE_SPREAD_BPS = Decimal("25")
 
 
 @dataclass(frozen=True)
@@ -35,28 +35,30 @@ class QuoteQualityStatus:
     price: Decimal | None = None
     bid: Decimal | None = None
     ask: Decimal | None = None
-    fillability_state: str = 'blocked'
+    fillability_state: str = "blocked"
     repair_action: str | None = None
+    operator_next_action: str | None = None
     evidence_requirements: tuple[str, ...] = ()
 
     def to_readback(self) -> dict[str, object]:
         """Return source-backed quote/fillability diagnostics for readiness output."""
 
         return {
-            'valid': self.valid,
-            'reason': self.reason,
-            'fillability_state': self.fillability_state,
-            'repair_action': self.repair_action,
-            'evidence_requirements': list(self.evidence_requirements),
-            'spread_bps': str(self.spread_bps) if self.spread_bps is not None else None,
-            'jump_bps': str(self.jump_bps) if self.jump_bps is not None else None,
-            'quote_age_seconds': str(self.quote_age_seconds)
+            "valid": self.valid,
+            "reason": self.reason,
+            "fillability_state": self.fillability_state,
+            "repair_action": self.repair_action,
+            "operator_next_action": self.operator_next_action,
+            "evidence_requirements": list(self.evidence_requirements),
+            "spread_bps": str(self.spread_bps) if self.spread_bps is not None else None,
+            "jump_bps": str(self.jump_bps) if self.jump_bps is not None else None,
+            "quote_age_seconds": str(self.quote_age_seconds)
             if self.quote_age_seconds is not None
             else None,
-            'source': self.source,
-            'price': str(self.price) if self.price is not None else None,
-            'bid': str(self.bid) if self.bid is not None else None,
-            'ask': str(self.ask) if self.ask is not None else None,
+            "source": self.source,
+            "price": str(self.price) if self.price is not None else None,
+            "bid": str(self.bid) if self.bid is not None else None,
+            "ask": str(self.ask) if self.ask is not None else None,
         }
 
 
@@ -94,10 +96,21 @@ def assess_signal_quote_quality(
     ask = _extract_ask(signal)
     source = _extract_quote_source(signal)
     quote_age_seconds = _signal_quote_age_seconds(signal)
+    has_snapshot_fallback = _has_quote_snapshot_fallback(signal) or source is not None
+    if price is None and bid is None and ask is None and not has_snapshot_fallback:
+        return _status(
+            valid=False,
+            reason="absent_snapshot_fallback",
+            quote_age_seconds=quote_age_seconds,
+            source=source,
+            price=price,
+            bid=bid,
+            ask=ask,
+        )
     if price is None or price <= 0:
         return _status(
             valid=False,
-            reason='non_positive_price',
+            reason="non_positive_price",
             quote_age_seconds=quote_age_seconds,
             source=source,
             price=price,
@@ -107,7 +120,7 @@ def assess_signal_quote_quality(
     if bid is None and ask is None:
         return _status(
             valid=False,
-            reason='missing_executable_quote',
+            reason="missing_executable_quote",
             quote_age_seconds=quote_age_seconds,
             source=source,
             price=price,
@@ -117,7 +130,7 @@ def assess_signal_quote_quality(
     if bid is None:
         return _status(
             valid=False,
-            reason='missing_bid',
+            reason="missing_bid",
             quote_age_seconds=quote_age_seconds,
             source=source,
             price=price,
@@ -127,7 +140,7 @@ def assess_signal_quote_quality(
     if ask is None:
         return _status(
             valid=False,
-            reason='missing_ask',
+            reason="missing_ask",
             quote_age_seconds=quote_age_seconds,
             source=source,
             price=price,
@@ -137,7 +150,7 @@ def assess_signal_quote_quality(
     if bid <= 0:
         return _status(
             valid=False,
-            reason='non_positive_bid',
+            reason="non_positive_bid",
             quote_age_seconds=quote_age_seconds,
             source=source,
             price=price,
@@ -147,7 +160,7 @@ def assess_signal_quote_quality(
     if ask <= 0:
         return _status(
             valid=False,
-            reason='non_positive_ask',
+            reason="non_positive_ask",
             quote_age_seconds=quote_age_seconds,
             source=source,
             price=price,
@@ -157,7 +170,7 @@ def assess_signal_quote_quality(
     if ask < bid:
         return _status(
             valid=False,
-            reason='crossed_quote',
+            reason="crossed_quote",
             quote_age_seconds=quote_age_seconds,
             source=source,
             price=price,
@@ -174,7 +187,7 @@ def assess_signal_quote_quality(
     ):
         return _status(
             valid=False,
-            reason='stale_quote',
+            reason="stale_quote",
             spread_bps=spread_bps,
             quote_age_seconds=quote_age_seconds,
             source=source,
@@ -188,7 +201,7 @@ def assess_signal_quote_quality(
     ):
         return _status(
             valid=False,
-            reason='spread_bps_exceeded',
+            reason="spread_bps_exceeded",
             spread_bps=spread_bps,
             quote_age_seconds=quote_age_seconds,
             source=source,
@@ -206,7 +219,7 @@ def assess_signal_quote_quality(
     ):
         return _status(
             valid=False,
-            reason='wide_spread_midpoint_jump',
+            reason="wide_spread_midpoint_jump",
             spread_bps=spread_bps,
             jump_bps=jump_bps,
             quote_age_seconds=quote_age_seconds,
@@ -228,43 +241,70 @@ def assess_signal_quote_quality(
 
 
 _QUOTE_CONTAINER_KEYS = (
-    'price_snapshot',
-    'executable_quote',
-    'quote',
-    'nbbo',
-    'market_snapshot',
+    "price_snapshot",
+    "executable_quote",
+    "quote",
+    "nbbo",
+    "market_snapshot",
 )
 _QUOTE_DECIMAL_KEYS: Mapping[str, tuple[str, ...]] = {
-    'price': ('price', 'mid', 'mid_price', 'midpoint'),
-    'bid': ('bid', 'bid_px', 'bid_price', 'bp'),
-    'ask': ('ask', 'ask_px', 'ask_price', 'ap'),
-    'spread': ('spread', 'imbalance_spread'),
+    "price": ("price", "mid", "mid_price", "midpoint"),
+    "bid": ("bid", "bid_px", "bid_price", "bp"),
+    "ask": ("ask", "ask_px", "ask_price", "ap"),
+    "spread": ("spread", "imbalance_spread"),
 }
 _REPAIR_ACTIONS: Mapping[str, str] = {
-    'non_positive_price': 'collect_positive_executable_reference_price',
-    'missing_executable_quote': 'collect_bid_ask_quote_before_routeability_claim',
-    'missing_bid': 'collect_bid_quote_before_routeability_claim',
-    'missing_ask': 'collect_ask_quote_before_routeability_claim',
-    'non_positive_bid': 'refresh_bid_quote_before_routeability_claim',
-    'non_positive_ask': 'refresh_ask_quote_before_routeability_claim',
-    'crossed_quote': 'refresh_uncrossed_executable_quote_before_routeability_claim',
-    'stale_quote': 'refresh_quote_snapshot_and_recompute_route_fillability',
-    'spread_bps_exceeded': 'wait_for_tighter_executable_quote_before_routeability_claim',
-    'wide_spread_midpoint_jump': 'collect_fresh_tight_quote_and_recheck_midpoint_jump',
+    "absent_snapshot_fallback": "refresh_source_snapshot_before_routeability_claim",
+    "non_positive_price": "collect_positive_executable_reference_price",
+    "missing_executable_quote": "collect_bid_ask_quote_before_routeability_claim",
+    "missing_bid": "collect_bid_quote_before_routeability_claim",
+    "missing_ask": "collect_ask_quote_before_routeability_claim",
+    "non_positive_bid": "refresh_bid_quote_before_routeability_claim",
+    "non_positive_ask": "refresh_ask_quote_before_routeability_claim",
+    "crossed_quote": "refresh_uncrossed_executable_quote_before_routeability_claim",
+    "stale_quote": "refresh_quote_snapshot_and_recompute_route_fillability",
+    "spread_bps_exceeded": "wait_for_tighter_executable_quote_before_routeability_claim",
+    "wide_spread_midpoint_jump": "collect_fresh_tight_quote_and_recheck_midpoint_jump",
+    "target_plan_source_mismatch": "skip_symbol_until_target_plan_source_matches_decision",
+}
+_OPERATOR_NEXT_ACTIONS: Mapping[str, str] = {
+    "absent_snapshot_fallback": "refresh_source_snapshot",
+    "non_positive_price": "refresh_source_snapshot",
+    "missing_executable_quote": "refresh_source_snapshot",
+    "missing_bid": "refresh_source_snapshot",
+    "missing_ask": "refresh_source_snapshot",
+    "non_positive_bid": "refresh_source_snapshot",
+    "non_positive_ask": "refresh_source_snapshot",
+    "crossed_quote": "wait_for_fresh_quote",
+    "stale_quote": "wait_for_fresh_quote",
+    "spread_bps_exceeded": "wait_for_fresh_quote",
+    "wide_spread_midpoint_jump": "wait_for_fresh_quote",
+    "target_plan_source_mismatch": "skip_symbol",
 }
 _EVIDENCE_REQUIREMENTS: Mapping[str, tuple[str, ...]] = {
-    'non_positive_price': ('positive_executable_price',),
-    'missing_executable_quote': ('bid_px', 'ask_px', 'quote_source', 'quote_as_of'),
-    'missing_bid': ('bid_px', 'quote_source', 'quote_as_of'),
-    'missing_ask': ('ask_px', 'quote_source', 'quote_as_of'),
-    'non_positive_bid': ('positive_bid_px', 'quote_source', 'quote_as_of'),
-    'non_positive_ask': ('positive_ask_px', 'quote_source', 'quote_as_of'),
-    'crossed_quote': ('uncrossed_bid_ask_quote', 'quote_source', 'quote_as_of'),
-    'stale_quote': ('fresh_quote_as_of', 'quote_source'),
-    'spread_bps_exceeded': ('tight_executable_spread_bps', 'bid_px', 'ask_px'),
-    'wide_spread_midpoint_jump': (
-        'fresh_reference_midpoint',
-        'tight_executable_spread_bps',
+    "absent_snapshot_fallback": (
+        "price_snapshot",
+        "bid_px",
+        "ask_px",
+        "quote_source",
+        "quote_as_of",
+    ),
+    "non_positive_price": ("positive_executable_price",),
+    "missing_executable_quote": ("bid_px", "ask_px", "quote_source", "quote_as_of"),
+    "missing_bid": ("bid_px", "quote_source", "quote_as_of"),
+    "missing_ask": ("ask_px", "quote_source", "quote_as_of"),
+    "non_positive_bid": ("positive_bid_px", "quote_source", "quote_as_of"),
+    "non_positive_ask": ("positive_ask_px", "quote_source", "quote_as_of"),
+    "crossed_quote": ("uncrossed_bid_ask_quote", "quote_source", "quote_as_of"),
+    "stale_quote": ("fresh_quote_as_of", "quote_source"),
+    "spread_bps_exceeded": ("tight_executable_spread_bps", "bid_px", "ask_px"),
+    "wide_spread_midpoint_jump": (
+        "fresh_reference_midpoint",
+        "tight_executable_spread_bps",
+    ),
+    "target_plan_source_mismatch": (
+        "target_plan_symbol_scope",
+        "strategy_source_decision_lineage",
     ),
 }
 
@@ -292,11 +332,12 @@ def _status(
             price=price,
             bid=bid,
             ask=ask,
-            fillability_state='executable_quote_ready',
+            fillability_state="executable_quote_ready",
             repair_action=None,
+            operator_next_action="allow_bounded_collection",
             evidence_requirements=(),
         )
-    normalized_reason = reason or 'unknown_quote_quality_blocker'
+    normalized_reason = reason or "unknown_quote_quality_blocker"
     return QuoteQualityStatus(
         valid=False,
         reason=normalized_reason,
@@ -307,13 +348,16 @@ def _status(
         price=price,
         bid=bid,
         ask=ask,
-        fillability_state='blocked',
+        fillability_state="blocked",
         repair_action=_REPAIR_ACTIONS.get(
-            normalized_reason, 'collect_source_backed_quote_repair_receipt'
+            normalized_reason, "collect_source_backed_quote_repair_receipt"
+        ),
+        operator_next_action=_OPERATOR_NEXT_ACTIONS.get(
+            normalized_reason, "refresh_source_snapshot"
         ),
         evidence_requirements=_EVIDENCE_REQUIREMENTS.get(
             normalized_reason,
-            ('source_backed_quote_fillability_receipt',),
+            ("source_backed_quote_fillability_receipt",),
         ),
     )
 
@@ -322,7 +366,7 @@ def _extract_price(signal: SignalEnvelope) -> Decimal | None:
     direct_price = extract_executable_price(signal.payload)
     if direct_price is not None:
         return direct_price
-    snapshot_price = _extract_quote_container_decimal(signal, 'price')
+    snapshot_price = _extract_quote_container_decimal(signal, "price")
     if snapshot_price is not None:
         return snapshot_price
     bid = _extract_bid(signal)
@@ -336,40 +380,40 @@ def _extract_bid(signal: SignalEnvelope) -> Decimal | None:
     bid = optional_decimal(
         payload_value(
             signal.payload,
-            'imbalance_bid_px',
-            block='imbalance',
-            nested_key='bid_px',
+            "imbalance_bid_px",
+            block="imbalance",
+            nested_key="bid_px",
         )
     )
     if bid is not None:
         return bid
-    bid = optional_decimal(signal.payload.get('bid'))
+    bid = optional_decimal(signal.payload.get("bid"))
     if bid is not None:
         return bid
-    bid = optional_decimal(signal.payload.get('bid_px'))
+    bid = optional_decimal(signal.payload.get("bid_px"))
     if bid is not None:
         return bid
-    return _extract_quote_container_decimal(signal, 'bid')
+    return _extract_quote_container_decimal(signal, "bid")
 
 
 def _extract_ask(signal: SignalEnvelope) -> Decimal | None:
     ask = optional_decimal(
         payload_value(
             signal.payload,
-            'imbalance_ask_px',
-            block='imbalance',
-            nested_key='ask_px',
+            "imbalance_ask_px",
+            block="imbalance",
+            nested_key="ask_px",
         )
     )
     if ask is not None:
         return ask
-    ask = optional_decimal(signal.payload.get('ask'))
+    ask = optional_decimal(signal.payload.get("ask"))
     if ask is not None:
         return ask
-    ask = optional_decimal(signal.payload.get('ask_px'))
+    ask = optional_decimal(signal.payload.get("ask_px"))
     if ask is not None:
         return ask
-    return _extract_quote_container_decimal(signal, 'ask')
+    return _extract_quote_container_decimal(signal, "ask")
 
 
 def _extract_quote_container_decimal(
@@ -404,24 +448,24 @@ def _signal_spread_bps(
             spread = ask - bid
     if spread is None:
         return None
-    return (abs(spread) / price) * Decimal('10000')
+    return (abs(spread) / price) * Decimal("10000")
 
 
 def _extract_explicit_spread(signal: SignalEnvelope) -> Decimal | None:
-    spread = _optional_decimal(signal.payload.get('spread'))
+    spread = _optional_decimal(signal.payload.get("spread"))
     if spread is not None:
         return spread
     spread = _optional_decimal(
         payload_value(
             signal.payload,
-            'imbalance_spread',
-            block='imbalance',
-            nested_key='spread',
+            "imbalance_spread",
+            block="imbalance",
+            nested_key="spread",
         )
     )
     if spread is not None:
         return spread
-    return _extract_quote_container_decimal(signal, 'spread')
+    return _extract_quote_container_decimal(signal, "spread")
 
 
 def _signal_mid_jump_bps(
@@ -431,7 +475,7 @@ def _signal_mid_jump_bps(
 ) -> Decimal | None:
     if price is None or price <= 0 or reference_price is None or reference_price <= 0:
         return None
-    return (abs(price - reference_price) / reference_price) * Decimal('10000')
+    return (abs(price - reference_price) / reference_price) * Decimal("10000")
 
 
 def _signal_quote_age_seconds(signal: SignalEnvelope) -> Decimal | None:
@@ -451,11 +495,11 @@ def _signal_quote_age_seconds(signal: SignalEnvelope) -> Decimal | None:
 
 def _extract_quote_timestamp(signal: SignalEnvelope) -> datetime | None:
     for typed_snapshot in _quote_containers(signal):
-        for key in ('quote_as_of', 'as_of', 'timestamp', 't'):
+        for key in ("quote_as_of", "as_of", "timestamp", "t"):
             parsed = _parse_datetime(typed_snapshot.get(key))
             if parsed is not None:
                 return parsed
-    for key in ('quote_as_of', 'executable_quote_as_of'):
+    for key in ("quote_as_of", "executable_quote_as_of"):
         parsed = _parse_datetime(signal.payload.get(key))
         if parsed is not None:
             return parsed
@@ -464,11 +508,11 @@ def _extract_quote_timestamp(signal: SignalEnvelope) -> datetime | None:
 
 def _extract_quote_source(signal: SignalEnvelope) -> str | None:
     for typed_snapshot in _quote_containers(signal):
-        for key in ('quote_source', 'source', 'feed'):
+        for key in ("quote_source", "source", "feed"):
             source = _optional_text(typed_snapshot.get(key))
             if source is not None:
                 return source
-    for key in ('quote_source', 'source'):
+    for key in ("quote_source", "source"):
         source = _optional_text(signal.payload.get(key))
         if source is not None:
             return source
@@ -484,6 +528,28 @@ def _quote_containers(signal: SignalEnvelope) -> tuple[Mapping[str, Any], ...]:
     return tuple(containers)
 
 
+def _has_quote_snapshot_fallback(signal: SignalEnvelope) -> bool:
+    for container in _quote_containers(signal):
+        for key in (
+            "price",
+            "mid",
+            "mid_price",
+            "midpoint",
+            "bid",
+            "bid_px",
+            "bid_price",
+            "ask",
+            "ask_px",
+            "ask_price",
+            "quote_as_of",
+            "as_of",
+            "timestamp",
+        ):
+            if container.get(key) is not None:
+                return True
+    return False
+
+
 def _parse_datetime(value: Any) -> datetime | None:
     if value is None:
         return None
@@ -494,7 +560,7 @@ def _parse_datetime(value: Any) -> datetime | None:
         if not text:
             return None
         try:
-            return datetime.fromisoformat(text.replace('Z', '+00:00'))
+            return datetime.fromisoformat(text.replace("Z", "+00:00"))
         except ValueError:
             return None
     return None
@@ -512,11 +578,11 @@ def _optional_decimal(value: Any) -> Decimal | None:
 
 
 __all__ = [
-    'DEFAULT_MAX_EXECUTABLE_SPREAD_BPS',
-    'DEFAULT_MAX_JUMP_WITH_WIDE_SPREAD_BPS',
-    'DEFAULT_MAX_QUOTE_MID_JUMP_BPS',
-    'QuoteQualityPolicy',
-    'QuoteQualityStatus',
-    'SignalQuoteQualityTracker',
-    'assess_signal_quote_quality',
+    "DEFAULT_MAX_EXECUTABLE_SPREAD_BPS",
+    "DEFAULT_MAX_JUMP_WITH_WIDE_SPREAD_BPS",
+    "DEFAULT_MAX_QUOTE_MID_JUMP_BPS",
+    "QuoteQualityPolicy",
+    "QuoteQualityStatus",
+    "SignalQuoteQualityTracker",
+    "assess_signal_quote_quality",
 ]

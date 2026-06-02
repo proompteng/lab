@@ -428,6 +428,35 @@ def _target_materialization_blockers(
     return sorted(dict.fromkeys(blockers))
 
 
+def _blocked_target_readiness(blockers: Sequence[str]) -> dict[str, Any]:
+    blocker_set = {blocker for blocker in blockers if blocker}
+    if "paper_route_target_notional_exceeds_bounded_collection_limit" in blocker_set:
+        next_action = "reduce_notional"
+    elif (
+        "paper_route_target_symbol_actions_missing" in blocker_set
+        or "paper_route_target_symbol_quantities_missing" in blocker_set
+        or "paper_route_target_bounded_collection_stage_required" in blocker_set
+        or "paper_route_target_torghut_sim_account_required" in blocker_set
+    ):
+        next_action = "skip_symbol"
+    elif (
+        "paper_route_evidence_collection_gate_not_passed" in blocker_set
+        or "paper_route_bounded_collection_not_authorized" in blocker_set
+    ):
+        next_action = "wait_for_fresh_quote"
+    else:
+        next_action = "refresh_source_snapshot"
+    return {
+        "schema_version": "torghut.paper-route-target-plan-readiness.v1",
+        "state": "blocked",
+        "blockers": list(blockers),
+        "next_operator_action": next_action,
+        "promotion_allowed": False,
+        "final_authority_ok": False,
+        "final_promotion_allowed": False,
+    }
+
+
 def _paper_route_decision_hash(payload: Mapping[str, Any]) -> str:
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
     return sha256(canonical.encode("utf-8")).hexdigest()
@@ -552,6 +581,7 @@ def materialize_bounded_paper_route_target_plan(
                     "hypothesis_id": identity.get("hypothesis_id"),
                     "candidate_id": identity.get("candidate_id"),
                     "blockers": blockers,
+                    "readiness": _blocked_target_readiness(blockers),
                     "target_identity": identity,
                 }
             )
@@ -569,6 +599,9 @@ def materialize_bounded_paper_route_target_plan(
                     "hypothesis_id": identity.get("hypothesis_id"),
                     "candidate_id": identity.get("candidate_id"),
                     "blockers": ["paper_route_target_strategy_missing"],
+                    "readiness": _blocked_target_readiness(
+                        ["paper_route_target_strategy_missing"]
+                    ),
                     "target_identity": identity,
                 }
             )

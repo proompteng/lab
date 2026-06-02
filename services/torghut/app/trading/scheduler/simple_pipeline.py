@@ -552,6 +552,109 @@ def _parse_target_datetime(value: object) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def _mapping_value(value: object) -> Mapping[str, Any] | None:
+    if isinstance(value, Mapping):
+        return cast(Mapping[str, Any], value)
+    return None
+
+
+def _decimal_from_mapping(
+    payload: Mapping[str, Any],
+    keys: Sequence[str],
+) -> Decimal | None:
+    for key in keys:
+        value = _optional_decimal(payload.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _text_from_mapping(payload: Mapping[str, Any], keys: Sequence[str]) -> str | None:
+    for key in keys:
+        value = _safe_text(payload.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _target_metadata_quote_snapshot(
+    params: Mapping[str, Any],
+    *,
+    symbol: str,
+) -> Mapping[str, Any] | None:
+    normalized_symbol = symbol.strip().upper()
+    for metadata_key in (
+        "paper_route_target_plan_source_decision",
+        "paper_route_target_plan",
+        "paper_route_probe",
+        "strategy_signal_paper",
+    ):
+        metadata = _mapping_value(params.get(metadata_key))
+        if metadata is None:
+            continue
+        snapshot = _quote_snapshot_from_mapping(metadata, symbol=normalized_symbol)
+        if snapshot is not None:
+            return snapshot
+    return None
+
+
+def _quote_snapshot_from_mapping(
+    payload: Mapping[str, Any],
+    *,
+    symbol: str,
+) -> Mapping[str, Any] | None:
+    for direct_key in (
+        "price_snapshot",
+        "executable_quote",
+        "quote",
+        "nbbo",
+        "market_snapshot",
+    ):
+        direct = _mapping_value(payload.get(direct_key))
+        if direct is not None and _quote_snapshot_matches_symbol(direct, symbol=symbol):
+            return direct
+
+    readiness = _mapping_value(payload.get("source_decision_readiness"))
+    if readiness is not None:
+        snapshot = _quote_snapshot_from_mapping(readiness, symbol=symbol)
+        if snapshot is not None:
+            return snapshot
+
+    for symbol_map_key in (
+        "paper_route_probe_symbol_quotes",
+        "source_symbol_quotes",
+        "symbol_quotes",
+        "executable_quotes",
+        "price_snapshots",
+        "latest_quotes",
+    ):
+        symbol_map = _mapping_value(payload.get(symbol_map_key))
+        if symbol_map is None:
+            continue
+        for raw_symbol, raw_snapshot in symbol_map.items():
+            if str(raw_symbol).strip().upper() != symbol:
+                continue
+            snapshot = _mapping_value(raw_snapshot)
+            if snapshot is not None:
+                return snapshot
+    return None
+
+
+def _quote_snapshot_matches_symbol(
+    snapshot: Mapping[str, Any],
+    *,
+    symbol: str,
+) -> bool:
+    snapshot_symbol = _safe_text(snapshot.get("symbol"))
+    return snapshot_symbol is None or snapshot_symbol.upper() == symbol
+
+
+def _snapshot_has_executable_quote(snapshot: Mapping[str, Any]) -> bool:
+    bid = _decimal_from_mapping(snapshot, ("bid", "bid_px", "bid_price", "bp"))
+    ask = _decimal_from_mapping(snapshot, ("ask", "ask_px", "ask_price", "ap"))
+    return bid is not None and ask is not None and bid > 0 and ask >= bid
+
+
 def _target_probe_window(target: Mapping[str, Any]) -> tuple[datetime, datetime] | None:
     window_start = _parse_target_datetime(
         target.get("paper_route_probe_window_start") or target.get("window_start")
@@ -2549,6 +2652,21 @@ class SimpleTradingPipeline(TradingPipeline):
                 timeframe=decision.timeframe,
             )
         )
+        target_snapshot = _target_metadata_quote_snapshot(
+            decision.params,
+            symbol=decision.symbol,
+        )
+        if (
+            (snapshot is None or snapshot.price is None)
+            and target_snapshot is not None
+            and _snapshot_has_executable_quote(target_snapshot)
+        ):
+            updated_params = self._paper_route_params_with_quote_snapshot(
+                decision.params,
+                target_snapshot,
+                signal_price=signal_price,
+            )
+            return decision.model_copy(update={"params": updated_params}), None
         if snapshot is None or snapshot.price is None:
             return decision, None
         updated_params = dict(decision.params)
@@ -2566,6 +2684,53 @@ class SimpleTradingPipeline(TradingPipeline):
         if snapshot.spread is not None:
             updated_params.setdefault("imbalance_spread", snapshot.spread)
         return decision.model_copy(update={"params": updated_params}), snapshot
+
+    @staticmethod
+    def _paper_route_params_with_quote_snapshot(
+        params: Mapping[str, Any],
+        snapshot: Mapping[str, Any],
+        *,
+        signal_price: Any,
+    ) -> dict[str, Any]:
+        updated_params = dict(params)
+        price = _decimal_from_mapping(
+            snapshot, ("price", "mid", "mid_price", "midpoint")
+        )
+        bid = _decimal_from_mapping(snapshot, ("bid", "bid_px", "bid_price", "bp"))
+        ask = _decimal_from_mapping(snapshot, ("ask", "ask_px", "ask_price", "ap"))
+        spread = _decimal_from_mapping(snapshot, ("spread", "imbalance_spread"))
+        computed_spread = ask - bid if bid is not None and ask is not None else None
+        quote_as_of = (
+            _parse_target_datetime(snapshot.get("quote_as_of"))
+            or _parse_target_datetime(snapshot.get("as_of"))
+            or _parse_target_datetime(snapshot.get("timestamp"))
+        )
+        source = _text_from_mapping(snapshot, ("quote_source", "source", "feed"))
+        if price is None and bid is not None and ask is not None:
+            price = (bid + ask) / Decimal("2")
+        if signal_price is None and price is not None:
+            updated_params["price"] = price
+        if bid is not None:
+            updated_params.setdefault("imbalance_bid_px", bid)
+        if ask is not None:
+            updated_params.setdefault("imbalance_ask_px", ask)
+        if spread is not None or computed_spread is not None:
+            effective_spread = spread if spread is not None else computed_spread
+            updated_params.setdefault("spread", effective_spread)
+            updated_params.setdefault("imbalance_spread", effective_spread)
+        updated_params["price_snapshot"] = {
+            "source": source,
+            "quote_source": source,
+            "as_of": quote_as_of.isoformat() if quote_as_of is not None else None,
+            "quote_as_of": quote_as_of.isoformat() if quote_as_of is not None else None,
+            "price": str(price) if price is not None else None,
+            "bid": str(bid) if bid is not None else None,
+            "ask": str(ask) if ask is not None else None,
+            "spread": str(spread if spread is not None else computed_spread)
+            if spread is not None or computed_spread is not None
+            else None,
+        }
+        return updated_params
 
     @staticmethod
     def _decision_has_executable_quote_payload(decision: StrategyDecision) -> bool:
@@ -2628,24 +2793,42 @@ class SimpleTradingPipeline(TradingPipeline):
             price_snapshot = cast(Mapping[str, Any], price_snapshot_raw)
         else:
             price_snapshot = {}
+        target_quote_snapshot = _target_metadata_quote_snapshot(
+            params,
+            symbol=decision.symbol,
+        )
+        if not price_snapshot and target_quote_snapshot is not None:
+            price_snapshot = target_quote_snapshot
 
         params_price = _optional_decimal(params.get("price"))
         snapshot_price = snapshot.price if snapshot is not None else None
-        payload_price = _optional_decimal(price_snapshot.get("price"))
-        price = _first_decimal(params_price, snapshot_price, payload_price)
+        payload_price = _decimal_from_mapping(
+            price_snapshot,
+            ("price", "mid", "mid_price", "midpoint"),
+        )
+        price = _first_decimal(snapshot_price, payload_price, params_price)
 
         snapshot_bid = snapshot.bid if snapshot is not None else None
-        payload_bid = _optional_decimal(price_snapshot.get("bid"))
+        payload_bid = _decimal_from_mapping(
+            price_snapshot,
+            ("bid", "bid_px", "bid_price", "bp"),
+        )
         params_bid = _optional_decimal(params.get("imbalance_bid_px"))
         bid = _first_decimal(snapshot_bid, payload_bid, params_bid)
 
         snapshot_ask = snapshot.ask if snapshot is not None else None
-        payload_ask = _optional_decimal(price_snapshot.get("ask"))
+        payload_ask = _decimal_from_mapping(
+            price_snapshot,
+            ("ask", "ask_px", "ask_price", "ap"),
+        )
         params_ask = _optional_decimal(params.get("imbalance_ask_px"))
         ask = _first_decimal(snapshot_ask, payload_ask, params_ask)
 
         snapshot_spread = snapshot.spread if snapshot is not None else None
-        payload_spread = _optional_decimal(price_snapshot.get("spread"))
+        payload_spread = _decimal_from_mapping(
+            price_snapshot,
+            ("spread", "imbalance_spread"),
+        )
         params_spread = _optional_decimal(params.get("spread"))
         computed_spread = ask - bid if bid is not None and ask is not None else None
         spread = _first_decimal(
@@ -2659,6 +2842,7 @@ class SimpleTradingPipeline(TradingPipeline):
             if snapshot is not None and snapshot.quote_as_of is not None
             else _parse_target_datetime(price_snapshot.get("quote_as_of"))
             or _parse_target_datetime(price_snapshot.get("as_of"))
+            or _parse_target_datetime(price_snapshot.get("timestamp"))
         )
         source = (
             str(
@@ -2667,6 +2851,7 @@ class SimpleTradingPipeline(TradingPipeline):
                     if snapshot is not None and snapshot.quote_source is not None
                     else price_snapshot.get("quote_source")
                     or price_snapshot.get("source")
+                    or price_snapshot.get("feed")
                     or (snapshot.source if snapshot is not None else "")
                 )
                 or ""
@@ -2706,13 +2891,61 @@ class SimpleTradingPipeline(TradingPipeline):
                 max_executable_quote_age_seconds=settings.trading_executable_quote_lookback_seconds,
             ),
         )
+        target_mismatch = self._paper_route_target_plan_source_mismatch(decision)
+        if target_mismatch is not None:
+            status = QuoteQualityStatus(
+                valid=False,
+                reason="target_plan_source_mismatch",
+                spread_bps=status.spread_bps,
+                jump_bps=status.jump_bps,
+                quote_age_seconds=status.quote_age_seconds,
+                source=source,
+                price=status.price,
+                bid=status.bid,
+                ask=status.ask,
+                fillability_state="blocked",
+                repair_action="skip_symbol_until_target_plan_source_matches_decision",
+                operator_next_action="skip_symbol",
+                evidence_requirements=(
+                    "target_plan_symbol_scope",
+                    "strategy_source_decision_lineage",
+                ),
+            )
         routeability = self._paper_route_quote_routeability_payload(
             decision=decision,
             status=status,
             source=source,
             quote_as_of=quote_as_of,
+            target_mismatch=target_mismatch,
         )
         return status, routeability
+
+    @staticmethod
+    def _paper_route_target_plan_source_mismatch(
+        decision: StrategyDecision,
+    ) -> dict[str, object] | None:
+        metadata = _mapping_value(
+            decision.params.get("paper_route_target_plan_source_decision")
+        ) or _mapping_value(decision.params.get("paper_route_target_plan"))
+        if metadata is None:
+            return None
+        symbol = decision.symbol.strip().upper()
+        metadata_symbol = _safe_text(metadata.get("symbol"))
+        target_symbols = _target_symbols(metadata)
+        mismatches: list[str] = []
+        if metadata_symbol is not None and metadata_symbol.upper() != symbol:
+            mismatches.append("target_plan_symbol_mismatch")
+        if target_symbols and symbol not in target_symbols:
+            mismatches.append("target_plan_symbol_scope_mismatch")
+        if not mismatches:
+            return None
+        return {
+            "schema_version": "torghut.paper-route-target-plan-source-mismatch.v1",
+            "symbol": symbol,
+            "metadata_symbol": metadata_symbol,
+            "target_symbols": sorted(target_symbols),
+            "mismatches": mismatches,
+        }
 
     @staticmethod
     def _paper_route_quote_routeability_payload(
@@ -2721,7 +2954,9 @@ class SimpleTradingPipeline(TradingPipeline):
         status: QuoteQualityStatus,
         source: str | None,
         quote_as_of: datetime | None,
+        target_mismatch: Mapping[str, object] | None = None,
     ) -> dict[str, object]:
+        blockers = [] if status.valid else [status.reason or "missing_executable_quote"]
         return {
             "schema_version": "torghut.paper-route-quote-routeability.v1",
             "status": "accepted" if status.valid else "blocked",
@@ -2741,6 +2976,31 @@ class SimpleTradingPipeline(TradingPipeline):
             "ask": str(status.ask) if status.ask is not None else None,
             "price": str(status.price) if status.price is not None else None,
             "capability": "executable_bid_ask",
+            "fillability_state": status.fillability_state,
+            "repair_action": status.repair_action,
+            "operator_next_action": status.operator_next_action,
+            "bounded_evidence_collection_ready": status.valid,
+            "bounded_evidence_collection_action": (
+                "allow_bounded_collection"
+                if status.valid
+                else status.operator_next_action or "refresh_source_snapshot"
+            ),
+            "promotion_allowed": False,
+            "final_authority_ok": False,
+            "final_promotion_allowed": False,
+            "readiness": {
+                "schema_version": "torghut.paper-route-fillability-readiness.v1",
+                "state": "ready" if status.valid else "blocked",
+                "blockers": blockers,
+                "next_operator_action": status.operator_next_action,
+                "repair_action": status.repair_action,
+                "evidence_requirements": list(status.evidence_requirements),
+                "promotion_allowed": False,
+                "final_authority_ok": False,
+            },
+            "target_plan_source_mismatch": dict(target_mismatch)
+            if target_mismatch is not None
+            else None,
         }
 
     def _prepare_decision_for_submission(

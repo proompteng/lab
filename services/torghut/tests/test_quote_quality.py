@@ -35,6 +35,7 @@ class TestQuoteQuality(TestCase):
 
         self.assertFalse(status.valid)
         self.assertEqual(status.reason, "crossed_quote")
+        self.assertEqual(status.operator_next_action, "wait_for_fresh_quote")
 
     def test_tracker_uses_last_valid_price_for_jump_filter(self) -> None:
         tracker = SignalQuoteQualityTracker(
@@ -52,6 +53,7 @@ class TestQuoteQuality(TestCase):
         self.assertTrue(first.valid)
         self.assertFalse(second.valid)
         self.assertEqual(second.reason, "wide_spread_midpoint_jump")
+        self.assertEqual(second.operator_next_action, "wait_for_fresh_quote")
 
     def test_assess_signal_quote_quality_uses_nested_imbalance_midpoint(self) -> None:
         signal = SignalEnvelope(
@@ -98,6 +100,7 @@ class TestQuoteQuality(TestCase):
 
         self.assertFalse(status.valid)
         self.assertEqual(status.reason, "missing_executable_quote")
+        self.assertEqual(status.operator_next_action, "refresh_source_snapshot")
 
     def test_assess_signal_quote_quality_rejects_zero_top_level_bid_without_falling_back(
         self,
@@ -125,6 +128,7 @@ class TestQuoteQuality(TestCase):
 
         self.assertFalse(status.valid)
         self.assertEqual(status.reason, "non_positive_bid")
+        self.assertEqual(status.operator_next_action, "refresh_source_snapshot")
 
     def test_assess_signal_quote_quality_rejects_price_without_executable_quote(
         self,
@@ -147,6 +151,7 @@ class TestQuoteQuality(TestCase):
 
         self.assertFalse(status.valid)
         self.assertEqual(status.reason, "missing_executable_quote")
+        self.assertEqual(status.operator_next_action, "refresh_source_snapshot")
 
     def test_assess_signal_quote_quality_rejects_non_positive_price_with_top_level_quote(
         self,
@@ -250,6 +255,7 @@ class TestQuoteQuality(TestCase):
 
         self.assertFalse(status.valid)
         self.assertEqual(status.reason, "missing_bid")
+        self.assertEqual(status.operator_next_action, "refresh_source_snapshot")
 
     def test_assess_signal_quote_quality_rejects_missing_ask(self) -> None:
         signal = SignalEnvelope(
@@ -306,6 +312,7 @@ class TestQuoteQuality(TestCase):
             status.repair_action,
             "refresh_quote_snapshot_and_recompute_route_fillability",
         )
+        self.assertEqual(status.operator_next_action, "wait_for_fresh_quote")
         self.assertIn("fresh_quote_as_of", status.evidence_requirements)
 
     def test_assess_signal_quote_quality_uses_h_pairs_price_snapshot_quote(
@@ -342,6 +349,7 @@ class TestQuoteQuality(TestCase):
         self.assertIsNone(status.reason)
         self.assertEqual(status.fillability_state, "executable_quote_ready")
         self.assertIsNone(status.repair_action)
+        self.assertEqual(status.operator_next_action, "allow_bounded_collection")
         self.assertEqual(status.source, "paper_route_h_pairs_quote")
         self.assertEqual(status.quote_age_seconds, Decimal("1.0"))
         self.assertEqual(status.price, Decimal("190.01"))
@@ -383,6 +391,31 @@ class TestQuoteQuality(TestCase):
         self.assertEqual(
             status.to_readback()["repair_action"],
             "collect_bid_quote_before_routeability_claim",
+        )
+        self.assertEqual(
+            status.to_readback()["operator_next_action"],
+            "refresh_source_snapshot",
+        )
+
+    def test_assess_signal_quote_quality_exposes_absent_snapshot_fallback(
+        self,
+    ) -> None:
+        signal = SignalEnvelope(
+            event_ts=datetime(2026, 3, 27, 17, 30, 24, tzinfo=timezone.utc),
+            symbol="AAPL",
+            timeframe="1Sec",
+            seq=21,
+            payload={},
+        )
+
+        status = assess_signal_quote_quality(signal=signal, previous_price=None)
+
+        self.assertFalse(status.valid)
+        self.assertEqual(status.reason, "absent_snapshot_fallback")
+        self.assertEqual(status.operator_next_action, "refresh_source_snapshot")
+        self.assertEqual(
+            status.repair_action,
+            "refresh_source_snapshot_before_routeability_claim",
         )
 
     def test_assess_signal_quote_quality_rejects_non_positive_snapshot_price(
