@@ -2837,6 +2837,63 @@ class TestTradingApi(TestCase):
             payload["status_read_budget"]["skipped_reads"],
         )
 
+    def test_trading_status_skips_expensive_reads_when_budget_remaining_is_low(
+        self,
+    ) -> None:
+        class ManualBudget(main_module._TradingStatusReadBudget):
+            def __init__(self) -> None:
+                super().__init__(max_seconds=10.0)
+                self.current_elapsed = 1.0
+
+            def elapsed_seconds(self) -> float:
+                return self.current_elapsed
+
+        budget = ManualBudget()
+
+        def _load_rejected_signal_outcome_learning_summary(
+            _session: Session,
+        ) -> dict[str, object]:
+            budget.current_elapsed = 8.5
+            return {}
+
+        with (
+            patch("app.main._TradingStatusReadBudget", return_value=budget),
+            patch(
+                "app.main._load_clickhouse_ta_status",
+                return_value={
+                    "state": "current",
+                    "latest_signal_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+                    "source_ref": "clickhouse:ta_signals",
+                },
+            ),
+            patch(
+                "app.main._load_rejected_signal_outcome_learning_summary",
+                side_effect=_load_rejected_signal_outcome_learning_summary,
+            ),
+            patch("app.main._build_live_submission_gate_payload") as live_gate,
+        ):
+            response = self.client.get("/trading/status")
+
+        self.assertEqual(response.status_code, 200)
+        live_gate.assert_not_called()
+        payload = response.json()
+        self.assertFalse(payload["live_submission_gate"]["allowed"])
+        self.assertEqual(
+            payload["live_submission_gate"]["reason"],
+            "live_submission_gate_status_read_budget_insufficient_remaining",
+        )
+        self.assertTrue(payload["live_submission_gate"]["read_model_unavailable"])
+        self.assertFalse(payload["status_read_budget"]["exhausted"])
+        self.assertEqual(payload["status_read_budget"]["remaining_seconds"], 1.5)
+        self.assertIn(
+            "live_submission_gate",
+            payload["status_read_budget"]["skipped_reads"],
+        )
+        self.assertIn(
+            "options_catalog_freshness",
+            payload["status_read_budget"]["skipped_reads"],
+        )
+
     def test_readiness_checks_external_dependencies_before_postgres_session(
         self,
     ) -> None:
