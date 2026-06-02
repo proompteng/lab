@@ -937,9 +937,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         )
 
         self.assertEqual(bucket["source_window_status_counts"], {"inserted": 1})
-        self.assertEqual(
-            bucket["source_window_classification_counts"], {"inserted": 1}
-        )
+        self.assertEqual(bucket["source_window_classification_counts"], {"inserted": 1})
         self.assertTrue(bucket["order_feed_lifecycle_complete"])
         self.assertTrue(bucket["execution_economics_complete"])
         self.assertEqual(
@@ -1135,6 +1133,64 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             "runtime_ledger_execution_order_event_refs_missing",
             metadata["runtime_ledger_profit_proof_blockers"],
         )
+
+    def test_runtime_ledger_materialization_metadata_excludes_exact_replay_artifacts(
+        self,
+    ) -> None:
+        exact_replay_artifact = _complete_runtime_ledger_bucket(
+            source_materialization="exact_replay_artifact",
+            authority_class="exact_replay_artifact_only_not_live",
+            authority_reason="exact_replay_artifact_not_runtime_proof",
+            pnl_derivation="exact_replay_artifact_only_not_live",
+            promotion_authority="blocked",
+        )
+        source_backed = _complete_runtime_ledger_bucket(
+            run_id="source-backed-runtime-ledger",
+            source_materialization="execution_order_events",
+            authority_class="runtime_order_feed_execution_source",
+            authority_reason="event_sourced_runtime_ledger_profit_proof",
+            pnl_derivation="execution_order_events_runtime_ledger",
+        )
+
+        tca_rows = [
+            {
+                "post_cost_expectancy_basis": POST_COST_BASIS_RUNTIME_LEDGER,
+                "runtime_ledger_bucket": exact_replay_artifact,
+            },
+            {
+                "post_cost_expectancy_basis": POST_COST_BASIS_RUNTIME_LEDGER,
+                "runtime_ledger_bucket": source_backed,
+            },
+        ]
+        metadata = _runtime_ledger_tca_materialization_metadata(tca_rows)
+        authority_payload = _runtime_observation_authority_payload(
+            source_kind="paper_runtime_observed",
+            tca_rows=[dict(row) for row in tca_rows],
+        )
+
+        self.assertFalse(
+            _runtime_ledger_bucket_profit_proof_present(exact_replay_artifact)
+        )
+        self.assertTrue(_runtime_ledger_bucket_profit_proof_present(source_backed))
+        self.assertEqual(metadata["runtime_ledger_tca_runtime_bucket_row_count"], 2)
+        self.assertEqual(metadata["runtime_ledger_tca_profit_proof_count"], 1)
+        self.assertEqual(
+            metadata["runtime_ledger_source_execution_materialized_bucket_count"],
+            1,
+        )
+        self.assertIn(
+            "runtime_ledger_source_materialization_missing",
+            metadata["runtime_ledger_profit_proof_blockers"],
+        )
+        self.assertIn(
+            "runtime_ledger_authority_class_missing",
+            metadata["runtime_ledger_profit_proof_blockers"],
+        )
+        self.assertTrue(
+            _runtime_ledger_profit_proof_present([dict(row) for row in tca_rows])
+        )
+        self.assertEqual(authority_payload["runtime_ledger_profit_proof_present"], True)
+        self.assertEqual(authority_payload["promotion_authority"], "runtime_ledger")
 
     def test_runtime_ledger_profit_proof_rejects_modeled_cost_basis(
         self,
