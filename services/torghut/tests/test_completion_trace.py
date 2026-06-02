@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 from unittest import TestCase
+from unittest.mock import patch
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -19,10 +20,12 @@ from app.models import (
 )
 from app.trading.completion import (
     DOC29_EMPIRICAL_JOBS_GATE,
+    DOC29_EMPIRICAL_MANIFEST_GATE,
     DOC29_LIVE_CANARY_GATE,
     DOC29_LIVE_SCALE_GATE,
     DOC29_PAPER_GATE,
     DOC29_SIMULATION_FULL_DAY_GATE,
+    DOC29_SIMULATION_SMOKE_GATE,
     TRACE_STATUS_SATISFIED,
     _median_decimal,
     _p10_decimal,
@@ -339,6 +342,31 @@ class TestCompletionTrace(TestCase):
         self.assertEqual(gate['status'], 'satisfied')
         self.assertEqual(gate['latest_run'], 'sim-2026-03-06-full-day')
 
+    def test_doc29_completion_status_all_satisfied_sets_final_authority(self) -> None:
+        with self.session_local() as session:
+            with patch(
+                'app.trading.completion.load_doc29_completion_matrix',
+                return_value={
+                    'doc_id': 'doc29',
+                    'design_doc_path': 'docs/torghut/design-system/v6/29-completion-matrix-2026-03-07.yaml',
+                    'matrix_version': 'test-empty-matrix',
+                    'gates': [],
+                },
+            ):
+                status = build_doc29_completion_status(
+                    session=session,
+                    stale_after_seconds=86400,
+                    current_git_revision='abc123',
+                    current_image_digest='sha256:test',
+                )
+
+        self.assertTrue(status['summary']['all_satisfied'])
+        self.assertTrue(status['promotion_authority']['capital_promotion_allowed'])
+        self.assertTrue(status['promotion_authority']['promotion_allowed'])
+        self.assertTrue(status['promotion_authority']['final_authority_ok'])
+        self.assertTrue(status['promotion_authority']['final_promotion_allowed'])
+        self.assertEqual(status['promotion_authority']['final_promotion_blockers'], [])
+
     def test_doc29_completion_status_derives_empirical_jobs_gate(self) -> None:
         with self.session_local() as session:
             for job_type in (
@@ -479,7 +507,7 @@ class TestCompletionTrace(TestCase):
                             's3://artifacts/gates/fill-price-error-budget-report-v1.json'
                         ),
                     },
-                }
+                },
             },
             blocked_reasons={},
             git_revision='abc123',
@@ -533,7 +561,13 @@ class TestCompletionTrace(TestCase):
     def test_doc29_completion_status_derives_live_canary_and_scale_gates(self) -> None:
         trace = build_completion_trace(
             doc_id='doc29',
-            gate_ids_attempted=[DOC29_SIMULATION_FULL_DAY_GATE],
+            gate_ids_attempted=[
+                'promotion_truthfulness_firewall',
+                'strategy_spec_v2_runtime_lineage',
+                DOC29_SIMULATION_SMOKE_GATE,
+                DOC29_SIMULATION_FULL_DAY_GATE,
+                DOC29_EMPIRICAL_MANIFEST_GATE,
+            ],
             run_id='sim-2026-03-06-full-day',
             dataset_snapshot_ref='snapshot-1',
             candidate_id='cand-1',
@@ -543,6 +577,33 @@ class TestCompletionTrace(TestCase):
             db_row_refs={},
             status_snapshot={},
             result_by_gate={
+                'promotion_truthfulness_firewall': {
+                    'status': TRACE_STATUS_SATISFIED,
+                    'artifact_ref': 's3://artifacts/gates/benchmark-parity-report-v1.json',
+                    'acceptance_snapshot': {
+                        'synthetic_evidence_present': False,
+                        'placeholder_evidence_present': False,
+                    },
+                },
+                'strategy_spec_v2_runtime_lineage': {
+                    'status': TRACE_STATUS_SATISFIED,
+                    'artifact_ref': 's3://artifacts/completion-trace.json',
+                    'acceptance_snapshot': {
+                        'strategy_spec_ref': 'StrategySpecV2:legacy_macd_rsi',
+                        'experiment_spec_ref': 'ExperimentSpec:doc29',
+                    },
+                },
+                DOC29_SIMULATION_SMOKE_GATE: {
+                    'status': TRACE_STATUS_SATISFIED,
+                    'artifact_ref': 's3://artifacts/run-smoke-manifest.json',
+                    'acceptance_snapshot': {
+                        'trade_decisions': 12,
+                        'executions': 12,
+                        'execution_tca_metrics': 12,
+                        'execution_order_events': 12,
+                        'coverage_ratio': 1.0,
+                    },
+                },
                 DOC29_SIMULATION_FULL_DAY_GATE: {
                     'status': TRACE_STATUS_SATISFIED,
                     'artifact_ref': 's3://artifacts/run-full-lifecycle-manifest.json',
@@ -557,7 +618,15 @@ class TestCompletionTrace(TestCase):
                             's3://artifacts/gates/fill-price-error-budget-report-v1.json'
                         ),
                     },
-                }
+                },
+                DOC29_EMPIRICAL_MANIFEST_GATE: {
+                    'status': TRACE_STATUS_SATISFIED,
+                    'artifact_ref': 's3://artifacts/empirical-manifest.json',
+                    'acceptance_snapshot': {
+                        'manifest_schema_version': 'torghut.empirical-manifest.v1',
+                        'lineage_complete': True,
+                    },
+                },
             },
             blocked_reasons={},
             git_revision='abc123',
@@ -726,6 +795,12 @@ class TestCompletionTrace(TestCase):
             scale_gate['runtime_ledger_summary']['runtime_ledger_mean_daily_net_pnl_after_costs'],
             '24',
         )
+        self.assertTrue(status['summary']['all_satisfied'])
+        self.assertTrue(status['promotion_authority']['final_authority_ok'])
+        self.assertTrue(status['promotion_authority']['capital_promotion_allowed'])
+        self.assertTrue(status['promotion_authority']['promotion_allowed'])
+        self.assertTrue(status['promotion_authority']['final_promotion_allowed'])
+        self.assertEqual(status['promotion_authority']['final_promotion_blockers'], [])
 
     def test_runtime_ledger_daily_summary_falls_back_to_bucket_rows(self) -> None:
         first = _runtime_ledger_bucket(
@@ -1201,6 +1276,16 @@ class TestCompletionTrace(TestCase):
         self.assertEqual(canary_gate['status'], 'satisfied')
         self.assertEqual(scale_gate['status'], 'blocked')
         self.assertEqual(scale_gate['blocked_reason'], 'runtime_ledger_profit_proof_missing')
+        self.assertTrue(status['promotion_authority']['evidence_collection_ok'])
+        self.assertTrue(status['promotion_authority']['canary_collection_authorized'])
+        self.assertFalse(status['promotion_authority']['capital_promotion_allowed'])
+        self.assertFalse(status['promotion_authority']['promotion_allowed'])
+        self.assertFalse(status['promotion_authority']['final_authority_ok'])
+        self.assertFalse(status['promotion_authority']['final_promotion_allowed'])
+        self.assertIn(
+            DOC29_LIVE_SCALE_GATE,
+            status['promotion_authority']['final_promotion_blockers'],
+        )
         self.assertEqual(scale_gate['db_row_refs']['strategy_runtime_ledger_buckets'], [])
         self.assertEqual(
             len(scale_gate['db_row_refs']['runtime_ledger_unbacked_hypothesis_metric_windows']),

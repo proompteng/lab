@@ -1584,6 +1584,34 @@ def build_doc29_completion_status(
     for gate in gates:
         gate_status = str(gate['status'])
         status_counts[gate_status] = status_counts.get(gate_status, 0) + 1
+    all_satisfied = all(str(gate['status']) == TRACE_STATUS_SATISFIED for gate in gates)
+    blocked_gate_ids = [
+        str(gate['gate_id'])
+        for gate in gates
+        if str(gate['status']) != TRACE_STATUS_SATISFIED
+    ]
+    promotion_authority = {
+        'evidence_collection_ok': (
+            str(gate_status_map.get(DOC29_LIVE_CANARY_GATE, {}).get('status'))
+            == TRACE_STATUS_SATISFIED
+        ),
+        'canary_collection_authorized': (
+            str(gate_status_map.get(DOC29_LIVE_CANARY_GATE, {}).get('status'))
+            == TRACE_STATUS_SATISFIED
+        ),
+        'paper_probation_satisfied_for_bounded_live_paper_collection': (
+            str(gate_status_map.get(DOC29_PAPER_GATE, {}).get('status'))
+            == TRACE_STATUS_SATISFIED
+        ),
+        'capital_promotion_allowed': False,
+        'promotion_allowed': False,
+        'final_authority_ok': all_satisfied,
+        'final_promotion_allowed': all_satisfied,
+        'final_promotion_blockers': blocked_gate_ids,
+    }
+    if all_satisfied:
+        promotion_authority['capital_promotion_allowed'] = True
+        promotion_authority['promotion_allowed'] = True
     return {
         'doc_id': matrix['doc_id'],
         'design_doc_path': matrix['design_doc_path'],
@@ -1594,8 +1622,9 @@ def build_doc29_completion_status(
         'summary': {
             'total': len(gates),
             'status_counts': status_counts,
-            'all_satisfied': all(str(gate['status']) == TRACE_STATUS_SATISFIED for gate in gates),
+            'all_satisfied': all_satisfied,
         },
+        'promotion_authority': promotion_authority,
         'gates': gates,
     }
 
