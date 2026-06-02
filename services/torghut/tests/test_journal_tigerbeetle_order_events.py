@@ -214,6 +214,19 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
             "sqlite+pysqlite:///:memory:",
         )
 
+    def test_parse_sources_accepts_aliases_and_deduplicates(self) -> None:
+        self.assertEqual(
+            script._parse_sources("execution,tca,cost,runtime_ledger"),
+            (
+                script.SOURCE_TYPE_EXECUTION,
+                script.SOURCE_TYPE_EXECUTION_TCA_METRIC,
+                script.SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+            ),
+        )
+        self.assertEqual(script._parse_sources("all"), script.DEFAULT_SOURCES)
+        with self.assertRaises(ValueError):
+            script._parse_sources("unknown-source")
+
     def test_payload_summarizes_batches(self) -> None:
         args = argparse.Namespace(
             dry_run=True,
@@ -663,6 +676,55 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
             reconcile.call_args.kwargs["client"],
             FakeJournal.instances[0].reconciliation_client,
         )
+
+    def test_main_can_target_tca_metrics_without_reconcile(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "torghut.db")
+            dsn = f"sqlite+pysqlite:///{db_path}"
+            engine = create_engine(dsn, future=True)
+            Base.metadata.create_all(engine)
+            with Session(engine) as session:
+                _add_order_event(session, fingerprint="selected", source_offset=1)
+                _add_real_source_rows(session)
+                session.commit()
+
+            stdout = io.StringIO()
+            with (
+                patch.dict(os.environ, {"TEST_DB_DSN": dsn}),
+                patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "journal_tigerbeetle_order_events.py",
+                        "--dsn-env",
+                        "TEST_DB_DSN",
+                        "--sources",
+                        "execution_tca_metric",
+                        "--batch-size",
+                        "10",
+                        "--max-batches",
+                        "2",
+                        "--skip-reconcile",
+                        "--json",
+                    ],
+                ),
+                patch.object(script, "TigerBeetleLedgerJournal", FakeJournal),
+                patch.object(script, "reconcile_tigerbeetle_transfers") as reconcile,
+                redirect_stdout(stdout),
+            ):
+                exit_code = script.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["sources"], [script.SOURCE_TYPE_EXECUTION_TCA_METRIC])
+        self.assertTrue(payload["skip_reconcile"])
+        self.assertEqual(payload["journaled"], 1)
+        self.assertEqual(FakeJournal.instances[0].events, [])
+        self.assertEqual(FakeJournal.instances[0].executions, [])
+        self.assertEqual(FakeJournal.instances[0].tca_metrics, ["AAPL"])
+        self.assertEqual(FakeJournal.instances[0].runtime_buckets, [])
+        reconcile.assert_not_called()
 
     def test_main_dry_run_rolls_back_without_reconcile(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
