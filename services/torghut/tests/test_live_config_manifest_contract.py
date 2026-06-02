@@ -1380,7 +1380,10 @@ class TestLiveConfigManifestContract(TestCase):
             metadata.get("name"),
             "torghut-tigerbeetle-journal-order-events",
         )
-        self.assertEqual(spec.get("schedule"), "6,36 * * * *")
+        self.assertEqual(
+            spec.get("schedule"),
+            "1,6,11,16,21,26,31,36,41,46,51,56 * * * *",
+        )
         self.assertEqual(spec.get("concurrencyPolicy"), "Forbid")
         self.assertEqual(spec.get("startingDeadlineSeconds"), 300)
         self.assertEqual(spec.get("successfulJobsHistoryLimit"), 2)
@@ -1395,7 +1398,7 @@ class TestLiveConfigManifestContract(TestCase):
             cast(Mapping[str, object], job_spec.get("template", {})),
         )
         pod_spec = cast(Mapping[str, object], template.get("spec", {}))
-        self.assertEqual(job_spec.get("activeDeadlineSeconds"), 900)
+        self.assertEqual(job_spec.get("activeDeadlineSeconds"), 1200)
         self.assertEqual(job_spec.get("backoffLimit"), 0)
         self.assertEqual(pod_spec.get("restartPolicy"), "Never")
         self.assertEqual(pod_spec.get("serviceAccountName"), "torghut-runtime")
@@ -1474,17 +1477,25 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertIn("scripts/journal_tigerbeetle_order_events.py", args)
         self.assertNotIn("scripts/repair_order_feed_source_windows.py", args)
         self.assertIn("--dsn-env DB_DSN", args)
+        self.assertIn("--sources execution,execution_tca_metric", args)
+        self.assertIn(
+            "--sources execution_order_event,strategy_runtime_ledger_bucket",
+            args,
+        )
+        self.assertIn("--batch-size 500", args)
+        self.assertIn("--batch-size 250", args)
         self.assertIn("--batch-size 125", args)
         self.assertIn("--max-batches 2", args)
         self.assertIn("--event-scan-limit 1000", args)
-        self.assertIn("--reconcile-limit 500", args)
+        self.assertIn("--reconcile-limit 1000", args)
         self.assertIn("--dsn-env SIM_DB_DSN", args)
         self.assertIn("--account-label TORGHUT_SIM", args)
         self.assertIn("--batch-size 75", args)
         self.assertIn("--max-batches 4", args)
         self.assertIn("--event-scan-limit 300", args)
-        self.assertIn("--reconcile-limit 250", args)
-        self.assertEqual(args.count("scripts/journal_tigerbeetle_order_events.py"), 2)
+        self.assertIn("--reconcile-limit 500", args)
+        self.assertIn("--skip-reconcile", args)
+        self.assertEqual(args.count("scripts/journal_tigerbeetle_order_events.py"), 4)
         self.assertNotIn("--fail-on-degraded", args)
         self.assertIn("--json", args)
         security_context = cast(
