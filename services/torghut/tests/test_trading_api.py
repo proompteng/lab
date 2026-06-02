@@ -2533,6 +2533,60 @@ class TestTradingApi(TestCase):
         self.assertIsNot(observed_sessions[0], observed_sessions[2])
         self.assertIsNot(observed_sessions[2], observed_sessions[3])
 
+    def test_trading_status_reuses_clickhouse_signal_status_once(self) -> None:
+        with patch(
+            "app.main._load_clickhouse_ta_status",
+            return_value={
+                "state": "current",
+                "latest_signal_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+                "source_ref": "clickhouse:ta_signals",
+                "signal_rows": 10,
+                "symbol_count": 1,
+            },
+        ) as load_clickhouse:
+            response = self.client.get("/trading/status")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(load_clickhouse.call_count, 1)
+        payload = response.json()
+        self.assertIn("status_read_budget", payload)
+
+    def test_trading_status_fails_closed_late_reads_after_budget_exhausted(
+        self,
+    ) -> None:
+        with (
+            patch("app.main._TRADING_STATUS_READ_BUDGET_SECONDS", 0.0),
+            patch(
+                "app.main._load_clickhouse_ta_status",
+                return_value={
+                    "state": "current",
+                    "latest_signal_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+                    "source_ref": "clickhouse:ta_signals",
+                },
+            ),
+            patch("app.main._build_live_submission_gate_payload") as live_gate,
+        ):
+            response = self.client.get("/trading/status")
+
+        self.assertEqual(response.status_code, 200)
+        live_gate.assert_not_called()
+        payload = response.json()
+        self.assertFalse(payload["live_submission_gate"]["allowed"])
+        self.assertEqual(
+            payload["live_submission_gate"]["reason"],
+            "live_submission_gate_status_read_budget_exhausted",
+        )
+        self.assertTrue(payload["live_submission_gate"]["read_model_unavailable"])
+        self.assertTrue(payload["status_read_budget"]["exhausted"])
+        self.assertIn(
+            "live_submission_gate",
+            payload["status_read_budget"]["skipped_reads"],
+        )
+        self.assertIn(
+            "options_catalog_freshness",
+            payload["status_read_budget"]["skipped_reads"],
+        )
+
     def test_readiness_checks_external_dependencies_before_postgres_session(
         self,
     ) -> None:

@@ -3083,6 +3083,7 @@ class AutoresearchPortfolioCandidate(Base, TimestampMixin):
     __table_args__ = (
         Index("ix_autoresearch_portfolio_candidates_epoch_id", "epoch_id"),
         Index("ix_autoresearch_portfolio_candidates_status", "status"),
+        Index("ix_autoresearch_portfolio_candidates_created", "created_at"),
         Index(
             "ix_autoresearch_portfolio_candidates_status_created",
             "status",
