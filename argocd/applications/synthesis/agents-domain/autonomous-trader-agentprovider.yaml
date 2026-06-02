@@ -83,7 +83,7 @@ spec:
     ANALYSIS_REPO_URL: https://github.com/gregkonush/analysis.git
     ANALYSIS_REQUIRED_COMMIT: 56be940b69bf1a56578040eda9bf2e3699c5220e
     AUTONOMOUS_TRADER_ARTIFACT_DIR: /workspace/.agentrun/autonomous-trader
-    AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED: "true"
+    AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED: "{{parameters.brokerMutationEnabled}}"
     AUTONOMOUS_TRADER_MODE: "{{parameters.mode}}"
     AUTONOMOUS_TRADER_SYNTHESIS_SESSION_MODE: "{{parameters.synthesisSessionMode}}"
     AUTONOMOUS_TRADER_TARGET_EQUITY_USD: "{{parameters.targetEquityUsd}}"
@@ -139,7 +139,7 @@ spec:
         command = "/usr/bin/python3"
         args = ["-u", "/root/alpaca-mcp-stdio-bridge.py"]
         startup_timeout_sec = 60.0
-        env = { FASTMCP_SHOW_SERVER_BANNER = "false", FASTMCP_LOG_LEVEL = "ERROR", AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED = "true" }
+        env = { FASTMCP_SHOW_SERVER_BANNER = "false", FASTMCP_LOG_LEVEL = "ERROR", AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED = "{{ env.AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED }}" }
 
         [mcp_servers.synthesis]
         command = "node"
