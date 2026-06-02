@@ -142,6 +142,7 @@ class CensusIdentity:
     runtime_strategy_name: str
     account_label: str
     observed_stage: str | None
+    source_account_label: str | None = None
 
 
 @dataclass
@@ -169,6 +170,15 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--runtime-strategy-name", default=DEFAULT_HPAIRS_RUNTIME_STRATEGY
     )
     parser.add_argument("--account-label", default=DEFAULT_HPAIRS_ACCOUNT_LABEL)
+    parser.add_argument(
+        "--source-account-label",
+        default="",
+        help=(
+            "Optional source/broker account label to reconcile against the logical "
+            "--account-label. Source-account rows only count when linked to the "
+            "logical account by durable decision/execution refs or alias payloads."
+        ),
+    )
     parser.add_argument("--observed-stage", default="paper")
     parser.add_argument("--start", dest="started_at")
     parser.add_argument("--end", dest="ended_at")
@@ -191,8 +201,9 @@ def build_source_proof_census(
 ) -> dict[str, object]:
     """Build a deterministic source-proof census from already-read rows."""
 
+    scoped_rows = _authority_scope_rows(rows, identity)
     ledger_report = build_runtime_authority_report(
-        rows.runtime_ledger_buckets,
+        scoped_rows.runtime_ledger_buckets,
         hypothesis_id=identity.hypothesis_id,
         candidate_id=identity.candidate_id,
         runtime_strategy_name=identity.runtime_strategy_name,
@@ -202,15 +213,17 @@ def build_source_proof_census(
         ended_at=ended_at,
         evidence_read_error=read_error,
     )
-    daily = _daily_census(rows, ledger_report)
+    daily = _daily_census(scoped_rows, ledger_report)
     candidate_config_match = _candidate_config_match(rows, identity, ledger_report)
     totals = _totals(
-        rows,
+        scoped_rows,
         daily,
         ledger_report,
         candidate_config_match=candidate_config_match,
     )
-    blockers = _census_blockers(rows, totals, ledger_report, read_error=read_error)
+    blockers = _census_blockers(
+        scoped_rows, totals, ledger_report, read_error=read_error
+    )
     missing_source_ref_categories = _missing_source_ref_categories(blockers)
     missing_requirement_categories = _missing_requirement_categories(blockers)
     blocker_ladder = _blocker_ladder(
@@ -229,6 +242,7 @@ def build_source_proof_census(
             "candidate_id": identity.candidate_id,
             "runtime_strategy_name": identity.runtime_strategy_name,
             "account_label": identity.account_label,
+            "source_account_label": _source_account_label(identity),
             "observed_stage": identity.observed_stage,
         },
         "window": {
@@ -241,6 +255,8 @@ def build_source_proof_census(
             "writes_proof": False,
             "modifies_rows": False,
             "runtime_stage": identity.observed_stage,
+            "account_label": identity.account_label,
+            "source_account_label": _source_account_label(identity),
             "replay_outputs_count_as_runtime_proof": False,
             "synthetic_proof_created": False,
         },
@@ -315,6 +331,8 @@ def _load_session_rows(
     started_at: datetime | None,
     ended_at: datetime | None,
 ) -> CensusSourceRows:
+    source_account_label = _source_account_label(identity)
+    account_labels = sorted({identity.account_label, source_account_label})
     decision_stmt = (
         select(TradeDecision, Strategy.name)
         .join(Strategy, TradeDecision.strategy_id == Strategy.id)
@@ -347,10 +365,14 @@ def _load_session_rows(
         )
     executions = [_execution_row(row) for row in session.scalars(execution_stmt).all()]
     execution_ids = {str(row["id"]) for row in executions}
+    execution_order_ids = _row_text_values(executions, "alpaca_order_id")
+    client_order_ids = _row_text_values(
+        executions, "client_order_id"
+    ) | _row_text_values(decisions, "decision_hash")
 
     event_stmt = (
         select(ExecutionOrderEvent)
-        .where(ExecutionOrderEvent.alpaca_account_label == identity.account_label)
+        .where(ExecutionOrderEvent.alpaca_account_label.in_(account_labels))
         .order_by(
             ExecutionOrderEvent.event_ts.asc().nulls_last(),
             ExecutionOrderEvent.created_at.asc(),
@@ -371,7 +393,7 @@ def _load_session_rows(
                 ExecutionOrderEvent.created_at < ended_at,
             )
         )
-    if decision_ids or execution_ids:
+    if decision_ids or execution_ids or execution_order_ids or client_order_ids:
         event_filters = []
         if decision_ids:
             event_filters.append(
@@ -379,8 +401,25 @@ def _load_session_rows(
             )
         if execution_ids:
             event_filters.append(ExecutionOrderEvent.execution_id.in_(execution_ids))
+        if execution_order_ids:
+            event_filters.append(
+                ExecutionOrderEvent.alpaca_order_id.in_(execution_order_ids)
+            )
+        if client_order_ids:
+            event_filters.append(
+                ExecutionOrderEvent.client_order_id.in_(client_order_ids)
+            )
         event_stmt = event_stmt.where(or_(*event_filters))
+    else:
+        event_stmt = event_stmt.where(
+            ExecutionOrderEvent.alpaca_account_label == identity.account_label
+        )
     order_events = [_order_event_row(row) for row in session.scalars(event_stmt).all()]
+    order_event_source_window_ids = {
+        source_window_id
+        for row in order_events
+        if (source_window_id := _text(row.get("source_window_id"))) is not None
+    }
 
     tca_stmt = (
         select(ExecutionTCAMetric)
@@ -400,14 +439,19 @@ def _load_session_rows(
         tca_stmt = tca_stmt.where(or_(*tca_filters))
     tca_metrics = [_tca_row(row) for row in session.scalars(tca_stmt).all()]
 
-    source_window_stmt = (
-        select(OrderFeedSourceWindow)
-        .where(OrderFeedSourceWindow.alpaca_account_label == identity.account_label)
-        .order_by(
-            OrderFeedSourceWindow.window_started_at.asc(),
-            OrderFeedSourceWindow.id.asc(),
-        )
+    source_window_stmt = select(OrderFeedSourceWindow).order_by(
+        OrderFeedSourceWindow.window_started_at.asc(),
+        OrderFeedSourceWindow.id.asc(),
     )
+    source_window_account_filters = [
+        OrderFeedSourceWindow.alpaca_account_label == identity.account_label
+    ]
+    if source_account_label != identity.account_label and order_event_source_window_ids:
+        source_window_account_filters.append(
+            (OrderFeedSourceWindow.alpaca_account_label == source_account_label)
+            & OrderFeedSourceWindow.id.in_(order_event_source_window_ids)
+        )
+    source_window_stmt = source_window_stmt.where(or_(*source_window_account_filters))
     if started_at is not None:
         source_window_stmt = source_window_stmt.where(
             OrderFeedSourceWindow.window_ended_at >= started_at
@@ -473,6 +517,294 @@ def _load_session_rows(
         order_feed_source_windows=source_windows,
         runtime_ledger_buckets=runtime_ledger_buckets,
     )
+
+
+def _source_account_label(identity: CensusIdentity) -> str:
+    return (identity.source_account_label or "").strip() or identity.account_label
+
+
+def _authority_scope_rows(
+    rows: CensusSourceRows,
+    identity: CensusIdentity,
+) -> CensusSourceRows:
+    """Return only rows allowed to contribute proof for the requested identity."""
+
+    source_account_label = _source_account_label(identity)
+    target_account_label = identity.account_label
+    scoped_trade_decisions = [
+        row
+        for row in rows.trade_decisions
+        if _row_account_label(row) in (None, target_account_label)
+        and _text(row.get("strategy_name")) in (None, identity.runtime_strategy_name)
+    ]
+    scoped_decision_ids = _row_ids(scoped_trade_decisions)
+    scoped_executions = [
+        row
+        for row in rows.executions
+        if _row_account_label(row) in (None, target_account_label)
+        and _optional_row_ref_matches(row, "trade_decision_id", scoped_decision_ids)
+    ]
+    scoped_execution_ids = _row_ids(scoped_executions)
+    scoped_tca_metrics = [
+        row
+        for row in rows.execution_tca_metrics
+        if _row_account_label(row) in (None, target_account_label)
+        and _optional_row_ref_matches(row, "trade_decision_id", scoped_decision_ids)
+        and _optional_row_ref_matches(row, "execution_id", scoped_execution_ids)
+    ]
+    ledger_rows = [
+        row
+        for row in rows.runtime_ledger_buckets
+        if _ledger_row_matches_identity(row, identity)
+    ]
+    ledger_decision_ids = _payload_identifier_values(
+        ledger_rows,
+        "trade_decision_ids",
+        "decision_ids",
+        "decision_hashes",
+    )
+    ledger_execution_ids = _payload_identifier_values(ledger_rows, "execution_ids")
+    ledger_source_window_ids = _payload_identifier_values(
+        ledger_rows,
+        "source_window_ids",
+        "runtime_ledger_source_window_ids",
+    )
+    canonical_decision_ids = scoped_decision_ids | ledger_decision_ids
+    canonical_execution_ids = scoped_execution_ids | ledger_execution_ids
+    canonical_order_ids = _row_text_values(scoped_executions, "alpaca_order_id")
+    canonical_client_order_ids = _row_text_values(
+        scoped_executions, "client_order_id"
+    ) | _row_text_values(scoped_trade_decisions, "decision_hash")
+    scoped_events = [
+        row
+        for row in rows.execution_order_events
+        if _source_event_row_matches_identity(
+            row,
+            identity=identity,
+            source_account_label=source_account_label,
+            target_account_label=target_account_label,
+            canonical_decision_ids=canonical_decision_ids,
+            canonical_execution_ids=canonical_execution_ids,
+            canonical_order_ids=canonical_order_ids,
+            canonical_client_order_ids=canonical_client_order_ids,
+        )
+    ]
+    scoped_event_source_window_ids = {
+        source_window_id
+        for row in scoped_events
+        if (source_window_id := _text(row.get("source_window_id"))) is not None
+    }
+    canonical_source_window_ids = (
+        scoped_event_source_window_ids | ledger_source_window_ids
+    )
+    scoped_source_windows = [
+        row
+        for row in rows.order_feed_source_windows
+        if _source_window_row_matches_identity(
+            row,
+            identity=identity,
+            source_account_label=source_account_label,
+            target_account_label=target_account_label,
+            canonical_source_window_ids=canonical_source_window_ids,
+        )
+    ]
+    return CensusSourceRows(
+        trade_decisions=scoped_trade_decisions,
+        executions=scoped_executions,
+        execution_order_events=scoped_events,
+        execution_tca_metrics=scoped_tca_metrics,
+        order_feed_source_windows=scoped_source_windows,
+        runtime_ledger_buckets=ledger_rows,
+    )
+
+
+def _source_event_row_matches_identity(
+    row: Mapping[str, object],
+    *,
+    identity: CensusIdentity,
+    source_account_label: str,
+    target_account_label: str,
+    canonical_decision_ids: set[str],
+    canonical_execution_ids: set[str],
+    canonical_order_ids: set[str] | None = None,
+    canonical_client_order_ids: set[str] | None = None,
+) -> bool:
+    canonical_order_ids = canonical_order_ids or set()
+    canonical_client_order_ids = canonical_client_order_ids or set()
+    account_label = _row_account_label(row)
+    if account_label in (None, target_account_label):
+        return True
+    if (
+        account_label != source_account_label
+        or source_account_label == target_account_label
+    ):
+        return False
+    if _row_ref_matches(row, "trade_decision_id", canonical_decision_ids):
+        return True
+    if _row_ref_matches(row, "decision_id", canonical_decision_ids):
+        return True
+    if _row_ref_matches(row, "execution_id", canonical_execution_ids):
+        return True
+    if _row_has_any_ref(row, "trade_decision_id", "decision_id", "execution_id"):
+        return False
+    if _row_ref_matches(row, "alpaca_order_id", canonical_order_ids):
+        return True
+    if _row_ref_matches(row, "client_order_id", canonical_client_order_ids):
+        return True
+    if _row_has_any_ref(row, "alpaca_order_id", "client_order_id"):
+        return False
+    return _row_aliases_target_account(row, identity.account_label)
+
+
+def _source_window_row_matches_identity(
+    row: Mapping[str, object],
+    *,
+    identity: CensusIdentity,
+    source_account_label: str,
+    target_account_label: str,
+    canonical_source_window_ids: set[str],
+) -> bool:
+    account_label = _row_account_label(row)
+    if account_label in (None, target_account_label):
+        return True
+    if (
+        account_label != source_account_label
+        or source_account_label == target_account_label
+    ):
+        return False
+    if _row_ref_matches(row, "id", canonical_source_window_ids):
+        return True
+    if _row_ref_matches(row, "source_window_id", canonical_source_window_ids):
+        return True
+    if _row_has_any_ref(row, "id", "source_window_id"):
+        return False
+    return _row_aliases_target_account(row, identity.account_label)
+
+
+def _ledger_row_matches_identity(
+    row: Mapping[str, object],
+    identity: CensusIdentity,
+) -> bool:
+    return (
+        _text(row.get("candidate_id")) in (None, identity.candidate_id)
+        and _text(row.get("hypothesis_id")) in (None, identity.hypothesis_id)
+        and _text(row.get("runtime_strategy_name"))
+        in (None, identity.runtime_strategy_name)
+        and _text(row.get("account_label")) in (None, identity.account_label)
+        and _text(row.get("observed_stage")) in (None, identity.observed_stage)
+    )
+
+
+def _row_account_label(row: Mapping[str, object]) -> str | None:
+    return _text(row.get("alpaca_account_label")) or _text(row.get("account_label"))
+
+
+def _row_ids(rows: Sequence[Mapping[str, object]]) -> set[str]:
+    return {row_id for row in rows if (row_id := _text(row.get("id"))) is not None}
+
+
+def _row_text_values(rows: Sequence[Mapping[str, object]], key: str) -> set[str]:
+    return {value for row in rows if (value := _text(row.get(key))) is not None}
+
+
+def _optional_row_ref_matches(
+    row: Mapping[str, object],
+    key: str,
+    candidates: set[str],
+) -> bool:
+    value = _text(row.get(key))
+    return value is None or not candidates or value in candidates
+
+
+def _row_ref_matches(
+    row: Mapping[str, object],
+    key: str,
+    candidates: set[str],
+) -> bool:
+    value = _text(row.get(key))
+    return value is not None and value in candidates
+
+
+def _row_has_any_ref(row: Mapping[str, object], *keys: str) -> bool:
+    return any(_text(row.get(key)) is not None for key in keys)
+
+
+def _payload_identifier_values(
+    rows: Sequence[Mapping[str, object]],
+    *keys: str,
+) -> set[str]:
+    values: set[str] = set()
+    for row in rows:
+        payload = _mapping(row.get("payload"))
+        for source in (row, payload):
+            for key in keys:
+                values.update(_text_values(source.get(key)))
+    return values
+
+
+def _text_values(value: object) -> set[str]:
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return {item_text for item in value if (item_text := _text(item)) is not None}
+    text = _text(value)
+    if text is not None:
+        return {text}
+    return set()
+
+
+def _row_aliases_target_account(
+    row: Mapping[str, object],
+    target_account_label: str,
+) -> bool:
+    return _mapping_aliases_target(row, target_account_label, alias_context=False)
+
+
+def _mapping_aliases_target(
+    payload: Mapping[str, object],
+    target_account_label: str,
+    *,
+    alias_context: bool,
+) -> bool:
+    for key, value in payload.items():
+        normalized_key = str(key).lower()
+        next_alias_context = alias_context or any(
+            marker in normalized_key
+            for marker in (
+                "alias",
+                "canonical",
+                "logical",
+                "materialized",
+                "target_account",
+            )
+        )
+        if next_alias_context and _value_mentions_text(value, target_account_label):
+            return True
+        if isinstance(value, Mapping) and _mapping_aliases_target(
+            value,
+            target_account_label,
+            alias_context=next_alias_context,
+        ):
+            return True
+        if isinstance(value, Sequence) and not isinstance(
+            value, (str, bytes, bytearray)
+        ):
+            for item in value:
+                if isinstance(item, Mapping) and _mapping_aliases_target(
+                    item,
+                    target_account_label,
+                    alias_context=next_alias_context,
+                ):
+                    return True
+    return False
+
+
+def _value_mentions_text(value: object, expected: str) -> bool:
+    if _text(value) == expected:
+        return True
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return any(_text(item) == expected for item in value)
+    if isinstance(value, Mapping):
+        return any(_value_mentions_text(item, expected) for item in value.values())
+    return False
 
 
 def _daily_census(
@@ -708,6 +1040,9 @@ def _candidate_config_match(
 ) -> dict[str, object]:
     """Summarize whether read rows match the requested H-PAIRS candidate/config."""
 
+    scoped_rows = _authority_scope_rows(rows, identity)
+    scoped_order_event_ids = _row_ids(scoped_rows.execution_order_events)
+    scoped_source_window_ids = _row_ids(scoped_rows.order_feed_source_windows)
     trade_decision_mismatches = sum(
         1
         for row in rows.trade_decisions
@@ -722,7 +1057,7 @@ def _candidate_config_match(
     order_event_mismatches = sum(
         1
         for row in rows.execution_order_events
-        if _text(row.get("alpaca_account_label")) not in (None, identity.account_label)
+        if _text(row.get("id")) not in scoped_order_event_ids
     )
     tca_metric_mismatches = sum(
         1
@@ -732,7 +1067,7 @@ def _candidate_config_match(
     source_window_mismatches = sum(
         1
         for row in rows.order_feed_source_windows
-        if _text(row.get("alpaca_account_label")) not in (None, identity.account_label)
+        if _text(row.get("id")) not in scoped_source_window_ids
     )
     ledger_mismatches = [
         row
@@ -762,6 +1097,7 @@ def _candidate_config_match(
             "candidate_id": identity.candidate_id,
             "runtime_strategy_name": identity.runtime_strategy_name,
             "account_label": identity.account_label,
+            "source_account_label": _source_account_label(identity),
             "observed_stage": identity.observed_stage,
         },
         "trade_decision_mismatch_count": trade_decision_mismatches,
@@ -1400,6 +1736,7 @@ def _order_event_row(row: ExecutionOrderEvent) -> dict[str, object]:
         "filled_qty_delta": row.filled_qty_delta,
         "avg_fill_price": row.avg_fill_price,
         "filled_notional_delta": row.filled_notional_delta,
+        "raw_event": getattr(row, "raw_event", None),
         "execution_id": str(row.execution_id) if row.execution_id is not None else None,
         "trade_decision_id": str(row.trade_decision_id)
         if row.trade_decision_id is not None
@@ -1556,6 +1893,7 @@ def main(argv: list[str] | None = None) -> int:
         candidate_id=args.candidate_id,
         runtime_strategy_name=args.runtime_strategy_name,
         account_label=args.account_label,
+        source_account_label=args.source_account_label,
         observed_stage=args.observed_stage,
     )
     read_error = None

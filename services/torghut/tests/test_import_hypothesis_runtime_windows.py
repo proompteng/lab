@@ -7397,18 +7397,13 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             _source_activity_diagnostics_blockers(diagnostics),
         )
 
-    def test_query_timestamps_uses_source_account_but_materializes_target_account(
+    def test_query_timestamps_uses_source_events_but_materializes_target_account(
         self,
     ) -> None:
         cursor = _FakeCursor()
-        cursor._results = [
-            [
-                tuple(
-                    "TORGHUT_REPLAY" if item == "TORGHUT_SIM" else item for item in row
-                )
-                for row in rows
-            ]
-            for rows in cursor._results
+        cursor._results[2] = [
+            tuple("PA3SX7FYNUTF" if item == "TORGHUT_SIM" else item for item in row)
+            for row in cursor._results[2]
         ]
         connection = _FakeConnection(cursor)
         window_start = datetime(2026, 3, 6, 14, 30, tzinfo=timezone.utc)
@@ -7422,21 +7417,39 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             _, _, tca_rows = _query_timestamps(
                 dsn="postgresql://example",
                 strategy_names=["intraday_tsmom_v1@paper"],
-                account_label="TORGHUT_REPLAY",
+                account_label="PA3SX7FYNUTF",
                 target_account_label="TORGHUT_SIM",
                 window_start=window_start,
                 window_end=window_end,
                 source_activity_diagnostics=diagnostics,
             )
 
-        for _, params in cursor.executed:
-            self.assertIn("TORGHUT_REPLAY", params)
-            self.assertNotIn("TORGHUT_SIM", params)
+        decision_params = cursor.executed[0][1]
+        execution_params = cursor.executed[1][1]
+        order_event_query, order_event_params = cursor.executed[2]
+        tca_params = cursor.executed[3][1]
+        self.assertEqual(decision_params[1], "TORGHUT_SIM")
+        self.assertEqual(execution_params[1], "TORGHUT_SIM")
+        self.assertEqual(execution_params[2], "TORGHUT_SIM")
+        self.assertIn("e_match.alpaca_account_label = %s", order_event_query)
+        self.assertIn("d_match.alpaca_account_label = %s", order_event_query)
+        self.assertEqual(
+            order_event_params[:5],
+            (
+                "TORGHUT_SIM",
+                "TORGHUT_SIM",
+                ["intraday_tsmom_v1@paper"],
+                "TORGHUT_SIM",
+                "PA3SX7FYNUTF",
+            ),
+        )
+        self.assertEqual(tca_params[1], "TORGHUT_SIM")
+        self.assertEqual(tca_params[2], "TORGHUT_SIM")
         self.assertEqual(diagnostics["account_label"], "TORGHUT_SIM")
-        self.assertEqual(diagnostics["source_account_label"], "TORGHUT_REPLAY")
+        self.assertEqual(diagnostics["source_account_label"], "PA3SX7FYNUTF")
         runtime_bucket = tca_rows[1]["runtime_ledger_bucket"]
         self.assertEqual(runtime_bucket["account_label"], "TORGHUT_SIM")
-        self.assertEqual(runtime_bucket["source_account_label"], "TORGHUT_REPLAY")
+        self.assertEqual(runtime_bucket["source_account_label"], "PA3SX7FYNUTF")
         self.assertEqual(
             diagnostics["order_feed_fill_lifecycle_blockers"],
             ["order_feed_fill_lifecycle_missing"],
@@ -7676,7 +7689,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
             datetime(2026, 3, 1, 14, 40, tzinfo=timezone.utc),
         )
         self.assertEqual(
-            carry_order_params[3],
+            carry_order_params[5],
             datetime(2026, 3, 1, 14, 40, tzinfo=timezone.utc),
         )
         self.assertEqual(diagnostics["carry_in_decision_rows_before_lineage_filter"], 1)
