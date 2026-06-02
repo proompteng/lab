@@ -312,6 +312,7 @@ class OrderFeedSourceWindow(Base, TimestampMixin):
     status_reason: Mapped[Optional[str]] = mapped_column(
         String(length=128), nullable=True
     )
+    classification_counts: Mapped[Any] = mapped_column(JSONType, nullable=True)
     payload_json: Mapped[Any] = mapped_column(JSONType, nullable=True)
 
     events: Mapped[list["ExecutionOrderEvent"]] = relationship(

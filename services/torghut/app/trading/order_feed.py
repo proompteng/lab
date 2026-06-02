@@ -689,9 +689,11 @@ def _classify_source_window_drop(
     source_window.status = "dropped"
     source_window.status_reason = drop_reason or "unknown_drop"
     source_window.dropped_count = 1
+    classification_counts = {drop_reason or "unknown_drop": 1}
+    source_window.classification_counts = classification_counts
     source_window.payload_json = {
         "classification": drop_reason or "unknown_drop",
-        "classification_counts": {drop_reason or "unknown_drop": 1},
+        "classification_counts": classification_counts,
         "source_coverage_complete": False,
         "promotion_authority_eligible": False,
         "authority_class": "invalid_order_feed_message",
@@ -718,9 +720,11 @@ def _classify_source_window_unhandled_failure(
     source_window.status = "failed_unhandled"
     source_window.status_reason = _source_window_failure_reason(exc)
     source_window.failed_unhandled_count = 1
+    classification_counts = {"failed_unhandled": 1}
+    source_window.classification_counts = classification_counts
     source_window.payload_json = {
         "classification": "failed_unhandled",
-        "classification_counts": {"failed_unhandled": 1},
+        "classification_counts": classification_counts,
         "source_coverage_complete": False,
         "promotion_authority_eligible": False,
         "authority_class": "failed_unhandled_order_feed_message",
@@ -757,9 +761,11 @@ def _classify_source_window_event(
         source_window.status = "duplicate"
         source_window.status_reason = "duplicate_event_fingerprint"
         source_window.duplicate_count = 1
+        classification_counts = {"duplicate": 1}
+        source_window.classification_counts = classification_counts
         payload: dict[str, Any] = {
             "classification": "duplicate",
-            "classification_counts": {"duplicate": 1},
+            "classification_counts": classification_counts,
             **_source_window_source_identity_payload(source_window),
             **_order_event_evidence_payload(persisted),
             "source_coverage_complete": False,
@@ -780,6 +786,7 @@ def _classify_source_window_event(
     if persisted.trade_decision_id is None:
         source_window.unlinked_decision_count = 1
         classification_counts["unlinked_decision"] = 1
+    source_window.classification_counts = classification_counts
     payload = {
         "classification": "inserted",
         "classification_counts": classification_counts,
@@ -2894,6 +2901,7 @@ def _refresh_source_window_linkage_counts(
     else:
         classification_counts.pop("unlinked_decision", None)
     payload_dict["classification_counts"] = classification_counts
+    source_window.classification_counts = classification_counts
     source_window_complete = bool(
         event_count
         and source_window.unlinked_execution_count == 0
@@ -2971,6 +2979,15 @@ def _retry_failed_duplicate_order_event_application(
             event.source_window_id
         )
         source_window.status_reason = "duplicate_after_failed_unhandled_reprocessed"
+        raw_classification_counts = payload_dict.get("classification_counts")
+        if isinstance(raw_classification_counts, Mapping):
+            source_window.classification_counts = {
+                str(key): value
+                for key, value in cast(
+                    Mapping[object, Any],
+                    raw_classification_counts,
+                ).items()
+            }
         source_window.payload_json = coerce_json_payload(payload_dict)
 
 
