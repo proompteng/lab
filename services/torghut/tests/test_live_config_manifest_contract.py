@@ -1498,11 +1498,18 @@ class TestLiveConfigManifestContract(TestCase):
             self.assertNotIn("scripts/repair_order_feed_source_windows.py", args)
             self.assertEqual(
                 args.count("scripts/journal_tigerbeetle_order_events.py"),
-                2,
+                4,
             )
-            self.assertEqual(args.count("--skip-reconcile"), 1)
-            self.assertEqual(args.count("--fail-on-degraded"), 2)
-            self.assertEqual(args.count("--supervise-timeout-seconds 45"), 2)
+            self.assertIn("status=0", args)
+            self.assertEqual(args.count("|| status=1"), 4)
+            self.assertIn('exit "$status"', args)
+            self.assertIn("--sources execution", args)
+            self.assertIn("--sources execution_tca_metric", args)
+            self.assertIn("--sources execution_order_event", args)
+            self.assertIn("--sources strategy_runtime_ledger_bucket", args)
+            self.assertEqual(args.count("--skip-reconcile"), 2)
+            self.assertEqual(args.count("--fail-on-degraded"), 4)
+            self.assertEqual(args.count("--supervise-timeout-seconds 45"), 4)
             self.assertIn("--json", args)
             security_context = cast(
                 Mapping[str, object],
@@ -1530,6 +1537,7 @@ class TestLiveConfigManifestContract(TestCase):
         self.assertNotIn("SIM_DB_DSN", live_env)
         live_args = "\n".join(str(item) for item in live_container.get("args", []))
         self.assertIn("--dsn-env DB_DSN", live_args)
+        self.assertEqual(live_args.count("--dsn-env DB_DSN"), 4)
         self.assertNotIn("--dsn-env SIM_DB_DSN", live_args)
         self.assertNotIn("--account-label TORGHUT_SIM", live_args)
         self.assertIn("--batch-size 50", live_args)
@@ -1561,6 +1569,8 @@ class TestLiveConfigManifestContract(TestCase):
         sim_args = "\n".join(str(item) for item in sim_container.get("args", []))
         self.assertIn("--dsn-env SIM_DB_DSN", sim_args)
         self.assertIn("--account-label TORGHUT_SIM", sim_args)
+        self.assertEqual(sim_args.count("--dsn-env SIM_DB_DSN"), 4)
+        self.assertEqual(sim_args.count("--account-label TORGHUT_SIM"), 4)
         self.assertIn("--batch-size 250", sim_args)
         self.assertIn("--batch-size 75", sim_args)
         self.assertIn("--max-batches 4", sim_args)
