@@ -229,6 +229,95 @@ class LiveScanCycleTest(unittest.TestCase):
         self.assertEqual(summary["retainedCycles"], 5)
         self.assertEqual(summary["removedCycleDirs"], [])
 
+    def test_builds_ticket_payload_from_scanner_candidate(self) -> None:
+        payload = live_scan_cycle.ticket_payload_for_scan_result(
+            session_id="session-1",
+            cycle=3,
+            index=1,
+            result={
+                "symbol": "nvda",
+                "setup_type": "vwap_reclaim",
+                "setup_grade": "A",
+                "expected_r": "2.50",
+                "last": "100.25",
+                "fat_pitch": True,
+                "regime": "trend_up",
+                "instrument": "equity",
+                "side": "long",
+            },
+        )
+
+        assert payload is not None
+        self.assertEqual(payload["sessionId"], "session-1")
+        self.assertEqual(payload["idempotencyKey"], "scan-cycle-3-1-NVDA-vwap_reclaim-A")
+        self.assertEqual(payload["symbol"], "NVDA")
+        self.assertEqual(payload["instrument"], "stock")
+        self.assertEqual(payload["side"], "buy")
+        self.assertEqual(payload["setupType"], "vwap_reclaim")
+        self.assertEqual(payload["setupGrade"], "A")
+        self.assertEqual(payload["expectedR"], "2.50")
+        self.assertEqual(payload["entryLimitPrice"], "100.25")
+        self.assertEqual(payload["status"], "candidate")
+        self.assertIsNone(payload["noTradeReason"])
+        self.assertEqual(payload["protectionType"], "bracket_required")
+
+    def test_builds_blocked_ticket_payload_from_scanner_no_trade(self) -> None:
+        payload = live_scan_cycle.ticket_payload_for_scan_result(
+            session_id="session-1",
+            cycle=3,
+            index=2,
+            result={
+                "symbol": "AMD",
+                "setup_type": "opening_range_breakout",
+                "setup_grade": "C",
+                "expected_r": "0.61",
+                "no_trade_reason": "C_setup_blocked;wide_spread",
+            },
+        )
+
+        assert payload is not None
+        self.assertEqual(payload["idempotencyKey"], "scan-cycle-3-2-AMD-opening_range_breakout-C")
+        self.assertEqual(payload["status"], "blocked")
+        self.assertEqual(payload["noTradeReason"], "C_setup_blocked;wide_spread")
+        self.assertEqual(payload["protectionType"], "none_no_order")
+        self.assertEqual(payload["entryTrigger"], "blocked_by_scanner")
+        self.assertEqual(payload["brokerOrderPlan"]["source"], "live_scan_cycle")
+
+    def test_records_scan_tickets_to_synthesis_with_ticket_ids(self) -> None:
+        class FakeSynthesis:
+            def __init__(self) -> None:
+                self.posts: list[tuple[str, dict[str, object]]] = []
+
+            def post(self, path: str, payload: dict[str, object]) -> object:
+                self.posts.append((path, payload))
+                return {"ticket": {"id": f"ticket-{len(self.posts)}"}}
+
+        synthesis = FakeSynthesis()
+        recorded = live_scan_cycle.record_scan_tickets(
+            synthesis=synthesis,  # type: ignore[arg-type]
+            session_id="session-1",
+            cycle=4,
+            scan={
+                "results": [
+                    {"symbol": "AAPL", "setup_type": "vwap_reclaim", "setup_grade": "B", "expected_r": "1.2"},
+                    {
+                        "symbol": "AMD",
+                        "setup_type": "no_trade",
+                        "setup_grade": "C",
+                        "no_trade_reason": "no_confirmed_setup",
+                    },
+                ]
+            },
+            limit=10,
+        )
+
+        self.assertEqual([path for path, _ in synthesis.posts], ["/api/autotrader/trade-tickets"] * 2)
+        self.assertEqual(recorded[0]["ticketId"], "ticket-1")
+        self.assertEqual(recorded[0]["status"], "candidate")
+        self.assertEqual(recorded[1]["ticketId"], "ticket-2")
+        self.assertEqual(recorded[1]["status"], "blocked")
+        self.assertEqual(recorded[1]["noTradeReason"], "no_confirmed_setup")
+
     def test_run_cycle_returns_summary_without_summary_file(self) -> None:
         case = self
 
@@ -261,20 +350,45 @@ class LiveScanCycleTest(unittest.TestCase):
             def __init__(self, *, base_url: str | None, timeout_seconds: float) -> None:
                 self.base_url = base_url
                 self.timeout_seconds = timeout_seconds
+                self.posts: list[tuple[str, dict[str, object]]] = []
 
             def get(self, path: str, query: dict[str, str]) -> object:
                 case.assertEqual(path, "/api/autotrader/scorecards")
                 case.assertEqual(query, {"limit": "20"})
                 return {"scorecards": []}
 
+            def post(self, path: str, payload: dict[str, object]) -> object:
+                self.posts.append((path, payload))
+                return {"ticket": {"id": "ticket-nvda"}}
+
         def fake_scan(**kwargs: object) -> dict[str, object]:
-            return {"results": [{"symbol": "NVDA", "bars": 9, "no_trade_reason": "limited_live_bars"}]}
+            return {
+                "results": [
+                    {
+                        "symbol": "NVDA",
+                        "bars": 9,
+                        "setup_type": "vwap_reclaim",
+                        "setup_grade": "blocked",
+                        "no_trade_reason": "limited_live_bars",
+                    }
+                ]
+            }
 
         with tempfile.TemporaryDirectory() as directory:
             old_cycle = Path(directory) / "cycle-1"
             old_cycle.mkdir()
             args = live_scan_cycle.build_parser().parse_args(
-                ["--work-dir", directory, "--watchlist", "NVDA", "--retain-cycles", "1"]
+                [
+                    "--work-dir",
+                    directory,
+                    "--watchlist",
+                    "NVDA",
+                    "--retain-cycles",
+                    "1",
+                    "--session-id",
+                    "session-1",
+                    "--record-tickets",
+                ]
             )
             with (
                 patch.object(live_scan_cycle, "AlpacaRestClient", FakeAlpaca),
@@ -291,6 +405,8 @@ class LiveScanCycleTest(unittest.TestCase):
             self.assertFalse((cycle_dir / "summary.json").exists())
             self.assertFalse(old_cycle.exists())
             self.assertEqual(summary["removedCycleDirs"], ["cycle-1"])
+            self.assertEqual(summary["recordedTickets"][0]["ticketId"], "ticket-nvda")
+            self.assertEqual(summary["recordedTickets"][0]["status"], "blocked")
 
 
 if __name__ == "__main__":

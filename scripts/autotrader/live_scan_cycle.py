@@ -23,6 +23,17 @@ from synthesis_autotrader_client import SynthesisClient
 DEFAULT_DATA_BASE_URL = "https://data.alpaca.markets/v2"
 DEFAULT_WATCHLIST = ("SPY", "QQQ", "NVDA", "AVGO", "TSLA", "AAPL", "MSFT", "AMD", "PLTR", "GOOGL")
 MARKET_TIMEZONE = ZoneInfo("America/New_York")
+SYNTHESIS_INSTRUMENTS = {"stock", "etf", "option", "crypto", "other"}
+SYNTHESIS_SIDES = {
+    "buy",
+    "sell",
+    "sell_short",
+    "buy_to_cover",
+    "buy_to_open",
+    "buy_to_close",
+    "sell_to_open",
+    "sell_to_close",
+}
 
 
 class AlpacaRestClient:
@@ -412,6 +423,150 @@ def summarize_scan(
     }
 
 
+def optional_text(value: Any, *, max_length: int | None = None) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if max_length is not None and len(text) > max_length:
+        return text[: max_length - 1].rstrip() + "..."
+    return text
+
+
+def numeric_text(value: Any) -> str | None:
+    text = optional_text(value)
+    if text is None:
+        return None
+    try:
+        return str(Decimal(text))
+    except InvalidOperation:
+        return None
+
+
+def setup_grade(value: Any) -> str:
+    grade = optional_text(value)
+    if grade in {"A+", "A", "B", "C", "blocked"}:
+        return grade
+    return "blocked"
+
+
+def setup_type(value: Any) -> str:
+    return optional_text(value, max_length=120) or "no_trade"
+
+
+def schema_enum(value: Any, allowed: set[str], default: str) -> str:
+    text = optional_text(value)
+    if text in allowed:
+        return text
+    return default
+
+
+def result_no_trade_reason(result: dict[str, Any], grade: str, type_: str) -> str | None:
+    reason = optional_text(result.get("no_trade_reason") or result.get("noTradeReason"), max_length=1000)
+    if reason:
+        return reason
+    if grade in {"C", "blocked"}:
+        return "scanner_blocked_grade"
+    if type_ == "no_trade":
+        return "scanner_no_trade"
+    return None
+
+
+def ticket_payload_for_scan_result(
+    *,
+    session_id: str,
+    cycle: int,
+    index: int,
+    result: dict[str, Any],
+) -> dict[str, Any] | None:
+    symbol = optional_text(result.get("symbol"), max_length=32)
+    if not symbol:
+        return None
+    grade = setup_grade(result.get("setup_grade") or result.get("setupGrade"))
+    type_ = setup_type(result.get("setup_type") or result.get("setupType"))
+    no_trade_reason = result_no_trade_reason(result, grade, type_)
+    expected_r = numeric_text(result.get("expected_r") or result.get("expectedR"))
+    blocked = no_trade_reason is not None
+    idempotency_key = f"scan-cycle-{cycle}-{index}-{symbol.upper()}-{type_}-{grade}".replace(" ", "-")
+    idempotency_key = re.sub(r"[^A-Za-z0-9_.:-]+", "-", idempotency_key)[:240]
+    thesis = optional_text(result.get("thesis"), max_length=2000) or (
+        f"Live scan cycle {cycle} produced {symbol.upper()} {grade} {type_}"
+        + (f" with expectedR {expected_r}" if expected_r else "")
+    )
+    entry_trigger = optional_text(result.get("entry_trigger") or result.get("entryTrigger"), max_length=1200)
+    invalidation = optional_text(result.get("invalidation"), max_length=1200)
+
+    return {
+        "sessionId": session_id,
+        "idempotencyKey": idempotency_key,
+        "symbol": symbol.upper(),
+        "instrument": schema_enum(result.get("instrument"), SYNTHESIS_INSTRUMENTS, "stock"),
+        "side": schema_enum(result.get("side"), SYNTHESIS_SIDES, "buy"),
+        "setupType": type_,
+        "setupGrade": grade,
+        "fatPitch": bool(result.get("fat_pitch") or result.get("fatPitch") or False),
+        "regime": optional_text(result.get("regime"), max_length=120) or "intraday_live_scan",
+        "timeBucket": optional_text(result.get("time_bucket") or result.get("timeBucket"), max_length=80)
+        or "market_session",
+        "thesis": thesis,
+        "entryTrigger": entry_trigger or ("blocked_by_scanner" if blocked else "scanner_candidate_requires_guard"),
+        "invalidation": invalidation or ("no broker order" if blocked else "strategy guard must approve before broker order"),
+        "entryLimitPrice": numeric_text(result.get("entry_limit_price") or result.get("entryLimitPrice") or result.get("last")),
+        "stopPrice": numeric_text(result.get("stop_price") or result.get("stopPrice")),
+        "targetPrice": numeric_text(result.get("target_price") or result.get("targetPrice")),
+        "expectedR": expected_r,
+        "riskDollars": numeric_text(result.get("risk_dollars") or result.get("riskDollars")),
+        "plannedQuantity": numeric_text(result.get("planned_quantity") or result.get("plannedQuantity")),
+        "protectionType": optional_text(result.get("protection_type") or result.get("protectionType"), max_length=80)
+        or ("none_no_order" if blocked else "bracket_required"),
+        "brokerOrderPlan": {
+            "source": "live_scan_cycle",
+            "cycle": cycle,
+            "resultIndex": index,
+            "raw": result,
+        },
+        "status": "blocked" if blocked else "candidate",
+        "noTradeReason": no_trade_reason,
+    }
+
+
+def record_scan_tickets(
+    *,
+    synthesis: SynthesisClient,
+    session_id: str,
+    cycle: int,
+    scan: dict[str, Any],
+    limit: int,
+) -> list[dict[str, Any]]:
+    if not session_id.strip():
+        raise ValueError("session id is required when recording scan tickets")
+    results = scan.get("results")
+    if not isinstance(results, list):
+        return []
+    recorded: list[dict[str, Any]] = []
+    for index, result in enumerate(results[: max(0, limit)], start=1):
+        if not isinstance(result, dict):
+            continue
+        payload = ticket_payload_for_scan_result(session_id=session_id, cycle=cycle, index=index, result=result)
+        if payload is None:
+            continue
+        response = synthesis.post("/api/autotrader/trade-tickets", payload)
+        ticket = response.get("ticket") if isinstance(response, dict) else None
+        recorded.append(
+            {
+                "symbol": payload["symbol"],
+                "setupType": payload["setupType"],
+                "setupGrade": payload["setupGrade"],
+                "status": payload["status"],
+                "noTradeReason": payload["noTradeReason"],
+                "ticketId": ticket.get("id") if isinstance(ticket, dict) else None,
+                "idempotencyKey": payload["idempotencyKey"],
+            }
+        )
+    return recorded
+
+
 def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
     symbols = normalize_watchlist(args.watchlist)
     work_dir = Path(args.work_dir or os.environ.get("AUTONOMOUS_TRADER_WORK_DIR", "/tmp/autonomous-trader-work"))
@@ -442,7 +597,7 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
         watchlist=symbols,
     )
     removed_cycle_dirs = prune_old_cycle_dirs(work_dir, args.retain_cycles)
-    return summarize_scan(
+    summary = summarize_scan(
         cycle,
         cycle_dir,
         scan,
@@ -450,6 +605,15 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
         retained_cycles=args.retain_cycles,
         removed_cycle_dirs=removed_cycle_dirs,
     )
+    if args.record_tickets:
+        summary["recordedTickets"] = record_scan_tickets(
+            synthesis=synthesis,
+            session_id=args.session_id or "",
+            cycle=cycle,
+            scan=scan,
+            limit=args.max_recorded_tickets,
+        )
+    return summary
 
 
 def run_account_gate(args: argparse.Namespace) -> dict[str, Any]:
@@ -475,6 +639,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--analysis-context")
     parser.add_argument("--stock-analysis-cli")
     parser.add_argument("--retain-cycles", type=int, default=5)
+    parser.add_argument("--session-id")
+    parser.add_argument("--record-tickets", action="store_true")
+    parser.add_argument("--max-recorded-tickets", type=int, default=10)
     parser.add_argument("--self-test", action="store_true")
     parser.add_argument("--account-gate-only", action="store_true")
     return parser
