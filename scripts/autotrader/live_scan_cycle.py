@@ -11,6 +11,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -134,16 +135,76 @@ def prune_old_cycle_dirs(work_dir: Path, retain_cycles: int) -> list[str]:
     return removed
 
 
+def account_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes"}
+    return bool(value)
+
+
+def parse_account_decimal(value: Any) -> Decimal | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return Decimal(text)
+    except InvalidOperation:
+        return None
+
+
+def parse_account_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        return None
+
+
+def intraday_equity_entry_eligibility(account: dict[str, Any]) -> dict[str, Any]:
+    daytrading_buying_power = account.get("daytrading_buying_power") or account.get("daytrade_buying_power")
+    daytrading_buying_power_value = parse_account_decimal(daytrading_buying_power)
+    daytrade_count = parse_account_int(account.get("daytrade_count"))
+    reasons: list[str] = []
+
+    if account_bool(account.get("account_blocked", False)) or account_bool(account.get("trading_blocked", False)):
+        reasons.append("account_or_trading_blocked")
+    if daytrading_buying_power_value is not None and daytrading_buying_power_value <= 0:
+        reasons.append("daytrading_buying_power_not_positive")
+    if (
+        daytrade_count is not None
+        and daytrade_count >= 4
+        and daytrading_buying_power_value is not None
+        and daytrading_buying_power_value <= 0
+    ):
+        reasons.append("pdt_daytrade_count_at_or_above_four_without_dtbp")
+
+    return {
+        "status": "blocked" if reasons else "allowed",
+        "reasons": reasons,
+    }
+
+
 def format_account(account: dict[str, Any]) -> dict[str, Any]:
+    daytrading_buying_power = account.get("daytrading_buying_power") or account.get("daytrade_buying_power")
     return {
         "account": {
             "id": account.get("id"),
             "equity": account.get("equity"),
             "cash": account.get("cash"),
             "buying_power": account.get("buying_power"),
-            "daytrading_buying_power": account.get("daytrading_buying_power") or account.get("daytrade_buying_power"),
-            "trading_blocked": bool(account.get("trading_blocked", False)),
-            "account_blocked": bool(account.get("account_blocked", False)),
+            "daytrading_buying_power": daytrading_buying_power,
+            "daytrade_count": account.get("daytrade_count"),
+            "pattern_day_trader": account_bool(account.get("pattern_day_trader", False)),
+            "trading_blocked": account_bool(account.get("trading_blocked", False)),
+            "account_blocked": account_bool(account.get("account_blocked", False)),
+            "intraday_equity_entry": intraday_equity_entry_eligibility(account),
         }
     }
 
