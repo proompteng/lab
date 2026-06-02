@@ -1763,7 +1763,7 @@ class TestTradingApi(TestCase):
                             },
                         ]
                     )
-                if "FROM pg_catalog.pg_index" in sql:
+                if "FROM pg_catalog.pg_index" in sql and "array_agg" in sql:
                     return FakeResult(
                         [
                             {
@@ -1797,7 +1797,7 @@ class TestTradingApi(TestCase):
                             },
                         ]
                     )
-                if "FROM pg_catalog.pg_indexes" in sql:
+                if "FROM pg_catalog.pg_index" in sql:
                     return FakeResult(
                         [
                             {
@@ -1828,6 +1828,7 @@ class TestTradingApi(TestCase):
         self.assertIn("SET LOCAL statement_timeout", joined_sql)
         self.assertNotIn("pg_type", joined_sql)
         self.assertNotIn("information_schema.columns", joined_sql)
+        self.assertNotIn("pg_catalog.pg_indexes", joined_sql)
 
     def test_bounded_account_scope_invariants_reports_legacy_indexes(self) -> None:
         class FakeResult:
@@ -1866,7 +1867,7 @@ class TestTradingApi(TestCase):
                             },
                         ]
                     )
-                if "FROM pg_catalog.pg_index" in sql:
+                if "FROM pg_catalog.pg_index" in sql and "array_agg" in sql:
                     return FakeResult(
                         [
                             {
@@ -1886,7 +1887,7 @@ class TestTradingApi(TestCase):
                             },
                         ]
                     )
-                if "FROM pg_catalog.pg_indexes" in sql:
+                if "FROM pg_catalog.pg_index" in sql:
                     return FakeResult(
                         [
                             {
