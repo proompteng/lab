@@ -26,16 +26,18 @@ data:
     - If `AUTONOMOUS_TRADER_SYNTHESIS_SESSION_MODE` is non-empty, pass exactly that value to `autotrader_start_session.mode`.
 
     Execution loop:
-    1. Run `/usr/bin/env bash /root/bootstrap-analysis-daytrading.sh`, read `/workspace/analysis/docs/daytrading-agent-bootstrap.md`, validate the local analysis context at `ANALYSIS_CONTEXT_PATH`, and self-test the Synthesis, live-scan, and protective-order helper scripts.
+    1. Run `/usr/bin/env bash /root/bootstrap-analysis-daytrading.sh`, read `/workspace/analysis/docs/daytrading-agent-bootstrap.md`, validate the local analysis context at `ANALYSIS_CONTEXT_PATH`, and self-test the Synthesis, live-scan, strategy-order, and protective-order helper scripts.
     2. Preflight Alpaca account/config/clock/calendar/tools/positions/orders and Synthesis autotrader tool availability.
     3. Call `autotrader_start_session` before scanning and keep its `sessionId` for every Synthesis write.
     4. Before grading candidates, call `autotrader_get_scorecard` and include scorecard influence in the ticket/risk/status payloads.
     5. Run `python3 /workspace/lab/scripts/autotrader/live_scan_cycle.py`, use its summary plus Synthesis scorecards to pick the next best action: protected entry, managed exit/reduce/hedge/flatten, or no-trade.
-    6. Before any Alpaca mutation, record the planned order/risk in Synthesis and use an AgentRun-prefixed deterministic `client_order_id` when the broker tool supports it.
-    7. After any Alpaca mutation, reconcile by broker order id and client order id, refresh account/positions/orders, then update Synthesis before taking more risk.
-    8. Continue market-open cycles until market close, 500000 USD equity, or hard unrecoverable account/order/visibility state.
-    9. In market-open mode, `terminal_reason: running`, `phase: manage`, `next_action: continue_monitoring`, active monitoring, quiet markets, and protected open positions are checkpoints, not completion. Write Synthesis status/event plus `report.md`, sleep no more than 60 seconds, and immediately start the next cycle.
-    10. Finalize with realized scorecard observations for terminal tickets, rejected valid setups, rejected invalid setups, slippage, hold time, MFE/MAE, and mistake tags.
+    6. For risk/order writes linked to a trade ticket, use the returned trade-ticket UUID, not the ticket idempotency key.
+    7. Before any non-smoke strategy entry, run `python3 /workspace/lab/scripts/autotrader/strategy_order_guard.py` against the planned bracket prices; if `allowed=false`, record the guard reason in Synthesis and do not submit the broker order.
+    8. Before any Alpaca mutation, record the planned order/risk in Synthesis and use an AgentRun-prefixed deterministic `client_order_id` when the broker tool supports it.
+    9. After any Alpaca mutation, reconcile by broker order id and client order id, refresh account/positions/orders, then update Synthesis before taking more risk.
+    10. Continue market-open cycles until market close, 500000 USD equity, or hard unrecoverable account/order/visibility state.
+    11. In market-open mode, `terminal_reason: running`, `phase: manage`, `next_action: continue_monitoring`, active monitoring, quiet markets, and protected open positions are checkpoints, not completion. Write Synthesis status/event plus `report.md`, sleep no more than 60 seconds, and immediately start the next cycle.
+    12. Finalize with realized scorecard observations for terminal tickets, rejected valid setups, rejected invalid setups, slippage, hold time, MFE/MAE, and mistake tags.
 
     Mode behavior:
     - `dry-run`: no Alpaca submit/cancel/replace/close-position calls; perform one read-only scanner/ticket/risk/status pass, finalize with `dry_run_complete`, write `report.md`, call `update_goal complete` if available, and stop.
