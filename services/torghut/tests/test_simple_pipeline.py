@@ -955,7 +955,7 @@ def test_bounded_source_collection_authorizes_after_runtime_account_audit_readba
         settings.trading_allow_shorts = allow_shorts_before
 
 
-def test_hpairs_source_collection_authorization_emits_bounded_lineage_decisions(
+def test_source_collection_authorization_emits_bounded_lineage_decisions_without_candidate_hardcode(
     monkeypatch,
 ) -> None:
     trading_mode_before = settings.trading_mode
@@ -967,6 +967,8 @@ def test_hpairs_source_collection_authorization_emits_bounded_lineage_decisions(
         settings.trading_allow_shorts = True
         now = datetime(2026, 6, 2, 18, 0, tzinfo=timezone.utc)
         target = _bounded_hpairs_target(
+            hypothesis_id="H-SOURCE-AUTH-01",
+            candidate_id="source-authorized-candidate",
             paper_route_probe_window_start="2026-06-02T13:30:00+00:00",
             paper_route_probe_window_end="2026-06-02T20:00:00+00:00",
             paper_route_probe_next_session_max_notional="25",
@@ -1027,8 +1029,8 @@ def test_hpairs_source_collection_authorization_emits_bounded_lineage_decisions(
         for decision in decisions:
             params = decision.params
             metadata = params["paper_route_target_plan_source_decision"]
-            assert params["hypothesis_id"] == "H-PAIRS-01"
-            assert params["candidate_id"] == "c88421d619759b2cfaa6f4d0"
+            assert params["hypothesis_id"] == "H-SOURCE-AUTH-01"
+            assert params["candidate_id"] == "source-authorized-candidate"
             assert params["strategy_name"] == "microbar-cross-sectional-pairs-v1"
             assert (
                 params["runtime_strategy_name"] == "microbar-cross-sectional-pairs-v1"

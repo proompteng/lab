@@ -151,8 +151,12 @@ _BOUNDED_SIM_COLLECTION_RUNTIME_ACCOUNT_ALIAS_FIELDS = (
     "paper_route_runtime_account_label",
     "source_account_label",
 )
-_BOUNDED_SIM_COLLECTION_HPAIRS_HYPOTHESIS_ID = "H-PAIRS-01"
-_BOUNDED_SIM_COLLECTION_HPAIRS_CANDIDATE_ID = "c88421d619759b2cfaa6f4d0"
+_BOUNDED_SIM_COLLECTION_SOURCE_AUTHORIZATION_SCOPES = frozenset(
+    {
+        "bounded_paper_route_source_decision_collection_only",
+        "source_window_evidence_collection_only",
+    }
+)
 
 
 def _safe_int(value: object) -> int:
@@ -247,16 +251,16 @@ def _target_lineage_strategy_names(target: Mapping[str, Any]) -> list[str]:
     return names
 
 
-def _target_is_hpairs_source_collection_candidate(target: Mapping[str, Any]) -> bool:
+def _target_has_bounded_source_collection_authorization(
+    target: Mapping[str, Any],
+) -> bool:
+    scope = _safe_text(target.get("source_collection_authorization_scope"))
     return (
-        _safe_text(target.get("hypothesis_id"))
-        == _BOUNDED_SIM_COLLECTION_HPAIRS_HYPOTHESIS_ID
-        and _safe_text(target.get("candidate_id"))
-        == _BOUNDED_SIM_COLLECTION_HPAIRS_CANDIDATE_ID
+        _target_truthy(target.get("source_collection_authorized"))
         and _safe_text(target.get("source_kind")) == _BOUNDED_SIM_COLLECTION_SOURCE_KIND
         and _safe_text(target.get("account_label"))
         == _BOUNDED_SIM_COLLECTION_ACCOUNT_LABEL
-        and _target_truthy(target.get("source_collection_authorized"))
+        and scope in _BOUNDED_SIM_COLLECTION_SOURCE_AUTHORIZATION_SCOPES
     )
 
 
@@ -265,7 +269,7 @@ def _target_bounded_collection_authorized(target: Mapping[str, Any]) -> bool:
         _target_truthy(target.get("bounded_evidence_collection_authorized"))
         or _target_truthy(target.get("bounded_live_paper_collection_authorized"))
         or _target_truthy(target.get("canary_collection_authorized"))
-        or _target_is_hpairs_source_collection_candidate(target)
+        or _target_has_bounded_source_collection_authorization(target)
     )
 
 
@@ -399,7 +403,7 @@ def _bounded_sim_collection_target_with_runtime_account_audit(
     if positions is None:
         return normalized
 
-    if _target_is_hpairs_source_collection_candidate(normalized):
+    if _target_has_bounded_source_collection_authorization(normalized):
         for key in (
             "bounded_evidence_collection_blockers",
             "candidate_blockers",
