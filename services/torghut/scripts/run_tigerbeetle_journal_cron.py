@@ -27,6 +27,8 @@ from scripts import journal_tigerbeetle_order_events as journal_script  # noqa: 
 LIVE_ORDER_EVENT_BATCH_SIZE = 1
 LIVE_ORDER_EVENT_MAX_BATCHES = 1
 LIVE_ORDER_EVENT_SCAN_LIMIT = 250
+LIVE_TCA_METRIC_BATCH_SIZE = 5
+LIVE_TCA_METRIC_MAX_BATCHES = 1
 
 
 @dataclass(frozen=True)
@@ -71,8 +73,8 @@ def _live_commands(*, execution_batch_size: int) -> list[JournalCronCommand]:
         JournalCronCommand(
             source=SOURCE_TYPE_EXECUTION_TCA_METRIC,
             dsn_env="DB_DSN",
-            batch_size=5,
-            max_batches=3,
+            batch_size=LIVE_TCA_METRIC_BATCH_SIZE,
+            max_batches=LIVE_TCA_METRIC_MAX_BATCHES,
             reconcile_limit=1000,
             skip_reconcile=True,
         ),
