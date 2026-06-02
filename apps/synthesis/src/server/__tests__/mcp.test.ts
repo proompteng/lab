@@ -521,6 +521,28 @@ describe('synthesis MCP', () => {
         ),
       ),
     )
+    const stopFillPayload = await parseToolJson(
+      await handleMcpRequest(
+        callTool(
+          'autotrader_record_fill',
+          {
+            sessionId,
+            clientOrderId: 'wrong-child-client-id',
+            brokerOrderId: 'alpaca-order-1',
+            brokerFillId: 'fill-1-stop',
+            symbol: 'NVDA',
+            side: 'sell',
+            quantity: '200',
+            price: '123.80',
+            filledAt: '2026-05-29T14:02:00Z',
+            brokerPayload: { source: 'alpaca', order_id: 'alpaca-order-1' },
+          },
+          headers,
+        ),
+      ),
+    )
+
+    expect(stopFillPayload.fill.clientOrderId).toBe('atr-test-nvda-1')
     await parseToolJson(
       await handleMcpRequest(
         callTool(

@@ -182,6 +182,7 @@ export const AutotraderRecordFillInputSchema = z
   .object({
     sessionId: z.string().trim().min(1),
     clientOrderId: z.string().trim().min(1).max(128),
+    brokerOrderId: z.string().trim().min(1).max(240).optional(),
     brokerFillId: z.string().trim().min(1).max(240),
     symbol: z.string().trim().min(1).max(32),
     side: AutotraderSideSchema,
