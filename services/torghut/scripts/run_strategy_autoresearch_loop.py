@@ -2096,16 +2096,12 @@ def _exact_replay_ledger_refs(value: Any) -> list[str]:
     refs: list[str] = []
     if isinstance(value, Mapping):
         for key, item in value.items():
-            if key in {
-                "exact_replay_ledger_artifact_ref",
-            }:
+            if key == "exact_replay_ledger_artifact_ref":
                 ref = _string(item)
                 if ref:
                     refs.append(ref)
                 continue
-            if key in {
-                "exact_replay_ledger_artifact_refs",
-            }:
+            if key == "exact_replay_ledger_artifact_refs":
                 if isinstance(item, (list, tuple)):
                     refs.extend(ref for raw in item if (ref := _string(raw)))
                 else:

@@ -3462,7 +3462,11 @@ class TestRunEmpiricalPromotionJobs(TestCase):
         )
         self.assertEqual(
             triage["candidates"][0]["exact_replay_ledger_artifact_refs"],
-            ["proof/exact-replay-ledger-a.json", "proof/runtime-ledger-a.json"],
+            ["proof/exact-replay-ledger-a.json"],
+        )
+        self.assertIn(
+            "proof/runtime-ledger-a.json",
+            triage["candidates"][0]["source_artifact_refs"],
         )
 
     def test_offline_replay_triage_artifact_payload_variants(

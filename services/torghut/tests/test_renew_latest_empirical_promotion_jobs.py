@@ -247,6 +247,90 @@ class TestRenewLatestEmpiricalPromotionJobsRuntimeLedger(TestCase):
         self.assertTrue(target.target_metadata["source_collection_authorized"])
         self.assertNotIn("paper_route_probe_symbols", target.target_metadata)
 
+    def test_exact_replay_runtime_window_plan_preserves_exact_counts(
+        self,
+    ) -> None:
+        plan = renew._runtime_window_target_plan_from_payload(
+            {
+                "runtime_window_import_plan": {
+                    "schema_version": "torghut.runtime-window-import-plan.v1",
+                    "source": "exact_replay_ledger_runtime_window_handoff",
+                    "targets": [
+                        {
+                            "hypothesis_id": "H-PAIRS-01",
+                            "candidate_id": "candidate-exact",
+                            "observed_stage": "paper",
+                            "strategy_family": "microbar_cross_sectional_pairs",
+                            "strategy_name": "microbar-cross-sectional-pairs-v1",
+                            "account_label": "TORGHUT_REPLAY",
+                            "source_kind": (
+                                "simulation_exact_replay_runtime_ledger"
+                            ),
+                            "source_manifest_ref": (
+                                "config/trading/hypotheses/h-pairs-01.json"
+                            ),
+                            "artifact_refs": ["exact-ledger.json"],
+                            "exact_replay_ledger_artifact_refs": [
+                                "exact-ledger.json"
+                            ],
+                            "exact_replay_ledger_artifact_ref": (
+                                "exact-ledger.json"
+                            ),
+                            "exact_replay_ledger_artifact_row_count": 6,
+                            "exact_replay_ledger_artifact_fill_count": 2,
+                            "promotion_allowed": False,
+                            "final_promotion_authorized": False,
+                        }
+                    ],
+                }
+            }
+        )
+
+        targets = renew._runtime_window_targets_from_plan(
+            plan=plan,
+            ref="exact-replay-plan-fixture",
+            args=argparse.Namespace(),
+        )
+
+        self.assertEqual(len(targets), 1)
+        target = targets[0]
+        self.assertEqual(target.artifact_refs, ("exact-ledger.json",))
+        self.assertEqual(
+            target.target_metadata["exact_replay_ledger_artifact_refs"],
+            ["exact-ledger.json"],
+        )
+        self.assertEqual(
+            target.target_metadata["exact_replay_ledger_artifact_ref"],
+            "exact-ledger.json",
+        )
+        self.assertEqual(
+            target.target_metadata["exact_replay_ledger_artifact_row_count"],
+            6,
+        )
+        self.assertEqual(
+            target.target_metadata["exact_replay_ledger_artifact_fill_count"],
+            2,
+        )
+        self.assertNotIn("runtime_ledger_artifact_ref", target.target_metadata)
+        self.assertNotIn("runtime_ledger_artifact_refs", target.target_metadata)
+
+    def test_offline_exact_replay_refs_ignore_runtime_aliases(self) -> None:
+        refs = renew._offline_replay_exact_artifact_refs(
+            {
+                "target_metadata": {
+                    "runtime_ledger_artifact_ref": "runtime-alias.json",
+                    "runtime_ledger_artifact_refs": ["runtime-alias-2.json"],
+                    "exact_replay_ledger_artifact_ref": "exact-ledger.json",
+                    "exact_replay_ledger_artifact_refs": [
+                        "exact-ledger.json",
+                        "exact-ledger-2.json",
+                    ],
+                }
+            }
+        )
+
+        self.assertEqual(refs, ["exact-ledger.json", "exact-ledger-2.json"])
+
     def test_hpairs_source_proof_census_status_is_non_authority_renewal_evidence(
         self,
     ) -> None:

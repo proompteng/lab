@@ -146,7 +146,7 @@ def _build_runtime_window_import_plan(
             runtime_ledger_blockers=runtime_ledger_blockers,
         )
         probation_allowed = not search_blockers
-        artifact_counts = _runtime_ledger_artifact_counts(artifact_ref)
+        artifact_counts = _exact_replay_ledger_artifact_counts(artifact_ref)
         replay_window_metadata = _target_replay_window_metadata(
             best_candidate=best_candidate,
             ranking_policy=ranking_policy,
@@ -165,8 +165,7 @@ def _build_runtime_window_import_plan(
             "source_manifest_ref": source_manifest_ref,
             "dataset_snapshot_ref": dataset_snapshot_ref,
             "artifact_refs": [artifact_ref],
-            "runtime_ledger_artifact_refs": [artifact_ref],
-            "runtime_ledger_artifact_ref": artifact_ref,
+            "exact_replay_ledger_artifact_refs": [artifact_ref],
             "exact_replay_ledger_artifact_ref": artifact_ref,
             "window_start": window_start,
             "window_end": window_end,
@@ -190,9 +189,13 @@ def _build_runtime_window_import_plan(
             "promotion_gate": "runtime_ledger_live_or_live_paper_required",
         }
         if artifact_counts["row_count"] is not None:
-            target["runtime_ledger_artifact_row_count"] = artifact_counts["row_count"]
+            target["exact_replay_ledger_artifact_row_count"] = artifact_counts[
+                "row_count"
+            ]
         if artifact_counts["fill_count"] is not None:
-            target["runtime_ledger_artifact_fill_count"] = artifact_counts["fill_count"]
+            target["exact_replay_ledger_artifact_fill_count"] = artifact_counts[
+                "fill_count"
+            ]
         targets.append(target)
     return {
         "schema_version": RUNTIME_WINDOW_IMPORT_PLAN_SCHEMA_VERSION,
@@ -250,7 +253,7 @@ def _plan_blockers(
     if not artifact_ref:
         blockers.append(
             {
-                "blocker": "runtime_ledger_artifact_ref_missing",
+                "blocker": "exact_replay_ledger_artifact_ref_missing",
                 "candidate_id": candidate_id,
                 "remediation": "enable_exact_replay_ledger_artifact_output",
             }
@@ -373,7 +376,7 @@ def _infer_dataset_snapshot_ref(frontier: Mapping[str, Any]) -> str:
     )
 
 
-def _runtime_ledger_artifact_counts(artifact_ref: str) -> dict[str, int | None]:
+def _exact_replay_ledger_artifact_counts(artifact_ref: str) -> dict[str, int | None]:
     payload = _load_json_mapping(artifact_ref)
     rows = _runtime_ledger_rows(payload)
     row_count = _int_or_none(payload.get("row_count")) or (len(rows) if rows else None)
