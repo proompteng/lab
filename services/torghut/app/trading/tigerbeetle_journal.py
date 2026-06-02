@@ -1134,6 +1134,82 @@ def _assert_transfer_ref_matches(
         )
 
 
+def _find_transfer_ref(
+    session: Session,
+    *,
+    cluster_id: int,
+    transfer_id_text: str,
+    source_type: str,
+    source_id: str,
+    transfer_kind: str,
+) -> TigerBeetleTransferRef | None:
+    source_existing = session.execute(
+        select(TigerBeetleTransferRef).where(
+            TigerBeetleTransferRef.cluster_id == cluster_id,
+            TigerBeetleTransferRef.source_type == source_type,
+            TigerBeetleTransferRef.source_id == source_id,
+            TigerBeetleTransferRef.transfer_kind == transfer_kind,
+        )
+    ).scalar_one_or_none()
+    if source_existing is not None:
+        return source_existing
+    return session.execute(
+        select(TigerBeetleTransferRef).where(
+            TigerBeetleTransferRef.cluster_id == cluster_id,
+            TigerBeetleTransferRef.transfer_id == transfer_id_text,
+        )
+    ).scalar_one_or_none()
+
+
+def _merge_existing_transfer_ref(
+    session: Session,
+    existing: TigerBeetleTransferRef,
+    *,
+    transfer_spec: TigerBeetleTransferSpec,
+    trade_decision_id: object | None,
+    execution_id: object | None,
+    execution_order_event_id: object | None,
+    execution_tca_metric_id: object | None,
+    runtime_ledger_bucket_id: object | None,
+    event_fingerprint: str | None,
+    source_type: str,
+    source_id: str,
+    payload_json: Mapping[str, object],
+) -> TigerBeetleTransferRef:
+    _assert_transfer_ref_matches(existing, transfer_spec)
+    if existing.trade_decision_id is None:
+        existing.trade_decision_id = cast(Any, trade_decision_id)
+    if existing.execution_id is None:
+        existing.execution_id = cast(Any, execution_id)
+    if existing.execution_order_event_id is None:
+        existing.execution_order_event_id = cast(Any, execution_order_event_id)
+    if existing.execution_tca_metric_id is None:
+        existing.execution_tca_metric_id = cast(Any, execution_tca_metric_id)
+    if existing.runtime_ledger_bucket_id is None:
+        existing.runtime_ledger_bucket_id = cast(Any, runtime_ledger_bucket_id)
+    if existing.source_type is None:
+        existing.source_type = source_type
+    if existing.source_id is None:
+        existing.source_id = source_id
+    if existing.event_fingerprint is None:
+        existing.event_fingerprint = event_fingerprint
+    raw_existing_payload: object = existing.payload_json
+    existing_payload: Mapping[str, object] = (
+        cast(Mapping[str, object], raw_existing_payload)
+        if isinstance(raw_existing_payload, Mapping)
+        else {}
+    )
+    existing.payload_json = coerce_json_payload(
+        {
+            **existing_payload,
+            **payload_json,
+        }
+    )
+    session.add(existing)
+    session.flush()
+    return existing
+
+
 def _source_transfer_spec(
     *,
     transfer_id: int,
@@ -1337,11 +1413,12 @@ class TigerBeetleLedgerJournal:
         source_id: str,
         payload_json: Mapping[str, object],
     ) -> TigerBeetleTransferRef:
+        cluster_id = self._settings.tigerbeetle_cluster_id
         transfer_id_text = u128_decimal(transfer_spec.transfer_id)
         payload_json = {
             **payload_json,
             **tigerbeetle_stable_ref_payload(
-                cluster_id=self._settings.tigerbeetle_cluster_id,
+                cluster_id=cluster_id,
                 account_specs=account_specs,
                 transfer_spec=transfer_spec,
                 source_type=source_type,
@@ -1350,72 +1427,33 @@ class TigerBeetleLedgerJournal:
                 event_fingerprint=event_fingerprint,
             ),
         }
-        source_existing = session.execute(
-            select(TigerBeetleTransferRef).where(
-                TigerBeetleTransferRef.cluster_id
-                == self._settings.tigerbeetle_cluster_id,
-                TigerBeetleTransferRef.source_type == source_type,
-                TigerBeetleTransferRef.source_id == source_id,
-                TigerBeetleTransferRef.transfer_kind == transfer_spec.transfer_kind,
-            )
-        ).scalar_one_or_none()
-        if source_existing is not None:
-            _assert_transfer_ref_matches(source_existing, transfer_spec)
-            existing = source_existing
-        else:
-            existing = session.execute(
-                select(TigerBeetleTransferRef).where(
-                    TigerBeetleTransferRef.cluster_id
-                    == self._settings.tigerbeetle_cluster_id,
-                    TigerBeetleTransferRef.transfer_id == transfer_id_text,
-                )
-            ).scalar_one_or_none()
+        existing = _find_transfer_ref(
+            session,
+            cluster_id=cluster_id,
+            transfer_id_text=transfer_id_text,
+            source_type=source_type,
+            source_id=source_id,
+            transfer_kind=transfer_spec.transfer_kind,
+        )
         if existing is not None:
-            _assert_transfer_ref_matches(existing, transfer_spec)
-            if existing.trade_decision_id is None:
-                existing.trade_decision_id = cast(Any, trade_decision_id)
-            if existing.execution_id is None:
-                existing.execution_id = cast(Any, execution_id)
-            if existing.execution_order_event_id is None:
-                existing.execution_order_event_id = cast(
-                    Any,
-                    execution_order_event_id,
-                )
-            if existing.execution_tca_metric_id is None:
-                existing.execution_tca_metric_id = cast(
-                    Any,
-                    execution_tca_metric_id,
-                )
-            if existing.runtime_ledger_bucket_id is None:
-                existing.runtime_ledger_bucket_id = cast(
-                    Any,
-                    runtime_ledger_bucket_id,
-                )
-            if existing.source_type is None:
-                existing.source_type = source_type
-            if existing.source_id is None:
-                existing.source_id = source_id
-            if existing.event_fingerprint is None:
-                existing.event_fingerprint = event_fingerprint
-            raw_existing_payload: object = existing.payload_json
-            existing_payload: Mapping[str, object] = (
-                cast(Mapping[str, object], raw_existing_payload)
-                if isinstance(raw_existing_payload, Mapping)
-                else {}
+            return _merge_existing_transfer_ref(
+                session,
+                existing,
+                transfer_spec=transfer_spec,
+                trade_decision_id=trade_decision_id,
+                execution_id=execution_id,
+                execution_order_event_id=execution_order_event_id,
+                execution_tca_metric_id=execution_tca_metric_id,
+                runtime_ledger_bucket_id=runtime_ledger_bucket_id,
+                event_fingerprint=event_fingerprint,
+                source_type=source_type,
+                source_id=source_id,
+                payload_json=payload_json,
             )
-            existing.payload_json = coerce_json_payload(
-                {
-                    **existing_payload,
-                    **payload_json,
-                }
-            )
-            session.add(existing)
-            session.flush()
-            return existing
 
         _persist_account_refs(
             session,
-            cluster_id=self._settings.tigerbeetle_cluster_id,
+            cluster_id=cluster_id,
             account_specs=account_specs,
         )
         client = self._client_for_write()
@@ -1434,7 +1472,7 @@ class TigerBeetleLedgerJournal:
                 raise RuntimeError("tigerbeetle_duplicate_transfer_conflict")
 
         ref = TigerBeetleTransferRef(
-            cluster_id=self._settings.tigerbeetle_cluster_id,
+            cluster_id=cluster_id,
             transfer_id=transfer_id_text,
             transfer_kind=transfer_spec.transfer_kind,
             ledger=transfer_spec.ledger,
@@ -1452,8 +1490,35 @@ class TigerBeetleLedgerJournal:
             event_fingerprint=event_fingerprint,
             payload_json=coerce_json_payload(payload_json),
         )
-        session.add(ref)
-        session.flush()
+        try:
+            with session.begin_nested():
+                session.add(ref)
+                session.flush()
+        except IntegrityError:
+            existing = _find_transfer_ref(
+                session,
+                cluster_id=cluster_id,
+                transfer_id_text=transfer_id_text,
+                source_type=source_type,
+                source_id=source_id,
+                transfer_kind=transfer_spec.transfer_kind,
+            )
+            if existing is None:
+                raise
+            return _merge_existing_transfer_ref(
+                session,
+                existing,
+                transfer_spec=transfer_spec,
+                trade_decision_id=trade_decision_id,
+                execution_id=execution_id,
+                execution_order_event_id=execution_order_event_id,
+                execution_tca_metric_id=execution_tca_metric_id,
+                runtime_ledger_bucket_id=runtime_ledger_bucket_id,
+                event_fingerprint=event_fingerprint,
+                source_type=source_type,
+                source_id=source_id,
+                payload_json=payload_json,
+            )
         return ref
 
     def backfill_stable_ref_payloads(
