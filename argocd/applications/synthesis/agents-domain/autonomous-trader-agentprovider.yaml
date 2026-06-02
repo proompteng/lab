@@ -170,7 +170,23 @@ spec:
           printf '# Autonomous Trader Report\n\nstatus: bootstrapping\n' > "${report_path}"
         fi
 
+        trader_mode="$(printf '%s' "${AUTONOMOUS_TRADER_MODE:-}" | tr '[:upper:]' '[:lower:]' | tr '_' '-')"
         reconcile_enabled="$(printf '%s' "${AUTONOMOUS_TRADER_SESSION_RECONCILE_ENABLED:-false}" | tr '[:upper:]' '[:lower:]')"
+        if [ "${trader_mode}" = "scorecard-readback" ]; then
+          readback_args=(
+            --report-path "${report_path}"
+            --scorecard-limit 20
+            --agent-run-name "${AGENT_RUN_NAME:-autonomous-trader-readback}"
+            --session-mode "${AUTONOMOUS_TRADER_SYNTHESIS_SESSION_MODE:-scorecard_readback}"
+            --goal-equity "${AUTONOMOUS_TRADER_TARGET_EQUITY_USD:-500000}"
+          )
+          if [ "${reconcile_enabled}" = "true" ] || [ "${reconcile_enabled}" = "1" ] || [ "${reconcile_enabled}" = "yes" ]; then
+            readback_args+=(--finalize-stale-flat)
+          fi
+          "${python_bin}" /workspace/lab/scripts/autotrader/scorecard_readback.py "${readback_args[@]}"
+          exit 0
+        fi
+
         if [ "${reconcile_enabled}" = "true" ] || [ "${reconcile_enabled}" = "1" ] || [ "${reconcile_enabled}" = "yes" ]; then
           if "${python_bin}" /workspace/lab/scripts/autotrader/session_reconciler.py \
             --finalize-stale-flat \
