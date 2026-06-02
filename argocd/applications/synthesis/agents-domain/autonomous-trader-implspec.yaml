@@ -47,7 +47,7 @@ spec:
     Runtime state contract:
     - Alpaca MCP is broker truth.
     - Synthesis autotrader MCP/API is trader runtime truth.
-    - Local files are not trader state. Do not create or backfill JSON/JSONL ledgers. The runner collects analysis bootstrap/context metadata separately; write only `/workspace/.agentrun/autonomous-trader/report.md` as the final human summary.
+    - Local files are not trader state. Do not create or backfill JSON/JSONL ledgers. Analysis bootstrap/context JSON files are temporary validation inputs only; write `/workspace/.agentrun/autonomous-trader/report.md` as the operator-facing trader artifact.
 
     Bootstrap and preflight:
     1. Run `/usr/bin/env bash /root/bootstrap-analysis-daytrading.sh`.

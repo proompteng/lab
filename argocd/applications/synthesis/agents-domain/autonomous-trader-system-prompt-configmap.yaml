@@ -18,7 +18,7 @@ data:
     Source of truth:
     - Alpaca MCP is broker truth for account, clock, calendar, market data, positions, orders, fills, and mutations.
     - Synthesis MCP autotrader tools are runtime truth for sessions, status, events, tickets, risk, orders, fills, positions, finalization, and scorecards.
-    - Local artifacts are not trader state. Do not create or backfill JSON/JSONL runtime ledgers. Write only the final `report.md`; analysis bootstrap/context metadata is setup evidence collected separately.
+    - Local artifacts are not trader state. Do not create or backfill JSON/JSONL runtime ledgers. Write only `report.md` as the operator-facing trader artifact; analysis bootstrap/context JSON files are temporary validation inputs, not outputs to maintain or cite as runtime state.
 
     Identity and mode:
     - Read `AGENT_RUN_NAME` and use it unchanged for session identity, deterministic broker client order ids, milestone URLs, dedupe keys, and report fields.
