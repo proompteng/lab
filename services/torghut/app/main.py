@@ -4717,7 +4717,6 @@ def trading_paper_route_evidence(
         le=MAX_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
         description="Maximum number of paper-route targets to audit.",
     ),
-    session: Session = Depends(get_session),
 ) -> JSONResponse:
     """Return target-by-target paper-route evidence collection status."""
 
@@ -4730,7 +4729,8 @@ def trading_paper_route_evidence(
     quant_evidence = load_quant_evidence_status(
         account_label=settings.trading_account_label,
     )
-    tca_summary = _load_tca_summary(session, scheduler=scheduler)
+    with SessionLocal() as session:
+        tca_summary = _load_tca_summary(session, scheduler=scheduler)
     market_context_status = scheduler.market_context_status()
     hypothesis_payload, _hypothesis_summary, _dependency_quorum = (
         _build_hypothesis_runtime_payload(
@@ -4739,27 +4739,29 @@ def trading_paper_route_evidence(
             market_context_status=market_context_status,
         )
     )
-    live_submission_gate = _build_live_submission_gate_payload(
-        scheduler.state,
-        session=session,
-        hypothesis_summary=hypothesis_payload,
-        empirical_jobs_status=empirical_jobs,
-        dspy_runtime_status=cast(
-            dict[str, object],
-            scheduler.llm_status().get("dspy_runtime", {}),
-        ),
-        quant_health_status=quant_evidence,
-    )
+    with SessionLocal() as session:
+        live_submission_gate = _build_live_submission_gate_payload(
+            scheduler.state,
+            session=session,
+            hypothesis_summary=hypothesis_payload,
+            empirical_jobs_status=empirical_jobs,
+            dspy_runtime_status=cast(
+                dict[str, object],
+                scheduler.llm_status().get("dspy_runtime", {}),
+            ),
+            quant_health_status=quant_evidence,
+        )
     live_submission_gate = _merge_external_paper_route_target_plan(
         cast(Mapping[str, Any], live_submission_gate)
     )
     simple_lane_status = _build_simple_lane_status_payload()
-    route_reacquisition_book = _paper_route_probe_book_from_target_plan(
-        live_submission_gate,
-        simple_lane_status=simple_lane_status,
-        state=scheduler.state,
-        session=session,
-    )
+    with SessionLocal() as session:
+        route_reacquisition_book = _paper_route_probe_book_from_target_plan(
+            live_submission_gate,
+            simple_lane_status=simple_lane_status,
+            state=scheduler.state,
+            session=session,
+        )
     if route_reacquisition_book is None:
         proof_floor = _build_profitability_proof_floor_payload(
             state=scheduler.state,
@@ -4776,21 +4778,20 @@ def trading_paper_route_evidence(
             Mapping[str, Any],
             proof_floor.get("route_reacquisition_book") or {},
         )
-    payload = build_paper_route_evidence_audit(
-        session,
-        live_submission_gate=cast(Mapping[str, Any], live_submission_gate),
-        route_reacquisition_book=route_reacquisition_book,
-        lookback_hours=lookback_hours,
-        target_limit=target_limit,
-        target_account_audit_available=settings.trading_mode == "paper",
-    )
+    with SessionLocal() as session:
+        payload = build_paper_route_evidence_audit(
+            session,
+            live_submission_gate=cast(Mapping[str, Any], live_submission_gate),
+            route_reacquisition_book=route_reacquisition_book,
+            lookback_hours=lookback_hours,
+            target_limit=target_limit,
+            target_account_audit_available=settings.trading_mode == "paper",
+        )
     return JSONResponse(status_code=200, content=jsonable_encoder(payload))
 
 
 @app.get("/trading/paper-route-target-plan")
-def trading_paper_route_target_plan(
-    session: Session = Depends(get_session),
-) -> JSONResponse:
+def trading_paper_route_target_plan() -> JSONResponse:
     """Return the lightweight next-window paper-route target plan."""
 
     scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
@@ -4814,7 +4815,8 @@ def trading_paper_route_target_plan(
         quant_evidence = load_quant_evidence_status(
             account_label=settings.trading_account_label,
         )
-        tca_summary = _load_tca_summary(session, scheduler=scheduler)
+        with SessionLocal() as session:
+            tca_summary = _load_tca_summary(session, scheduler=scheduler)
         market_context_status = scheduler.market_context_status()
         hypothesis_payload, _hypothesis_summary, _dependency_quorum = (
             _build_hypothesis_runtime_payload(
@@ -4823,28 +4825,30 @@ def trading_paper_route_target_plan(
                 market_context_status=market_context_status,
             )
         )
-        live_submission_gate = _build_live_submission_gate_payload(
-            scheduler.state,
-            session=session,
-            hypothesis_summary=hypothesis_payload,
-            empirical_jobs_status=empirical_jobs,
-            dspy_runtime_status=cast(
-                dict[str, object],
-                scheduler.llm_status().get("dspy_runtime", {}),
-            ),
-            quant_health_status=quant_evidence,
-        )
+        with SessionLocal() as session:
+            live_submission_gate = _build_live_submission_gate_payload(
+                scheduler.state,
+                session=session,
+                hypothesis_summary=hypothesis_payload,
+                empirical_jobs_status=empirical_jobs,
+                dspy_runtime_status=cast(
+                    dict[str, object],
+                    scheduler.llm_status().get("dspy_runtime", {}),
+                ),
+                quant_health_status=quant_evidence,
+            )
         loaded_full_live_gate = True
     live_submission_gate = _merge_external_paper_route_target_plan(
         cast(Mapping[str, Any], live_submission_gate)
     )
     simple_lane_status = _build_simple_lane_status_payload()
-    route_reacquisition_book = _paper_route_probe_book_from_target_plan(
-        live_submission_gate,
-        simple_lane_status=simple_lane_status,
-        state=scheduler.state,
-        session=session,
-    )
+    with SessionLocal() as session:
+        route_reacquisition_book = _paper_route_probe_book_from_target_plan(
+            live_submission_gate,
+            simple_lane_status=simple_lane_status,
+            state=scheduler.state,
+            session=session,
+        )
     if settings.trading_mode == "live" and loaded_full_live_gate:
         assert empirical_jobs is not None
         assert quant_evidence is not None
@@ -4876,13 +4880,14 @@ def trading_paper_route_target_plan(
                 )
     if route_reacquisition_book is None:
         route_reacquisition_book = cast(Mapping[str, Any], {})
-    payload = build_paper_route_target_plan_payload(
-        session,
-        live_submission_gate=cast(Mapping[str, Any], live_submission_gate),
-        route_reacquisition_book=route_reacquisition_book,
-        include_runtime_window_import_audit=None,
-        target_account_audit_available=settings.trading_mode == "paper",
-    )
+    with SessionLocal() as session:
+        payload = build_paper_route_target_plan_payload(
+            session,
+            live_submission_gate=cast(Mapping[str, Any], live_submission_gate),
+            route_reacquisition_book=route_reacquisition_book,
+            include_runtime_window_import_audit=None,
+            target_account_audit_available=settings.trading_mode == "paper",
+        )
     return JSONResponse(status_code=200, content=jsonable_encoder(payload))
 
 
@@ -5214,7 +5219,16 @@ def _fetch_paper_route_target_plan_url(
             timeout=max(float(timeout_seconds), 0.1),
         )
         try:
-            connection.request("GET", path, headers={"Accept": "application/json"})
+            host_header = parsed.netloc or parsed.hostname
+            connection.request(
+                "GET",
+                path,
+                headers={
+                    "Accept": "application/json",
+                    "Connection": "close",
+                    "Host": host_header,
+                },
+            )
             response = connection.getresponse()
             if response.status < 200 or response.status >= 300:
                 result = {

@@ -8893,6 +8893,184 @@ class TestTradingApi(TestCase):
             else:
                 app.state.trading_scheduler = original_scheduler
 
+    def test_paper_route_evidence_releases_db_session_before_external_plan_fetch(
+        self,
+    ) -> None:
+        original_scheduler = getattr(app.state, "trading_scheduler", None)
+        original_target_plan_url = settings.trading_paper_route_target_plan_url
+        settings.trading_paper_route_target_plan_url = (
+            "http://torghut.torghut.svc.cluster.local/trading/paper-route-target-plan"
+        )
+        active_sessions = 0
+
+        class TrackingSession:
+            def __enter__(self) -> "TrackingSession":
+                nonlocal active_sessions
+                active_sessions += 1
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                nonlocal active_sessions
+                active_sessions -= 1
+
+        def _load_external_without_held_session() -> dict[str, object]:
+            self.assertEqual(active_sessions, 0)
+            return {
+                "targets": [
+                    {
+                        "candidate_id": "fresh-authoritative",
+                        "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                        "promotion_allowed": False,
+                        "final_promotion_allowed": False,
+                    }
+                ]
+            }
+
+        try:
+            app.state.trading_scheduler = SimpleNamespace(
+                state=SimpleNamespace(market_session_open=False),
+                llm_status=lambda: {"dspy_runtime": {}},
+                market_context_status=lambda: {},
+            )
+            with (
+                patch("app.main.SessionLocal", return_value=TrackingSession()),
+                patch("app.main._empirical_jobs_status", return_value={}),
+                patch("app.main.load_quant_evidence_status", return_value={}),
+                patch("app.main._load_tca_summary", return_value={}),
+                patch(
+                    "app.main._build_hypothesis_runtime_payload",
+                    return_value=({}, {}, {}),
+                ),
+                patch(
+                    "app.main._build_live_submission_gate_payload",
+                    return_value={
+                        "allowed": False,
+                        "runtime_ledger_paper_probation_import_plan": {
+                            "targets": []
+                        },
+                    },
+                ),
+                patch(
+                    "app.main._load_external_paper_route_target_plan",
+                    side_effect=_load_external_without_held_session,
+                ),
+                patch("app.main._build_simple_lane_status_payload", return_value={}),
+                patch(
+                    "app.main._paper_route_probe_book_from_target_plan",
+                    return_value={},
+                ),
+                patch(
+                    "app.main.build_paper_route_evidence_audit",
+                    return_value={
+                        "schema_version": "torghut.paper-route-evidence.v1",
+                        "summary": {"target_count": 1},
+                    },
+                ),
+            ):
+                response = self.client.get("/trading/paper-route-evidence")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(active_sessions, 0)
+            self.assertEqual(response.json()["summary"]["target_count"], 1)
+        finally:
+            settings.trading_paper_route_target_plan_url = original_target_plan_url
+            if original_scheduler is None:
+                if hasattr(app.state, "trading_scheduler"):
+                    del app.state.trading_scheduler
+            else:
+                app.state.trading_scheduler = original_scheduler
+
+    def test_paper_route_target_plan_releases_db_session_before_external_plan_fetch(
+        self,
+    ) -> None:
+        original_scheduler = getattr(app.state, "trading_scheduler", None)
+        original_target_plan_url = settings.trading_paper_route_target_plan_url
+        settings.trading_paper_route_target_plan_url = (
+            "http://torghut.torghut.svc.cluster.local/trading/paper-route-target-plan"
+        )
+        active_sessions = 0
+        cached_gate = {
+            "allowed": False,
+            "runtime_ledger_paper_probation_import_plan": {
+                "target_count": 1,
+                "promotion_allowed": False,
+                "final_promotion_allowed": False,
+                "targets": [
+                    {
+                        "candidate_id": "cached-authoritative",
+                        "account_label": "TORGHUT_SIM",
+                        "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                        "promotion_allowed": False,
+                        "final_promotion_allowed": False,
+                    }
+                ],
+            },
+        }
+
+        class TrackingSession:
+            def __enter__(self) -> "TrackingSession":
+                nonlocal active_sessions
+                active_sessions += 1
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                nonlocal active_sessions
+                active_sessions -= 1
+
+        def _load_external_without_held_session() -> dict[str, object]:
+            self.assertEqual(active_sessions, 0)
+            return {
+                "targets": [
+                    {
+                        "candidate_id": "fresh-authoritative",
+                        "account_label": "TORGHUT_SIM",
+                        "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                        "promotion_allowed": False,
+                        "final_promotion_allowed": False,
+                    }
+                ]
+            }
+
+        try:
+            app.state.trading_scheduler = SimpleNamespace(
+                state=SimpleNamespace(market_session_open=False),
+                _last_live_submission_gate=cached_gate,
+            )
+            with (
+                patch("app.main.SessionLocal", return_value=TrackingSession()),
+                patch(
+                    "app.main._load_external_paper_route_target_plan",
+                    side_effect=_load_external_without_held_session,
+                ),
+                patch("app.main._build_simple_lane_status_payload", return_value={}),
+                patch(
+                    "app.main._paper_route_probe_book_from_target_plan",
+                    return_value={},
+                ),
+                patch(
+                    "app.main.build_paper_route_target_plan_payload",
+                    return_value={
+                        "schema_version": "torghut.paper-route-target-plan.v1",
+                        "target_count": 1,
+                        "promotion_allowed": False,
+                        "final_promotion_allowed": False,
+                        "targets": [{"candidate_id": "fresh-authoritative"}],
+                    },
+                ),
+            ):
+                response = self.client.get("/trading/paper-route-target-plan")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(active_sessions, 0)
+            self.assertEqual(response.json()["target_count"], 1)
+        finally:
+            settings.trading_paper_route_target_plan_url = original_target_plan_url
+            if original_scheduler is None:
+                if hasattr(app.state, "trading_scheduler"):
+                    del app.state.trading_scheduler
+            else:
+                app.state.trading_scheduler = original_scheduler
+
     def test_trading_paper_route_evidence_resolves_target_plan_strategy_universe(
         self,
     ) -> None:
@@ -9246,6 +9424,13 @@ class TestTradingApi(TestCase):
         self.assertEqual(
             http_error_connection.instances[0].request_path, "/plan?mode=paper"
         )
+        self.assertEqual(
+            http_error_connection.instances[0].request_headers["Host"],
+            "torghut.example",
+        )
+        self.assertEqual(
+            http_error_connection.instances[0].request_headers["Connection"], "close"
+        )
         self.assertEqual(http_error_connection.instances[0].timeout, 0.1)
         self.assertTrue(http_error_connection.instances[0].closed)
 
@@ -9472,6 +9657,13 @@ class TestTradingApi(TestCase):
         self.assertEqual(http_error_connection.instances[0].hostname, "torghut.example")
         self.assertEqual(
             http_error_connection.instances[0].request_path, "/plan?mode=paper"
+        )
+        self.assertEqual(
+            http_error_connection.instances[0].request_headers["Host"],
+            "torghut.example",
+        )
+        self.assertEqual(
+            http_error_connection.instances[0].request_headers["Connection"], "close"
         )
         self.assertEqual(http_error_connection.instances[0].timeout, 0.1)
         self.assertTrue(http_error_connection.instances[0].closed)
