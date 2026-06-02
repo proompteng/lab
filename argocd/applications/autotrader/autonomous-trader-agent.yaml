@@ -1,23 +1,30 @@
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: Agent
 metadata:
-  name: autonomous-trader-readback-agent
+  name: autonomous-trader-agent
   namespace: synthesis
   annotations:
     autonomous-trader.proompteng.ai/deployment-color: blue
-    autonomous-trader.proompteng.ai/deployment-role: scorecard-readback
+    autonomous-trader.proompteng.ai/deployment-role: active
   labels:
-    app.kubernetes.io/part-of: synthesis
+    app.kubernetes.io/part-of: autotrader
     app.kubernetes.io/component: autonomous-trader
     autonomous-trader.proompteng.ai/deployment-color: blue
-    autonomous-trader.proompteng.ai/deployment-role: scorecard-readback
+    autonomous-trader.proompteng.ai/deployment-role: active
 spec:
   providerRef:
-    name: autonomous-trader-readback-runner
+    name: autonomous-trader-codex
+  defaults:
+    systemPromptRef:
+      kind: ConfigMap
+      name: autonomous-trader-system-prompt
+      key: system-prompt.md
   security:
     allowedSecrets:
       - autonomous-trader-alpaca-mcp
       - agents-artifacts
+      - codex-auth
+      - github-token
       - synthesis-env
     allowedServiceAccounts:
       - agents-sa

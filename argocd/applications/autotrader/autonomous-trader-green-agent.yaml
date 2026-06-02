@@ -1,23 +1,23 @@
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: Agent
 metadata:
-  name: autonomous-trader-agent
+  name: autonomous-trader-agent-green
   namespace: synthesis
   annotations:
-    autonomous-trader.proompteng.ai/deployment-color: blue
-    autonomous-trader.proompteng.ai/deployment-role: active
+    autonomous-trader.proompteng.ai/deployment-color: green
+    autonomous-trader.proompteng.ai/deployment-role: preview
   labels:
-    app.kubernetes.io/part-of: synthesis
+    app.kubernetes.io/part-of: autotrader
     app.kubernetes.io/component: autonomous-trader
-    autonomous-trader.proompteng.ai/deployment-color: blue
-    autonomous-trader.proompteng.ai/deployment-role: active
+    autonomous-trader.proompteng.ai/deployment-color: green
+    autonomous-trader.proompteng.ai/deployment-role: preview
 spec:
   providerRef:
     name: autonomous-trader-codex
   defaults:
     systemPromptRef:
       kind: ConfigMap
-      name: autonomous-trader-system-prompt
+      name: autonomous-trader-system-prompt-green
       key: system-prompt.md
   security:
     allowedSecrets:

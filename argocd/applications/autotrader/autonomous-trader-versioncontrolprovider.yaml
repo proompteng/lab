@@ -4,7 +4,7 @@ metadata:
   name: github
   namespace: synthesis
   labels:
-    app.kubernetes.io/part-of: synthesis
+    app.kubernetes.io/part-of: autotrader
     app.kubernetes.io/component: autonomous-trader
 spec:
   provider: github

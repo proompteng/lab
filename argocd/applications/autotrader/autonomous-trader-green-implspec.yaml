@@ -1,34 +1,36 @@
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: ImplementationSpec
 metadata:
-  name: autonomous-trader-v1
+  name: autonomous-trader-v1-green
   namespace: synthesis
   annotations:
-    autonomous-trader.proompteng.ai/deployment-color: blue
-    autonomous-trader.proompteng.ai/deployment-role: active
+    autonomous-trader.proompteng.ai/deployment-color: green
+    autonomous-trader.proompteng.ai/deployment-role: preview
   labels:
-    app.kubernetes.io/part-of: synthesis
+    app.kubernetes.io/part-of: autotrader
     app.kubernetes.io/component: autonomous-trader
-    autonomous-trader.proompteng.ai/deployment-color: blue
-    autonomous-trader.proompteng.ai/deployment-role: active
+    autonomous-trader.proompteng.ai/deployment-color: green
+    autonomous-trader.proompteng.ai/deployment-role: preview
 spec:
-  summary: Autonomous paper-trader agent for market-open Alpaca MCP execution
+  summary: Autonomous paper-trader agent for green preview market-open Alpaca MCP execution
   source:
     provider: custom
-    externalId: autonomous-trader-v1
+    externalId: autonomous-trader-v1-green
   labels:
     - synthesis
     - autonomous-trader
     - alpaca
     - paper-trading
+    - preview
   acceptanceCriteria:
+    - Keep the green lane read-only until a GitOps promotion makes it the only active mutating market-open lane.
     - Trade only the dedicated Alpaca paper account and record trader state in Synthesis autotrader tables.
     - Bootstrap the analysis repo, read scorecards before grading, and use the live scan-cycle helper for candidate ranking.
     - Submit strategy broker mutations only after Synthesis risk/order records, protective preflight success, strategy guard approval, and deterministic client order ids; helper-proven entry-ineligible smoke skips must stand down from entries.
     - Keep market-open runs cycling until market close, 500000 USD equity, or hard unrecoverable broker/order/visibility state.
     - Finalize sessions with realized scorecard observations and write `report.md` as the only operator-facing artifact.
   text: |-
-    Run the Synthesis autonomous paper-trader using the Agent default system prompt as the durable operating policy.
+    Run the Synthesis autonomous paper-trader green preview lane using the Agent default system prompt as the durable operating policy.
 
     Variable task context:
     - mode: read `AUTONOMOUS_TRADER_MODE`

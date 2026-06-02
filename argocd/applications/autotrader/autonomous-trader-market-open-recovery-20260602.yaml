@@ -1,19 +1,18 @@
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
-  name: autonomous-trader-stale-reconcile-20260602
+  name: autonomous-trader-market-open-recovery-20260602
   namespace: synthesis
   annotations:
     autonomous-trader.proompteng.ai/deployment-color: blue
-    autonomous-trader.proompteng.ai/deployment-role: stale-session-reconcile
-    autonomous-trader.proompteng.ai/reconcile-for: autonomous-trader-market-open-lxhgb
-    autonomous-trader.proompteng.ai/reconcile-session: c41d58a4-5e50-4d02-96d5-2a0458193c90
-    autonomous-trader.proompteng.ai/reconcile-session-date: "2026-06-02"
+    autonomous-trader.proompteng.ai/deployment-role: recovery
+    autonomous-trader.proompteng.ai/recovery-for: autonomous-trader-market-open-lxhgb
+    autonomous-trader.proompteng.ai/recovery-session-date: "2026-06-02"
   labels:
-    app.kubernetes.io/part-of: synthesis
+    app.kubernetes.io/part-of: autotrader
     app.kubernetes.io/component: autonomous-trader
     autonomous-trader.proompteng.ai/deployment-color: blue
-    autonomous-trader.proompteng.ai/deployment-role: stale-session-reconcile
+    autonomous-trader.proompteng.ai/deployment-role: recovery
 spec:
   agentRef:
     name: autonomous-trader-agent
@@ -21,8 +20,10 @@ spec:
     name: autonomous-trader-v1
   goal:
     objective: >-
-      Reconcile stale post-close Synthesis autotrader market-open sessions only after live Alpaca readback
-      proves the dedicated paper account has no open positions or open orders; do not submit broker mutations.
+      Continue the 2026-06-02 market-open autotrader recovery run in the dedicated Synthesis Alpaca paper
+      account after the earlier AgentRun exited early; read current broker state, manage open positions and
+      orders, keep cycling until market close or a real terminal condition, and record every decision, risk
+      check, broker action, reconciliation result, and scorecard update in Synthesis.
   vcsRef:
     name: github
   vcsPolicy:
@@ -37,10 +38,10 @@ spec:
   parameters:
     repository: proompteng/lab
     base: main
-    head: codex/synthesis-autonomous-trader-stale-reconcile
-    mode: scorecard-readback
-    synthesisSessionMode: scorecard_readback
-    brokerMutationEnabled: "false"
+    head: codex/synthesis-autonomous-trader-session
+    mode: market-open
+    synthesisSessionMode: market_open
+    brokerMutationEnabled: "true"
     sessionReconcileEnabled: "true"
     accountType: paper
     targetEquityUsd: "500000"
