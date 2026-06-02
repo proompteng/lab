@@ -763,7 +763,15 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
                 runtime_argv[runtime_argv.index("--sources") + 1],
                 script.SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
             )
-            self.assertIn("--reconcile-empty-selection", runtime_argv)
+            if cronjob_name == "torghut-tigerbeetle-journal-order-events-live":
+                tca_argv = command_argvs[1]
+                self.assertEqual(
+                    tca_argv[tca_argv.index("--max-batches") + 1],
+                    "1",
+                )
+                self.assertNotIn("--reconcile-empty-selection", runtime_argv)
+            else:
+                self.assertIn("--reconcile-empty-selection", runtime_argv)
             self.assertIn("--fail-on-degraded", runtime_argv)
             self.assertIn("--allow-data-quality-degraded", runtime_argv)
 
