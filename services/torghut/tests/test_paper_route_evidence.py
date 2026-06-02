@@ -62,6 +62,239 @@ class TestPaperRouteEvidenceAudit(TestCase):
         )
         Base.metadata.create_all(self.engine)
 
+    def _seed_hpairs_strategy_and_flat_snapshot(
+        self,
+        session: Session,
+        *,
+        window_start: datetime,
+    ) -> None:
+        session.add(
+            Strategy(
+                name="microbar-cross-sectional-pairs-v1",
+                enabled=True,
+                base_timeframe="1m",
+                universe_type="microbar_cross_sectional_pairs_v1",
+                universe_symbols=["AAPL", "AMZN"],
+                max_notional_per_trade=Decimal("25"),
+            )
+        )
+        session.add(
+            PositionSnapshot(
+                alpaca_account_label="TORGHUT_SIM",
+                as_of=window_start,
+                equity=Decimal("100000"),
+                cash=Decimal("100000"),
+                buying_power=Decimal("100000"),
+                positions=[],
+            )
+        )
+        session.commit()
+
+    def _hpairs_live_submission_gate(
+        self,
+        *,
+        candidate_blockers: list[str],
+        continuity_ok: bool,
+        continuity_reason: str,
+        drift_ok: bool,
+        drift_reason: str,
+    ) -> dict[str, object]:
+        return {
+            "allowed": False,
+            "reason": "paper_route_probe_only",
+            "blocked_reasons": [],
+            "promotion_eligible_total": 0,
+            "dependency_quorum_decision": "allow",
+            "continuity_ok": continuity_ok,
+            "continuity_reason": continuity_reason,
+            "drift_ok": drift_ok,
+            "drift_reason": drift_reason,
+            "runtime_ledger_paper_probation_import_plan": {
+                "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                "target_count": 1,
+                "targets": [
+                    {
+                        "hypothesis_id": "H-PAIRS-01",
+                        "candidate_id": "c88421d619759b2cfaa6f4d0",
+                        "observed_stage": "paper",
+                        "strategy_family": "microbar_cross_sectional_pairs",
+                        "strategy_name": "microbar-cross-sectional-pairs-v1",
+                        "strategy_id": "microbar_cross_sectional_pairs_v1@research",
+                        "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                        "strategy_lookup_names": [
+                            "microbar-cross-sectional-pairs-v1",
+                        ],
+                        "account_label": "TORGHUT_SIM",
+                        "source_account_label": "TORGHUT_SIM",
+                        "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
+                        "source_kind": "paper_route_probe_runtime_observed",
+                        "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                        "paper_probation_satisfied_for_bounded_live_paper_collection": True,
+                        "evidence_collection_ok": True,
+                        "promotion_allowed": False,
+                        "final_promotion_authorized": False,
+                        "final_promotion_allowed": False,
+                        "candidate_blockers": candidate_blockers,
+                        "runtime_ledger_target_metadata_blockers": candidate_blockers,
+                    }
+                ],
+            },
+        }
+
+    def _hpairs_route_reacquisition_book(
+        self,
+        *,
+        blocking_reasons: list[str] | None = None,
+    ) -> dict[str, object]:
+        return {
+            "schema_version": "torghut.route-reacquisition-book.v1",
+            "state": "repair_only",
+            "summary": {
+                "paper_route_probe_eligible_symbols": ["AAPL", "AMZN"],
+                "paper_route_probe_active_symbols": ["AAPL", "AMZN"],
+            },
+            "paper_route_probe": {
+                "configured_enabled": True,
+                "active": True,
+                "effective_max_notional": "25",
+                "next_session_max_notional": "25",
+                "eligible_symbol_count": 2,
+                "blocking_reasons": blocking_reasons or [],
+            },
+        }
+
+    def test_hpairs_fresh_collection_clears_stale_drift_and_signal_blockers(
+        self,
+    ) -> None:
+        generated_at = datetime(2026, 6, 2, 15, tzinfo=timezone.utc)
+        window_start, _window_end = _next_regular_equities_session_window(generated_at)
+        with Session(self.engine) as session:
+            self._seed_hpairs_strategy_and_flat_snapshot(
+                session,
+                window_start=window_start,
+            )
+
+            payload = build_paper_route_target_plan_payload(
+                session,
+                live_submission_gate=self._hpairs_live_submission_gate(
+                    candidate_blockers=[
+                        "drift_checks_missing",
+                        "signal_lag_exceeded",
+                        "paper_route_runtime_ledger_import_pending",
+                    ],
+                    continuity_ok=True,
+                    continuity_reason="signals_present",
+                    drift_ok=True,
+                    drift_reason="drift_checks_recent",
+                ),
+                route_reacquisition_book=self._hpairs_route_reacquisition_book(),
+                generated_at=generated_at,
+                include_runtime_window_import_audit=False,
+            )
+
+        target = payload["targets"][0]
+        self.assertTrue(target["evidence_collection_ok"])
+        self.assertTrue(target["bounded_evidence_collection_authorized"])
+        self.assertFalse(target["promotion_allowed"])
+        self.assertFalse(target["final_promotion_allowed"])
+        self.assertNotIn("drift_checks_missing", target["candidate_blockers"])
+        self.assertNotIn("signal_lag_exceeded", target["candidate_blockers"])
+        self.assertIn(
+            "paper_route_runtime_ledger_import_pending",
+            target["candidate_blockers"],
+        )
+        self.assertEqual(
+            target["stale_collection_blockers_cleared_by_current_inputs"],
+            ["drift_checks_missing", "signal_lag_exceeded"],
+        )
+
+    def test_hpairs_stale_signal_and_missing_drift_block_collection_when_current(
+        self,
+    ) -> None:
+        generated_at = datetime(2026, 6, 2, 15, tzinfo=timezone.utc)
+        window_start, _window_end = _next_regular_equities_session_window(generated_at)
+        with Session(self.engine) as session:
+            self._seed_hpairs_strategy_and_flat_snapshot(
+                session,
+                window_start=window_start,
+            )
+
+            payload = build_paper_route_target_plan_payload(
+                session,
+                live_submission_gate=self._hpairs_live_submission_gate(
+                    candidate_blockers=[
+                        "drift_checks_missing",
+                        "signal_lag_exceeded",
+                    ],
+                    continuity_ok=False,
+                    continuity_reason="signal_lag_exceeded",
+                    drift_ok=False,
+                    drift_reason="drift_live_promotion_eligible_missing",
+                ),
+                route_reacquisition_book=self._hpairs_route_reacquisition_book(),
+                generated_at=generated_at,
+                include_runtime_window_import_audit=False,
+            )
+
+        target = payload["targets"][0]
+        self.assertFalse(target["evidence_collection_ok"])
+        self.assertFalse(target["bounded_evidence_collection_authorized"])
+        self.assertIn("signal_lag_exceeded", target["candidate_blockers"])
+        self.assertIn("drift_checks_missing", target["candidate_blockers"])
+        self.assertIn(
+            "signal_lag_exceeded",
+            target["bounded_evidence_collection_blockers"],
+        )
+        self.assertIn(
+            "drift_checks_missing",
+            target["bounded_evidence_collection_blockers"],
+        )
+        self.assertIn(
+            "drift_checks_missing",
+            target["runtime_ledger_target_metadata_blockers"],
+        )
+        self.assertFalse(target["promotion_allowed"])
+        self.assertFalse(target["final_promotion_allowed"])
+
+    def test_hpairs_after_hours_market_session_closed_is_not_bypassed(self) -> None:
+        generated_at = datetime(2026, 6, 2, 21, tzinfo=timezone.utc)
+        window_start, _window_end = _next_regular_equities_session_window(generated_at)
+        with Session(self.engine) as session:
+            self._seed_hpairs_strategy_and_flat_snapshot(
+                session,
+                window_start=window_start,
+            )
+
+            payload = build_paper_route_target_plan_payload(
+                session,
+                live_submission_gate=self._hpairs_live_submission_gate(
+                    candidate_blockers=["signal_lag_exceeded"],
+                    continuity_ok=True,
+                    continuity_reason="signals_present",
+                    drift_ok=True,
+                    drift_reason="drift_checks_recent",
+                ),
+                route_reacquisition_book=self._hpairs_route_reacquisition_book(
+                    blocking_reasons=["market_session_closed"],
+                ),
+                generated_at=generated_at,
+                include_runtime_window_import_audit=False,
+            )
+
+        target = payload["targets"][0]
+        self.assertIn(
+            "market_session_closed",
+            payload["paper_route_probe"]["blocking_reasons"],
+        )
+        self.assertFalse(target["evidence_collection_ok"])
+        self.assertFalse(target["bounded_evidence_collection_authorized"])
+        self.assertIn(
+            "paper_route_session_window_closed",
+            target["bounded_evidence_collection_blockers"],
+        )
+        self.assertFalse(target["promotion_allowed"])
+        self.assertFalse(target["final_promotion_allowed"])
+
     def test_balanced_pair_probe_infers_missing_leg_opposite_existing_action(
         self,
     ) -> None:

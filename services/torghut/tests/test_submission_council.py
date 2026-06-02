@@ -5438,6 +5438,53 @@ class TestSubmissionCouncil(TestCase):
             ["evidence_continuity_not_ok"],
         )
 
+    def test_build_live_submission_gate_payload_clears_signal_lag_with_fresh_clickhouse_status(
+        self,
+    ) -> None:
+        result = build_live_submission_gate_payload(
+            SimpleNamespace(
+                last_autonomy_promotion_eligible=False,
+                last_autonomy_promotion_action=None,
+                drift_live_promotion_eligible=True,
+                last_signal_continuity_state="signal_lag_exceeded",
+                last_signal_continuity_reason="signal_lag_exceeded",
+                last_signal_continuity_actionable=True,
+                signal_continuity_alert_active=True,
+                signal_continuity_alert_reason="signal_lag_exceeded",
+                last_market_context_freshness_seconds=45,
+                metrics=SimpleNamespace(
+                    feature_batch_rows_total=9,
+                    feature_null_rate={"price": 0.0},
+                    feature_staleness_ms_p95=250,
+                    feature_duplicate_ratio=0.0,
+                    decision_state_total={},
+                ),
+            ),
+            hypothesis_summary={
+                "promotion_eligible_total": 0,
+                "capital_stage_totals": {"shadow": 1},
+                "dependency_quorum": {
+                    "decision": "allow",
+                    "reasons": [],
+                    "message": "ready",
+                },
+            },
+            empirical_jobs_status={"ready": True, "status": "healthy"},
+            quant_health_status=self._healthy_quant_status(),
+            clickhouse_ta_status={
+                "state": "current",
+                "latest_signal_at": datetime.now(timezone.utc).isoformat(),
+                "equity_ta_rows": 12,
+                "equity_ta_symbols": 2,
+                "source_ref": "clickhouse:ta_signals",
+            },
+        )
+
+        self.assertEqual(result["continuity_ok"], "true")
+        self.assertEqual(result["continuity_source"], "clickhouse_ta_status")
+        self.assertEqual(result["continuity_reason"], "signals_present")
+        self.assertEqual(result["runtime_window_import_health_gate"]["blockers"], [])
+
     def test_build_live_submission_gate_payload_fails_closed_on_empty_quant_evidence(
         self,
     ) -> None:
