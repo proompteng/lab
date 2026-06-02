@@ -218,9 +218,39 @@ class TestFastReplayPreview(TestCase):
             row_payload["frontier_selection"]["reason_code"],
             "fast_replay_frontier_exploitation_selected",
         )
+        self.assertEqual(
+            row_payload["discovery_stage_metadata"]["preview_status"],
+            "preview_only_ranked",
+        )
+        self.assertTrue(
+            row_payload["discovery_stage_metadata"]["exact_replay_qualified"]
+        )
+        self.assertEqual(
+            row_payload["discovery_stage_metadata"]["evidence_collection_status"],
+            "bounded_sim_evidence_collection_candidate",
+        )
+        self.assertFalse(row_payload["discovery_stage_metadata"]["promotion_allowed"])
+        self.assertFalse(
+            row_payload["frontier_selection"]["discovery_stage_metadata"][
+                "final_promotion_allowed"
+            ]
+        )
         self.assertFalse(row_payload["frontier_selection"]["promotion_allowed"])
+        self.assertEqual(
+            payload["discovery_stage_semantics"]["authority"],
+            "candidate_discovery_only",
+        )
+        self.assertFalse(
+            payload["discovery_stage_semantics"][
+                "exact_replay_frontier_can_authorize_promotion"
+            ]
+        )
         sim_queue = payload["bounded_sim_target_queue"]
         self.assertEqual(sim_queue["status"], "metadata_only_not_dispatched")
+        self.assertEqual(
+            sim_queue["discovery_stage_semantics"]["preview_only_status"],
+            "preview_only_ranked",
+        )
         self.assertEqual(
             sim_queue["selected_candidate_spec_ids"], ["spec-good", "spec-stress"]
         )

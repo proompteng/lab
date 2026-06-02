@@ -6689,6 +6689,9 @@ def _apply_fast_replay_preview_narrowing(
                 cast(Sequence[Any], preview_row.get("risk_flags") or ())
             )
             updated["fast_replay_frontier_bucket"] = preview_row["frontier_bucket"]
+            updated["fast_replay_discovery_stage_metadata"] = preview_row.get(
+                "discovery_stage_metadata"
+            )
             updated["fast_replay_candidate_frontier_hash"] = preview_row.get(
                 "candidate_frontier_hash"
             )
@@ -6855,6 +6858,62 @@ def _fast_replay_preview_proof_semantics() -> dict[str, Any]:
     }
 
 
+def _fast_replay_discovery_stage_semantics() -> dict[str, Any]:
+    return {
+        "schema_version": "torghut.hpairs-discovery-stage-semantics.v1",
+        "preview_only_status": "preview_only_ranked",
+        "exact_replay_qualified_status": "exact_replay_qualified_frontier",
+        "evidence_collection_candidate_status": (
+            "bounded_sim_evidence_collection_candidate"
+        ),
+        "authority": "candidate_discovery_only",
+        "preview_output_can_authorize_promotion": False,
+        "exact_replay_frontier_can_authorize_promotion": False,
+        "requires_runtime_ledger_for_promotion": True,
+        "requires_live_paper_evidence_for_final_promotion": True,
+        "promotion_allowed": False,
+        "final_promotion_allowed": False,
+        "final_authority_ok": False,
+    }
+
+
+def _fast_replay_queue_stage_metadata(
+    *,
+    frontier_bucket: str,
+    exact_replay_selection_blocked: bool,
+    exact_replay_selection_blockers: Sequence[Any],
+) -> dict[str, Any]:
+    exact_replay_qualified = not exact_replay_selection_blocked
+    return {
+        "schema_version": "torghut.hpairs-discovery-stage-metadata.v1",
+        "preview_status": "preview_only_ranked",
+        "preview_only": True,
+        "exact_replay_status": (
+            "exact_replay_qualified_frontier"
+            if exact_replay_qualified
+            else "not_exact_replay_qualified"
+        ),
+        "exact_replay_qualified": exact_replay_qualified,
+        "evidence_collection_status": (
+            "bounded_sim_evidence_collection_candidate"
+            if exact_replay_qualified
+            else "not_evidence_collection_candidate"
+        ),
+        "evidence_collection_candidate": exact_replay_qualified,
+        "selected_for_bounded_frontier": True,
+        "frontier_bucket": frontier_bucket,
+        "blockers": list(exact_replay_selection_blockers),
+        "authority": "candidate_discovery_only",
+        "resource_scope": "local_offline_bounded_queue_metadata_only",
+        "promotion_proof": False,
+        "proof_authority": False,
+        "promotion_authority": False,
+        "promotion_allowed": False,
+        "final_promotion_allowed": False,
+        "final_authority_ok": False,
+    }
+
+
 def _bounded_sim_target_queue_metadata(
     *,
     preview_rows: Sequence[Mapping[str, Any]],
@@ -6888,12 +6947,26 @@ def _bounded_sim_target_queue_metadata(
     for index, row in enumerate(selected_rows, start=1):
         candidate_spec_id = _string(row.get("candidate_spec_id"))
         frontier_bucket = _string(row.get("frontier_bucket"))
+        exact_replay_selection_blockers = list(
+            cast(
+                Sequence[Any],
+                row.get("exact_replay_selection_blockers") or (),
+            )
+        )
+        stage_metadata = _fast_replay_queue_stage_metadata(
+            frontier_bucket=frontier_bucket,
+            exact_replay_selection_blocked=bool(
+                row.get("exact_replay_selection_blocked")
+            ),
+            exact_replay_selection_blockers=exact_replay_selection_blockers,
+        )
         handoff_lineage = _fast_replay_exact_handoff_lineage(
             row=row,
             replay_tape_manifest=replay_tape_manifest,
             queue_priority=index,
             candidate_spec_id=candidate_spec_id,
             frontier_bucket=frontier_bucket,
+            stage_metadata=stage_metadata,
         )
         handoff_lineage_hash = _string(handoff_lineage.get("lineage_hash"))
         entries.append(
@@ -6901,6 +6974,7 @@ def _bounded_sim_target_queue_metadata(
                 "queue_priority": index,
                 "candidate_spec_id": candidate_spec_id,
                 "frontier_bucket": frontier_bucket,
+                "discovery_stage_metadata": stage_metadata,
                 "candidate_frontier_hash": row.get("candidate_frontier_hash"),
                 "exact_replay_frontier_key": row.get("exact_replay_frontier_key"),
                 "frontier_dedupe_status": row.get("frontier_dedupe_status"),
@@ -6917,12 +6991,7 @@ def _bounded_sim_target_queue_metadata(
                 "exact_replay_selection_blocked": row.get(
                     "exact_replay_selection_blocked"
                 ),
-                "exact_replay_selection_blockers": list(
-                    cast(
-                        Sequence[Any],
-                        row.get("exact_replay_selection_blockers") or (),
-                    )
-                ),
+                "exact_replay_selection_blockers": exact_replay_selection_blockers,
                 "reproducibility_metadata": {
                     "dataset_snapshot_ref": replay_tape_manifest.dataset_snapshot_ref,
                     "replay_tape_content_sha256": replay_tape_manifest.content_sha256,
@@ -6968,8 +7037,9 @@ def _bounded_sim_target_queue_metadata(
             }
         )
     return {
-        "schema_version": "torghut.fast-replay-bounded-sim-target-queue.v3",
+        "schema_version": "torghut.fast-replay-bounded-sim-target-queue.v4",
         "status": "metadata_only_preview_to_exact_replay_queue",
+        "discovery_stage_semantics": _fast_replay_discovery_stage_semantics(),
         "authority": "not_promotion_proof",
         "prefilter_only": True,
         "promotion_proof": False,
@@ -7022,6 +7092,7 @@ def _bounded_sim_target_queue_metadata(
             "sim_account_label": "TORGHUT_SIM",
             "live_paper_account_label": "TORGHUT_LIVE_PAPER_AFTER_PROBATION",
             "status": "sim_target_queue_ready_live_paper_blocked",
+            "candidate_stage": "bounded_sim_evidence_collection_candidate",
             "live_paper_blockers": [
                 "exact_replay_probation_required",
                 "source_backed_runtime_ledger_required",
@@ -7062,10 +7133,12 @@ def _fast_replay_exact_handoff_lineage(
     queue_priority: int,
     candidate_spec_id: str,
     frontier_bucket: str,
+    stage_metadata: Mapping[str, Any],
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
-        "schema_version": "torghut.fast-replay-exact-handoff-lineage.v2",
+        "schema_version": "torghut.fast-replay-exact-handoff-lineage.v3",
         "status": "preview_only_exact_replay_handoff",
+        "discovery_stage_metadata": dict(stage_metadata),
         "authority": "not_promotion_proof",
         "prefilter_only": True,
         "promotion_proof": False,
