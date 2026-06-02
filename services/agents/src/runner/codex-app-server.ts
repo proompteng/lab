@@ -60,6 +60,10 @@ export type CodexAppServerRunnerClient = {
     prompt: string,
     options?: CodexAppServerTurnOptions,
   ) => Promise<{ stream: AsyncGenerator<StreamDelta, Turn | null, void>; turnId: string; threadId: string }>
+  waitForThreadIdle?: (
+    threadId: string,
+    options?: { quietMs?: number; timeoutMs?: number; signal?: AbortSignal },
+  ) => Promise<{ lastTurn: Turn | null }>
   interruptTurn?: (turnId: string, threadId: string) => Promise<void>
   stop?: () => void
 }
@@ -962,6 +966,29 @@ const consumeTurnStreamEffect = ({
         : new CodexRunnerTurnError({ operation: 'stream-turn', threadId, turnId, cause }),
   })
 
+const parseNonNegativeInteger = (value: string | undefined, fallback: number): number => {
+  if (value === undefined) return fallback
+  const parsed = Number.parseInt(value, 10)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
+}
+
+const waitForThreadIdleEffect = (
+  client: CodexAppServerRunnerClient,
+  threadId: string,
+  signal: AbortSignal | undefined,
+) =>
+  Effect.tryPromise({
+    try: () => {
+      if (!client.waitForThreadIdle) return Promise.resolve(null)
+      return client.waitForThreadIdle(threadId, {
+        quietMs: parseNonNegativeInteger(process.env.CODEX_APP_SERVER_THREAD_IDLE_QUIET_MS, 1000),
+        timeoutMs: parseNonNegativeInteger(process.env.CODEX_APP_SERVER_THREAD_IDLE_TIMEOUT_MS, 0),
+        signal,
+      })
+    },
+    catch: (cause) => new CodexRunnerTurnError({ operation: 'stream-turn', threadId, cause }),
+  })
+
 const uploadOutputArtifactsEffect = (
   artifacts: AgentProviderOutputArtifact[],
   uploadArtifacts: typeof uploadOutputArtifacts,
@@ -1061,6 +1088,10 @@ export const runCodexAppServerAdapterEffect = ({
       turnId: response.turnId,
       logStream: state.logStream,
     })
+    const idleResult = yield* waitForThreadIdleEffect(state.client, response.threadId, options.abortSignal)
+    if (idleResult?.lastTurn) {
+      state.finalTurn = idleResult.lastTurn
+    }
 
     const terminalError = terminalErrorForTurn(state.finalTurn, state.threadId, state.turnId)
     if (terminalError) {
