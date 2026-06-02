@@ -777,6 +777,62 @@ class TestTigerBeetleReconcile(TestCase):
             self.assertEqual(payload["runtime_ledger_missing_signed_ref_count"], 1)
             self.assertEqual(payload["runtime_ledger_missing_account_ref_count"], 2)
 
+    def test_reconciliation_keeps_unsigned_runtime_placeholder_blocked_with_accounts(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            bucket = _runtime_bucket(net_pnl=Decimal("2.50"))
+            session.add(bucket)
+            session.flush()
+            plan = build_runtime_ledger_bucket_transfer_plan(bucket)
+            self.assertIsNotNone(plan)
+            assert plan is not None
+            _add_account_refs_for_plan(session, plan)
+            transfer = plan.transfer_spec
+            session.add(
+                TigerBeetleTransferRef(
+                    cluster_id=2001,
+                    transfer_id=str(transfer.transfer_id),
+                    transfer_kind=transfer.transfer_kind,
+                    ledger=transfer.ledger,
+                    code=transfer.code,
+                    amount=Decimal(transfer.amount),
+                    status="created",
+                    runtime_ledger_bucket_id=bucket.id,
+                    source_type=SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                    source_id=str(bucket.id),
+                    payload_json={
+                        "source": SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                        "account_ids": [
+                            str(transfer.debit_account_id),
+                            str(transfer.credit_account_id),
+                        ],
+                    },
+                )
+            )
+            session.flush()
+            client = FakeTigerBeetleClient()
+            client.transfers[transfer.transfer_id] = transfer
+
+            payload = reconcile_tigerbeetle_transfers(
+                session,
+                settings_obj=_settings(),
+                client=client,
+            )
+
+            self.assertFalse(payload["ok"], payload)
+            self.assertIn(
+                BLOCKER_RUNTIME_LEDGER_SIGNED_REFS_MISSING,
+                payload["blockers"],
+            )
+            self.assertNotIn(
+                BLOCKER_RUNTIME_LEDGER_ACCOUNT_REFS_MISSING,
+                payload["blockers"],
+            )
+            self.assertEqual(payload["runtime_ledger_signed_ref_count"], 0)
+            self.assertEqual(payload["runtime_ledger_missing_signed_ref_count"], 1)
+            self.assertEqual(payload["runtime_ledger_missing_account_ref_count"], 0)
+
     def test_reconciliation_blocks_stable_ref_payload_mismatch(self) -> None:
         with Session(self.engine) as session:
             bucket = _runtime_bucket(net_pnl=Decimal("2.50"))

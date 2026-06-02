@@ -16,7 +16,7 @@ from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import patch
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from app.config import Settings
@@ -26,7 +26,12 @@ from app.models import (
     ExecutionOrderEvent,
     ExecutionTCAMetric,
     StrategyRuntimeLedgerBucket,
+    TigerBeetleAccountRef,
     TigerBeetleTransferRef,
+)
+from app.trading.tigerbeetle_journal import (
+    TigerBeetleLedgerJournal,
+    build_runtime_ledger_bucket_transfer_plan,
 )
 from app.trading.tigerbeetle_ledger_model import (
     LEDGER_USD_MICRO,
@@ -36,7 +41,10 @@ from app.trading.tigerbeetle_ledger_model import (
     TRANSFER_KIND_FILL_POST,
     TRANSFER_KIND_RUNTIME_NET_PNL,
 )
-from app.trading.tigerbeetle_client import TigerBeetleClientTimeoutError
+from app.trading.tigerbeetle_client import (
+    FakeTigerBeetleClient,
+    TigerBeetleClientTimeoutError,
+)
 from scripts import journal_tigerbeetle_order_events as script
 
 
@@ -727,7 +735,10 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
             self.assertIn("--allow-data-quality-degraded", runtime_section)
 
     def test_process_rows_attaches_runtime_bucket_journal_payload(self) -> None:
-        settings_obj = Settings(TORGHUT_TIGERBEETLE_ENABLED=True)
+        settings_obj = Settings(
+            TORGHUT_TIGERBEETLE_ENABLED=True,
+            TORGHUT_TIGERBEETLE_JOURNAL_ENABLED=True,
+        )
         observed_at = datetime.now(timezone.utc)
         with Session(self.engine) as session:
             bucket = StrategyRuntimeLedgerBucket(
@@ -818,6 +829,111 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
         self.assertFalse(
             payload["tigerbeetle_journal_parity"]["promotion_authority"],
         )
+
+    def test_runtime_bucket_journal_materializes_signed_ref_and_is_idempotent(
+        self,
+    ) -> None:
+        settings_obj = Settings(
+            TORGHUT_TIGERBEETLE_ENABLED=True,
+            TORGHUT_TIGERBEETLE_JOURNAL_ENABLED=True,
+        )
+        client = FakeTigerBeetleClient()
+        observed_at = datetime.now(timezone.utc)
+        with Session(self.engine) as session:
+            bucket = StrategyRuntimeLedgerBucket(
+                run_id="runtime-run-signed-ref",
+                candidate_id="candidate",
+                hypothesis_id="hypothesis",
+                observed_stage="paper",
+                bucket_started_at=observed_at,
+                bucket_ended_at=observed_at,
+                account_label="paper",
+                runtime_strategy_name="demo-runtime",
+                strategy_family="demo",
+                fill_count=1,
+                decision_count=1,
+                submitted_order_count=1,
+                cancelled_order_count=0,
+                rejected_order_count=0,
+                unfilled_order_count=0,
+                closed_trade_count=1,
+                open_position_count=0,
+                filled_notional=Decimal("190.25"),
+                gross_strategy_pnl=Decimal("3.00"),
+                cost_amount=Decimal("0.50"),
+                net_strategy_pnl_after_costs=Decimal("2.50"),
+                post_cost_expectancy_bps=Decimal("12.50"),
+                ledger_schema_version="torghut.runtime-ledger.v1",
+                pnl_basis="post_cost",
+                payload_json={
+                    "source_refs": ["postgres:execution_order_events:event-1"],
+                    "source_row_counts": {"execution_order_events": 1},
+                    "source_window_refs": ["kafka:torghut.trade-updates.v1:0:1-2"],
+                },
+            )
+            session.add(bucket)
+            session.flush()
+            plan = build_runtime_ledger_bucket_transfer_plan(bucket)
+            self.assertIsNotNone(plan)
+            assert plan is not None
+
+            with TigerBeetleLedgerJournal(
+                settings_obj=settings_obj,
+                client=client,
+            ) as journal:
+                ref = journal.journal_runtime_ledger_bucket(session, bucket)
+                self.assertIsNotNone(ref)
+                assert ref is not None
+                script._attach_runtime_bucket_journal_payload(bucket, ref)
+                ref_again = journal.journal_runtime_ledger_bucket(session, bucket)
+
+            session.flush()
+            payload = ref.payload_json
+            self.assertIsInstance(payload, dict)
+            transfer = plan.transfer_spec
+            self.assertEqual(ref_again, ref)
+            self.assertEqual(ref.runtime_ledger_bucket_id, bucket.id)
+            self.assertEqual(ref.source_type, script.SOURCE_TYPE_RUNTIME_LEDGER_BUCKET)
+            self.assertEqual(ref.source_id, str(bucket.id))
+            self.assertEqual(ref.transfer_id, str(transfer.transfer_id))
+            self.assertEqual(payload["signed_amount_micros"], plan.signed_amount_micros)
+            self.assertEqual(payload["pnl_direction"], plan.pnl_direction)
+            self.assertEqual(
+                payload["debit_account_id"], str(transfer.debit_account_id)
+            )
+            self.assertEqual(
+                payload["credit_account_id"],
+                str(transfer.credit_account_id),
+            )
+            self.assertEqual(len(client.transfers), 1)
+            self.assertEqual(len(client.accounts), 4)
+            self.assertEqual(
+                len(
+                    session.execute(
+                        select(TigerBeetleTransferRef).where(
+                            TigerBeetleTransferRef.source_type
+                            == script.SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                            TigerBeetleTransferRef.source_id == str(bucket.id),
+                        )
+                    )
+                    .scalars()
+                    .all()
+                ),
+                1,
+            )
+            self.assertEqual(
+                len(session.execute(select(TigerBeetleAccountRef)).scalars().all()),
+                4,
+            )
+            self.assertEqual(
+                script._select_unlinked_runtime_buckets(
+                    session,
+                    settings_obj=settings_obj,
+                    account_label="paper",
+                    limit=10,
+                ),
+                [],
+            )
 
     def test_source_batch_stops_on_tigerbeetle_timeout(self) -> None:
         rows = [SimpleNamespace(id="first"), SimpleNamespace(id="second")]
@@ -1275,7 +1391,7 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
 
         self.assertEqual([row.id for row in metrics], [newer.id])
 
-    def test_select_runtime_buckets_repairs_legacy_ref_missing_bucket_fk(
+    def test_select_runtime_buckets_repairs_unsigned_legacy_ref_materialization(
         self,
     ) -> None:
         settings_obj = Settings(TORGHUT_TIGERBEETLE_ENABLED=True)
@@ -1310,18 +1426,26 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
             )
             session.add(bucket)
             session.flush()
+            plan = build_runtime_ledger_bucket_transfer_plan(bucket)
+            self.assertIsNotNone(plan)
+            assert plan is not None
+            transfer = plan.transfer_spec
             legacy_ref = TigerBeetleTransferRef(
                 cluster_id=settings_obj.tigerbeetle_cluster_id,
-                transfer_id="1234",
-                transfer_kind=TRANSFER_KIND_RUNTIME_NET_PNL,
-                ledger=LEDGER_USD_MICRO,
-                code=TRANSFER_CODE_FILL_POST,
-                amount=Decimal("2500000"),
+                transfer_id=str(transfer.transfer_id),
+                transfer_kind=transfer.transfer_kind,
+                ledger=transfer.ledger,
+                code=transfer.code,
+                amount=Decimal(transfer.amount),
                 status="created",
                 source_type=script.SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
                 source_id=str(bucket.id),
                 payload_json={
                     "source": script.SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                    "account_ids": [
+                        str(transfer.debit_account_id),
+                        str(transfer.credit_account_id),
+                    ],
                 },
             )
             session.add(legacy_ref)
@@ -1331,22 +1455,58 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
                 session,
                 settings_obj=settings_obj,
                 account_label="paper",
-                limit=10,
+                limit=1,
             )
 
             self.assertEqual([row.id for row in selected], [bucket.id])
+            self.assertEqual(
+                script._payload_mapping(legacy_ref), legacy_ref.payload_json
+            )
+            self.assertFalse(
+                script._payload_int_matches(
+                    {"signed_amount_micros": "not-an-int"},
+                    "signed_amount_micros",
+                    plan.signed_amount_micros,
+                )
+            )
 
             legacy_ref.runtime_ledger_bucket_id = bucket.id
             session.add(legacy_ref)
             session.flush()
-            selected_after_repair = script._select_unlinked_runtime_buckets(
+            selected_after_fk_repair = script._select_unlinked_runtime_buckets(
                 session,
                 settings_obj=settings_obj,
                 account_label="paper",
-                limit=10,
+                limit=1,
             )
 
-        self.assertEqual(selected_after_repair, [])
+            legacy_ref.payload_json = {
+                **legacy_ref.payload_json,
+                "signed_amount_micros": plan.signed_amount_micros,
+                "pnl_direction": plan.pnl_direction,
+                "debit_account_id": str(transfer.debit_account_id),
+                "credit_account_id": str(transfer.credit_account_id),
+            }
+            session.add(legacy_ref)
+            session.flush()
+            selected_after_signed_materialization = (
+                script._select_unlinked_runtime_buckets(
+                    session,
+                    settings_obj=settings_obj,
+                    account_label="paper",
+                    limit=10,
+                )
+            )
+            legacy_ref.payload_json = None
+            bucket.net_strategy_pnl_after_costs = Decimal("0")
+            bucket.cost_amount = Decimal("0")
+            self.assertEqual(script._payload_mapping(legacy_ref), {})
+            self.assertFalse(
+                script._runtime_ref_matches_signed_bucket(legacy_ref, bucket)
+            )
+
+        self.assertEqual([row.id for row in selected_after_fk_repair], [bucket.id])
+        self.assertEqual(selected_after_signed_materialization, [])
 
     def test_main_journals_selected_events_and_reconciles(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

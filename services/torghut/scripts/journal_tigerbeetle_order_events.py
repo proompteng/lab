@@ -11,9 +11,10 @@ import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any, cast
 
-from sqlalchemy import String, create_engine, select
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from app.config import Settings
@@ -31,6 +32,7 @@ from app.trading.tigerbeetle_journal import (
     SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
     TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_STATUS_PASS,
     TigerBeetleLedgerJournal,
+    build_runtime_ledger_bucket_transfer_plan,
     build_order_event_transfer_plan,
     tigerbeetle_runtime_ledger_journal_payload,
 )
@@ -305,23 +307,9 @@ def _select_unlinked_runtime_buckets(
     account_label: str | None,
     limit: int,
 ) -> list[StrategyRuntimeLedgerBucket]:
-    complete_ref = (
-        select(TigerBeetleTransferRef.id)
-        .where(
-            TigerBeetleTransferRef.cluster_id == settings_obj.tigerbeetle_cluster_id,
-            TigerBeetleTransferRef.source_type == SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
-            TigerBeetleTransferRef.source_id
-            == StrategyRuntimeLedgerBucket.id.cast(String),
-            TigerBeetleTransferRef.transfer_kind == TRANSFER_KIND_RUNTIME_NET_PNL,
-            TigerBeetleTransferRef.runtime_ledger_bucket_id
-            == StrategyRuntimeLedgerBucket.id,
-        )
-        .exists()
-    )
     stmt = (
         select(StrategyRuntimeLedgerBucket)
         .where(
-            ~complete_ref,
             (StrategyRuntimeLedgerBucket.net_strategy_pnl_after_costs != 0)
             | (StrategyRuntimeLedgerBucket.cost_amount != 0),
         )
@@ -329,7 +317,101 @@ def _select_unlinked_runtime_buckets(
     )
     if account_label:
         stmt = stmt.where(StrategyRuntimeLedgerBucket.account_label == account_label)
-    return list(session.execute(stmt.limit(limit)).scalars().all())
+    scan_limit = max(limit, min(limit * 20, 10000))
+    candidates = session.execute(stmt.limit(scan_limit)).scalars().all()
+    buckets: list[StrategyRuntimeLedgerBucket] = []
+    for bucket in candidates:
+        if _runtime_bucket_has_signed_ref(
+            session,
+            bucket,
+            settings_obj=settings_obj,
+        ):
+            continue
+        buckets.append(bucket)
+        if len(buckets) >= limit:
+            break
+    return buckets
+
+
+def _runtime_bucket_has_signed_ref(
+    session: Any,
+    bucket: StrategyRuntimeLedgerBucket,
+    *,
+    settings_obj: Settings,
+) -> bool:
+    refs = (
+        session.execute(
+            select(TigerBeetleTransferRef).where(
+                TigerBeetleTransferRef.cluster_id
+                == settings_obj.tigerbeetle_cluster_id,
+                TigerBeetleTransferRef.source_type == SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                TigerBeetleTransferRef.source_id == str(bucket.id),
+                TigerBeetleTransferRef.transfer_kind == TRANSFER_KIND_RUNTIME_NET_PNL,
+                TigerBeetleTransferRef.runtime_ledger_bucket_id == bucket.id,
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return any(_runtime_ref_matches_signed_bucket(ref, bucket) for ref in refs)
+
+
+def _payload_mapping(row: TigerBeetleTransferRef) -> Mapping[str, object]:
+    raw_payload = cast(object, row.payload_json)
+    if isinstance(raw_payload, Mapping):
+        return cast(Mapping[str, object], raw_payload)
+    return {}
+
+
+def _payload_int_matches(
+    payload: Mapping[str, object],
+    key: str,
+    expected: int,
+) -> bool:
+    value = payload.get(key)
+    if value is None:
+        return False
+    try:
+        return int(str(value)) == expected
+    except (TypeError, ValueError):
+        return False
+
+
+def _runtime_ref_matches_signed_bucket(
+    ref: TigerBeetleTransferRef,
+    bucket: StrategyRuntimeLedgerBucket,
+) -> bool:
+    plan = build_runtime_ledger_bucket_transfer_plan(bucket)
+    if plan is None:
+        return False
+    transfer_spec = plan.transfer_spec
+    payload = _payload_mapping(ref)
+    return (
+        ref.transfer_id == str(transfer_spec.transfer_id)
+        and ref.transfer_kind == TRANSFER_KIND_RUNTIME_NET_PNL
+        and ref.amount == Decimal(transfer_spec.amount)
+        and ref.ledger == transfer_spec.ledger
+        and ref.code == transfer_spec.code
+        and ref.runtime_ledger_bucket_id == bucket.id
+        and ref.source_type == SOURCE_TYPE_RUNTIME_LEDGER_BUCKET
+        and ref.source_id == str(bucket.id)
+        and _payload_int_matches(
+            payload,
+            "debit_account_id",
+            transfer_spec.debit_account_id,
+        )
+        and _payload_int_matches(
+            payload,
+            "credit_account_id",
+            transfer_spec.credit_account_id,
+        )
+        and _payload_int_matches(
+            payload,
+            "signed_amount_micros",
+            plan.signed_amount_micros,
+        )
+        and str(payload.get("pnl_direction") or "") == plan.pnl_direction
+    )
 
 
 def _journal_source_batch(
