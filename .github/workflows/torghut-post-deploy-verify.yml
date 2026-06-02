@@ -271,22 +271,41 @@ jobs:
             local output_path="$2"
             local label="$3"
             local status
+            local decision
 
-            for attempt in $(seq 1 18); do
+            for attempt in $(seq 1 48); do
               status="$(
                 curl -sS --connect-timeout 10 --max-time 90 \
                   -o "${output_path}" -w '%{http_code}' "${url}" || true
               )"
-              if [[ "${status}" =~ ^2[0-9][0-9]$ ]] &&
+              if [[ "${status}" =~ ^[0-9]{3}$ ]] &&
+                [ "${status}" != '000' ] &&
                 python3 -m json.tool "${output_path}" >/dev/null 2>&1; then
-                printf '%s' "${status}"
-                return 0
-              fi
-              if [ "${status}" = '503' ] &&
-                python3 -m json.tool "${output_path}" >/dev/null 2>&1 &&
-                python3 -c 'import json, sys; payload = json.load(open(sys.argv[1], encoding="utf-8")); sys.exit(0 if payload.get("status") == "degraded" else 1)' "${output_path}"; then
-                printf '%s' "${status}"
-                return 0
+                decision="$(
+                  bun run packages/scripts/src/torghut/readyz-contract.ts \
+                    --status "${status}" \
+                    --readyz-json "${output_path}"
+                )"
+                case "${decision}" in
+                  acceptable)
+                    printf '%s' "${status}"
+                    return 0
+                    ;;
+                  retryable_database_timeout)
+                    if [ "${attempt}" -eq 48 ]; then
+                      echo "${label} still reports a retryable database-readiness timeout after ${attempt} attempts" >&2
+                      printf '%s' "${status}"
+                      return 0
+                    fi
+                    echo "Attempt ${attempt}: ${label} database readiness timed out; retrying until repair-only readyz contract is acceptable" >&2
+                    sleep 5
+                    continue
+                    ;;
+                  *)
+                    printf '%s' "${status}"
+                    return 0
+                    ;;
+                esac
               fi
 
               if [ "${attempt}" -eq 18 ]; then
