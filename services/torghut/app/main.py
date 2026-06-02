@@ -5,7 +5,7 @@ import logging
 import os
 import time
 from collections.abc import Mapping, Sequence
-from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
@@ -221,6 +221,17 @@ LEAN_LANE_MANAGER = LeanLaneManager()
 WHITEPAPER_WORKFLOW = WhitepaperWorkflowService()
 _TRADING_DEPENDENCY_HEALTH_CACHE_LOCK = Lock()
 _TRADING_DEPENDENCY_HEALTH_CACHE: dict[str, dict[str, object]] = {}
+_TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = 3.0
+_TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR = ThreadPoolExecutor(
+    max_workers=2,
+    thread_name_prefix="torghut-health-surface",
+)
+_TRADING_HEALTH_SURFACE_EVALUATION_LOCK = Lock()
+_TRADING_HEALTH_SURFACE_EVALUATIONS: dict[
+    str,
+    Future[tuple[dict[str, object], int]],
+] = {}
+_TRADING_HEALTH_SURFACE_PAYLOAD_CACHE: dict[str, dict[str, object]] = {}
 _OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK = Lock()
 _OPTIONS_CATALOG_FRESHNESS_CACHE: dict[
     tuple[str, ...], tuple[datetime, dict[str, object]]
@@ -850,6 +861,207 @@ def _strip_promotion_authority_claims_for_readiness(value: object) -> object:
             _strip_promotion_authority_claims_for_readiness(item) for item in list_value
         ]
     return value
+
+
+def _trading_health_surface_cache_key(
+    *,
+    include_database_contract: bool,
+    allow_stale_dependency_cache: bool,
+) -> str:
+    return (
+        f"health-surface:{int(include_database_contract)}:"
+        f"{int(allow_stale_dependency_cache)}"
+    )
+
+
+def _cache_completed_trading_health_surface_payload(
+    cache_key: str,
+    payload: dict[str, object],
+    status_code: int,
+) -> None:
+    with _TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+        _TRADING_HEALTH_SURFACE_PAYLOAD_CACHE[cache_key] = {
+            "payload": deepcopy(payload),
+            "status_code": status_code,
+            "checked_at": datetime.now(timezone.utc),
+        }
+
+
+def _record_trading_health_surface_completion(
+    cache_key: str,
+    future: Future[tuple[dict[str, object], int]],
+) -> None:
+    with _TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+        current = _TRADING_HEALTH_SURFACE_EVALUATIONS.get(cache_key)
+        if current is future:
+            _TRADING_HEALTH_SURFACE_EVALUATIONS.pop(cache_key, None)
+
+    try:
+        payload, status_code = future.result()
+    except Exception as exc:  # pragma: no cover - defensive callback surface
+        logger.warning(
+            "Trading health surface evaluation failed asynchronously: %s", exc
+        )
+        return
+
+    _cache_completed_trading_health_surface_payload(cache_key, payload, status_code)
+
+
+def _cached_trading_health_surface_payload(
+    cache_key: str,
+) -> tuple[dict[str, object], datetime] | None:
+    with _TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+        cache_entry = _TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.get(cache_key)
+        if cache_entry is None:
+            return None
+        payload = deepcopy(cast(dict[str, object], cache_entry["payload"]))
+        checked_at = cast(datetime, cache_entry["checked_at"])
+    return payload, checked_at
+
+
+def _fail_closed_health_evaluation_gate(
+    *,
+    reason_code: str,
+    detail: str,
+) -> dict[str, object]:
+    return {
+        "allowed": False,
+        "promotion_authority": False,
+        "promotion_authority_ok": False,
+        "final_authority_ok": False,
+        "final_promotion_allowed": False,
+        "final_promotion_authorized": False,
+        "reason": reason_code,
+        "reason_codes": [reason_code],
+        "blocked_reasons": [reason_code],
+        "detail": detail,
+    }
+
+
+def _health_surface_timeout_fallback_payload(
+    *,
+    cache_key: str,
+    reason_code: str,
+    detail: str,
+) -> dict[str, object]:
+    cached = _cached_trading_health_surface_payload(cache_key)
+    if cached is None:
+        return {
+            "status": "degraded",
+            "reason": reason_code,
+            "reason_codes": [reason_code],
+            "dependencies": {
+                "health_evaluation": {
+                    "ok": False,
+                    "detail": detail,
+                    "reason_codes": [reason_code],
+                }
+            },
+            "live_submission_gate": _fail_closed_health_evaluation_gate(
+                reason_code=reason_code,
+                detail=detail,
+            ),
+        }
+
+    payload, checked_at = cached
+    payload["status"] = "degraded"
+    payload["reason"] = reason_code
+    reason_codes = list(cast(Sequence[object], payload.get("reason_codes") or []))
+    payload["reason_codes"] = _append_unique_reason(reason_codes, reason_code)
+    payload["health_evaluation_timeout"] = {
+        "ok": False,
+        "detail": detail,
+        "reason_codes": [reason_code],
+        "cached_payload_checked_at": checked_at.isoformat(),
+    }
+    dependencies = payload.get("dependencies")
+    if isinstance(dependencies, Mapping):
+        dependencies_payload = deepcopy(dict(cast(Mapping[str, object], dependencies)))
+    else:
+        dependencies_payload = {}
+    dependencies_payload["health_evaluation"] = {
+        "ok": False,
+        "detail": detail,
+        "reason_codes": [reason_code],
+        "cached_payload_checked_at": checked_at.isoformat(),
+    }
+    payload["dependencies"] = dependencies_payload
+    live_submission_gate = payload.get("live_submission_gate")
+    if isinstance(live_submission_gate, Mapping):
+        payload["live_submission_gate"] = _guard_live_submission_gate_for_readiness(
+            cast(Mapping[str, object], live_submission_gate),
+            readiness_dependency_reasons=[reason_code],
+        )
+    else:
+        payload["live_submission_gate"] = _fail_closed_health_evaluation_gate(
+            reason_code=reason_code,
+            detail=detail,
+        )
+    return cast(
+        dict[str, object],
+        _strip_promotion_authority_claims_for_readiness(payload),
+    )
+
+
+def _evaluate_trading_health_payload_bounded(
+    *,
+    include_database_contract: bool = False,
+    allow_stale_dependency_cache: bool = False,
+    surface: str,
+) -> tuple[dict[str, object], int]:
+    cache_key = _trading_health_surface_cache_key(
+        include_database_contract=include_database_contract,
+        allow_stale_dependency_cache=allow_stale_dependency_cache,
+    )
+    with _TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+        future = _TRADING_HEALTH_SURFACE_EVALUATIONS.get(cache_key)
+        if future is None or future.done():
+            future = _TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR.submit(
+                _evaluate_trading_health_payload,
+                include_database_contract=include_database_contract,
+                allow_stale_dependency_cache=allow_stale_dependency_cache,
+            )
+            _TRADING_HEALTH_SURFACE_EVALUATIONS[cache_key] = future
+            future.add_done_callback(
+                lambda completed, key=cache_key: (
+                    _record_trading_health_surface_completion(
+                        key,
+                        completed,
+                    )
+                )
+            )
+
+    timeout_seconds = max(0.1, _TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS)
+    try:
+        payload, status_code = future.result(timeout=timeout_seconds)
+    except TimeoutError:
+        reason_code = f"{surface}_evaluation_timeout"
+        detail = (
+            f"{surface} evaluation exceeded {timeout_seconds:.1f}s; "
+            "returning fail-closed cached/degraded health"
+        )
+        return (
+            _health_surface_timeout_fallback_payload(
+                cache_key=cache_key,
+                reason_code=reason_code,
+                detail=detail,
+            ),
+            503,
+        )
+    except Exception as exc:
+        logger.warning("Trading health surface evaluation failed: %s", exc)
+        reason_code = f"{surface}_evaluation_unavailable"
+        return (
+            _health_surface_timeout_fallback_payload(
+                cache_key=cache_key,
+                reason_code=reason_code,
+                detail=str(exc),
+            ),
+            503,
+        )
+
+    _cache_completed_trading_health_surface_payload(cache_key, payload, status_code)
+    return payload, status_code
 
 
 def _evaluate_trading_health_payload(
@@ -1809,9 +2021,10 @@ def _evaluate_database_contract(session: Session) -> dict[str, object]:
 def readyz() -> JSONResponse:
     """Readiness endpoint with dependency-aware status for rollout safety."""
 
-    payload, status_code = _evaluate_trading_health_payload(
+    payload, status_code = _evaluate_trading_health_payload_bounded(
         include_database_contract=True,
         allow_stale_dependency_cache=True,
+        surface="readyz",
     )
     return JSONResponse(
         status_code=status_code,
@@ -5653,7 +5866,9 @@ def trading_tca(
 def trading_health() -> JSONResponse:
     """Trading loop health including dependency readiness."""
 
-    payload, status_code = _evaluate_trading_health_payload()
+    payload, status_code = _evaluate_trading_health_payload_bounded(
+        surface="trading_health",
+    )
     return JSONResponse(status_code=status_code, content=jsonable_encoder(payload))
 
 
