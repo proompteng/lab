@@ -1067,7 +1067,7 @@ class TestSubmissionCouncil(TestCase):
 
         self.assertEqual(
             fake_session.calls,
-            ["SET LOCAL statement_timeout = 5000"],
+            ["SET LOCAL statement_timeout = 500"],
         )
 
     def test_runtime_ledger_status_rollback_helper_ignores_missing_rollback(
