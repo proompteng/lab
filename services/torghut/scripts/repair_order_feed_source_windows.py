@@ -26,6 +26,7 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--dsn-env", default="DB_DSN")
     parser.add_argument("--account-label", default=None)
+    parser.add_argument("--canonical-account-label", default=None)
     parser.add_argument("--batch-size", type=int, default=1000)
     parser.add_argument("--max-batches", type=int, default=1)
     parser.add_argument(
@@ -84,6 +85,9 @@ def _payload(
         "execution_link_events_without_decision": sum(
             batch["execution_link_events_without_decision"] for batch in batches
         ),
+        "execution_link_account_alias_events_linked": sum(
+            batch["execution_link_account_alias_events_linked"] for batch in batches
+        ),
         "execution_event_backfill_candidates": sum(
             batch["execution_event_backfill_candidates"] for batch in batches
         ),
@@ -128,6 +132,7 @@ def _payload(
         "apply": bool(args.apply),
         "dsn_env": args.dsn_env,
         "account_label": args.account_label,
+        "canonical_account_label": args.canonical_account_label,
         "backfill_execution_events": bool(args.backfill_execution_events),
         "batch_size": max(1, min(int(args.batch_size), 5000)),
         "max_batches": max(1, int(args.max_batches)),
@@ -183,6 +188,7 @@ def main() -> int:
             execution_link_batch = repair_order_feed_execution_links(
                 session,
                 account_label=args.account_label,
+                canonical_account_label=args.canonical_account_label,
                 limit=batch_size,
             )
             execution_event_backfill_batch = (
@@ -228,6 +234,9 @@ def main() -> int:
                 ],
                 "execution_link_events_without_decision": execution_link_batch.get(
                     "events_without_decision", 0
+                ),
+                "execution_link_account_alias_events_linked": execution_link_batch.get(
+                    "account_alias_events_linked", 0
                 ),
                 "execution_event_backfill_candidates": execution_event_backfill_batch[
                     "selected"

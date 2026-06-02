@@ -148,6 +148,7 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
         repair_links.assert_called_once_with(
             fake_session,
             account_label=None,
+            canonical_account_label=None,
             limit=5000,
         )
         backfill_execution_events.assert_not_called()
@@ -283,6 +284,7 @@ class TestRepairOrderFeedSourceWindowsScript(TestCase):
         self.assertEqual(backfill.call_args.kwargs["limit"], 2)
         self.assertEqual(repair_links.call_count, 2)
         self.assertEqual(repair_links.call_args.kwargs["account_label"], "TORGHUT_SIM")
+        self.assertIsNone(repair_links.call_args.kwargs["canonical_account_label"])
         self.assertEqual(repair_links.call_args.kwargs["limit"], 2)
         backfill_execution_events.assert_not_called()
         self.assertEqual(repair_deltas.call_count, 2)

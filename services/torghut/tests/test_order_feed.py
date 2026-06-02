@@ -185,6 +185,7 @@ class TestOrderFeed(TestCase):
         order_id: str = "order-1",
         client_order_id: str = "client-1",
         execution_idempotency_key: str | None = None,
+        execution_correlation_id: str | None = None,
     ) -> Execution:
         strategy = Strategy(
             name="demo",
@@ -221,6 +222,7 @@ class TestOrderFeed(TestCase):
             submitted_qty=Decimal("1"),
             filled_qty=Decimal("0"),
             status="new",
+            execution_correlation_id=execution_correlation_id,
             execution_idempotency_key=execution_idempotency_key,
             raw_order={"id": "order-1"},
             last_update_at=datetime.now(timezone.utc),
@@ -966,6 +968,53 @@ class TestOrderFeed(TestCase):
                 "basis": "matched_order_identity",
             },
         )
+        self.assertFalse(source_window.payload_json["promotion_authority_eligible"])
+
+    def test_order_feed_event_links_by_execution_correlation_id_only(self) -> None:
+        record = FakeRecord(
+            value=(
+                b'{"channel":"trade_updates","payload":{"event":"fill",'
+                b'"timestamp":"2026-02-01T10:00:00Z",'
+                b'"_execution_correlation_id":"corr-order-feed-1",'
+                b'"order":{"symbol":"AAPL","status":"filled","qty":"1",'
+                b'"filled_qty":"1","filled_avg_price":"190.2"}},'
+                b'"seq":12}'
+            ),
+            offset=27,
+        )
+        consumer = FakeConsumer([record])
+        ingestor = OrderFeedIngestor(
+            consumer_factory=lambda: consumer,
+            default_account_label="paper",
+        )
+
+        with Session(self.engine) as session:
+            execution = self._seed_execution(
+                session,
+                order_id="corr-broker-order-1",
+                client_order_id="corr-client-1",
+                execution_correlation_id="corr-order-feed-1",
+            )
+            execution_id = execution.id
+            trade_decision_id = execution.trade_decision_id
+
+            counters = ingestor.ingest_once(session)
+            event = session.execute(select(ExecutionOrderEvent)).scalar_one()
+            source_window = session.execute(select(OrderFeedSourceWindow)).scalar_one()
+
+        self.assertEqual(counters["events_persisted_total"], 1)
+        self.assertEqual(counters["unlinked_execution_total"], 0)
+        self.assertEqual(counters["unlinked_decision_total"], 0)
+        self.assertIsNone(event.alpaca_order_id)
+        self.assertIsNone(event.client_order_id)
+        self.assertEqual(event.execution_id, execution_id)
+        self.assertEqual(event.trade_decision_id, trade_decision_id)
+        self.assertEqual(
+            source_window.payload_json["execution_correlation_id"],
+            "corr-order-feed-1",
+        )
+        self.assertTrue(source_window.payload_json["source_coverage_complete"])
+        self.assertFalse(source_window.payload_json["promotion_authority_eligible"])
 
     def test_build_consumer_applies_kafka_security_kwargs(self) -> None:
         captured_kwargs: dict[str, object] = {}
@@ -1629,6 +1678,7 @@ class TestOrderFeed(TestCase):
                 "decision_events_linked": 0,
                 "events_without_execution": 1,
                 "events_without_decision": 1,
+                "account_alias_events_linked": 0,
             },
         )
         self.assertEqual(linkable_event.execution_id, execution_id)
@@ -1747,6 +1797,95 @@ class TestOrderFeed(TestCase):
         self.assertEqual(source_window.unlinked_execution_count, 0)
         self.assertEqual(source_window.unlinked_decision_count, 0)
         self.assertEqual(source_window.payload_json["source_coverage_complete"], True)
+        self.assertFalse(source_window.payload_json["promotion_authority_eligible"])
+
+    def test_repair_order_feed_execution_links_resolves_configured_account_alias(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            execution = self._seed_execution(
+                session,
+                account_label="TORGHUT_SIM",
+                order_id="sim-alias-order-1",
+                client_order_id="sim-alias-client-1",
+            )
+            execution_id = execution.id
+            trade_decision_id = execution.trade_decision_id
+            source_window = OrderFeedSourceWindow(
+                consumer_group="torghut-order-feed-v1",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                alpaca_account_label="PA3SX7FYNUTF",
+                assignment_mode="group",
+                source_revision=ORDER_FEED_SOURCE_REVISION,
+                window_started_at=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+                window_ended_at=datetime(2026, 2, 1, 10, 1, tzinfo=timezone.utc),
+                start_offset=330,
+                end_offset=330,
+                consumed_count=1,
+                inserted_count=1,
+                unlinked_execution_count=1,
+                unlinked_decision_count=1,
+                status="inserted",
+                status_reason="missing_execution_and_decision_links",
+            )
+            session.add(source_window)
+            session.flush()
+            event = ExecutionOrderEvent(
+                event_fingerprint="repair-configured-account-alias",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=330,
+                alpaca_account_label="PA3SX7FYNUTF",
+                event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+                symbol="AAPL",
+                alpaca_order_id="sim-alias-order-1",
+                client_order_id="sim-alias-client-1",
+                event_type="fill",
+                status="filled",
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("191.25"),
+                raw_event={"event": "fill"},
+                source_window_id=source_window.id,
+            )
+            session.add(event)
+            session.commit()
+
+            result = repair_order_feed_execution_links(
+                session,
+                account_label="PA3SX7FYNUTF",
+                canonical_account_label="TORGHUT_SIM",
+                limit=10,
+            )
+            session.commit()
+            session.refresh(event)
+            session.refresh(source_window)
+
+        self.assertEqual(result["events_linked"], 1)
+        self.assertEqual(result["account_alias_events_linked"], 1)
+        self.assertEqual(event.alpaca_account_label, "PA3SX7FYNUTF")
+        self.assertEqual(event.execution_id, execution_id)
+        self.assertEqual(event.trade_decision_id, trade_decision_id)
+        self.assertEqual(
+            event.raw_event["_torghut_account_label_alias"],
+            {
+                "source_account_label": "PA3SX7FYNUTF",
+                "canonical_account_label": "TORGHUT_SIM",
+                "basis": "matched_order_identity",
+            },
+        )
+        self.assertEqual(source_window.unlinked_execution_count, 0)
+        self.assertEqual(source_window.unlinked_decision_count, 0)
+        self.assertEqual(
+            source_window.payload_json["account_label_alias"],
+            {
+                "source_account_label": "PA3SX7FYNUTF",
+                "canonical_account_label": "TORGHUT_SIM",
+                "basis": "matched_order_identity",
+            },
+        )
+        self.assertTrue(source_window.payload_json["source_coverage_complete"])
+        self.assertFalse(source_window.payload_json["promotion_authority_eligible"])
 
     def test_linkage_helpers_preserve_actionable_blocker_classifications(
         self,
@@ -2023,6 +2162,7 @@ class TestOrderFeed(TestCase):
                 "decision_events_linked": 1,
                 "events_without_execution": 1,
                 "events_without_decision": 0,
+                "account_alias_events_linked": 0,
             },
         )
         self.assertIsNone(event.execution_id)
@@ -2180,6 +2320,7 @@ class TestOrderFeed(TestCase):
                     symbol="AAPL",
                     alpaca_order_id="missing-execution-order",
                     client_order_id="decision-only-persist-client",
+                    execution_correlation_id=None,
                     event_type="fill",
                     status="filled",
                     qty=Decimal("1"),
@@ -3499,6 +3640,7 @@ class TestOrderFeed(TestCase):
             symbol="AAPL",
             alpaca_order_id=None,
             client_order_id=None,
+            execution_correlation_id=None,
             event_type="fill",
             status="filled",
             qty=Decimal("1"),
@@ -3541,6 +3683,7 @@ class TestOrderFeed(TestCase):
             symbol="AAPL",
             alpaca_order_id="order-1",
             client_order_id="client-1",
+            execution_correlation_id=None,
             event_type="fill",
             status="filled",
             qty=Decimal("2"),
