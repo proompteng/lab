@@ -7600,7 +7600,7 @@ class TestTradingApi(TestCase):
             else:
                 app.state.trading_scheduler = original_scheduler
 
-    def test_trading_paper_route_target_plan_uses_auto_import_audit_mode(self) -> None:
+    def test_trading_paper_route_target_plan_defers_runtime_import_audit(self) -> None:
         original_scheduler = getattr(app.state, "trading_scheduler", None)
         target = {
             "hypothesis_id": "H-PAIRS-01",
@@ -7638,7 +7638,7 @@ class TestTradingApi(TestCase):
             if hasattr(app.state, "trading_scheduler"):
                 del app.state.trading_scheduler
 
-            def _assert_auto_audit_mode(
+            def _assert_deferred_audit_mode(
                 *args: object, **kwargs: object
             ) -> dict[str, object]:
                 self.assertEqual(
@@ -7647,7 +7647,7 @@ class TestTradingApi(TestCase):
                     ],
                     live_gate["runtime_ledger_paper_probation_import_plan"],
                 )
-                self.assertIsNone(kwargs["include_runtime_window_import_audit"])
+                self.assertFalse(kwargs["include_runtime_window_import_audit"])
                 self.assertTrue(kwargs["route_reacquisition_book"])
                 return {
                     "schema_version": "torghut.paper-route-target-plan.v1",
@@ -7709,7 +7709,7 @@ class TestTradingApi(TestCase):
                 ),
                 patch(
                     "app.main.build_paper_route_target_plan_payload",
-                    side_effect=_assert_auto_audit_mode,
+                    side_effect=_assert_deferred_audit_mode,
                 ),
             ):
                 response = self.client.get("/trading/paper-route-target-plan")
@@ -8653,7 +8653,7 @@ class TestTradingApi(TestCase):
             *args: object, **kwargs: object
         ) -> dict[str, object]:
             self.assertEqual(kwargs["route_reacquisition_book"], {})
-            self.assertIsNone(kwargs["include_runtime_window_import_audit"])
+            self.assertFalse(kwargs["include_runtime_window_import_audit"])
             return {
                 "schema_version": "torghut.paper-route-target-plan.v1",
                 "target_count": 1,
@@ -8945,9 +8945,7 @@ class TestTradingApi(TestCase):
                     "app.main._build_live_submission_gate_payload",
                     return_value={
                         "allowed": False,
-                        "runtime_ledger_paper_probation_import_plan": {
-                            "targets": []
-                        },
+                        "runtime_ledger_paper_probation_import_plan": {"targets": []},
                     },
                 ),
                 patch(
