@@ -27,6 +27,7 @@ from scripts import journal_tigerbeetle_order_events as journal_script  # noqa: 
 LIVE_ORDER_EVENT_BATCH_SIZE = 1
 LIVE_ORDER_EVENT_MAX_BATCHES = 1
 LIVE_ORDER_EVENT_SCAN_LIMIT = 250
+LIVE_EXECUTION_BATCH_SIZE = 25
 LIVE_TCA_METRIC_BATCH_SIZE = 5
 LIVE_TCA_METRIC_MAX_BATCHES = 1
 
@@ -53,7 +54,9 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--preset", choices=("live", "sim"), required=True)
-    parser.add_argument("--execution-batch-size", type=int, default=5)
+    parser.add_argument(
+        "--execution-batch-size", type=int, default=LIVE_EXECUTION_BATCH_SIZE
+    )
     parser.add_argument("--supervise-timeout-seconds", type=float, default=45.0)
     parser.add_argument("--json", action="store_true")
     return parser.parse_args()
