@@ -57,7 +57,6 @@ POST_COST_BASIS_RUNTIME_LEDGER = POST_COST_PNL_BASIS
 POST_COST_BASIS_EXECUTION_RECONSTRUCTION = (
     "execution_reconstructed_pnl_after_explicit_costs"
 )
-POST_COST_BASIS_SIMULATION_REPORT = "simulation_report_net_pnl"
 POST_COST_BASIS_TCA_PROXY = "tca_shortfall_proxy"
 RUNTIME_LEDGER_ARTIFACT_SCHEMAS = frozenset(
     {
@@ -4259,33 +4258,6 @@ def _build_realized_strategy_pnl_rows(
     return realized_rows
 
 
-def _load_report_post_cost_expectancy_bps(artifact_refs: list[str]) -> Decimal | None:
-    for ref in artifact_refs:
-        path = Path(ref)
-        if (
-            path.name not in {"simulation-report.json", "evaluation-report.json"}
-            or not path.exists()
-        ):
-            continue
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        pnl_payload = _as_mapping(payload.get("pnl"))
-        metrics_payload = _as_mapping(payload.get("metrics"))
-        net_pnl = _decimal_or_none(
-            pnl_payload.get("net_pnl_estimated") or metrics_payload.get("net_pnl")
-        )
-        execution_notional = _decimal_or_none(
-            pnl_payload.get("execution_notional_total")
-            or metrics_payload.get("turnover_notional")
-        )
-        if net_pnl is None or execution_notional is None or execution_notional <= 0:
-            continue
-        return (net_pnl / execution_notional) * Decimal("10000")
-    return None
-
-
 def _load_json_artifact(ref: str) -> dict[str, Any]:
     text = ref.strip()
     if not text:
@@ -6353,22 +6325,6 @@ def main() -> int:
     delay_depth_report = _load_json_artifact(delay_depth_report_ref)
     if delay_depth_report_ref:
         artifact_refs.append(delay_depth_report_ref)
-    report_post_cost_expectancy_bps = _load_report_post_cost_expectancy_bps(
-        artifact_refs
-    )
-    if (
-        report_post_cost_expectancy_bps is not None
-        and args.source_kind.strip().startswith("simulation_")
-    ):
-        tca_rows.append(
-            {
-                "computed_at": executions[-1] if executions else window_end,
-                "post_cost_expectancy_bps": report_post_cost_expectancy_bps,
-                "post_cost_expectancy_basis": POST_COST_BASIS_SIMULATION_REPORT,
-                "post_cost_promotion_eligible": False,
-                "promotion_blocker": "simulation_report_not_runtime_ledger_proof",
-            }
-        )
     if not bucket_ranges:
         bucket_ranges = build_regular_session_buckets(
             window_start=window_start,
@@ -6428,17 +6384,6 @@ def main() -> int:
         **runtime_ledger_artifact_metadata,
         **runtime_ledger_durable_metadata,
         **runtime_ledger_source_metadata,
-        "report_post_cost_expectancy_bps": (
-            str(report_post_cost_expectancy_bps)
-            if report_post_cost_expectancy_bps is not None
-            else None
-        ),
-        "report_post_cost_expectancy_basis": (
-            POST_COST_BASIS_SIMULATION_REPORT
-            if report_post_cost_expectancy_bps is not None
-            and source_kind.startswith("simulation_")
-            else None
-        ),
     }
     if delay_depth_report_ref:
         runtime_observation_payload.update(

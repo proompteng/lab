@@ -7259,11 +7259,13 @@ class TestPaperRouteEvidenceAudit(TestCase):
         ]
         self.assertFalse(gate_plan["promotion_allowed"])
         self.assertFalse(gate_plan["final_promotion_allowed"])
+        self.assertFalse(gate_plan["stripped_source_promotion_authority"])
         audit = payload["targets"][0]
         self.assertFalse(audit["target"]["promotion_allowed"])
         self.assertFalse(audit["target"]["final_promotion_allowed"])
-        self.assertTrue(audit["target"]["source_promotion_allowed"])
-        self.assertTrue(audit["target"]["source_final_promotion_allowed"])
+        self.assertTrue(audit["target"]["stripped_source_promotion_authority"])
+        self.assertNotIn("source_promotion_allowed", audit["target"])
+        self.assertNotIn("source_final_promotion_allowed", audit["target"])
         self.assertEqual(audit["target"]["strategy_name"], target_strategy_name)
         self.assertIn(strategy_name, audit["target"]["strategy_lookup_names"])
         self.assertFalse(audit["source_activity"]["missing"])
@@ -7329,8 +7331,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
                 "allowed": False,
                 "final_authority_ok": False,
                 "reason": "paper_route_evidence_audit_observability_only",
-                "source_promotion_allowed": True,
-                "source_final_promotion_allowed": True,
+                "stripped_source_promotion_authority": True,
                 "blockers": [
                     "paper_probation_evidence_collection_only",
                     "paper_route_evidence_audit_stripped_promotion_authority",
@@ -7352,8 +7353,9 @@ class TestPaperRouteEvidenceAudit(TestCase):
         self.assertEqual(payload["summary"]["target_with_promotion_decision_count"], 1)
         self.assertEqual(payload["summary"]["promotion_allowed_count"], 0)
         self.assertEqual(payload["summary"]["final_promotion_allowed_count"], 0)
-        self.assertEqual(payload["summary"]["source_promotion_allowed_count"], 1)
-        self.assertEqual(payload["summary"]["source_final_promotion_allowed_count"], 1)
+        self.assertEqual(
+            payload["summary"]["stripped_source_promotion_authority_count"], 1
+        )
         self.assertEqual(
             payload["summary"]["promotion_authority"]["reason"],
             "paper_route_evidence_audit_observability_only",

@@ -20,7 +20,6 @@ from scripts.import_hypothesis_runtime_windows import (
     EXECUTION_ELIGIBLE_DECISION_STATUSES,
     POST_COST_BASIS_EXECUTION_RECONSTRUCTION,
     POST_COST_BASIS_RUNTIME_LEDGER,
-    POST_COST_BASIS_SIMULATION_REPORT,
     POST_COST_BASIS_TCA_PROXY,
     _alpaca_2026_equity_fee_schedule_hash,
     _build_realized_strategy_pnl_rows,
@@ -29,7 +28,6 @@ from scripts.import_hypothesis_runtime_windows import (
     _first_bool,
     _first_lineage_digest,
     _load_json_artifact,
-    _load_report_post_cost_expectancy_bps,
     _order_feed_fill_delta_blockers,
     _nonnegative_int,
     _order_lifecycle_query_row,
@@ -804,7 +802,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self,
     ) -> None:
         invalid_cases = {
-            "invalid_pnl_basis": {"pnl_basis": POST_COST_BASIS_SIMULATION_REPORT},
+            "invalid_pnl_basis": {"pnl_basis": "simulation_report_net_pnl"},
             "invalid_schema": {"ledger_schema_version": "torghut.loose_ledger.v0"},
             "explicit_blocker": {"blockers": ["runtime_ledger_incomplete"]},
             "missing_fills": {"fill_count": 0},
@@ -2701,32 +2699,6 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         ):
             with self.assertRaisesRegex(RuntimeError, "source_dsn_not_configured"):
                 main()
-
-    def test_load_report_post_cost_expectancy_bps_uses_simulation_report(self) -> None:
-        with TemporaryDirectory() as temp_dir:
-            report_path = Path(temp_dir) / "simulation-report.json"
-            report_path.write_text(
-                '{"pnl":{"net_pnl_estimated":"66.16","execution_notional_total":"200061.4"}}',
-                encoding="utf-8",
-            )
-
-            value = _load_report_post_cost_expectancy_bps([str(report_path)])
-
-        self.assertEqual(value, Decimal("3.306984755680006238084907933"))
-
-    def test_load_report_post_cost_expectancy_bps_rejects_gross_only_report(
-        self,
-    ) -> None:
-        with TemporaryDirectory() as temp_dir:
-            report_path = Path(temp_dir) / "simulation-report.json"
-            report_path.write_text(
-                '{"pnl":{"gross_pnl":"66.16","execution_notional_total":"200061.4"}}',
-                encoding="utf-8",
-            )
-
-            value = _load_report_post_cost_expectancy_bps([str(report_path)])
-
-        self.assertEqual(value, None)
 
     def test_json_artifact_and_nonnegative_int_helpers_fail_closed(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -9543,7 +9515,7 @@ class TestImportHypothesisRuntimeWindows(TestCase):
         self.assertEqual(runtime_payload["promotion_authority"], "blocked")
         self.assertEqual(runtime_payload["runtime_ledger_profit_proof_present"], False)
 
-    def test_main_quarantines_report_runtime_pnl_when_tca_rows_are_empty(self) -> None:
+    def test_main_ignores_report_runtime_pnl_when_tca_rows_are_empty(self) -> None:
         with TemporaryDirectory() as temp_dir:
             report_path = Path(temp_dir) / "simulation-report.json"
             report_path.write_text(
@@ -9625,25 +9597,12 @@ class TestImportHypothesisRuntimeWindows(TestCase):
 
         self.assertEqual(exit_code, 0)
         tca_rows = build_buckets.call_args.kwargs["tca_rows"]
-        self.assertEqual(
-            tca_rows,
-            [
-                {
-                    "computed_at": datetime(2026, 3, 6, 14, 36, tzinfo=timezone.utc),
-                    "post_cost_expectancy_bps": Decimal("50.000"),
-                    "post_cost_expectancy_basis": POST_COST_BASIS_SIMULATION_REPORT,
-                    "post_cost_promotion_eligible": False,
-                    "promotion_blocker": "simulation_report_not_runtime_ledger_proof",
-                }
-            ],
-        )
+        self.assertEqual(tca_rows, [])
         runtime_payload = persist_windows.call_args.kwargs[
             "runtime_observation_payload"
         ]
-        self.assertEqual(
-            runtime_payload["report_post_cost_expectancy_basis"],
-            POST_COST_BASIS_SIMULATION_REPORT,
-        )
+        self.assertNotIn("report_post_cost_expectancy_basis", runtime_payload)
+        self.assertNotIn("report_post_cost_expectancy_bps", runtime_payload)
         self.assertEqual(runtime_payload["authoritative"], False)
         self.assertEqual(
             runtime_payload["authority_reason"],
