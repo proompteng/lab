@@ -5334,6 +5334,10 @@ def _target_evidence_readback_diagnostics(
         or _unique_text_items(source_activity.get("tca_metric_refs"))
     )
     runtime_buckets_present = runtime_bucket_count > 0
+    source_activity_stage_diagnostics = _source_activity_stage_diagnostics(
+        source_activity=source_activity,
+        runtime_ledger=runtime_ledger,
+    )
     if evidence_grade_runtime_bucket_count > 0:
         state = "evidence_grade_runtime_buckets_present"
     elif runtime_buckets_present:
@@ -5378,6 +5382,7 @@ def _target_evidence_readback_diagnostics(
         "evidence_grade_runtime_buckets_present": (
             evidence_grade_runtime_bucket_count > 0
         ),
+        "source_activity_stage_diagnostics": source_activity_stage_diagnostics,
         "runtime_bucket_count": runtime_bucket_count,
         "evidence_grade_runtime_bucket_count": evidence_grade_runtime_bucket_count,
         "final_promotion_authority_blocked": not bool(
@@ -5398,6 +5403,58 @@ def _target_evidence_readback_diagnostics(
             },
         },
         "blockers": promotion_authority_blockers,
+    }
+
+
+def _source_activity_stage_diagnostics(
+    *,
+    source_activity: Mapping[str, object],
+    runtime_ledger: Mapping[str, object],
+) -> dict[str, object]:
+    stage_presence = _as_mapping(source_activity.get("stage_presence"))
+    decision_count = _safe_int(source_activity.get("decision_count"))
+    execution_count = _safe_int(
+        source_activity.get("submitted_order_count")
+        or source_activity.get("execution_count")
+    )
+    tca_sample_count = _safe_int(source_activity.get("tca_sample_count"))
+    complete_fill_order_event_count = _safe_int(
+        source_activity.get("complete_fill_order_event_count")
+    )
+    runtime_bucket_count = _safe_int(runtime_ledger.get("bucket_count"))
+    source_decisions_present = bool(stage_presence.get("source_decisions_present")) or (
+        decision_count > 0
+    )
+    source_executions_present = bool(
+        stage_presence.get("submitted_lifecycle_present")
+    ) or (execution_count > 0)
+    source_tca_present = bool(
+        stage_presence.get("runtime_execution_economics_present")
+    ) or (tca_sample_count > 0 or complete_fill_order_event_count > 0)
+    runtime_ledger_buckets_present = runtime_bucket_count > 0
+    blockers = _unique_text_items(
+        [
+            *(["source_decisions_missing"] if not source_decisions_present else []),
+            *(["source_executions_missing"] if not source_executions_present else []),
+            *(["source_tca_missing"] if not source_tca_present else []),
+            *(
+                ["runtime_ledger_bucket_missing"]
+                if not runtime_ledger_buckets_present
+                else []
+            ),
+        ]
+    )
+    return {
+        "schema_version": "torghut.paper-route-source-activity-stage-diagnostics.v1",
+        "source_decisions_present": source_decisions_present,
+        "source_executions_present": source_executions_present,
+        "source_tca_present": source_tca_present,
+        "runtime_ledger_buckets_present": runtime_ledger_buckets_present,
+        "decision_count": decision_count,
+        "execution_count": execution_count,
+        "tca_sample_count": tca_sample_count,
+        "runtime_ledger_bucket_count": runtime_bucket_count,
+        "blockers": blockers,
     }
 
 
@@ -5429,6 +5486,8 @@ def _hpairs_zero_activity_reason_flags(
     hpairs_symbol_count: int,
     hpairs_source_decision_ready_count: int,
     hpairs_decision_count: int,
+    hpairs_submitted_order_count: int,
+    hpairs_tca_sample_count: int,
     hpairs_runtime_bucket_count: int,
 ) -> dict[str, bool]:
     normalized = {blocker.lower() for blocker in blockers}
@@ -5514,6 +5573,25 @@ def _hpairs_zero_activity_reason_flags(
         "import_due_runtime_ledger_missing",
         "import_due_runtime_ledger_not_materialized",
     }
+    source_decisions_missing = (
+        hpairs_target_count > 0 and hpairs_decision_count <= 0
+    ) or "source_decisions_missing" in normalized
+    source_executions_missing = (
+        hpairs_decision_count > 0 and hpairs_submitted_order_count <= 0
+    ) or "source_executions_missing" in normalized
+    source_tca_missing = (
+        hpairs_submitted_order_count > 0 and hpairs_tca_sample_count <= 0
+    ) or "source_tca_missing" in normalized
+    runtime_ledger_bucket_missing = (
+        hpairs_decision_count > 0 and hpairs_runtime_bucket_count <= 0
+    ) or bool(
+        {
+            "runtime_ledger_bucket_missing",
+            "runtime_ledger_source_bucket_missing",
+            "runtime_ledger_evidence_grade_bucket_missing",
+        }
+        & normalized
+    )
     source_lineage_mismatch = bool(
         {
             "source_lineage_partial_match_only",
@@ -5533,6 +5611,10 @@ def _hpairs_zero_activity_reason_flags(
         "strategy_not_scheduled": strategy_not_scheduled,
         "source_lineage_mismatch": source_lineage_mismatch,
         "source_ledger_import_not_running": source_ledger_import_not_running,
+        "source_decisions_missing": source_decisions_missing,
+        "source_executions_missing": source_executions_missing,
+        "source_tca_missing": source_tca_missing,
+        "runtime_ledger_bucket_missing": runtime_ledger_bucket_missing,
     }
 
 
@@ -5631,6 +5713,10 @@ def _hpairs_zero_activity_diagnostics(
         )
         for audit in hpairs_audits
     )
+    hpairs_tca_sample_count = sum(
+        _safe_int(_as_mapping(audit.get("source_activity")).get("tca_sample_count"))
+        for audit in hpairs_audits
+    )
     hpairs_runtime_bucket_count = sum(
         _safe_int(_as_mapping(audit.get("runtime_ledger")).get("bucket_count"))
         for audit in hpairs_audits
@@ -5726,6 +5812,8 @@ def _hpairs_zero_activity_diagnostics(
         hpairs_symbol_count=hpairs_symbol_count,
         hpairs_source_decision_ready_count=hpairs_source_decision_ready_count,
         hpairs_decision_count=hpairs_decision_count,
+        hpairs_submitted_order_count=hpairs_submitted_order_count,
+        hpairs_tca_sample_count=hpairs_tca_sample_count,
         hpairs_runtime_bucket_count=hpairs_runtime_bucket_count,
     )
     session_window = _as_mapping(runtime_window_import_audit.get("session_window"))
@@ -5743,10 +5831,42 @@ def _hpairs_zero_activity_diagnostics(
             "hpairs_decision_count": hpairs_decision_count,
             "hpairs_submitted_order_count": hpairs_submitted_order_count,
             "hpairs_order_event_count": hpairs_order_event_count,
+            "hpairs_tca_sample_count": hpairs_tca_sample_count,
             "hpairs_fill_evidence_count": hpairs_fill_count,
             "hpairs_runtime_bucket_count": hpairs_runtime_bucket_count,
             "hpairs_evidence_grade_runtime_bucket_count": (
                 hpairs_evidence_grade_runtime_bucket_count
+            ),
+        },
+        "source_activity_stage_diagnostics": {
+            "schema_version": "torghut.hpairs-source-activity-stage-diagnostics.v1",
+            "source_decisions_present": hpairs_decision_count > 0,
+            "source_executions_present": hpairs_submitted_order_count > 0,
+            "source_tca_present": hpairs_tca_sample_count > 0,
+            "runtime_ledger_buckets_present": hpairs_runtime_bucket_count > 0,
+            "blockers": _unique_text_items(
+                [
+                    *(
+                        ["source_decisions_missing"]
+                        if bool(reason_flags.get("source_decisions_missing"))
+                        else []
+                    ),
+                    *(
+                        ["source_executions_missing"]
+                        if bool(reason_flags.get("source_executions_missing"))
+                        else []
+                    ),
+                    *(
+                        ["source_tca_missing"]
+                        if bool(reason_flags.get("source_tca_missing"))
+                        else []
+                    ),
+                    *(
+                        ["runtime_ledger_bucket_missing"]
+                        if bool(reason_flags.get("runtime_ledger_bucket_missing"))
+                        else []
+                    ),
+                ]
             ),
         },
         "market_window": {
@@ -5999,6 +6119,7 @@ def _target_audit(
             "final_promotion_allowed": bool(target.get("final_promotion_allowed")),
             "blockers": blockers,
             "evidence_collection_blockers": evidence_collection_blockers,
+            "capital_promotion_blockers": blockers,
             "promotion_authority": {
                 "allowed": False,
                 "final_authority_ok": False,
@@ -6240,6 +6361,7 @@ def _database_unavailable_target_audit(
             "final_promotion_allowed": bool(target.get("final_promotion_allowed")),
             "blockers": blockers,
             "evidence_collection_blockers": blockers,
+            "capital_promotion_blockers": blockers,
             "promotion_authority": {
                 "allowed": False,
                 "final_authority_ok": False,
@@ -6250,6 +6372,7 @@ def _database_unavailable_target_audit(
                 "source_final_promotion_allowed": bool(
                     target.get("source_final_promotion_allowed")
                 ),
+                "blockers": blockers,
             },
         },
         "db_load_error": error_payload,
