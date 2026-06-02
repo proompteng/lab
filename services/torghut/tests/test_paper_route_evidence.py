@@ -4916,6 +4916,38 @@ class TestPaperRouteEvidenceAudit(TestCase):
             ["paper_route_session_window_not_closed"],
         )
 
+        close_boundary_payload = build(window_end)
+        close_boundary_readiness = close_boundary_payload[
+            "next_paper_route_runtime_window_targets"
+        ]["session_readiness"]
+        self.assertEqual(
+            close_boundary_readiness["state"],
+            "collecting_session_evidence",
+        )
+        self.assertTrue(close_boundary_readiness["window_open"])
+        self.assertFalse(close_boundary_readiness["window_closed"])
+        close_boundary_target_audit = close_boundary_payload[
+            "next_runtime_window_target_audits"
+        ][0]
+        close_boundary_close_state = close_boundary_target_audit["account_close_state"]
+        self.assertFalse(close_boundary_close_state["required"])
+        self.assertEqual(
+            close_boundary_close_state["state"],
+            "pending_until_window_close",
+        )
+        self.assertEqual(close_boundary_close_state["blockers"], [])
+        close_boundary_import_audit = close_boundary_payload[
+            "runtime_window_import_audit"
+        ]
+        self.assertEqual(
+            close_boundary_import_audit["state"],
+            "collecting_session_evidence",
+        )
+        self.assertEqual(
+            close_boundary_import_audit["blockers"],
+            ["paper_route_session_window_not_closed"],
+        )
+
         settlement_payload = build(datetime(2026, 5, 26, 20, 30, tzinfo=timezone.utc))
         settlement_readiness = settlement_payload[
             "next_paper_route_runtime_window_targets"

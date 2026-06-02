@@ -4695,7 +4695,7 @@ def _account_window_close_snapshot_audit(
     symbol_filters = {
         str(item).strip().upper() for item in symbols if str(item).strip()
     }
-    required = generated_at >= window_end
+    required = generated_at > window_end
     base_payload: dict[str, object] = {
         "schema_version": "torghut.paper-route-account-window-close-snapshot-audit.v1",
         "scope": "account_position_snapshot_after_runtime_window_close",
@@ -6571,7 +6571,7 @@ def _database_unavailable_target_audit(
             "symbols": _target_probe_symbols(target, probe),
             "generated_at": _isoformat(generated_at),
             "window_end": _isoformat(window_end),
-            "required": generated_at >= window_end,
+            "required": generated_at > window_end,
             "state": "database_unavailable",
             "flat": None,
             "zero_open_position_evidence": False,
