@@ -48,6 +48,11 @@ DEFAULT_SOURCES = (
     SOURCE_TYPE_EXECUTION_TCA_METRIC,
     SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
 )
+INFRASTRUCTURE_RECONCILIATION_BLOCKERS = frozenset(
+    {
+        "tigerbeetle_client_unavailable",
+    }
+)
 SOURCE_ALIASES = {
     "event": SOURCE_TYPE_EXECUTION_ORDER_EVENT,
     "events": SOURCE_TYPE_EXECUTION_ORDER_EVENT,
@@ -106,6 +111,16 @@ def _parse_args() -> argparse.Namespace:
         "--fail-on-degraded",
         action="store_true",
         help="Exit non-zero when journaling/reconciliation is degraded.",
+    )
+    parser.add_argument(
+        "--allow-data-quality-degraded",
+        action="store_true",
+        help=(
+            "When --fail-on-degraded is set, allow non-authoritative scheduled "
+            "telemetry runs to exit zero for reconciliation/accounting data-quality "
+            "blockers while still failing closed for journal batch failures, "
+            "TigerBeetle infrastructure blockers, timeouts, and unhandled errors."
+        ),
     )
     parser.add_argument(
         "--progress-interval",
@@ -503,11 +518,43 @@ def _payload(
         for batch in batches
         if str(batch.get("stop_reason") or "").strip()
     ]
+    reconciliation_blockers = _reconciliation_blockers(reconciliation)
+    hard_failure_reasons = _hard_failure_reasons(
+        failed=failed,
+        stop_reasons=stop_reasons,
+        reconciliation_blockers=reconciliation_blockers,
+        reconciliation_ok=reconciliation_ok,
+    )
+    accounting_blockers = [
+        blocker
+        for blocker in reconciliation_blockers
+        if blocker not in INFRASTRUCTURE_RECONCILIATION_BLOCKERS
+    ]
+    exit_nonzero = _should_exit_nonzero(
+        status=status,
+        fail_on_degraded=bool(args.fail_on_degraded),
+        allow_data_quality_degraded=bool(
+            getattr(args, "allow_data_quality_degraded", False)
+        ),
+        hard_failure_reasons=hard_failure_reasons,
+    )
     return {
         "schema_version": "torghut.tigerbeetle-journal-order-events.v1",
         "ok": status == "ok",
         "status": status,
+        "authority": "non_authoritative_tigerbeetle_journal_telemetry",
+        "promotion_authority": False,
+        "overrides_runtime_ledger_authority": False,
         "fail_on_degraded": bool(args.fail_on_degraded),
+        "allow_data_quality_degraded": bool(
+            getattr(args, "allow_data_quality_degraded", False)
+        ),
+        "exit_nonzero": exit_nonzero,
+        "exit_policy": (
+            "fail_on_hard_failures_only"
+            if bool(getattr(args, "allow_data_quality_degraded", False))
+            else "fail_on_any_degraded"
+        ),
         "dry_run": bool(args.dry_run),
         "dsn_env": args.dsn_env,
         "account_label": args.account_label,
@@ -522,6 +569,9 @@ def _payload(
         ),
         "stopped_early": bool(stop_reasons),
         "stop_reasons": stop_reasons,
+        "hard_failure_reasons": hard_failure_reasons,
+        "accounting_blockers": accounting_blockers,
+        "reconciliation_blockers": reconciliation_blockers,
         "started_at": started_at.isoformat(),
         "completed_at": datetime.now(timezone.utc).isoformat(),
         "selected": selected,
@@ -531,6 +581,61 @@ def _payload(
         "batches": batches,
         "reconciliation": reconciliation,
     }
+
+
+def _reconciliation_blockers(
+    reconciliation: Mapping[str, object] | None,
+) -> list[str]:
+    if reconciliation is None:
+        return []
+    raw_blockers = reconciliation.get("blockers")
+    if not isinstance(raw_blockers, Sequence) or isinstance(
+        raw_blockers,
+        (str, bytes, bytearray),
+    ):
+        return []
+    return sorted({str(item) for item in raw_blockers if str(item).strip()})
+
+
+def _hard_failure_reasons(
+    *,
+    failed: int,
+    stop_reasons: Sequence[str],
+    reconciliation_blockers: Sequence[str],
+    reconciliation_ok: bool,
+) -> list[str]:
+    reasons: list[str] = []
+    if failed:
+        reasons.append("journal_batch_failures")
+    if (
+        not reconciliation_ok
+        and not reconciliation_blockers
+        and not failed
+        and not stop_reasons
+    ):
+        reasons.append("reconciliation_degraded_without_blockers")
+    for reason in stop_reasons:
+        clean_reason = str(reason).strip()
+        if clean_reason and clean_reason not in reasons:
+            reasons.append(clean_reason)
+    for blocker in reconciliation_blockers:
+        if blocker in INFRASTRUCTURE_RECONCILIATION_BLOCKERS and blocker not in reasons:
+            reasons.append(blocker)
+    return reasons
+
+
+def _should_exit_nonzero(
+    *,
+    status: str,
+    fail_on_degraded: bool,
+    allow_data_quality_degraded: bool,
+    hard_failure_reasons: Sequence[str],
+) -> bool:
+    if not fail_on_degraded or status == "ok":
+        return False
+    if allow_data_quality_degraded:
+        return bool(hard_failure_reasons)
+    return True
 
 
 def _supervised_timeout_payload(
@@ -556,36 +661,24 @@ def _supervised_timeout_payload(
         "stopped_early": True,
         "stop_reason": stop_reason,
     }
-    return {
-        "schema_version": "torghut.tigerbeetle-journal-order-events.v1",
+    reconciliation = {
         "ok": False,
-        "status": "degraded",
-        "fail_on_degraded": bool(args.fail_on_degraded),
-        "dry_run": bool(args.dry_run),
-        "dsn_env": args.dsn_env,
-        "account_label": args.account_label,
-        "batch_size": max(1, min(int(args.batch_size), 5000)),
-        "max_batches": max(1, int(args.max_batches)),
-        "event_scan_limit": getattr(args, "event_scan_limit", None),
-        "sources": list(_parse_sources(getattr(args, "sources", "all"))),
-        "skip_reconcile": bool(getattr(args, "skip_reconcile", False)),
-        "supervised_worker": False,
-        "supervise_timeout_seconds": timeout_seconds,
-        "stopped_early": True,
-        "stop_reasons": [stop_reason],
-        "started_at": started_at.isoformat(),
-        "completed_at": datetime.now(timezone.utc).isoformat(),
-        "selected": 0,
-        "journaled": 0,
-        "skipped": 0,
-        "failed": 1,
-        "batches": [batch],
-        "reconciliation": {
-            "ok": False,
-            "status": "skipped",
-            "reason": stop_reason,
-        },
+        "status": "skipped",
+        "reason": stop_reason,
     }
+    payload = _payload(
+        args=args,
+        started_at=started_at,
+        batches=[batch],
+        reconciliation=reconciliation,
+    )
+    payload.update(
+        {
+            "supervised_worker": False,
+            "supervise_timeout_seconds": timeout_seconds,
+        }
+    )
+    return payload
 
 
 def _supervised_worker_argv() -> list[str]:
@@ -621,7 +714,7 @@ def _run_supervised_worker(args: argparse.Namespace, *, started_at: datetime) ->
             if args.json
             else json.dumps(payload, indent=2)
         )
-        return 1 if args.fail_on_degraded else 0
+        return 1 if bool(payload["exit_nonzero"]) else 0
     return int(completed.returncode)
 
 
@@ -818,7 +911,7 @@ def main() -> int:
         if args.json
         else json.dumps(payload, indent=2)
     )
-    return 1 if args.fail_on_degraded and payload["status"] != "ok" else 0
+    return 1 if bool(payload["exit_nonzero"]) else 0
 
 
 if __name__ == "__main__":
