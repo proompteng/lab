@@ -1200,6 +1200,101 @@ def _strip_promotion_authority_claims_for_readiness(value: object) -> object:
     return value
 
 
+def _core_readiness_live_submission_gate() -> dict[str, object]:
+    blocked_reasons: list[str] = ["readyz_core_dependencies_only"]
+    if settings.trading_mode == "live":
+        if not settings.trading_enabled:
+            blocked_reasons.append("trading_disabled")
+        if settings.trading_kill_switch_enabled:
+            blocked_reasons.append("kill_switch_enabled")
+        if (
+            settings.trading_pipeline_mode == "simple"
+            and not settings.trading_simple_submit_enabled
+        ):
+            blocked_reasons.append("simple_submit_disabled")
+
+    return {
+        "allowed": False,
+        "promotion_authority": False,
+        "promotion_authority_ok": False,
+        "final_authority_ok": False,
+        "final_promotion_allowed": False,
+        "final_promotion_authorized": False,
+        "reason": blocked_reasons[0],
+        "reason_codes": blocked_reasons,
+        "blocked_reasons": blocked_reasons,
+        "capital_stage": "shadow",
+        "capital_state": "observe",
+        "read_model_evaluated": False,
+        "readiness_surface": "core_dependencies_only",
+    }
+
+
+def _evaluate_core_readiness_payload(
+    *,
+    include_database_contract: bool = False,
+    allow_stale_dependency_cache: bool = False,
+) -> tuple[dict[str, object], int]:
+    scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
+    if scheduler is None:
+        scheduler = TradingScheduler()
+        app.state.trading_scheduler = scheduler
+    scheduler_ok, scheduler_payload = _evaluate_scheduler_status(scheduler)
+
+    now = datetime.now(timezone.utc)
+    with SessionLocal() as session:
+        dependencies, checked_at, cache_used = _readiness_dependency_snapshot(
+            session,
+            include_database_contract=include_database_contract,
+            allow_stale_dependency_cache=allow_stale_dependency_cache,
+        )
+    dependencies = dict(dependencies)
+    dependencies["universe"] = _evaluate_universe_dependency(scheduler)
+    cache_age_seconds = (now - checked_at).total_seconds() if checked_at else 0.0
+    cache_age_seconds = 0.0 if cache_age_seconds < 0 else round(cache_age_seconds, 3)
+    cache_stale = (
+        cache_used
+        and cache_age_seconds > settings.trading_readiness_dependency_cache_ttl_seconds
+    )
+    dependencies["readiness_cache"] = {
+        "checked_at": checked_at.isoformat(),
+        "cache_ttl_seconds": settings.trading_readiness_dependency_cache_ttl_seconds,
+        "cache_stale_tolerance_seconds": settings.trading_readiness_dependency_cache_stale_tolerance_seconds,
+        "cache_used": cache_used,
+        "cache_age_seconds": cache_age_seconds,
+        "cache_stale": cache_stale,
+    }
+
+    readiness_dependency_reasons = _readiness_dependency_degradation_reason_codes(
+        dependencies,
+        scheduler_ok=scheduler_ok,
+    )
+    overall_ok = scheduler_ok and not readiness_dependency_reasons
+    status = "ok" if overall_ok else "degraded"
+    status_code = 200 if overall_ok else 503
+    payload: dict[str, object] = {
+        "status": status,
+        "reason_codes": readiness_dependency_reasons,
+        "scheduler": scheduler_payload,
+        "dependencies": dependencies,
+        "build": {
+            "version": BUILD_VERSION,
+            "commit": BUILD_COMMIT,
+            "image_digest": BUILD_IMAGE_DIGEST,
+            "active_revision": _active_runtime_revision() or BUILD_COMMIT,
+        },
+        "mode": settings.trading_mode,
+        "pipeline_mode": settings.trading_pipeline_mode,
+        "trading_enabled": settings.trading_enabled,
+        "readiness_surface": "core_dependencies_only",
+        "live_submission_gate": _core_readiness_live_submission_gate(),
+    }
+    return cast(
+        dict[str, object],
+        _strip_promotion_authority_claims_for_readiness(payload),
+    ), status_code
+
+
 def _trading_health_surface_cache_key(
     *,
     include_database_contract: bool,
@@ -2822,10 +2917,9 @@ def _evaluate_database_contract(session: Session) -> dict[str, object]:
 def readyz() -> JSONResponse:
     """Readiness endpoint with dependency-aware status for rollout safety."""
 
-    payload, status_code = _evaluate_trading_health_payload_bounded(
+    payload, status_code = _evaluate_core_readiness_payload(
         include_database_contract=True,
         allow_stale_dependency_cache=True,
-        surface="readyz",
     )
     return JSONResponse(
         status_code=status_code,
