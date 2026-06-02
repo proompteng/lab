@@ -68,6 +68,44 @@ class TestRuntimeLedgerProofPolicy(TestCase):
             },
         )
 
+    def test_mode_contract_makes_non_authority_defaults_explicit(self) -> None:
+        self.assertEqual(
+            DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.mode_contract(),
+            {
+                "proof_mode": "smoke",
+                "default_proof_mode": "smoke",
+                "authority_scope": "plumbing_only",
+                "mode_can_grant_final_authority": False,
+                "mode_can_grant_promotion_authority": False,
+                "requires_explicit_authority_mode_for_final_promotion": True,
+                "implicit_default_final_authority": False,
+            },
+        )
+        self.assertEqual(
+            DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.mode_contract("probation"),
+            {
+                "proof_mode": "probation",
+                "default_proof_mode": "smoke",
+                "authority_scope": "bounded_evidence_collection_only",
+                "mode_can_grant_final_authority": False,
+                "mode_can_grant_promotion_authority": False,
+                "requires_explicit_authority_mode_for_final_promotion": True,
+                "implicit_default_final_authority": False,
+            },
+        )
+        self.assertEqual(
+            DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.mode_contract("authority"),
+            {
+                "proof_mode": "authority",
+                "default_proof_mode": "smoke",
+                "authority_scope": "final_promotion_authority_candidate",
+                "mode_can_grant_final_authority": True,
+                "mode_can_grant_promotion_authority": True,
+                "requires_explicit_authority_mode_for_final_promotion": True,
+                "implicit_default_final_authority": False,
+            },
+        )
+
     def test_policy_can_be_overridden_without_touching_call_sites(self) -> None:
         policy = runtime_ledger_proof_policy_from_env(
             {

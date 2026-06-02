@@ -2054,6 +2054,9 @@ def build_runtime_ledger_proof_packet(
     proof_mode_targets = DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.targets_for_mode(
         resolved_proof_mode
     )
+    proof_mode_contract = DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.mode_contract(
+        resolved_proof_mode
+    )
     min_runtime_ledger_net_pnl = max(
         min_runtime_ledger_net_pnl,
         cast(Decimal, proof_mode_targets["min_net_pnl_after_costs"]),
@@ -2108,6 +2111,7 @@ def build_runtime_ledger_proof_packet(
             "canary_collection_authorized": bool(
                 proof_mode_targets["canary_collection_authorized"]
             ),
+            "mode_contract": proof_mode_contract,
             "promotion_allowed": False,
             "capital_promotion_allowed": False,
             "final_promotion_allowed": False,
@@ -3077,6 +3081,7 @@ def build_runtime_ledger_proof_packet(
         "schema_version": SCHEMA_VERSION,
         "generated_at": generated_at,
         "proof_mode": resolved_proof_mode,
+        "proof_mode_contract": proof_mode_contract,
         "verdict": verdict,
         "ok": post_cost_proof_satisfied,
         "final_authority_ok": post_cost_proof_authority_allowed,

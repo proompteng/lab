@@ -290,6 +290,15 @@ def _runtime_ledger_proof_packet(
     return {
         "schema_version": verifier.RUNTIME_LEDGER_PROOF_PACKET_SCHEMA_VERSION,
         "proof_mode": "authority",
+        "proof_mode_contract": {
+            "proof_mode": "authority",
+            "default_proof_mode": "smoke",
+            "authority_scope": "final_promotion_authority_candidate",
+            "mode_can_grant_final_authority": True,
+            "mode_can_grant_promotion_authority": True,
+            "requires_explicit_authority_mode_for_final_promotion": True,
+            "implicit_default_final_authority": False,
+        },
         "ok": allowed,
         "final_authority_ok": allowed,
         "promotion_allowed": allowed,
@@ -632,6 +641,15 @@ class TestVerifyTradingReadiness(TestCase):
     ) -> None:
         packet = _runtime_ledger_proof_packet()
         packet["proof_mode"] = "smoke"
+        packet["proof_mode_contract"] = {
+            "proof_mode": "smoke",
+            "default_proof_mode": "smoke",
+            "authority_scope": "plumbing_only",
+            "mode_can_grant_final_authority": False,
+            "mode_can_grant_promotion_authority": False,
+            "requires_explicit_authority_mode_for_final_promotion": True,
+            "implicit_default_final_authority": False,
+        }
         packet["final_authority_ok"] = False
         packet["capital_promotion_allowed"] = False
         packet["evidence_collection_ok"] = True
@@ -653,7 +671,30 @@ class TestVerifyTradingReadiness(TestCase):
         observed = result["checks"]["runtime_ledger_proof_packet_authority"]["observed"]
         self.assertEqual(observed["proof_mode"], "smoke")
         self.assertFalse(observed["authority_allowed"])
+        self.assertFalse(observed["mode_contract_allows_authority"])
         self.assertEqual(result["next_action"], "rerun_proof_packet_in_authority_mode")
+
+    def test_runtime_ledger_proof_packet_requires_explicit_authority_mode_contract(
+        self,
+    ) -> None:
+        packet = _runtime_ledger_proof_packet(allowed=True)
+        packet.pop("proof_mode_contract")
+
+        result = evaluate_trading_readiness(
+            _ready_status(),
+            runtime_ledger_proof_packet=packet,
+            require_runtime_ledger_proof_packet=True,
+        )
+
+        self.assertFalse(result["ok"])
+        observed = result["checks"]["runtime_ledger_proof_packet_authority"]["observed"]
+        self.assertEqual(observed["proof_mode"], "authority")
+        self.assertEqual(observed["proof_mode_contract"], {})
+        self.assertFalse(observed["mode_contract_allows_authority"])
+        self.assertIn(
+            "runtime_ledger_proof_packet_authority",
+            result["failed_checks"],
+        )
 
     def test_runtime_ledger_proof_packet_rejects_mislabeled_smoke_authority(
         self,

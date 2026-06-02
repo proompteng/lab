@@ -878,12 +878,23 @@ def _add_runtime_ledger_proof_packet_check(
     packet = _mapping(runtime_ledger_proof_packet)
     authority = _mapping(packet.get("promotion_authority"))
     capital_authority = _mapping(packet.get("capital_promotion_authority"))
+    proof_mode_contract = _mapping(packet.get("proof_mode_contract"))
     schema_version = _text(packet.get("schema_version"))
     proof_mode = _text(packet.get("proof_mode"))
     allowed = authority.get("allowed") is True
+    mode_contract_allows_authority = (
+        proof_mode_contract.get("mode_can_grant_final_authority") is True
+        and proof_mode_contract.get("mode_can_grant_promotion_authority") is True
+        and proof_mode_contract.get(
+            "requires_explicit_authority_mode_for_final_promotion"
+        )
+        is True
+        and proof_mode_contract.get("implicit_default_final_authority") is False
+    )
     packet_ok = (
         packet.get("ok") is True
         and proof_mode == "authority"
+        and mode_contract_allows_authority
         and packet.get("final_authority_ok") is True
         and packet.get("promotion_allowed") is True
         and packet.get("capital_promotion_allowed") is True
@@ -899,6 +910,8 @@ def _add_runtime_ledger_proof_packet_check(
             "present": bool(packet),
             "schema_version": schema_version,
             "proof_mode": proof_mode,
+            "proof_mode_contract": dict(proof_mode_contract),
+            "mode_contract_allows_authority": mode_contract_allows_authority,
             "final_authority_ok": packet.get("final_authority_ok"),
             "promotion_allowed": packet.get("promotion_allowed"),
             "capital_promotion_allowed": packet.get("capital_promotion_allowed"),
@@ -925,6 +938,7 @@ def _add_runtime_ledger_proof_packet_check(
             "schema_version": RUNTIME_LEDGER_PROOF_PACKET_SCHEMA_VERSION,
             "ok": True,
             "proof_mode": "authority",
+            "proof_mode_contract.mode_can_grant_final_authority": True,
             "final_authority_ok": True,
             "promotion_allowed": True,
             "capital_promotion_allowed": True,
