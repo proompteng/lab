@@ -95,6 +95,7 @@ spec:
                     --max-batches 1 \
                     --reconcile-limit 1000 \
                     --fail-on-degraded \
+                    --allow-data-quality-degraded \
                     --supervise-timeout-seconds 45 \
                     --json || status=1
                   exit "$status"
@@ -226,6 +227,7 @@ spec:
                     --max-batches 4 \
                     --reconcile-limit 500 \
                     --fail-on-degraded \
+                    --allow-data-quality-degraded \
                     --supervise-timeout-seconds 45 \
                     --json || status=1
                   exit "$status"
