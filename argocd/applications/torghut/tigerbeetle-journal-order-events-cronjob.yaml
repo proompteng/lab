@@ -59,7 +59,7 @@ spec:
                   /opt/venv/bin/python scripts/journal_tigerbeetle_order_events.py \
                     --dsn-env DB_DSN \
                     --sources execution \
-                    --batch-size 50 \
+                    --batch-size 5 \
                     --max-batches 1 \
                     --reconcile-limit 1000 \
                     --skip-reconcile \
@@ -70,7 +70,7 @@ spec:
                   /opt/venv/bin/python scripts/journal_tigerbeetle_order_events.py \
                     --dsn-env DB_DSN \
                     --sources execution_tca_metric \
-                    --batch-size 50 \
+                    --batch-size 5 \
                     --max-batches 1 \
                     --reconcile-limit 1000 \
                     --skip-reconcile \
@@ -80,10 +80,11 @@ spec:
                   /opt/venv/bin/python scripts/journal_tigerbeetle_order_events.py \
                     --dsn-env DB_DSN \
                     --sources execution_order_event \
-                    --batch-size 50 \
+                    --batch-size 5 \
                     --max-batches 1 \
                     --event-scan-limit 250 \
                     --reconcile-limit 1000 \
+                    --skip-reconcile \
                     --fail-on-degraded \
                     --allow-data-quality-degraded \
                     --supervise-timeout-seconds 45 \
@@ -91,7 +92,7 @@ spec:
                   /opt/venv/bin/python scripts/journal_tigerbeetle_order_events.py \
                     --dsn-env DB_DSN \
                     --sources strategy_runtime_ledger_bucket \
-                    --batch-size 50 \
+                    --batch-size 5 \
                     --max-batches 1 \
                     --reconcile-limit 1000 \
                     --fail-on-degraded \
@@ -188,8 +189,8 @@ spec:
                     --dsn-env SIM_DB_DSN \
                     --account-label TORGHUT_SIM \
                     --sources execution \
-                    --batch-size 250 \
-                    --max-batches 2 \
+                    --batch-size 5 \
+                    --max-batches 1 \
                     --reconcile-limit 500 \
                     --skip-reconcile \
                     --fail-on-degraded \
@@ -200,8 +201,8 @@ spec:
                     --dsn-env SIM_DB_DSN \
                     --account-label TORGHUT_SIM \
                     --sources execution_tca_metric \
-                    --batch-size 250 \
-                    --max-batches 2 \
+                    --batch-size 5 \
+                    --max-batches 1 \
                     --reconcile-limit 500 \
                     --skip-reconcile \
                     --fail-on-degraded \
@@ -211,10 +212,11 @@ spec:
                     --dsn-env SIM_DB_DSN \
                     --account-label TORGHUT_SIM \
                     --sources execution_order_event \
-                    --batch-size 75 \
-                    --max-batches 4 \
+                    --batch-size 5 \
+                    --max-batches 1 \
                     --event-scan-limit 300 \
                     --reconcile-limit 500 \
+                    --skip-reconcile \
                     --fail-on-degraded \
                     --allow-data-quality-degraded \
                     --supervise-timeout-seconds 45 \
@@ -223,8 +225,8 @@ spec:
                     --dsn-env SIM_DB_DSN \
                     --account-label TORGHUT_SIM \
                     --sources strategy_runtime_ledger_bucket \
-                    --batch-size 75 \
-                    --max-batches 4 \
+                    --batch-size 5 \
+                    --max-batches 1 \
                     --reconcile-limit 500 \
                     --fail-on-degraded \
                     --allow-data-quality-degraded \
