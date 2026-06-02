@@ -23,4 +23,4 @@ resources:
 images:
   - name: registry.ide-newton.ts.net/lab/bilig-app
     newName: registry.ide-newton.ts.net/lab/bilig-app
-    newTag: 30248af1d74e15e4a79882c6bcae61a0eaeb808d
+    newTag: 8d3d539c1e2073cae5e1b48bee040579fe98ca6d
