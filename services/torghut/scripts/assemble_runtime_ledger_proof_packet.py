@@ -1141,7 +1141,9 @@ def _runtime_import_materialization_metadata_blockers(
         observation.get("runtime_ledger_source_execution_materialized_bucket_count")
     )
     if source_materialized_count < proof_count:
-        blockers.append("runtime_window_import_source_execution_materialization_missing")
+        blockers.append(
+            "runtime_window_import_source_execution_materialization_missing"
+        )
 
     source_materializations = _text_list(
         observation.get("runtime_ledger_source_materializations")
@@ -1168,7 +1170,9 @@ def _runtime_import_materialization_metadata_blockers(
         _runtime_ledger_non_authority_marker_present(value)
         for value in [*derivations, *authority_reasons]
     ):
-        blockers.append("runtime_window_import_replay_or_artifact_derivation_not_authority")
+        blockers.append(
+            "runtime_window_import_replay_or_artifact_derivation_not_authority"
+        )
     return list(dict.fromkeys(blockers))
 
 

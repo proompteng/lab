@@ -918,9 +918,7 @@ class TestRuntimeLedgerProofPacket(TestCase):
                 "runtime_ledger_materialization_pnl_derivations": [
                     "aggregate_only_runtime_ledger"
                 ],
-                "runtime_ledger_materialization_authority_reasons": [
-                    "aggregate_only"
-                ],
+                "runtime_ledger_materialization_authority_reasons": ["aggregate_only"],
             }
         )
 
