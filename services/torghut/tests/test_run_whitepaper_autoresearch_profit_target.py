@@ -10739,6 +10739,10 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             runner._bounded_real_replay_shard_timeout_seconds(0),
             runner._DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS,
         )
+        self.assertEqual(
+            runner._bounded_real_replay_shard_timeout_seconds(-1),
+            runner._DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS,
+        )
         self.assertEqual(plan["flags"]["--real-replay-shard-timeout-seconds"], "900")
         self.assertIn(
             {
@@ -10749,6 +10753,39 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 "reason": "rejected_invalid_numeric_remediation_flag",
             },
             plan["rejected_recommended_flags"],
+        )
+
+    def test_next_epoch_plan_applies_within_limit_shard_timeout_remediation(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            args = self._args(Path(tmpdir) / "epoch")
+            args.real_replay_shard_timeout_seconds = 900
+            remediation = {
+                "next_actions": [
+                    {
+                        "action": "shrink_per_spec_frontier_or_extend_timeout",
+                        "recommended_flags": {
+                            "--real-replay-shard-timeout-seconds": "600",
+                        },
+                    }
+                ]
+            }
+
+            plan = runner._profitability_next_epoch_plan(
+                args=args, target=Decimal("500"), remediation=remediation
+            )
+
+        self.assertEqual(plan["flags"]["--real-replay-shard-timeout-seconds"], "600")
+        self.assertFalse(plan["rejected_recommended_flags"])
+        self.assertFalse(plan["capped_runtime_flags"])
+        self.assertIn(
+            {
+                "action": "shrink_per_spec_frontier_or_extend_timeout",
+                "flag": "--real-replay-shard-timeout-seconds",
+                "value": "600",
+            },
+            plan["applied_recommended_flags"],
         )
 
     def test_train_ranker_script_main_writes_model_and_scores(self) -> None:
