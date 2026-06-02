@@ -10,6 +10,9 @@ export type AutotraderRuntimeAlert = {
 const staleHeartbeatMs = 90_000
 const unreconciledOrderMs = 30_000
 
+const marketSessionModes = new Set(['market_open', 'market_session'])
+const acceptedEarlyTerminalReasons = new Set(['target_reached', 'hard_stop'])
+
 const terminalOrderStatuses = new Set<AutotraderOrder['status']>([
   'filled',
   'canceled',
@@ -35,6 +38,12 @@ const isNonZeroQuantity = (value: string) => {
 const normalizeSymbol = (value: string | null | undefined) => value?.trim().toUpperCase() ?? ''
 
 const stringify = (value: unknown) => (typeof value === 'string' ? value.trim().toLowerCase() : '')
+
+const parsedTime = (value: string | null | undefined) => {
+  if (!value) return null
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
 
 const truthyRuntimeFlag = (value: unknown) => {
   if (value === true) return true
@@ -84,11 +93,29 @@ const payloadHasManagedLoop = (payload: Record<string, unknown>, symbol: string)
 
 export const isMarketSessionActive = (detail: AutotraderSessionDetail, now = new Date()) => {
   if (detail.session.finalizedAt) return false
-  const marketOpen = Date.parse(detail.session.marketOpenAt)
-  const marketClose = Date.parse(detail.session.marketCloseAt)
-  if (!Number.isFinite(marketOpen) || !Number.isFinite(marketClose)) return false
+  const marketOpen = parsedTime(detail.session.marketOpenAt)
+  const marketClose = parsedTime(detail.session.marketCloseAt)
+  if (marketOpen == null || marketClose == null) return false
   const current = now.getTime()
   return current >= marketOpen && current <= marketClose
+}
+
+const hasEarlyCompletionGuard = (detail: AutotraderSessionDetail) => {
+  const summary = detail.session.summary
+  const guard = stringify(summary.guard)
+  const reason = stringify(summary.reason)
+  return guard === 'autotrader-session-guard' && reason.includes('completed early')
+}
+
+export const didMarketSessionEndEarly = (detail: AutotraderSessionDetail) => {
+  if (!marketSessionModes.has(detail.session.mode)) return false
+  if (!detail.session.finalizedAt) return false
+  if (detail.session.terminalReason && acceptedEarlyTerminalReasons.has(detail.session.terminalReason)) return false
+  if (hasEarlyCompletionGuard(detail)) return true
+
+  const finalizedAt = parsedTime(detail.session.finalizedAt)
+  const marketClose = parsedTime(detail.session.marketCloseAt)
+  return finalizedAt != null && marketClose != null && finalizedAt < marketClose
 }
 
 export const isAutotraderOrderUnreconciled = (order: AutotraderOrder, now = new Date()) => {
@@ -143,6 +170,16 @@ const positionHasProtection = (
 
 export const getAutotraderRuntimeAlerts = (detail: AutotraderSessionDetail, now = new Date()) => {
   const alerts: AutotraderRuntimeAlert[] = []
+
+  if (didMarketSessionEndEarly(detail)) {
+    alerts.push({
+      key: 'market-session-ended-early',
+      severity: 'critical',
+      title: 'Market session ended early',
+      message:
+        'The market-open AgentRun ended before regular close or required guard finalization; verify the next run stays active through market close.',
+    })
+  }
 
   if (isMarketSessionActive(detail, now)) {
     const heartbeatAgeMs = ageMs(detail.status?.updatedAt, now)
