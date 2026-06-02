@@ -629,6 +629,136 @@ class TestReplayTape(TestCase):
             {"start_date": "2026-03-27", "end_date": "2026-03-27"},
         )
 
+    def test_replay_tape_cache_identity_mismatch_fails_closed(self) -> None:
+        source_query_digest = build_source_query_digest(
+            {"window": "a", "symbols": ["NVDA", "AAPL"]}
+        )
+        with TemporaryDirectory() as tmpdir:
+            manifest = materialize_signal_tape(
+                rows=[
+                    self._signal(day=27, seq=1, symbol="NVDA"),
+                    self._signal(day=27, seq=2, symbol="AAPL"),
+                ],
+                tape_path=Path(tmpdir) / "tape.jsonl",
+                dataset_snapshot_ref="snapshot-a",
+                symbols=("NVDA", "AAPL"),
+                start_date=date(2026, 3, 27),
+                end_date=date(2026, 3, 27),
+                source_query_digest=source_query_digest,
+                feature_schema_hash="feature-schema-v1",
+                cost_model_hash="cost-model-v1",
+                strategy_family="hpairs-v1",
+                feature_versions=hpairs_replay_tape_feature_versions(),
+            )
+
+        validation = validate_tape_freshness(
+            manifest,
+            start_date=date(2026, 3, 27),
+            end_date=date(2026, 3, 27),
+            symbols=("AAPL", "NVDA"),
+            require_exact_cache_identity=True,
+            expected_dataset_snapshot_ref="snapshot-a",
+            expected_source_query_digest=source_query_digest,
+            expected_feature_schema_hash="feature-schema-v1",
+            expected_cost_model_hash="cost-model-v1",
+            expected_strategy_family="hpairs-v1",
+            expected_replay_cache_key=manifest.replay_cache_key,
+            expected_feature_versions=hpairs_replay_tape_feature_versions(),
+        )
+        self.assertEqual(validation["status"], "valid")
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "replay_tape_cache_identity_mismatch:.*feature_schema_hash",
+        ):
+            validate_tape_freshness(
+                manifest,
+                start_date=date(2026, 3, 27),
+                end_date=date(2026, 3, 27),
+                symbols=("AAPL", "NVDA"),
+                allow_stale_tape=True,
+                require_exact_cache_identity=True,
+                expected_dataset_snapshot_ref="snapshot-a",
+                expected_source_query_digest=source_query_digest,
+                expected_feature_schema_hash="feature-schema-v2",
+                expected_cost_model_hash="cost-model-v1",
+                expected_strategy_family="hpairs-v1",
+            )
+
+        stale_key_payload = manifest.to_payload()
+        stale_key_payload["replay_cache_key"] = "stale-cache-key"
+        stale_key_manifest = ReplayTapeManifest.from_payload(stale_key_payload)
+        with self.assertRaisesRegex(
+            ValueError,
+            "replay_tape_cache_identity_mismatch:.*replay_cache_key",
+        ):
+            validate_tape_freshness(
+                stale_key_manifest,
+                start_date=date(2026, 3, 27),
+                end_date=date(2026, 3, 27),
+                symbols=("AAPL", "NVDA"),
+                require_exact_cache_identity=True,
+            )
+
+    def test_replay_tape_exact_cache_identity_blocks_incomplete_or_version_mismatch(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            incomplete_manifest = materialize_signal_tape(
+                rows=[self._signal(day=27, seq=1, symbol="NVDA")],
+                tape_path=Path(tmpdir) / "incomplete-tape.jsonl",
+                dataset_snapshot_ref="snapshot-incomplete",
+                symbols=(),
+                start_date=date(2026, 3, 27),
+                end_date=date(2026, 3, 27),
+                source_query_digest=build_source_query_digest({"window": "incomplete"}),
+            )
+            complete_manifest = materialize_signal_tape(
+                rows=[self._signal(day=27, seq=1, symbol="NVDA")],
+                tape_path=Path(tmpdir) / "complete-tape.jsonl",
+                dataset_snapshot_ref="snapshot-complete",
+                symbols=("NVDA",),
+                start_date=date(2026, 3, 27),
+                end_date=date(2026, 3, 27),
+                source_query_digest=build_source_query_digest({"window": "complete"}),
+                feature_schema_hash="feature-schema-v1",
+                cost_model_hash="cost-model-v1",
+                strategy_family="hpairs-v1",
+                feature_versions=hpairs_replay_tape_feature_versions(),
+                source_table_versions={"signals": "v1"},
+            )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "replay_tape_cache_identity_mismatch:"
+            ".*missing_components.*date_range.*symbol_universe",
+        ):
+            validate_tape_freshness(
+                incomplete_manifest,
+                start_date=date(2026, 3, 26),
+                end_date=date(2026, 3, 27),
+                symbols=("AAPL",),
+                allow_stale_tape=True,
+                require_exact_cache_identity=True,
+            )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "replay_tape_cache_identity_mismatch:"
+            ".*feature_versions.*source_table_versions",
+        ):
+            validate_tape_freshness(
+                complete_manifest,
+                start_date=date(2026, 3, 27),
+                end_date=date(2026, 3, 27),
+                symbols=("NVDA",),
+                require_exact_cache_identity=True,
+                expected_feature_versions={
+                    "hpairs": "torghut.hpairs-replay-tape-features.v2"
+                },
+                expected_source_table_versions={"signals": "v2"},
+            )
+
     def test_replay_tape_cache_identity_reports_missing_components(self) -> None:
         with TemporaryDirectory() as tmpdir:
             manifest = materialize_signal_tape(
