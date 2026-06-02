@@ -16,12 +16,12 @@ from app.trading.features import (
     FeatureVectorV3,
     normalize_feature_vector_v3,
 )
+from app.trading.evaluation_trace import GateTrace, StrategyTrace
 from app.trading.models import SignalEnvelope
 from app.trading.research_sleeves import (
     _rank_thresholds,
     evaluate_mean_reversion_exhaustion_short,
 )
-from app.trading.evaluation_trace import GateTrace, StrategyTrace
 from app.trading.strategy_runtime import (
     LegacyMacdRsiPlugin,
     MicrobarCrossSectionalLongPlugin,
