@@ -681,20 +681,59 @@ def _supervised_timeout_payload(
     return payload
 
 
-def _supervised_worker_argv() -> list[str]:
+def _without_arg(argv: Sequence[str], option: str) -> list[str]:
+    filtered: list[str] = []
+    skip_next = False
+    for item in argv:
+        if skip_next:
+            skip_next = False
+            continue
+        if item == option:
+            skip_next = True
+            continue
+        if item.startswith(f"{option}="):
+            continue
+        filtered.append(item)
+    return filtered
+
+
+def _with_source_arg(argv: Sequence[str], source: str | None) -> list[str]:
+    worker_args = [item for item in argv if item != "--supervised-worker"]
+    if source is None:
+        return worker_args
+    return [*_without_arg(worker_args, "--sources"), "--sources", source]
+
+
+def _args_for_source(
+    args: argparse.Namespace, source: str | None
+) -> argparse.Namespace:
+    if source is None:
+        return args
+    source_args = vars(args).copy()
+    source_args["sources"] = source
+    return argparse.Namespace(**source_args)
+
+
+def _supervised_worker_argv(source: str | None = None) -> list[str]:
     return [
         sys.executable,
         os.path.abspath(__file__),
-        *sys.argv[1:],
+        *_with_source_arg(sys.argv[1:], source),
         "--supervised-worker",
     ]
 
 
-def _run_supervised_worker(args: argparse.Namespace, *, started_at: datetime) -> int:
-    timeout_seconds = max(float(args.supervise_timeout_seconds), 0.001)
+def _run_supervised_worker_once(
+    args: argparse.Namespace,
+    *,
+    started_at: datetime,
+    source: str | None = None,
+) -> int:
+    worker_args = _args_for_source(args, source)
+    timeout_seconds = max(float(worker_args.supervise_timeout_seconds), 0.001)
     try:
         completed = subprocess.run(
-            _supervised_worker_argv(),
+            _supervised_worker_argv(source),
             check=False,
             timeout=timeout_seconds,
         )
@@ -702,20 +741,37 @@ def _run_supervised_worker(args: argparse.Namespace, *, started_at: datetime) ->
         _emit_progress(
             "supervised_worker_timeout",
             timeout_seconds=timeout_seconds,
-            sources=list(_parse_sources(getattr(args, "sources", "all"))),
+            sources=list(_parse_sources(getattr(worker_args, "sources", "all"))),
         )
         payload = _supervised_timeout_payload(
-            args=args,
+            args=worker_args,
             started_at=started_at,
             timeout_seconds=timeout_seconds,
         )
         print(
             json.dumps(payload, separators=(",", ":"))
-            if args.json
+            if worker_args.json
             else json.dumps(payload, indent=2)
         )
         return 1 if bool(payload["exit_nonzero"]) else 0
     return int(completed.returncode)
+
+
+def _run_supervised_worker(args: argparse.Namespace, *, started_at: datetime) -> int:
+    sources = _parse_sources(getattr(args, "sources", "all"))
+    if len(sources) <= 1:
+        return _run_supervised_worker_once(args, started_at=started_at)
+
+    exit_code = 0
+    for source in sources:
+        source_exit_code = _run_supervised_worker_once(
+            args,
+            started_at=started_at,
+            source=source,
+        )
+        if source_exit_code:
+            exit_code = 1
+    return exit_code
 
 
 def main() -> int:

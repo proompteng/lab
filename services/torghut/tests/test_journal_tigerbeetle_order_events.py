@@ -4,12 +4,14 @@ import argparse
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
 from decimal import Decimal
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import patch
@@ -422,6 +424,113 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
         self.assertIn("supervised_worker_timeout", stderr.getvalue())
         self.assertIn("--supervised-worker", run_mock.call_args.args[0])
         self.assertEqual(run_mock.call_args.kwargs["timeout"], 0.01)
+
+    def test_supervised_worker_splits_multi_source_timeout_budget(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        with (
+            patch.dict(os.environ, {"DB_DSN": "sqlite+pysqlite:///:memory:"}),
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "journal_tigerbeetle_order_events.py",
+                    "--dsn-env",
+                    "DB_DSN",
+                    "--sources",
+                    "execution,execution_tca_metric",
+                    "--batch-size",
+                    "50",
+                    "--max-batches",
+                    "1",
+                    "--fail-on-degraded",
+                    "--allow-data-quality-degraded",
+                    "--json",
+                    "--supervise-timeout-seconds",
+                    "0.01",
+                ],
+            ),
+            patch(
+                "scripts.journal_tigerbeetle_order_events.subprocess.run",
+                side_effect=[
+                    subprocess.CompletedProcess(
+                        args=["python", "journal_tigerbeetle_order_events.py"],
+                        returncode=0,
+                    ),
+                    subprocess.TimeoutExpired(
+                        cmd=["python", "journal_tigerbeetle_order_events.py"],
+                        timeout=0.01,
+                    ),
+                ],
+            ) as run_mock,
+            redirect_stdout(stdout),
+            redirect_stderr(stderr),
+        ):
+            exit_code = script.main()
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(run_mock.call_count, 2)
+        first_argv = run_mock.call_args_list[0].args[0]
+        second_argv = run_mock.call_args_list[1].args[0]
+        self.assertEqual(
+            first_argv[first_argv.index("--sources") + 1],
+            script.SOURCE_TYPE_EXECUTION,
+        )
+        self.assertEqual(
+            second_argv[second_argv.index("--sources") + 1],
+            script.SOURCE_TYPE_EXECUTION_TCA_METRIC,
+        )
+        self.assertIn("--supervised-worker", first_argv)
+        self.assertIn("--supervised-worker", second_argv)
+        self.assertEqual(run_mock.call_args_list[0].kwargs["timeout"], 0.01)
+        self.assertEqual(run_mock.call_args_list[1].kwargs["timeout"], 0.01)
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["sources"], [script.SOURCE_TYPE_EXECUTION_TCA_METRIC])
+        self.assertFalse(payload["ok"])
+        self.assertTrue(payload["exit_nonzero"])
+        self.assertEqual(
+            payload["hard_failure_reasons"],
+            ["journal_batch_failures", "tigerbeetle_journal_worker_timeout"],
+        )
+        self.assertIn("supervised_worker_timeout", stderr.getvalue())
+        self.assertIn(script.SOURCE_TYPE_EXECUTION_TCA_METRIC, stderr.getvalue())
+        self.assertNotIn(
+            f'"{script.SOURCE_TYPE_EXECUTION}","{script.SOURCE_TYPE_EXECUTION_TCA_METRIC}"',
+            stderr.getvalue(),
+        )
+
+    def test_torghut_cronjob_keeps_live_sources_split_and_honest(self) -> None:
+        manifest = (
+            Path(__file__).resolve().parents[3]
+            / "argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml"
+        ).read_text()
+        for cronjob_name in (
+            "torghut-tigerbeetle-journal-order-events-live",
+            "torghut-tigerbeetle-journal-order-events-sim",
+        ):
+            section = manifest.split(f"name: {cronjob_name}", 1)[1]
+            if "---" in section:
+                section = section.split("---", 1)[0]
+            source_args = re.findall(r"--sources ([a-z_]+)", section)
+            self.assertEqual(
+                source_args,
+                [
+                    script.SOURCE_TYPE_EXECUTION,
+                    script.SOURCE_TYPE_EXECUTION_TCA_METRIC,
+                    script.SOURCE_TYPE_EXECUTION_ORDER_EVENT,
+                    script.SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                ],
+            )
+            self.assertNotIn("execution,execution_tca_metric", section)
+            self.assertEqual(section.count("--supervise-timeout-seconds 45"), 4)
+            runtime_section = section.split(
+                "--sources strategy_runtime_ledger_bucket",
+                1,
+            )[1]
+            self.assertIn("--fail-on-degraded", runtime_section)
+            self.assertIn("--allow-data-quality-degraded", runtime_section)
 
     def test_process_rows_attaches_runtime_bucket_journal_payload(self) -> None:
         settings_obj = Settings(TORGHUT_TIGERBEETLE_ENABLED=True)
