@@ -1,3 +1,5 @@
+import type { ZodError, ZodIssue } from 'zod'
+
 import { isAuthorized } from './auth'
 import { CompanyProfileHintSchema } from './company'
 import { jsonResponse } from './http'
@@ -701,6 +703,27 @@ const buildConfigResource = (request: Request) => ({
 const invalidParams = (id: JsonRpcId, message: string, data?: unknown): JsonRpcResponse =>
   asJsonRpcError(id, { code: -32602, message, data })
 
+const zodIssuePath = (issue: ZodIssue): string => issue.path.map(String).join('.') || '$'
+
+const zodIssueData = (error: ZodError): { issues: Record<string, unknown>[] } => ({
+  issues: error.issues.slice(0, 12).map((issue) => {
+    const data: Record<string, unknown> = {
+      path: zodIssuePath(issue),
+      code: issue.code,
+      message: issue.message,
+    }
+
+    if ('keys' in issue) data.keys = issue.keys
+    if ('expected' in issue) data.expected = issue.expected
+    if ('received' in issue) data.received = issue.received
+
+    return data
+  }),
+})
+
+const invalidSchemaParams = (id: JsonRpcId, message: string, error: ZodError): JsonRpcResponse =>
+  invalidParams(id, message, zodIssueData(error))
+
 const toolError = (id: JsonRpcId, message: string, data?: unknown): JsonRpcResponse =>
   asJsonRpcError(id, { code: -32000, message, data })
 
@@ -719,27 +742,27 @@ const handleToolCall = async (
   try {
     if (name === 'synthesis_start_run') {
       const parsed = StartRunInputSchema.safeParse(args)
-      if (!parsed.success) return invalidParams(id, 'Invalid synthesis_start_run input')
+      if (!parsed.success) return invalidSchemaParams(id, 'Invalid synthesis_start_run input', parsed.error)
       return asJsonRpcResponse(id, toTextToolResult({ ok: true, run: await store.startRun(parsed.data) }))
     }
     if (name === 'synthesis_submit_item') {
       const parsed = SubmitItemInputSchema.safeParse(args)
-      if (!parsed.success) return invalidParams(id, 'Invalid synthesis_submit_item input')
+      if (!parsed.success) return invalidSchemaParams(id, 'Invalid synthesis_submit_item input', parsed.error)
       return asJsonRpcResponse(id, toTextToolResult({ ok: true, ...(await store.submitItem(parsed.data)) }))
     }
     if (name === 'synthesis_submit_batch') {
       const parsed = SubmitBatchInputSchema.safeParse(args)
-      if (!parsed.success) return invalidParams(id, 'Invalid synthesis_submit_batch input')
+      if (!parsed.success) return invalidSchemaParams(id, 'Invalid synthesis_submit_batch input', parsed.error)
       return asJsonRpcResponse(id, toTextToolResult({ ok: true, ...(await store.submitBatch(parsed.data)) }))
     }
     if (name === 'synthesis_prefill_company') {
       const parsed = CompanyProfileHintSchema.safeParse(args)
-      if (!parsed.success) return invalidParams(id, 'Invalid synthesis_prefill_company input')
+      if (!parsed.success) return invalidSchemaParams(id, 'Invalid synthesis_prefill_company input', parsed.error)
       return asJsonRpcResponse(id, toTextToolResult({ ok: true, company: await store.prefillCompany(parsed.data) }))
     }
     if (name === 'synthesis_list_feed') {
       const parsed = ListFeedInputSchema.safeParse(args)
-      if (!parsed.success) return invalidParams(id, 'Invalid synthesis_list_feed input')
+      if (!parsed.success) return invalidSchemaParams(id, 'Invalid synthesis_list_feed input', parsed.error)
       return asJsonRpcResponse(id, toTextToolResult({ ok: true, ...(await store.listFeed(parsed.data)) }))
     }
     if (name === 'synthesis_get_item') {
@@ -749,12 +772,12 @@ const handleToolCall = async (
     }
     if (name === 'synthesis_record_feedback') {
       const parsed = RecordFeedbackInputSchema.safeParse(args)
-      if (!parsed.success) return invalidParams(id, 'Invalid synthesis_record_feedback input')
+      if (!parsed.success) return invalidSchemaParams(id, 'Invalid synthesis_record_feedback input', parsed.error)
       return asJsonRpcResponse(id, toTextToolResult({ ok: true, feedback: await store.recordFeedback(parsed.data) }))
     }
     if (name === 'autotrader_start_session') {
       const parsed = AutotraderStartSessionInputSchema.safeParse(args)
-      if (!parsed.success) return invalidParams(id, 'Invalid autotrader_start_session input')
+      if (!parsed.success) return invalidSchemaParams(id, 'Invalid autotrader_start_session input', parsed.error)
       return asJsonRpcResponse(
         id,
         toTextToolResult({ ok: true, session: await getAutotraderStore().startSession(parsed.data) }),
@@ -762,7 +785,7 @@ const handleToolCall = async (
     }
     if (name === 'autotrader_upsert_status') {
       const parsed = AutotraderUpsertStatusInputSchema.safeParse(args)
-      if (!parsed.success) return invalidParams(id, 'Invalid autotrader_upsert_status input')
+      if (!parsed.success) return invalidSchemaParams(id, 'Invalid autotrader_upsert_status input', parsed.error)
       return asJsonRpcResponse(
         id,
         toTextToolResult({ ok: true, status: await getAutotraderStore().upsertStatus(parsed.data) }),
@@ -770,7 +793,7 @@ const handleToolCall = async (
     }
     if (name === 'autotrader_append_event') {
       const parsed = AutotraderAppendEventInputSchema.safeParse(args)
-      if (!parsed.success) return invalidParams(id, 'Invalid autotrader_append_event input')
+      if (!parsed.success) return invalidSchemaParams(id, 'Invalid autotrader_append_event input', parsed.error)
       return asJsonRpcResponse(
         id,
         toTextToolResult({ ok: true, event: await getAutotraderStore().appendEvent(parsed.data) }),
@@ -778,7 +801,7 @@ const handleToolCall = async (
     }
     if (name === 'autotrader_create_trade_ticket') {
       const parsed = AutotraderCreateTradeTicketInputSchema.safeParse(args)
-      if (!parsed.success) return invalidParams(id, 'Invalid autotrader_create_trade_ticket input')
+      if (!parsed.success) return invalidSchemaParams(id, 'Invalid autotrader_create_trade_ticket input', parsed.error)
       return asJsonRpcResponse(
         id,
         toTextToolResult({ ok: true, ticket: await getAutotraderStore().createTradeTicket(parsed.data) }),
@@ -786,7 +809,7 @@ const handleToolCall = async (
     }
     if (name === 'autotrader_record_risk_check') {
       const parsed = AutotraderRecordRiskCheckInputSchema.safeParse(args)
-      if (!parsed.success) return invalidParams(id, 'Invalid autotrader_record_risk_check input')
+      if (!parsed.success) return invalidSchemaParams(id, 'Invalid autotrader_record_risk_check input', parsed.error)
       return asJsonRpcResponse(
         id,
         toTextToolResult({ ok: true, riskCheck: await getAutotraderStore().recordRiskCheck(parsed.data) }),
@@ -794,7 +817,7 @@ const handleToolCall = async (
     }
     if (name === 'autotrader_record_order') {
       const parsed = AutotraderRecordOrderInputSchema.safeParse(args)
-      if (!parsed.success) return invalidParams(id, 'Invalid autotrader_record_order input')
+      if (!parsed.success) return invalidSchemaParams(id, 'Invalid autotrader_record_order input', parsed.error)
       return asJsonRpcResponse(
         id,
         toTextToolResult({ ok: true, order: await getAutotraderStore().recordOrder(parsed.data) }),
@@ -802,7 +825,7 @@ const handleToolCall = async (
     }
     if (name === 'autotrader_record_fill') {
       const parsed = AutotraderRecordFillInputSchema.safeParse(args)
-      if (!parsed.success) return invalidParams(id, 'Invalid autotrader_record_fill input')
+      if (!parsed.success) return invalidSchemaParams(id, 'Invalid autotrader_record_fill input', parsed.error)
       return asJsonRpcResponse(
         id,
         toTextToolResult({ ok: true, fill: await getAutotraderStore().recordFill(parsed.data) }),
@@ -810,7 +833,9 @@ const handleToolCall = async (
     }
     if (name === 'autotrader_record_position_snapshot') {
       const parsed = AutotraderRecordPositionSnapshotInputSchema.safeParse(args)
-      if (!parsed.success) return invalidParams(id, 'Invalid autotrader_record_position_snapshot input')
+      if (!parsed.success) {
+        return invalidSchemaParams(id, 'Invalid autotrader_record_position_snapshot input', parsed.error)
+      }
       return asJsonRpcResponse(
         id,
         toTextToolResult({
@@ -821,7 +846,7 @@ const handleToolCall = async (
     }
     if (name === 'autotrader_finalize_session') {
       const parsed = AutotraderFinalizeSessionInputSchema.safeParse(args)
-      if (!parsed.success) return invalidParams(id, 'Invalid autotrader_finalize_session input')
+      if (!parsed.success) return invalidSchemaParams(id, 'Invalid autotrader_finalize_session input', parsed.error)
       return asJsonRpcResponse(
         id,
         toTextToolResult({ ok: true, detail: await getAutotraderStore().finalizeSession(parsed.data) }),
@@ -829,7 +854,7 @@ const handleToolCall = async (
     }
     if (name === 'autotrader_get_scorecard') {
       const parsed = AutotraderGetScorecardInputSchema.safeParse(args)
-      if (!parsed.success) return invalidParams(id, 'Invalid autotrader_get_scorecard input')
+      if (!parsed.success) return invalidSchemaParams(id, 'Invalid autotrader_get_scorecard input', parsed.error)
       return asJsonRpcResponse(
         id,
         toTextToolResult({ ok: true, ...(await getAutotraderStore().getScorecard(parsed.data)) }),

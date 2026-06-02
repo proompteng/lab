@@ -117,6 +117,29 @@ describe('synthesis MCP', () => {
     expect(payload.error.code).toBe(-32001)
   })
 
+  test('returns validation details for invalid autotrader tool input', async () => {
+    const response = await handleMcpRequest(
+      callTool(
+        'autotrader_upsert_status',
+        {
+          sessionId: 'session-1',
+          cycle: 1,
+          phase: 'planning',
+          currentAction: 'ranking candidates',
+          unexpectedField: 'trial-error',
+        },
+        { authorization: `Bearer ${token}` },
+      ),
+    )
+    const payload = await response.json()
+    const issues = payload.error.data.issues as Array<{ path: string; keys?: string[] }>
+
+    expect(payload.error.code).toBe(-32602)
+    expect(payload.error.message).toBe('Invalid autotrader_upsert_status input')
+    expect(issues.map((issue) => issue.path)).toContain('phase')
+    expect(issues.find((issue) => issue.path === '$')?.keys).toContain('unexpectedField')
+  })
+
   test('submits an item and reads it back through the feed', async () => {
     const headers = { authorization: `Bearer ${token}` }
     const runPayload = await parseToolJson(await handleMcpRequest(callTool('synthesis_start_run', {}, headers)))
