@@ -44,6 +44,9 @@ from app.trading.tigerbeetle_ledger_model import (
     TRANSFER_KIND_RUNTIME_NET_PNL,
     TigerBeetleTransferSpec,
 )
+from app.trading.tigerbeetle_reconcile import (
+    latest_tigerbeetle_reconciliation_payload,
+)
 
 
 SCHEMA_VERSION = "torghut.tigerbeetle-runtime-ledger-parity.v1"
@@ -60,7 +63,9 @@ BLOCKER_CANDIDATE_MISMATCH = "tigerbeetle_parity_candidate_mismatch"
 BLOCKER_TRANSFER_SHAPE_MISMATCH = "tigerbeetle_parity_transfer_shape_mismatch"
 BLOCKER_TRANSFER_MISSING = "tigerbeetle_parity_transfer_missing"
 BLOCKER_CLIENT_UNAVAILABLE = "tigerbeetle_parity_client_unavailable"
+BLOCKER_RECONCILIATION_MISSING = "tigerbeetle_reconciliation_missing"
 BLOCKER_RECONCILIATION_NOT_OK = "tigerbeetle_reconciliation_not_ok"
+BLOCKER_RECONCILIATION_STALE = "tigerbeetle_reconciliation_stale"
 
 
 @dataclass(frozen=True)
@@ -106,6 +111,107 @@ def _increment(mapping: dict[str, int], key: str, value: int = 1) -> None:
 def _add_blocker(blockers: list[str], blocker: str) -> None:
     if blocker not in blockers:
         blockers.append(blocker)
+
+
+def _payload_text_list(payload: Mapping[str, object], key: str) -> list[str]:
+    value = payload.get(key)
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return [str(item) for item in cast(Sequence[object], value) if item is not None]
+    if value is None:
+        return []
+    return [str(value)]
+
+
+def _source_table(source_type: str) -> str:
+    if source_type == SOURCE_TYPE_EXECUTION:
+        return "executions"
+    if source_type == SOURCE_TYPE_EXECUTION_TCA_METRIC:
+        return "execution_tca_metrics"
+    if source_type == SOURCE_TYPE_RUNTIME_LEDGER_BUCKET:
+        return "strategy_runtime_ledger_buckets"
+    return source_type
+
+
+def _source_row_id(source_id: str) -> str:
+    return source_id.split(":", 1)[0]
+
+
+def _stable_source_refs(
+    source: _ParitySource,
+    ref: TigerBeetleTransferRef | None,
+) -> list[str]:
+    refs: list[str] = []
+    if ref is not None:
+        payload = _payload_mapping(ref)
+        refs.extend(_payload_text_list(payload, "source_refs"))
+        row_id = str(payload.get("source_row_id") or "")
+        if row_id:
+            refs.append(f"postgres:{_source_table(source.source_type)}:{row_id}")
+    refs.append(
+        f"postgres:{_source_table(source.source_type)}:{_source_row_id(source.source_id)}"
+    )
+    deduped: list[str] = []
+    for item in refs:
+        if item and item not in deduped:
+            deduped.append(item)
+    return deduped
+
+
+def _tigerbeetle_transfer_ref(
+    *,
+    cluster_id: int,
+    transfer_id: str,
+) -> str:
+    return f"tigerbeetle:{cluster_id}:transfers:{transfer_id}"
+
+
+def _reconciliation_freshness(
+    session: Session,
+    *,
+    settings_obj: Settings,
+    required: bool,
+    source_count: int,
+) -> tuple[dict[str, object], list[str]]:
+    latest_reconciliation = latest_tigerbeetle_reconciliation_payload(
+        session,
+        cluster_id=settings_obj.tigerbeetle_cluster_id,
+    )
+    max_age_seconds = max(1, int(settings_obj.tigerbeetle_reconcile_max_age_seconds))
+    age_seconds = None
+    if latest_reconciliation is not None:
+        try:
+            age_seconds = int(str(latest_reconciliation.get("age_seconds", 0)))
+        except (TypeError, ValueError):
+            age_seconds = 0
+    stale = age_seconds is not None and age_seconds > max_age_seconds
+    reconciliation_required = required and source_count > 0
+    blockers: list[str] = []
+    if reconciliation_required and latest_reconciliation is None:
+        blockers.append(BLOCKER_RECONCILIATION_MISSING)
+    elif reconciliation_required and latest_reconciliation is not None:
+        if not bool(latest_reconciliation.get("ok")):
+            blockers.append(BLOCKER_RECONCILIATION_NOT_OK)
+        if stale:
+            blockers.append(BLOCKER_RECONCILIATION_STALE)
+        raw_blockers = latest_reconciliation.get("blockers")
+        if isinstance(raw_blockers, Sequence) and not isinstance(
+            raw_blockers,
+            (str, bytes, bytearray),
+        ):
+            blockers.extend(str(item) for item in cast(Sequence[object], raw_blockers))
+    reconciliation_ok = not blockers if reconciliation_required else True
+    return (
+        {
+            "required": reconciliation_required,
+            "ok": reconciliation_ok,
+            "stale": stale,
+            "age_seconds": age_seconds,
+            "max_age_seconds": max_age_seconds,
+            "latest_reconciliation": latest_reconciliation,
+            "blockers": sorted(set(blockers)),
+        },
+        sorted(set(blockers)),
+    )
 
 
 def _query_transfer_ref(
@@ -362,13 +468,24 @@ def audit_tigerbeetle_runtime_ledger_parity(
             "family": source.family,
             "source_type": source.source_type,
             "source_id": source.source_id,
+            "source_refs": _stable_source_refs(source, None),
             "account_label": source.account_label,
             "candidate_id": source.candidate_id,
             "expected_transfer_id": u128_decimal(spec.transfer_id),
+            "expected_transfer_kind": spec.transfer_kind,
             "expected_amount_micros": _stable_decimal(expected_amount),
+            "authority": "accounting_parity_only",
+            "promotion_authority": False,
+            "overrides_runtime_ledger_authority": False,
             "status": "pass",
             "blockers": [],
         }
+        if isinstance(source.plan, TigerBeetleRuntimeLedgerTransferPlan):
+            sample["expected_signed_amount_micros"] = str(
+                source.plan.signed_amount_micros
+            )
+            sample["expected_pnl_direction"] = source.plan.pnl_direction
+            sample["runtime_key"] = source.plan.runtime_key
         sample_blockers = cast(list[str], sample["blockers"])
         if ref is None:
             missing_ref_count += 1
@@ -383,8 +500,24 @@ def audit_tigerbeetle_runtime_ledger_parity(
         ref_totals[source.family] = ref_totals.get(
             source.family, Decimal("0")
         ) + Decimal(ref.amount)
+        ref_payload = _payload_mapping(ref)
+        sample["source_refs"] = _stable_source_refs(source, ref)
         sample["ref_transfer_id"] = ref.transfer_id
+        sample["tigerbeetle_transfer_ref"] = _tigerbeetle_transfer_ref(
+            cluster_id=ref.cluster_id,
+            transfer_id=ref.transfer_id,
+        )
         sample["ref_amount_micros"] = _stable_decimal(ref.amount)
+        sample["ref_transfer_kind"] = ref.transfer_kind
+        if source.family == TRANSFER_KIND_RUNTIME_NET_PNL:
+            sample["runtime_ledger_net_pnl_transfer_ref"] = sample[
+                "tigerbeetle_transfer_ref"
+            ]
+            sample["signed_amount_micros"] = str(
+                ref_payload.get("signed_amount_micros") or ""
+            )
+            sample["pnl_direction"] = str(ref_payload.get("pnl_direction") or "")
+            sample["runtime_key"] = str(ref_payload.get("runtime_key") or "")
         if ref.amount != expected_amount:
             amount_mismatch_count += 1
             _add_blocker(blockers, BLOCKER_AMOUNT_MISMATCH)
@@ -485,6 +618,15 @@ def audit_tigerbeetle_runtime_ledger_parity(
     for family, value in sorted(actual_totals.items()):
         actual_micros_by_family[family] = _stable_decimal(value)
 
+    reconciliation_freshness, reconciliation_blockers = _reconciliation_freshness(
+        session,
+        settings_obj=settings_obj,
+        required=required,
+        source_count=len(sources),
+    )
+    for blocker in reconciliation_blockers:
+        _add_blocker(blockers, blocker)
+
     unique_blockers = sorted(blockers)
     parity_status = _status(
         blockers=unique_blockers,
@@ -508,8 +650,19 @@ def audit_tigerbeetle_runtime_ledger_parity(
             "ok": ok,
             "parity_status": parity_status,
             "blockers": unique_blockers,
+            "authority": "accounting_parity_only",
+            "promotion_authority": False,
+            "overrides_runtime_ledger_authority": False,
             "client_lookup": client is not None,
             "client_error": client_error,
+            "reconciliation_ok": reconciliation_freshness["ok"],
+            "reconciliation_stale": reconciliation_freshness["stale"],
+            "reconciliation_age_seconds": reconciliation_freshness["age_seconds"],
+            "reconciliation_max_age_seconds": reconciliation_freshness[
+                "max_age_seconds"
+            ],
+            "reconciliation_freshness": reconciliation_freshness,
+            "latest_reconciliation": reconciliation_freshness["latest_reconciliation"],
             "totals": {
                 "checked_source_count": len(sources),
                 "checked_ref_count": checked_ref_count,
@@ -545,6 +698,11 @@ def tigerbeetle_runtime_ledger_parity_blockers(
     if not required:
         return []
     blockers: list[str] = []
+    if (
+        payload.get("latest_reconciliation") is None
+        and payload.get("reconciliation_ok") is False
+    ):
+        blockers.append(BLOCKER_RECONCILIATION_MISSING)
     if payload.get("reconciliation_ok") is False:
         blockers.append(BLOCKER_RECONCILIATION_NOT_OK)
         latest_reconciliation = payload.get("latest_reconciliation")
@@ -562,6 +720,8 @@ def tigerbeetle_runtime_ledger_parity_blockers(
                     str(item)
                     for item in cast(Sequence[object], raw_reconciliation_blockers)
                 )
+    if payload.get("reconciliation_stale") is True:
+        blockers.append(BLOCKER_RECONCILIATION_STALE)
     raw_blockers = payload.get("blockers")
     if not isinstance(raw_blockers, Sequence) or isinstance(
         raw_blockers, (str, bytes, bytearray)

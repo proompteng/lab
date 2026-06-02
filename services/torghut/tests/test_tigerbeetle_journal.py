@@ -554,9 +554,7 @@ class TestTigerBeetleLedgerJournal(TestCase):
         self,
     ) -> None:
         with Session(self.engine) as session:
-            event = _create_fill_event(
-                session, fingerprint="fingerprint-cost-revision"
-            )
+            event = _create_fill_event(session, fingerprint="fingerprint-cost-revision")
             metric = ExecutionTCAMetric(
                 execution_id=event.execution_id,
                 trade_decision_id=event.trade_decision_id,
@@ -599,8 +597,7 @@ class TestTigerBeetleLedgerJournal(TestCase):
             refs = (
                 session.execute(
                     select(TigerBeetleTransferRef).where(
-                        TigerBeetleTransferRef.source_type
-                        == "execution_tca_metric"
+                        TigerBeetleTransferRef.source_type == "execution_tca_metric"
                     )
                 )
                 .scalars()
@@ -765,6 +762,16 @@ class TestTigerBeetleLedgerJournal(TestCase):
             self.assertEqual(ref.amount, Decimal("2500000"))
             self.assertEqual(ref.payload_json["pnl_direction"], "profit")
             self.assertEqual(ref.payload_json["signed_amount_micros"], 2500000)
+            self.assertEqual(
+                ref.payload_json["source_refs"],
+                [f"postgres:strategy_runtime_ledger_buckets:{bucket.id}"],
+            )
+            self.assertEqual(ref.payload_json["source_row_id"], str(bucket.id))
+            self.assertEqual(ref.payload_json["transfer_id"], ref.transfer_id)
+            self.assertEqual(ref.payload_json["ledger"], ref.ledger)
+            self.assertEqual(ref.payload_json["code"], ref.code)
+            self.assertFalse(ref.payload_json["promotion_authority"])
+            self.assertFalse(ref.payload_json["overrides_runtime_ledger_authority"])
             parity = tigerbeetle_runtime_ledger_journal_payload(
                 bucket=bucket,
                 ref=ref,

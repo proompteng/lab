@@ -1466,6 +1466,10 @@ class TigerBeetleLedgerJournal:
             source_id=str(bucket.id),
             payload_json={
                 "source": SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                "source_refs": [
+                    f"postgres:strategy_runtime_ledger_buckets:{bucket.id}",
+                ],
+                "source_row_id": str(bucket.id),
                 "run_id": bucket.run_id,
                 "candidate_id": bucket.candidate_id,
                 "hypothesis_id": bucket.hypothesis_id,
@@ -1483,7 +1487,17 @@ class TigerBeetleLedgerJournal:
                 "signed_amount_micros": plan.signed_amount_micros,
                 "pnl_direction": plan.pnl_direction,
                 "runtime_key": plan.runtime_key,
+                "transfer_id": u128_decimal(transfer_spec.transfer_id),
+                "ledger": transfer_spec.ledger,
+                "code": transfer_spec.code,
                 "debit_account_id": u128_decimal(transfer_spec.debit_account_id),
                 "credit_account_id": u128_decimal(transfer_spec.credit_account_id),
+                "account_ids": [
+                    u128_decimal(spec.account_id) for spec in plan.account_specs
+                ],
+                "account_keys": [spec.account_key for spec in plan.account_specs],
+                "authority": "accounting_parity_only",
+                "promotion_authority": False,
+                "overrides_runtime_ledger_authority": False,
             },
         )

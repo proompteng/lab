@@ -674,12 +674,25 @@ def _latest_run_payload(
         0,
         int((datetime.now(timezone.utc) - observed_at).total_seconds()),
     )
+    max_age_seconds = _payload_int(payload, "reconciliation_max_age_seconds")
+    stale = bool(max_age_seconds > 0 and age_seconds > max_age_seconds)
     return {
         "schema_version": SCHEMA_VERSION,
         "ok": row.status == "ok",
         "cluster_id": row.cluster_id,
         "status": row.status,
         "age_seconds": age_seconds,
+        "reconciliation_max_age_seconds": max_age_seconds,
+        "reconciliation_stale": stale,
+        "reconciliation_freshness": {
+            "observed_at": observed_at.isoformat(),
+            "age_seconds": age_seconds,
+            "max_age_seconds": max_age_seconds,
+            "stale": stale,
+        },
+        "authority": "accounting_parity_only",
+        "promotion_authority": False,
+        "overrides_runtime_ledger_authority": False,
         "account_ref_count": account_ref_count,
         "transfer_ref_count": transfer_ref_count,
         "checked_transfer_count": row.checked_transfer_count,
@@ -1170,10 +1183,25 @@ def reconcile_tigerbeetle_transfers(
         blockers.append(BLOCKER_RUNTIME_LEDGER_ACCOUNT_REFS_MISSING)
     unique_blockers = sorted(set(blockers))
     ok = not unique_blockers
+    max_age_seconds = max(1, int(settings_obj.tigerbeetle_reconcile_max_age_seconds))
     payload: dict[str, object] = {
         "schema_version": SCHEMA_VERSION,
         "ok": ok,
         "cluster_id": settings_obj.tigerbeetle_cluster_id,
+        "started_at": started_at.isoformat(),
+        "finished_at": finished_at.isoformat(),
+        "age_seconds": 0,
+        "reconciliation_stale": False,
+        "reconciliation_max_age_seconds": max_age_seconds,
+        "reconciliation_freshness": {
+            "observed_at": finished_at.isoformat(),
+            "age_seconds": 0,
+            "max_age_seconds": max_age_seconds,
+            "stale": False,
+        },
+        "authority": "accounting_parity_only",
+        "promotion_authority": False,
+        "overrides_runtime_ledger_authority": False,
         "account_ref_count": _payload_int(ref_counts, "account_ref_count"),
         "transfer_ref_count": _payload_int(ref_counts, "transfer_ref_count"),
         "checked_transfer_count": checked_transfer_count,
