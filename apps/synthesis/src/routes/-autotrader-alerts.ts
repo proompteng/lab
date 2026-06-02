@@ -23,6 +23,7 @@ const terminalOrderStatuses = new Set<AutotraderOrder['status']>([
 ])
 
 const protectiveOrderClasses = new Set(['bracket', 'oco', 'oto'])
+const protectiveExitOrderClasses = new Set(['oco'])
 
 const ageMs = (value: string | null | undefined, now: Date) => {
   if (!value) return null
@@ -131,16 +132,31 @@ export const didMarketSessionEndEarly = (detail: AutotraderSessionDetail) => {
   return finalizedAt != null && marketClose != null && finalizedAt < marketClose
 }
 
-export const isAutotraderOrderUnreconciled = (order: AutotraderOrder, now = new Date()) => {
-  if (terminalOrderStatuses.has(order.status)) return false
-  const orderAgeMs = ageMs(order.updatedAt, now)
-  return orderAgeMs == null || orderAgeMs > unreconciledOrderMs
-}
-
 export const hasBrokerAttachedProtection = (order: AutotraderOrder) => {
   if (order.status === 'rejected' || order.status === 'canceled' || order.status === 'expired') return false
   if (order.orderClass && protectiveOrderClasses.has(order.orderClass.toLowerCase())) return true
   return Boolean(order.stopPrice || order.takeProfitLimitPrice || order.stopLossStopPrice || order.stopLossLimitPrice)
+}
+
+const isBrokerAttachedProtectiveExitOrder = (order: AutotraderOrder) => {
+  if (!order.brokerOrderId) return false
+  const orderClass = order.orderClass?.toLowerCase() ?? ''
+  const orderType = order.orderType.toLowerCase()
+  return (
+    protectiveExitOrderClasses.has(orderClass) ||
+    orderClass.includes('take_profit') ||
+    orderClass.includes('stop_loss') ||
+    orderType === 'stop' ||
+    orderType === 'stop_limit' ||
+    Boolean(order.stopPrice || order.stopLossStopPrice || order.stopLossLimitPrice)
+  )
+}
+
+export const isAutotraderOrderUnreconciled = (order: AutotraderOrder, now = new Date()) => {
+  if (terminalOrderStatuses.has(order.status)) return false
+  if (isBrokerAttachedProtectiveExitOrder(order)) return false
+  const orderAgeMs = ageMs(order.updatedAt, now)
+  return orderAgeMs == null || orderAgeMs > unreconciledOrderMs
 }
 
 const ticketHasManagedLoopFallback = (ticket: AutotraderTradeTicket) =>
