@@ -151,6 +151,7 @@ class FakeJournal:
         self.executions: list[str] = []
         self.tca_metrics: list[str] = []
         self.runtime_buckets: list[str] = []
+        self.stable_ref_backfills = 0
         self.reconciliation_client = SimpleNamespace(name="shared-tigerbeetle-client")
         self.closed = False
         FakeJournal.instances.append(self)
@@ -214,6 +215,7 @@ class FakeJournal:
         limit: int = 1000,
     ) -> dict[str, object]:
         del session, limit
+        self.stable_ref_backfills += 1
         return {"selected": 0, "updated": 0, "skipped": 0}
 
 
@@ -1724,6 +1726,53 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
         self.assertEqual(FakeJournal.instances[0].executions, [])
         self.assertEqual(FakeJournal.instances[0].tca_metrics, ["AAPL"])
         self.assertEqual(FakeJournal.instances[0].runtime_buckets, [])
+        reconcile.assert_not_called()
+
+    def test_main_skips_backfill_and_reconcile_when_source_selects_no_rows(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "torghut.db")
+            dsn = f"sqlite+pysqlite:///{db_path}"
+            engine = create_engine(dsn, future=True)
+            Base.metadata.create_all(engine)
+
+            stdout = io.StringIO()
+            with (
+                patch.dict(os.environ, {"TEST_DB_DSN": dsn}),
+                patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "journal_tigerbeetle_order_events.py",
+                        "--dsn-env",
+                        "TEST_DB_DSN",
+                        "--sources",
+                        "strategy_runtime_ledger_bucket",
+                        "--batch-size",
+                        "5",
+                        "--fail-on-degraded",
+                        "--allow-data-quality-degraded",
+                        "--json",
+                    ],
+                ),
+                patch.object(script, "TigerBeetleLedgerJournal", FakeJournal),
+                patch.object(script, "reconcile_tigerbeetle_transfers") as reconcile,
+                redirect_stdout(stdout),
+            ):
+                exit_code = script.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["selected"], 0)
+        self.assertEqual(payload["journaled"], 0)
+        self.assertEqual(payload["failed"], 0)
+        self.assertEqual(payload["reconciliation"]["status"], "skipped")
+        self.assertEqual(payload["reconciliation"]["reason"], "no_source_rows_selected")
+        self.assertEqual(FakeJournal.instances[0].runtime_buckets, [])
+        self.assertEqual(FakeJournal.instances[0].stable_ref_backfills, 0)
         reconcile.assert_not_called()
 
     def test_main_dry_run_rolls_back_without_reconcile(self) -> None:

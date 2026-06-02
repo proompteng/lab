@@ -992,6 +992,7 @@ def main() -> int:
     batches: list[dict[str, Any]] = []
     reconciliation: dict[str, object] | None = None
     stop_journaling = False
+    selected_source_rows = 0
 
     with (
         session_factory() as session,
@@ -1100,7 +1101,9 @@ def main() -> int:
                 session.rollback()
                 _reset_session_identity_map(session)
                 break
-            if not stop_journaling:
+            iteration_selected_rows = sum(batch_lengths)
+            selected_source_rows += iteration_selected_rows
+            if not stop_journaling and iteration_selected_rows > 0:
                 stable_ref_backfill = journal.backfill_stable_ref_payloads(
                     session,
                     limit=batch_size,
@@ -1130,7 +1133,12 @@ def main() -> int:
             if batch_lengths and all(length < batch_size for length in batch_lengths):
                 break
 
-        if not args.dry_run and not args.skip_reconcile and not stop_journaling:
+        if (
+            not args.dry_run
+            and not args.skip_reconcile
+            and not stop_journaling
+            and selected_source_rows > 0
+        ):
             reconciliation = reconcile_tigerbeetle_transfers(
                 session,
                 settings_obj=settings_obj,
@@ -1139,6 +1147,12 @@ def main() -> int:
                 persist=True,
             )
             session.commit()
+        elif not args.dry_run and not args.skip_reconcile and not stop_journaling:
+            reconciliation = {
+                "ok": True,
+                "status": "skipped",
+                "reason": "no_source_rows_selected",
+            }
 
     payload = _payload(
         args=args,
