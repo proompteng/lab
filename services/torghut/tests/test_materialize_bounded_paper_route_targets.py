@@ -1,0 +1,641 @@
+from __future__ import annotations
+
+import json
+from collections.abc import Iterator
+from datetime import datetime, timezone
+from decimal import Decimal
+from pathlib import Path
+from typing import Any
+
+import pytest
+from sqlalchemy import create_engine, func, select
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from app.models import Base, Strategy, TradeDecision
+from app.trading.paper_route_target_plan import (
+    materialize_bounded_paper_route_target_plan,
+)
+from scripts import materialize_bounded_paper_route_targets as cli
+
+
+def _hpairs_target(**overrides: object) -> dict[str, Any]:
+    target: dict[str, Any] = {
+        "hypothesis_id": "H-PAIRS-01",
+        "candidate_id": "c88421d619759b2cfaa6f4d0",
+        "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+        "strategy_name": "microbar-cross-sectional-pairs-v1",
+        "account_label": "TORGHUT_SIM",
+        "source_plan_ref": "paper-route-plan:c88421d619759b2cfaa6f4d0",
+        "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
+        "target_notional": "20",
+        "bounded_collection_stage": "paper",
+        "evidence_collection_stage": "paper",
+        "window_start": "2026-06-01T13:30:00+00:00",
+        "window_end": "2026-06-01T20:00:00+00:00",
+        "paper_route_probe_symbol_actions": {
+            "AAPL": "buy",
+            "AMZN": "sell",
+        },
+        "paper_route_probe_symbol_quantities": {
+            "AAPL": "1",
+            "AMZN": "1",
+        },
+        "paper_route_clean_window_state": "clean_window_collection_ready",
+        "paper_route_clean_window_baseline_state": {
+            "state": "clean",
+            "blockers": [],
+        },
+        "paper_route_clean_window_baseline_blockers": [],
+        "source_decision_readiness": {
+            "schema_version": "torghut.paper-route-source-decision-readiness.v1",
+            "ready": True,
+            "blockers": [],
+            "strategy_lookup_names": ["microbar-cross-sectional-pairs-v1"],
+            "matched_strategy": {
+                "strategy_name": "microbar-cross-sectional-pairs-v1",
+                "enabled": True,
+                "base_timeframe": "1Min",
+                "universe_symbols": ["AAPL", "AMZN"],
+                "max_notional_per_trade": "25",
+            },
+            "raw_probe_symbols": ["AAPL", "AMZN"],
+            "scoped_probe_symbols": ["AAPL", "AMZN"],
+        },
+        "evidence_collection_ok": True,
+        "bounded_evidence_collection_authorized": True,
+        "capital_promotion_allowed": False,
+        "promotion_allowed": False,
+        "final_authority_ok": False,
+        "final_promotion_authorized": False,
+        "final_promotion_allowed": False,
+        "live_capital_routing_enabled": False,
+    }
+    target.update(overrides)
+    return target
+
+
+def _plan(*targets: dict[str, Any], **overrides: object) -> dict[str, Any]:
+    plan: dict[str, Any] = {
+        "schema_version": "torghut.next-paper-route-runtime-window-targets.v1",
+        "source": "paper_route_evidence_audit",
+        "purpose": "next_session_paper_route_runtime_window_evidence_collection",
+        "promotion_allowed": False,
+        "final_promotion_allowed": False,
+        "final_promotion_authorized": False,
+        "capital_promotion_allowed": False,
+        "targets": list(targets),
+    }
+    plan.update(overrides)
+    return plan
+
+
+@pytest.fixture()
+def sqlite_dsn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
+    dsn = f"sqlite+pysqlite:///{tmp_path / 'torghut.sqlite3'}"
+    engine = create_engine(dsn, future=True)
+    Base.metadata.create_all(engine)
+    session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+    with session_local() as session:
+        session.add(
+            Strategy(
+                name="microbar-cross-sectional-pairs-v1",
+                description="H-PAIRS bounded target plan fixture",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL", "AMZN"],
+                max_notional_per_trade=Decimal("25"),
+            )
+        )
+        session.commit()
+    monkeypatch.setenv("DB_DSN", dsn)
+    yield dsn
+    engine.dispose()
+
+
+@pytest.fixture()
+def in_memory_session() -> Iterator[Session]:
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        future=True,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+    with session_local() as session:
+        session.add(
+            Strategy(
+                name="microbar-cross-sectional-pairs-v1",
+                description="H-PAIRS bounded target plan fixture",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL", "AMZN"],
+                max_notional_per_trade=Decimal("25"),
+            )
+        )
+        session.commit()
+        yield session
+    engine.dispose()
+
+
+def _write_plan(tmp_path: Path, payload: dict[str, Any]) -> Path:
+    plan_path = tmp_path / "target-plan.json"
+    plan_path.write_text(json.dumps(payload), encoding="utf-8")
+    return plan_path
+
+
+def _count_decisions(dsn: str) -> int:
+    engine = create_engine(dsn, future=True)
+    try:
+        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        with session_local() as session:
+            return int(
+                session.execute(
+                    select(func.count()).select_from(TradeDecision)
+                ).scalar_one()
+            )
+    finally:
+        engine.dispose()
+
+
+def _run_cli(
+    argv: list[str], capsys: pytest.CaptureFixture[str]
+) -> tuple[int, dict[str, Any]]:
+    exit_code = cli.main(argv)
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert isinstance(payload, dict)
+    return exit_code, payload
+
+
+def _safe_commit_args(plan_path: Path) -> list[str]:
+    return [
+        "--plan-json",
+        str(plan_path),
+        "--max-notional",
+        "25",
+        "--commit",
+        "--confirm-account-label",
+        "TORGHUT_SIM",
+        "--confirm-dsn-env",
+        "DB_DSN",
+        "--confirm-hypothesis-id",
+        "H-PAIRS-01",
+        "--confirm-candidate-id",
+        "c88421d619759b2cfaa6f4d0",
+        "--confirm-runtime-strategy-name",
+        "microbar-cross-sectional-pairs-v1",
+        "--confirm-target-plan-ref",
+        "paper-route-plan:c88421d619759b2cfaa6f4d0",
+        "--confirm-max-notional",
+        "25",
+        "--operator-confirmation",
+        cli.OPERATOR_CONFIRMATION,
+    ]
+
+
+def test_dry_run_is_default_and_rolls_back_materialization(
+    tmp_path: Path,
+    sqlite_dsn: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    plan_path = _write_plan(tmp_path, _plan(_hpairs_target()))
+
+    exit_code, payload = _run_cli(
+        ["--plan-json", str(plan_path), "--max-notional", "25"],
+        capsys,
+    )
+
+    assert exit_code == 0
+    assert payload["mode"] == "dry_run"
+    assert payload["dry_run"] is True
+    assert payload["commit"] is False
+    assert payload["materialized"] is False
+    assert payload["account_label"] == "TORGHUT_SIM"
+    assert payload["max_notional"] == "25"
+    assert payload["promotion_allowed"] is False
+    assert payload["final_promotion_allowed"] is False
+    assert payload["capital_promotion_allowed"] is False
+    assert payload["materialized_decision_count"] == 2
+    assert payload["route_submission_count"] == 2
+    assert payload["blockers"] == []
+    assert _count_decisions(sqlite_dsn) == 0
+
+
+def test_commit_writes_only_for_torghut_sim_with_explicit_confirmations(
+    tmp_path: Path,
+    sqlite_dsn: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    plan_path = _write_plan(tmp_path, _plan(_hpairs_target()))
+
+    exit_code, payload = _run_cli(_safe_commit_args(plan_path), capsys)
+
+    assert exit_code == 0
+    assert payload["mode"] == "commit"
+    assert payload["dry_run"] is False
+    assert payload["materialized"] is True
+    assert payload["materialized_decision_count"] == 2
+    assert payload["route_submission_count"] == 2
+    assert payload["blockers"] == []
+    assert _count_decisions(sqlite_dsn) == 2
+
+
+def test_commit_rejects_missing_account_and_dsn_confirmation(
+    tmp_path: Path,
+    sqlite_dsn: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    plan_path = _write_plan(tmp_path, _plan(_hpairs_target()))
+
+    exit_code, payload = _run_cli(
+        [
+            "--plan-json",
+            str(plan_path),
+            "--max-notional",
+            "25",
+            "--commit",
+        ],
+        capsys,
+    )
+
+    assert exit_code == 2
+    assert (
+        "paper_route_materialization_commit_confirm_account_label_missing"
+        in payload["blockers"]
+    )
+    assert (
+        "paper_route_materialization_commit_confirm_dsn_env_missing"
+        in payload["blockers"]
+    )
+    assert (
+        "paper_route_materialization_operator_confirmation_missing"
+        in payload["blockers"]
+    )
+    assert _count_decisions(sqlite_dsn) == 0
+
+
+def test_rejects_live_account_labels(
+    tmp_path: Path,
+    sqlite_dsn: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    plan_path = _write_plan(
+        tmp_path, _plan(_hpairs_target(account_label="TORGHUT_LIVE"))
+    )
+
+    exit_code, payload = _run_cli(
+        [
+            "--plan-json",
+            str(plan_path),
+            "--account-label",
+            "TORGHUT_LIVE",
+            "--max-notional",
+            "25",
+        ],
+        capsys,
+    )
+
+    assert exit_code == 2
+    assert (
+        "paper_route_materialization_account_label_must_be_torghut_sim"
+        in payload["blockers"]
+    )
+    assert (
+        "paper_route_materialization_live_account_label_rejected" in payload["blockers"]
+    )
+    assert (
+        "paper_route_materialization_target_0_account_label_must_be_torghut_sim"
+        in payload["blockers"]
+    )
+    assert (
+        "paper_route_materialization_target_0_live_account_label_rejected"
+        in payload["blockers"]
+    )
+    assert _count_decisions(sqlite_dsn) == 0
+
+
+def test_rejects_unbounded_or_missing_target_identity(
+    tmp_path: Path,
+    sqlite_dsn: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    plan_path = _write_plan(
+        tmp_path,
+        _plan(
+            _hpairs_target(
+                candidate_id="",
+                source_plan_ref="",
+                source_manifest_ref="",
+                target_notional="0",
+            )
+        ),
+    )
+
+    exit_code, payload = _run_cli(["--plan-json", str(plan_path)], capsys)
+
+    assert exit_code == 2
+    assert (
+        "paper_route_materialization_bounded_max_notional_required"
+        in payload["blockers"]
+    )
+    assert (
+        "paper_route_materialization_target_0_candidate_id_missing"
+        in payload["blockers"]
+    )
+    assert (
+        "paper_route_materialization_target_0_target_plan_ref_missing"
+        in payload["blockers"]
+    )
+    assert (
+        "paper_route_materialization_target_0_target_notional_missing"
+        in payload["blockers"]
+    )
+    assert _count_decisions(sqlite_dsn) == 0
+
+
+def test_rejects_promotion_capital_and_final_authority_flags(
+    tmp_path: Path,
+    sqlite_dsn: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    plan_path = _write_plan(
+        tmp_path,
+        _plan(
+            _hpairs_target(capital_promotion_allowed=True, final_authority_ok=True),
+            promotion_allowed=True,
+        ),
+    )
+
+    exit_code, payload = _run_cli(
+        [
+            "--plan-json",
+            str(plan_path),
+            "--max-notional",
+            "25",
+            "--promotion-allowed",
+            "--final-promotion-allowed",
+            "--capital-promotion-allowed",
+        ],
+        capsys,
+    )
+
+    blockers = set(payload["blockers"])
+    assert exit_code == 2
+    assert (
+        "paper_route_materialization_request_promotion_allowed_must_be_false"
+        in blockers
+    )
+    assert (
+        "paper_route_materialization_request_final_promotion_allowed_must_be_false"
+        in blockers
+    )
+    assert (
+        "paper_route_materialization_request_capital_promotion_allowed_must_be_false"
+        in blockers
+    )
+    assert (
+        "paper_route_materialization_plan_promotion_allowed_must_be_false" in blockers
+    )
+    assert (
+        "paper_route_materialization_target_0_capital_promotion_allowed_must_be_false"
+        in blockers
+    )
+    assert (
+        "paper_route_materialization_target_0_final_authority_ok_must_be_false"
+        in blockers
+    )
+    assert _count_decisions(sqlite_dsn) == 0
+
+
+def test_cli_preserves_existing_paper_route_target_plan_materialization_semantics(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    in_memory_session: Session,
+    sqlite_dsn: str,
+) -> None:
+    plan = _plan(_hpairs_target())
+    direct = materialize_bounded_paper_route_target_plan(
+        in_memory_session,
+        plan,
+        generated_at=datetime(2026, 6, 1, 13, 35, tzinfo=timezone.utc),
+        bounded_notional_limit=Decimal("25"),
+    )
+    plan_path = _write_plan(tmp_path, plan)
+
+    exit_code, payload = _run_cli(_safe_commit_args(plan_path), capsys)
+
+    assert exit_code == 0
+    assert payload["materialization"]["schema_version"] == direct["schema_version"]
+    assert (
+        payload["materialization"]["source_decision_mode"]
+        == direct["source_decision_mode"]
+    )
+    assert (
+        payload["materialized_decision_count"] == direct["materialized_decision_count"]
+    )
+    assert payload["route_submission_count"] == direct["route_submission_count"]
+    assert payload["candidate_ids"] == ["c88421d619759b2cfaa6f4d0"]
+    assert payload["runtime_strategy_names"] == ["microbar-cross-sectional-pairs-v1"]
+    assert payload["target_plan_refs"] == ["paper-route-plan:c88421d619759b2cfaa6f4d0"]
+    assert payload["materialization"]["promotion_allowed"] is False
+    assert payload["materialization"]["final_promotion_allowed"] is False
+    assert payload["materialization"]["live_capital_routing_enabled"] is False
+
+
+def test_paper_route_target_plan_json_and_scalar_helpers_preserve_report_encoding_edges() -> (
+    None
+):
+    generated_at = datetime(2026, 6, 2, 12, 0, tzinfo=timezone.utc)
+
+    assert cli._json_default(Decimal("12.500")) == "12.500"
+    assert cli._json_default(generated_at) == generated_at.isoformat()
+    assert cli._json_default(Path("target-plan.json")) == "target-plan.json"
+    assert cli._safe_decimal("not-a-number") == Decimal("0")
+    assert cli._truthy(1) is True
+    assert cli._truthy(0) is False
+
+
+def test_paper_route_target_plan_target_summary_accepts_explicit_quantity_and_symbol_fallbacks() -> (
+    None
+):
+    target = _hpairs_target(
+        paper_route_probe_symbol_quantities={},
+        target_quantity="3",
+    )
+
+    summaries = cli._target_summaries(_plan(target))
+
+    assert summaries == [
+        {
+            "target_index": 0,
+            "hypothesis_id": "H-PAIRS-01",
+            "candidate_id": "c88421d619759b2cfaa6f4d0",
+            "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+            "strategy_name": "microbar-cross-sectional-pairs-v1",
+            "account_label": "TORGHUT_SIM",
+            "target_plan_ref": "paper-route-plan:c88421d619759b2cfaa6f4d0",
+            "source_manifest_ref": "config/trading/hypotheses/h-pairs-01.json",
+            "bounded_collection_stage": "paper",
+            "target_notional": "20",
+            "target_quantity": "3",
+            "symbols": ["AAPL", "AMZN"],
+            "symbol_actions": {"AAPL": "buy", "AMZN": "sell"},
+            "symbol_quantities": {"AAPL": "3", "AMZN": "3"},
+        }
+    ]
+
+
+def test_paper_route_target_plan_invalid_payload_reports_load_blockers(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    plan_path = tmp_path / "invalid-plan.json"
+    plan_path.write_text("[]", encoding="utf-8")
+
+    exit_code, payload = _run_cli(
+        ["--plan-json", str(plan_path), "--max-notional", "25"],
+        capsys,
+    )
+
+    assert exit_code == 2
+    blockers = set(payload["blockers"])
+    assert (
+        "paper_route_materialization_plan_load_failed:paper_route_target_plan_json_must_be_object"
+        in blockers
+    )
+    assert "paper_route_materialization_target_plan_targets_missing" in blockers
+
+
+def test_paper_route_target_plan_missing_dsn_live_capital_mode_and_empty_plan_are_blockers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.delenv("DB_DSN", raising=False)
+    plan_path = _write_plan(tmp_path, _plan())
+
+    exit_code, payload = _run_cli(
+        [
+            "--plan-json",
+            str(plan_path),
+            "--max-notional",
+            "25",
+            "--capital-mode",
+            "live",
+        ],
+        capsys,
+    )
+
+    assert exit_code == 2
+    blockers = set(payload["blockers"])
+    assert "paper_route_materialization_database_dsn_env_missing" in blockers
+    assert "paper_route_materialization_non_live_capital_mode_required" in blockers
+    assert "paper_route_materialization_target_plan_targets_missing" in blockers
+
+
+def test_paper_route_target_plan_rejects_exceeded_notional_missing_quantity_and_missing_actions(
+    tmp_path: Path,
+    sqlite_dsn: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    plan_path = _write_plan(
+        tmp_path,
+        _plan(
+            _hpairs_target(
+                paper_route_probe_symbol_actions={},
+                paper_route_probe_symbol_quantities={},
+                target_quantity="",
+                target_notional="50",
+            )
+        ),
+    )
+
+    exit_code, payload = _run_cli(
+        ["--plan-json", str(plan_path), "--max-notional", "25"],
+        capsys,
+    )
+
+    assert exit_code == 2
+    blockers = set(payload["blockers"])
+    assert (
+        "paper_route_materialization_target_0_target_notional_exceeds_max" in blockers
+    )
+    assert "paper_route_materialization_target_0_target_quantity_missing" in blockers
+    assert "paper_route_materialization_target_0_symbol_actions_missing" in blockers
+    assert _count_decisions(sqlite_dsn) == 0
+
+
+def test_paper_route_target_plan_writes_json_output_file_for_safe_dry_run(
+    tmp_path: Path,
+    sqlite_dsn: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    plan_path = _write_plan(tmp_path, _plan(_hpairs_target()))
+    output_path = tmp_path / "reports" / "materialization.json"
+
+    exit_code, payload = _run_cli(
+        [
+            "--plan-json",
+            str(plan_path),
+            "--max-notional",
+            "25",
+            "--output",
+            str(output_path),
+        ],
+        capsys,
+    )
+
+    written = json.loads(output_path.read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert written["schema_version"] == cli.SCHEMA_VERSION
+    assert written["dry_run"] is True
+    assert written == payload
+    assert _count_decisions(sqlite_dsn) == 0
+
+
+def test_paper_route_target_plan_url_load_failure_is_reported_without_materialization(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    exit_code, payload = _run_cli(
+        [
+            "--plan-url",
+            "file:///tmp/target-plan.json",
+            "--max-notional",
+            "25",
+        ],
+        capsys,
+    )
+
+    assert exit_code == 2
+    assert (
+        "paper_route_materialization_plan_load_failed:paper_route_target_plan_invalid_scheme:file"
+        in payload["blockers"]
+    )
+    assert payload["plan_source"] == {"kind": "unavailable"}
+
+
+def test_paper_route_target_plan_database_open_failure_is_reported(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    plan_path = _write_plan(tmp_path, _plan(_hpairs_target()))
+    monkeypatch.setenv(
+        "DB_DSN",
+        f"sqlite+pysqlite:///{tmp_path / 'missing' / 'torghut.sqlite3'}",
+    )
+
+    exit_code, payload = _run_cli(
+        ["--plan-json", str(plan_path), "--max-notional", "25"],
+        capsys,
+    )
+
+    assert exit_code == 2
+    assert any(
+        blocker.startswith("paper_route_materialization_database_failed:")
+        for blocker in payload["blockers"]
+    )

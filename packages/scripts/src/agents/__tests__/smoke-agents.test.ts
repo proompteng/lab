@@ -607,6 +607,12 @@ describe('synthesis autonomous trader provider', () => {
     const template = readYamlObjects(
       'argocd/applications/synthesis/agents-domain/autonomous-trader-agentrun-template.yaml',
     ).find((manifest) => objectAt(manifest, 'kind') === 'AgentRun')
+    const greenSchedule = readYamlObjects(
+      'argocd/applications/synthesis/agents-domain/autonomous-trader-green-schedule.yaml',
+    ).find((manifest) => objectAt(manifest, 'kind') === 'Schedule')
+    const greenTemplate = readYamlObjects(
+      'argocd/applications/synthesis/agents-domain/autonomous-trader-green-agentrun-template.yaml',
+    ).find((manifest) => objectAt(manifest, 'kind') === 'AgentRun')
     const agent = readYamlObjects('argocd/applications/synthesis/agents-domain/autonomous-trader-agent.yaml').find(
       (manifest) => objectAt(manifest, 'kind') === 'Agent',
     )
@@ -621,7 +627,15 @@ describe('synthesis autonomous trader provider', () => {
     const scheduleSpec = objectAt(schedule, 'spec')
     const templateSpec = objectAt(template, 'spec')
     const parameters = objectAt(templateSpec, 'parameters')
+    const greenScheduleSpec = objectAt(greenSchedule, 'spec')
+    const greenTemplateSpec = objectAt(greenTemplate, 'spec')
+    const greenParameters = objectAt(greenTemplateSpec, 'parameters')
     const annotations = objectAt(objectAt(schedule, 'metadata'), 'annotations')
+    const labels = objectAt(objectAt(schedule, 'metadata'), 'labels')
+    const templateAnnotations = objectAt(objectAt(template, 'metadata'), 'annotations')
+    const greenScheduleAnnotations = objectAt(objectAt(greenSchedule, 'metadata'), 'annotations')
+    const greenScheduleLabels = objectAt(objectAt(greenSchedule, 'metadata'), 'labels')
+    const greenTemplateAnnotations = objectAt(objectAt(greenTemplate, 'metadata'), 'annotations')
     const overallTimeoutSeconds = Number(objectAt(envTemplate, 'CODEX_MARKET_CONTEXT_OVERALL_TIMEOUT_SECONDS'))
     const systemPromptRef = objectAt(objectAt(objectAt(agent, 'spec'), 'defaults'), 'systemPromptRef')
     const implText = String(objectAt(objectAt(implSpec, 'spec'), 'text') ?? '')
@@ -632,6 +646,8 @@ describe('synthesis autonomous trader provider', () => {
     expect(resources).not.toContain('autonomous-trader-alpaca-mcp-sealedsecret.yaml')
     expect(resources).toContain('autonomous-trader-schedule.yaml')
     expect(resources).toContain('autonomous-trader-agentrun-template.yaml')
+    expect(resources).toContain('autonomous-trader-green-schedule.yaml')
+    expect(resources).toContain('autonomous-trader-green-agentrun-template.yaml')
     expect(
       existsSync(
         resolve(process.cwd(), 'argocd/applications/synthesis/agents-domain/autonomous-trader-agentrun-template.yaml'),
@@ -648,6 +664,12 @@ describe('synthesis autonomous trader provider', () => {
     expect(objectAt(scheduleSpec, 'suspend')).toBe(false)
     expect(objectAt(scheduleSpec, 'timezone')).toBe('America/New_York')
     expect(objectAt(objectAt(scheduleSpec, 'targetRef'), 'name')).toBe('autonomous-trader-template')
+    expect(objectAt(annotations, 'autonomous-trader.proompteng.ai/deployment-color')).toBe('blue')
+    expect(objectAt(annotations, 'autonomous-trader.proompteng.ai/deployment-role')).toBe('active')
+    expect(objectAt(labels, 'autonomous-trader.proompteng.ai/deployment-color')).toBe('blue')
+    expect(objectAt(labels, 'autonomous-trader.proompteng.ai/deployment-role')).toBe('active')
+    expect(objectAt(templateAnnotations, 'autonomous-trader.proompteng.ai/deployment-color')).toBe('blue')
+    expect(objectAt(templateAnnotations, 'autonomous-trader.proompteng.ai/deployment-role')).toBe('active')
     expect(objectAt(annotations, 'proompteng.ai/account-isolation-mode')).toBeUndefined()
     expect(objectAt(annotations, 'proompteng.ai/suspension-reason')).toBeUndefined()
     expect(objectAt(parameters, 'mode')).toBe('market-open')
@@ -655,6 +677,21 @@ describe('synthesis autonomous trader provider', () => {
     expect(objectAt(parameters, 'brokerMutationEnabled')).toBe('true')
     expect(objectAt(parameters, 'accountType')).toBe('paper')
     expect(objectAt(parameters, 'targetEquityUsd')).toBe('500000')
+    expect(objectAt(greenScheduleSpec, 'cron')).toBe('15 9 * * 1-5')
+    expect(objectAt(greenScheduleSpec, 'suspend')).toBe(true)
+    expect(objectAt(greenScheduleSpec, 'timezone')).toBe('America/New_York')
+    expect(objectAt(objectAt(greenScheduleSpec, 'targetRef'), 'name')).toBe('autonomous-trader-template-green')
+    expect(objectAt(greenScheduleAnnotations, 'autonomous-trader.proompteng.ai/deployment-color')).toBe('green')
+    expect(objectAt(greenScheduleAnnotations, 'autonomous-trader.proompteng.ai/deployment-role')).toBe('preview')
+    expect(objectAt(greenScheduleLabels, 'autonomous-trader.proompteng.ai/deployment-color')).toBe('green')
+    expect(objectAt(greenScheduleLabels, 'autonomous-trader.proompteng.ai/deployment-role')).toBe('preview')
+    expect(objectAt(greenTemplateAnnotations, 'autonomous-trader.proompteng.ai/deployment-color')).toBe('green')
+    expect(objectAt(greenTemplateAnnotations, 'autonomous-trader.proompteng.ai/deployment-role')).toBe('preview')
+    expect(objectAt(greenParameters, 'mode')).toBe('market-open')
+    expect(objectAt(greenParameters, 'synthesisSessionMode')).toBe('market_open')
+    expect(objectAt(greenParameters, 'brokerMutationEnabled')).toBe('true')
+    expect(objectAt(greenParameters, 'accountType')).toBe('paper')
+    expect(objectAt(greenParameters, 'targetEquityUsd')).toBe('500000')
     expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_MODE')).toBe('{{parameters.mode}}')
     expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_SYNTHESIS_SESSION_MODE')).toBe(
       '{{parameters.synthesisSessionMode}}',
