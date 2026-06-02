@@ -8,7 +8,7 @@ import json
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import ROUND_CEILING, Decimal
 from typing import Any, Optional, cast
 
 from sqlalchemy import func, or_, select
@@ -38,6 +38,11 @@ ADAPTIVE_EXECUTION_SLOWDOWN = Decimal("1.40")
 ADAPTIVE_EXECUTION_SPEEDUP = Decimal("0.85")
 EXECUTION_TCA_COST_LINEAGE_SCHEMA_VERSION = "torghut.execution-tca-cost-lineage.v1"
 POST_COST_PNL_BASIS = "realized_strategy_pnl_after_explicit_costs"
+_CENT = Decimal("0.01")
+_ALPACA_2026_EQUITY_SEC_FEE_RATE = Decimal("20.60") / Decimal("1000000")
+_ALPACA_2026_EQUITY_TAF_RATE_PER_SHARE = Decimal("0.000195")
+_ALPACA_2026_EQUITY_TAF_CAP = Decimal("9.79")
+_ALPACA_2026_FEE_SCHEDULE_REVISED_ON = "2026-04-01"
 
 _EXPLICIT_COST_AMOUNT_KEYS = (
     "cost_amount",
@@ -302,7 +307,12 @@ def _repair_execution_tca_cost_lineage(
     else:
         blockers.append("filled_notional_missing")
 
-    cost_amount, cost_basis, cost_source_field = _resolve_explicit_cost(source_payloads)
+    cost_amount, cost_basis, cost_source_field = _resolve_explicit_cost(
+        source_payloads,
+        execution=execution,
+        filled_qty=filled_qty,
+        filled_notional=filled_notional,
+    )
     if cost_amount is None:
         blockers.append("explicit_cost_missing")
     elif cost_basis is None:
@@ -315,6 +325,17 @@ def _repair_execution_tca_cost_lineage(
         hash_keys=_EXECUTION_POLICY_HASH_KEYS,
         payload_keys=_EXECUTION_POLICY_PAYLOAD_KEYS,
     )
+    if len(execution_policy_hashes) == 0:
+        decision_policy_hash = _decision_execution_policy_hash(
+            decision=decision,
+            decision_payload=decision_payload,
+            execution=execution,
+        )
+        if decision_policy_hash is not None:
+            execution_policy_hashes.add(decision_policy_hash)
+            source_fields["execution_policy_hash"] = (
+                "trade_decisions.decision_json+executions.order_fields"
+            )
     if len(execution_policy_hashes) == 0:
         blockers.append("execution_policy_hash_missing")
     elif len(execution_policy_hashes) > 1:
@@ -330,6 +351,8 @@ def _repair_execution_tca_cost_lineage(
         hash_keys=_COST_MODEL_HASH_KEYS,
         payload_keys=_COST_MODEL_PAYLOAD_KEYS,
     )
+    if len(cost_model_hashes) == 0 and _cost_basis_is_alpaca_fee_schedule(cost_basis):
+        cost_model_hashes.add(_alpaca_2026_equity_fee_schedule_hash())
     if (
         len(cost_model_hashes) == 0
         and cost_amount is not None
@@ -432,6 +455,10 @@ def _lineage_source_payloads(
 
 def _resolve_explicit_cost(
     payloads: Collection[Mapping[str, object]],
+    *,
+    execution: Execution,
+    filled_qty: Decimal,
+    filled_notional: Decimal | None,
 ) -> tuple[Decimal | None, str | None, str | None]:
     missing_basis_candidate: tuple[Decimal, str] | None = None
     for payload in payloads:
@@ -449,6 +476,16 @@ def _resolve_explicit_cost(
     if missing_basis_candidate is not None:
         amount, key = missing_basis_candidate
         return amount, None, key
+    if filled_notional is not None:
+        fee_schedule_cost = _alpaca_2026_equity_fee_schedule_cost(
+            payloads,
+            execution=execution,
+            filled_qty=filled_qty,
+            filled_notional=filled_notional,
+        )
+        if fee_schedule_cost is not None:
+            amount, basis = fee_schedule_cost
+            return amount, basis, "alpaca_2026_equity_fee_schedule"
     return None, None, None
 
 
@@ -465,6 +502,137 @@ def _default_cost_basis_for_field(key: str) -> str | None:
     }:
         return "broker_reported_fees"
     return None
+
+
+def _alpaca_2026_equity_fee_schedule_cost(
+    payloads: Collection[Mapping[str, object]],
+    *,
+    execution: Execution,
+    filled_qty: Decimal,
+    filled_notional: Decimal,
+) -> tuple[Decimal, str] | None:
+    if filled_qty <= 0 or filled_notional <= 0:
+        return None
+    if not _has_alpaca_us_equity_source(payloads, execution=execution):
+        return None
+    normalized_side = str(execution.side or "").strip().lower().replace("-", "_")
+    if normalized_side in {"buy", "buy_to_cover", "cover"}:
+        return Decimal("0"), "alpaca_2026_equity_zero_commission_and_cat_fee_schedule"
+    if normalized_side not in {"sell", "sell_short", "short"}:
+        return None
+    sec_fee = _decimal_ceil_cent(filled_notional * _ALPACA_2026_EQUITY_SEC_FEE_RATE)
+    taf_fee = min(
+        _decimal_ceil_cent(filled_qty * _ALPACA_2026_EQUITY_TAF_RATE_PER_SHARE),
+        _ALPACA_2026_EQUITY_TAF_CAP,
+    )
+    return sec_fee + taf_fee, "alpaca_2026_equity_sec_taf_cat_fee_schedule"
+
+
+def _has_alpaca_us_equity_source(
+    payloads: Collection[Mapping[str, object]], *, execution: Execution
+) -> bool:
+    source_markers = {
+        str(item or "").strip().lower()
+        for item in (
+            execution.execution_expected_adapter,
+            execution.execution_actual_adapter,
+            execution.alpaca_account_label,
+        )
+        if str(item or "").strip()
+    }
+    asset_classes: set[str] = set()
+    for payload in payloads:
+        for key in (
+            "feed",
+            "source_topic",
+            "channel",
+            "submit_path",
+            "source",
+            "adapter",
+            "execution_adapter",
+            "_execution_adapter",
+        ):
+            text = str(payload.get(key) or "").strip().lower()
+            if text:
+                source_markers.add(text)
+        asset_class = (
+            str(payload.get("asset_class") or "").strip().lower().replace("-", "_")
+        )
+        if asset_class:
+            asset_classes.add(asset_class)
+    if not any(
+        "alpaca" in marker or marker == "trade_updates" for marker in source_markers
+    ):
+        return False
+    return any(
+        item in {"us_equity", "us_equities", "equity", "equities"}
+        for item in asset_classes
+    )
+
+
+def _decimal_ceil_cent(value: Decimal) -> Decimal:
+    if value <= 0:
+        return Decimal("0")
+    return value.quantize(_CENT, rounding=ROUND_CEILING)
+
+
+def _alpaca_2026_equity_fee_schedule_hash() -> str:
+    return _stable_payload_digest(
+        {
+            "broker": "alpaca",
+            "asset_class": "us_equity",
+            "schedule": "alpaca_brokerage_fee_schedule",
+            "revised_on": _ALPACA_2026_FEE_SCHEDULE_REVISED_ON,
+            "sec_fee_rate_per_notional": str(_ALPACA_2026_EQUITY_SEC_FEE_RATE),
+            "taf_rate_per_share": str(_ALPACA_2026_EQUITY_TAF_RATE_PER_SHARE),
+            "taf_cap": str(_ALPACA_2026_EQUITY_TAF_CAP),
+            "cat_fee_equities": "0",
+            "commission": "0",
+        }
+    )
+
+
+def _cost_basis_is_alpaca_fee_schedule(value: object) -> bool:
+    return str(value or "").strip().startswith("alpaca_2026_equity_")
+
+
+def _decision_execution_policy_hash(
+    *,
+    decision: TradeDecision | None,
+    decision_payload: Mapping[str, object],
+    execution: Execution,
+) -> str | None:
+    if decision is None:
+        return None
+    action = (
+        _text_from_payload(decision_payload, "action")
+        or str(execution.side or "").strip()
+    )
+    order_type = (
+        _text_from_payload(decision_payload, "order_type")
+        or str(execution.order_type or "").strip()
+    )
+    time_in_force = (
+        _text_from_payload(decision_payload, "time_in_force")
+        or str(execution.time_in_force or "").strip()
+    )
+    if not action or not order_type or not time_in_force:
+        return None
+    policy_payload = {
+        "source": "trade_decision_execution_policy",
+        "decision_hash": decision.decision_hash,
+        "strategy_id": str(decision.strategy_id) if decision.strategy_id else None,
+        "symbol": decision.symbol or execution.symbol,
+        "action": action,
+        "order_type": order_type,
+        "time_in_force": time_in_force,
+        "limit_price": _text_from_payload(decision_payload, "limit_price"),
+        "stop_price": _text_from_payload(decision_payload, "stop_price"),
+        "submission_stage": _text_from_payload(decision_payload, "submission_stage"),
+    }
+    return _stable_payload_digest(
+        {key: value for key, value in policy_payload.items() if value is not None}
+    )
 
 
 def _hash_candidates(
