@@ -3692,16 +3692,28 @@ def _profitability_next_epoch_plan(
     real_replay_shard_size = _int_arg(args, "real_replay_shard_size", 0)
     if real_replay_shard_size > 0:
         flags["--real-replay-shard-size"] = str(real_replay_shard_size)
-    real_replay_shard_timeout_seconds = _int_arg(
+    requested_real_replay_shard_timeout_seconds = _int_arg(
         args,
         "real_replay_shard_timeout_seconds",
         _DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS,
+    )
+    real_replay_shard_timeout_seconds = _bounded_real_replay_shard_timeout_seconds(
+        requested_real_replay_shard_timeout_seconds
     )
     if real_replay_shard_timeout_seconds > 0:
         flags["--real-replay-shard-timeout-seconds"] = str(
             real_replay_shard_timeout_seconds
         )
     capped_runtime_flags: list[dict[str, str]] = []
+    if requested_real_replay_shard_timeout_seconds != real_replay_shard_timeout_seconds:
+        capped_runtime_flags.append(
+            {
+                "flag": "--real-replay-shard-timeout-seconds",
+                "requested_value": str(requested_real_replay_shard_timeout_seconds),
+                "capped_value": str(real_replay_shard_timeout_seconds),
+                "reason": "capped_to_local_shard_timeout_no_cluster_fanout",
+            }
+        )
     requested_real_replay_shard_workers = _int_arg(
         args, "real_replay_shard_workers", _DEFAULT_REAL_REPLAY_SHARD_WORKERS
     )
@@ -3790,6 +3802,40 @@ def _profitability_next_epoch_plan(
                                 "current_value": str(current_value or ""),
                                 "recommended_value": _string(value),
                                 "reason": "rejected_broad_replay_worker_fanout",
+                            }
+                        )
+                        continue
+                    if key == "--real-replay-shard-timeout-seconds":
+                        if recommended_int is None:
+                            rejected_recommended_flags.append(
+                                {
+                                    "action": action_name,
+                                    "flag": key,
+                                    "current_value": str(current_value or ""),
+                                    "recommended_value": _string(value),
+                                    "reason": "rejected_invalid_numeric_remediation_flag",
+                                }
+                            )
+                            continue
+                        capped_timeout = _bounded_real_replay_shard_timeout_seconds(
+                            recommended_int
+                        )
+                        if capped_timeout != recommended_int:
+                            capped_runtime_flags.append(
+                                {
+                                    "action": action_name,
+                                    "flag": key,
+                                    "requested_value": str(recommended_int),
+                                    "capped_value": str(capped_timeout),
+                                    "reason": "capped_to_local_shard_timeout_no_cluster_fanout",
+                                }
+                            )
+                        flags[key] = str(capped_timeout)
+                        applied_recommended_flags.append(
+                            {
+                                "action": action_name,
+                                "flag": key,
+                                "value": str(capped_timeout),
                             }
                         )
                         continue
@@ -7660,16 +7706,12 @@ def _run_replay_with_optional_timeout(
 
     shard_size = max(0, int(getattr(args, "real_replay_shard_size", 0) or 0))
     if shard_size > 0 and len(specs) > shard_size:
-        shard_timeout_seconds = max(
-            0,
-            int(
-                getattr(
-                    args,
-                    "real_replay_shard_timeout_seconds",
-                    _DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS,
-                )
-                or 0
-            ),
+        shard_timeout_seconds = _bounded_real_replay_shard_timeout_seconds(
+            getattr(
+                args,
+                "real_replay_shard_timeout_seconds",
+                _DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS,
+            )
         )
         return _run_real_replay_shards(
             args=args,
@@ -7806,6 +7848,9 @@ def _build_real_replay_shards(
 ) -> tuple[_ReplayShardPlan, ...]:
     ordered_specs = list(specs)
     bounded_shard_size = max(1, int(shard_size))
+    bounded_shard_timeout_seconds = _bounded_real_replay_shard_timeout_seconds(
+        shard_timeout_seconds
+    )
     max_frontier_candidates_per_spec = max(
         1,
         int(
@@ -7857,7 +7902,7 @@ def _build_real_replay_shards(
                 / "strategy-factory-shards"
                 / f"shard-{shard_index:03d}",
                 specs=shard_specs,
-                timeout_seconds=shard_timeout_seconds,
+                timeout_seconds=bounded_shard_timeout_seconds,
             )
         )
     return tuple(plans)
@@ -8086,6 +8131,7 @@ def _bounded_real_replay_shard_workers(
         1,
         min(
             len(plans) or 1,
+            _DEFAULT_REAL_REPLAY_SHARD_WORKERS,
             int(
                 getattr(
                     args,
@@ -8118,6 +8164,16 @@ def _bounded_real_replay_shard_workers(
     return max(1, min(requested_workers, budget_capped_workers))
 
 
+def _bounded_real_replay_shard_timeout_seconds(raw_timeout_seconds: object) -> int:
+    requested_timeout_seconds = max(
+        0,
+        int(raw_timeout_seconds or _DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS),
+    )
+    if requested_timeout_seconds <= 0:
+        return _DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS
+    return min(requested_timeout_seconds, _DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS)
+
+
 def _run_real_replay_shards(
     *,
     args: argparse.Namespace,
@@ -8129,12 +8185,15 @@ def _run_real_replay_shards(
     evidence_bundles: list[CandidateEvidenceBundle] = []
     replay_results: list[Mapping[str, Any]] = []
     shard_failures: list[dict[str, Any]] = []
+    bounded_shard_timeout_seconds = _bounded_real_replay_shard_timeout_seconds(
+        shard_timeout_seconds
+    )
     plans = _build_real_replay_shards(
         args=args,
         output_dir=output_dir,
         specs=specs,
         shard_size=shard_size,
-        shard_timeout_seconds=shard_timeout_seconds,
+        shard_timeout_seconds=bounded_shard_timeout_seconds,
     )
     bounded_shard_size = max(1, int(shard_size))
     shard_workers = _bounded_real_replay_shard_workers(
@@ -8171,7 +8230,7 @@ def _run_real_replay_shards(
             output_dir=output_dir,
             specs=specs,
             shard_failures=shard_failures,
-            shard_timeout_seconds=shard_timeout_seconds,
+            shard_timeout_seconds=bounded_shard_timeout_seconds,
             starting_shard_index=len(plans),
         )
         if retry_evidence:
@@ -8190,7 +8249,7 @@ def _run_real_replay_shards(
                 "schema_version": "torghut.whitepaper-autoresearch-shards.v1",
                 "shard_size": bounded_shard_size,
                 "shard_workers": shard_workers,
-                "shard_timeout_seconds": shard_timeout_seconds,
+                "shard_timeout_seconds": bounded_shard_timeout_seconds,
                 "selected_candidate_spec_count": len(specs),
                 "evidence_bundle_count": len(deduped_evidence),
                 "failures": shard_failures,
@@ -12454,12 +12513,13 @@ def run_whitepaper_autoresearch_profit_target(
                 getattr(args, "real_replay_shard_size", 0) or 0
             ),
             "real_replay_shard_timeout_seconds": int(
-                getattr(
-                    args,
-                    "real_replay_shard_timeout_seconds",
-                    _DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS,
+                _bounded_real_replay_shard_timeout_seconds(
+                    getattr(
+                        args,
+                        "real_replay_shard_timeout_seconds",
+                        _DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS,
+                    )
                 )
-                or _DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS
             ),
             "real_replay_shard_workers": int(
                 getattr(
