@@ -490,12 +490,14 @@ const toolsListResult = {
     },
     {
       name: 'autotrader_record_fill',
-      description: 'Record or reconcile an Alpaca fill by broker fill id.',
+      description:
+        'Record or reconcile an Alpaca fill by broker fill id, resolving the stored order by broker order id.',
       inputSchema: {
         type: 'object',
         properties: {
           sessionId: { type: 'string' },
           clientOrderId: { type: 'string', maxLength: 128 },
+          brokerOrderId: { type: 'string', maxLength: 240 },
           brokerFillId: { type: 'string' },
           symbol: { type: 'string' },
           side: sideSchema,

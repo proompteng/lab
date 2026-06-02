@@ -76,6 +76,27 @@ const brokerReplacesOrderId = (payload: Record<string, unknown>) => {
   const replaces = payload.replaces
   return typeof replaces === 'string' && replaces.trim() ? replaces.trim() : null
 }
+const textFromPayload = (payload: Record<string, unknown>, keys: string[]) => {
+  for (const key of keys) {
+    const value = payload[key]
+    if (typeof value !== 'string' && typeof value !== 'number') continue
+    const normalized = String(value).trim()
+    if (normalized) return normalized
+  }
+  return null
+}
+const brokerOrderIdFromFill = (input: AutotraderRecordFillInput) => {
+  const explicit = input.brokerOrderId?.trim()
+  if (explicit) return explicit
+  const direct = textFromPayload(input.brokerPayload, ['brokerOrderId', 'broker_order_id', 'orderId', 'order_id'])
+  if (direct) return direct
+  const alpacaOrderId = textFromPayload(input.brokerPayload, ['id'])
+  const payloadLooksLikeOrder =
+    textFromPayload(input.brokerPayload, ['client_order_id', 'clientOrderId']) ||
+    textFromPayload(input.brokerPayload, ['order_class', 'orderClass']) ||
+    textFromPayload(input.brokerPayload, ['submitted_at', 'submittedAt'])
+  return alpacaOrderId && payloadLooksLikeOrder ? alpacaOrderId : null
+}
 const numericFromPayload = (payload: Record<string, unknown>, keys: string[]) => {
   for (const key of keys) {
     const value = payload[key]
@@ -478,9 +499,17 @@ class InMemoryAutotraderStore implements AutotraderStore {
 
   async recordFill(input: AutotraderRecordFillInput): Promise<AutotraderFill> {
     this.requireSession(input.sessionId)
+    const brokerOrderId = brokerOrderIdFromFill(input)
+    const existingClientOrder = this.orders.get(input.clientOrderId)
+    const resolvedClientOrderId =
+      existingClientOrder?.sessionId === input.sessionId
+        ? input.clientOrderId
+        : ([...this.orders.values()].find(
+            (order) => order.sessionId === input.sessionId && order.brokerOrderId === brokerOrderId,
+          )?.clientOrderId ?? input.clientOrderId)
     const fill: AutotraderFill = {
       sessionId: input.sessionId,
-      clientOrderId: input.clientOrderId,
+      clientOrderId: resolvedClientOrderId,
       brokerFillId: input.brokerFillId,
       symbol: normalizedSymbol(input.symbol) ?? input.symbol,
       side: input.side,
@@ -1278,6 +1307,26 @@ class PostgresAutotraderStore implements AutotraderStore {
 
   async recordFill(input: AutotraderRecordFillInput): Promise<AutotraderFill> {
     await this.ensureSchema()
+    const brokerOrderId = brokerOrderIdFromFill(input)
+    let clientOrderId = input.clientOrderId
+    if (brokerOrderId) {
+      const orderResult = await this.pool.query<{ client_order_id: string }>(
+        `SELECT client_order_id
+         FROM (
+           SELECT client_order_id, 0 AS rank
+           FROM autotrader.orders
+           WHERE session_id = $1 AND client_order_id = $2
+           UNION ALL
+           SELECT client_order_id, 1 AS rank
+           FROM autotrader.orders
+           WHERE session_id = $1 AND broker_order_id = $3
+         ) candidates
+         ORDER BY rank
+         LIMIT 1`,
+        [input.sessionId, input.clientOrderId, brokerOrderId],
+      )
+      clientOrderId = orderResult.rows[0]?.client_order_id ?? clientOrderId
+    }
     const result = await this.pool.query<FillRow>(
       `INSERT INTO autotrader.fills (
         session_id, client_order_id, broker_fill_id, symbol, side, quantity, price, filled_at, broker_payload
@@ -1295,7 +1344,7 @@ class PostgresAutotraderStore implements AutotraderStore {
       RETURNING *`,
       [
         input.sessionId,
-        input.clientOrderId,
+        clientOrderId,
         input.brokerFillId,
         normalizedSymbol(input.symbol) ?? input.symbol,
         input.side,
