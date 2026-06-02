@@ -28,7 +28,7 @@ def _base_inputs() -> dict[str, Any]:
         "tca_summary": {"order_count": 72, "filled_execution_count": 72, "last_computed_at": NOW.isoformat(), "latest_execution_created_at": NOW.isoformat(), "avg_abs_slippage_bps": "4.5", "expected_shortfall_sample_count": 80},
         "empirical_jobs_status": {"ready": True, "status": "ready", "updated_at": NOW.isoformat(), "authority": "empirical-jobs:ready"},
         "proof_floor_receipt": {"schema_version": "torghut.profitability-proof-floor.v1", "route_state": "paper_candidate", "capital_state": "paper_allowed", "max_notional": "25", "generated_at": NOW.isoformat()},
-        "routeability_repair_acceptance_ledger": {"ledger_id": "routeability:accepted", "aggregate_state": "accepted", "accepted_routeable_candidate_count": 1, "aggregate_blocking_reason_codes": [], "generated_at": NOW.isoformat()},
+        "routeability_repair_acceptance_ledger": {"ledger_id": "routeability:accepted", "account": "PA3SX7FYNUTF", "window": "15m", "trading_mode": "live", "aggregate_state": "accepted", "accepted_routeable_candidate_count": 1, "aggregate_blocking_reason_codes": [], "promotion_authority": False, "generated_at": NOW.isoformat()},
         "profit_signal_quorum": {"quorum_set_id": "profit-quorum:ready", "aggregate_decision": "paper_candidate", "aggregate_reason_codes": [], "generated_at": NOW.isoformat(), "quorums": [{"quorum_id": "quorum:H-MICRO-01", "hypothesis_id": "H-MICRO-01", "candidate_id": "candidate-micro", "strategy_id": "strategy-micro", "decision": "paper_candidate"}]},
         "profit_freshness_frontier": {"frontier_id": "profit-freshness-frontier:ready", "frontier_state": "ready", "summary": {"ranked_daily_net_pnl_repair_count": 0, "selected_expected_daily_net_pnl_unlock": None}},
         "live_submission_gate": {"allowed": True, "reason": "ready", "blocked_reasons": []},
@@ -238,3 +238,37 @@ def test_repair_packets_are_zero_notional_and_single_receipt() -> None:
             "fill_tca_or_slippage_quality",
             "capital_gate_safety",
         }
+
+
+def test_routeability_acceptance_account_mismatch_blocks_warrant_candidate() -> None:
+    warrant = _build(
+        routeability_repair_acceptance_ledger={
+            **_base_inputs()["routeability_repair_acceptance_ledger"],
+            "account": "TORGHUT_SIM",
+        }
+    )
+
+    assert warrant["warrant_state"] == "repair_only"
+    assert warrant["accepted_routeable_candidate_count"] == 0
+    packet = _packet_for(warrant, "routeability")
+    assert "routeability_acceptance_account_mismatch" in packet["reason_codes"]
+    assert packet["promotion_authority"] is False
+    assert warrant["promotion_authority"] is False
+
+
+def test_routeability_acceptance_promotion_authority_blocks_warrant_candidate() -> None:
+    warrant = _build(
+        routeability_repair_acceptance_ledger={
+            **_base_inputs()["routeability_repair_acceptance_ledger"],
+            "promotion_authority": True,
+        }
+    )
+
+    assert warrant["warrant_state"] == "repair_only"
+    assert warrant["accepted_routeable_candidate_count"] == 0
+    packet = _packet_for(warrant, "routeability")
+    assert (
+        "routeability_acceptance_promotion_authority_must_be_false"
+        in packet["reason_codes"]
+    )
+    assert warrant["max_notional"] == "0"

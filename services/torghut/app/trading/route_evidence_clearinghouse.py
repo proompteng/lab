@@ -429,13 +429,112 @@ def _capital_book(
     )
 
 
-def _routeability_reasons(ledger: Mapping[str, Any]) -> list[str]:
+def _lineage_values(
+    source: Mapping[str, Any], *keys: str, uppercase: bool = False
+) -> list[str]:
+    values: list[str] = []
+    for key in keys:
+        raw = source.get(key)
+        if isinstance(raw, Sequence) and not isinstance(raw, (str, bytes, bytearray)):
+            values.extend(_text(item) for item in cast(Sequence[object], raw))
+        elif raw is not None:
+            values.append(_text(raw))
+    if uppercase:
+        return _unique([value.upper() for value in values])
+    return _unique(values)
+
+
+def _source_identity(ledger: Mapping[str, Any]) -> Mapping[str, Any]:
+    return _mapping(ledger.get("source_identity"))
+
+
+def _lineage_mismatch_reason(
+    *,
+    expected: Sequence[str],
+    observed: Sequence[str],
+    missing_reason: str,
+    mismatch_reason: str,
+) -> str | None:
+    expected_values = sorted({_text(item) for item in expected if _text(item)})
+    observed_values = sorted({_text(item) for item in observed if _text(item)})
+    if not expected_values:
+        return None
+    if not observed_values:
+        return missing_reason
+    return None if expected_values == observed_values else mismatch_reason
+
+
+def _routeability_reasons(
+    ledger: Mapping[str, Any],
+    *,
+    account_label: str,
+    session_id: str,
+    trading_mode: str,
+) -> list[str]:
     if not ledger:
         return ["routeability_acceptance_ledger_missing"]
     state = _text(ledger.get("aggregate_state"), "unknown").lower()
-    reasons = _strings(ledger.get("aggregate_blocking_reason_codes"))
+    identity = _source_identity(ledger)
+    reasons = [
+        *_strings(ledger.get("aggregate_blocking_reason_codes")),
+        *_strings(identity.get("blocking_reason_codes")),
+    ]
     if state != "accepted":
         reasons.append(f"routeability_acceptance_{state}")
+
+    ledger_account = _text(ledger.get("account") or identity.get("account"))
+    ledger_window = _text(ledger.get("window") or identity.get("window"))
+    ledger_mode = _text(ledger.get("trading_mode") or identity.get("trading_mode"))
+    if not ledger_account:
+        reasons.append("routeability_acceptance_account_missing")
+    elif ledger_account != account_label:
+        reasons.append("routeability_acceptance_account_mismatch")
+    if not ledger_window:
+        reasons.append("routeability_acceptance_window_missing")
+    elif ledger_window != session_id:
+        reasons.append("routeability_acceptance_window_mismatch")
+    if not ledger_mode:
+        reasons.append("routeability_acceptance_trading_mode_missing")
+    elif ledger_mode != trading_mode:
+        reasons.append("routeability_acceptance_trading_mode_mismatch")
+    if ledger.get("promotion_authority") is True:
+        reasons.append("routeability_acceptance_promotion_authority_must_be_false")
+
+    return _unique(reasons)
+
+
+def _routeability_claim_lineage_reasons(
+    ledger: Mapping[str, Any], claim: Mapping[str, Any]
+) -> list[str]:
+    if not ledger:
+        return []
+    identity = _source_identity(ledger)
+    reasons: list[str] = []
+    claim_candidate_ids = _unique(
+        [_text(claim.get("candidate_id"))] if _text(claim.get("candidate_id")) else []
+    )
+    ledger_candidate_ids = _lineage_values(
+        identity, "route_candidate_ids", "candidate_ids", "candidateIds"
+    )
+    if reason := _lineage_mismatch_reason(
+        expected=claim_candidate_ids,
+        observed=ledger_candidate_ids,
+        missing_reason="routeability_acceptance_candidate_lineage_missing",
+        mismatch_reason="routeability_acceptance_candidate_lineage_mismatch",
+    ):
+        reasons.append(reason)
+
+    claim_symbols = _claim_symbols(claim)
+    ledger_symbols = _lineage_values(
+        identity, "route_symbols", "symbols", uppercase=True
+    )
+    if reason := _lineage_mismatch_reason(
+        expected=claim_symbols,
+        observed=ledger_symbols,
+        missing_reason="routeability_acceptance_symbol_scope_missing",
+        mismatch_reason="routeability_acceptance_symbol_scope_mismatch",
+    ):
+        reasons.append(reason)
     return _unique(reasons)
 
 
@@ -545,6 +644,7 @@ def _route_claims(
     *,
     common_reasons: Sequence[str],
     source_reasons_by_claim: Sequence[Sequence[str]],
+    routeability_acceptance_ledger: Mapping[str, Any],
 ) -> list[dict[str, object]]:
     route_claims: list[dict[str, object]] = []
     for index, claim in enumerate(claims):
@@ -558,7 +658,11 @@ def _route_claims(
             if index < len(source_reasons_by_claim)
             else []
         )
-        reasons = [*_strings(claim.get("reason_codes")), *common_reasons]
+        reasons = [
+            *_strings(claim.get("reason_codes")),
+            *common_reasons,
+            *_routeability_claim_lineage_reasons(routeability_acceptance_ledger, claim),
+        ]
         if asset_class == "options":
             reasons.extend(claim_source_reasons)
         reason_codes = _unique(reasons)
@@ -665,7 +769,12 @@ def build_route_evidence_clearinghouse_packet(
             *cast(Sequence[str], rollout_book["reason_codes"]),
             *cast(Sequence[str], profit_window_book["reason_codes"]),
             *cast(Sequence[str], capital_book["reason_codes"]),
-            *_routeability_reasons(_mapping(routeability_acceptance_ledger)),
+            *_routeability_reasons(
+                _mapping(routeability_acceptance_ledger),
+                account_label=account_label,
+                session_id=session_id,
+                trading_mode=trading_mode,
+            ),
             *_profit_signal_reasons(profit_signal_quorum),
         ]
     )
@@ -673,6 +782,7 @@ def build_route_evidence_clearinghouse_packet(
         claim_inputs,
         common_reasons=common_reasons,
         source_reasons_by_claim=source_reasons_by_claim,
+        routeability_acceptance_ledger=_mapping(routeability_acceptance_ledger),
     )
     all_reasons = _unique(
         [

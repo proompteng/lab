@@ -143,7 +143,248 @@ def _hypothesis_ids(rows: Sequence[Mapping[str, Any]]) -> list[str]:
     ids: list[str] = []
     for row in rows:
         ids.extend(_strings(row.get("hypothesis_ids")))
+        source_metadata = _source_metadata(row)
+        ids.extend(
+            _identity_strings(source_metadata, "hypothesis_ids", "hypothesisIds")
+        )
+        if hypothesis_id := _text(
+            source_metadata.get("hypothesis_id") or source_metadata.get("hypothesisId")
+        ):
+            ids.append(hypothesis_id)
     return sorted(set(ids))
+
+
+def _source_metadata(row: Mapping[str, Any]) -> Mapping[str, Any]:
+    metadata = _mapping(row.get("source_metadata"))
+    if metadata:
+        return metadata
+    return _mapping(_mapping(row.get("audit_receipt")).get("source_metadata"))
+
+
+def _identity_strings(
+    source: Mapping[str, Any], *keys: str, uppercase: bool = False
+) -> list[str]:
+    values: list[str] = []
+    for key in keys:
+        raw = source.get(key)
+        if isinstance(raw, Sequence) and not isinstance(raw, (str, bytes, bytearray)):
+            values.extend(_text(item) for item in cast(Sequence[object], raw))
+        elif raw is not None:
+            values.append(_text(raw))
+    if uppercase:
+        return _unique([value.upper() for value in values])
+    return _unique(values)
+
+
+def _nested_identity(ref: Mapping[str, Any]) -> Mapping[str, Any]:
+    for key in ("source_identity", "route_identity", "identity", "source_ref"):
+        nested = _mapping(ref.get(key))
+        if nested:
+            return nested
+    return {}
+
+
+def _identity_field_values(
+    source: Mapping[str, Any], *keys: str, uppercase: bool = False
+) -> list[str]:
+    nested = _nested_identity(source)
+    return _unique(
+        [
+            *_identity_strings(source, *keys, uppercase=uppercase),
+            *_identity_strings(nested, *keys, uppercase=uppercase),
+        ]
+    )
+
+
+def _candidate_ids(rows: Sequence[Mapping[str, Any]]) -> list[str]:
+    ids: list[str] = []
+    for row in rows:
+        ids.extend(_identity_strings(row, "candidate_ids", "candidateIds"))
+        source_metadata = _source_metadata(row)
+        ids.extend(_identity_strings(source_metadata, "candidate_ids", "candidateIds"))
+        if candidate_id := _text(
+            source_metadata.get("candidate_id") or source_metadata.get("candidateId")
+        ):
+            ids.append(candidate_id)
+    return sorted(set(ids))
+
+
+def _source_manifest_refs(rows: Sequence[Mapping[str, Any]]) -> list[str]:
+    refs: list[str] = []
+    for row in rows:
+        source_metadata = _source_metadata(row)
+        if manifest_ref := _text(
+            row.get("source_manifest_ref")
+            or row.get("sourceManifestRef")
+            or source_metadata.get("source_manifest_ref")
+            or source_metadata.get("sourceManifestRef")
+        ):
+            refs.append(manifest_ref)
+    return sorted(set(refs))
+
+
+def _identity_mismatch_blockers(
+    *,
+    expected: Sequence[str],
+    observed: Sequence[str],
+    missing_reason: str,
+    mismatch_reason: str,
+) -> list[str]:
+    expected_values = sorted({_text(item) for item in expected if _text(item)})
+    observed_values = sorted({_text(item) for item in observed if _text(item)})
+    if not expected_values:
+        return []
+    if not observed_values:
+        return [missing_reason]
+    if expected_values != observed_values:
+        return [mismatch_reason]
+    return []
+
+
+def _source_identity_contract(
+    *,
+    account: str | None,
+    window: str | None,
+    trading_mode: str,
+    proof_floor_receipt: Mapping[str, Any],
+    route_reacquisition_board: Mapping[str, Any],
+    rows: Sequence[Mapping[str, Any]],
+    torghut_routeability_admission_ref: Mapping[str, Any],
+) -> dict[str, object]:
+    nested_admission = _nested_identity(torghut_routeability_admission_ref)
+    route_account = _text(route_reacquisition_board.get("account_label")) or account
+    proof_account = _text(proof_floor_receipt.get("account_label")) or account
+    admission_account = _text(
+        torghut_routeability_admission_ref.get("account_label")
+        or torghut_routeability_admission_ref.get("account")
+        or torghut_routeability_admission_ref.get("account_id")
+        or nested_admission.get("account_label")
+        or nested_admission.get("account")
+        or nested_admission.get("account_id")
+    )
+    route_symbols = _symbols(rows)
+    route_hypothesis_ids = _hypothesis_ids(rows)
+    route_candidate_ids = _candidate_ids(rows)
+    route_manifest_refs = _source_manifest_refs(rows)
+    admission_symbols = sorted(
+        set(
+            _identity_field_values(
+                torghut_routeability_admission_ref,
+                "symbols",
+                "route_symbols",
+                "routeSymbols",
+                "accepted_symbols",
+                "acceptedSymbols",
+                "candidate_symbols",
+                "candidateSymbols",
+                "symbol",
+                uppercase=True,
+            )
+        )
+    )
+    admission_hypothesis_ids = _identity_field_values(
+        torghut_routeability_admission_ref,
+        "hypothesis_ids",
+        "hypothesisIds",
+        "hypothesis_id",
+        "hypothesisId",
+    )
+    admission_candidate_ids = _identity_field_values(
+        torghut_routeability_admission_ref,
+        "candidate_ids",
+        "candidateIds",
+        "candidate_id",
+        "candidateId",
+    )
+    admission_manifest_refs = _identity_field_values(
+        torghut_routeability_admission_ref,
+        "source_manifest_refs",
+        "sourceManifestRefs",
+        "source_manifest_ref",
+        "sourceManifestRef",
+    )
+    admission_window = _text(
+        torghut_routeability_admission_ref.get("window")
+        or torghut_routeability_admission_ref.get("session_id")
+        or torghut_routeability_admission_ref.get("sessionId")
+        or nested_admission.get("window")
+        or nested_admission.get("session_id")
+    )
+    admission_mode = _text(
+        torghut_routeability_admission_ref.get("trading_mode")
+        or torghut_routeability_admission_ref.get("tradingMode")
+        or nested_admission.get("trading_mode")
+    )
+
+    blockers: list[str] = []
+    if route_account and account and route_account != account:
+        blockers.append("route_identity_route_board_account_mismatch")
+    if proof_account and account and proof_account != account:
+        blockers.append("route_identity_proof_floor_account_mismatch")
+    if torghut_routeability_admission_ref:
+        if account and not admission_account:
+            blockers.append("route_identity_admission_account_missing")
+        elif account and admission_account != account:
+            blockers.append("route_identity_admission_account_mismatch")
+        if window and not admission_window:
+            blockers.append("route_identity_admission_window_missing")
+        elif window and admission_window != window:
+            blockers.append("route_identity_admission_window_mismatch")
+        if trading_mode and not admission_mode:
+            blockers.append("route_identity_admission_trading_mode_missing")
+        elif trading_mode and admission_mode != trading_mode:
+            blockers.append("route_identity_admission_trading_mode_mismatch")
+        blockers.extend(
+            _identity_mismatch_blockers(
+                expected=route_symbols,
+                observed=admission_symbols,
+                missing_reason="route_identity_admission_symbol_scope_missing",
+                mismatch_reason="route_identity_admission_symbol_scope_mismatch",
+            )
+        )
+        blockers.extend(
+            _identity_mismatch_blockers(
+                expected=route_hypothesis_ids,
+                observed=admission_hypothesis_ids,
+                missing_reason="route_identity_hypothesis_lineage_missing",
+                mismatch_reason="route_identity_hypothesis_lineage_mismatch",
+            )
+        )
+        blockers.extend(
+            _identity_mismatch_blockers(
+                expected=route_candidate_ids,
+                observed=admission_candidate_ids,
+                missing_reason="route_identity_candidate_lineage_missing",
+                mismatch_reason="route_identity_candidate_lineage_mismatch",
+            )
+        )
+        blockers.extend(
+            _identity_mismatch_blockers(
+                expected=route_manifest_refs,
+                observed=admission_manifest_refs,
+                missing_reason="route_identity_source_manifest_missing",
+                mismatch_reason="route_identity_source_manifest_mismatch",
+            )
+        )
+    return {
+        "account": account,
+        "route_board_account": route_account,
+        "proof_floor_account": proof_account,
+        "admission_account": admission_account or None,
+        "window": window,
+        "admission_window": admission_window or None,
+        "trading_mode": trading_mode,
+        "admission_trading_mode": admission_mode or None,
+        "route_symbols": route_symbols,
+        "admission_symbols": admission_symbols,
+        "route_hypothesis_ids": route_hypothesis_ids,
+        "admission_hypothesis_ids": admission_hypothesis_ids,
+        "route_candidate_ids": route_candidate_ids,
+        "admission_candidate_ids": admission_candidate_ids,
+        "route_source_manifest_refs": route_manifest_refs,
+        "admission_source_manifest_refs": admission_manifest_refs,
+        "blocking_reason_codes": _unique(blockers),
+    }
 
 
 def _dimension(
@@ -463,6 +704,7 @@ def _lot(
     rollback_trigger: str,
     symbols: Sequence[str] = (),
     hypothesis_ids: Sequence[str] = (),
+    source_identity: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     normalized_symbols = sorted(
         {_text(symbol).upper() for symbol in symbols if _text(symbol)}
@@ -483,7 +725,7 @@ def _lot(
             "blockers": blocking_reason_codes,
         },
     )
-    return {
+    lot: dict[str, object] = {
         "lot_id": lot_id,
         "lot_type": lot_type,
         "symbols": normalized_symbols,
@@ -501,6 +743,9 @@ def _lot(
         "authority_semantics": "audit_only_until_source_backed_runtime_ledger_fill_proof",
         "rollback_trigger": rollback_trigger,
     }
+    if source_identity is not None:
+        lot["source_identity"] = dict(source_identity)
+    return lot
 
 
 def _aggregate_state(lots: Sequence[Mapping[str, Any]]) -> str:
@@ -572,6 +817,16 @@ def build_routeability_repair_acceptance_ledger(
         proof_floor_receipt=proof_floor_receipt,
     )
     torghut_blockers = _torghut_admission_blockers(torghut_routeability_admission_ref)
+    source_identity = _source_identity_contract(
+        account=account,
+        window=window,
+        trading_mode=trading_mode,
+        proof_floor_receipt=proof_floor_receipt,
+        route_reacquisition_board=route_reacquisition_board,
+        rows=route_rows,
+        torghut_routeability_admission_ref=torghut_routeability_admission_ref,
+    )
+    source_identity_blockers = _strings(source_identity.get("blocking_reason_codes"))
 
     lots = [
         _lot(
@@ -682,6 +937,30 @@ def build_routeability_repair_acceptance_ledger(
             next_repair_action="refresh_torghut_routeability_admission_witness",
             rollback_trigger="routeability ledger accepts a candidate without current Torghut admission",
         ),
+        _lot(
+            account=account,
+            window=window,
+            trading_mode=trading_mode,
+            lot_type="source_identity_match",
+            value_gate="routeable_candidate_count",
+            expected_gate_delta="bind_routeability_acceptance_to_account_symbol_candidate_source_identity",
+            required_receipts=[
+                "route_source_identity_receipt",
+                "torghut_routeability_admission",
+            ],
+            blockers=source_identity_blockers,
+            acceptance_condition=(
+                "route board, proof floor, and Torghut admission agree on "
+                "account/window/mode/symbol/hypothesis/candidate lineage"
+            ),
+            next_repair_action="repair_route_source_identity_before_routeable_candidate_claim",
+            rollback_trigger="routeability acceptance consumed with mismatched source identity",
+            symbols=cast(Sequence[str], source_identity.get("route_symbols") or []),
+            hypothesis_ids=cast(
+                Sequence[str], source_identity.get("route_hypothesis_ids") or []
+            ),
+            source_identity=source_identity,
+        ),
     ]
 
     aggregate_state = _aggregate_state(lots)
@@ -743,6 +1022,7 @@ def build_routeability_repair_acceptance_ledger(
             "ledger_id"
         ),
         "torghut_routeability_admission_ref": dict(torghut_routeability_admission_ref),
+        "source_identity": source_identity,
         "lots": lots,
         "aggregate_state": aggregate_state,
         "aggregate_blocking_reason_codes": aggregate_blockers,

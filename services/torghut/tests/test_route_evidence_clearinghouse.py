@@ -32,7 +32,7 @@ BASE_INPUTS: dict[str, Any] = {
     "tca_summary": BASE_TCA,
     "options_catalog_freshness": {"active_contracts": 100, "missing_provider_updated_ts_count": 0, "provider_updated_ts_present": True, "newest_provider_updated_ts": NOW.isoformat(), "newest_last_seen_ts": NOW.isoformat()},
     "image_proof_summary": {"image_digest": "sha256:ready", "active_revision": "torghut-00324", "route_workloads_ok": True, "state": "current"},
-    "routeability_acceptance_ledger": {"ledger_id": "routeability:accepted", "aggregate_state": "accepted"},
+    "routeability_acceptance_ledger": {"ledger_id": "routeability:accepted", "account": "PA3SX7FYNUTF", "window": "15m", "trading_mode": "live", "aggregate_state": "accepted", "promotion_authority": False, "source_identity": {"account": "PA3SX7FYNUTF", "window": "15m", "trading_mode": "live", "route_symbols": ["AAPL"], "route_candidate_ids": ["candidate-micro"], "blocking_reason_codes": []}},
     "live_submission_gate": {"allowed": True, "reason": "ready"},
     "now": NOW,
 }
@@ -346,4 +346,32 @@ def test_route_repair_bids_emit_audit_receipts_and_blocker_recommendations() -> 
         assert receipt["requires_runtime_ledger_source_proof"] is True
     route_claim = cast(Mapping[str, Any], packet["route_claims"][0])
     assert route_claim["promotion_authority"] is False
+    assert packet["promotion_authority"] is False
+
+
+def test_routeability_acceptance_lineage_mismatch_holds_route_claim() -> None:
+    packet = _build(
+        routeability_acceptance_ledger={
+            **BASE_INPUTS["routeability_acceptance_ledger"],
+            "source_identity": {
+                "account": "PA3SX7FYNUTF",
+                "window": "15m",
+                "trading_mode": "live",
+                "route_symbols": ["MSFT"],
+                "route_candidate_ids": ["candidate-other"],
+                "blocking_reason_codes": [],
+            },
+        }
+    )
+    route_claim = packet["route_claims"][0]
+
+    assert packet["accepted_routeable_candidate_count"] == 0
+    assert route_claim["routeability_decision"] == "repair_only"
+    assert (
+        "routeability_acceptance_symbol_scope_mismatch" in route_claim["reason_codes"]
+    )
+    assert (
+        "routeability_acceptance_candidate_lineage_mismatch"
+        in route_claim["reason_codes"]
+    )
     assert packet["promotion_authority"] is False

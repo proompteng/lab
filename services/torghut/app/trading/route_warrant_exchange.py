@@ -404,7 +404,9 @@ def _repair_packet(witness: Mapping[str, Any]) -> dict[str, object]:
     dependency_name = _text(witness.get("published_clock"))
     dependency = _WARRANT_DEPENDENCIES[dependency_name]
     reason_codes = _strings(witness.get("reason_codes"))
-    primary_reason = reason_codes[0] if reason_codes else _text(witness.get("state"), "missing")
+    primary_reason = (
+        reason_codes[0] if reason_codes else _text(witness.get("state"), "missing")
+    )
     payload = {
         "dependency": dependency["target_dependency"],
         "state": _text(witness.get("state")),
@@ -439,6 +441,91 @@ def _repair_packet(witness: Mapping[str, Any]) -> dict[str, object]:
             "promotion_authority": False,
         },
     }
+
+
+def _routeability_acceptance_identity_blockers(
+    *,
+    account_label: str,
+    window: str,
+    trading_mode: str,
+    routeability_repair_acceptance_ledger: Mapping[str, Any],
+) -> list[str]:
+    if not routeability_repair_acceptance_ledger:
+        return ["routeability_acceptance_ledger_missing"]
+    blockers: list[str] = []
+    ledger_account = _text(routeability_repair_acceptance_ledger.get("account"))
+    ledger_window = _text(routeability_repair_acceptance_ledger.get("window"))
+    ledger_mode = _text(routeability_repair_acceptance_ledger.get("trading_mode"))
+    if not ledger_account:
+        blockers.append("routeability_acceptance_account_missing")
+    elif ledger_account != account_label:
+        blockers.append("routeability_acceptance_account_mismatch")
+    if not ledger_window:
+        blockers.append("routeability_acceptance_window_missing")
+    elif ledger_window != window:
+        blockers.append("routeability_acceptance_window_mismatch")
+    if not ledger_mode:
+        blockers.append("routeability_acceptance_trading_mode_missing")
+    elif ledger_mode != trading_mode:
+        blockers.append("routeability_acceptance_trading_mode_mismatch")
+    if routeability_repair_acceptance_ledger.get("promotion_authority") is True:
+        blockers.append("routeability_acceptance_promotion_authority_must_be_false")
+    if (
+        _text(routeability_repair_acceptance_ledger.get("aggregate_state"))
+        != "accepted"
+    ):
+        blockers.append("routeability_acceptance_not_accepted")
+    return _unique(blockers)
+
+
+def _guard_routeability_acceptance_witness(
+    witnesses: Sequence[Mapping[str, Any]],
+    *,
+    account_label: str,
+    window: str,
+    trading_mode: str,
+    routeability_repair_acceptance_ledger: Mapping[str, Any],
+) -> list[dict[str, object]]:
+    blockers = _routeability_acceptance_identity_blockers(
+        account_label=account_label,
+        window=window,
+        trading_mode=trading_mode,
+        routeability_repair_acceptance_ledger=routeability_repair_acceptance_ledger,
+    )
+    guarded: list[dict[str, object]] = []
+    for witness in witnesses:
+        updated = cast(dict[str, object], dict(witness))
+        if (
+            _text(witness.get("published_clock")) == "routeability_acceptance"
+            and blockers
+        ):
+            updated["state"] = "blocked"
+            updated["reason_codes"] = _unique(
+                [*_strings(witness.get("reason_codes")), *blockers]
+            )
+            updated["matching_published_clock"] = False
+            updated["contradiction_reason_codes"] = _unique(
+                [
+                    *_strings(witness.get("contradiction_reason_codes")),
+                    "routeability_acceptance_identity_guard_blocked",
+                ]
+            )
+            details = dict(_mapping(witness.get("details")))
+            details["expected_account"] = account_label
+            details["expected_window"] = window
+            details["expected_trading_mode"] = trading_mode
+            details["ledger_account"] = routeability_repair_acceptance_ledger.get(
+                "account"
+            )
+            details["ledger_window"] = routeability_repair_acceptance_ledger.get(
+                "window"
+            )
+            details["ledger_trading_mode"] = routeability_repair_acceptance_ledger.get(
+                "trading_mode"
+            )
+            updated["details"] = details
+        guarded.append(updated)
+    return guarded
 
 
 def _group_witnesses(
@@ -552,25 +639,31 @@ def build_route_warrant_exchange(
         "profit_signal_quorum",
         "capital_gate",
     ]
-    witnesses = [
-        _witness(
-            clock_name=clock_name,
-            source=_source_for_clock(
-                clock_name,
-                quant_evidence=quant_evidence,
-                tca_summary=tca_summary,
-                empirical_jobs_status=empirical_jobs_status,
-                market_context_status=market_context_status,
-                routeability_repair_acceptance_ledger=routeability_repair_acceptance_ledger,
-                live_submission_gate=live_submission_gate,
-                build=build,
-                profit_freshness_frontier=profit_freshness_frontier,
-            ),
-            clock=clocks.get(clock_name, {}),
-            fallback_reason=f"{clock_name}_clock_missing",
-        )
-        for clock_name in required_clock_names
-    ]
+    witnesses = _guard_routeability_acceptance_witness(
+        [
+            _witness(
+                clock_name=clock_name,
+                source=_source_for_clock(
+                    clock_name,
+                    quant_evidence=quant_evidence,
+                    tca_summary=tca_summary,
+                    empirical_jobs_status=empirical_jobs_status,
+                    market_context_status=market_context_status,
+                    routeability_repair_acceptance_ledger=routeability_repair_acceptance_ledger,
+                    live_submission_gate=live_submission_gate,
+                    build=build,
+                    profit_freshness_frontier=profit_freshness_frontier,
+                ),
+                clock=clocks.get(clock_name, {}),
+                fallback_reason=f"{clock_name}_clock_missing",
+            )
+            for clock_name in required_clock_names
+        ],
+        account_label=account_label,
+        window=window,
+        trading_mode=trading_mode,
+        routeability_repair_acceptance_ledger=routeability_repair_acceptance_ledger,
+    )
     noncurrent_witnesses = [
         witness for witness in witnesses if _text(witness.get("state")) != "current"
     ]
