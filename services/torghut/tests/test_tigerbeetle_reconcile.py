@@ -958,6 +958,54 @@ class TestTigerBeetleReconcile(TestCase):
             "strategy_runtime_ledger_buckets",
         )
 
+    def test_bounded_ref_counts_preserve_signed_runtime_refs_when_sample_exact(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            bucket = _runtime_bucket(net_pnl=Decimal("2.50"))
+            session.add(bucket)
+            session.flush()
+            plan = build_runtime_ledger_bucket_transfer_plan(bucket)
+            self.assertIsNotNone(plan)
+            assert plan is not None
+            _add_account_refs_for_plan(session, plan)
+            transfer = plan.transfer_spec
+            session.add(
+                TigerBeetleTransferRef(
+                    cluster_id=2001,
+                    transfer_id=str(transfer.transfer_id),
+                    transfer_kind=transfer.transfer_kind,
+                    ledger=transfer.ledger,
+                    code=transfer.code,
+                    amount=Decimal(transfer.amount),
+                    status="created",
+                    runtime_ledger_bucket_id=bucket.id,
+                    source_type=SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                    source_id=str(bucket.id),
+                    payload_json={
+                        "source": SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                        "signed_amount_micros": plan.signed_amount_micros,
+                        "pnl_direction": plan.pnl_direction,
+                        "debit_account_id": str(transfer.debit_account_id),
+                        "credit_account_id": str(transfer.credit_account_id),
+                    },
+                )
+            )
+            session.flush()
+
+            payload = tigerbeetle_ref_counts(
+                session,
+                cluster_id=2001,
+                full_ref_scan=False,
+            )
+
+        self.assertEqual(payload["runtime_ledger_ref_count"], 1)
+        self.assertEqual(payload["runtime_ledger_signed_ref_count"], 1)
+        self.assertEqual(payload["runtime_ledger_missing_signed_ref_count"], 0)
+        self.assertEqual(payload["runtime_ledger_missing_account_ref_count"], 0)
+        self.assertEqual(payload["runtime_ledger_signed_bucket_ids"], [str(bucket.id)])
+        self.assertFalse(payload["runtime_ledger_ref_coverage_bounded"])
+
     def test_reconciliation_blocks_runtime_ledger_signed_direction_mismatch(
         self,
     ) -> None:
