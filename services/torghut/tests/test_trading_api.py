@@ -9133,7 +9133,7 @@ class TestTradingApi(TestCase):
                     ],
                     live_gate["runtime_ledger_paper_probation_import_plan"],
                 )
-                self.assertFalse(kwargs["include_runtime_window_import_audit"])
+                self.assertIsNone(kwargs["include_runtime_window_import_audit"])
                 self.assertTrue(kwargs["route_reacquisition_book"])
                 return {
                     "schema_version": "torghut.paper-route-target-plan.v1",
@@ -10139,7 +10139,7 @@ class TestTradingApi(TestCase):
             *args: object, **kwargs: object
         ) -> dict[str, object]:
             self.assertEqual(kwargs["route_reacquisition_book"], {})
-            self.assertFalse(kwargs["include_runtime_window_import_audit"])
+            self.assertIsNone(kwargs["include_runtime_window_import_audit"])
             return {
                 "schema_version": "torghut.paper-route-target-plan.v1",
                 "target_count": 1,

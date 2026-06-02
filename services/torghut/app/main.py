@@ -6177,8 +6177,8 @@ def trading_paper_route_target_plan() -> JSONResponse:
             live_submission_gate=cast(Mapping[str, Any], live_submission_gate),
             route_reacquisition_book=route_reacquisition_book,
             # Keep this provider endpoint bounded; proof-grade runtime import
-            # audits run from /trading/paper-route-evidence.
-            include_runtime_window_import_audit=False,
+            # audits run only after the runtime window is import-ready.
+            include_runtime_window_import_audit=None,
             target_account_audit_available=settings.trading_mode == "paper",
         )
     return JSONResponse(status_code=200, content=jsonable_encoder(payload))

@@ -7701,11 +7701,33 @@ def _truthy_plan_value(value: object) -> bool:
 def _live_gate_has_source_collection_pending(
     live_submission_gate: Mapping[str, Any],
 ) -> bool:
-    return RUNTIME_LEDGER_SOURCE_COLLECTION_PENDING_BLOCKER in {
+    blocked_reasons = {
         str(reason or "").strip()
         for reason in _as_sequence(live_submission_gate.get("blocked_reasons"))
         if str(reason or "").strip()
     }
+    if RUNTIME_LEDGER_SOURCE_COLLECTION_PENDING_BLOCKER in blocked_reasons:
+        return True
+    if _as_mapping_items(
+        live_submission_gate.get("runtime_ledger_source_collection_candidates")
+    ):
+        return True
+    if (
+        _safe_int(
+            live_submission_gate.get("runtime_ledger_source_collection_candidate_total")
+        )
+        > 0
+    ):
+        return True
+    plan = _as_mapping(
+        live_submission_gate.get("runtime_ledger_paper_probation_import_plan")
+    )
+    if _safe_int(plan.get("source_collection_target_count")) > 0:
+        return True
+    return any(
+        _target_is_runtime_ledger_source_collection(target)
+        for target in _as_mapping_items(plan.get("targets"))
+    )
 
 
 def _target_is_runtime_ledger_source_collection(
@@ -7915,11 +7937,24 @@ def _runtime_ledger_repair_candidates_by_strategy_name(
     live_submission_gate: Mapping[str, Any],
 ) -> dict[str, Mapping[str, Any]]:
     candidates_by_name: dict[str, Mapping[str, Any]] = {}
-    for candidate in _as_mapping_items(
-        live_submission_gate.get("runtime_ledger_repair_candidates")
-    ):
-        for name in _runtime_ledger_repair_candidate_lookup_names(candidate):
-            candidates_by_name.setdefault(name, candidate)
+    candidate_sources = [
+        *[
+            _as_mapping_items(live_submission_gate.get(key))
+            for key in (
+                "runtime_ledger_repair_candidates",
+                "runtime_ledger_source_collection_candidates",
+            )
+        ],
+        _as_mapping_items(
+            _as_mapping(
+                live_submission_gate.get("runtime_ledger_paper_probation_import_plan")
+            ).get("targets")
+        ),
+    ]
+    for candidates in candidate_sources:
+        for candidate in candidates:
+            for name in _runtime_ledger_repair_candidate_lookup_names(candidate):
+                candidates_by_name.setdefault(name, candidate)
     return candidates_by_name
 
 
