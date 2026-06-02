@@ -3013,7 +3013,90 @@ class TestTradingApi(TestCase):
             payload["status_read_budget"]["skipped_reads"],
         )
 
-    def test_trading_status_skips_expensive_reads_when_budget_remaining_is_low(
+    def test_trading_status_prioritizes_live_gate_before_late_reads_when_budget_is_low(
+        self,
+    ) -> None:
+        class ManualBudget(main_module._TradingStatusReadBudget):
+            def __init__(self) -> None:
+                super().__init__(max_seconds=10.0)
+                self.current_elapsed = 1.0
+
+            def elapsed_seconds(self) -> float:
+                return self.current_elapsed
+
+        budget = ManualBudget()
+        live_submission_gate_payload = {
+            "allowed": False,
+            "reason": "alpha_readiness_not_promotion_eligible",
+            "blocked_reasons": ["alpha_readiness_not_promotion_eligible"],
+            "read_model_unavailable": False,
+            "promotion_authority": False,
+            "final_authority_ok": False,
+            "final_promotion_allowed": False,
+        }
+
+        def _build_live_submission_gate(
+            *args: object,
+            **kwargs: object,
+        ) -> dict[str, object]:
+            budget.current_elapsed = 9.8
+            return live_submission_gate_payload
+
+        with (
+            patch("app.main._TradingStatusReadBudget", return_value=budget),
+            patch(
+                "app.main._load_clickhouse_ta_status",
+                return_value={
+                    "state": "current",
+                    "latest_signal_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+                    "source_ref": "clickhouse:ta_signals",
+                },
+            ),
+            patch("app.main._build_tigerbeetle_ledger_status") as tigerbeetle_status,
+            patch(
+                "app.main._daily_runtime_ledger_portfolio_summary"
+            ) as portfolio_summary,
+            patch("app.main._load_last_decision_at") as last_decision,
+            patch(
+                "app.main._load_rejected_signal_outcome_learning_summary"
+            ) as rejected_signal_learning,
+            patch(
+                "app.main._build_live_submission_gate_payload",
+                side_effect=_build_live_submission_gate,
+            ) as live_gate,
+        ):
+            response = self.client.get("/trading/status")
+
+        self.assertEqual(response.status_code, 200)
+        live_gate.assert_called_once()
+        tigerbeetle_status.assert_not_called()
+        portfolio_summary.assert_not_called()
+        last_decision.assert_not_called()
+        rejected_signal_learning.assert_not_called()
+        payload = response.json()
+        skipped_reads = payload["status_read_budget"]["skipped_reads"]
+        self.assertNotIn("live_submission_gate", skipped_reads)
+        self.assertIn("tigerbeetle_ledger", skipped_reads)
+        self.assertIn("runtime_ledger_portfolio_summary", skipped_reads)
+        self.assertIn("last_decision", skipped_reads)
+        self.assertIn("rejected_signal_outcome_learning", skipped_reads)
+        self.assertFalse(payload["live_submission_gate"]["allowed"])
+        self.assertEqual(
+            payload["live_submission_gate"]["reason"],
+            "alpha_readiness_not_promotion_eligible",
+        )
+        self.assertFalse(payload["live_submission_gate"]["read_model_unavailable"])
+        self.assertFalse(payload["status_read_budget"]["exhausted"])
+        self.assertEqual(payload["status_read_budget"]["remaining_seconds"], 0.2)
+        self.assertIn(
+            "tigerbeetle_ledger_status_read_budget_insufficient_remaining",
+            payload["tigerbeetle_ledger"]["blockers"],
+        )
+        self.assertTrue(
+            payload["portfolio_runtime_ledger_summary"]["read_model_unavailable"]
+        )
+
+    def test_trading_status_skips_live_gate_when_gate_dependencies_consume_budget(
         self,
     ) -> None:
         class ManualBudget(main_module._TradingStatusReadBudget):
@@ -3026,11 +3109,18 @@ class TestTradingApi(TestCase):
 
         budget = ManualBudget()
 
-        def _load_rejected_signal_outcome_learning_summary(
-            _session: Session,
-        ) -> dict[str, object]:
+        def _load_hypothesis_runtime(
+            *_args: object,
+            **_kwargs: object,
+        ) -> tuple[
+            dict[str, object],
+            dict[str, object],
+            main_module.JangarDependencyQuorumStatus,
+        ]:
             budget.current_elapsed = 8.5
-            return {}
+            return main_module._budget_unavailable_hypothesis_runtime_payload(
+                reason="hypothesis_runtime_test_budget_marker"
+            )
 
         with (
             patch("app.main._TradingStatusReadBudget", return_value=budget),
@@ -3043,8 +3133,8 @@ class TestTradingApi(TestCase):
                 },
             ),
             patch(
-                "app.main._load_rejected_signal_outcome_learning_summary",
-                side_effect=_load_rejected_signal_outcome_learning_summary,
+                "app.main._load_trading_status_hypothesis_runtime",
+                side_effect=_load_hypothesis_runtime,
             ),
             patch("app.main._build_live_submission_gate_payload") as live_gate,
         ):
