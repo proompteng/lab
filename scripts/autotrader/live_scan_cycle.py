@@ -274,8 +274,8 @@ def market_open_start(now: datetime) -> str:
 def stock_analysis_cli_path(value: str | None) -> str:
     if value:
         return value
-    artifact_dir = os.environ.get("AUTONOMOUS_TRADER_ARTIFACT_DIR", "/workspace/.agentrun/autonomous-trader")
-    return str(Path(artifact_dir) / "stock_analysis")
+    work_dir = os.environ.get("AUTONOMOUS_TRADER_WORK_DIR", "/tmp/autonomous-trader-work")
+    return str(Path(work_dir) / "stock_analysis")
 
 
 def run_stock_analysis_scan(
@@ -434,9 +434,7 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
     )
     for name, payload in inputs.items():
         write_json(cycle_dir / name, payload)
-    analysis_context = Path(
-        args.analysis_context or os.environ.get("ANALYSIS_CONTEXT_PATH") or work_dir / "analysis-context.json"
-    )
+    analysis_context = Path(args.analysis_context or work_dir / "analysis-context.json")
     scan = run_stock_analysis_scan(
         stock_analysis_cli=stock_analysis_cli_path(args.stock_analysis_cli),
         cycle_dir=cycle_dir,
