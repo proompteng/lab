@@ -8710,6 +8710,92 @@ class TestTradingPipeline(TestCase):
         )
         self.assertEqual(fetch_plan.call_count, 2)
 
+    def test_bounded_signal_scope_records_target_plan_fetch_failure(
+        self,
+    ) -> None:
+        from app import config
+
+        original_target_plan_url = config.settings.trading_paper_route_target_plan_url
+        original_target_plan_timeout = (
+            config.settings.trading_paper_route_target_plan_timeout_seconds
+        )
+        original_mode = config.settings.trading_mode
+        original_probe_enabled = (
+            config.settings.trading_simple_paper_route_probe_enabled
+        )
+        config.settings.trading_mode = "paper"
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_paper_route_target_plan_url = (
+            "http://torghut.local/trading/paper-route-target-plan"
+        )
+        config.settings.trading_paper_route_target_plan_timeout_seconds = 1.0
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=FakeAlpacaClient(),
+            order_firewall=OrderFirewall(FakeAlpacaClient()),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=FakeAlpacaClient(),
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="TORGHUT_SIM",
+            session_factory=self.session_local,
+        )
+        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+        now = datetime(2026, 6, 1, 14, 30, tzinfo=timezone.utc)
+        try:
+            with (
+                patch(
+                    "app.trading.scheduler.simple_pipeline.trading_now",
+                    return_value=now,
+                ),
+                patch(
+                    "app.trading.scheduler.simple_pipeline.fetch_paper_route_target_plan_url",
+                    return_value={
+                        "load_error": (
+                            "paper_route_target_plan_fetch_failed:timed out"
+                        ),
+                        "fetch_attempts": 3,
+                    },
+                ) as fetch_plan,
+            ):
+                self.assertIsNone(pipeline._bounded_paper_route_signal_scope([]))
+        finally:
+            config.settings.trading_mode = original_mode
+            config.settings.trading_simple_paper_route_probe_enabled = (
+                original_probe_enabled
+            )
+            config.settings.trading_paper_route_target_plan_url = (
+                original_target_plan_url
+            )
+            config.settings.trading_paper_route_target_plan_timeout_seconds = (
+                original_target_plan_timeout
+            )
+
+        fetch_plan.assert_called_once_with(
+            "http://torghut.local/trading/paper-route-target-plan",
+            timeout_seconds=1.0,
+            attempts=3,
+            retry_backoff_seconds=0.25,
+        )
+        blocker = cast(
+            dict[str, Any],
+            getattr(pipeline.state, "last_bounded_evidence_collection_blocker"),
+        )
+        self.assertEqual(
+            blocker.get("reason"),
+            "paper_route_target_plan_fetch_failed:timed out",
+        )
+        self.assertEqual(
+            blocker.get("blockers"),
+            ["paper_route_target_plan_fetch_failed:timed out"],
+        )
+        self.assertEqual(blocker.get("source"), "external_target_plan_url")
+        self.assertEqual(blocker.get("account_label"), "TORGHUT_SIM")
+        self.assertEqual(blocker.get("fetch_attempts"), 3)
+
     def test_matching_paper_target_signal_gets_strategy_signal_paper_authority(
         self,
     ) -> None:
