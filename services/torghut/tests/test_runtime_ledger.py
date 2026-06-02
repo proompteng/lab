@@ -271,6 +271,7 @@ def test_partial_unclosed_positions_report_realized_pnl_but_block_expectancy() -
     assert bucket.closed_trade_count == 1
     assert bucket.open_position_count == 1
     assert "unclosed_position" in bucket.blockers
+    assert bucket.filled_notional == Decimal("1440")
     assert bucket.gross_strategy_pnl == Decimal("40")
     assert bucket.net_strategy_pnl_after_costs == Decimal("38.60")
     assert bucket.post_cost_expectancy_bps is None
@@ -1415,8 +1416,11 @@ def test_linked_order_feed_fill_accepts_structured_source_offsets_mapping() -> N
     )
 
     assert bucket.fill_count == 1
+    assert bucket.filled_notional == Decimal("100")
     assert "runtime_fills_missing" not in bucket.blockers
-    assert "filled_notional_missing" in bucket.blockers
+    assert "filled_notional_missing" not in bucket.blockers
+    assert "closed_round_trip_missing" in bucket.blockers
+    assert "unclosed_position" in bucket.blockers
 
 
 def test_linked_order_feed_fill_without_explicit_costs_stays_non_authority() -> None:
@@ -1621,10 +1625,11 @@ def test_source_authority_open_position_blocks_final_expectancy() -> None:
     assert bucket.fill_count == 1
     assert bucket.closed_trade_count == 0
     assert bucket.open_position_count == 1
+    assert bucket.filled_notional == Decimal("100")
     assert bucket.post_cost_expectancy_bps is None
     assert "unclosed_position" in bucket.blockers
     assert "closed_round_trip_missing" in bucket.blockers
-    assert "filled_notional_missing" in bucket.blockers
+    assert "filled_notional_missing" not in bucket.blockers
     assert "runtime_ledger_expectancy_missing" in bucket.blockers
 
 
