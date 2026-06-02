@@ -1016,6 +1016,47 @@ class TestOrderFeed(TestCase):
         self.assertTrue(source_window.payload_json["source_coverage_complete"])
         self.assertFalse(source_window.payload_json["promotion_authority_eligible"])
 
+    def test_order_identity_account_scope_matches_execution_correlation_id(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            self._seed_execution(
+                session,
+                order_id="corr-scope-order",
+                client_order_id="corr-scope-client",
+                execution_correlation_id="corr-scope-1",
+            )
+            event = NormalizedOrderEvent(
+                event_fingerprint="corr-scope-fingerprint",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=40,
+                alpaca_account_label="paper",
+                feed_seq=12,
+                event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+                symbol="AAPL",
+                alpaca_order_id=None,
+                client_order_id=None,
+                execution_correlation_id="corr-scope-1",
+                event_type="fill",
+                status="filled",
+                qty=Decimal("1"),
+                filled_qty=Decimal("1"),
+                filled_qty_delta=Decimal("1"),
+                avg_fill_price=Decimal("190.2"),
+                filled_notional_delta=Decimal("190.2"),
+                fill_quantity_basis="filled_qty",
+                raw_event={"event": "fill"},
+            )
+
+            in_scope = order_feed_module._order_identity_matches_account_scope(
+                session,
+                event,
+                account_label="paper",
+            )
+
+        self.assertTrue(in_scope)
+
     def test_build_consumer_applies_kafka_security_kwargs(self) -> None:
         captured_kwargs: dict[str, object] = {}
         original_security_protocol = settings.trading_order_feed_security_protocol
@@ -1904,6 +1945,56 @@ class TestOrderFeed(TestCase):
                 },
             },
         )
+        event = ExecutionOrderEvent(
+            event_fingerprint="account-alias-helper-edge",
+            source_topic="torghut.trade-updates.v1",
+            source_partition=0,
+            source_offset=399,
+            alpaca_account_label="paper",
+            event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+            symbol="AAPL",
+            raw_event="raw-event",
+        )
+        self.assertIsNone(order_feed_module._order_event_account_label_alias(event))
+
+        event.raw_event = {
+            "_torghut_account_label_alias": {"source_account_label": "PA3SX7FYNUTF"}
+        }
+        self.assertIsNone(order_feed_module._order_event_account_label_alias(event))
+
+        order_feed_module._mark_order_event_account_alias(
+            event,
+            source_account_label="PA3SX7FYNUTF",
+            canonical_account_label="TORGHUT_SIM",
+            basis="matched_order_identity",
+        )
+        self.assertEqual(
+            event.raw_event,
+            {
+                "_torghut_account_label_alias": {
+                    "source_account_label": "PA3SX7FYNUTF",
+                    "canonical_account_label": "TORGHUT_SIM",
+                    "basis": "matched_order_identity",
+                }
+            },
+        )
+
+        event.raw_event = "raw-event"
+        order_feed_module._mark_order_event_account_alias(
+            event,
+            source_account_label="PA3SX7FYNUTF",
+            canonical_account_label="TORGHUT_SIM",
+            basis="matched_order_identity",
+        )
+        self.assertEqual(event.raw_event["payload"], "raw-event")
+        self.assertEqual(
+            event.raw_event["_torghut_account_label_alias"],
+            {
+                "source_account_label": "PA3SX7FYNUTF",
+                "canonical_account_label": "TORGHUT_SIM",
+                "basis": "matched_order_identity",
+            },
+        )
 
         existing = order_feed_module._raw_event_with_linkage_blockers(
             {"event": "fill", "_torghut_linkage": {"source": "previous"}},
@@ -2183,6 +2274,118 @@ class TestOrderFeed(TestCase):
             source_window.payload_json["authority_class"],
             "order_feed_lifecycle_unlinked",
         )
+
+    def test_repair_order_feed_execution_links_resolves_decision_account_alias_without_execution(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            strategy = Strategy(
+                name="decision-alias-demo",
+                description="decision-alias-demo",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="symbols_list",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.flush()
+            decision = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="TORGHUT_SIM",
+                symbol="AAPL",
+                timeframe="1Min",
+                decision_json={"side": "buy"},
+                decision_hash="decision-alias-client-1",
+                status="submitted",
+            )
+            session.add(decision)
+            session.flush()
+            decision_id = decision.id
+            source_window = OrderFeedSourceWindow(
+                consumer_group="torghut-order-feed-v1",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                alpaca_account_label="PA3SX7FYNUTF",
+                assignment_mode="group",
+                source_revision=ORDER_FEED_SOURCE_REVISION,
+                window_started_at=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+                window_ended_at=datetime(2026, 2, 1, 10, 1, tzinfo=timezone.utc),
+                start_offset=389,
+                end_offset=389,
+                consumed_count=1,
+                inserted_count=1,
+                unlinked_execution_count=1,
+                unlinked_decision_count=1,
+                status="inserted",
+                status_reason="missing_execution_and_decision_links",
+            )
+            session.add(source_window)
+            session.flush()
+            event = ExecutionOrderEvent(
+                event_fingerprint="repair-decision-alias-only-fill",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=389,
+                alpaca_account_label="PA3SX7FYNUTF",
+                event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+                symbol="AAPL",
+                alpaca_order_id="missing-execution-order",
+                client_order_id="decision-alias-client-1",
+                event_type="fill",
+                status="filled",
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("191.25"),
+                raw_event={"event": "fill"},
+                source_window_id=source_window.id,
+            )
+            session.add(event)
+            session.commit()
+
+            result = repair_order_feed_execution_links(
+                session,
+                account_label="PA3SX7FYNUTF",
+                canonical_account_label="TORGHUT_SIM",
+                limit=10,
+            )
+            session.commit()
+            session.refresh(event)
+            session.refresh(source_window)
+
+        self.assertEqual(
+            result,
+            {
+                "selected": 1,
+                "executions_matched": 0,
+                "executions_linked": 0,
+                "decisions_matched": 1,
+                "events_linked": 0,
+                "decision_events_linked": 1,
+                "events_without_execution": 1,
+                "events_without_decision": 0,
+                "account_alias_events_linked": 1,
+            },
+        )
+        self.assertIsNone(event.execution_id)
+        self.assertEqual(event.trade_decision_id, decision_id)
+        self.assertEqual(
+            event.raw_event["_torghut_account_label_alias"],
+            {
+                "source_account_label": "PA3SX7FYNUTF",
+                "canonical_account_label": "TORGHUT_SIM",
+                "basis": "matched_order_identity",
+            },
+        )
+        self.assertEqual(source_window.unlinked_execution_count, 1)
+        self.assertEqual(source_window.unlinked_decision_count, 0)
+        self.assertEqual(
+            source_window.payload_json["account_label_alias"],
+            {
+                "source_account_label": "PA3SX7FYNUTF",
+                "canonical_account_label": "TORGHUT_SIM",
+                "basis": "matched_order_identity",
+            },
+        )
+        self.assertFalse(source_window.payload_json["source_coverage_complete"])
 
     def test_repair_order_feed_execution_links_counts_missing_decision_identity(
         self,
