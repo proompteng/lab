@@ -21,7 +21,10 @@ from app.trading.runtime_cost_authority import (
     cost_basis_counts_have_non_promotion_grade_costs,
     is_non_promotion_grade_runtime_cost_basis,
 )
-from app.trading.runtime_ledger import EXACT_REPLAY_LEDGER_SCHEMA_VERSION, POST_COST_PNL_BASIS
+from app.trading.runtime_ledger import (
+    EXACT_REPLAY_LEDGER_SCHEMA_VERSION,
+    POST_COST_PNL_BASIS,
+)
 from app.trading.runtime_ledger_proof_policy import (
     DEFAULT_RUNTIME_LEDGER_PROOF_POLICY,
     RuntimeLedgerProofPolicy,
@@ -42,36 +45,38 @@ from app.trading.runtime_ledger_source_authority import (
     runtime_ledger_source_window_present,
 )
 
-DEFAULT_HPAIRS_HYPOTHESIS_ID = 'H-PAIRS-01'
-DEFAULT_HPAIRS_CANDIDATE_ID = 'c88421d619759b2cfaa6f4d0'
-DEFAULT_HPAIRS_RUNTIME_STRATEGY = 'microbar-cross-sectional-pairs-v1'
-DEFAULT_HPAIRS_ACCOUNT_LABEL = 'TORGHUT_SIM'
-HPAIRS_RUNTIME_AUTHORITY_PROOF_SCHEMA_VERSION = 'torghut.hpairs-runtime-authority-proof.v1'
+DEFAULT_HPAIRS_HYPOTHESIS_ID = "H-PAIRS-01"
+DEFAULT_HPAIRS_CANDIDATE_ID = "c88421d619759b2cfaa6f4d0"
+DEFAULT_HPAIRS_RUNTIME_STRATEGY = "microbar-cross-sectional-pairs-v1"
+DEFAULT_HPAIRS_ACCOUNT_LABEL = "TORGHUT_SIM"
+HPAIRS_RUNTIME_AUTHORITY_PROOF_SCHEMA_VERSION = (
+    "torghut.hpairs-runtime-authority-proof.v1"
+)
 
-AUTHORITY_TRADING_DAYS_BLOCKER = 'runtime_ledger_trading_days_below_authority_minimum'
-AUTHORITY_MEAN_PNL_BLOCKER = 'mean_daily_net_pnl_after_costs_below_500'
-AUTHORITY_MEDIAN_PNL_BLOCKER = 'median_daily_net_pnl_after_costs_below_250'
-AUTHORITY_P10_PNL_BLOCKER = 'p10_daily_net_pnl_after_costs_below_floor'
-AUTHORITY_WORST_DAY_BLOCKER = 'worst_day_net_pnl_after_costs_below_floor'
-AUTHORITY_BEST_DAY_CONCENTRATION_BLOCKER = 'best_day_concentration_above_25pct'
-AUTHORITY_FILLED_NOTIONAL_BLOCKER = 'filled_notional_below_authority_minimum'
-AUTHORITY_FILLED_NOTIONAL_MISSING_BLOCKER = 'filled_notional_missing'
-AUTHORITY_CLOSED_ROUND_TRIPS_BLOCKER = 'closed_round_trips_below_authority_minimum'
-AUTHORITY_OPEN_POSITIONS_BLOCKER = 'open_positions_present'
-AUTHORITY_EXPLICIT_COSTS_BLOCKER = 'explicit_costs_missing'
-AUTHORITY_BUCKET_BLOCKERS_PRESENT = 'runtime_ledger_bucket_blockers_present'
-AUTHORITY_EVIDENCE_MISSING_BLOCKER = 'runtime_ledger_evidence_missing'
-AUTHORITY_READ_ERROR_BLOCKER = 'runtime_ledger_read_error'
-AUTHORITY_RUNTIME_FILLS_MISSING_BLOCKER = 'runtime_fills_missing'
-AUTHORITY_RUNTIME_DECISIONS_MISSING_BLOCKER = 'runtime_decisions_missing'
+AUTHORITY_TRADING_DAYS_BLOCKER = "runtime_ledger_trading_days_below_authority_minimum"
+AUTHORITY_MEAN_PNL_BLOCKER = "mean_daily_net_pnl_after_costs_below_500"
+AUTHORITY_MEDIAN_PNL_BLOCKER = "median_daily_net_pnl_after_costs_below_250"
+AUTHORITY_P10_PNL_BLOCKER = "p10_daily_net_pnl_after_costs_below_floor"
+AUTHORITY_WORST_DAY_BLOCKER = "worst_day_net_pnl_after_costs_below_floor"
+AUTHORITY_BEST_DAY_CONCENTRATION_BLOCKER = "best_day_concentration_above_25pct"
+AUTHORITY_FILLED_NOTIONAL_BLOCKER = "filled_notional_below_authority_minimum"
+AUTHORITY_FILLED_NOTIONAL_MISSING_BLOCKER = "filled_notional_missing"
+AUTHORITY_CLOSED_ROUND_TRIPS_BLOCKER = "closed_round_trips_below_authority_minimum"
+AUTHORITY_OPEN_POSITIONS_BLOCKER = "open_positions_present"
+AUTHORITY_EXPLICIT_COSTS_BLOCKER = "explicit_costs_missing"
+AUTHORITY_BUCKET_BLOCKERS_PRESENT = "runtime_ledger_bucket_blockers_present"
+AUTHORITY_EVIDENCE_MISSING_BLOCKER = "runtime_ledger_evidence_missing"
+AUTHORITY_READ_ERROR_BLOCKER = "runtime_ledger_read_error"
+AUTHORITY_RUNTIME_FILLS_MISSING_BLOCKER = "runtime_fills_missing"
+AUTHORITY_RUNTIME_DECISIONS_MISSING_BLOCKER = "runtime_decisions_missing"
 AUTHORITY_ORDER_LIFECYCLE_MISSING_BLOCKER = ORDER_FEED_LIFECYCLE_MISSING_BLOCKER
-AUTHORITY_CLOSED_ROUND_TRIP_MISSING_BLOCKER = 'closed_round_trip_missing'
-AUTHORITY_LEDGER_SCHEMA_BLOCKER = 'runtime_ledger_schema_version_invalid'
-AUTHORITY_PNL_BASIS_BLOCKER = 'runtime_ledger_pnl_basis_invalid'
-AUTHORITY_COST_BASIS_BLOCKER = 'runtime_ledger_cost_basis_non_promotion_grade'
-AUTHORITY_POLICY_HASH_BLOCKER = 'execution_policy_hash_missing'
-AUTHORITY_COST_MODEL_HASH_BLOCKER = 'cost_model_hash_missing'
-AUTHORITY_LINEAGE_HASH_BLOCKER = 'lineage_hash_missing'
+AUTHORITY_CLOSED_ROUND_TRIP_MISSING_BLOCKER = "closed_round_trip_missing"
+AUTHORITY_LEDGER_SCHEMA_BLOCKER = "runtime_ledger_schema_version_invalid"
+AUTHORITY_PNL_BASIS_BLOCKER = "runtime_ledger_pnl_basis_invalid"
+AUTHORITY_COST_BASIS_BLOCKER = "runtime_ledger_cost_basis_non_promotion_grade"
+AUTHORITY_POLICY_HASH_BLOCKER = "execution_policy_hash_missing"
+AUTHORITY_COST_MODEL_HASH_BLOCKER = "cost_model_hash_missing"
+AUTHORITY_LINEAGE_HASH_BLOCKER = "lineage_hash_missing"
 
 _PROMOTION_GRADE_LEDGER_SCHEMAS = frozenset({EXACT_REPLAY_LEDGER_SCHEMA_VERSION})
 
@@ -115,8 +120,8 @@ class RuntimeAuthorityEvidenceRow:
 @dataclass
 class _DailyAccumulator:
     trading_day: str
-    net_strategy_pnl_after_costs: Decimal = Decimal('0')
-    filled_notional: Decimal = Decimal('0')
+    net_strategy_pnl_after_costs: Decimal = Decimal("0")
+    filled_notional: Decimal = Decimal("0")
     closed_trade_count: int = 0
     open_position_count: int = 0
     fill_count: int = 0
@@ -134,6 +139,10 @@ class _DailyAccumulator:
     authority_class_count: int = 0
     bucket_count: int = 0
     source_authority_bucket_count: int = 0
+    clean_authority_bucket_count: int = 0
+    clean_authority_net_strategy_pnl_after_costs: Decimal = Decimal("0")
+    clean_authority_filled_notional: Decimal = Decimal("0")
+    clean_authority_closed_trade_count: int = 0
     row_refs: list[str] | None = None
     blockers: list[str] | None = None
 
@@ -170,11 +179,17 @@ def load_runtime_authority_rows(
         StrategyRuntimeLedgerBucket.runtime_strategy_name == runtime_strategy_name,
     )
     if observed_stage is not None:
-        statement = statement.where(StrategyRuntimeLedgerBucket.observed_stage == observed_stage)
+        statement = statement.where(
+            StrategyRuntimeLedgerBucket.observed_stage == observed_stage
+        )
     if started_at is not None:
-        statement = statement.where(StrategyRuntimeLedgerBucket.bucket_ended_at >= _utc(started_at))
+        statement = statement.where(
+            StrategyRuntimeLedgerBucket.bucket_ended_at >= _utc(started_at)
+        )
     if ended_at is not None:
-        statement = statement.where(StrategyRuntimeLedgerBucket.bucket_started_at < _utc(ended_at))
+        statement = statement.where(
+            StrategyRuntimeLedgerBucket.bucket_started_at < _utc(ended_at)
+        )
     statement = statement.order_by(
         StrategyRuntimeLedgerBucket.bucket_started_at.asc(),
         StrategyRuntimeLedgerBucket.bucket_ended_at.asc(),
@@ -188,7 +203,7 @@ def load_runtime_authority_rows(
 def build_runtime_authority_report(
     rows: Sequence[RuntimeAuthorityEvidenceRow | Mapping[str, object]],
     *,
-    mode: str = 'authority',
+    mode: str = "authority",
     hypothesis_id: str = DEFAULT_HPAIRS_HYPOTHESIS_ID,
     candidate_id: str = DEFAULT_HPAIRS_CANDIDATE_ID,
     runtime_strategy_name: str = DEFAULT_HPAIRS_RUNTIME_STRATEGY,
@@ -212,26 +227,38 @@ def build_runtime_authority_report(
         policy=policy,
         evidence_read_error=evidence_read_error,
     )
+    final_authority_ok = not blockers
     return {
-        'schema_version': HPAIRS_RUNTIME_AUTHORITY_PROOF_SCHEMA_VERSION,
-        'mode': proof_mode,
-        'final_authority_ok': not blockers,
-        'identity': {
-            'hypothesis_id': hypothesis_id,
-            'candidate_id': candidate_id,
-            'runtime_strategy_name': runtime_strategy_name,
-            'account_label': account_label,
-            'observed_stage': observed_stage,
+        "schema_version": HPAIRS_RUNTIME_AUTHORITY_PROOF_SCHEMA_VERSION,
+        "mode": proof_mode,
+        "evidence_source": {
+            "table": "strategy_runtime_ledger_buckets",
+            "writes_performed": False,
+            "synthetic_or_replay_only_authority_allowed": False,
         },
-        'window': {
-            'started_at': _isoformat(started_at) if started_at is not None else None,
-            'ended_at': _isoformat(ended_at) if ended_at is not None else None,
+        "authority_allowed": final_authority_ok,
+        "promotion_allowed": final_authority_ok,
+        "capital_promotion_allowed": final_authority_ok,
+        "final_authority_ok": final_authority_ok,
+        "identity": {
+            "hypothesis_id": hypothesis_id,
+            "candidate_id": candidate_id,
+            "runtime_strategy_name": runtime_strategy_name,
+            "account_label": account_label,
+            "observed_stage": observed_stage,
         },
-        'evidence_read_error': evidence_read_error,
-        'targets': _authority_targets(policy),
-        'trading_days': [_daily_payload(item) for item in daily],
-        'aggregate': aggregate,
-        'blockers': blockers,
+        "window": {
+            "started_at": _isoformat(started_at) if started_at is not None else None,
+            "ended_at": _isoformat(ended_at) if ended_at is not None else None,
+        },
+        "evidence_read_error": evidence_read_error,
+        "targets": _authority_targets(policy),
+        "trading_days": [_daily_payload(item) for item in daily],
+        "aggregate": aggregate,
+        "gaps": _authority_gaps(aggregate, policy=policy),
+        "blocker_counts": _blocker_counts(daily, extra_blockers=blockers),
+        "blockers": blockers,
+        "next_actions": _next_actions(blockers),
     }
 
 
@@ -240,12 +267,16 @@ def runtime_authority_report_json(report: Mapping[str, object]) -> str:
 
     import json
 
-    return json.dumps(report, indent=2, sort_keys=True) + '\n'
+    return json.dumps(report, indent=2, sort_keys=True) + "\n"
 
 
-def _row_from_bucket(bucket: StrategyRuntimeLedgerBucket) -> RuntimeAuthorityEvidenceRow:
+def _row_from_bucket(
+    bucket: StrategyRuntimeLedgerBucket,
+) -> RuntimeAuthorityEvidenceRow:
     payload = _as_mapping(bucket.payload_json)
-    blockers = _string_tuple([*_as_sequence(bucket.blockers_json), *_as_sequence(payload.get('blockers'))])
+    blockers = _string_tuple(
+        [*_as_sequence(bucket.blockers_json), *_as_sequence(payload.get("blockers"))]
+    )
     return RuntimeAuthorityEvidenceRow(
         row_id=str(bucket.id),
         run_id=_text(bucket.run_id),
@@ -280,42 +311,52 @@ def _row_from_bucket(bucket: StrategyRuntimeLedgerBucket) -> RuntimeAuthorityEvi
     )
 
 
-def _normalize_row(row: RuntimeAuthorityEvidenceRow | Mapping[str, object]) -> RuntimeAuthorityEvidenceRow:
+def _normalize_row(
+    row: RuntimeAuthorityEvidenceRow | Mapping[str, object],
+) -> RuntimeAuthorityEvidenceRow:
     if isinstance(row, RuntimeAuthorityEvidenceRow):
         return row
-    bucket_start = _required_datetime(row.get('bucket_started_at'), field_name='bucket_started_at')
-    bucket_end = _required_datetime(row.get('bucket_ended_at'), field_name='bucket_ended_at')
-    payload = _as_mapping(row.get('payload_json') or row.get('payload'))
-    blockers = _string_tuple([*_as_sequence(row.get('blockers_json')), *_as_sequence(row.get('blockers'))])
+    bucket_start = _required_datetime(
+        row.get("bucket_started_at"), field_name="bucket_started_at"
+    )
+    bucket_end = _required_datetime(
+        row.get("bucket_ended_at"), field_name="bucket_ended_at"
+    )
+    payload = _as_mapping(row.get("payload_json") or row.get("payload"))
+    blockers = _string_tuple(
+        [*_as_sequence(row.get("blockers_json")), *_as_sequence(row.get("blockers"))]
+    )
     return RuntimeAuthorityEvidenceRow(
-        row_id=_text(row.get('id') or row.get('row_id')) or '',
-        run_id=_text(row.get('run_id')),
-        candidate_id=_text(row.get('candidate_id')),
-        hypothesis_id=_text(row.get('hypothesis_id')),
-        observed_stage=_text(row.get('observed_stage')),
+        row_id=_text(row.get("id") or row.get("row_id")) or "",
+        run_id=_text(row.get("run_id")),
+        candidate_id=_text(row.get("candidate_id")),
+        hypothesis_id=_text(row.get("hypothesis_id")),
+        observed_stage=_text(row.get("observed_stage")),
         bucket_started_at=bucket_start,
         bucket_ended_at=bucket_end,
-        account_label=_text(row.get('account_label')),
-        runtime_strategy_name=_text(row.get('runtime_strategy_name')),
-        strategy_family=_text(row.get('strategy_family')),
-        fill_count=_int(row.get('fill_count')),
-        decision_count=_int(row.get('decision_count')),
-        submitted_order_count=_int(row.get('submitted_order_count')),
-        cancelled_order_count=_int(row.get('cancelled_order_count')),
-        rejected_order_count=_int(row.get('rejected_order_count')),
-        unfilled_order_count=_int(row.get('unfilled_order_count')),
-        closed_trade_count=_int(row.get('closed_trade_count')),
-        open_position_count=_int(row.get('open_position_count')),
-        filled_notional=_decimal(row.get('filled_notional')),
-        gross_strategy_pnl=_decimal(row.get('gross_strategy_pnl')),
-        cost_amount=_decimal(row.get('cost_amount')),
-        net_strategy_pnl_after_costs=_decimal(row.get('net_strategy_pnl_after_costs')),
-        post_cost_expectancy_bps=_optional_decimal(row.get('post_cost_expectancy_bps')),
-        ledger_schema_version=_text(row.get('ledger_schema_version')),
-        pnl_basis=_text(row.get('pnl_basis')),
-        execution_policy_hash_counts=_as_mapping(row.get('execution_policy_hash_counts')),
-        cost_model_hash_counts=_as_mapping(row.get('cost_model_hash_counts')),
-        lineage_hash_counts=_as_mapping(row.get('lineage_hash_counts')),
+        account_label=_text(row.get("account_label")),
+        runtime_strategy_name=_text(row.get("runtime_strategy_name")),
+        strategy_family=_text(row.get("strategy_family")),
+        fill_count=_int(row.get("fill_count")),
+        decision_count=_int(row.get("decision_count")),
+        submitted_order_count=_int(row.get("submitted_order_count")),
+        cancelled_order_count=_int(row.get("cancelled_order_count")),
+        rejected_order_count=_int(row.get("rejected_order_count")),
+        unfilled_order_count=_int(row.get("unfilled_order_count")),
+        closed_trade_count=_int(row.get("closed_trade_count")),
+        open_position_count=_int(row.get("open_position_count")),
+        filled_notional=_decimal(row.get("filled_notional")),
+        gross_strategy_pnl=_decimal(row.get("gross_strategy_pnl")),
+        cost_amount=_decimal(row.get("cost_amount")),
+        net_strategy_pnl_after_costs=_decimal(row.get("net_strategy_pnl_after_costs")),
+        post_cost_expectancy_bps=_optional_decimal(row.get("post_cost_expectancy_bps")),
+        ledger_schema_version=_text(row.get("ledger_schema_version")),
+        pnl_basis=_text(row.get("pnl_basis")),
+        execution_policy_hash_counts=_as_mapping(
+            row.get("execution_policy_hash_counts")
+        ),
+        cost_model_hash_counts=_as_mapping(row.get("cost_model_hash_counts")),
+        lineage_hash_counts=_as_mapping(row.get("lineage_hash_counts")),
         blockers=blockers,
         payload=payload,
     )
@@ -329,6 +370,7 @@ def _daily_rows(rows: Sequence[RuntimeAuthorityEvidenceRow]) -> list[_DailyAccum
         payload = _promotion_payload(row)
         row_blockers = _row_authority_blockers(row, payload)
         source_blockers = runtime_ledger_promotion_source_authority_blockers(payload)
+        combined_blockers = [*row_blockers, *source_blockers]
         accumulator.net_strategy_pnl_after_costs += row.net_strategy_pnl_after_costs
         accumulator.filled_notional += row.filled_notional
         accumulator.closed_trade_count += max(0, row.closed_trade_count)
@@ -343,34 +385,49 @@ def _daily_rows(rows: Sequence[RuntimeAuthorityEvidenceRow]) -> list[_DailyAccum
             accumulator.source_window_count += 1
         if not source_blockers:
             accumulator.source_authority_bucket_count += 1
+        if not combined_blockers:
+            accumulator.clean_authority_bucket_count += 1
+            accumulator.clean_authority_net_strategy_pnl_after_costs += (
+                row.net_strategy_pnl_after_costs
+            )
+            accumulator.clean_authority_filled_notional += row.filled_notional
+            accumulator.clean_authority_closed_trade_count += max(
+                0, row.closed_trade_count
+            )
         accumulator.source_window_id_count += _ref_count(
             payload,
-            'source_window_ids',
-            'source_window_id',
-            'runtime_ledger_source_window_ids',
-            'runtime_ledger_source_window_id',
+            "source_window_ids",
+            "source_window_id",
+            "runtime_ledger_source_window_ids",
+            "runtime_ledger_source_window_id",
         )
-        accumulator.source_ref_count += _ref_count(payload, 'source_refs', 'source_ref')
+        accumulator.source_ref_count += _ref_count(payload, "source_refs", "source_ref")
         accumulator.source_offset_count += _source_offset_count(payload)
         accumulator.trade_decision_ref_count += _ref_count(
             payload,
-            'trade_decision_ids',
-            'trade_decision_refs',
-            'trade_decision_id',
-            'decision_ids',
-            'decision_id',
+            "trade_decision_ids",
+            "trade_decision_refs",
+            "trade_decision_id",
+            "decision_ids",
+            "decision_id",
         )
-        accumulator.execution_ref_count += _ref_count(payload, 'execution_ids', 'execution_refs', 'execution_id')
+        accumulator.execution_ref_count += _ref_count(
+            payload, "execution_ids", "execution_refs", "execution_id"
+        )
         accumulator.execution_order_event_ref_count += _ref_count(
             payload,
-            'execution_order_event_ids',
-            'execution_order_event_refs',
-            'execution_order_event_id',
+            "execution_order_event_ids",
+            "execution_order_event_refs",
+            "execution_order_event_id",
         )
-        accumulator.source_materialization_count += int(_text(payload.get('source_materialization')) is not None)
-        accumulator.authority_class_count += int(_text(payload.get('authority_class')) is not None)
+        accumulator.source_materialization_count += int(
+            _text(payload.get("source_materialization")) is not None
+        )
+        accumulator.authority_class_count += int(
+            _text(payload.get("authority_class")) is not None
+        )
         accumulator.add_ref(row.row_id)
-        accumulator.add_blockers([*row_blockers, *source_blockers])
+        accumulator.add_blockers(combined_blockers)
     return [accumulators[day] for day in sorted(accumulators)]
 
 
@@ -380,37 +437,128 @@ def _aggregate(
     *,
     policy: RuntimeLedgerProofPolicy,
 ) -> dict[str, object]:
-    daily_net = [item.net_strategy_pnl_after_costs for item in daily]
-    total_net = sum(daily_net, Decimal('0'))
-    positive_total_net = sum((max(item, Decimal('0')) for item in daily_net), Decimal('0'))
-    best_day_net = max(daily_net) if daily_net else Decimal('0')
-    best_day_share = (
-        max(best_day_net, Decimal('0')) / positive_total_net if positive_total_net > 0 else None
+    authority_daily = [item for item in daily if item.clean_authority_bucket_count > 0]
+    clean_daily_net = [
+        item.clean_authority_net_strategy_pnl_after_costs for item in authority_daily
+    ]
+    clean_total_net = sum(clean_daily_net, Decimal("0"))
+    clean_positive_total_net = sum(
+        (max(item, Decimal("0")) for item in clean_daily_net), Decimal("0")
     )
-    max_drawdown = _max_drawdown(daily_net)
-    filled_notional = sum((row.filled_notional for row in rows), Decimal('0'))
-    closed_round_trips = sum((max(0, row.closed_trade_count) for row in rows), 0)
-    cost_amount = sum((row.cost_amount for row in rows), Decimal('0'))
+    clean_best_day_net = max(clean_daily_net) if clean_daily_net else Decimal("0")
+    clean_best_day_share = (
+        max(clean_best_day_net, Decimal("0")) / clean_positive_total_net
+        if clean_positive_total_net > 0
+        else None
+    )
+    clean_max_drawdown = _max_drawdown(clean_daily_net)
+    raw_daily_net = [item.net_strategy_pnl_after_costs for item in daily]
+    raw_total_net = sum(raw_daily_net, Decimal("0"))
+    raw_positive_total_net = sum(
+        (max(item, Decimal("0")) for item in raw_daily_net), Decimal("0")
+    )
+    raw_best_day_net = max(raw_daily_net) if raw_daily_net else Decimal("0")
+    raw_best_day_share = (
+        max(raw_best_day_net, Decimal("0")) / raw_positive_total_net
+        if raw_positive_total_net > 0
+        else None
+    )
+    raw_closed_round_trips = sum((max(0, row.closed_trade_count) for row in rows), 0)
+    raw_filled_notional = sum((row.filled_notional for row in rows), Decimal("0"))
+    clean_filled_notional = sum(
+        (item.clean_authority_filled_notional for item in authority_daily), Decimal("0")
+    )
+    clean_closed_round_trips = sum(
+        (item.clean_authority_closed_trade_count for item in authority_daily), 0
+    )
+    cost_amount = sum((row.cost_amount for row in rows), Decimal("0"))
+    target_implied_notional_gap = max(
+        Decimal("0"), policy.authority_min_filled_notional - clean_filled_notional
+    )
     return {
-        'bucket_count': len(rows),
-        'trading_day_count': len(daily),
-        'mean_daily_net_pnl_after_costs': _decimal_text(_mean(daily_net)),
-        'median_daily_net_pnl_after_costs': _decimal_text(_median(daily_net)),
-        'p10_daily_net_pnl_after_costs': _decimal_text(_p10(daily_net)),
-        'worst_day_net_pnl_after_costs': _decimal_text(min(daily_net) if daily_net else Decimal('0')),
-        'best_day_net_pnl_after_costs': _decimal_text(best_day_net),
-        'best_day_share': _decimal_text(best_day_share) if best_day_share is not None else None,
-        'max_drawdown': _decimal_text(max_drawdown) if daily else None,
-        'total_net_strategy_pnl_after_costs': _decimal_text(total_net),
-        'total_filled_notional': _decimal_text(filled_notional),
-        'total_explicit_costs': _decimal_text(cost_amount),
-        'closed_round_trips': closed_round_trips,
-        'open_position_count': sum((max(0, row.open_position_count) for row in rows), 0),
-        'source_authority_bucket_count': sum(item.source_authority_bucket_count for item in daily),
-        'explicit_cost_bucket_count': sum(item.explicit_cost_bucket_count for item in daily),
-        'authority_min_trading_days': policy.authority_min_trading_days,
-        'authority_min_filled_notional': _decimal_text(policy.authority_min_filled_notional),
-        'authority_min_closed_round_trips': policy.authority_min_closed_round_trips,
+        "bucket_count": len(rows),
+        "runtime_ledger_trading_day_count": len(daily),
+        "trading_day_count": len(daily),
+        "clean_authority_bucket_count": sum(
+            item.clean_authority_bucket_count for item in daily
+        ),
+        "clean_authority_trading_day_count": len(authority_daily),
+        "mean_daily_net_pnl_after_costs": _decimal_text(_mean(raw_daily_net)),
+        "median_daily_net_pnl_after_costs": _decimal_text(_median(raw_daily_net)),
+        "p10_daily_net_pnl_after_costs": _decimal_text(_p10(raw_daily_net)),
+        "worst_day_net_pnl_after_costs": _decimal_text(
+            min(raw_daily_net) if raw_daily_net else Decimal("0")
+        ),
+        "best_day_net_pnl_after_costs": _decimal_text(raw_best_day_net),
+        "best_day_share": _decimal_text(raw_best_day_share)
+        if raw_best_day_share is not None
+        else None,
+        "max_drawdown": _decimal_text(_max_drawdown(raw_daily_net)) if daily else None,
+        "total_net_strategy_pnl_after_costs": _decimal_text(raw_total_net),
+        "total_filled_notional": _decimal_text(raw_filled_notional),
+        "target_implied_notional_gap": _decimal_text(target_implied_notional_gap),
+        "total_explicit_costs": _decimal_text(cost_amount),
+        "closed_round_trips": raw_closed_round_trips,
+        "open_position_count": sum(
+            (max(0, row.open_position_count) for row in rows), 0
+        ),
+        "source_authority_bucket_count": sum(
+            item.source_authority_bucket_count for item in daily
+        ),
+        "explicit_cost_bucket_count": sum(
+            item.explicit_cost_bucket_count for item in daily
+        ),
+        "clean_authority_mean_daily_net_pnl_after_costs": _decimal_text(
+            _mean(clean_daily_net)
+        ),
+        "clean_authority_median_daily_net_pnl_after_costs": _decimal_text(
+            _median(clean_daily_net)
+        ),
+        "clean_authority_p10_daily_net_pnl_after_costs": _decimal_text(
+            _p10(clean_daily_net)
+        ),
+        "clean_authority_worst_day_net_pnl_after_costs": _decimal_text(
+            min(clean_daily_net) if clean_daily_net else Decimal("0")
+        ),
+        "clean_authority_best_day_net_pnl_after_costs": _decimal_text(
+            clean_best_day_net
+        ),
+        "clean_authority_best_day_share": _decimal_text(clean_best_day_share)
+        if clean_best_day_share is not None
+        else None,
+        "clean_authority_max_drawdown": _decimal_text(clean_max_drawdown)
+        if authority_daily
+        else None,
+        "clean_authority_total_net_strategy_pnl_after_costs": _decimal_text(
+            clean_total_net
+        ),
+        "clean_authority_total_filled_notional": _decimal_text(clean_filled_notional),
+        "clean_authority_closed_round_trips": clean_closed_round_trips,
+        "raw_runtime_ledger_total_net_strategy_pnl_after_costs": _decimal_text(
+            raw_total_net
+        ),
+        "raw_runtime_ledger_mean_daily_net_pnl_after_costs": _decimal_text(
+            _mean(raw_daily_net)
+        ),
+        "raw_runtime_ledger_total_filled_notional": _decimal_text(raw_filled_notional),
+        "raw_runtime_ledger_closed_round_trips": raw_closed_round_trips,
+        "concentration": {
+            "best_day_share": _decimal_text(raw_best_day_share)
+            if raw_best_day_share is not None
+            else None,
+            "max_best_day_share": _decimal_text(policy.authority_max_best_day_share),
+        },
+        "clean_authority_concentration": {
+            "best_day_share": _decimal_text(clean_best_day_share)
+            if clean_best_day_share is not None
+            else None,
+            "max_best_day_share": _decimal_text(policy.authority_max_best_day_share),
+        },
+        "authority_min_trading_days": policy.authority_min_trading_days,
+        "authority_min_filled_notional": _decimal_text(
+            policy.authority_min_filled_notional
+        ),
+        "authority_min_closed_round_trips": policy.authority_min_closed_round_trips,
     }
 
 
@@ -427,30 +575,49 @@ def _authority_blockers(
         blockers.append(AUTHORITY_READ_ERROR_BLOCKER)
     if not rows:
         blockers.append(AUTHORITY_EVIDENCE_MISSING_BLOCKER)
-    daily_net = [item.net_strategy_pnl_after_costs for item in daily]
-    if len(daily) < policy.authority_min_trading_days:
+    if (
+        _int(aggregate.get("clean_authority_trading_day_count"))
+        < policy.authority_min_trading_days
+    ):
         blockers.append(AUTHORITY_TRADING_DAYS_BLOCKER)
-    if _mean(daily_net) < policy.authority_min_mean_daily_net_pnl_after_costs:
+    if (
+        _decimal(aggregate.get("clean_authority_mean_daily_net_pnl_after_costs"))
+        < policy.authority_min_mean_daily_net_pnl_after_costs
+    ):
         blockers.append(AUTHORITY_MEAN_PNL_BLOCKER)
-    if _median(daily_net) < policy.authority_min_median_daily_net_pnl_after_costs:
+    if (
+        _decimal(aggregate.get("clean_authority_median_daily_net_pnl_after_costs"))
+        < policy.authority_min_median_daily_net_pnl_after_costs
+    ):
         blockers.append(AUTHORITY_MEDIAN_PNL_BLOCKER)
-    if _p10(daily_net) < policy.authority_min_p10_daily_net_pnl_after_costs:
+    if (
+        _decimal(aggregate.get("clean_authority_p10_daily_net_pnl_after_costs"))
+        < policy.authority_min_p10_daily_net_pnl_after_costs
+    ):
         blockers.append(AUTHORITY_P10_PNL_BLOCKER)
-    if (min(daily_net) if daily_net else Decimal('0')) < policy.authority_min_worst_day_net_pnl_after_costs:
+    if (
+        _decimal(aggregate.get("clean_authority_worst_day_net_pnl_after_costs"))
+    ) < policy.authority_min_worst_day_net_pnl_after_costs:
         blockers.append(AUTHORITY_WORST_DAY_BLOCKER)
-    best_day_share = _optional_decimal(aggregate.get('best_day_share'))
-    if best_day_share is not None and best_day_share > policy.authority_max_best_day_share:
+    best_day_share = _optional_decimal(aggregate.get("clean_authority_best_day_share"))
+    if (
+        best_day_share is not None
+        and best_day_share > policy.authority_max_best_day_share
+    ):
         blockers.append(AUTHORITY_BEST_DAY_CONCENTRATION_BLOCKER)
-    filled_notional = _decimal(aggregate.get('total_filled_notional'))
+    filled_notional = _decimal(aggregate.get("clean_authority_total_filled_notional"))
     if filled_notional <= 0:
         blockers.append(AUTHORITY_FILLED_NOTIONAL_MISSING_BLOCKER)
     if filled_notional < policy.authority_min_filled_notional:
         blockers.append(AUTHORITY_FILLED_NOTIONAL_BLOCKER)
-    if _int(aggregate.get('closed_round_trips')) < policy.authority_min_closed_round_trips:
+    if (
+        _int(aggregate.get("clean_authority_closed_round_trips"))
+        < policy.authority_min_closed_round_trips
+    ):
         blockers.append(AUTHORITY_CLOSED_ROUND_TRIPS_BLOCKER)
-    if _int(aggregate.get('open_position_count')) > 0:
+    if _int(aggregate.get("open_position_count")) > 0:
         blockers.append(AUTHORITY_OPEN_POSITIONS_BLOCKER)
-    if rows and _int(aggregate.get('explicit_cost_bucket_count')) < len(rows):
+    if rows and _int(aggregate.get("explicit_cost_bucket_count")) < len(rows):
         blockers.append(AUTHORITY_EXPLICIT_COSTS_BLOCKER)
     for item in daily:
         blockers.extend(item.blockers or [])
@@ -495,113 +662,310 @@ def _promotion_payload(row: RuntimeAuthorityEvidenceRow) -> dict[str, object]:
     payload = dict(row.payload)
     payload.update(
         {
-            'run_id': row.run_id,
-            'candidate_id': row.candidate_id,
-            'hypothesis_id': row.hypothesis_id,
-            'observed_stage': row.observed_stage,
-            'account_label': row.account_label,
-            'runtime_strategy_name': row.runtime_strategy_name,
-            'strategy_family': row.strategy_family,
-            'fill_count': row.fill_count,
-            'decision_count': row.decision_count,
-            'submitted_order_count': row.submitted_order_count,
-            'cancelled_order_count': row.cancelled_order_count,
-            'rejected_order_count': row.rejected_order_count,
-            'unfilled_order_count': row.unfilled_order_count,
-            'closed_trade_count': row.closed_trade_count,
-            'open_position_count': row.open_position_count,
-            'filled_notional': row.filled_notional,
-            'gross_strategy_pnl': row.gross_strategy_pnl,
-            'cost_amount': row.cost_amount,
-            'net_strategy_pnl_after_costs': row.net_strategy_pnl_after_costs,
-            'post_cost_expectancy_bps': row.post_cost_expectancy_bps,
-            'ledger_schema_version': row.ledger_schema_version,
-            'pnl_basis': row.pnl_basis,
-            'execution_policy_hash_counts': row.execution_policy_hash_counts,
-            'cost_model_hash_counts': row.cost_model_hash_counts,
-            'lineage_hash_counts': row.lineage_hash_counts,
+            "run_id": row.run_id,
+            "candidate_id": row.candidate_id,
+            "hypothesis_id": row.hypothesis_id,
+            "observed_stage": row.observed_stage,
+            "account_label": row.account_label,
+            "runtime_strategy_name": row.runtime_strategy_name,
+            "strategy_family": row.strategy_family,
+            "fill_count": row.fill_count,
+            "decision_count": row.decision_count,
+            "submitted_order_count": row.submitted_order_count,
+            "cancelled_order_count": row.cancelled_order_count,
+            "rejected_order_count": row.rejected_order_count,
+            "unfilled_order_count": row.unfilled_order_count,
+            "closed_trade_count": row.closed_trade_count,
+            "open_position_count": row.open_position_count,
+            "filled_notional": row.filled_notional,
+            "gross_strategy_pnl": row.gross_strategy_pnl,
+            "cost_amount": row.cost_amount,
+            "net_strategy_pnl_after_costs": row.net_strategy_pnl_after_costs,
+            "post_cost_expectancy_bps": row.post_cost_expectancy_bps,
+            "ledger_schema_version": row.ledger_schema_version,
+            "pnl_basis": row.pnl_basis,
+            "execution_policy_hash_counts": row.execution_policy_hash_counts,
+            "cost_model_hash_counts": row.cost_model_hash_counts,
+            "lineage_hash_counts": row.lineage_hash_counts,
         }
     )
     return payload
 
 
-def _explicit_costs_present(row: RuntimeAuthorityEvidenceRow, payload: Mapping[str, object]) -> bool:
-    if is_non_promotion_grade_runtime_cost_basis(payload.get('cost_basis')):
+def _explicit_costs_present(
+    row: RuntimeAuthorityEvidenceRow, payload: Mapping[str, object]
+) -> bool:
+    if is_non_promotion_grade_runtime_cost_basis(payload.get("cost_basis")):
         return False
-    if cost_basis_counts_have_non_promotion_grade_costs(payload.get('cost_basis_counts')):
+    if cost_basis_counts_have_non_promotion_grade_costs(
+        payload.get("cost_basis_counts")
+    ):
         return False
-    cost_basis_counts = _as_mapping(payload.get('cost_basis_counts'))
+    cost_basis_counts = _as_mapping(payload.get("cost_basis_counts"))
     return bool(cost_basis_counts) and _positive_hash_count(row.cost_model_hash_counts)
 
 
 def _daily_payload(item: _DailyAccumulator) -> dict[str, object]:
     return {
-        'trading_day': item.trading_day,
-        'net_strategy_pnl_after_costs': _decimal_text(item.net_strategy_pnl_after_costs),
-        'filled_notional': _decimal_text(item.filled_notional),
-        'closed_trade_count': item.closed_trade_count,
-        'open_position_count': item.open_position_count,
-        'fill_count': item.fill_count,
-        'decision_count': item.decision_count,
-        'submitted_order_count': item.submitted_order_count,
-        'bucket_count': item.bucket_count,
-        'explicit_cost_bucket_count': item.explicit_cost_bucket_count,
-        'source_window_count': item.source_window_count,
-        'source_window_id_count': item.source_window_id_count,
-        'source_ref_count': item.source_ref_count,
-        'source_offset_count': item.source_offset_count,
-        'trade_decision_ref_count': item.trade_decision_ref_count,
-        'execution_ref_count': item.execution_ref_count,
-        'execution_order_event_ref_count': item.execution_order_event_ref_count,
-        'source_materialization_count': item.source_materialization_count,
-        'authority_class_count': item.authority_class_count,
-        'source_authority_bucket_count': item.source_authority_bucket_count,
-        'row_refs': sorted(item.row_refs or []),
-        'blockers': sorted(item.blockers or []),
+        "trading_day": item.trading_day,
+        "net_strategy_pnl_after_costs": _decimal_text(
+            item.net_strategy_pnl_after_costs
+        ),
+        "filled_notional": _decimal_text(item.filled_notional),
+        "closed_trade_count": item.closed_trade_count,
+        "open_position_count": item.open_position_count,
+        "fill_count": item.fill_count,
+        "decision_count": item.decision_count,
+        "submitted_order_count": item.submitted_order_count,
+        "bucket_count": item.bucket_count,
+        "explicit_cost_bucket_count": item.explicit_cost_bucket_count,
+        "source_window_count": item.source_window_count,
+        "source_window_id_count": item.source_window_id_count,
+        "source_ref_count": item.source_ref_count,
+        "source_offset_count": item.source_offset_count,
+        "trade_decision_ref_count": item.trade_decision_ref_count,
+        "execution_ref_count": item.execution_ref_count,
+        "execution_order_event_ref_count": item.execution_order_event_ref_count,
+        "source_materialization_count": item.source_materialization_count,
+        "authority_class_count": item.authority_class_count,
+        "source_authority_bucket_count": item.source_authority_bucket_count,
+        "clean_authority_bucket_count": item.clean_authority_bucket_count,
+        "clean_authority_net_strategy_pnl_after_costs": _decimal_text(
+            item.clean_authority_net_strategy_pnl_after_costs
+        ),
+        "clean_authority_filled_notional": _decimal_text(
+            item.clean_authority_filled_notional
+        ),
+        "clean_authority_closed_trade_count": item.clean_authority_closed_trade_count,
+        "row_refs": sorted(item.row_refs or []),
+        "blockers": sorted(item.blockers or []),
     }
 
 
 def _authority_targets(policy: RuntimeLedgerProofPolicy) -> dict[str, object]:
     return {
-        'min_trading_days': policy.authority_min_trading_days,
-        'min_mean_daily_net_pnl_after_costs': _decimal_text(policy.authority_min_mean_daily_net_pnl_after_costs),
-        'min_median_daily_net_pnl_after_costs': _decimal_text(policy.authority_min_median_daily_net_pnl_after_costs),
-        'min_p10_daily_net_pnl_after_costs': _decimal_text(policy.authority_min_p10_daily_net_pnl_after_costs),
-        'min_worst_day_net_pnl_after_costs': _decimal_text(policy.authority_min_worst_day_net_pnl_after_costs),
-        'max_best_day_share': _decimal_text(policy.authority_max_best_day_share),
-        'min_filled_notional': _decimal_text(policy.authority_min_filled_notional),
-        'min_closed_round_trips': policy.authority_min_closed_round_trips,
+        "min_trading_days": policy.authority_min_trading_days,
+        "min_mean_daily_net_pnl_after_costs": _decimal_text(
+            policy.authority_min_mean_daily_net_pnl_after_costs
+        ),
+        "min_median_daily_net_pnl_after_costs": _decimal_text(
+            policy.authority_min_median_daily_net_pnl_after_costs
+        ),
+        "min_p10_daily_net_pnl_after_costs": _decimal_text(
+            policy.authority_min_p10_daily_net_pnl_after_costs
+        ),
+        "min_worst_day_net_pnl_after_costs": _decimal_text(
+            policy.authority_min_worst_day_net_pnl_after_costs
+        ),
+        "max_best_day_share": _decimal_text(policy.authority_max_best_day_share),
+        "min_filled_notional": _decimal_text(policy.authority_min_filled_notional),
+        "min_closed_round_trips": policy.authority_min_closed_round_trips,
     }
+
+
+def _authority_gaps(
+    aggregate: Mapping[str, object],
+    *,
+    policy: RuntimeLedgerProofPolicy,
+) -> dict[str, object]:
+    target_total_net = policy.authority_min_mean_daily_net_pnl_after_costs * Decimal(
+        policy.authority_min_trading_days
+    )
+    observed_total_net = _decimal(
+        aggregate.get("clean_authority_total_net_strategy_pnl_after_costs")
+    )
+    return {
+        "missing_trading_days": max(
+            0,
+            policy.authority_min_trading_days
+            - _int(aggregate.get("clean_authority_trading_day_count")),
+        ),
+        "missing_clean_authority_buckets": max(
+            0,
+            policy.authority_min_trading_days
+            - _int(aggregate.get("clean_authority_bucket_count")),
+        ),
+        "missing_net_pnl_after_costs_to_mean_floor": _decimal_text(
+            max(Decimal("0"), target_total_net - observed_total_net)
+        ),
+        "missing_mean_daily_net_pnl_after_costs": _decimal_text(
+            max(
+                Decimal("0"),
+                policy.authority_min_mean_daily_net_pnl_after_costs
+                - _decimal(
+                    aggregate.get("clean_authority_mean_daily_net_pnl_after_costs")
+                ),
+            )
+        ),
+        "missing_median_daily_net_pnl_after_costs": _decimal_text(
+            max(
+                Decimal("0"),
+                policy.authority_min_median_daily_net_pnl_after_costs
+                - _decimal(
+                    aggregate.get("clean_authority_median_daily_net_pnl_after_costs")
+                ),
+            )
+        ),
+        "missing_p10_daily_net_pnl_after_costs": _decimal_text(
+            max(
+                Decimal("0"),
+                policy.authority_min_p10_daily_net_pnl_after_costs
+                - _decimal(
+                    aggregate.get("clean_authority_p10_daily_net_pnl_after_costs")
+                ),
+            )
+        ),
+        "missing_worst_day_net_pnl_after_costs": _decimal_text(
+            max(
+                Decimal("0"),
+                policy.authority_min_worst_day_net_pnl_after_costs
+                - _decimal(
+                    aggregate.get("clean_authority_worst_day_net_pnl_after_costs")
+                ),
+            )
+        ),
+        "missing_closed_round_trips": max(
+            0,
+            policy.authority_min_closed_round_trips
+            - _int(aggregate.get("clean_authority_closed_round_trips")),
+        ),
+        "missing_filled_notional": _decimal_text(
+            max(
+                Decimal("0"),
+                policy.authority_min_filled_notional
+                - _decimal(aggregate.get("clean_authority_total_filled_notional")),
+            )
+        ),
+        "target_implied_notional_gap": _decimal_text(
+            _decimal(aggregate.get("target_implied_notional_gap"))
+        ),
+    }
+
+
+def _blocker_counts(
+    daily: Sequence[_DailyAccumulator],
+    *,
+    extra_blockers: Sequence[str],
+) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in daily:
+        for blocker in item.blockers or []:
+            counts[blocker] = counts.get(blocker, 0) + 1
+    for blocker in extra_blockers:
+        counts.setdefault(blocker, 1)
+    return {key: counts[key] for key in sorted(counts)}
+
+
+def _next_actions(blockers: Sequence[str]) -> list[str]:
+    actions: list[str] = []
+
+    def add(action: str) -> None:
+        if action not in actions:
+            actions.append(action)
+
+    for blocker in blockers:
+        if blocker in {
+            RUNTIME_LEDGER_TRADE_DECISION_REFS_MISSING_BLOCKER,
+            RUNTIME_LEDGER_EXECUTION_REFS_MISSING_BLOCKER,
+            RUNTIME_LEDGER_EXECUTION_ORDER_EVENT_REFS_MISSING_BLOCKER,
+            RUNTIME_LEDGER_SOURCE_WINDOW_IDS_MISSING_BLOCKER,
+            RUNTIME_LEDGER_SOURCE_OFFSETS_MISSING_BLOCKER,
+            RUNTIME_LEDGER_SOURCE_REFS_MISSING_BLOCKER,
+            RUNTIME_LEDGER_SOURCE_WINDOW_MISSING_BLOCKER,
+            RUNTIME_LEDGER_SOURCE_MATERIALIZATION_MISSING_BLOCKER,
+        }:
+            add("repair_order_feed_linkage")
+        elif blocker == AUTHORITY_TRADING_DAYS_BLOCKER:
+            add("wait_for_more_authority_days")
+        elif blocker in {
+            AUTHORITY_CLOSED_ROUND_TRIPS_BLOCKER,
+            AUTHORITY_CLOSED_ROUND_TRIP_MISSING_BLOCKER,
+        }:
+            add("collect_closed_round_trips")
+        elif blocker in {
+            AUTHORITY_FILLED_NOTIONAL_BLOCKER,
+            AUTHORITY_FILLED_NOTIONAL_MISSING_BLOCKER,
+        }:
+            add("increase_filled_notional_after_source_linkage")
+        elif (
+            blocker == AUTHORITY_OPEN_POSITIONS_BLOCKER
+            or "unclosed_position" in blocker
+        ):
+            add("flatten_open_positions")
+        elif blocker == AUTHORITY_PNL_BASIS_BLOCKER or "pnl_basis" in blocker:
+            add("repair_runtime_pnl_basis")
+        elif blocker == AUTHORITY_READ_ERROR_BLOCKER:
+            add("restore_runtime_ledger_database_read_access")
+        elif blocker == AUTHORITY_EXPLICIT_COSTS_BLOCKER:
+            add("repair_explicit_runtime_costs")
+        elif blocker in {
+            AUTHORITY_MEAN_PNL_BLOCKER,
+            AUTHORITY_MEDIAN_PNL_BLOCKER,
+            AUTHORITY_P10_PNL_BLOCKER,
+        }:
+            add("improve_clean_authority_daily_pnl")
+        elif blocker == AUTHORITY_WORST_DAY_BLOCKER:
+            add("reduce_authority_drawdown")
+        elif blocker == AUTHORITY_BEST_DAY_CONCENTRATION_BLOCKER:
+            add("reduce_best_day_concentration")
+        elif blocker in {
+            AUTHORITY_RUNTIME_FILLS_MISSING_BLOCKER,
+            AUTHORITY_RUNTIME_DECISIONS_MISSING_BLOCKER,
+        }:
+            add("repair_runtime_decision_execution_linkage")
+        elif blocker == AUTHORITY_ORDER_LIFECYCLE_MISSING_BLOCKER:
+            add("repair_order_feed_linkage")
+        elif blocker == AUTHORITY_LEDGER_SCHEMA_BLOCKER:
+            add("regenerate_exact_replay_runtime_ledger_rows")
+        elif blocker in {
+            AUTHORITY_POLICY_HASH_BLOCKER,
+            AUTHORITY_COST_MODEL_HASH_BLOCKER,
+            AUTHORITY_LINEAGE_HASH_BLOCKER,
+        }:
+            add("repair_runtime_ledger_hash_lineage")
+        elif blocker == EXECUTION_ECONOMICS_MISSING_BLOCKER:
+            add("repair_execution_economics")
+        elif blocker == AUTHORITY_EVIDENCE_MISSING_BLOCKER:
+            add("collect_source_backed_runtime_ledger_rows")
+        elif blocker == AUTHORITY_BUCKET_BLOCKERS_PRESENT:
+            add("resolve_runtime_ledger_bucket_blockers")
+        elif blocker == "runtime_ledger_expectancy_missing":
+            add("repair_runtime_expectancy")
+        elif blocker == "source_decision_mode_not_profit_proof_eligible":
+            add("collect_profit_proof_eligible_source_decisions")
+        elif blocker == "execution_reconstruction_not_runtime_ledger_proof":
+            add("repair_order_feed_linkage")
+    return actions
 
 
 def _mean(values: Sequence[Decimal]) -> Decimal:
     if not values:
-        return Decimal('0')
-    return sum(values, Decimal('0')) / Decimal(len(values))
+        return Decimal("0")
+    return sum(values, Decimal("0")) / Decimal(len(values))
 
 
 def _median(values: Sequence[Decimal]) -> Decimal:
     if not values:
-        return Decimal('0')
+        return Decimal("0")
     sorted_values = sorted(values)
     middle = len(sorted_values) // 2
     if len(sorted_values) % 2:
         return sorted_values[middle]
-    return (sorted_values[middle - 1] + sorted_values[middle]) / Decimal('2')
+    return (sorted_values[middle - 1] + sorted_values[middle]) / Decimal("2")
 
 
 def _p10(values: Sequence[Decimal]) -> Decimal:
     if not values:
-        return Decimal('0')
+        return Decimal("0")
     sorted_values = sorted(values)
     index = max(0, ((len(sorted_values) + 9) // 10) - 1)
     return sorted_values[index]
 
 
 def _max_drawdown(values: Sequence[Decimal]) -> Decimal:
-    cumulative = Decimal('0')
-    peak = Decimal('0')
-    max_drawdown = Decimal('0')
+    cumulative = Decimal("0")
+    peak = Decimal("0")
+    max_drawdown = Decimal("0")
     for value in values:
         cumulative += value
         if cumulative > peak:
@@ -625,7 +989,9 @@ def _ref_count(bucket: Mapping[str, object], *keys: str) -> int:
                     ref_text = _text(ref_key)
                 if ref_text is not None:
                     refs.add(ref_text)
-        elif isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        elif isinstance(value, Sequence) and not isinstance(
+            value, (str, bytes, bytearray)
+        ):
             for item in cast(Sequence[object], value):
                 if (text := _text(item)) is not None:
                     refs.add(text)
@@ -635,30 +1001,40 @@ def _ref_count(bucket: Mapping[str, object], *keys: str) -> int:
 
 
 def _source_offset_count(bucket: Mapping[str, object]) -> int:
-    offsets = bucket.get('source_offsets')
+    offsets = bucket.get("source_offsets")
     if isinstance(offsets, Mapping):
-        return int(_source_offset_triplet_present(cast(Mapping[object, object], offsets)))
-    if isinstance(offsets, Sequence) and not isinstance(offsets, (str, bytes, bytearray)):
+        return int(
+            _source_offset_triplet_present(cast(Mapping[object, object], offsets))
+        )
+    if isinstance(offsets, Sequence) and not isinstance(
+        offsets, (str, bytes, bytearray)
+    ):
         seen: set[tuple[str, str, str]] = set()
         for item in cast(Sequence[object], offsets):
             if not isinstance(item, Mapping):
                 continue
             typed_item = cast(Mapping[object, object], item)
             if _source_offset_triplet_present(typed_item):
-                seen.add((str(typed_item.get('topic')), str(typed_item.get('partition')), str(typed_item.get('offset'))))
+                seen.add(
+                    (
+                        str(typed_item.get("topic")),
+                        str(typed_item.get("partition")),
+                        str(typed_item.get("offset")),
+                    )
+                )
         return len(seen)
     return int(
-        _text(bucket.get('source_topic')) is not None
-        and bucket.get('source_partition') is not None
-        and bucket.get('source_offset') is not None
+        _text(bucket.get("source_topic")) is not None
+        and bucket.get("source_partition") is not None
+        and bucket.get("source_offset") is not None
     )
 
 
 def _source_offset_triplet_present(value: Mapping[object, object]) -> bool:
     return (
-        _text(value.get('topic')) is not None
-        and value.get('partition') is not None
-        and value.get('offset') is not None
+        _text(value.get("topic")) is not None
+        and value.get("partition") is not None
+        and value.get("offset") is not None
     )
 
 
@@ -672,7 +1048,9 @@ def _positive_hash_count(value: Mapping[str, object]) -> bool:
 def _as_mapping(value: object) -> Mapping[str, object]:
     if not isinstance(value, Mapping):
         return {}
-    return {str(key): item for key, item in cast(Mapping[object, object], value).items()}
+    return {
+        str(key): item for key, item in cast(Mapping[object, object], value).items()
+    }
 
 
 def _as_sequence(value: object) -> Sequence[object]:
@@ -701,17 +1079,17 @@ def _text(value: object) -> str | None:
 
 def _int(value: object) -> int:
     try:
-        return int(str(value or '0'))
+        return int(str(value or "0"))
     except (TypeError, ValueError):
         return 0
 
 
 def _decimal(value: object) -> Decimal:
     try:
-        parsed = Decimal(str(value if value is not None else '0'))
+        parsed = Decimal(str(value if value is not None else "0"))
     except (InvalidOperation, ValueError):
-        return Decimal('0')
-    return parsed if parsed.is_finite() else Decimal('0')
+        return Decimal("0")
+    return parsed if parsed.is_finite() else Decimal("0")
 
 
 def _optional_decimal(value: object) -> Decimal | None:
@@ -727,7 +1105,7 @@ def _optional_decimal(value: object) -> Decimal | None:
 def _required_datetime(value: object, *, field_name: str) -> datetime:
     parsed = _parse_datetime(value)
     if parsed is None:
-        raise ValueError(f'{field_name}_invalid')
+        raise ValueError(f"{field_name}_invalid")
     return parsed
 
 
@@ -738,7 +1116,7 @@ def _parse_datetime(value: object) -> datetime | None:
     if text is None:
         return None
     try:
-        return _utc(datetime.fromisoformat(text.replace('Z', '+00:00')))
+        return _utc(datetime.fromisoformat(text.replace("Z", "+00:00")))
     except ValueError:
         return None
 
@@ -750,47 +1128,47 @@ def _utc(value: datetime) -> datetime:
 
 
 def _isoformat(value: datetime) -> str:
-    return _utc(value).isoformat().replace('+00:00', 'Z')
+    return _utc(value).isoformat().replace("+00:00", "Z")
 
 
 def _decimal_text(value: Decimal | None) -> str:
     if value is None:
-        return '0'
-    text = format(value.normalize(), 'f')
-    return text.rstrip('0').rstrip('.') if '.' in text else text
+        return "0"
+    text = format(value.normalize(), "f")
+    return text.rstrip("0").rstrip(".") if "." in text else text
 
 
 __all__ = [
-    'AUTHORITY_BEST_DAY_CONCENTRATION_BLOCKER',
-    'AUTHORITY_CLOSED_ROUND_TRIPS_BLOCKER',
-    'AUTHORITY_EVIDENCE_MISSING_BLOCKER',
-    'AUTHORITY_EXPLICIT_COSTS_BLOCKER',
-    'AUTHORITY_FILLED_NOTIONAL_BLOCKER',
-    'AUTHORITY_FILLED_NOTIONAL_MISSING_BLOCKER',
-    'AUTHORITY_MEAN_PNL_BLOCKER',
-    'AUTHORITY_MEDIAN_PNL_BLOCKER',
-    'AUTHORITY_OPEN_POSITIONS_BLOCKER',
-    'AUTHORITY_P10_PNL_BLOCKER',
-    'AUTHORITY_READ_ERROR_BLOCKER',
-    'AUTHORITY_TRADING_DAYS_BLOCKER',
-    'AUTHORITY_WORST_DAY_BLOCKER',
-    'DEFAULT_HPAIRS_ACCOUNT_LABEL',
-    'DEFAULT_HPAIRS_CANDIDATE_ID',
-    'DEFAULT_HPAIRS_HYPOTHESIS_ID',
-    'DEFAULT_HPAIRS_RUNTIME_STRATEGY',
-    'EXECUTION_ECONOMICS_MISSING_BLOCKER',
-    'HPAIRS_RUNTIME_AUTHORITY_PROOF_SCHEMA_VERSION',
-    'ORDER_FEED_LIFECYCLE_MISSING_BLOCKER',
-    'RUNTIME_LEDGER_EXECUTION_ORDER_EVENT_REFS_MISSING_BLOCKER',
-    'RUNTIME_LEDGER_EXECUTION_REFS_MISSING_BLOCKER',
-    'RUNTIME_LEDGER_SOURCE_MATERIALIZATION_MISSING_BLOCKER',
-    'RUNTIME_LEDGER_SOURCE_OFFSETS_MISSING_BLOCKER',
-    'RUNTIME_LEDGER_SOURCE_REFS_MISSING_BLOCKER',
-    'RUNTIME_LEDGER_SOURCE_WINDOW_IDS_MISSING_BLOCKER',
-    'RUNTIME_LEDGER_SOURCE_WINDOW_MISSING_BLOCKER',
-    'RUNTIME_LEDGER_TRADE_DECISION_REFS_MISSING_BLOCKER',
-    'RuntimeAuthorityEvidenceRow',
-    'build_runtime_authority_report',
-    'load_runtime_authority_rows',
-    'runtime_authority_report_json',
+    "AUTHORITY_BEST_DAY_CONCENTRATION_BLOCKER",
+    "AUTHORITY_CLOSED_ROUND_TRIPS_BLOCKER",
+    "AUTHORITY_EVIDENCE_MISSING_BLOCKER",
+    "AUTHORITY_EXPLICIT_COSTS_BLOCKER",
+    "AUTHORITY_FILLED_NOTIONAL_BLOCKER",
+    "AUTHORITY_FILLED_NOTIONAL_MISSING_BLOCKER",
+    "AUTHORITY_MEAN_PNL_BLOCKER",
+    "AUTHORITY_MEDIAN_PNL_BLOCKER",
+    "AUTHORITY_OPEN_POSITIONS_BLOCKER",
+    "AUTHORITY_P10_PNL_BLOCKER",
+    "AUTHORITY_READ_ERROR_BLOCKER",
+    "AUTHORITY_TRADING_DAYS_BLOCKER",
+    "AUTHORITY_WORST_DAY_BLOCKER",
+    "DEFAULT_HPAIRS_ACCOUNT_LABEL",
+    "DEFAULT_HPAIRS_CANDIDATE_ID",
+    "DEFAULT_HPAIRS_HYPOTHESIS_ID",
+    "DEFAULT_HPAIRS_RUNTIME_STRATEGY",
+    "EXECUTION_ECONOMICS_MISSING_BLOCKER",
+    "HPAIRS_RUNTIME_AUTHORITY_PROOF_SCHEMA_VERSION",
+    "ORDER_FEED_LIFECYCLE_MISSING_BLOCKER",
+    "RUNTIME_LEDGER_EXECUTION_ORDER_EVENT_REFS_MISSING_BLOCKER",
+    "RUNTIME_LEDGER_EXECUTION_REFS_MISSING_BLOCKER",
+    "RUNTIME_LEDGER_SOURCE_MATERIALIZATION_MISSING_BLOCKER",
+    "RUNTIME_LEDGER_SOURCE_OFFSETS_MISSING_BLOCKER",
+    "RUNTIME_LEDGER_SOURCE_REFS_MISSING_BLOCKER",
+    "RUNTIME_LEDGER_SOURCE_WINDOW_IDS_MISSING_BLOCKER",
+    "RUNTIME_LEDGER_SOURCE_WINDOW_MISSING_BLOCKER",
+    "RUNTIME_LEDGER_TRADE_DECISION_REFS_MISSING_BLOCKER",
+    "RuntimeAuthorityEvidenceRow",
+    "build_runtime_authority_report",
+    "load_runtime_authority_rows",
+    "runtime_authority_report_json",
 ]
