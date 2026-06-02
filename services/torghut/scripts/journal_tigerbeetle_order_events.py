@@ -727,6 +727,89 @@ def _supervised_worker_argv(source: str | None = None) -> list[str]:
     ]
 
 
+def _write_supervised_output(value: str | bytes | None, *, stream: Any) -> str:
+    if value is None:
+        return ""
+    text = (
+        value.decode("utf-8", errors="replace") if isinstance(value, bytes) else value
+    )
+    if text:
+        stream.write(text)
+        stream.flush()
+    return text
+
+
+def _last_journal_payload(text: str) -> dict[str, Any] | None:
+    payload: dict[str, Any] | None = None
+    for line in text.splitlines():
+        clean_line = line.strip()
+        if not clean_line.startswith("{"):
+            continue
+        try:
+            candidate = json.loads(clean_line)
+        except json.JSONDecodeError:
+            continue
+        if (
+            isinstance(candidate, dict)
+            and candidate.get("schema_version")
+            == "torghut.tigerbeetle-journal-order-events.v1"
+        ):
+            payload = candidate
+    return payload
+
+
+def _safe_payload_allows_success(payload: Mapping[str, Any] | None) -> bool:
+    if not payload:
+        return False
+    if payload.get("schema_version") != "torghut.tigerbeetle-journal-order-events.v1":
+        return False
+    if bool(payload.get("exit_nonzero", True)):
+        return False
+    if bool(payload.get("promotion_authority", True)):
+        return False
+    if bool(payload.get("overrides_runtime_ledger_authority", True)):
+        return False
+    if int(payload.get("failed") or 0) != 0:
+        return False
+    for key in ("hard_failure_reasons", "stop_reasons"):
+        raw_value = payload.get(key)
+        if isinstance(raw_value, Sequence) and not isinstance(
+            raw_value,
+            (str, bytes, bytearray),
+        ):
+            if any(str(item).strip() for item in raw_value):
+                return False
+        elif raw_value:
+            return False
+    return True
+
+
+def _normalize_supervised_returncode(
+    *,
+    returncode: int,
+    payload: Mapping[str, Any] | None,
+    worker_args: argparse.Namespace,
+) -> int:
+    if returncode == 0:
+        return 0
+    if not _safe_payload_allows_success(payload):
+        return returncode
+    assert payload is not None
+    _emit_progress(
+        "supervised_worker_exit_mismatch_normalized",
+        returncode=returncode,
+        sources=list(_parse_sources(getattr(worker_args, "sources", "all"))),
+        status=str(payload.get("status", "")),
+        accounting_blockers=list(
+            cast(Sequence[object], payload.get("accounting_blockers") or [])
+        ),
+        reconciliation_blockers=list(
+            cast(Sequence[object], payload.get("reconciliation_blockers") or [])
+        ),
+    )
+    return 0
+
+
 def _run_supervised_worker_once(
     args: argparse.Namespace,
     *,
@@ -735,13 +818,19 @@ def _run_supervised_worker_once(
 ) -> int:
     worker_args = _args_for_source(args, source)
     timeout_seconds = max(float(worker_args.supervise_timeout_seconds), 0.001)
+    stdout_text = ""
+    stderr_text = ""
     try:
         completed = subprocess.run(
             _supervised_worker_argv(source),
             check=False,
             timeout=timeout_seconds,
+            capture_output=True,
+            text=True,
         )
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as exc:
+        stdout_text += _write_supervised_output(exc.stdout, stream=sys.stdout)
+        stderr_text += _write_supervised_output(exc.stderr, stream=sys.stderr)
         _emit_progress(
             "supervised_worker_timeout",
             timeout_seconds=timeout_seconds,
@@ -758,7 +847,16 @@ def _run_supervised_worker_once(
             else json.dumps(payload, indent=2)
         )
         return 1 if bool(payload["exit_nonzero"]) else 0
-    return int(completed.returncode)
+    stdout_text += _write_supervised_output(completed.stdout, stream=sys.stdout)
+    stderr_text += _write_supervised_output(completed.stderr, stream=sys.stderr)
+    payload = _last_journal_payload(stdout_text)
+    if payload is None:
+        payload = _last_journal_payload(stderr_text)
+    return _normalize_supervised_returncode(
+        returncode=int(completed.returncode),
+        payload=payload,
+        worker_args=worker_args,
+    )
 
 
 def _run_supervised_worker(args: argparse.Namespace, *, started_at: datetime) -> int:
