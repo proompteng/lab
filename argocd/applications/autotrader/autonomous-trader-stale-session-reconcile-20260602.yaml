@@ -1,18 +1,19 @@
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
-  name: autonomous-trader-readback-proof-20260602
+  name: autonomous-trader-stale-reconcile-20260602
   namespace: synthesis
   annotations:
     autonomous-trader.proompteng.ai/deployment-color: blue
-    autonomous-trader.proompteng.ai/deployment-role: scorecard-readback-proof
-    autonomous-trader.proompteng.ai/proof-for: pr-9947
-    autonomous-trader.proompteng.ai/proof-date: "2026-06-02"
+    autonomous-trader.proompteng.ai/deployment-role: stale-session-reconcile
+    autonomous-trader.proompteng.ai/reconcile-for: autonomous-trader-market-open-lxhgb
+    autonomous-trader.proompteng.ai/reconcile-session: c41d58a4-5e50-4d02-96d5-2a0458193c90
+    autonomous-trader.proompteng.ai/reconcile-session-date: "2026-06-02"
   labels:
-    app.kubernetes.io/part-of: synthesis
+    app.kubernetes.io/part-of: autotrader
     app.kubernetes.io/component: autonomous-trader
     autonomous-trader.proompteng.ai/deployment-color: blue
-    autonomous-trader.proompteng.ai/deployment-role: scorecard-readback-proof
+    autonomous-trader.proompteng.ai/deployment-role: stale-session-reconcile
 spec:
   agentRef:
     name: autonomous-trader-agent
@@ -20,9 +21,8 @@ spec:
     name: autonomous-trader-v1
   goal:
     objective: >-
-      Prove the autotrader scorecard-readback lane executes through the dedicated read-only
-      helper, reads scorecards and broker state, reconciles stale flat sessions when safe, writes
-      report.md, and submits no Alpaca broker mutations.
+      Reconcile stale post-close Synthesis autotrader market-open sessions only after live Alpaca readback
+      proves the dedicated paper account has no open positions or open orders; do not submit broker mutations.
   vcsRef:
     name: github
   vcsPolicy:
@@ -37,7 +37,7 @@ spec:
   parameters:
     repository: proompteng/lab
     base: main
-    head: codex/synthesis-autonomous-trader-readback-proof
+    head: codex/synthesis-autonomous-trader-stale-reconcile
     mode: scorecard-readback
     synthesisSessionMode: scorecard_readback
     brokerMutationEnabled: "false"
@@ -45,6 +45,7 @@ spec:
     accountType: paper
     targetEquityUsd: "500000"
     marketOpenTimezone: America/New_York
+    premarketBootstrapMinutes: "15"
   secrets:
     - autonomous-trader-alpaca-mcp
     - agents-artifacts

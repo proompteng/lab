@@ -1,24 +1,28 @@
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
-  name: autonomous-trader-template
+  name: autonomous-trader-readback-proof-20260602
   namespace: synthesis
   annotations:
-    agents.proompteng.ai/template: "true"
     autonomous-trader.proompteng.ai/deployment-color: blue
-    autonomous-trader.proompteng.ai/deployment-role: active
+    autonomous-trader.proompteng.ai/deployment-role: scorecard-readback-proof
+    autonomous-trader.proompteng.ai/proof-for: pr-9947
+    autonomous-trader.proompteng.ai/proof-date: "2026-06-02"
   labels:
-    app.kubernetes.io/part-of: synthesis
+    app.kubernetes.io/part-of: autotrader
     app.kubernetes.io/component: autonomous-trader
     autonomous-trader.proompteng.ai/deployment-color: blue
-    autonomous-trader.proompteng.ai/deployment-role: active
+    autonomous-trader.proompteng.ai/deployment-role: scorecard-readback-proof
 spec:
   agentRef:
     name: autonomous-trader-agent
   implementationSpecRef:
     name: autonomous-trader-v1
   goal:
-    objective: Reach 500000 USD account equity in the dedicated Synthesis Alpaca paper account through autonomous market-open day trading while recording every decision, risk check, broker action, reconciliation result, and scorecard update in Synthesis.
+    objective: >-
+      Prove the autotrader scorecard-readback lane executes through the dedicated read-only
+      helper, reads scorecards and broker state, reconciles stale flat sessions when safe, writes
+      report.md, and submits no Alpaca broker mutations.
   vcsRef:
     name: github
   vcsPolicy:
@@ -30,19 +34,17 @@ spec:
       serviceAccountName: agents-sa
       backoffLimit: 0
       logRetentionSeconds: 604800
-  ttlSecondsAfterFinished: 86400
   parameters:
     repository: proompteng/lab
     base: main
-    head: codex/synthesis-autonomous-trader-session
-    mode: market-open
-    synthesisSessionMode: market_open
-    brokerMutationEnabled: "true"
+    head: codex/synthesis-autonomous-trader-readback-proof
+    mode: scorecard-readback
+    synthesisSessionMode: scorecard_readback
+    brokerMutationEnabled: "false"
     sessionReconcileEnabled: "true"
     accountType: paper
     targetEquityUsd: "500000"
     marketOpenTimezone: America/New_York
-    premarketBootstrapMinutes: "15"
   secrets:
     - autonomous-trader-alpaca-mcp
     - agents-artifacts

@@ -7,7 +7,7 @@ metadata:
     autonomous-trader.proompteng.ai/deployment-color: green
     autonomous-trader.proompteng.ai/deployment-role: preview
   labels:
-    app.kubernetes.io/part-of: synthesis
+    app.kubernetes.io/part-of: autotrader
     app.kubernetes.io/component: autonomous-trader
     autonomous-trader.proompteng.ai/deployment-color: green
     autonomous-trader.proompteng.ai/deployment-role: preview

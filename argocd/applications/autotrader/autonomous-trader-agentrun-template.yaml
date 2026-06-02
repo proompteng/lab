@@ -1,29 +1,24 @@
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
-  name: autonomous-trader-market-open-recovery-20260602
+  name: autonomous-trader-template
   namespace: synthesis
   annotations:
+    agents.proompteng.ai/template: "true"
     autonomous-trader.proompteng.ai/deployment-color: blue
-    autonomous-trader.proompteng.ai/deployment-role: recovery
-    autonomous-trader.proompteng.ai/recovery-for: autonomous-trader-market-open-lxhgb
-    autonomous-trader.proompteng.ai/recovery-session-date: "2026-06-02"
+    autonomous-trader.proompteng.ai/deployment-role: active
   labels:
-    app.kubernetes.io/part-of: synthesis
+    app.kubernetes.io/part-of: autotrader
     app.kubernetes.io/component: autonomous-trader
     autonomous-trader.proompteng.ai/deployment-color: blue
-    autonomous-trader.proompteng.ai/deployment-role: recovery
+    autonomous-trader.proompteng.ai/deployment-role: active
 spec:
   agentRef:
     name: autonomous-trader-agent
   implementationSpecRef:
     name: autonomous-trader-v1
   goal:
-    objective: >-
-      Continue the 2026-06-02 market-open autotrader recovery run in the dedicated Synthesis Alpaca paper
-      account after the earlier AgentRun exited early; read current broker state, manage open positions and
-      orders, keep cycling until market close or a real terminal condition, and record every decision, risk
-      check, broker action, reconciliation result, and scorecard update in Synthesis.
+    objective: Reach 500000 USD account equity in the dedicated Synthesis Alpaca paper account through autonomous market-open day trading while recording every decision, risk check, broker action, reconciliation result, and scorecard update in Synthesis.
   vcsRef:
     name: github
   vcsPolicy:
@@ -35,6 +30,7 @@ spec:
       serviceAccountName: agents-sa
       backoffLimit: 0
       logRetentionSeconds: 604800
+  ttlSecondsAfterFinished: 86400
   parameters:
     repository: proompteng/lab
     base: main

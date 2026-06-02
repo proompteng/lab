@@ -1,24 +1,24 @@
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
-  name: autonomous-trader-template-green
+  name: autonomous-trader-scorecard-readback-template
   namespace: synthesis
   annotations:
     agents.proompteng.ai/template: "true"
-    autonomous-trader.proompteng.ai/deployment-color: green
-    autonomous-trader.proompteng.ai/deployment-role: preview
+    autonomous-trader.proompteng.ai/deployment-color: blue
+    autonomous-trader.proompteng.ai/deployment-role: scorecard-readback
   labels:
-    app.kubernetes.io/part-of: synthesis
+    app.kubernetes.io/part-of: autotrader
     app.kubernetes.io/component: autonomous-trader
-    autonomous-trader.proompteng.ai/deployment-color: green
-    autonomous-trader.proompteng.ai/deployment-role: preview
+    autonomous-trader.proompteng.ai/deployment-color: blue
+    autonomous-trader.proompteng.ai/deployment-role: scorecard-readback
 spec:
   agentRef:
-    name: autonomous-trader-agent-green
+    name: autonomous-trader-readback-agent
   implementationSpecRef:
-    name: autonomous-trader-v1-green
+    name: autonomous-trader-readback-v1
   goal:
-    objective: Reach 500000 USD account equity in the dedicated Synthesis Alpaca paper account through autonomous market-open day trading while recording every decision, risk check, broker action, reconciliation result, and scorecard update in Synthesis.
+    objective: Run deterministic autonomous-trader scorecard readback, safe flat-session reconciliation, and report writing without Codex, analysis clone, candidate scanning, or Alpaca broker mutations.
   vcsRef:
     name: github
   vcsPolicy:
@@ -34,20 +34,17 @@ spec:
   parameters:
     repository: proompteng/lab
     base: main
-    head: codex/synthesis-autonomous-trader-session-green
-    mode: market-open
-    synthesisSessionMode: market_open
+    head: codex/synthesis-autonomous-trader-scorecard-readback
+    mode: scorecard-readback
+    synthesisSessionMode: scorecard_readback
     brokerMutationEnabled: "false"
-    sessionReconcileEnabled: "false"
+    sessionReconcileEnabled: "true"
     accountType: paper
     targetEquityUsd: "500000"
     marketOpenTimezone: America/New_York
-    premarketBootstrapMinutes: "15"
   secrets:
     - autonomous-trader-alpaca-mcp
     - agents-artifacts
-    - codex-auth
-    - github-token
     - synthesis-env
   workload:
     volumes:
@@ -58,9 +55,9 @@ spec:
         readOnly: true
     resources:
       requests:
-        cpu: "2"
-        memory: 4Gi
+        cpu: "1"
+        memory: 2Gi
         ephemeral-storage: 2Gi
       limits:
-        memory: 16Gi
-        ephemeral-storage: 16Gi
+        memory: 8Gi
+        ephemeral-storage: 12Gi

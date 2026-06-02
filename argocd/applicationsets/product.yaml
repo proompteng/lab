@@ -40,6 +40,14 @@ spec:
                   argocd.argoproj.io/sync-wave: "6"
                 automation: auto
                 enabled: "true"
+              - name: autotrader
+                path: argocd/applications/autotrader
+                namespace: synthesis
+                renderWithLovely: false
+                annotations:
+                  argocd.argoproj.io/sync-wave: "7"
+                automation: auto
+                enabled: "true"
               - name: cms
                 path: argocd/applications/cms
                 namespace: cms

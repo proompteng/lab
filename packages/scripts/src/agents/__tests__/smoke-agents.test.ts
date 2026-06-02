@@ -595,41 +595,80 @@ describe('scheduled AgentRun templates', () => {
 })
 
 describe('autonomous trader provider', () => {
+  it('registers autotrader as its own product app without Synthesis desired-state co-ownership', () => {
+    const product = readYamlObjects('argocd/applicationsets/product.yaml')[0]
+    const generators = objectAt(objectAt(product, 'spec'), 'generators') as Record<string, unknown>[]
+    const matrixGenerators = objectAt(objectAt(generators[0], 'matrix'), 'generators') as Record<string, unknown>[]
+    const productElements = objectAt(objectAt(matrixGenerators[1], 'list'), 'elements') as Record<string, unknown>[]
+    const autotrader = productElements.find((element) => objectAt(element, 'name') === 'autotrader')
+    const synthesis = productElements.find((element) => objectAt(element, 'name') === 'synthesis')
+    const synthesisRoot = readYamlObjects('argocd/applications/synthesis/kustomization.yaml')[0]
+    const synthesisAgents = readYamlObjects('argocd/applications/synthesis/agents-domain/kustomization.yaml')[0]
+    const autotraderKustomization = readYamlObjects('argocd/applications/autotrader/kustomization.yaml')[0]
+    const synthesisRootResources = objectAt(synthesisRoot, 'resources') as string[] | undefined
+    const synthesisAgentResources = objectAt(synthesisAgents, 'resources') as string[] | undefined
+    const autotraderResources = objectAt(autotraderKustomization, 'resources') as string[] | undefined
+
+    expect(autotrader).toEqual(
+      expect.objectContaining({
+        name: 'autotrader',
+        path: 'argocd/applications/autotrader',
+        namespace: 'synthesis',
+        renderWithLovely: false,
+        automation: 'auto',
+        enabled: 'true',
+      }),
+    )
+    expect(objectAt(objectAt(autotrader, 'annotations'), 'argocd.argoproj.io/sync-wave')).toBe('7')
+    expect(objectAt(objectAt(synthesis, 'annotations'), 'argocd.argoproj.io/sync-wave')).toBe('6')
+    expect(synthesisRootResources).toContain('agents-domain')
+    expect(synthesisAgentResources).toEqual([
+      'synthesis-deep-alpha-agentprovider.yaml',
+      'synthesis-deep-alpha-agent.yaml',
+      'synthesis-deep-alpha-implspec.yaml',
+      'synthesis-deep-alpha-agentrun-template.yaml',
+    ])
+    expect((synthesisAgentResources ?? []).join('\n')).not.toContain('autonomous-trader')
+    expect(autotraderResources?.every((resource) => resource.startsWith('autonomous-trader-'))).toBe(true)
+    expect(autotraderResources).toContain('autonomous-trader-schedule.yaml')
+    expect(autotraderResources).toContain('autonomous-trader-scorecard-readback-schedule.yaml')
+  })
+
   it('runs the market-open trader on its dedicated paper account', () => {
-    const kustomization = readYamlObjects('argocd/applications/synthesis/agents-domain/kustomization.yaml')[0]
+    const kustomization = readYamlObjects('argocd/applications/autotrader/kustomization.yaml')[0]
     const resources = objectAt(kustomization, 'resources') as string[] | undefined
-    const provider = readYamlObjects(
-      'argocd/applications/synthesis/agents-domain/autonomous-trader-agentprovider.yaml',
-    ).find((manifest) => objectAt(manifest, 'kind') === 'AgentProvider')
-    const schedule = readYamlObjects(
-      'argocd/applications/synthesis/agents-domain/autonomous-trader-schedule.yaml',
-    ).find((manifest) => objectAt(manifest, 'kind') === 'Schedule')
-    const template = readYamlObjects(
-      'argocd/applications/synthesis/agents-domain/autonomous-trader-agentrun-template.yaml',
-    ).find((manifest) => objectAt(manifest, 'kind') === 'AgentRun')
-    const greenSchedule = readYamlObjects(
-      'argocd/applications/synthesis/agents-domain/autonomous-trader-green-schedule.yaml',
-    ).find((manifest) => objectAt(manifest, 'kind') === 'Schedule')
+    const provider = readYamlObjects('argocd/applications/autotrader/autonomous-trader-agentprovider.yaml').find(
+      (manifest) => objectAt(manifest, 'kind') === 'AgentProvider',
+    )
+    const schedule = readYamlObjects('argocd/applications/autotrader/autonomous-trader-schedule.yaml').find(
+      (manifest) => objectAt(manifest, 'kind') === 'Schedule',
+    )
+    const template = readYamlObjects('argocd/applications/autotrader/autonomous-trader-agentrun-template.yaml').find(
+      (manifest) => objectAt(manifest, 'kind') === 'AgentRun',
+    )
+    const greenSchedule = readYamlObjects('argocd/applications/autotrader/autonomous-trader-green-schedule.yaml').find(
+      (manifest) => objectAt(manifest, 'kind') === 'Schedule',
+    )
     const greenTemplate = readYamlObjects(
-      'argocd/applications/synthesis/agents-domain/autonomous-trader-green-agentrun-template.yaml',
+      'argocd/applications/autotrader/autonomous-trader-green-agentrun-template.yaml',
     ).find((manifest) => objectAt(manifest, 'kind') === 'AgentRun')
-    const agent = readYamlObjects('argocd/applications/synthesis/agents-domain/autonomous-trader-agent.yaml').find(
+    const agent = readYamlObjects('argocd/applications/autotrader/autonomous-trader-agent.yaml').find(
       (manifest) => objectAt(manifest, 'kind') === 'Agent',
     )
-    const greenAgent = readYamlObjects(
-      'argocd/applications/synthesis/agents-domain/autonomous-trader-green-agent.yaml',
-    ).find((manifest) => objectAt(manifest, 'kind') === 'Agent')
-    const implSpec = readYamlObjects(
-      'argocd/applications/synthesis/agents-domain/autonomous-trader-implspec.yaml',
-    ).find((manifest) => objectAt(manifest, 'kind') === 'ImplementationSpec')
-    const greenImplSpec = readYamlObjects(
-      'argocd/applications/synthesis/agents-domain/autonomous-trader-green-implspec.yaml',
-    ).find((manifest) => objectAt(manifest, 'kind') === 'ImplementationSpec')
+    const greenAgent = readYamlObjects('argocd/applications/autotrader/autonomous-trader-green-agent.yaml').find(
+      (manifest) => objectAt(manifest, 'kind') === 'Agent',
+    )
+    const implSpec = readYamlObjects('argocd/applications/autotrader/autonomous-trader-implspec.yaml').find(
+      (manifest) => objectAt(manifest, 'kind') === 'ImplementationSpec',
+    )
+    const greenImplSpec = readYamlObjects('argocd/applications/autotrader/autonomous-trader-green-implspec.yaml').find(
+      (manifest) => objectAt(manifest, 'kind') === 'ImplementationSpec',
+    )
     const systemPrompt = readYamlObjects(
-      'argocd/applications/synthesis/agents-domain/autonomous-trader-system-prompt-configmap.yaml',
+      'argocd/applications/autotrader/autonomous-trader-system-prompt-configmap.yaml',
     ).find((manifest) => objectAt(manifest, 'kind') === 'ConfigMap')
     const greenSystemPrompt = readYamlObjects(
-      'argocd/applications/synthesis/agents-domain/autonomous-trader-green-system-prompt-configmap.yaml',
+      'argocd/applications/autotrader/autonomous-trader-green-system-prompt-configmap.yaml',
     ).find((manifest) => objectAt(manifest, 'kind') === 'ConfigMap')
     const envTemplate = objectAt(objectAt(provider, 'spec'), 'envTemplate')
     const secretEnv = objectAt(objectAt(provider, 'spec'), 'secretEnv') as Record<string, unknown>[] | undefined
@@ -700,21 +739,19 @@ describe('autonomous trader provider', () => {
     expect(resources).toContain('autonomous-trader-stale-session-reconcile-20260602.yaml')
     expect(objectAt(handoffPatchAnnotations, syncOptionsKey)).toBe('Prune=false')
     for (const path of [
-      'argocd/applications/synthesis/agents-domain/autonomous-trader-dedicated-alpaca-mcp-sealedsecret.yaml',
-      'argocd/applications/synthesis/agents-domain/autonomous-trader-agents-artifacts-sealedsecret.yaml',
-      'argocd/applications/synthesis/agents-domain/autonomous-trader-codex-auth-sealedsecret.yaml',
-      'argocd/applications/synthesis/agents-domain/autonomous-trader-github-token-sealedsecret.yaml',
+      'argocd/applications/autotrader/autonomous-trader-dedicated-alpaca-mcp-sealedsecret.yaml',
+      'argocd/applications/autotrader/autonomous-trader-agents-artifacts-sealedsecret.yaml',
+      'argocd/applications/autotrader/autonomous-trader-codex-auth-sealedsecret.yaml',
+      'argocd/applications/autotrader/autonomous-trader-github-token-sealedsecret.yaml',
     ]) {
       const sealedSecret = readYamlObjects(path).find((manifest) => objectAt(manifest, 'kind') === 'SealedSecret')
       const labels = objectAt(objectAt(sealedSecret, 'metadata'), 'labels')
 
       expect(objectAt(labels, 'app.kubernetes.io/component')).toBe('autonomous-trader')
-      expect(objectAt(labels, 'app.kubernetes.io/part-of')).toBe('synthesis')
+      expect(objectAt(labels, 'app.kubernetes.io/part-of')).toBe('autotrader')
     }
     expect(
-      existsSync(
-        resolve(process.cwd(), 'argocd/applications/synthesis/agents-domain/autonomous-trader-agentrun-template.yaml'),
-      ),
+      existsSync(resolve(process.cwd(), 'argocd/applications/autotrader/autonomous-trader-agentrun-template.yaml')),
     ).toBe(true)
     expect(systemPromptRef).toEqual({
       kind: 'ConfigMap',
@@ -811,27 +848,27 @@ describe('autonomous trader provider', () => {
   })
 
   it('schedules a post-close scorecard readback proof without broker mutations', () => {
-    const kustomization = readYamlObjects('argocd/applications/synthesis/agents-domain/kustomization.yaml')[0]
+    const kustomization = readYamlObjects('argocd/applications/autotrader/kustomization.yaml')[0]
     const resources = objectAt(kustomization, 'resources') as string[] | undefined
     const deploymentColorKey = 'autonomous-trader.proompteng.ai/deployment-color'
     const deploymentRoleKey = 'autonomous-trader.proompteng.ai/deployment-role'
     const schedule = readYamlObjects(
-      'argocd/applications/synthesis/agents-domain/autonomous-trader-scorecard-readback-schedule.yaml',
+      'argocd/applications/autotrader/autonomous-trader-scorecard-readback-schedule.yaml',
     ).find((manifest) => objectAt(manifest, 'kind') === 'Schedule')
     const template = readYamlObjects(
-      'argocd/applications/synthesis/agents-domain/autonomous-trader-scorecard-readback-template.yaml',
+      'argocd/applications/autotrader/autonomous-trader-scorecard-readback-template.yaml',
     ).find((manifest) => objectAt(manifest, 'kind') === 'AgentRun')
     const provider = readYamlObjects(
-      'argocd/applications/synthesis/agents-domain/autonomous-trader-readback-agentprovider.yaml',
+      'argocd/applications/autotrader/autonomous-trader-readback-agentprovider.yaml',
     ).find((manifest) => objectAt(manifest, 'kind') === 'AgentProvider')
-    const agent = readYamlObjects(
-      'argocd/applications/synthesis/agents-domain/autonomous-trader-readback-agent.yaml',
-    ).find((manifest) => objectAt(manifest, 'kind') === 'Agent')
+    const agent = readYamlObjects('argocd/applications/autotrader/autonomous-trader-readback-agent.yaml').find(
+      (manifest) => objectAt(manifest, 'kind') === 'Agent',
+    )
     const implementationSpec = readYamlObjects(
-      'argocd/applications/synthesis/agents-domain/autonomous-trader-readback-implspec.yaml',
+      'argocd/applications/autotrader/autonomous-trader-readback-implspec.yaml',
     ).find((manifest) => objectAt(manifest, 'kind') === 'ImplementationSpec')
     const secretBinding = readYamlObjects(
-      'argocd/applications/synthesis/agents-domain/autonomous-trader-readback-secretbinding.yaml',
+      'argocd/applications/autotrader/autonomous-trader-readback-secretbinding.yaml',
     ).find((manifest) => objectAt(manifest, 'kind') === 'SecretBinding')
     const scheduleMetadata = objectAt(schedule, 'metadata')
     const templateMetadata = objectAt(template, 'metadata')
@@ -929,10 +966,10 @@ describe('autonomous trader provider', () => {
   })
 
   it('runs a one-off stale session reconcile through the read-only autotrader lane', () => {
-    const kustomization = readYamlObjects('argocd/applications/synthesis/agents-domain/kustomization.yaml')[0]
+    const kustomization = readYamlObjects('argocd/applications/autotrader/kustomization.yaml')[0]
     const resources = objectAt(kustomization, 'resources') as string[] | undefined
     const agentRun = readYamlObjects(
-      'argocd/applications/synthesis/agents-domain/autonomous-trader-stale-session-reconcile-20260602.yaml',
+      'argocd/applications/autotrader/autonomous-trader-stale-session-reconcile-20260602.yaml',
     ).find((manifest) => objectAt(manifest, 'kind') === 'AgentRun')
     const metadata = objectAt(agentRun, 'metadata')
     const annotations = objectAt(metadata, 'annotations')
@@ -981,11 +1018,11 @@ describe('autonomous trader provider', () => {
   })
 
   it('wires the analysis daytrading bootstrap into the trader provider', () => {
-    const provider = readYamlObjects(
-      'argocd/applications/synthesis/agents-domain/autonomous-trader-agentprovider.yaml',
-    ).find((manifest) => objectAt(manifest, 'kind') === 'AgentProvider')
+    const provider = readYamlObjects('argocd/applications/autotrader/autonomous-trader-agentprovider.yaml').find(
+      (manifest) => objectAt(manifest, 'kind') === 'AgentProvider',
+    )
     const vcsProvider = readYamlObjects(
-      'argocd/applications/synthesis/agents-domain/autonomous-trader-versioncontrolprovider.yaml',
+      'argocd/applications/autotrader/autonomous-trader-versioncontrolprovider.yaml',
     ).find((manifest) => objectAt(manifest, 'kind') === 'VersionControlProvider')
     const providerSpec = objectAt(provider, 'spec')
     const codex = objectAt(objectAt(providerSpec, 'adapter'), 'codex')
@@ -1058,18 +1095,18 @@ describe('autonomous trader provider', () => {
   })
 
   it('wires Synthesis MCP visibility into the trader provider', () => {
-    const provider = readYamlObjects(
-      'argocd/applications/synthesis/agents-domain/autonomous-trader-agentprovider.yaml',
-    ).find((manifest) => objectAt(manifest, 'kind') === 'AgentProvider')
-    const agent = readYamlObjects('argocd/applications/synthesis/agents-domain/autonomous-trader-agent.yaml').find(
+    const provider = readYamlObjects('argocd/applications/autotrader/autonomous-trader-agentprovider.yaml').find(
+      (manifest) => objectAt(manifest, 'kind') === 'AgentProvider',
+    )
+    const agent = readYamlObjects('argocd/applications/autotrader/autonomous-trader-agent.yaml').find(
       (manifest) => objectAt(manifest, 'kind') === 'Agent',
     )
     const template = readYamlObjects(
-      'argocd/applications/synthesis/agents-domain/autonomous-trader-scorecard-readback-template.yaml',
+      'argocd/applications/autotrader/autonomous-trader-scorecard-readback-template.yaml',
     ).find((manifest) => objectAt(manifest, 'kind') === 'AgentRun')
-    const secretBinding = readYamlObjects(
-      'argocd/applications/synthesis/agents-domain/autonomous-trader-secretbinding.yaml',
-    ).find((manifest) => objectAt(manifest, 'kind') === 'SecretBinding')
+    const secretBinding = readYamlObjects('argocd/applications/autotrader/autonomous-trader-secretbinding.yaml').find(
+      (manifest) => objectAt(manifest, 'kind') === 'SecretBinding',
+    )
     const spec = objectAt(provider, 'spec')
     const codex = objectAt(objectAt(spec, 'adapter'), 'codex')
     const threadConfig = objectAt(codex, 'threadConfig')
@@ -1131,9 +1168,9 @@ describe('autonomous trader provider', () => {
   })
 
   it('bridges Codex framed MCP stdio to Alpaca newline stdio', () => {
-    const provider = readYamlObjects(
-      'argocd/applications/synthesis/agents-domain/autonomous-trader-agentprovider.yaml',
-    ).find((manifest) => objectAt(manifest, 'kind') === 'AgentProvider')
+    const provider = readYamlObjects('argocd/applications/autotrader/autonomous-trader-agentprovider.yaml').find(
+      (manifest) => objectAt(manifest, 'kind') === 'AgentProvider',
+    )
     const spec = objectAt(provider, 'spec')
     const codex = objectAt(objectAt(spec, 'adapter'), 'codex')
     const threadConfig = objectAt(codex, 'threadConfig')
