@@ -17,7 +17,7 @@ pytestmark = pytest.mark.property
 
 @given(signal=valid_quote_signals())
 def test_tight_positive_quotes_remain_executable(signal: SignalEnvelope) -> None:
-    previous_price = Decimal(signal.payload['price'])
+    previous_price = Decimal(signal.payload["price"])
 
     status = assess_signal_quote_quality(
         signal=signal,
@@ -26,8 +26,9 @@ def test_tight_positive_quotes_remain_executable(signal: SignalEnvelope) -> None
 
     assert status.valid is True
     assert status.reason is None
-    assert status.fillability_state == 'executable_quote_ready'
+    assert status.fillability_state == "executable_quote_ready"
     assert status.repair_action is None
+    assert status.operator_next_action == "allow_bounded_collection"
     assert status.spread_bps is not None
     assert status.spread_bps >= 0
 
@@ -36,29 +37,33 @@ def test_tight_positive_quotes_remain_executable(signal: SignalEnvelope) -> None
 def test_crossed_quotes_always_reject(signal: SignalEnvelope) -> None:
     status = assess_signal_quote_quality(
         signal=signal,
-        previous_price=Decimal('100'),
+        previous_price=Decimal("100"),
     )
 
     assert status.valid is False
-    assert status.reason == 'crossed_quote'
-    assert status.fillability_state == 'blocked'
-    assert status.repair_action == 'refresh_uncrossed_executable_quote_before_routeability_claim'
+    assert status.reason == "crossed_quote"
+    assert status.fillability_state == "blocked"
+    assert (
+        status.repair_action
+        == "refresh_uncrossed_executable_quote_before_routeability_claim"
+    )
+    assert status.operator_next_action == "wait_for_fresh_quote"
 
 
 @given(ask=positive_prices())
 def test_zero_top_level_bid_does_not_fall_back_to_nested_bid(ask: Decimal) -> None:
     signal = SignalEnvelope(
         event_ts=datetime(2026, 3, 27, 17, 30, 24, tzinfo=timezone.utc),
-        symbol='META',
-        timeframe='1Sec',
+        symbol="META",
+        timeframe="1Sec",
         seq=14,
         payload={
-            'price': ask,
-            'imbalance_bid_px': Decimal('0'),
-            'imbalance_ask_px': ask,
-            'imbalance': {
-                'bid_px': ask - Decimal('0.01'),
-                'ask_px': ask,
+            "price": ask,
+            "imbalance_bid_px": Decimal("0"),
+            "imbalance_ask_px": ask,
+            "imbalance": {
+                "bid_px": ask - Decimal("0.01"),
+                "ask_px": ask,
             },
         },
     )
@@ -69,15 +74,16 @@ def test_zero_top_level_bid_does_not_fall_back_to_nested_bid(ask: Decimal) -> No
     )
 
     assert status.valid is False
-    assert status.reason == 'non_positive_bid'
-    assert status.fillability_state == 'blocked'
-    assert status.repair_action == 'refresh_bid_quote_before_routeability_claim'
+    assert status.reason == "non_positive_bid"
+    assert status.fillability_state == "blocked"
+    assert status.repair_action == "refresh_bid_quote_before_routeability_claim"
+    assert status.operator_next_action == "refresh_source_snapshot"
 
 
 @given(
     bid=st.decimals(
-        min_value=Decimal('-10'),
-        max_value=Decimal('0'),
+        min_value=Decimal("-10"),
+        max_value=Decimal("0"),
         allow_nan=False,
         allow_infinity=False,
         places=4,
@@ -87,14 +93,14 @@ def test_zero_top_level_bid_does_not_fall_back_to_nested_bid(ask: Decimal) -> No
 def test_non_positive_bid_is_never_executable(bid: Decimal, ask: Decimal) -> None:
     signal = SignalEnvelope(
         event_ts=datetime(2026, 3, 27, 17, 30, 24, tzinfo=timezone.utc),
-        symbol='META',
-        timeframe='1Sec',
+        symbol="META",
+        timeframe="1Sec",
         seq=99,
         payload={
-            'price': ask,
-            'imbalance_bid_px': bid,
-            'imbalance_ask_px': ask,
-            'spread': ask - bid,
+            "price": ask,
+            "imbalance_bid_px": bid,
+            "imbalance_ask_px": ask,
+            "spread": ask - bid,
         },
     )
 
@@ -104,6 +110,7 @@ def test_non_positive_bid_is_never_executable(bid: Decimal, ask: Decimal) -> Non
     )
 
     assert status.valid is False
-    assert status.reason == 'non_positive_bid'
-    assert status.fillability_state == 'blocked'
-    assert status.repair_action == 'refresh_bid_quote_before_routeability_claim'
+    assert status.reason == "non_positive_bid"
+    assert status.fillability_state == "blocked"
+    assert status.repair_action == "refresh_bid_quote_before_routeability_claim"
+    assert status.operator_next_action == "refresh_source_snapshot"
