@@ -184,6 +184,7 @@ class TestOrderFeed(TestCase):
         account_label: str = "paper",
         order_id: str = "order-1",
         client_order_id: str = "client-1",
+        execution_idempotency_key: str | None = None,
     ) -> Execution:
         strategy = Strategy(
             name="demo",
@@ -220,6 +221,7 @@ class TestOrderFeed(TestCase):
             submitted_qty=Decimal("1"),
             filled_qty=Decimal("0"),
             status="new",
+            execution_idempotency_key=execution_idempotency_key,
             raw_order={"id": "order-1"},
             last_update_at=datetime.now(timezone.utc),
         )
@@ -1652,6 +1654,309 @@ class TestOrderFeed(TestCase):
             source_window.payload_json["authority_class"],
             "runtime_order_feed_execution_source",
         )
+
+    def test_repair_order_feed_execution_links_links_by_alpaca_order_id_only(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            execution = self._seed_execution(session)
+            execution_id = execution.id
+            trade_decision_id = execution.trade_decision_id
+            event = ExecutionOrderEvent(
+                event_fingerprint="repair-link-by-alpaca-order-id",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=328,
+                alpaca_account_label="paper",
+                event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+                symbol="AAPL",
+                alpaca_order_id=execution.alpaca_order_id,
+                client_order_id=None,
+                event_type="fill",
+                status="filled",
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("191.25"),
+                raw_event={"event": "fill"},
+            )
+            session.add(event)
+            session.commit()
+
+            result = repair_order_feed_execution_links(
+                session,
+                account_label="paper",
+                limit=10,
+            )
+            session.commit()
+            session.refresh(event)
+            source_window = session.execute(select(OrderFeedSourceWindow)).scalar_one()
+
+        self.assertEqual(result["events_linked"], 1)
+        self.assertEqual(event.execution_id, execution_id)
+        self.assertEqual(event.trade_decision_id, trade_decision_id)
+        self.assertEqual(event.source_window_id, source_window.id)
+        self.assertEqual(source_window.unlinked_execution_count, 0)
+        self.assertEqual(source_window.unlinked_decision_count, 0)
+        self.assertEqual(
+            source_window.status_reason, "historical_execution_order_event_backfill"
+        )
+
+    def test_repair_order_feed_execution_links_links_by_execution_idempotency_key(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            execution = self._seed_execution(
+                session,
+                order_id="broker-order-idempotency",
+                client_order_id="decision-client-id",
+                execution_idempotency_key="lean-idempotency-key-1",
+            )
+            execution_id = execution.id
+            trade_decision_id = execution.trade_decision_id
+            event = ExecutionOrderEvent(
+                event_fingerprint="repair-link-by-idempotency-key",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=329,
+                alpaca_account_label="paper",
+                event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+                symbol="AAPL",
+                alpaca_order_id=None,
+                client_order_id="lean-idempotency-key-1",
+                event_type="fill",
+                status="filled",
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("191.25"),
+                raw_event={"event": "fill"},
+            )
+            session.add(event)
+            session.commit()
+
+            result = repair_order_feed_execution_links(
+                session,
+                account_label="paper",
+                limit=10,
+            )
+            session.commit()
+            session.refresh(event)
+            source_window = session.execute(select(OrderFeedSourceWindow)).scalar_one()
+
+        self.assertEqual(result["events_linked"], 1)
+        self.assertEqual(event.execution_id, execution_id)
+        self.assertEqual(event.trade_decision_id, trade_decision_id)
+        self.assertEqual(event.source_window_id, source_window.id)
+        self.assertEqual(source_window.unlinked_execution_count, 0)
+        self.assertEqual(source_window.unlinked_decision_count, 0)
+        self.assertEqual(source_window.payload_json["source_coverage_complete"], True)
+
+    def test_linkage_helpers_preserve_actionable_blocker_classifications(
+        self,
+    ) -> None:
+        non_mapping = order_feed_module._raw_event_with_linkage_blockers(
+            "raw-event",
+            ["missing_execution", "", "missing_execution"],
+        )
+        self.assertEqual(
+            non_mapping,
+            {
+                "payload": "raw-event",
+                "_torghut_linkage": {
+                    "blockers": ["missing_execution"],
+                    "classification": "missing_execution",
+                },
+            },
+        )
+
+        existing = order_feed_module._raw_event_with_linkage_blockers(
+            {"event": "fill", "_torghut_linkage": {"source": "previous"}},
+            ["ambiguous_execution_identity"],
+        )
+        self.assertEqual(existing["event"], "fill")
+        self.assertEqual(existing["_torghut_linkage"]["source"], "previous")
+        self.assertEqual(
+            existing["_torghut_linkage"]["blockers"],
+            ["ambiguous_execution_identity"],
+        )
+        self.assertEqual(
+            order_feed_module._order_event_linkage_blockers(
+                ExecutionOrderEvent(raw_event="raw-event")
+            ),
+            [],
+        )
+        self.assertEqual(
+            order_feed_module._order_event_linkage_blockers(
+                ExecutionOrderEvent(
+                    raw_event={"_torghut_linkage": {"blockers": "single_blocker"}}
+                )
+            ),
+            ["single_blocker"],
+        )
+        self.assertEqual(
+            order_feed_module._order_event_linkage_blockers(
+                ExecutionOrderEvent(raw_event={"_torghut_linkage": {"blockers": 0}})
+            ),
+            [],
+        )
+        self.assertIsNone(
+            order_feed_module._order_event_client_identity(
+                ExecutionOrderEvent(raw_event="raw-event")
+            )
+        )
+        self.assertEqual(
+            order_feed_module._order_event_client_identity(
+                ExecutionOrderEvent(
+                    raw_event={
+                        "order": {
+                            "executionIdempotencyKey": "execution-idempotency-key-1"
+                        }
+                    }
+                )
+            ),
+            "execution-idempotency-key-1",
+        )
+
+    def test_repair_order_feed_execution_links_blocks_account_mismatch(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            self._seed_execution(session, account_label="paper")
+            source_window = OrderFeedSourceWindow(
+                consumer_group="torghut-order-feed-v1",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                alpaca_account_label="PA3SX7FYNUTF",
+                assignment_mode="group",
+                source_revision=ORDER_FEED_SOURCE_REVISION,
+                window_started_at=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+                window_ended_at=datetime(2026, 2, 1, 10, 1, tzinfo=timezone.utc),
+                start_offset=330,
+                end_offset=330,
+                consumed_count=1,
+                inserted_count=1,
+                unlinked_execution_count=1,
+                unlinked_decision_count=1,
+                status="inserted",
+                status_reason="missing_execution_and_decision_links",
+            )
+            session.add(source_window)
+            session.flush()
+            event = ExecutionOrderEvent(
+                event_fingerprint="repair-account-mismatch",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=330,
+                alpaca_account_label="PA3SX7FYNUTF",
+                event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+                symbol="AAPL",
+                alpaca_order_id="order-1",
+                client_order_id="client-1",
+                event_type="fill",
+                status="filled",
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("191.25"),
+                raw_event={"event": "fill"},
+                source_window_id=source_window.id,
+            )
+            session.add(event)
+            session.commit()
+
+            result = repair_order_feed_execution_links(
+                session,
+                account_label="PA3SX7FYNUTF",
+                limit=10,
+            )
+            session.commit()
+            session.refresh(event)
+            source_window = session.execute(select(OrderFeedSourceWindow)).scalar_one()
+
+        self.assertEqual(result["events_linked"], 0)
+        self.assertIsNone(event.execution_id)
+        self.assertIsNone(event.trade_decision_id)
+        self.assertEqual(source_window.unlinked_execution_count, 1)
+        self.assertEqual(source_window.unlinked_decision_count, 1)
+        self.assertEqual(
+            source_window.status_reason,
+            "account_mismatch_execution_identity",
+        )
+        self.assertEqual(
+            source_window.payload_json["linkage_blockers"],
+            ["account_mismatch_execution_identity"],
+        )
+        self.assertFalse(source_window.payload_json["promotion_authority_eligible"])
+
+    def test_repair_order_feed_execution_links_blocks_ambiguous_identity(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            first = self._seed_execution(
+                session,
+                order_id="ambiguous-alpaca-order",
+                client_order_id="first-client",
+            )
+            second = self._seed_execution(
+                session,
+                order_id="second-alpaca-order",
+                client_order_id="ambiguous-client",
+            )
+            source_window = OrderFeedSourceWindow(
+                consumer_group="torghut-order-feed-v1",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                alpaca_account_label="paper",
+                assignment_mode="group",
+                source_revision=ORDER_FEED_SOURCE_REVISION,
+                window_started_at=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+                window_ended_at=datetime(2026, 2, 1, 10, 1, tzinfo=timezone.utc),
+                start_offset=331,
+                end_offset=331,
+                consumed_count=1,
+                inserted_count=1,
+                unlinked_execution_count=1,
+                unlinked_decision_count=1,
+                status="inserted",
+                status_reason="missing_execution_and_decision_links",
+            )
+            session.add(source_window)
+            session.flush()
+            event = ExecutionOrderEvent(
+                event_fingerprint="repair-ambiguous-identity",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=331,
+                alpaca_account_label="paper",
+                event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+                symbol="AAPL",
+                alpaca_order_id=first.alpaca_order_id,
+                client_order_id=second.client_order_id,
+                event_type="fill",
+                status="filled",
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("191.25"),
+                raw_event={"event": "fill"},
+                source_window_id=source_window.id,
+            )
+            session.add(event)
+            session.commit()
+
+            result = repair_order_feed_execution_links(
+                session,
+                account_label="paper",
+                limit=10,
+            )
+            session.commit()
+            session.refresh(event)
+            source_window = session.execute(select(OrderFeedSourceWindow)).scalar_one()
+
+        self.assertEqual(result["events_linked"], 0)
+        self.assertIsNone(event.execution_id)
+        self.assertIsNone(event.trade_decision_id)
+        self.assertEqual(source_window.unlinked_execution_count, 1)
+        self.assertEqual(source_window.unlinked_decision_count, 1)
+        self.assertEqual(source_window.status_reason, "ambiguous_execution_identity")
+        self.assertEqual(
+            source_window.payload_json["linkage_blockers"],
+            ["ambiguous_execution_identity"],
+        )
+        self.assertFalse(source_window.payload_json["source_coverage_complete"])
 
     def test_repair_order_feed_execution_links_links_matching_decision_without_execution(
         self,
