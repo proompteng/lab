@@ -297,6 +297,290 @@ class _TradingStatusReadBudget:
         }
 
 
+def _rollback_status_read_session(session: Session, *, context: str) -> None:
+    rollback = getattr(session, "rollback", None)
+    if not callable(rollback):
+        return
+    try:
+        rollback()
+    except SQLAlchemyError:
+        logger.warning("Failed to roll back %s status-read session", context)
+
+
+def _apply_status_read_statement_timeout(
+    session: Session,
+    *,
+    milliseconds: int,
+) -> None:
+    get_bind = getattr(session, "get_bind", None)
+    if not callable(get_bind):
+        return
+    try:
+        bind = get_bind()
+        dialect = getattr(getattr(bind, "dialect", None), "name", "")
+        if dialect == "postgresql":
+            timeout_ms = max(1, int(milliseconds))
+            session.execute(text(f"SET LOCAL statement_timeout = {timeout_ms}"))
+    except SQLAlchemyError:
+        raise
+    except Exception:
+        return
+
+
+def _budget_unavailable_llm_evaluation_payload(reason: str) -> dict[str, object]:
+    return {
+        "ok": False,
+        "error": reason,
+        "read_model_unavailable": True,
+        "read_model_status": "timeout",
+        "reason_codes": [reason],
+    }
+
+
+def _budget_unavailable_tca_summary_payload(reason: str) -> dict[str, object]:
+    return {
+        "account_label": settings.trading_account_label,
+        "order_count": 0,
+        "filled_execution_count": 0,
+        "expected_shortfall_sample_count": 0,
+        "expected_shortfall_coverage": "0",
+        "avg_abs_slippage_bps": None,
+        "avg_realized_shortfall_bps": None,
+        "avg_divergence_bps": None,
+        "latest_execution_created_at": None,
+        "last_computed_at": None,
+        "scope_symbols": [],
+        "scope_symbol_count": 0,
+        "symbol_breakdown": [],
+        "missing_symbols": [],
+        "read_model_unavailable": True,
+        "read_model_status": "timeout",
+        "reason_codes": [reason],
+    }
+
+
+def _budget_unavailable_tigerbeetle_ledger_payload(reason: str) -> dict[str, object]:
+    reconciliation_required = bool(
+        settings.tigerbeetle_required or settings.tigerbeetle_reconcile_required
+    )
+    latest_reconciliation = _unavailable_tigerbeetle_reconciliation_payload(
+        reason_codes=[reason],
+        last_error=reason,
+    )
+    ref_counts = _empty_tigerbeetle_ref_counts(
+        reason_codes=[reason],
+        last_error=reason,
+    )
+    return {
+        "schema_version": "torghut.tigerbeetle-ledger-status.v1",
+        "enabled": settings.tigerbeetle_enabled,
+        "journal_enabled": settings.tigerbeetle_journal_enabled,
+        "required": settings.tigerbeetle_required,
+        "reconcile_required": settings.tigerbeetle_reconcile_required,
+        "claimed_by_runtime_evidence": False,
+        "reconciliation_required": reconciliation_required,
+        "ok": False,
+        "protocol_ok": False,
+        "protocol_probe_skipped": True,
+        "reconciliation_ok": False,
+        "reconciliation_age_seconds": None,
+        "reconciliation_max_age_seconds": max(
+            1,
+            int(settings.tigerbeetle_reconcile_max_age_seconds),
+        ),
+        "reconciliation_stale": False,
+        "cluster_id": settings.tigerbeetle_cluster_id,
+        "replica_addresses": [],
+        "last_error": reason,
+        "ref_counts": ref_counts,
+        "account_ref_count": 0,
+        "transfer_ref_count": 0,
+        "runtime_ledger_ref_count": 0,
+        "runtime_ledger_signed_ref_count": 0,
+        "runtime_ledger_missing_signed_ref_count": 0,
+        "runtime_ledger_missing_account_ref_count": 0,
+        "source_materialization": {},
+        "latest_reconciliation": latest_reconciliation,
+        "blockers": [reason],
+        "read_model_unavailable": True,
+        "reason_codes": [reason],
+    }
+
+
+def _unavailable_runtime_ledger_portfolio_summary(
+    *,
+    account_label: str,
+    stage_scope: str,
+    observed_at: datetime,
+    reason: str,
+) -> dict[str, object]:
+    observed = (
+        observed_at.astimezone(timezone.utc)
+        if observed_at.tzinfo
+        else observed_at.replace(tzinfo=timezone.utc)
+    )
+    day_start = observed.replace(hour=0, minute=0, second=0, microsecond=0)
+    stage = stage_scope.strip()
+    account = account_label.strip()
+    return {
+        "summary_basis": "runtime_ledger_daily_stage_account_scope",
+        "day_start": day_start.isoformat(),
+        "observed_at": observed.isoformat(),
+        "filters": {
+            "account_label": account,
+            "stage_scope": stage,
+            "observed_stage": stage if stage in {"paper", "live"} else "__missing__",
+        },
+        "bucket_count": 0,
+        "evidence_grade_bucket_count": 0,
+        "post_cost_net_pnl_per_day": "0",
+        "filled_notional": "0",
+        "candidate_ids": [],
+        "db_row_refs": [],
+        "blockers": [reason],
+        "read_model_unavailable": True,
+        "query_limit": 200,
+    }
+
+
+def _budget_unavailable_hypothesis_runtime_payload(
+    *,
+    reason: str,
+) -> tuple[dict[str, object], dict[str, object], JangarDependencyQuorumStatus]:
+    registry = load_hypothesis_registry()
+    dependency_quorum = resolve_hypothesis_dependency_quorum(registry)
+    summary: dict[str, object] = {
+        "hypotheses_total": len(registry.items),
+        "state_totals": {},
+        "capital_stage_totals": {},
+        "promotion_eligible_total": 0,
+        "paper_probation_eligible_total": 0,
+        "rollback_required_total": 0,
+        "read_model_unavailable": True,
+        "read_model_status": "timeout",
+        "reason_codes": [reason],
+        "runtime_ledger_read_status": {
+            "status": "unavailable",
+            "reason_codes": [reason],
+            "query_limit": None,
+            "query_limit_per_hypothesis": None,
+        },
+        "runtime_ledger_read_model": {
+            "query_scope": "hypothesis_runtime_status",
+            "query_limit_per_hypothesis": None,
+            "reason_codes": [reason],
+            "read_model_unavailable": True,
+        },
+        "certificate_evidence_read_status": {
+            "status": "degraded",
+            "reason_codes": [reason],
+            "read_model_unavailable": True,
+        },
+    }
+    return (
+        {
+            "registry_loaded": registry.loaded,
+            "registry_path": registry.path,
+            "registry_errors": list(registry.errors),
+            "dependency_quorum": dependency_quorum.as_payload(),
+            "summary": summary,
+            "items": [],
+        },
+        summary,
+        dependency_quorum,
+    )
+
+
+def _load_trading_status_llm_evaluation(
+    status_read_budget: _TradingStatusReadBudget,
+) -> dict[str, object]:
+    skip_reason = status_read_budget.skip_reason_if_unavailable(
+        "llm_evaluation",
+        min_remaining_seconds=0.75,
+    )
+    if skip_reason is not None:
+        return _budget_unavailable_llm_evaluation_payload(skip_reason)
+    with SessionLocal() as session:
+        return _load_llm_evaluation(session)
+
+
+def _load_trading_status_tca_summary(
+    status_read_budget: _TradingStatusReadBudget,
+    *,
+    scheduler: TradingScheduler,
+) -> dict[str, object]:
+    skip_reason = status_read_budget.skip_reason_if_unavailable(
+        "tca_summary",
+        min_remaining_seconds=1.0,
+    )
+    if skip_reason is not None:
+        return _budget_unavailable_tca_summary_payload(skip_reason)
+    with SessionLocal() as session:
+        return _load_tca_summary(session, scheduler=scheduler)
+
+
+def _load_trading_status_tigerbeetle_ledger(
+    status_read_budget: _TradingStatusReadBudget,
+) -> dict[str, object]:
+    skip_reason = status_read_budget.skip_reason_if_unavailable(
+        "tigerbeetle_ledger",
+        min_remaining_seconds=2.0,
+    )
+    if skip_reason is not None:
+        return _budget_unavailable_tigerbeetle_ledger_payload(skip_reason)
+    with SessionLocal() as session:
+        return _build_tigerbeetle_ledger_status(session)
+
+
+def _load_trading_status_runtime_ledger_portfolio_summary(
+    status_read_budget: _TradingStatusReadBudget,
+    *,
+    account_label: str,
+    stage_scope: str,
+    observed_at: datetime,
+) -> dict[str, object]:
+    skip_reason = status_read_budget.skip_reason_if_unavailable(
+        "runtime_ledger_portfolio_summary",
+        min_remaining_seconds=1.0,
+    )
+    if skip_reason is not None:
+        return _unavailable_runtime_ledger_portfolio_summary(
+            account_label=account_label,
+            stage_scope=stage_scope,
+            observed_at=observed_at,
+            reason=skip_reason,
+        )
+    with SessionLocal() as session:
+        return _daily_runtime_ledger_portfolio_summary(
+            session=session,
+            account_label=account_label,
+            stage_scope=stage_scope,
+            observed_at=observed_at,
+        )
+
+
+def _load_trading_status_hypothesis_runtime(
+    status_read_budget: _TradingStatusReadBudget,
+    scheduler: TradingScheduler,
+    *,
+    tca_summary: Mapping[str, Any],
+    market_context_status: Mapping[str, Any],
+    feature_readiness: Mapping[str, Any],
+) -> tuple[dict[str, object], dict[str, object], JangarDependencyQuorumStatus]:
+    skip_reason = status_read_budget.skip_reason_if_unavailable(
+        "hypothesis_runtime",
+        min_remaining_seconds=1.5,
+    )
+    if skip_reason is not None:
+        return _budget_unavailable_hypothesis_runtime_payload(reason=skip_reason)
+    return _build_hypothesis_runtime_payload(
+        scheduler,
+        tca_summary=tca_summary,
+        market_context_status=market_context_status,
+        feature_readiness=feature_readiness,
+    )
+
+
 def _extract_bearer_token(authorization_header: str | None) -> str | None:
     if not authorization_header:
         return None
@@ -3352,19 +3636,26 @@ def trading_status() -> dict[str, object]:
     forecast_service_status = _forecast_service_status(empirical_jobs)
     lean_authority_status = _lean_authority_status()
     clickhouse_ta_status = _load_clickhouse_ta_status(scheduler)
-    with SessionLocal() as session:
-        llm_evaluation = _load_llm_evaluation(session)
-        tca_summary = _load_tca_summary(session, scheduler=scheduler)
-        tigerbeetle_ledger = _build_tigerbeetle_ledger_status(session)
-        runtime_ledger_portfolio_summary = _daily_runtime_ledger_portfolio_summary(
-            session=session,
+    status_observed_at = datetime.now(timezone.utc)
+    status_stage_scope = "live" if settings.trading_mode == "live" else "paper"
+    llm_evaluation = _load_trading_status_llm_evaluation(status_read_budget)
+    tca_summary = _load_trading_status_tca_summary(
+        status_read_budget,
+        scheduler=scheduler,
+    )
+    tigerbeetle_ledger = _load_trading_status_tigerbeetle_ledger(status_read_budget)
+    runtime_ledger_portfolio_summary = (
+        _load_trading_status_runtime_ledger_portfolio_summary(
+            status_read_budget,
             account_label=settings.trading_account_label,
-            stage_scope="live" if settings.trading_mode == "live" else "paper",
-            observed_at=datetime.now(timezone.utc),
+            stage_scope=status_stage_scope,
+            observed_at=status_observed_at,
         )
+    )
     market_context_status = scheduler.market_context_status()
     hypothesis_payload, hypothesis_summary, hypothesis_dependency_quorum = (
-        _build_hypothesis_runtime_payload(
+        _load_trading_status_hypothesis_runtime(
+            status_read_budget,
             scheduler,
             tca_summary=tca_summary,
             market_context_status=market_context_status,
@@ -3466,9 +3757,11 @@ def trading_status() -> dict[str, object]:
         live_submission_gate=live_submission_gate,
     )
     route_claim_symbols = _route_claim_symbols(profit_signal_quorum)
-    options_catalog_freshness_skip_reason = status_read_budget.skip_reason_if_unavailable(
-        "options_catalog_freshness",
-        min_remaining_seconds=2.0,
+    options_catalog_freshness_skip_reason = (
+        status_read_budget.skip_reason_if_unavailable(
+            "options_catalog_freshness",
+            min_remaining_seconds=2.0,
+        )
     )
     if options_catalog_freshness_skip_reason is not None:
         options_catalog_freshness = _budget_exhausted_options_catalog_freshness_payload(
@@ -4706,54 +4999,25 @@ def _daily_runtime_ledger_portfolio_summary(
     else:
         stmt = stmt.where(StrategyRuntimeLedgerBucket.observed_stage == "__missing__")
     try:
-        get_bind = getattr(session, "get_bind", None)
-        if callable(get_bind):
-            try:
-                bind = get_bind()
-                dialect = getattr(getattr(bind, "dialect", None), "name", "")
-                if dialect == "postgresql":
-                    session.execute(text("SET LOCAL statement_timeout = 500"))
-            except SQLAlchemyError:
-                raise
-            except Exception:
-                pass
+        _apply_status_read_statement_timeout(session, milliseconds=500)
         rows = list(session.execute(stmt.limit(200)).scalars())
     except SQLAlchemyError as exc:
         logger.warning("Portfolio runtime-ledger daily summary unavailable: %s", exc)
-        rollback = getattr(session, "rollback", None)
-        if callable(rollback):
-            try:
-                rollback()
-            except SQLAlchemyError:
-                logger.warning(
-                    "Failed to roll back portfolio runtime-ledger summary session"
-                )
+        _rollback_status_read_session(
+            session,
+            context="portfolio runtime-ledger summary",
+        )
         reason_code = (
             "portfolio_runtime_ledger_summary_query_timeout"
             if _sqlalchemy_error_indicates_statement_timeout(exc)
             else "portfolio_runtime_ledger_summary_unavailable"
         )
-        return {
-            "summary_basis": "runtime_ledger_daily_stage_account_scope",
-            "day_start": day_start.isoformat(),
-            "observed_at": observed.isoformat(),
-            "filters": {
-                "account_label": account,
-                "stage_scope": stage,
-                "observed_stage": stage
-                if stage in {"paper", "live"}
-                else "__missing__",
-            },
-            "bucket_count": 0,
-            "evidence_grade_bucket_count": 0,
-            "post_cost_net_pnl_per_day": "0",
-            "filled_notional": "0",
-            "candidate_ids": [],
-            "db_row_refs": [],
-            "blockers": [reason_code],
-            "read_model_unavailable": True,
-            "query_limit": 200,
-        }
+        return _unavailable_runtime_ledger_portfolio_summary(
+            account_label=account,
+            stage_scope=stage,
+            observed_at=observed,
+            reason=reason_code,
+        )
     evidence_rows = [row for row in rows if _runtime_ledger_bucket_evidence_grade(row)]
     net_pnl = sum(
         (row.net_strategy_pnl_after_costs for row in evidence_rows),
@@ -6380,9 +6644,7 @@ def _build_tigerbeetle_ledger_status(session: Session) -> dict[str, object]:
     latest_reconciliation: dict[str, object] | None
     reconciliation_status_available = True
     try:
-        bind = session.get_bind()
-        if bind.dialect.name == "postgresql":
-            session.execute(text("SET LOCAL statement_timeout = 750"))
+        _apply_status_read_statement_timeout(session, milliseconds=750)
         latest_reconciliation = latest_tigerbeetle_reconciliation_payload(
             session,
             cluster_id=settings.tigerbeetle_cluster_id,
@@ -6403,9 +6665,7 @@ def _build_tigerbeetle_ledger_status(session: Session) -> dict[str, object]:
     ref_counts: dict[str, object]
     ref_counts_available = True
     try:
-        bind = session.get_bind()
-        if bind.dialect.name == "postgresql":
-            session.execute(text("SET LOCAL statement_timeout = 750"))
+        _apply_status_read_statement_timeout(session, milliseconds=750)
         ref_counts = tigerbeetle_ref_counts(
             session,
             cluster_id=settings.tigerbeetle_cluster_id,
@@ -7024,11 +7284,22 @@ def _load_tca_summary(
     *,
     scheduler: TradingScheduler | None = None,
 ) -> dict[str, object]:
-    return build_tca_gate_inputs(
-        session=session,
-        account_label=settings.trading_account_label,
-        symbols=_resolve_tca_scope_symbols(scheduler),
-    )
+    try:
+        _apply_status_read_statement_timeout(session, milliseconds=750)
+        return build_tca_gate_inputs(
+            session=session,
+            account_label=settings.trading_account_label,
+            symbols=_resolve_tca_scope_symbols(scheduler),
+        )
+    except SQLAlchemyError as exc:
+        logger.warning("Execution TCA status summary unavailable: %s", exc)
+        _rollback_status_read_session(session, context="execution TCA summary")
+        reason = (
+            "execution_tca_summary_query_timeout"
+            if _sqlalchemy_error_indicates_statement_timeout(exc)
+            else "execution_tca_summary_unavailable"
+        )
+        return _budget_unavailable_tca_summary_payload(reason)
 
 
 def _load_clickhouse_ta_status(
@@ -7698,15 +7969,25 @@ def _build_hypothesis_runtime_payload(
     resolved_feature_readiness = feature_readiness or _load_clickhouse_ta_status(
         scheduler
     )
-    with SessionLocal() as session:
-        summary_with_items = build_hypothesis_runtime_summary(
-            session,
-            state=scheduler.state,
-            tca_summary=tca_summary,
-            market_context_status=market_context_status,
-            dependency_quorum=dependency_quorum,
-            feature_readiness=resolved_feature_readiness,
+    try:
+        with SessionLocal() as session:
+            _apply_status_read_statement_timeout(session, milliseconds=750)
+            summary_with_items = build_hypothesis_runtime_summary(
+                session,
+                state=scheduler.state,
+                tca_summary=tca_summary,
+                market_context_status=market_context_status,
+                dependency_quorum=dependency_quorum,
+                feature_readiness=resolved_feature_readiness,
+            )
+    except SQLAlchemyError as exc:
+        logger.warning("Hypothesis runtime status summary unavailable: %s", exc)
+        reason = (
+            "hypothesis_runtime_summary_query_timeout"
+            if _sqlalchemy_error_indicates_statement_timeout(exc)
+            else "hypothesis_runtime_summary_unavailable"
         )
+        return _budget_unavailable_hypothesis_runtime_payload(reason=reason)
     items = list(
         cast(Sequence[Mapping[str, Any]], summary_with_items.get("items") or [])
     )
@@ -9923,6 +10204,14 @@ def _safe_float(value: object) -> float:
 
 def _load_llm_evaluation(session: Session) -> dict[str, object]:
     try:
+        _apply_status_read_statement_timeout(session, milliseconds=500)
         return build_llm_evaluation_metrics(session)
-    except SQLAlchemyError:
-        return {"ok": False, "error": "database_unavailable"}
+    except SQLAlchemyError as exc:
+        logger.warning("LLM evaluation status summary unavailable: %s", exc)
+        _rollback_status_read_session(session, context="LLM evaluation")
+        reason = (
+            "llm_evaluation_query_timeout"
+            if _sqlalchemy_error_indicates_statement_timeout(exc)
+            else "database_unavailable"
+        )
+        return _budget_unavailable_llm_evaluation_payload(reason)
