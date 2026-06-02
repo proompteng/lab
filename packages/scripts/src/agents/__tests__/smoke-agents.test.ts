@@ -594,7 +594,7 @@ describe('scheduled AgentRun templates', () => {
   })
 })
 
-describe('synthesis autonomous trader provider', () => {
+describe('autonomous trader provider', () => {
   it('runs the market-open trader on its dedicated paper account', () => {
     const kustomization = readYamlObjects('argocd/applications/synthesis/agents-domain/kustomization.yaml')[0]
     const resources = objectAt(kustomization, 'resources') as string[] | undefined
@@ -624,18 +624,28 @@ describe('synthesis autonomous trader provider', () => {
     ).find((manifest) => objectAt(manifest, 'kind') === 'ConfigMap')
     const envTemplate = objectAt(objectAt(provider, 'spec'), 'envTemplate')
     const secretEnv = objectAt(objectAt(provider, 'spec'), 'secretEnv') as Record<string, unknown>[] | undefined
-    const scheduleSpec = objectAt(schedule, 'spec')
-    const templateSpec = objectAt(template, 'spec')
-    const parameters = objectAt(templateSpec, 'parameters')
-    const greenScheduleSpec = objectAt(greenSchedule, 'spec')
-    const greenTemplateSpec = objectAt(greenTemplate, 'spec')
-    const greenParameters = objectAt(greenTemplateSpec, 'parameters')
-    const annotations = objectAt(objectAt(schedule, 'metadata'), 'annotations')
-    const labels = objectAt(objectAt(schedule, 'metadata'), 'labels')
-    const templateAnnotations = objectAt(objectAt(template, 'metadata'), 'annotations')
-    const greenScheduleAnnotations = objectAt(objectAt(greenSchedule, 'metadata'), 'annotations')
-    const greenScheduleLabels = objectAt(objectAt(greenSchedule, 'metadata'), 'labels')
-    const greenTemplateAnnotations = objectAt(objectAt(greenTemplate, 'metadata'), 'annotations')
+    const deploymentColorKey = 'autonomous-trader.proompteng.ai/deployment-color'
+    const deploymentRoleKey = 'autonomous-trader.proompteng.ai/deployment-role'
+    const marketOpenLanes = [
+      {
+        color: 'blue',
+        schedule,
+        template,
+        templateName: 'autonomous-trader-template',
+      },
+      {
+        color: 'green',
+        schedule: greenSchedule,
+        template: greenTemplate,
+        templateName: 'autonomous-trader-template-green',
+      },
+    ]
+    const activeMarketOpenLanes = marketOpenLanes.filter(
+      (lane) => objectAt(objectAt(lane.schedule, 'spec'), 'suspend') === false,
+    )
+    const previewMarketOpenLanes = marketOpenLanes.filter(
+      (lane) => objectAt(objectAt(lane.schedule, 'spec'), 'suspend') === true,
+    )
     const overallTimeoutSeconds = Number(objectAt(envTemplate, 'CODEX_MARKET_CONTEXT_OVERALL_TIMEOUT_SECONDS'))
     const systemPromptRef = objectAt(objectAt(objectAt(agent, 'spec'), 'defaults'), 'systemPromptRef')
     const implText = String(objectAt(objectAt(implSpec, 'spec'), 'text') ?? '')
@@ -660,38 +670,44 @@ describe('synthesis autonomous trader provider', () => {
     })
     expect(countWords(implText)).toBeLessThanOrEqual(120)
     expect(countWords(systemPromptText)).toBeLessThanOrEqual(650)
-    expect(objectAt(scheduleSpec, 'cron')).toBe('15 9 * * 1-5')
-    expect(objectAt(scheduleSpec, 'suspend')).toBe(false)
-    expect(objectAt(scheduleSpec, 'timezone')).toBe('America/New_York')
-    expect(objectAt(objectAt(scheduleSpec, 'targetRef'), 'name')).toBe('autonomous-trader-template')
-    expect(objectAt(annotations, 'autonomous-trader.proompteng.ai/deployment-color')).toBe('blue')
-    expect(objectAt(annotations, 'autonomous-trader.proompteng.ai/deployment-role')).toBe('active')
-    expect(objectAt(labels, 'autonomous-trader.proompteng.ai/deployment-color')).toBe('blue')
-    expect(objectAt(labels, 'autonomous-trader.proompteng.ai/deployment-role')).toBe('active')
-    expect(objectAt(templateAnnotations, 'autonomous-trader.proompteng.ai/deployment-color')).toBe('blue')
-    expect(objectAt(templateAnnotations, 'autonomous-trader.proompteng.ai/deployment-role')).toBe('active')
-    expect(objectAt(annotations, 'proompteng.ai/account-isolation-mode')).toBeUndefined()
-    expect(objectAt(annotations, 'proompteng.ai/suspension-reason')).toBeUndefined()
-    expect(objectAt(parameters, 'mode')).toBe('market-open')
-    expect(objectAt(parameters, 'synthesisSessionMode')).toBe('market_open')
-    expect(objectAt(parameters, 'brokerMutationEnabled')).toBe('true')
-    expect(objectAt(parameters, 'accountType')).toBe('paper')
-    expect(objectAt(parameters, 'targetEquityUsd')).toBe('500000')
-    expect(objectAt(greenScheduleSpec, 'cron')).toBe('15 9 * * 1-5')
-    expect(objectAt(greenScheduleSpec, 'suspend')).toBe(true)
-    expect(objectAt(greenScheduleSpec, 'timezone')).toBe('America/New_York')
-    expect(objectAt(objectAt(greenScheduleSpec, 'targetRef'), 'name')).toBe('autonomous-trader-template-green')
-    expect(objectAt(greenScheduleAnnotations, 'autonomous-trader.proompteng.ai/deployment-color')).toBe('green')
-    expect(objectAt(greenScheduleAnnotations, 'autonomous-trader.proompteng.ai/deployment-role')).toBe('preview')
-    expect(objectAt(greenScheduleLabels, 'autonomous-trader.proompteng.ai/deployment-color')).toBe('green')
-    expect(objectAt(greenScheduleLabels, 'autonomous-trader.proompteng.ai/deployment-role')).toBe('preview')
-    expect(objectAt(greenTemplateAnnotations, 'autonomous-trader.proompteng.ai/deployment-color')).toBe('green')
-    expect(objectAt(greenTemplateAnnotations, 'autonomous-trader.proompteng.ai/deployment-role')).toBe('preview')
-    expect(objectAt(greenParameters, 'mode')).toBe('market-open')
-    expect(objectAt(greenParameters, 'synthesisSessionMode')).toBe('market_open')
-    expect(objectAt(greenParameters, 'brokerMutationEnabled')).toBe('true')
-    expect(objectAt(greenParameters, 'accountType')).toBe('paper')
-    expect(objectAt(greenParameters, 'targetEquityUsd')).toBe('500000')
+    expect(activeMarketOpenLanes).toHaveLength(1)
+    expect(previewMarketOpenLanes).toHaveLength(1)
+    const activeMarketOpenLane = activeMarketOpenLanes[0]
+    const activeTemplateSpec = objectAt(activeMarketOpenLane, 'template')
+    const activeParameters = objectAt(objectAt(activeTemplateSpec, 'spec'), 'parameters')
+    const activeSchedule = objectAt(activeMarketOpenLane, 'schedule')
+    const activeAnnotations = objectAt(objectAt(activeSchedule, 'metadata'), 'annotations')
+    expect(objectAt(activeAnnotations, 'proompteng.ai/account-isolation-mode')).toBeUndefined()
+    expect(objectAt(activeAnnotations, 'proompteng.ai/suspension-reason')).toBeUndefined()
+    expect(objectAt(activeParameters, 'mode')).toBe('market-open')
+    expect(objectAt(activeParameters, 'synthesisSessionMode')).toBe('market_open')
+    expect(objectAt(activeParameters, 'brokerMutationEnabled')).toBe('true')
+    expect(objectAt(activeParameters, 'accountType')).toBe('paper')
+    expect(objectAt(activeParameters, 'targetEquityUsd')).toBe('500000')
+    for (const lane of marketOpenLanes) {
+      const scheduleSpec = objectAt(lane.schedule, 'spec')
+      const templateSpec = objectAt(lane.template, 'spec')
+      const parameters = objectAt(templateSpec, 'parameters')
+      const role = objectAt(scheduleSpec, 'suspend') === false ? 'active' : 'preview'
+      const scheduleAnnotations = objectAt(objectAt(lane.schedule, 'metadata'), 'annotations')
+      const scheduleLabels = objectAt(objectAt(lane.schedule, 'metadata'), 'labels')
+      const templateAnnotations = objectAt(objectAt(lane.template, 'metadata'), 'annotations')
+
+      expect(objectAt(scheduleSpec, 'cron')).toBe('15 9 * * 1-5')
+      expect(objectAt(scheduleSpec, 'timezone')).toBe('America/New_York')
+      expect(objectAt(objectAt(scheduleSpec, 'targetRef'), 'name')).toBe(lane.templateName)
+      expect(objectAt(scheduleAnnotations, deploymentColorKey)).toBe(lane.color)
+      expect(objectAt(scheduleLabels, deploymentColorKey)).toBe(lane.color)
+      expect(objectAt(templateAnnotations, deploymentColorKey)).toBe(lane.color)
+      expect(objectAt(scheduleAnnotations, deploymentRoleKey)).toBe(role)
+      expect(objectAt(scheduleLabels, deploymentRoleKey)).toBe(role)
+      expect(objectAt(templateAnnotations, deploymentRoleKey)).toBe(role)
+      expect(objectAt(parameters, 'mode')).toBe('market-open')
+      expect(objectAt(parameters, 'synthesisSessionMode')).toBe('market_open')
+      expect(objectAt(parameters, 'brokerMutationEnabled')).toBe('true')
+      expect(objectAt(parameters, 'accountType')).toBe('paper')
+      expect(objectAt(parameters, 'targetEquityUsd')).toBe('500000')
+    }
     expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_MODE')).toBe('{{parameters.mode}}')
     expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_SYNTHESIS_SESSION_MODE')).toBe(
       '{{parameters.synthesisSessionMode}}',
