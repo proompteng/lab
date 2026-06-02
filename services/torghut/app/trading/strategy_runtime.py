@@ -215,12 +215,68 @@ def _microbar_rank_universe_size(
     features: FeatureVectorV3,
     rank_feature: str,
 ) -> int:
+    executable_universe_size = _microbar_observed_rank_universe_size(
+        features=features,
+        rank_feature=rank_feature,
+    )
+    if executable_universe_size is not None and executable_universe_size > 0:
+        return executable_universe_size
+    return _microbar_universe_size(context=context, params=params)
+
+
+def _microbar_observed_rank_universe_size(
+    *,
+    features: FeatureVectorV3,
+    rank_feature: str,
+) -> int | None:
     executable_universe_size = _decimal(
         features.values.get(f"{rank_feature}_universe_size")
     )
     if executable_universe_size is not None and executable_universe_size > 0:
         return max(1, int(executable_universe_size))
-    return _microbar_universe_size(context=context, params=params)
+    return None
+
+
+def _microbar_pair_rank_thresholds(
+    *,
+    context: "StrategyContext",
+    params: dict[str, Any],
+    features: FeatureVectorV3,
+    rank_feature: str,
+    pair_side_count: int,
+) -> tuple[Decimal, Decimal, str, int, int | None]:
+    configured_universe_size = _microbar_universe_size(context=context, params=params)
+    observed_universe_size = _microbar_observed_rank_universe_size(
+        features=features,
+        rank_feature=rank_feature,
+    )
+    if (
+        configured_universe_size == 2
+        and observed_universe_size is not None
+        and observed_universe_size > configured_universe_size
+        and pair_side_count == 1
+    ):
+        midpoint = Decimal("0.5")
+        return (
+            midpoint,
+            midpoint,
+            "configured_pair_midpoint",
+            configured_universe_size,
+            observed_universe_size,
+        )
+    low_threshold, high_threshold = _microbar_rank_thresholds(
+        universe_size=observed_universe_size or configured_universe_size,
+        top_n=pair_side_count,
+    )
+    return (
+        low_threshold,
+        high_threshold,
+        "observed_rank_universe"
+        if observed_universe_size is not None
+        else "configured_universe",
+        configured_universe_size,
+        observed_universe_size,
+    )
 
 
 def _microbar_runtime_position_qty(features: FeatureVectorV3) -> Decimal | None:
@@ -499,10 +555,31 @@ def _evaluate_microbar_cross_sectional(
                 },
             ),
         )
-    low_threshold, high_threshold = _microbar_rank_thresholds(
-        universe_size=universe_size,
-        top_n=pair_side_count if pair_mode else top_n,
+    rank_threshold_basis = "observed_rank_universe"
+    configured_universe_size = _microbar_universe_size(context=context, params=params)
+    observed_rank_universe_size = _microbar_observed_rank_universe_size(
+        features=features,
+        rank_feature=rank_feature,
     )
+    if pair_mode:
+        (
+            low_threshold,
+            high_threshold,
+            rank_threshold_basis,
+            configured_universe_size,
+            observed_rank_universe_size,
+        ) = _microbar_pair_rank_thresholds(
+            context=context,
+            params=params,
+            features=features,
+            rank_feature=rank_feature,
+            pair_side_count=pair_side_count,
+        )
+    else:
+        low_threshold, high_threshold = _microbar_rank_thresholds(
+            universe_size=universe_size,
+            top_n=top_n,
+        )
     if pair_mode:
         high_entry_action: Literal["buy", "sell"] = (
             "sell" if selection_mode == "reversal" else "buy"
@@ -514,7 +591,13 @@ def _evaluate_microbar_cross_sectional(
         pair_side: str | None = None
         comparator = "gte"
         threshold_value = high_threshold
-        if rank_value >= high_threshold:
+        if (
+            rank_threshold_basis == "configured_pair_midpoint"
+            and rank_value == high_threshold
+        ):
+            selected_entry_action = None
+            pair_side = None
+        elif rank_value >= high_threshold:
             selected_entry_action = high_entry_action
             pair_side = "high_rank"
             comparator = "gte"
@@ -524,6 +607,16 @@ def _evaluate_microbar_cross_sectional(
             pair_side = "low_rank"
             comparator = "lte"
             threshold_value = low_threshold
+        rejection_reason: str | None = None
+        if selected_entry_action is None:
+            rejection_reason = (
+                "ambiguous_pair_rank_midpoint"
+                if (
+                    rank_threshold_basis == "configured_pair_midpoint"
+                    and rank_value == high_threshold
+                )
+                else "rank_inside_pair_band"
+            )
         should_trade = selected_entry_action is not None
         resolved_action: Literal["buy", "sell"] | None = selected_entry_action
         rationale = (
@@ -585,9 +678,13 @@ def _evaluate_microbar_cross_sectional(
                 "selection_mode": selection_mode,
                 "top_n": top_n,
                 "universe_size": universe_size,
+                "configured_universe_size": configured_universe_size,
+                "observed_rank_universe_size": observed_rank_universe_size,
+                "rank_threshold_basis": rank_threshold_basis,
                 "pair_side_count": pair_side_count,
                 "max_pair_legs": max_pair_legs,
                 "pair_side": pair_side,
+                "reason": rejection_reason,
             },
         )
         if not should_trade:
@@ -894,6 +991,24 @@ def _coerce_plugin_result(
     if result is None:
         return PluginEvaluationResult(intent=None, trace=None)
     return PluginEvaluationResult(intent=result, trace=None)
+
+
+def _trace_suppression_reason(trace: StrategyTrace | None) -> str:
+    if trace is None:
+        return "no_runtime_intent"
+    failed_gate = trace.first_failed_gate
+    selected_gate = trace.gates[0] if trace.gates else None
+    gate = failed_gate or (selected_gate.gate if selected_gate is not None else "")
+    reason = ""
+    if selected_gate is not None:
+        raw_reason = selected_gate.context.get("reason")
+        if raw_reason is not None:
+            reason = str(raw_reason).strip()
+    if gate and reason:
+        return f"{gate}:{reason}"
+    if gate:
+        return gate
+    return "no_runtime_intent"
 
 
 @dataclass
@@ -2454,6 +2569,10 @@ class StrategyRuntime:
                 if plugin_result.trace is not None:
                     traces.append(plugin_result.trace)
                 if plugin_result.intent is None:
+                    observation.record_intent_suppression(
+                        definition.strategy_id,
+                        _trace_suppression_reason(plugin_result.trace),
+                    )
                     continue
                 decision = RuntimeDecision(
                     intent=plugin_result.intent,
