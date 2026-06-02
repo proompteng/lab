@@ -1612,6 +1612,97 @@ _BOUNDED_PAPER_ROUTE_COLLECTION_PROMOTION_BLOCKERS = (
     "paper_route_runtime_ledger_import_pending",
     "live_runtime_ledger_required",
 )
+_RUNTIME_LEDGER_PAPER_PROBATION_MIN_CLOSED_ROUND_TRIPS = 1
+
+
+def _runtime_ledger_paper_probation_payload(
+    candidate: Mapping[str, object],
+) -> dict[str, object]:
+    payload: dict[str, object] = {}
+    raw_bucket = candidate.get("runtime_ledger_bucket")
+    if isinstance(raw_bucket, Mapping):
+        payload.update(cast(Mapping[str, object], raw_bucket))
+    payload.update(
+        {
+            str(key): value
+            for key, value in candidate.items()
+            if key != "runtime_ledger_bucket"
+        }
+    )
+    return payload
+
+
+def _runtime_ledger_paper_probation_blockers(
+    candidate: Mapping[str, object],
+) -> list[str]:
+    payload = _runtime_ledger_paper_probation_payload(candidate)
+    blockers: list[str] = []
+    reasons = {
+        str(reason).strip()
+        for reason in cast(Sequence[object], payload.get("reason_codes") or [])
+        if str(reason).strip()
+    }
+    unexpected_reasons = reasons - _RUNTIME_LEDGER_PAPER_PROBATION_ALLOWED_REASONS
+    blockers.extend(sorted(unexpected_reasons))
+    if _safe_text(payload.get("observed_stage")) != "paper":
+        blockers.append("runtime_ledger_stage_not_paper")
+    if _safe_text(payload.get("pnl_basis")) != POST_COST_PNL_BASIS:
+        blockers.append("runtime_ledger_pnl_basis_missing")
+    if _safe_int(payload.get("decision_count")) <= 0:
+        blockers.append("runtime_ledger_decisions_missing")
+    if _safe_int(payload.get("submitted_order_count")) <= 0:
+        blockers.append("runtime_order_lifecycle_missing")
+    if _safe_int(payload.get("fill_count")) <= 0:
+        blockers.append("runtime_ledger_fills_missing")
+    if (_safe_decimal(payload.get("filled_notional")) or Decimal("0")) <= 0:
+        blockers.append("runtime_ledger_filled_notional_missing")
+    if (
+        _safe_int(payload.get("closed_trade_count"))
+        < _RUNTIME_LEDGER_PAPER_PROBATION_MIN_CLOSED_ROUND_TRIPS
+    ):
+        blockers.append("runtime_ledger_closed_round_trips_missing")
+    if _safe_int(payload.get("open_position_count")) > 0:
+        blockers.append("unclosed_position")
+    if (
+        _safe_decimal(payload.get("net_strategy_pnl_after_costs")) or Decimal("0")
+    ) <= 0:
+        blockers.append("post_cost_pnl_non_positive")
+    if (_safe_decimal(payload.get("post_cost_expectancy_bps")) or Decimal("0")) <= 0:
+        blockers.append("post_cost_expectancy_non_positive")
+    if _safe_decimal(payload.get("cost_amount")) is None:
+        blockers.append("runtime_ledger_explicit_costs_missing")
+    if (
+        _runtime_ledger_hash_count(
+            payload,
+            payload_key="execution_policy_hash_counts",
+            observed={},
+            observed_key="runtime_ledger_execution_policy_hash_count",
+        )
+        <= 0
+    ):
+        blockers.append("runtime_ledger_execution_policy_hash_missing")
+    if (
+        _runtime_ledger_hash_count(
+            payload,
+            payload_key="cost_model_hash_counts",
+            observed={},
+            observed_key="runtime_ledger_cost_model_hash_count",
+        )
+        <= 0
+    ):
+        blockers.append("runtime_ledger_cost_model_hash_missing")
+    if (
+        _runtime_ledger_hash_count(
+            payload,
+            payload_key="lineage_hash_counts",
+            observed={},
+            observed_key="runtime_ledger_lineage_hash_count",
+        )
+        <= 0
+    ):
+        blockers.append("runtime_ledger_lineage_hash_missing")
+    blockers.extend(runtime_ledger_promotion_source_authority_blockers(payload))
+    return _normalize_reason_codes(blockers)
 
 
 def _runtime_ledger_paper_probation_eligible(
@@ -1623,19 +1714,8 @@ def _runtime_ledger_paper_probation_eligible(
         if str(reason).strip()
     }
     return (
-        _safe_text(candidate.get("observed_stage")) == "paper"
-        and reasons == _RUNTIME_LEDGER_PAPER_PROBATION_ALLOWED_REASONS
-        and _safe_text(candidate.get("pnl_basis")) == POST_COST_PNL_BASIS
-        and (_safe_decimal(candidate.get("filled_notional")) or Decimal("0")) > 0
-        and _safe_int(candidate.get("fill_count")) > 0
-        and _safe_int(candidate.get("closed_trade_count")) > 0
-        and _safe_int(candidate.get("open_position_count")) == 0
-        and (
-            _safe_decimal(candidate.get("net_strategy_pnl_after_costs")) or Decimal("0")
-        )
-        > 0
-        and (_safe_decimal(candidate.get("post_cost_expectancy_bps")) or Decimal("0"))
-        > 0
+        reasons == _RUNTIME_LEDGER_PAPER_PROBATION_ALLOWED_REASONS
+        and not _runtime_ledger_paper_probation_blockers(candidate)
     )
 
 
@@ -1651,6 +1731,7 @@ def _runtime_ledger_paper_probation_candidates(
             "evidence_collection_ok": True,
             "canary_collection_authorized": True,
             "bounded_live_paper_collection_authorized": True,
+            "paper_probation_satisfied_for_bounded_live_paper_collection": True,
             "capital_promotion_allowed": False,
             "final_authority_ok": False,
             "final_promotion_allowed": False,
@@ -1694,6 +1775,7 @@ def _runtime_ledger_source_collection_candidates(
             "source_collection_scope": "source_window_evidence_collection_only",
             "proof_mode": "probation",
             "evidence_collection_ok": True,
+            "paper_probation_satisfied_for_bounded_live_paper_collection": False,
             "canary_collection_authorized": False,
             "bounded_live_paper_collection_authorized": False,
             "capital_promotion_allowed": False,
@@ -1817,6 +1899,31 @@ def _runtime_ledger_paper_probation_import_plan(
             continue
 
         source_collection = bool(candidate.get("source_collection_candidate"))
+        paper_probation_blockers = (
+            []
+            if source_collection
+            else _runtime_ledger_paper_probation_blockers(candidate)
+        )
+        paper_probation_satisfied = (
+            not source_collection and not paper_probation_blockers
+        )
+        if paper_probation_blockers:
+            skipped_targets.append(
+                {
+                    "hypothesis_id": hypothesis_id,
+                    "candidate_id": candidate_id,
+                    "strategy_family": strategy_family,
+                    "strategy_name": strategy_name,
+                    "window_start": window_start,
+                    "window_end": window_end,
+                    "runtime_ledger_bucket_ref": _runtime_ledger_paper_probation_bucket_ref(
+                        candidate
+                    ),
+                    "reason": "runtime_ledger_paper_probation_prerequisites_not_satisfied",
+                    "blockers": paper_probation_blockers,
+                }
+            )
+            continue
         source_kind = (
             _RUNTIME_LEDGER_SOURCE_COLLECTION_SOURCE_KIND
             if source_collection
@@ -1900,9 +2007,12 @@ def _runtime_ledger_paper_probation_import_plan(
             "source_kind": source_kind,
             "window_start": window_start,
             "window_end": window_end,
-            "paper_probation_authorized": not source_collection,
+            "paper_probation_authorized": paper_probation_satisfied,
             "paper_probation_authorization_scope": (
-                "evidence_collection_only" if not source_collection else ""
+                "evidence_collection_only" if paper_probation_satisfied else ""
+            ),
+            "paper_probation_satisfied_for_bounded_live_paper_collection": (
+                paper_probation_satisfied
             ),
             "source_collection_authorized": source_collection,
             "source_collection_authorization_scope": (
@@ -1920,16 +2030,16 @@ def _runtime_ledger_paper_probation_import_plan(
             ),
             "proof_mode": "probation",
             "evidence_collection_ok": True,
-            "canary_collection_authorized": not source_collection,
-            "bounded_live_paper_collection_authorized": not source_collection,
+            "canary_collection_authorized": paper_probation_satisfied,
+            "bounded_live_paper_collection_authorized": paper_probation_satisfied,
             "capital_promotion_allowed": False,
             "final_authority_ok": False,
             "evidence_collection_stage": "paper",
-            "probation_allowed": not source_collection,
+            "probation_allowed": paper_probation_satisfied,
             "probation_reason": (
                 "source_window_evidence_collection_pending"
                 if source_collection
-                else "paper_stage_runtime_ledger_positive_after_costs"
+                else "source_backed_paper_stage_runtime_ledger_positive_after_costs"
             ),
             "promotion_allowed": False,
             "final_promotion_authorized": False,
@@ -1965,6 +2075,14 @@ def _runtime_ledger_paper_probation_import_plan(
         "purpose": "paper_stage_runtime_ledger_source_evidence_collection",
         "proof_mode": "probation",
         "evidence_collection_ok": bool(targets),
+        "paper_probation_satisfied_for_bounded_live_paper_collection": any(
+            bool(
+                target.get(
+                    "paper_probation_satisfied_for_bounded_live_paper_collection"
+                )
+            )
+            for target in targets
+        ),
         "canary_collection_authorized": any(
             bool(target.get("canary_collection_authorized")) for target in targets
         ),
@@ -2088,8 +2206,9 @@ def _bounded_paper_route_manifest_collection_targets(
                 or "",
                 "source_manifest_ref": source_manifest_ref,
                 "source_kind": _BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_KIND,
-                "paper_probation_authorized": True,
-                "paper_probation_authorization_scope": "evidence_collection_only",
+                "paper_probation_authorized": False,
+                "paper_probation_authorization_scope": "",
+                "paper_probation_satisfied_for_bounded_live_paper_collection": False,
                 "source_collection_authorized": True,
                 "source_collection_authorization_scope": (
                     "bounded_paper_route_source_decision_collection_only"
@@ -2100,17 +2219,17 @@ def _bounded_paper_route_manifest_collection_targets(
                 ],
                 "proof_mode": "probation",
                 "evidence_collection_ok": True,
-                "canary_collection_authorized": True,
-                "bounded_live_paper_collection_authorized": True,
-                "bounded_evidence_collection_authorized": True,
+                "canary_collection_authorized": False,
+                "bounded_live_paper_collection_authorized": False,
+                "bounded_evidence_collection_authorized": False,
                 "bounded_evidence_collection_scope": (
                     _BOUNDED_PAPER_ROUTE_COLLECTION_SCOPE
                 ),
                 "capital_promotion_allowed": False,
                 "final_authority_ok": False,
                 "evidence_collection_stage": "paper",
-                "probation_allowed": True,
-                "probation_reason": "bounded_paper_route_source_activity_needed",
+                "probation_allowed": False,
+                "probation_reason": "source_backed_paper_probation_required",
                 "promotion_allowed": False,
                 "final_promotion_authorized": False,
                 "final_promotion_allowed": False,
@@ -2119,6 +2238,7 @@ def _bounded_paper_route_manifest_collection_targets(
                 ),
                 "candidate_blockers": [
                     "runtime_ledger_source_decisions_missing",
+                    "source_backed_paper_probation_required",
                     "paper_route_runtime_ledger_import_pending",
                 ],
                 "runtime_ledger_target_metadata_blockers": list(
@@ -2160,6 +2280,10 @@ def _with_bounded_paper_route_manifest_collection_targets(
         merged_plan.get("source_collection_target_count")
     ) + len(manifest_targets)
     merged_plan["evidence_collection_ok"] = bool(targets)
+    merged_plan["paper_probation_satisfied_for_bounded_live_paper_collection"] = any(
+        bool(target.get("paper_probation_satisfied_for_bounded_live_paper_collection"))
+        for target in targets
+    )
     merged_plan["canary_collection_authorized"] = any(
         bool(target.get("canary_collection_authorized")) for target in targets
     )

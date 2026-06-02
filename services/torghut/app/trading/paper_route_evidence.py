@@ -2160,9 +2160,26 @@ def _next_paper_route_runtime_window_targets(
         source_collection_reason_codes = _unique_text_items(
             target.get("source_collection_reason_codes")
         )
+        paper_probation_satisfied = bool(
+            target.get("paper_probation_satisfied_for_bounded_live_paper_collection")
+            or (
+                target.get(
+                    "paper_probation_satisfied_for_bounded_live_paper_collection"
+                )
+                is None
+                and target.get("bounded_live_paper_collection_authorized")
+            )
+        )
         evidence_collection_blockers = _unique_text_items(
             [
                 *collection_session_blockers,
+                *(
+                    []
+                    if paper_probation_satisfied
+                    else [
+                        "paper_probation_prerequisites_not_satisfied_for_bounded_collection"
+                    ]
+                ),
                 *_unique_text_items(source_decision_readiness.get("blockers")),
                 *target_account_audit_blockers,
                 *account_pre_session_blockers,
@@ -2315,6 +2332,9 @@ def _next_paper_route_runtime_window_targets(
             ),
             "source_collection_reason_codes": source_collection_reason_codes,
             "proof_mode": "probation",
+            "paper_probation_satisfied_for_bounded_live_paper_collection": (
+                paper_probation_satisfied
+            ),
             "evidence_collection_ok": evidence_collection_ok,
             "canary_collection_authorized": canary_collection_authorized,
             "capital_promotion_allowed": False,

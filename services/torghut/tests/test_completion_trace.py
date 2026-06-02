@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 from unittest import TestCase
+from unittest.mock import patch
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -338,6 +339,31 @@ class TestCompletionTrace(TestCase):
         gate = next(item for item in status['gates'] if item['gate_id'] == DOC29_SIMULATION_FULL_DAY_GATE)
         self.assertEqual(gate['status'], 'satisfied')
         self.assertEqual(gate['latest_run'], 'sim-2026-03-06-full-day')
+
+    def test_doc29_completion_status_all_satisfied_sets_final_authority(self) -> None:
+        with self.session_local() as session:
+            with patch(
+                'app.trading.completion.load_doc29_completion_matrix',
+                return_value={
+                    'doc_id': 'doc29',
+                    'design_doc_path': 'docs/torghut/design-system/v6/29-completion-matrix-2026-03-07.yaml',
+                    'matrix_version': 'test-empty-matrix',
+                    'gates': [],
+                },
+            ):
+                status = build_doc29_completion_status(
+                    session=session,
+                    stale_after_seconds=86400,
+                    current_git_revision='abc123',
+                    current_image_digest='sha256:test',
+                )
+
+        self.assertTrue(status['summary']['all_satisfied'])
+        self.assertTrue(status['promotion_authority']['capital_promotion_allowed'])
+        self.assertTrue(status['promotion_authority']['promotion_allowed'])
+        self.assertTrue(status['promotion_authority']['final_authority_ok'])
+        self.assertTrue(status['promotion_authority']['final_promotion_allowed'])
+        self.assertEqual(status['promotion_authority']['final_promotion_blockers'], [])
 
     def test_doc29_completion_status_derives_empirical_jobs_gate(self) -> None:
         with self.session_local() as session:
@@ -1201,6 +1227,16 @@ class TestCompletionTrace(TestCase):
         self.assertEqual(canary_gate['status'], 'satisfied')
         self.assertEqual(scale_gate['status'], 'blocked')
         self.assertEqual(scale_gate['blocked_reason'], 'runtime_ledger_profit_proof_missing')
+        self.assertTrue(status['promotion_authority']['evidence_collection_ok'])
+        self.assertTrue(status['promotion_authority']['canary_collection_authorized'])
+        self.assertFalse(status['promotion_authority']['capital_promotion_allowed'])
+        self.assertFalse(status['promotion_authority']['promotion_allowed'])
+        self.assertFalse(status['promotion_authority']['final_authority_ok'])
+        self.assertFalse(status['promotion_authority']['final_promotion_allowed'])
+        self.assertIn(
+            DOC29_LIVE_SCALE_GATE,
+            status['promotion_authority']['final_promotion_blockers'],
+        )
         self.assertEqual(scale_gate['db_row_refs']['strategy_runtime_ledger_buckets'], [])
         self.assertEqual(
             len(scale_gate['db_row_refs']['runtime_ledger_unbacked_hypothesis_metric_windows']),
