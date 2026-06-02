@@ -257,7 +257,7 @@ def _select_unlinked_executions(
             Execution.avg_fill_price.is_not(None),
             Execution.filled_qty > 0,
         )
-        .order_by(Execution.created_at.asc())
+        .order_by(Execution.created_at.desc(), Execution.id.desc())
     )
     if account_label:
         stmt = stmt.where(Execution.alpaca_account_label == account_label)
@@ -287,7 +287,11 @@ def _select_unlinked_tca_metrics(
             ExecutionTCAMetric.shortfall_notional.is_not(None),
             ExecutionTCAMetric.shortfall_notional != 0,
         )
-        .order_by(ExecutionTCAMetric.computed_at.asc())
+        .order_by(
+            ExecutionTCAMetric.computed_at.desc().nullslast(),
+            ExecutionTCAMetric.created_at.desc(),
+            ExecutionTCAMetric.id.desc(),
+        )
     )
     if account_label:
         stmt = stmt.where(ExecutionTCAMetric.alpaca_account_label == account_label)

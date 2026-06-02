@@ -7,7 +7,7 @@ metadata:
     app.kubernetes.io/name: torghut
     app.kubernetes.io/component: tigerbeetle-journal-order-events-live
 spec:
-  schedule: "6,36 * * * *"
+  schedule: "*/6 * * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 2
   failedJobsHistoryLimit: 3
@@ -60,7 +60,7 @@ spec:
                     --dsn-env DB_DSN \
                     --sources execution \
                     --batch-size 5 \
-                    --max-batches 1 \
+                    --max-batches 3 \
                     --reconcile-limit 1000 \
                     --skip-reconcile \
                     --fail-on-degraded \
@@ -71,7 +71,7 @@ spec:
                     --dsn-env DB_DSN \
                     --sources execution_tca_metric \
                     --batch-size 5 \
-                    --max-batches 1 \
+                    --max-batches 3 \
                     --reconcile-limit 1000 \
                     --skip-reconcile \
                     --fail-on-degraded \
@@ -81,7 +81,7 @@ spec:
                     --dsn-env DB_DSN \
                     --sources execution_order_event \
                     --batch-size 5 \
-                    --max-batches 1 \
+                    --max-batches 3 \
                     --event-scan-limit 250 \
                     --reconcile-limit 1000 \
                     --skip-reconcile \

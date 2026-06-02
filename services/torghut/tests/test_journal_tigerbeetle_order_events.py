@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 from contextlib import redirect_stderr, redirect_stdout
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -880,6 +880,56 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
 
         self.assertEqual([row.id for row in executions], [selected.id])
 
+    def test_select_unlinked_executions_prioritizes_reconciliation_window(
+        self,
+    ) -> None:
+        settings_obj = Settings(TORGHUT_TIGERBEETLE_ENABLED=True)
+        observed_at = datetime.now(timezone.utc)
+        with Session(self.engine) as session:
+            older = Execution(
+                alpaca_account_label="paper",
+                alpaca_order_id="order-older-window",
+                client_order_id="client-older-window",
+                symbol="AAPL",
+                side="buy",
+                order_type="market",
+                time_in_force="day",
+                submitted_qty=Decimal("1"),
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("190.25"),
+                status="filled",
+                raw_order={"id": "order-older-window"},
+                created_at=observed_at - timedelta(minutes=5),
+                updated_at=observed_at - timedelta(minutes=5),
+            )
+            newer = Execution(
+                alpaca_account_label="paper",
+                alpaca_order_id="order-newer-window",
+                client_order_id="client-newer-window",
+                symbol="MSFT",
+                side="buy",
+                order_type="market",
+                time_in_force="day",
+                submitted_qty=Decimal("1"),
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("410.50"),
+                status="filled",
+                raw_order={"id": "order-newer-window"},
+                created_at=observed_at,
+                updated_at=observed_at,
+            )
+            session.add_all([older, newer])
+            session.flush()
+
+            executions = script._select_unlinked_executions(
+                session,
+                settings_obj=settings_obj,
+                account_label="paper",
+                limit=1,
+            )
+
+        self.assertEqual([row.id for row in executions], [newer.id])
+
     def test_select_unlinked_tca_metrics_uses_direct_ref_fk(self) -> None:
         settings_obj = Settings(TORGHUT_TIGERBEETLE_ENABLED=True)
         with Session(self.engine) as session:
@@ -958,6 +1008,78 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
             )
 
         self.assertEqual([row.id for row in metrics], [selected.id])
+
+    def test_select_unlinked_tca_metrics_prioritizes_reconciliation_window(
+        self,
+    ) -> None:
+        settings_obj = Settings(TORGHUT_TIGERBEETLE_ENABLED=True)
+        observed_at = datetime.now(timezone.utc)
+        with Session(self.engine) as session:
+            older_execution = Execution(
+                alpaca_account_label="paper",
+                alpaca_order_id="order-older-tca-window",
+                client_order_id="client-older-tca-window",
+                symbol="AAPL",
+                side="buy",
+                order_type="market",
+                time_in_force="day",
+                submitted_qty=Decimal("1"),
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("190.25"),
+                status="filled",
+                raw_order={"id": "order-older-tca-window"},
+            )
+            newer_execution = Execution(
+                alpaca_account_label="paper",
+                alpaca_order_id="order-newer-tca-window",
+                client_order_id="client-newer-tca-window",
+                symbol="MSFT",
+                side="buy",
+                order_type="market",
+                time_in_force="day",
+                submitted_qty=Decimal("1"),
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("410.50"),
+                status="filled",
+                raw_order={"id": "order-newer-tca-window"},
+            )
+            session.add_all([older_execution, newer_execution])
+            session.flush()
+            older = ExecutionTCAMetric(
+                execution_id=older_execution.id,
+                alpaca_account_label="paper",
+                symbol="AAPL",
+                side="buy",
+                filled_qty=Decimal("1"),
+                signed_qty=Decimal("1"),
+                shortfall_notional=Decimal("0.25"),
+                computed_at=observed_at - timedelta(minutes=5),
+                created_at=observed_at - timedelta(minutes=5),
+                updated_at=observed_at - timedelta(minutes=5),
+            )
+            newer = ExecutionTCAMetric(
+                execution_id=newer_execution.id,
+                alpaca_account_label="paper",
+                symbol="MSFT",
+                side="buy",
+                filled_qty=Decimal("1"),
+                signed_qty=Decimal("1"),
+                shortfall_notional=Decimal("0.35"),
+                computed_at=observed_at,
+                created_at=observed_at,
+                updated_at=observed_at,
+            )
+            session.add_all([older, newer])
+            session.flush()
+
+            metrics = script._select_unlinked_tca_metrics(
+                session,
+                settings_obj=settings_obj,
+                account_label="paper",
+                limit=1,
+            )
+
+        self.assertEqual([row.id for row in metrics], [newer.id])
 
     def test_select_runtime_buckets_repairs_legacy_ref_missing_bucket_fk(
         self,
