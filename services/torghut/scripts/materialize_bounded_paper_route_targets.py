@@ -400,13 +400,24 @@ def _safety_blockers(
 
 
 def _session_factory(dsn: str) -> sessionmaker[Session]:
-    engine = create_engine(dsn, pool_pre_ping=True, future=True)
+    engine = create_engine(_sqlalchemy_dsn(dsn), pool_pre_ping=True, future=True)
     return sessionmaker(
         bind=engine,
         autoflush=False,
         expire_on_commit=False,
         future=True,
     )
+
+
+def _sqlalchemy_dsn(dsn: str) -> str:
+    text = dsn.strip()
+    if text.startswith("postgresql+psycopg://"):
+        return text
+    if text.startswith("postgres://"):
+        return text.replace("postgres://", "postgresql+psycopg://", 1)
+    if text.startswith("postgresql://"):
+        return text.replace("postgresql://", "postgresql+psycopg://", 1)
+    return text
 
 
 def _strategy_names_from_summaries(
