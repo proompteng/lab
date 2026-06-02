@@ -4946,6 +4946,113 @@ class TestTradingApi(TestCase):
             settings.trading_enabled = original
             settings.trading_universe_source = original_source
 
+    def test_core_readyz_gate_records_live_blockers_without_authority(self) -> None:
+        original = {
+            "trading_mode": settings.trading_mode,
+            "trading_enabled": settings.trading_enabled,
+            "trading_kill_switch_enabled": settings.trading_kill_switch_enabled,
+            "trading_pipeline_mode": settings.trading_pipeline_mode,
+            "trading_simple_submit_enabled": settings.trading_simple_submit_enabled,
+        }
+        try:
+            settings.trading_mode = "live"
+            settings.trading_enabled = False
+            settings.trading_kill_switch_enabled = True
+            settings.trading_pipeline_mode = "simple"
+            settings.trading_simple_submit_enabled = False
+
+            gate = main_module._core_readiness_live_submission_gate()
+        finally:
+            settings.trading_mode = original["trading_mode"]
+            settings.trading_enabled = original["trading_enabled"]
+            settings.trading_kill_switch_enabled = original[
+                "trading_kill_switch_enabled"
+            ]
+            settings.trading_pipeline_mode = original["trading_pipeline_mode"]
+            settings.trading_simple_submit_enabled = original[
+                "trading_simple_submit_enabled"
+            ]
+
+        self.assertFalse(gate["allowed"])
+        self.assertFalse(gate["promotion_authority"])
+        self.assertFalse(gate["promotion_authority_ok"])
+        self.assertFalse(gate["final_authority_ok"])
+        self.assertFalse(gate["final_promotion_allowed"])
+        self.assertFalse(gate["final_promotion_authorized"])
+        self.assertEqual(gate["reason"], "readyz_core_dependencies_only")
+        self.assertEqual(
+            gate["reason_codes"],
+            [
+                "readyz_core_dependencies_only",
+                "trading_disabled",
+                "kill_switch_enabled",
+                "simple_submit_disabled",
+            ],
+        )
+        self.assertFalse(gate["read_model_evaluated"])
+        self.assertEqual(gate["readiness_surface"], "core_dependencies_only")
+
+    def test_core_readyz_creates_scheduler_when_app_state_is_empty(self) -> None:
+        original = {
+            "trading_mode": settings.trading_mode,
+            "trading_enabled": settings.trading_enabled,
+            "trading_readiness_dependency_cache_ttl_seconds": settings.trading_readiness_dependency_cache_ttl_seconds,
+            "trading_readiness_dependency_cache_stale_tolerance_seconds": settings.trading_readiness_dependency_cache_stale_tolerance_seconds,
+        }
+        checked_at = datetime.now(timezone.utc)
+        if hasattr(app.state, "trading_scheduler"):
+            del app.state.trading_scheduler
+        try:
+            settings.trading_mode = "paper"
+            settings.trading_enabled = True
+            settings.trading_readiness_dependency_cache_ttl_seconds = 8
+            settings.trading_readiness_dependency_cache_stale_tolerance_seconds = 20
+            with (
+                patch(
+                    "app.main._evaluate_scheduler_status",
+                    return_value=(True, {"ok": True, "running": True}),
+                ),
+                patch(
+                    "app.main._readiness_dependency_snapshot",
+                    return_value=(
+                        {
+                            "postgres": {"ok": True, "detail": "ok"},
+                            "clickhouse": {"ok": True, "detail": "ok"},
+                            "alpaca": {"ok": True, "detail": "ok"},
+                            "tigerbeetle": {"ok": True, "detail": "ok"},
+                            "database": {"ok": True, "detail": "ok"},
+                        },
+                        checked_at,
+                        False,
+                    ),
+                ),
+                patch(
+                    "app.main._evaluate_universe_dependency",
+                    return_value={"ok": True, "detail": "ok"},
+                ),
+            ):
+                payload, status_code = main_module._evaluate_core_readiness_payload(
+                    include_database_contract=True,
+                    allow_stale_dependency_cache=True,
+                )
+        finally:
+            settings.trading_mode = original["trading_mode"]
+            settings.trading_enabled = original["trading_enabled"]
+            settings.trading_readiness_dependency_cache_ttl_seconds = original[
+                "trading_readiness_dependency_cache_ttl_seconds"
+            ]
+            settings.trading_readiness_dependency_cache_stale_tolerance_seconds = (
+                original["trading_readiness_dependency_cache_stale_tolerance_seconds"]
+            )
+
+        self.assertEqual(status_code, 200)
+        self.assertEqual(payload["status"], "ok")
+        self.assertIsInstance(app.state.trading_scheduler, TradingScheduler)
+        self.assertEqual(payload["readiness_surface"], "core_dependencies_only")
+        self.assertFalse(payload["live_submission_gate"]["allowed"])
+        self.assertFalse(payload["live_submission_gate"]["read_model_evaluated"])
+        self.assertFalse(payload["dependencies"]["readiness_cache"]["cache_stale"])
+
     @patch(
         "app.main._alpaca_probe_account",
         side_effect=[
