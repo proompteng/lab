@@ -1230,10 +1230,6 @@ def _history_record(
             scorecard.get("exact_replay_ledger_artifact_ref")
             or candidate_payload.get("exact_replay_ledger_artifact_ref")
         ),
-        "runtime_ledger_artifact_ref": _string(
-            scorecard.get("runtime_ledger_artifact_ref")
-            or candidate_payload.get("runtime_ledger_artifact_ref")
-        ),
         "exact_replay_ledger_artifact_row_count": _string(
             scorecard.get("exact_replay_ledger_artifact_row_count")
             or candidate_payload.get("exact_replay_ledger_artifact_row_count")
@@ -1241,14 +1237,6 @@ def _history_record(
         "exact_replay_ledger_artifact_fill_count": _string(
             scorecard.get("exact_replay_ledger_artifact_fill_count")
             or candidate_payload.get("exact_replay_ledger_artifact_fill_count")
-        ),
-        "runtime_ledger_artifact_row_count": _string(
-            scorecard.get("runtime_ledger_artifact_row_count")
-            or candidate_payload.get("runtime_ledger_artifact_row_count")
-        ),
-        "runtime_ledger_artifact_fill_count": _string(
-            scorecard.get("runtime_ledger_artifact_fill_count")
-            or candidate_payload.get("runtime_ledger_artifact_fill_count")
         ),
         "runtime_ledger_pnl_basis": _string(
             scorecard.get("runtime_ledger_pnl_basis")
@@ -1485,7 +1473,7 @@ def _exact_replay_runtime_window_blockers(
     if not artifact_refs:
         blockers.append(
             {
-                "blocker": "runtime_ledger_artifact_ref_missing",
+                "blocker": "exact_replay_ledger_artifact_ref_missing",
                 "candidate_id": candidate_id,
                 "remediation": "enable exact replay ledger artifact output",
             }
@@ -1555,7 +1543,6 @@ def _strategy_autoresearch_runtime_window_import_plan(
             best_exact_replay_ledger_candidate.get("artifact_ref")
             if best_exact_replay_ledger_candidate is not None
             else "",
-            history_row.get("runtime_ledger_artifact_ref") if history_row else "",
             history_row.get("exact_replay_ledger_artifact_ref") if history_row else "",
         ]
     )
@@ -1581,8 +1568,8 @@ def _strategy_autoresearch_runtime_window_import_plan(
                 "paper_probation_evidence_collection_only",
             ]
         )
-        row_count = _string(history_row.get("runtime_ledger_artifact_row_count"))
-        fill_count = _string(history_row.get("runtime_ledger_artifact_fill_count"))
+        row_count = _string(history_row.get("exact_replay_ledger_artifact_row_count"))
+        fill_count = _string(history_row.get("exact_replay_ledger_artifact_fill_count"))
         search_blockers = [
             blocker
             for blocker in _dedupe_nonempty_strings(
@@ -1607,8 +1594,7 @@ def _strategy_autoresearch_runtime_window_import_plan(
             "dataset_snapshot_ref": _string(history_row.get("dataset_snapshot_id"))
             or hypothesis_manifest["dataset_snapshot_ref"],
             "artifact_refs": artifact_refs,
-            "runtime_ledger_artifact_refs": artifact_refs,
-            "runtime_ledger_artifact_ref": artifact_refs[0],
+            "exact_replay_ledger_artifact_refs": artifact_refs,
             "exact_replay_ledger_artifact_ref": artifact_refs[0],
             "window_start": window_start,
             "window_end": window_end,
@@ -1631,9 +1617,9 @@ def _strategy_autoresearch_runtime_window_import_plan(
             "promotion_gate": "runtime_ledger_live_or_live_paper_required",
         }
         if row_count:
-            target["runtime_ledger_artifact_row_count"] = row_count
+            target["exact_replay_ledger_artifact_row_count"] = row_count
         if fill_count:
-            target["runtime_ledger_artifact_fill_count"] = fill_count
+            target["exact_replay_ledger_artifact_fill_count"] = fill_count
         targets.append(target)
     return {
         "schema_version": "torghut.runtime-window-import-plan.v1",
@@ -2112,7 +2098,6 @@ def _exact_replay_ledger_refs(value: Any) -> list[str]:
         for key, item in value.items():
             if key in {
                 "exact_replay_ledger_artifact_ref",
-                "runtime_ledger_artifact_ref",
             }:
                 ref = _string(item)
                 if ref:
@@ -2120,7 +2105,6 @@ def _exact_replay_ledger_refs(value: Any) -> list[str]:
                 continue
             if key in {
                 "exact_replay_ledger_artifact_refs",
-                "runtime_ledger_artifact_refs",
             }:
                 if isinstance(item, (list, tuple)):
                     refs.extend(ref for raw in item if (ref := _string(raw)))
