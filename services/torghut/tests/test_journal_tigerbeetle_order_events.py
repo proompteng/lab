@@ -31,6 +31,7 @@ from app.trading.tigerbeetle_ledger_model import (
     TRANSFER_KIND_FILL_POST,
     TRANSFER_KIND_RUNTIME_NET_PNL,
 )
+from app.trading.tigerbeetle_client import TigerBeetleClientTimeoutError
 from scripts import journal_tigerbeetle_order_events as script
 
 
@@ -159,6 +160,10 @@ class FakeJournal:
             return None
         if event.event_fingerprint == "fail":
             raise RuntimeError("journal failed")
+        if event.event_fingerprint == "timeout":
+            raise TigerBeetleClientTimeoutError(
+                "tigerbeetle_create_transfers_timeout:10.000s"
+            )
         return SimpleNamespace(transfer_id="1")
 
     def journal_execution(
@@ -380,6 +385,36 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
         )
         self.assertFalse(
             payload["tigerbeetle_journal_parity"]["promotion_authority"],
+        )
+
+    def test_source_batch_stops_on_tigerbeetle_timeout(self) -> None:
+        rows = [SimpleNamespace(id="first"), SimpleNamespace(id="second")]
+        seen: list[str] = []
+
+        def journal_one(row: SimpleNamespace) -> object:
+            seen.append(str(row.id))
+            raise TigerBeetleClientTimeoutError(
+                "tigerbeetle_create_transfers_timeout:10.000s"
+            )
+
+        with Session(self.engine) as session:
+            batch = script._journal_source_batch(
+                session,
+                args=argparse.Namespace(dry_run=False, progress_interval=0),
+                source=script.SOURCE_TYPE_EXECUTION,
+                rows=rows,
+                journal_one=journal_one,
+            )
+
+        self.assertEqual(seen, ["first"])
+        self.assertEqual(batch["failed"], 1)
+        self.assertTrue(batch["stopped_early"])
+        self.assertEqual(batch["stop_reason"], "tigerbeetle_rpc_timeout")
+        self.assertEqual(
+            batch["error_counts"],
+            {
+                "TigerBeetleClientTimeoutError:tigerbeetle_create_transfers_timeout:10.000s": 1
+            },
         )
 
     def test_select_unlinked_events_filters_to_journalable_account_rows(self) -> None:
@@ -882,6 +917,56 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
         self.assertTrue(sample_errors[0]["row_id"])
         self.assertEqual(sample_errors[0]["error_type"], "RuntimeError")
         self.assertEqual(sample_errors[0]["error"], "journal failed")
+
+    def test_main_stops_journaling_after_tigerbeetle_timeout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "torghut.db")
+            dsn = f"sqlite+pysqlite:///{db_path}"
+            engine = create_engine(dsn, future=True)
+            Base.metadata.create_all(engine)
+            with Session(engine) as session:
+                _add_order_event(session, fingerprint="timeout", source_offset=1)
+                _add_real_source_rows(session)
+                session.commit()
+
+            stdout = io.StringIO()
+            with (
+                patch.dict(os.environ, {"TEST_DB_DSN": dsn}),
+                patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "journal_tigerbeetle_order_events.py",
+                        "--dsn-env",
+                        "TEST_DB_DSN",
+                        "--batch-size",
+                        "10",
+                        "--fail-on-degraded",
+                        "--json",
+                    ],
+                ),
+                patch.object(script, "TigerBeetleLedgerJournal", FakeJournal),
+                patch.object(
+                    script,
+                    "reconcile_tigerbeetle_transfers",
+                    return_value={"ok": True},
+                ) as reconcile,
+                redirect_stdout(stdout),
+            ):
+                exit_code = script.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(payload["status"], "degraded")
+        self.assertTrue(payload["stopped_early"])
+        self.assertEqual(payload["stop_reasons"], ["tigerbeetle_rpc_timeout"])
+        self.assertEqual(payload["failed"], 1)
+        self.assertEqual(payload["reconciliation"]["status"], "skipped")
+        reconcile.assert_not_called()
+        fake_journal = FakeJournal.instances[-1]
+        self.assertEqual(fake_journal.events, ["timeout"])
+        self.assertEqual(fake_journal.executions, [])
+        self.assertEqual(fake_journal.tca_metrics, [])
 
     def test_main_can_fail_closed_for_degraded_batch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

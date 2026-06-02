@@ -62,6 +62,7 @@ spec:
                     --max-batches 2 \
                     --reconcile-limit 1000 \
                     --skip-reconcile \
+                    --fail-on-degraded \
                     --json
                   /opt/venv/bin/python scripts/journal_tigerbeetle_order_events.py \
                     --dsn-env DB_DSN \
@@ -70,6 +71,7 @@ spec:
                     --max-batches 2 \
                     --event-scan-limit 1000 \
                     --reconcile-limit 1000 \
+                    --fail-on-degraded \
                     --json
               env:
                 - name: DB_DSN
@@ -163,6 +165,7 @@ spec:
                     --max-batches 2 \
                     --reconcile-limit 500 \
                     --skip-reconcile \
+                    --fail-on-degraded \
                     --json
                   /opt/venv/bin/python scripts/journal_tigerbeetle_order_events.py \
                     --dsn-env SIM_DB_DSN \
@@ -172,6 +175,7 @@ spec:
                     --max-batches 4 \
                     --event-scan-limit 300 \
                     --reconcile-limit 500 \
+                    --fail-on-degraded \
                     --json
               env:
                 - name: TORGHUT_SIM_DB_HOST
