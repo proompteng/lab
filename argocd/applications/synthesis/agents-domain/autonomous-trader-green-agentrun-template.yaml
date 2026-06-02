@@ -1,17 +1,17 @@
 apiVersion: agents.proompteng.ai/v1alpha1
 kind: AgentRun
 metadata:
-  name: autonomous-trader-template
+  name: autonomous-trader-template-green
   namespace: synthesis
   annotations:
     agents.proompteng.ai/template: "true"
-    autonomous-trader.proompteng.ai/deployment-color: blue
-    autonomous-trader.proompteng.ai/deployment-role: active
+    autonomous-trader.proompteng.ai/deployment-color: green
+    autonomous-trader.proompteng.ai/deployment-role: preview
   labels:
     app.kubernetes.io/part-of: synthesis
     app.kubernetes.io/component: autonomous-trader
-    autonomous-trader.proompteng.ai/deployment-color: blue
-    autonomous-trader.proompteng.ai/deployment-role: active
+    autonomous-trader.proompteng.ai/deployment-color: green
+    autonomous-trader.proompteng.ai/deployment-role: preview
 spec:
   agentRef:
     name: autonomous-trader-agent
@@ -34,7 +34,7 @@ spec:
   parameters:
     repository: proompteng/lab
     base: main
-    head: codex/synthesis-autonomous-trader-session
+    head: codex/synthesis-autonomous-trader-session-green
     mode: market-open
     synthesisSessionMode: market_open
     brokerMutationEnabled: "true"

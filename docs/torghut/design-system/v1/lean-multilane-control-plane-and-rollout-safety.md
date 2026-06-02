@@ -90,4 +90,3 @@ Use existing helpers:
 
 - `services/torghut/scripts/ta_replay_runner.py`
 - `packages/scripts/src/kafka/tail-topic.ts`
-- `services/torghut/scripts/validate_market_context_and_lean.sh`

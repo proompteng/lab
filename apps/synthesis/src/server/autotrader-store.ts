@@ -129,6 +129,32 @@ const scorecardKeyFor = (value: {
     .digest('base64url')
     .slice(0, 32)
 
+const scorecardRelationKeyFor = (value: { symbol?: string | null; setupType: string }) => {
+  const symbol = normalizedSymbol(value.symbol)
+  const setupType = value.setupType.trim().toLowerCase()
+  return symbol && setupType ? `${symbol}|${setupType}` : null
+}
+
+const scorecardRelationsForTickets = (tickets: AutotraderTradeTicket[]) => {
+  const relationByKey = new Map<string, { symbol: string; setupType: string }>()
+  for (const ticket of tickets) {
+    const relationKey = scorecardRelationKeyFor(ticket)
+    const symbol = normalizedSymbol(ticket.symbol)
+    const setupType = ticket.setupType.trim()
+    if (!relationKey || !symbol || !setupType) continue
+    relationByKey.set(relationKey, { symbol, setupType })
+  }
+  return [...relationByKey.values()]
+}
+
+const scorecardMatchesTicketRelation = (scorecard: AutotraderScorecard, relationKeys: ReadonlySet<string>) => {
+  const relationKey = scorecardRelationKeyFor(scorecard)
+  return Boolean(relationKey && relationKeys.has(relationKey))
+}
+
+const scorecardRelationKeySet = (relations: { symbol: string; setupType: string }[]) =>
+  new Set(relations.map((relation) => scorecardRelationKeyFor(relation)).filter((key): key is string => Boolean(key)))
+
 type FinalizationWarning = {
   type: 'detached_unknown_ticket_id' | 'detached_cross_session_ticket_id'
   ticketId: string
@@ -622,6 +648,7 @@ class InMemoryAutotraderStore implements AutotraderStore {
         }),
       ),
     ])
+    const sessionScorecardRelationKeys = scorecardRelationKeySet(scorecardRelationsForTickets(sessionTickets))
     return {
       session,
       status: this.statuses.get(sessionId) ?? null,
@@ -635,7 +662,13 @@ class InMemoryAutotraderStore implements AutotraderStore {
       positionSnapshots: latestPositionSnapshots(
         [...this.positions.values()].filter((snapshot) => snapshot.sessionId === sessionId),
       ),
-      scorecards: [...this.scorecards.values()].filter((scorecard) => sessionScorecardKeys.has(scorecard.key)),
+      scorecards: [...this.scorecards.values()]
+        .filter(
+          (scorecard) =>
+            sessionScorecardKeys.has(scorecard.key) ||
+            scorecardMatchesTicketRelation(scorecard, sessionScorecardRelationKeys),
+        )
+        .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)),
       setupExamples: sessionExamples,
     }
   }
@@ -1583,14 +1616,26 @@ class PostgresAutotraderStore implements AutotraderStore {
         ),
       ]),
     ]
-    const scorecards = sessionScorecardKeys.length
+    const scorecardWhere: string[] = []
+    const scorecardValues: unknown[] = []
+    if (sessionScorecardKeys.length) {
+      scorecardValues.push(sessionScorecardKeys)
+      scorecardWhere.push(`key = ANY($${scorecardValues.length}::text[])`)
+    }
+    for (const relation of scorecardRelationsForTickets(tickets)) {
+      scorecardValues.push(relation.symbol)
+      const symbolParameter = scorecardValues.length
+      scorecardValues.push(relation.setupType)
+      scorecardWhere.push(`(symbol = $${symbolParameter} AND setup_type = $${scorecardValues.length})`)
+    }
+    const scorecards = scorecardWhere.length
       ? (
           await this.pool.query<ScorecardRow>(
             `SELECT *
              FROM autotrader.scorecards
-             WHERE key = ANY($1::text[])
+             WHERE ${scorecardWhere.join(' OR ')}
              ORDER BY updated_at DESC`,
-            [sessionScorecardKeys],
+            scorecardValues,
           )
         ).rows.map(mapScorecard)
       : []

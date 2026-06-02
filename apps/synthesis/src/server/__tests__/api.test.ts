@@ -741,6 +741,130 @@ describe('synthesis REST auth', () => {
     })
   })
 
+  test('links related prior scorecards to active autotrader session detail', async () => {
+    const authedHeaders = {
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+    }
+    const priorSessionResponse = await handleAutotraderStartSession(
+      new Request('http://synthesis.test/api/autotrader/sessions', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          agentRunName: 'autonomous-trader-related-scorecard-source',
+          mode: 'market_open',
+          tradingDate: '2026-05-29',
+          accountId: 'paper-account',
+          goalEquity: '500000',
+          marketOpenAt: '2026-05-29T13:30:00Z',
+          marketCloseAt: '2026-05-29T20:00:00Z',
+        }),
+      }),
+    )
+    const priorSessionId = (await priorSessionResponse.json()).session.id
+    const priorTicketResponse = await handleAutotraderCreateTradeTicket(
+      new Request('http://synthesis.test/api/autotrader/trade-tickets', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          sessionId: priorSessionId,
+          idempotencyKey: 'googl-vwap-prior-afternoon',
+          symbol: 'GOOGL',
+          instrument: 'stock',
+          side: 'buy',
+          setupType: 'vwap_reclaim',
+          setupGrade: 'A',
+          regime: 'regular_session',
+          timeBucket: 'afternoon',
+          thesis: 'Older GOOGL reclaim was invalid.',
+          entryTrigger: 'VWAP reclaim.',
+          invalidation: 'Lose VWAP.',
+          protectionType: 'none',
+          status: 'blocked',
+        }),
+      }),
+    )
+    const priorTicketId = (await priorTicketResponse.json()).ticket.id
+    await handleAutotraderFinalizeSession(
+      new Request('http://synthesis.test/api/autotrader/finalize', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          sessionId: priorSessionId,
+          terminalReason: 'market_closed',
+          summary: { accountEquity: '30000' },
+          scorecardObservations: [
+            {
+              ticketId: priorTicketId,
+              symbol: 'GOOGL',
+              setupType: 'vwap_reclaim',
+              setupGrade: 'A',
+              regime: 'regular_session',
+              timeBucket: 'afternoon',
+              outcome: 'rejected_invalid',
+              realizedR: '0',
+              notes: 'older GOOGL A reclaim was blocked correctly',
+            },
+          ],
+        }),
+      }),
+    )
+
+    const currentSessionResponse = await handleAutotraderStartSession(
+      new Request('http://synthesis.test/api/autotrader/sessions', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          agentRunName: 'autonomous-trader-related-scorecard-consumer',
+          mode: 'market_open',
+          tradingDate: '2026-06-02',
+          accountId: 'paper-account',
+          goalEquity: '500000',
+          marketOpenAt: '2026-06-02T13:30:00Z',
+          marketCloseAt: '2026-06-02T20:00:00Z',
+        }),
+      }),
+    )
+    const currentSessionId = (await currentSessionResponse.json()).session.id
+    await handleAutotraderCreateTradeTicket(
+      new Request('http://synthesis.test/api/autotrader/trade-tickets', {
+        method: 'POST',
+        headers: authedHeaders,
+        body: JSON.stringify({
+          sessionId: currentSessionId,
+          idempotencyKey: 'googl-vwap-current-aplus',
+          symbol: 'GOOGL',
+          instrument: 'stock',
+          side: 'buy',
+          setupType: 'vwap_reclaim',
+          setupGrade: 'A+',
+          regime: 'regular_session',
+          timeBucket: 'mid_session',
+          thesis: 'Current A+ setup should show related prior GOOGL reclaim context.',
+          entryTrigger: 'VWAP reclaim.',
+          invalidation: 'Lose VWAP.',
+          protectionType: 'bracket',
+          status: 'validated',
+        }),
+      }),
+    )
+
+    const detailResponse = await handleAutotraderGetSession(
+      new Request(`http://synthesis.test/api/autotrader/sessions/${currentSessionId}`),
+      currentSessionId,
+    )
+    const detailPayload = await detailResponse.json()
+
+    expect(detailPayload.setupExamples).toHaveLength(0)
+    expect(detailPayload.scorecards[0]).toMatchObject({
+      symbol: 'GOOGL',
+      setupType: 'vwap_reclaim',
+      setupGrade: 'A',
+      timeBucket: 'afternoon',
+      rejectedInvalid: 1,
+    })
+  })
+
   test('finalizes idempotently and detaches cross-session ticket references', async () => {
     const authedHeaders = {
       authorization: `Bearer ${token}`,
