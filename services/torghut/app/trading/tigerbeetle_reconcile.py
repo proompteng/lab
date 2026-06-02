@@ -26,7 +26,7 @@ from app.trading.tigerbeetle_client import (
     TigerBeetleClientProtocol,
     create_tigerbeetle_client,
 )
-from app.trading.tigerbeetle_ids import u128_decimal
+from app.trading.tigerbeetle_ids import stable_ref_u128, u128_decimal
 from app.trading.tigerbeetle_journal import (
     SOURCE_TYPE_EXECUTION,
     SOURCE_TYPE_EXECUTION_ORDER_EVENT,
@@ -71,6 +71,7 @@ BLOCKER_RUNTIME_LEDGER_SIGNED_REFS_MISSING = (
 BLOCKER_RUNTIME_LEDGER_ACCOUNT_REFS_MISSING = (
     "tigerbeetle_runtime_ledger_account_refs_missing"
 )
+BLOCKER_STABLE_REF_PAYLOAD_MISMATCH = "tigerbeetle_stable_ref_payload_mismatch"
 BLOCKER_CLIENT_UNAVAILABLE = "tigerbeetle_client_unavailable"
 BLOCKER_RECONCILIATION_STALE = "tigerbeetle_reconciliation_stale"
 SAMPLE_LIMIT = 50
@@ -126,6 +127,55 @@ def _payload_mapping(row: TigerBeetleTransferRef) -> Mapping[str, object]:
     if isinstance(raw_payload, Mapping):
         return cast(Mapping[str, object], raw_payload)
     return {}
+
+
+def _stable_ref_payload(row: TigerBeetleTransferRef) -> Mapping[str, object]:
+    stable_ref = _payload_mapping(row).get("stable_ref")
+    if isinstance(stable_ref, Mapping):
+        return cast(Mapping[str, object], stable_ref)
+    return {}
+
+
+def _stable_ref_matches(row: TigerBeetleTransferRef) -> bool:
+    stable_ref = _stable_ref_payload(row)
+    if not stable_ref:
+        return True
+    components = stable_ref.get("components")
+    if not isinstance(components, Mapping):
+        return False
+    component_mapping = cast(Mapping[str, object], components)
+    source_type = str(row.source_type or "").strip()
+    source_id = str(row.source_id or "").strip()
+    transfer_kind = str(row.transfer_kind or "").strip()
+    account_label = str(component_mapping.get("account_label") or "unknown")
+    source_signature = str(component_mapping.get("source_signature") or "none")
+    try:
+        expected_stable_ref_id = u128_decimal(
+            stable_ref_u128(
+                cluster_id=row.cluster_id,
+                account_label=account_label,
+                source_type=source_type,
+                source_id=source_id,
+                transfer_kind=transfer_kind,
+                source_signature=source_signature,
+            )
+        )
+    except ValueError:
+        return False
+    return (
+        stable_ref.get("schema_version") == "torghut.tigerbeetle-stable-ref.v1"
+        and str(stable_ref.get("stable_ref_id") or "") == expected_stable_ref_id
+        and str(component_mapping.get("cluster_id") or "") == str(row.cluster_id)
+        and str(component_mapping.get("source_type") or "") == source_type
+        and str(component_mapping.get("source_id") or "") == source_id
+        and str(component_mapping.get("transfer_kind") or "") == transfer_kind
+        and str(stable_ref.get("transfer_id") or "") == str(row.transfer_id)
+        and str(stable_ref.get("ledger") or "") == str(row.ledger)
+        and str(stable_ref.get("code") or "") == str(row.code)
+        and str(stable_ref.get("amount") or "") == str(int(row.amount))
+        and stable_ref.get("promotion_authority") is False
+        and stable_ref.get("overrides_runtime_ledger_authority") is False
+    )
 
 
 def _ref_matches_expected_event(
@@ -589,6 +639,24 @@ def tigerbeetle_ref_counts(session: Session, *, cluster_id: int) -> dict[str, ob
             TigerBeetleTransferRef.cluster_id == cluster_id
         )
     )
+    refs = (
+        session.execute(
+            select(TigerBeetleTransferRef).where(
+                TigerBeetleTransferRef.cluster_id == cluster_id
+            )
+        )
+        .scalars()
+        .all()
+    )
+    stable_ref_count = sum(1 for ref in refs if _stable_ref_payload(ref))
+    stable_ref_missing_count = sum(
+        1
+        for ref in refs
+        if ref.source_type and ref.source_id and not _stable_ref_payload(ref)
+    )
+    stable_ref_mismatch_count = sum(
+        1 for ref in refs if _stable_ref_payload(ref) and not _stable_ref_matches(ref)
+    )
     runtime_coverage = _runtime_ledger_ref_coverage(
         session,
         cluster_id=cluster_id,
@@ -606,6 +674,9 @@ def tigerbeetle_ref_counts(session: Session, *, cluster_id: int) -> dict[str, ob
             SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
             0,
         ),
+        "stable_ref_count": stable_ref_count,
+        "stable_ref_missing_count": stable_ref_missing_count,
+        "stable_ref_mismatch_count": stable_ref_mismatch_count,
         "source_materialization": {
             "account_ref_table": "tigerbeetle_account_refs",
             "transfer_ref_table": "tigerbeetle_transfer_refs",
@@ -658,6 +729,15 @@ def _latest_run_payload(
         payload,
         "runtime_ledger_signed_ref_count",
     ) or _payload_int(ref_counts, "runtime_ledger_signed_ref_count")
+    stable_ref_count = _payload_int(payload, "stable_ref_count") or _payload_int(
+        ref_counts, "stable_ref_count"
+    )
+    stable_ref_missing_count = _payload_int(
+        payload, "stable_ref_missing_count"
+    ) or _payload_int(ref_counts, "stable_ref_missing_count")
+    stable_ref_mismatch_count = _payload_int(
+        payload, "stable_ref_mismatch_count"
+    ) or _payload_int(ref_counts, "stable_ref_mismatch_count")
     source_row_missing_count = _payload_int(payload, "source_row_missing_count")
     missing_source_row_count = (
         _payload_int(
@@ -721,6 +801,9 @@ def _latest_run_payload(
             payload,
             "runtime_ledger_missing_account_ref_count",
         ),
+        "stable_ref_count": stable_ref_count,
+        "stable_ref_missing_count": stable_ref_missing_count,
+        "stable_ref_mismatch_count": stable_ref_mismatch_count,
         "archived_runtime_ledger_source_missing_count": _payload_int(
             payload, "archived_runtime_ledger_source_missing_count"
         ),
@@ -812,6 +895,7 @@ def reconcile_tigerbeetle_transfers(
     archived_runtime_ledger_source_missing_count = 0
     runtime_ledger_direction_mismatch_count = 0
     runtime_ledger_metadata_mismatch_count = 0
+    stable_ref_mismatch_count = 0
     blockers: list[str] = []
     mismatched_refs: list[dict[str, object]] = []
     missing_transfer_refs: list[dict[str, object]] = []
@@ -842,6 +926,18 @@ def reconcile_tigerbeetle_transfers(
 
     for ref in refs:
         ref_transfer_id = _u128_text(ref.transfer_id) or str(ref.transfer_id)
+        if not _stable_ref_matches(ref):
+            stable_ref_mismatch_count += 1
+            mismatched_transfer_count += 1
+            blockers.append(BLOCKER_STABLE_REF_PAYLOAD_MISMATCH)
+            _append_sample(
+                mismatched_refs,
+                _ref_sample(
+                    ref,
+                    blocker=BLOCKER_STABLE_REF_PAYLOAD_MISMATCH,
+                    reason="stable_ref_payload_does_not_match_transfer_ref_identity",
+                ),
+            )
         actual = transfer_lookup.get(ref_transfer_id)
         if actual is None:
             missing_transfer_count += 1
@@ -1177,10 +1273,16 @@ def reconcile_tigerbeetle_transfers(
         ref_counts,
         "runtime_ledger_missing_account_ref_count",
     )
+    ref_count_stable_ref_mismatch_count = _payload_int(
+        ref_counts,
+        "stable_ref_mismatch_count",
+    )
     if runtime_ledger_missing_signed_ref_count:
         blockers.append(BLOCKER_RUNTIME_LEDGER_SIGNED_REFS_MISSING)
     if runtime_ledger_missing_account_ref_count:
         blockers.append(BLOCKER_RUNTIME_LEDGER_ACCOUNT_REFS_MISSING)
+    if ref_count_stable_ref_mismatch_count:
+        blockers.append(BLOCKER_STABLE_REF_PAYLOAD_MISMATCH)
     unique_blockers = sorted(set(blockers))
     ok = not unique_blockers
     max_age_seconds = max(1, int(settings_obj.tigerbeetle_reconcile_max_age_seconds))
@@ -1227,6 +1329,15 @@ def reconcile_tigerbeetle_transfers(
         ),
         "runtime_ledger_missing_account_ref_count": (
             runtime_ledger_missing_account_ref_count
+        ),
+        "stable_ref_count": _payload_int(ref_counts, "stable_ref_count"),
+        "stable_ref_missing_count": _payload_int(
+            ref_counts,
+            "stable_ref_missing_count",
+        ),
+        "stable_ref_mismatch_count": max(
+            stable_ref_mismatch_count,
+            ref_count_stable_ref_mismatch_count,
         ),
         "archived_runtime_ledger_source_missing_count": archived_runtime_ledger_source_missing_count,
         "runtime_ledger_direction_mismatch_count": (

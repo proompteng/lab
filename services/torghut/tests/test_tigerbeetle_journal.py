@@ -770,6 +770,30 @@ class TestTigerBeetleLedgerJournal(TestCase):
             self.assertEqual(ref.payload_json["transfer_id"], ref.transfer_id)
             self.assertEqual(ref.payload_json["ledger"], ref.ledger)
             self.assertEqual(ref.payload_json["code"], ref.code)
+            stable_ref = ref.payload_json["stable_ref"]
+            self.assertEqual(
+                stable_ref["schema_version"], "torghut.tigerbeetle-stable-ref.v1"
+            )
+            self.assertEqual(
+                stable_ref["stable_ref_id"], ref.payload_json["stable_ref_id"]
+            )
+            self.assertEqual(stable_ref["transfer_id"], ref.transfer_id)
+            self.assertFalse(stable_ref["promotion_authority"])
+            self.assertFalse(stable_ref["overrides_runtime_ledger_authority"])
+            stable_components = stable_ref["components"]
+            self.assertEqual(stable_components["cluster_id"], 2001)
+            self.assertEqual(stable_components["account_label"], "paper")
+            self.assertEqual(
+                stable_components["source_type"],
+                "strategy_runtime_ledger_bucket",
+            )
+            self.assertEqual(stable_components["source_id"], str(bucket.id))
+            self.assertEqual(
+                stable_components["transfer_kind"], TRANSFER_KIND_RUNTIME_NET_PNL
+            )
+            self.assertEqual(
+                stable_components["source_signature"], ref.payload_json["runtime_key"]
+            )
             self.assertFalse(ref.payload_json["promotion_authority"])
             self.assertFalse(ref.payload_json["overrides_runtime_ledger_authority"])
             parity = tigerbeetle_runtime_ledger_journal_payload(
@@ -778,6 +802,11 @@ class TestTigerBeetleLedgerJournal(TestCase):
                 status=TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_STATUS_PASS,
             )
             self.assertEqual(parity["status"], "pass")
+            self.assertEqual(parity["stable_ref_count"], 1)
+            self.assertEqual(parity["stable_ref_ids"], [stable_ref["stable_ref_id"]])
+            self.assertEqual(
+                parity["transfer"]["stable_ref_id"], stable_ref["stable_ref_id"]
+            )
             self.assertFalse(parity["promotion_authority"])
             self.assertIn(
                 TIGERBEETLE_AUTHORITY_BLOCKER_ACCOUNTING_ONLY,
@@ -800,6 +829,48 @@ class TestTigerBeetleLedgerJournal(TestCase):
                 ref.payload_json["credit_account_id"],
                 str(getattr(transfer, "credit_account_id")),
             )
+
+    def test_stable_ref_payload_backfill_is_idempotent_without_tigerbeetle_write(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            bucket = _runtime_bucket()
+            session.add(bucket)
+            session.flush()
+            ref = TigerBeetleTransferRef(
+                cluster_id=2001,
+                transfer_id=str(runtime_ledger_transfer_id(bucket)),
+                transfer_kind=TRANSFER_KIND_RUNTIME_NET_PNL,
+                ledger=LEDGER_USD_MICRO,
+                code=2012,
+                amount=Decimal("2500000"),
+                status="created",
+                runtime_ledger_bucket_id=bucket.id,
+                source_type="strategy_runtime_ledger_bucket",
+                source_id=str(bucket.id),
+                payload_json={
+                    "debit_account_id": "100100100100100100100100100100100101",
+                    "credit_account_id": "100100100100100100100100100100100102",
+                    "runtime_key": "hypothesis-1:runtime-run-1:source-window",
+                },
+            )
+            session.add(ref)
+            session.flush()
+            client = FakeTigerBeetleClient()
+            journal = TigerBeetleLedgerJournal(
+                settings_obj=_settings(),
+                client=client,
+            )
+
+            first = journal.backfill_stable_ref_payloads(session)
+            first_payload = dict(ref.payload_json)
+            second = journal.backfill_stable_ref_payloads(session)
+
+            self.assertEqual(first, {"selected": 1, "updated": 1, "skipped": 0})
+            self.assertEqual(second, {"selected": 1, "updated": 0, "skipped": 1})
+            self.assertEqual(client.transfers, {})
+            self.assertEqual(ref.payload_json, first_payload)
+            self.assertIn("stable_ref", ref.payload_json)
 
     def test_runtime_bucket_journal_payload_marks_aggregate_only_non_authority(
         self,

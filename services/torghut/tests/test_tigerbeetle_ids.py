@@ -3,7 +3,12 @@ from __future__ import annotations
 import uuid
 from unittest import TestCase
 
-from app.trading.tigerbeetle_ids import stable_u128, u128_decimal, uuid_to_u128
+from app.trading.tigerbeetle_ids import (
+    stable_ref_u128,
+    stable_u128,
+    u128_decimal,
+    uuid_to_u128,
+)
 
 
 class TestTigerBeetleIds(TestCase):
@@ -32,3 +37,48 @@ class TestTigerBeetleIds(TestCase):
     def test_decimal_serialization_rejects_out_of_range_values(self) -> None:
         with self.assertRaisesRegex(ValueError, "tigerbeetle_id_out_of_range"):
             u128_decimal(0)
+
+    def test_stable_ref_ids_include_cluster_account_source_and_kind(self) -> None:
+        base = stable_ref_u128(
+            cluster_id=2001,
+            account_label="paper",
+            source_type="strategy_runtime_ledger_bucket",
+            source_id="bucket-1",
+            transfer_kind="runtime_net_pnl",
+            source_signature="runtime-key",
+        )
+
+        self.assertEqual(
+            base,
+            stable_ref_u128(
+                cluster_id=2001,
+                account_label="paper",
+                source_type="strategy_runtime_ledger_bucket",
+                source_id="bucket-1",
+                transfer_kind="runtime_net_pnl",
+                source_signature="runtime-key",
+            ),
+        )
+        self.assertNotEqual(
+            base,
+            stable_ref_u128(
+                cluster_id=2002,
+                account_label="paper",
+                source_type="strategy_runtime_ledger_bucket",
+                source_id="bucket-1",
+                transfer_kind="runtime_net_pnl",
+                source_signature="runtime-key",
+            ),
+        )
+        self.assertNotEqual(
+            base,
+            stable_ref_u128(
+                cluster_id=2001,
+                account_label="live",
+                source_type="strategy_runtime_ledger_bucket",
+                source_id="bucket-1",
+                transfer_kind="runtime_net_pnl",
+                source_signature="runtime-key",
+            ),
+        )
+        self.assertGreater(base, 0)

@@ -189,6 +189,15 @@ class FakeJournal:
     def client_for_reconciliation(self) -> object:
         return self.reconciliation_client
 
+    def backfill_stable_ref_payloads(
+        self,
+        session: Session,
+        *,
+        limit: int = 1000,
+    ) -> dict[str, object]:
+        del session, limit
+        return {"selected": 0, "updated": 0, "skipped": 0}
+
 
 class TestJournalTigerBeetleOrderEventsScript(TestCase):
     def setUp(self) -> None:

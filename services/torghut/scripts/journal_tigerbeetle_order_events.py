@@ -586,6 +586,21 @@ def main() -> int:
                 session.rollback()
                 _reset_session_identity_map(session)
                 break
+            stable_ref_backfill = journal.backfill_stable_ref_payloads(
+                session,
+                limit=batch_size,
+            )
+            batches.append(
+                {
+                    "source": "tigerbeetle_stable_ref_payload",
+                    "selected": int(stable_ref_backfill["selected"]),
+                    "journaled": int(stable_ref_backfill["updated"]),
+                    "skipped": int(stable_ref_backfill["skipped"]),
+                    "failed": 0,
+                    "error_counts": {},
+                    "sample_errors": [],
+                }
+            )
             session.commit()
             _reset_session_identity_map(session)
             if batch_lengths and all(length < batch_size for length in batch_lengths):
