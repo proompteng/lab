@@ -121,6 +121,76 @@ class LiveScanCycleTest(unittest.TestCase):
             },
         )
 
+    def test_summarizes_account_gate_as_monitor_only_when_entry_blocked_and_flat(self) -> None:
+        summary = live_scan_cycle.summarize_account_gate(
+            raw_account={
+                "id": "paper-account",
+                "equity": "29989.14",
+                "buying_power": "59978.28",
+                "daytrading_buying_power": "0",
+                "daytrade_count": 5,
+            },
+            raw_positions=[],
+            raw_orders=[],
+        )
+
+        self.assertEqual(summary["mode"], "account_gate")
+        self.assertEqual(summary["action"], "monitor_only")
+        self.assertTrue(summary["skipFullScan"])
+        self.assertFalse(summary["hasOpenBrokerState"])
+        self.assertEqual(summary["openPositionCount"], 0)
+        self.assertEqual(summary["openOrderCount"], 0)
+        self.assertEqual(summary["account"]["intraday_equity_entry"]["status"], "blocked")
+
+    def test_summarizes_account_gate_as_manage_state_when_entry_blocked_with_position(self) -> None:
+        summary = live_scan_cycle.summarize_account_gate(
+            raw_account={
+                "id": "paper-account",
+                "equity": "29989.14",
+                "buying_power": "59978.28",
+                "daytrading_buying_power": "0",
+                "daytrade_count": 5,
+            },
+            raw_positions=[{"symbol": "AAPL", "qty": "1"}],
+            raw_orders=[],
+        )
+
+        self.assertEqual(summary["action"], "manage_existing_broker_state")
+        self.assertFalse(summary["skipFullScan"])
+        self.assertTrue(summary["hasOpenBrokerState"])
+        self.assertEqual(summary["openPositionCount"], 1)
+
+    def test_run_account_gate_fetches_only_broker_state(self) -> None:
+        case = self
+
+        class FakeAlpaca:
+            def __init__(self, *, timeout_seconds: float) -> None:
+                self.timeout_seconds = timeout_seconds
+
+            def trading_get(self, path: str, query: dict[str, str] | None = None) -> object:
+                if path == "/v2/account":
+                    return {
+                        "id": "paper-account",
+                        "equity": "30000",
+                        "buying_power": "60000",
+                        "daytrading_buying_power": "0",
+                        "daytrade_count": "5",
+                    }
+                if path == "/v2/positions":
+                    case.assertIsNone(query)
+                    return []
+                if path == "/v2/orders":
+                    case.assertEqual(query, {"status": "open", "nested": "true"})
+                    return []
+                raise AssertionError(f"unexpected trading path {path}")
+
+        args = live_scan_cycle.build_parser().parse_args(["--account-gate-only", "--timeout-seconds", "3"])
+        with patch.object(live_scan_cycle, "AlpacaRestClient", FakeAlpaca):
+            summary = live_scan_cycle.run_account_gate(args)
+
+        self.assertEqual(summary["action"], "monitor_only")
+        self.assertTrue(summary["skipFullScan"])
+
     def test_summarizes_scan_without_runtime_ledger(self) -> None:
         summary = live_scan_cycle.summarize_scan(
             2,
