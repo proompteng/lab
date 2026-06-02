@@ -459,6 +459,24 @@ def test_paper_route_target_plan_json_and_scalar_helpers_preserve_report_encodin
     assert cli._truthy(0) is False
 
 
+def test_paper_route_target_plan_sqlalchemy_dsn_uses_installed_psycopg_driver() -> None:
+    assert (
+        cli._sqlalchemy_dsn("postgres://user:pass@postgres/torghut")
+        == "postgresql+psycopg://user:pass@postgres/torghut"
+    )
+    assert (
+        cli._sqlalchemy_dsn("postgresql://user:pass@postgres/torghut")
+        == "postgresql+psycopg://user:pass@postgres/torghut"
+    )
+    assert (
+        cli._sqlalchemy_dsn("postgresql+psycopg://user:pass@postgres/torghut")
+        == "postgresql+psycopg://user:pass@postgres/torghut"
+    )
+    assert cli._sqlalchemy_dsn("sqlite+pysqlite:///:memory:") == (
+        "sqlite+pysqlite:///:memory:"
+    )
+
+
 def test_paper_route_target_plan_target_summary_accepts_explicit_quantity_and_symbol_fallbacks() -> (
     None
 ):
