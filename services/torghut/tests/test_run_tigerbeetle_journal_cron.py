@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from app.trading.tigerbeetle_journal import (
     SOURCE_TYPE_EXECUTION,
+    SOURCE_TYPE_EXECUTION_ORDER_EVENT,
     SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
 )
 from scripts import run_tigerbeetle_journal_cron as runner
@@ -53,10 +54,48 @@ class RunTigerBeetleJournalCronTest(TestCase):
         self.assertTrue(commands[0].skip_reconcile)
         self.assertTrue(commands[0].allow_data_quality_degraded)
         self.assertEqual(commands[1].batch_size, 5)
-        self.assertEqual(commands[2].batch_size, 5)
-        self.assertEqual(commands[2].max_batches, 2)
+        self.assertEqual(commands[2].source, SOURCE_TYPE_EXECUTION_ORDER_EVENT)
+        self.assertEqual(commands[2].batch_size, runner.LIVE_ORDER_EVENT_BATCH_SIZE)
+        self.assertEqual(commands[2].max_batches, runner.LIVE_ORDER_EVENT_MAX_BATCHES)
+        self.assertLessEqual(commands[2].max_batches, 2)
+        self.assertEqual(
+            commands[2].event_scan_limit,
+            runner.LIVE_ORDER_EVENT_SCAN_LIMIT,
+        )
         self.assertEqual(commands[3].source, SOURCE_TYPE_RUNTIME_LEDGER_BUCKET)
         self.assertFalse(commands[3].skip_reconcile)
+
+    def test_live_order_event_argv_keeps_slice_bounded_under_watchdog(self) -> None:
+        [command] = [
+            item
+            for item in runner._live_commands(execution_batch_size=5)
+            if item.source == SOURCE_TYPE_EXECUTION_ORDER_EVENT
+        ]
+
+        argv = runner._argv_for_command(
+            command,
+            json_output=True,
+            supervise_timeout_seconds=45.0,
+        )
+
+        self.assertEqual(argv[argv.index("--sources") + 1], "execution_order_event")
+        self.assertEqual(
+            argv[argv.index("--batch-size") + 1],
+            str(runner.LIVE_ORDER_EVENT_BATCH_SIZE),
+        )
+        self.assertEqual(
+            argv[argv.index("--max-batches") + 1],
+            str(runner.LIVE_ORDER_EVENT_MAX_BATCHES),
+        )
+        self.assertLessEqual(int(argv[argv.index("--max-batches") + 1]), 2)
+        self.assertEqual(
+            argv[argv.index("--event-scan-limit") + 1],
+            str(runner.LIVE_ORDER_EVENT_SCAN_LIMIT),
+        )
+        self.assertEqual(argv[argv.index("--supervise-timeout-seconds") + 1], "45.0")
+        self.assertIn("--fail-on-degraded", argv)
+        self.assertIn("--allow-data-quality-degraded", argv)
+        self.assertIn("--json", argv)
 
     def test_safe_non_authority_payload_normalizes_nonzero_command_exit(self) -> None:
         safe_payload = {

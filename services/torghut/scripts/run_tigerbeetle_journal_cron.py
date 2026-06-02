@@ -24,6 +24,10 @@ from app.trading.tigerbeetle_journal import (  # noqa: E402
 )
 from scripts import journal_tigerbeetle_order_events as journal_script  # noqa: E402
 
+LIVE_ORDER_EVENT_BATCH_SIZE = 5
+LIVE_ORDER_EVENT_MAX_BATCHES = 2
+LIVE_ORDER_EVENT_SCAN_LIMIT = 250
+
 
 @dataclass(frozen=True)
 class JournalCronCommand:
@@ -74,10 +78,10 @@ def _live_commands(*, execution_batch_size: int) -> list[JournalCronCommand]:
         JournalCronCommand(
             source=SOURCE_TYPE_EXECUTION_ORDER_EVENT,
             dsn_env="DB_DSN",
-            batch_size=5,
-            max_batches=2,
+            batch_size=LIVE_ORDER_EVENT_BATCH_SIZE,
+            max_batches=LIVE_ORDER_EVENT_MAX_BATCHES,
             reconcile_limit=1000,
-            event_scan_limit=250,
+            event_scan_limit=LIVE_ORDER_EVENT_SCAN_LIMIT,
             skip_reconcile=True,
             allow_data_quality_degraded=True,
         ),
