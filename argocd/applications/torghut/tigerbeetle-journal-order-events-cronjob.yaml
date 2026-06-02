@@ -63,6 +63,7 @@ spec:
                     --reconcile-limit 1000 \
                     --skip-reconcile \
                     --fail-on-degraded \
+                    --allow-data-quality-degraded \
                     --supervise-timeout-seconds 45 \
                     --json
                   /opt/venv/bin/python scripts/journal_tigerbeetle_order_events.py \
@@ -73,6 +74,7 @@ spec:
                     --event-scan-limit 250 \
                     --reconcile-limit 1000 \
                     --fail-on-degraded \
+                    --allow-data-quality-degraded \
                     --supervise-timeout-seconds 45 \
                     --json
               env:
@@ -168,6 +170,7 @@ spec:
                     --reconcile-limit 500 \
                     --skip-reconcile \
                     --fail-on-degraded \
+                    --allow-data-quality-degraded \
                     --supervise-timeout-seconds 45 \
                     --json
                   /opt/venv/bin/python scripts/journal_tigerbeetle_order_events.py \
@@ -179,6 +182,7 @@ spec:
                     --event-scan-limit 300 \
                     --reconcile-limit 500 \
                     --fail-on-degraded \
+                    --allow-data-quality-degraded \
                     --supervise-timeout-seconds 45 \
                     --json
               env:
