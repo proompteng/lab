@@ -1,11 +1,15 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
+from sqlalchemy.pool import StaticPool
+
 from app.config import settings
-from app.models import Strategy
+from app.models import Base, Execution, Strategy, TradeDecision
 from app.trading.models import StrategyDecision
 from app.trading.prices import MarketSnapshot
 from app.trading.paper_route_target_plan import _blocked_target_readiness
@@ -264,6 +268,10 @@ def test_paper_route_target_metadata_is_collection_only_without_live_capital_mut
     assert metadata["promotion_allowed"] is False
     assert metadata["final_authority_ok"] is False
     assert metadata["final_promotion_allowed"] is False
+    assert metadata["exit_minute_after_open"] == 375
+    assert metadata["effective_exit_minute_after_open"] == 375
+    assert metadata["exit_due_at"] == "2026-06-01T19:45:00+00:00"
+    assert metadata["paper_route_probe_exit_defaulted"] is True
     assert metadata["account_stage_runtime_identity"] == {
         "account_label": "TORGHUT_SIM",
         "source_account_label": None,
@@ -1059,6 +1067,190 @@ def test_source_collection_authorization_emits_bounded_lineage_decisions_without
         settings.trading_mode = trading_mode_before
         settings.trading_simple_paper_route_probe_enabled = probe_enabled_before
         settings.trading_allow_shorts = allow_shorts_before
+
+
+def test_stale_unfilled_hpairs_closeout_does_not_block_retry_with_source_lineage(
+    monkeypatch,
+) -> None:
+    trading_mode_before = settings.trading_mode
+    probe_enabled_before = settings.trading_simple_paper_route_probe_enabled
+    try:
+        settings.trading_mode = "paper"
+        settings.trading_simple_paper_route_probe_enabled = True
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            future=True,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        session_open = datetime(2026, 6, 2, 13, 30, tzinfo=timezone.utc)
+        entry_at = session_open + timedelta(minutes=5)
+        exit_due_at = session_open + timedelta(minutes=60)
+        now = exit_due_at + timedelta(minutes=10)
+        with Session(engine) as session:
+            strategy = Strategy(
+                name="microbar-cross-sectional-pairs-v1",
+                description="H-PAIRS stale closeout retry fixture",
+                enabled=True,
+                base_timeframe="1Sec",
+                universe_type="static",
+                universe_symbols=["AAPL", "AMZN"],
+            )
+            session.add(strategy)
+            session.flush()
+            entry_decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=entry_at,
+                timeframe="1Sec",
+                action="buy",
+                qty=Decimal("1"),
+                params={
+                    "source_decision_mode": "bounded_paper_route_collection",
+                    "profit_proof_eligible": True,
+                    "candidate_id": "c88421d619759b2cfaa6f4d0",
+                    "hypothesis_id": "H-PAIRS-01",
+                    "paper_route_target_plan_source_decision": _bounded_hpairs_target(
+                        exit_minute_after_open=60,
+                        effective_exit_minute_after_open=60,
+                        exit_due_at=exit_due_at.isoformat(),
+                        paper_route_probe_window_start=session_open.isoformat(),
+                        paper_route_probe_window_end=(
+                            session_open + timedelta(minutes=390)
+                        ).isoformat(),
+                        source_decision_mode="bounded_paper_route_collection",
+                        profit_proof_eligible=True,
+                        source_candidate_ids=["c88421d619759b2cfaa6f4d0"],
+                        source_hypothesis_ids=["H-PAIRS-01"],
+                    ),
+                    "paper_route_probe_lineage_targets": [
+                        {
+                            "candidate_id": "c88421d619759b2cfaa6f4d0",
+                            "hypothesis_id": "H-PAIRS-01",
+                            "strategy_name": "microbar-cross-sectional-pairs-v1",
+                        }
+                    ],
+                    "source_candidate_ids": ["c88421d619759b2cfaa6f4d0"],
+                    "source_hypothesis_ids": ["H-PAIRS-01"],
+                    "source_strategy_names": ["microbar-cross-sectional-pairs-v1"],
+                    "promotion_allowed": False,
+                    "final_promotion_authorized": False,
+                    "final_promotion_allowed": False,
+                },
+            )
+            entry_row = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="TORGHUT_SIM",
+                symbol="AAPL",
+                timeframe="1Sec",
+                decision_json=entry_decision.model_dump(mode="json"),
+                rationale="H-PAIRS bounded entry fixture",
+                status="executed",
+                created_at=entry_at,
+                executed_at=entry_at,
+            )
+            session.add(entry_row)
+            session.flush()
+            session.add(
+                Execution(
+                    trade_decision_id=entry_row.id,
+                    alpaca_account_label="TORGHUT_SIM",
+                    alpaca_order_id="hpairs-entry-filled",
+                    client_order_id="hpairs-entry-filled",
+                    symbol="AAPL",
+                    side="buy",
+                    order_type="market",
+                    time_in_force="day",
+                    submitted_qty=Decimal("1"),
+                    filled_qty=Decimal("1"),
+                    avg_fill_price=Decimal("100"),
+                    status="filled",
+                    raw_order={},
+                    created_at=entry_at,
+                    updated_at=entry_at,
+                    last_update_at=entry_at,
+                )
+            )
+            stale_exit_decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=exit_due_at,
+                timeframe="1Sec",
+                action="sell",
+                qty=Decimal("1"),
+                params={
+                    "paper_route_probe_exit": {
+                        "mode": "paper_route_exit",
+                        "exit_due_at": exit_due_at.isoformat(),
+                    },
+                    "promotion_allowed": False,
+                    "final_promotion_authorized": False,
+                    "final_promotion_allowed": False,
+                },
+            )
+            stale_exit_row = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="TORGHUT_SIM",
+                symbol="AAPL",
+                timeframe="1Sec",
+                decision_json=stale_exit_decision.model_dump(mode="json"),
+                rationale="stale unfilled closeout",
+                status="submitted",
+                created_at=exit_due_at,
+            )
+            session.add(stale_exit_row)
+            session.flush()
+            session.add(
+                Execution(
+                    trade_decision_id=stale_exit_row.id,
+                    alpaca_account_label="TORGHUT_SIM",
+                    alpaca_order_id="hpairs-exit-unfilled",
+                    client_order_id="hpairs-exit-unfilled",
+                    symbol="AAPL",
+                    side="sell",
+                    order_type="market",
+                    time_in_force="day",
+                    submitted_qty=Decimal("1"),
+                    filled_qty=Decimal("0"),
+                    avg_fill_price=Decimal("0"),
+                    status="submitted",
+                    raw_order={},
+                    created_at=exit_due_at,
+                    updated_at=exit_due_at,
+                    last_update_at=exit_due_at,
+                )
+            )
+            session.commit()
+
+            pipeline = object.__new__(SimpleTradingPipeline)
+            pipeline.account_label = "TORGHUT_SIM"
+            pipeline._is_market_session_open = lambda _now: True
+            monkeypatch.setattr(
+                "app.trading.scheduler.simple_pipeline.trading_now",
+                lambda account_label=None: now,
+            )
+
+            decisions = pipeline._paper_route_probe_exit_decisions(session=session)
+
+        assert len(decisions) == 1
+        decision = decisions[0]
+        assert decision.action == "sell"
+        assert decision.event_ts == now
+        exit_metadata = decision.params["paper_route_probe_exit"]
+        assert exit_metadata["exit_due_at"] == exit_due_at.isoformat()
+        assert exit_metadata["retry_event_ts"] == now.isoformat()
+        assert exit_metadata["source_candidate_ids"] == ["c88421d619759b2cfaa6f4d0"]
+        assert exit_metadata["source_hypothesis_ids"] == ["H-PAIRS-01"]
+        assert decision.params["source_decision_mode"] == (
+            "bounded_paper_route_collection"
+        )
+        assert decision.params["profit_proof_eligible"] is True
+        assert decision.params.get("promotion_allowed") is not True
+        assert decision.params.get("final_promotion_allowed") is not True
+    finally:
+        settings.trading_mode = trading_mode_before
+        settings.trading_simple_paper_route_probe_enabled = probe_enabled_before
 
 
 def test_bounded_source_collection_blocks_closed_session_with_explicit_reason(

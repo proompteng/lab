@@ -3168,6 +3168,63 @@ def _trade_decision_is_target_plan_source_decision(row: TradeDecision) -> bool:
     return _safe_text(metadata.get("mode")) == "paper_route_target_plan_source_decision"
 
 
+def _trade_decision_is_paper_route_closeout(row: TradeDecision) -> bool:
+    payload = _as_mapping(row.decision_json)
+    params = _as_mapping(payload.get("params"))
+    metadata = _as_mapping(params.get("paper_route_probe_exit"))
+    return _safe_text(metadata.get("mode")) == "paper_route_exit"
+
+
+def _source_closeout_fillability_summary(
+    *,
+    decision_rows: Sequence[TradeDecision],
+    execution_rows: Sequence[Execution],
+    order_event_rows: Sequence[ExecutionOrderEvent],
+) -> dict[str, object]:
+    closeout_decisions = [
+        row for row in decision_rows if _trade_decision_is_paper_route_closeout(row)
+    ]
+    closeout_decision_ids = {row.id for row in closeout_decisions}
+    closeout_executions = [
+        row for row in execution_rows if row.trade_decision_id in closeout_decision_ids
+    ]
+    closeout_order_events = [
+        row
+        for row in order_event_rows
+        if row.trade_decision_id in closeout_decision_ids
+    ]
+    filled_execution_count = sum(
+        int(_safe_decimal(row.filled_qty) > 0) for row in closeout_executions
+    )
+    fill_order_event_count = sum(
+        int(_order_event_is_fill(row)) for row in closeout_order_events
+    )
+    blockers: list[str] = []
+    if (
+        closeout_decisions
+        and filled_execution_count <= 0
+        and fill_order_event_count <= 0
+    ):
+        blockers.append("source_closeout_fillability_missing")
+    return {
+        "schema_version": "torghut.paper-route-closeout-fillability-summary.v1",
+        "closeout_decision_count": len(closeout_decisions),
+        "closeout_execution_count": len(closeout_executions),
+        "closeout_filled_execution_count": filled_execution_count,
+        "closeout_order_event_count": len(closeout_order_events),
+        "closeout_fill_order_event_count": fill_order_event_count,
+        "closeout_decision_refs": [
+            str(row.id)
+            for row in closeout_decisions[:PAPER_ROUTE_SOURCE_ACTIVITY_REF_LIMIT]
+        ],
+        "closeout_execution_refs": [
+            str(row.id)
+            for row in closeout_executions[:PAPER_ROUTE_SOURCE_ACTIVITY_REF_LIMIT]
+        ],
+        "blockers": blockers,
+    }
+
+
 def _source_decision_mode_counts(
     decision_rows: Sequence[TradeDecision],
 ) -> dict[str, int]:
@@ -3812,6 +3869,11 @@ def _strategy_source_activity(
         order_event_rows=order_event_rows,
         tca_rows=tca_rows,
     )
+    closeout_fillability = _source_closeout_fillability_summary(
+        decision_rows=decision_rows,
+        execution_rows=execution_rows,
+        order_event_rows=order_event_rows,
+    )
     decision_refs = [
         str(row.id) for row in decision_rows[:PAPER_ROUTE_SOURCE_ACTIVITY_REF_LIMIT]
     ]
@@ -3865,6 +3927,7 @@ def _strategy_source_activity(
     source_lifecycle_blockers = _unique_text_items(
         [
             *_unique_text_items(lifecycle_summary.get("blockers")),
+            *_unique_text_items(closeout_fillability.get("blockers")),
             *source_reference_blockers,
             *(
                 decision_reject_blockers
@@ -3967,6 +4030,7 @@ def _strategy_source_activity(
             "truncated_sources": truncated_sources,
         },
         "source_lifecycle": lifecycle_summary,
+        "closeout_fillability": closeout_fillability,
         "source_lifecycle_blockers": source_lifecycle_blockers,
         "last_decision_at": _isoformat(
             decision_rows[0].created_at if decision_rows else None

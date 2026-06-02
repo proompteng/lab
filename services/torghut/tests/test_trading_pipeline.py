@@ -4960,13 +4960,13 @@ class TestTradingPipeline(TestCase):
                 max_notional=Decimal("250"),
             )
         )
-        self.assertEqual(source_decision_metadata["exit_minute_after_open"], 390)
+        self.assertEqual(source_decision_metadata["exit_minute_after_open"], 375)
         self.assertEqual(
-            source_decision_metadata["effective_exit_minute_after_open"], 389
+            source_decision_metadata["effective_exit_minute_after_open"], 375
         )
         self.assertEqual(
             source_decision_metadata["exit_due_at"],
-            "2026-03-26T19:59:00+00:00",
+            "2026-03-26T19:45:00+00:00",
         )
         self.assertTrue(source_decision_metadata["paper_route_probe_exit_defaulted"])
         self.assertEqual(
@@ -4981,7 +4981,7 @@ class TestTradingPipeline(TestCase):
                     }
                 )
             ),
-            390,
+            375,
         )
         strategy_signal_metadata = (
             SimpleTradingPipeline._strategy_signal_paper_metadata(
@@ -4990,7 +4990,7 @@ class TestTradingPipeline(TestCase):
                 strategy=strategy,
             )
         )
-        self.assertEqual(strategy_signal_metadata["exit_minute_after_open"], 390)
+        self.assertEqual(strategy_signal_metadata["exit_minute_after_open"], 375)
         self.assertTrue(strategy_signal_metadata["paper_route_probe_exit_defaulted"])
         self.assertEqual(
             SimpleTradingPipeline._paper_route_probe_exit_minute_after_open(
@@ -5000,7 +5000,7 @@ class TestTradingPipeline(TestCase):
                     }
                 )
             ),
-            390,
+            375,
         )
         old_row = TradeDecision(
             strategy_id=strategy_id,
