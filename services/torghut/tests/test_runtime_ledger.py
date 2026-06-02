@@ -1518,6 +1518,121 @@ def test_promotion_authority_class_requires_source_refs_without_lifecycle_gate()
     assert "runtime_ledger_source_offsets_missing" in bucket.blockers
 
 
+def test_aggregate_only_source_bucket_remains_blocked_from_authority() -> None:
+    bucket = _bucket(
+        [
+            {
+                "event_type": "fill",
+                "executed_at": _ts(1),
+                "source_materialization": "aggregate_only",
+                "authority_class": "aggregate_only",
+                "execution_order_event_id": "event-buy",
+                "execution_id": "execution-buy",
+                "trade_decision_id": "decision-buy",
+                "source_window_id": "window-buy",
+                "source_topic": "alpaca.trade_updates",
+                "source_partition": 0,
+                "source_offset": 7,
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "symbol": "NVDA",
+                "side": "buy",
+                "filled_qty": "1",
+                "filled_qty_delta": "1",
+                "fill_quantity_basis": "cumulative_to_delta",
+                "avg_fill_price": "100",
+                "cost_amount": "0",
+                "cost_basis": "broker_reported_zero_cost",
+            },
+            {
+                "event_type": "fill",
+                "executed_at": _ts(2),
+                "source_materialization": "aggregate_only",
+                "authority_class": "aggregate_only",
+                "execution_order_event_id": "event-sell",
+                "execution_id": "execution-sell",
+                "trade_decision_id": "decision-sell",
+                "source_window_id": "window-sell",
+                "source_topic": "alpaca.trade_updates",
+                "source_partition": 0,
+                "source_offset": 8,
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "symbol": "NVDA",
+                "side": "sell",
+                "filled_qty": "1",
+                "filled_qty_delta": "1",
+                "fill_quantity_basis": "cumulative_to_delta",
+                "avg_fill_price": "101",
+                "cost_amount": "0",
+                "cost_basis": "broker_reported_zero_cost",
+            },
+        ]
+    )
+
+    assert bucket.fill_count == 0
+    assert bucket.post_cost_expectancy_bps is None
+    assert "runtime_source_not_promotion_authority" in bucket.blockers
+    assert "runtime_fills_missing" in bucket.blockers
+
+
+def test_promotion_authority_class_also_requires_source_materialization() -> None:
+    bucket = _bucket(
+        [
+            {
+                "event_type": "fill",
+                "executed_at": _ts(1),
+                "authority_class": "source_execution_lifecycle_materialized_runtime_ledger",
+                "execution_order_event_id": "event-buy",
+                "execution_id": "execution-buy",
+                "trade_decision_id": "decision-buy",
+                "source_window_id": "window-buy",
+                "source_topic": "alpaca.trade_updates",
+                "source_partition": 0,
+                "source_offset": 7,
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "symbol": "NVDA",
+                "side": "buy",
+                "filled_qty": "1",
+                "filled_qty_delta": "1",
+                "fill_quantity_basis": "cumulative_to_delta",
+                "avg_fill_price": "100",
+                "cost_amount": "0",
+                "cost_basis": "broker_reported_zero_cost",
+            },
+            {
+                "event_type": "fill",
+                "executed_at": _ts(2),
+                "authority_class": "source_execution_lifecycle_materialized_runtime_ledger",
+                "execution_order_event_id": "event-sell",
+                "execution_id": "execution-sell",
+                "trade_decision_id": "decision-sell",
+                "source_window_id": "window-sell",
+                "source_topic": "alpaca.trade_updates",
+                "source_partition": 0,
+                "source_offset": 8,
+                "account_label": "paper",
+                "strategy_id": "strategy-1",
+                "symbol": "NVDA",
+                "side": "sell",
+                "filled_qty": "1",
+                "filled_qty_delta": "1",
+                "fill_quantity_basis": "cumulative_to_delta",
+                "avg_fill_price": "101",
+                "cost_amount": "0",
+                "cost_basis": "broker_reported_zero_cost",
+            },
+        ]
+    )
+
+    assert bucket.fill_count == 2
+    assert bucket.closed_trade_count == 1
+    assert bucket.post_cost_expectancy_bps is None
+    assert "runtime_ledger_source_materialization_missing" in bucket.blockers
+    assert "runtime_ledger_authority_class_missing" not in bucket.blockers
+
+
 def test_fill_quantity_basis_aliases_are_normalized() -> None:
     assert _coerce_fill_quantity_basis("fill-delta") == "delta"
     assert _coerce_fill_quantity_basis("cum") == "cumulative"
