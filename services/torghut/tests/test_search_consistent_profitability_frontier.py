@@ -153,8 +153,10 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
             self.assertTrue(exact_ledger_ref.exists())
             self.assertEqual(update["exact_replay_ledger_artifact_row_count"], 6)
             self.assertEqual(update["exact_replay_ledger_artifact_fill_count"], 2)
-            self.assertEqual(update["runtime_ledger_artifact_row_count"], 6)
-            self.assertEqual(update["runtime_ledger_artifact_fill_count"], 2)
+            self.assertNotIn("runtime_ledger_artifact_ref", update)
+            self.assertNotIn("runtime_ledger_artifact_row_count", update)
+            self.assertNotIn("runtime_ledger_artifact_fill_count", update)
+            self.assertNotIn("runtime_ledger_artifact_proof_authority", update)
             self.assertEqual(update["runtime_ledger_closed_trade_count"], 1)
             self.assertEqual(update["runtime_ledger_open_position_count"], 0)
             self.assertEqual(update["runtime_ledger_filled_notional"], "201")
@@ -1702,10 +1704,7 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                 exact_ledger_ref.parent, root / "frontier-artifacts" / "frontier"
             )
             self.assertEqual(artifact_ref.parent, exact_ledger_ref.parent)
-            self.assertEqual(
-                payload["top"][0]["runtime_ledger_artifact_ref"],
-                str(exact_ledger_ref),
-            )
+            self.assertNotIn("runtime_ledger_artifact_ref", payload["top"][0])
             self.assertIn(
                 str(exact_ledger_ref), payload["top"][0]["replay_artifact_refs"]
             )
@@ -1732,10 +1731,10 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                 exact_ledger_artifact["authority_blockers"],
             )
             self.assertFalse(scorecard["exact_replay_ledger_artifact_proof_authority"])
-            self.assertFalse(scorecard["runtime_ledger_artifact_proof_authority"])
+            self.assertNotIn("runtime_ledger_artifact_proof_authority", scorecard)
             self.assertFalse(scorecard["final_promotion_authority"])
-            self.assertEqual(scorecard["runtime_ledger_artifact_row_count"], 6)
-            self.assertEqual(scorecard["runtime_ledger_artifact_fill_count"], 2)
+            self.assertNotIn("runtime_ledger_artifact_row_count", scorecard)
+            self.assertNotIn("runtime_ledger_artifact_fill_count", scorecard)
             self.assertEqual(scorecard["runtime_ledger_closed_trade_count"], 1)
             self.assertEqual(scorecard["runtime_ledger_open_position_count"], 0)
             self.assertEqual(scorecard["runtime_ledger_filled_notional"], "201")
@@ -2619,7 +2618,7 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                     "min_cash": "-15",
                 },
                 "full_window": {"net_per_day": "150", "net_pnl": "750"},
-                "runtime_ledger_artifact_ref": "/tmp/high-ledger.json",
+                "exact_replay_ledger_artifact_ref": "/tmp/high-ledger.json",
                 "replay_artifact_refs": ["/tmp/high-ledger.json"],
                 "hard_vetoes": ["min_cash_below_min"],
                 "ranking": {"vetoed": True, "pareto_tier": 999},
@@ -2631,7 +2630,7 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertEqual(shortlist[0]["candidate_id"], "vetoed-high")
         self.assertEqual(shortlist[0]["net_pnl_per_day"], "150")
         self.assertEqual(
-            shortlist[0]["runtime_ledger_artifact_ref"], "/tmp/high-ledger.json"
+            shortlist[0]["exact_replay_ledger_artifact_ref"], "/tmp/high-ledger.json"
         )
         self.assertEqual(shortlist[0]["hard_vetoes"], ["min_cash_below_min"])
         self.assertTrue(shortlist[0]["vetoed"])
@@ -2686,14 +2685,11 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                     "min_cash": "-161171.80",
                 },
                 "full_window": {"net_per_day": "406.58", "net_pnl": "813.16"},
-                "runtime_ledger_artifact_ref": (
-                    "/tmp/microbar-exact-replay-ledger.json"
-                ),
                 "exact_replay_ledger_artifact_ref": (
                     "/tmp/microbar-exact-replay-ledger.json"
                 ),
-                "runtime_ledger_artifact_row_count": 12,
-                "runtime_ledger_artifact_fill_count": 4,
+                "exact_replay_ledger_artifact_row_count": 12,
+                "exact_replay_ledger_artifact_fill_count": 4,
                 "runtime_ledger_cost_basis_count": 4,
                 "runtime_ledger_post_cost_expectancy_bps": "25",
                 "runtime_ledger_pnl_basis": "realized_strategy_pnl_after_explicit_costs",
@@ -2770,9 +2766,9 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertEqual(
             shortlist[0]["probation_blockers"],
             [
-                "missing_exact_or_runtime_ledger_artifact",
-                "missing_runtime_ledger_row_count",
-                "missing_runtime_ledger_fill_count",
+                "missing_exact_replay_ledger_artifact",
+                "missing_exact_replay_ledger_row_count",
+                "missing_exact_replay_ledger_fill_count",
                 "missing_source_lineage",
                 "failed_exact_replay_parity",
             ],
@@ -2799,10 +2795,9 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                         "min_cash": "100",
                     },
                     "full_window": {"net_per_day": "125", "net_pnl": "250"},
-                    "runtime_ledger_artifact_ref": "/tmp/exact-replay-ledger.json",
                     "exact_replay_ledger_artifact_ref": "/tmp/exact-replay-ledger.json",
-                    "runtime_ledger_artifact_row_count": 6,
-                    "runtime_ledger_artifact_fill_count": 2,
+                    "exact_replay_ledger_artifact_row_count": 6,
+                    "exact_replay_ledger_artifact_fill_count": 2,
                     "runtime_ledger_open_position_count": 0,
                     "dataset_snapshot_id": "snapshot-post-cost",
                     "replay_lineage": {"lineage_hash": "lineage-post-cost"},
@@ -2858,10 +2853,9 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                         "min_cash": "100",
                     },
                     "full_window": {"net_per_day": "125", "net_pnl": "250"},
-                    "runtime_ledger_artifact_ref": "/tmp/exact-replay-ledger.json",
                     "exact_replay_ledger_artifact_ref": "/tmp/exact-replay-ledger.json",
-                    "runtime_ledger_artifact_row_count": 6,
-                    "runtime_ledger_artifact_fill_count": 2,
+                    "exact_replay_ledger_artifact_row_count": 6,
+                    "exact_replay_ledger_artifact_fill_count": 2,
                     "runtime_ledger_cost_basis_count": 2,
                     "runtime_ledger_post_cost_expectancy_bps": "25",
                     "runtime_ledger_pnl_basis": "realized_strategy_pnl_after_explicit_costs",
@@ -2928,7 +2922,7 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
 
         self.assertFalse(shortlist[0]["paper_probation_allowed"])
         self.assertIn(
-            "missing_exact_or_runtime_ledger_artifact",
+            "missing_exact_replay_ledger_artifact",
             shortlist[0]["probation_blockers"],
         )
 
@@ -2946,9 +2940,9 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                         "min_cash": "100",
                     },
                     "full_window": {"net_per_day": "225", "net_pnl": "450"},
-                    "runtime_ledger_artifact_ref": "/tmp/proof-only-ledger.json",
-                    "runtime_ledger_artifact_row_count": 12,
-                    "runtime_ledger_artifact_fill_count": 4,
+                    "exact_replay_ledger_artifact_ref": "/tmp/proof-only-ledger.json",
+                    "exact_replay_ledger_artifact_row_count": 12,
+                    "exact_replay_ledger_artifact_fill_count": 4,
                     "exact_replay_ledger_artifact_proof_only": True,
                     "screening": {"proof_only_full_window_replay_captured": True},
                     "staged_search": {
@@ -3103,8 +3097,8 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                     "exact_replay_ledger_artifact_ref": (
                         "/tmp/candidate-exact-replay-ledger.json"
                     ),
-                    "runtime_ledger_artifact_row_count": 6,
-                    "runtime_ledger_artifact_fill_count": 2,
+                    "exact_replay_ledger_artifact_row_count": 6,
+                    "exact_replay_ledger_artifact_fill_count": 2,
                     "hard_vetoes": [],
                     "ranking": {"vetoed": False},
                 },

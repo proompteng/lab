@@ -6017,9 +6017,8 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                             "active_day_ratio": "1",
                             "positive_day_ratio": "1",
                             "exact_replay_ledger_artifact_ref": "direct-exact-ledger.json",
-                            "runtime_ledger_artifact_ref": "direct-runtime-ledger.json",
-                            "runtime_ledger_artifact_row_count": 12,
-                            "runtime_ledger_artifact_fill_count": 4,
+                            "exact_replay_ledger_artifact_row_count": 12,
+                            "exact_replay_ledger_artifact_fill_count": 4,
                             "runtime_window_start": "2026-05-18T13:30:00+00:00",
                             "runtime_window_end": "2026-05-18T20:00:00+00:00",
                         },
@@ -6152,11 +6151,13 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             "runtime_ledger", direct_sleeve_row["paper_required_evidence_tokens"]
         )
         self.assertEqual(
-            direct_sleeve_row["runtime_ledger_artifact_refs"],
-            ["direct-exact-ledger.json", "direct-runtime-ledger.json"],
+            direct_sleeve_row["exact_replay_ledger_artifact_refs"],
+            ["direct-exact-ledger.json"],
         )
-        self.assertEqual(direct_sleeve_row["runtime_ledger_artifact_row_count"], 12)
-        self.assertEqual(direct_sleeve_row["runtime_ledger_artifact_fill_count"], 4)
+        self.assertNotIn("runtime_ledger_artifact_refs", direct_sleeve_row)
+        self.assertNotIn("runtime_ledger_artifact_ref", direct_sleeve_row)
+        self.assertEqual(direct_sleeve_row["exact_replay_ledger_artifact_row_count"], 12)
+        self.assertEqual(direct_sleeve_row["exact_replay_ledger_artifact_fill_count"], 4)
         source_compiler_mock.assert_not_called()
         candidate_compiler_mock.assert_not_called()
         selection_mock.assert_not_called()
@@ -7356,9 +7357,8 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 "order_type_opportunity_cost_bps": "4",
                 "market_order_spread_bps": "4",
                 "exact_replay_ledger_artifact_ref": "sleeve-exact-replay-ledger.json",
-                "runtime_ledger_artifact_ref": "sleeve-runtime-ledger.json",
-                "runtime_ledger_artifact_row_count": 30,
-                "runtime_ledger_artifact_fill_count": 10,
+                "exact_replay_ledger_artifact_row_count": 30,
+                "exact_replay_ledger_artifact_fill_count": 10,
                 "runtime_window_start": "2026-05-18T13:30:00+00:00",
                 "runtime_window_end": "2026-05-18T20:00:00+00:00",
             },
@@ -7425,18 +7425,17 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertEqual(rows[0]["paper_required_evidence_count"], 2)
         self.assertEqual(
-            rows[0]["runtime_ledger_artifact_refs"],
-            ["sleeve-exact-replay-ledger.json", "sleeve-runtime-ledger.json"],
+            rows[0]["exact_replay_ledger_artifact_refs"],
+            ["sleeve-exact-replay-ledger.json"],
         )
         self.assertEqual(
             rows[0]["exact_replay_ledger_artifact_ref"],
             "sleeve-exact-replay-ledger.json",
         )
-        self.assertEqual(
-            rows[0]["runtime_ledger_artifact_ref"], "sleeve-runtime-ledger.json"
-        )
-        self.assertEqual(rows[0]["runtime_ledger_artifact_row_count"], 30)
-        self.assertEqual(rows[0]["runtime_ledger_artifact_fill_count"], 10)
+        self.assertNotIn("runtime_ledger_artifact_ref", rows[0])
+        self.assertNotIn("runtime_ledger_artifact_refs", rows[0])
+        self.assertEqual(rows[0]["exact_replay_ledger_artifact_row_count"], 30)
+        self.assertEqual(rows[0]["exact_replay_ledger_artifact_fill_count"], 10)
         self.assertEqual(rows[0]["runtime_window_start"], "2026-05-18T13:30:00+00:00")
         fallback_rows = runner._candidate_sleeve_goal_rows(
             candidate_specs=(spec,),
@@ -7506,9 +7505,10 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertTrue(portfolio_rows[0]["paper_contract_selected_for_replay"])
         self.assertEqual(
-            portfolio_rows[0]["runtime_ledger_artifact_refs"],
-            ["sleeve-exact-replay-ledger.json", "sleeve-runtime-ledger.json"],
+            portfolio_rows[0]["exact_replay_ledger_artifact_refs"],
+            ["sleeve-exact-replay-ledger.json"],
         )
+        self.assertNotIn("runtime_ledger_artifact_refs", portfolio_rows[0])
 
     def test_candidate_board_marks_portfolio_promotion_found_when_portfolio_oracle_passes(
         self,
@@ -8396,8 +8396,8 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 "trade_count": 7,
                 "executable_replay_submitted_order_count": 7,
                 "exact_replay_ledger_artifact_ref": "paper-window-exact-replay-ledger.json",
-                "runtime_ledger_artifact_row_count": 21,
-                "runtime_ledger_artifact_fill_count": 7,
+                "exact_replay_ledger_artifact_row_count": 21,
+                "exact_replay_ledger_artifact_fill_count": 7,
                 "replay_lineage": {
                     "windows": {
                         "full_window": {
@@ -8610,8 +8610,8 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 "orders_submitted_count": 9,
                 "trade_count": 9,
                 "exact_replay_ledger_artifact_ref": "paper-probation-exact-ledger.json",
-                "runtime_ledger_artifact_row_count": 27,
-                "runtime_ledger_artifact_fill_count": 9,
+                "exact_replay_ledger_artifact_row_count": 27,
+                "exact_replay_ledger_artifact_fill_count": 9,
                 "replay_lineage": {
                     "windows": {
                         "full_window": {
@@ -8737,15 +8737,16 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             ["paper-probation.json", "paper-probation-exact-ledger.json"],
         )
         self.assertEqual(
-            target["runtime_ledger_artifact_refs"],
+            target["exact_replay_ledger_artifact_refs"],
             ["paper-probation-exact-ledger.json"],
         )
         self.assertEqual(
             target["exact_replay_ledger_artifact_ref"],
             "paper-probation-exact-ledger.json",
         )
-        self.assertEqual(target["runtime_ledger_artifact_row_count"], 27)
-        self.assertEqual(target["runtime_ledger_artifact_fill_count"], 9)
+        self.assertNotIn("runtime_ledger_artifact_refs", target)
+        self.assertEqual(target["exact_replay_ledger_artifact_row_count"], 27)
+        self.assertEqual(target["exact_replay_ledger_artifact_fill_count"], 9)
         self.assertEqual(
             target["replay_selection_reason"], "paper_contract_exploration"
         )
@@ -8766,11 +8767,12 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         import_metadata = json.loads(target["import_command_args"][metadata_arg_index])
         self.assertEqual(
-            import_metadata["runtime_ledger_artifact_refs"],
+            import_metadata["exact_replay_ledger_artifact_refs"],
             ["paper-probation-exact-ledger.json"],
         )
-        self.assertEqual(import_metadata["runtime_ledger_artifact_row_count"], 27)
-        self.assertEqual(import_metadata["runtime_ledger_artifact_fill_count"], 9)
+        self.assertNotIn("runtime_ledger_artifact_refs", import_metadata)
+        self.assertEqual(import_metadata["exact_replay_ledger_artifact_row_count"], 27)
+        self.assertEqual(import_metadata["exact_replay_ledger_artifact_fill_count"], 9)
         self.assertEqual(
             import_metadata["exact_replay_ledger_artifact_ref"],
             "paper-probation-exact-ledger.json",
@@ -8932,8 +8934,8 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 "orders_submitted_count": 8,
                 "trade_count": 8,
                 "exact_replay_ledger_artifact_ref": "close-probation-exact-replay-ledger.json",
-                "runtime_ledger_artifact_row_count": 24,
-                "runtime_ledger_artifact_fill_count": 8,
+                "exact_replay_ledger_artifact_row_count": 24,
+                "exact_replay_ledger_artifact_fill_count": 8,
                 "replay_lineage": {
                     "windows": {
                         "full_window": {
@@ -8996,8 +8998,8 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             "implementation_uncertainty_lower_net_pnl_per_day": "260",
             "conformal_tail_risk_adjusted_net_pnl_per_day": "260",
             "exact_replay_ledger_artifact_ref": "bridge-probation-exact-replay-ledger.json",
-            "runtime_ledger_artifact_row_count": 18,
-            "runtime_ledger_artifact_fill_count": 6,
+            "exact_replay_ledger_artifact_row_count": 18,
+            "exact_replay_ledger_artifact_fill_count": 6,
         }
         bridge_evidence = replace(
             close_evidence,
@@ -9121,8 +9123,8 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             "candidate_spec_id": "spec-ledger-paper",
             "candidate_id": "cand-ledger-paper",
             "exact_replay_ledger_artifact_ref": "ledger-exact-replay-ledger.json",
-            "runtime_ledger_artifact_row_count": 18,
-            "runtime_ledger_artifact_fill_count": 6,
+            "exact_replay_ledger_artifact_row_count": 18,
+            "exact_replay_ledger_artifact_fill_count": 6,
             "runtime_window_start": "2026-05-18",
             "runtime_window_end": "2026-05-20",
         }
@@ -9130,9 +9132,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertEqual(
             runner._candidate_board_paper_probation_admission_blockers(generic_row),
             [
-                "paper_probation_runtime_ledger_artifact_missing",
-                "paper_probation_runtime_ledger_row_count_missing",
-                "paper_probation_runtime_ledger_fill_count_missing",
+                "paper_probation_exact_replay_ledger_artifact_missing",
+                "paper_probation_exact_replay_ledger_row_count_missing",
+                "paper_probation_exact_replay_ledger_fill_count_missing",
                 "paper_probation_runtime_window_bounds_missing",
             ],
         )
@@ -9155,8 +9157,8 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             "submitted_order_count": 4,
             "filled_order_count": 4,
             "exact_replay_ledger_artifact_ref": "single-exact-replay-ledger.json",
-            "runtime_ledger_artifact_row_count": 12,
-            "runtime_ledger_artifact_fill_count": 4,
+            "exact_replay_ledger_artifact_row_count": 12,
+            "exact_replay_ledger_artifact_fill_count": 4,
             "runtime_window_start": "2026-05-18",
             "runtime_window_end": "2026-05-20",
             "net_pnl_per_day": "215",
@@ -9222,8 +9224,8 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                 "paper-runtime-plan-exact-replay-ledger.json",
             ],
             "exact_replay_ledger_artifact_ref": "paper-runtime-plan-exact-replay-ledger.json",
-            "runtime_ledger_artifact_row_count": 36,
-            "runtime_ledger_artifact_fill_count": 12,
+            "exact_replay_ledger_artifact_row_count": 36,
+            "exact_replay_ledger_artifact_fill_count": 12,
             "runtime_window_start": "2026-05-18T13:30:00+00:00",
             "runtime_window_end": "2026-05-20T20:00:00+00:00",
             "account_label": "TORGHUT_REPLAY",
@@ -9237,10 +9239,6 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             "runtime_strategy_name": "microbar-volume-continuation-long-top2-chip-v1",
             "dataset_snapshot_id": "snapshot-runtime-plan-fallback",
             "exact_replay_ledger_artifact_refs": "fallback-exact-replay-ledger.json",
-            "runtime_ledger_artifact_refs": [
-                "fallback-runtime-ledger.json",
-                "",
-            ],
             "runtime_window_start": "2026-05-21T13:30:00+00:00",
             "runtime_window_end": "2026-05-21T20:00:00+00:00",
         }
@@ -9290,9 +9288,10 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         )
         self.assertEqual(plan["targets"][0]["candidate_blockers"], row["blockers"])
         self.assertEqual(
-            plan["targets"][0]["runtime_ledger_artifact_refs"],
+            plan["targets"][0]["exact_replay_ledger_artifact_refs"],
             ["paper-runtime-plan-exact-replay-ledger.json"],
         )
+        self.assertNotIn("runtime_ledger_artifact_refs", plan["targets"][0])
         self.assertEqual(
             plan["targets"][0]["window_start"], "2026-05-18T13:30:00+00:00"
         )
@@ -9314,30 +9313,25 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
             plan["targets"][0]["import_command_args"][metadata_arg_index]
         )
         self.assertEqual(
-            import_metadata["runtime_ledger_artifact_refs"],
+            import_metadata["exact_replay_ledger_artifact_refs"],
             ["paper-runtime-plan-exact-replay-ledger.json"],
         )
-        self.assertEqual(import_metadata["runtime_ledger_artifact_row_count"], 36)
-        self.assertEqual(import_metadata["runtime_ledger_artifact_fill_count"], 12)
+        self.assertNotIn("runtime_ledger_artifact_refs", import_metadata)
+        self.assertEqual(import_metadata["exact_replay_ledger_artifact_row_count"], 36)
+        self.assertEqual(import_metadata["exact_replay_ledger_artifact_fill_count"], 12)
         self.assertEqual(import_metadata["window_start"], "2026-05-18T13:30:00+00:00")
         self.assertEqual(import_metadata["window_end"], "2026-05-20T20:00:00+00:00")
         self.assertEqual(fallback_plan["status"], "ready")
         self.assertEqual(fallback_plan["target_count"], 1)
         self.assertEqual(
-            fallback_plan["targets"][0]["runtime_ledger_artifact_refs"],
-            [
-                "fallback-exact-replay-ledger.json",
-                "fallback-runtime-ledger.json",
-            ],
+            fallback_plan["targets"][0]["exact_replay_ledger_artifact_refs"],
+            ["fallback-exact-replay-ledger.json"],
         )
         self.assertEqual(
             fallback_plan["targets"][0]["exact_replay_ledger_artifact_ref"],
             "fallback-exact-replay-ledger.json",
         )
-        self.assertEqual(
-            fallback_plan["targets"][0]["runtime_ledger_artifact_ref"],
-            "fallback-exact-replay-ledger.json",
-        )
+        self.assertNotIn("runtime_ledger_artifact_ref", fallback_plan["targets"][0])
         self.assertEqual(
             fallback_plan["targets"][0]["account_label"],
             "TORGHUT_REPLAY",

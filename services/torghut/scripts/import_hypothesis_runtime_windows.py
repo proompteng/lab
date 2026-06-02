@@ -1871,20 +1871,31 @@ def _runtime_ledger_target_metadata_blockers(
         if set(planned_refs) != set(loaded_refs):
             blockers.append("runtime_ledger_artifact_refs_mismatch")
 
-    for key, blocker in (
+    for keys, blocker in (
         (
-            "runtime_ledger_artifact_row_count",
+            (
+                "runtime_ledger_artifact_row_count",
+                "exact_replay_ledger_artifact_row_count",
+            ),
             "runtime_ledger_artifact_row_count_mismatch",
         ),
         (
-            "runtime_ledger_artifact_fill_count",
+            (
+                "runtime_ledger_artifact_fill_count",
+                "exact_replay_ledger_artifact_fill_count",
+            ),
             "runtime_ledger_artifact_fill_count_mismatch",
         ),
     ):
-        planned_count = _metadata_nonnegative_int_or_none(metadata.get(key))
+        planned_count: int | None = None
+        for key in keys:
+            count = _metadata_nonnegative_int_or_none(metadata.get(key))
+            if count is not None:
+                planned_count = count
+                break
         if planned_count is None:
             continue
-        loaded_count = _nonnegative_int(runtime_ledger_artifact_metadata.get(key))
+        loaded_count = _nonnegative_int(runtime_ledger_artifact_metadata.get(keys[0]))
         if planned_count != loaded_count:
             blockers.append(blocker)
 

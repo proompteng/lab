@@ -2306,11 +2306,8 @@ def _exact_replay_ledger_artifact_update(
     _write_json_output(artifact_path, artifact_payload)
     update: dict[str, Any] = {
         "exact_replay_ledger_artifact_ref": artifact_ref,
-        "runtime_ledger_artifact_ref": artifact_ref,
         "exact_replay_ledger_artifact_row_count": len(raw_rows),
         "exact_replay_ledger_artifact_fill_count": fill_row_count,
-        "runtime_ledger_artifact_row_count": len(raw_rows),
-        "runtime_ledger_artifact_fill_count": fill_row_count,
         "runtime_ledger_closed_trade_count": runtime_bucket.closed_trade_count,
         "runtime_ledger_open_position_count": runtime_bucket.open_position_count,
         "runtime_ledger_filled_notional": str(runtime_bucket.filled_notional),
@@ -2327,7 +2324,6 @@ def _exact_replay_ledger_artifact_update(
         "runtime_ledger_pnl_basis": POST_COST_PNL_BASIS,
         "runtime_ledger_pnl_source": "exact_replay_runtime_ledger",
         "exact_replay_ledger_artifact_proof_authority": False,
-        "runtime_ledger_artifact_proof_authority": False,
         "promotion_authority": False,
         "final_promotion_authority": False,
         "promotion_authority_blockers": [
@@ -2338,8 +2334,6 @@ def _exact_replay_ledger_artifact_update(
     if proof_only_reason:
         update["exact_replay_ledger_artifact_proof_only"] = True
         update["exact_replay_ledger_artifact_proof_only_reason"] = proof_only_reason
-        update["runtime_ledger_artifact_proof_only"] = True
-        update["runtime_ledger_artifact_proof_only_reason"] = proof_only_reason
     return update
 
 
@@ -4466,7 +4460,7 @@ def _build_economic_shortlist(
             )
         )
         != Decimal("0")
-        or item.get("runtime_ledger_artifact_ref")
+        or item.get("exact_replay_ledger_artifact_ref")
         or item.get("replay_artifact_refs")
     ]
     visible_items.sort(
@@ -4555,8 +4549,8 @@ def _build_economic_shortlist(
                         full_window_key="min_cash",
                     )
                 ),
-                "runtime_ledger_artifact_ref": str(
-                    item.get("runtime_ledger_artifact_ref") or ""
+                "exact_replay_ledger_artifact_ref": str(
+                    item.get("exact_replay_ledger_artifact_ref") or ""
                 ),
                 "replay_artifact_refs": [
                     str(ref)
@@ -4574,9 +4568,9 @@ def _build_economic_shortlist(
 
 def _candidate_artifact_refs(item: Mapping[str, Any]) -> list[str]:
     refs: list[str] = []
-    runtime_ref = str(item.get("runtime_ledger_artifact_ref") or "").strip()
-    if runtime_ref:
-        refs.append(runtime_ref)
+    exact_replay_ref = str(item.get("exact_replay_ledger_artifact_ref") or "").strip()
+    if exact_replay_ref:
+        refs.append(exact_replay_ref)
     refs.extend(
         str(ref).strip()
         for ref in cast(Sequence[Any], item.get("replay_artifact_refs") or ())
@@ -4585,21 +4579,15 @@ def _candidate_artifact_refs(item: Mapping[str, Any]) -> list[str]:
     return list(dict.fromkeys(refs))
 
 
-def _candidate_runtime_ledger_artifact_refs(item: Mapping[str, Any]) -> list[str]:
+def _candidate_exact_replay_ledger_artifact_refs(item: Mapping[str, Any]) -> list[str]:
     refs: list[str] = []
     scorecard = _mapping(item.get("objective_scorecard"))
     for source in (item, scorecard):
-        for key in (
-            "exact_replay_ledger_artifact_ref",
-            "runtime_ledger_artifact_ref",
-        ):
+        for key in ("exact_replay_ledger_artifact_ref",):
             ref = str(source.get(key) or "").strip()
             if ref:
                 refs.append(ref)
-        for key in (
-            "exact_replay_ledger_artifact_refs",
-            "runtime_ledger_artifact_refs",
-        ):
+        for key in ("exact_replay_ledger_artifact_refs",):
             raw_refs = source.get(key)
             if isinstance(raw_refs, str):
                 ref = raw_refs.strip()
@@ -4616,8 +4604,6 @@ def _candidate_runtime_ledger_artifact_refs(item: Mapping[str, Any]) -> list[str
         if ref and (
             "exact-replay-ledger" in ref_lower
             or "exact_replay_ledger" in ref_lower
-            or "runtime-ledger" in ref_lower
-            or "runtime_ledger" in ref_lower
         ):
             refs.append(ref)
     return list(dict.fromkeys(refs))
@@ -4785,8 +4771,8 @@ def _candidate_exact_replay_parity_ok(
     item: Mapping[str, Any],
     *,
     artifact_refs: Sequence[str],
-    runtime_ledger_row_count: int,
-    runtime_ledger_fill_count: int,
+    exact_replay_ledger_row_count: int,
+    exact_replay_ledger_fill_count: int,
 ) -> bool:
     scorecard = _mapping(item.get("objective_scorecard"))
     has_exact_ref = any(
@@ -4800,7 +4786,9 @@ def _candidate_exact_replay_parity_ok(
         ).strip()
     )
     return bool(
-        has_exact_ref and runtime_ledger_row_count > 0 and runtime_ledger_fill_count > 0
+        has_exact_ref
+        and exact_replay_ledger_row_count > 0
+        and exact_replay_ledger_fill_count > 0
     )
 
 
@@ -4809,8 +4797,8 @@ def _candidate_handoff_diagnostics(
     *,
     hard_vetoes: Sequence[str],
     artifact_refs: Sequence[str],
-    runtime_ledger_row_count: int,
-    runtime_ledger_fill_count: int,
+    exact_replay_ledger_row_count: int,
+    exact_replay_ledger_fill_count: int,
     source_lineage_ok: bool,
     exact_replay_parity_ok: bool,
 ) -> list[dict[str, Any]]:
@@ -4935,12 +4923,20 @@ def _candidate_handoff_diagnostics(
             {
                 "category": "failed_exact_replay_parity",
                 "artifact_refs": list(artifact_refs),
-                "runtime_ledger_artifact_row_count": runtime_ledger_row_count,
-                "runtime_ledger_artifact_fill_count": runtime_ledger_fill_count,
+                "exact_replay_ledger_artifact_row_count": (
+                    exact_replay_ledger_row_count
+                ),
+                "exact_replay_ledger_artifact_fill_count": (
+                    exact_replay_ledger_fill_count
+                ),
             }
         )
 
-    if artifact_refs and runtime_ledger_row_count > 0 and runtime_ledger_fill_count > 0:
+    if (
+        artifact_refs
+        and exact_replay_ledger_row_count > 0
+        and exact_replay_ledger_fill_count > 0
+    ):
         replay_tape_blockers = _candidate_replay_tape_metadata_blockers(item)
         if replay_tape_blockers:
             diagnostics.append(
@@ -5047,24 +5043,22 @@ def _build_paper_probation_shortlist(
         hard_vetoes = [
             str(reason) for reason in cast(Sequence[Any], item.get("hard_vetoes") or ())
         ]
-        artifact_refs = _candidate_runtime_ledger_artifact_refs(item)
-        runtime_ledger_row_count = _candidate_runtime_ledger_count(
+        artifact_refs = _candidate_exact_replay_ledger_artifact_refs(item)
+        exact_replay_ledger_row_count = _candidate_runtime_ledger_count(
             item,
-            "runtime_ledger_artifact_row_count",
             "exact_replay_ledger_artifact_row_count",
         )
-        runtime_ledger_fill_count = _candidate_runtime_ledger_count(
+        exact_replay_ledger_fill_count = _candidate_runtime_ledger_count(
             item,
-            "runtime_ledger_artifact_fill_count",
             "exact_replay_ledger_artifact_fill_count",
         )
         blockers: list[str] = []
         if not artifact_refs:
-            blockers.append("missing_exact_or_runtime_ledger_artifact")
-        if runtime_ledger_row_count <= 0:
-            blockers.append("missing_runtime_ledger_row_count")
-        if runtime_ledger_fill_count <= 0:
-            blockers.append("missing_runtime_ledger_fill_count")
+            blockers.append("missing_exact_replay_ledger_artifact")
+        if exact_replay_ledger_row_count <= 0:
+            blockers.append("missing_exact_replay_ledger_row_count")
+        if exact_replay_ledger_fill_count <= 0:
+            blockers.append("missing_exact_replay_ledger_fill_count")
         screening = _mapping(item.get("screening"))
         staged_search = _mapping(item.get("staged_search"))
         if (
@@ -5078,8 +5072,8 @@ def _build_paper_probation_shortlist(
         exact_replay_parity_ok = _candidate_exact_replay_parity_ok(
             item,
             artifact_refs=artifact_refs,
-            runtime_ledger_row_count=runtime_ledger_row_count,
-            runtime_ledger_fill_count=runtime_ledger_fill_count,
+            exact_replay_ledger_row_count=exact_replay_ledger_row_count,
+            exact_replay_ledger_fill_count=exact_replay_ledger_fill_count,
         )
         if not source_lineage_ok:
             blockers.append("missing_source_lineage")
@@ -5087,8 +5081,8 @@ def _build_paper_probation_shortlist(
             blockers.append("failed_exact_replay_parity")
         if (
             artifact_refs
-            and runtime_ledger_row_count > 0
-            and runtime_ledger_fill_count > 0
+            and exact_replay_ledger_row_count > 0
+            and exact_replay_ledger_fill_count > 0
         ):
             blockers.extend(_candidate_replay_tape_metadata_blockers(item))
             blockers.extend(_candidate_post_cost_proof_blockers(item))
@@ -5104,8 +5098,8 @@ def _build_paper_probation_shortlist(
             item,
             hard_vetoes=hard_vetoes,
             artifact_refs=artifact_refs,
-            runtime_ledger_row_count=runtime_ledger_row_count,
-            runtime_ledger_fill_count=runtime_ledger_fill_count,
+            exact_replay_ledger_row_count=exact_replay_ledger_row_count,
+            exact_replay_ledger_fill_count=exact_replay_ledger_fill_count,
             source_lineage_ok=source_lineage_ok,
             exact_replay_parity_ok=exact_replay_parity_ok,
         )
@@ -5139,9 +5133,13 @@ def _build_paper_probation_shortlist(
                     objective_veto_policy=objective_veto_policy,
                     hard_vetoes=hard_vetoes,
                 ),
-                "runtime_ledger_artifact_refs": artifact_refs,
-                "runtime_ledger_artifact_row_count": runtime_ledger_row_count,
-                "runtime_ledger_artifact_fill_count": runtime_ledger_fill_count,
+                "exact_replay_ledger_artifact_refs": artifact_refs,
+                "exact_replay_ledger_artifact_row_count": (
+                    exact_replay_ledger_row_count
+                ),
+                "exact_replay_ledger_artifact_fill_count": (
+                    exact_replay_ledger_fill_count
+                ),
                 "net_pnl_per_day": str(
                     _candidate_metric_value(
                         item,
@@ -5198,8 +5196,8 @@ def _build_paper_probation_shortlist(
                         full_window_key="min_cash",
                     )
                 ),
-                "runtime_ledger_artifact_ref": str(
-                    item.get("runtime_ledger_artifact_ref") or ""
+                "exact_replay_ledger_artifact_ref": str(
+                    item.get("exact_replay_ledger_artifact_ref") or ""
                 ),
                 "replay_artifact_refs": artifact_refs,
                 "hard_vetoes": hard_vetoes,
@@ -5259,15 +5257,14 @@ def _build_frontier_workflow_states(
     exact_replay_qualified = [
         {
             **_frontier_state_item(item),
-            "runtime_ledger_artifact_refs": _candidate_runtime_ledger_artifact_refs(
-                item
+            "exact_replay_ledger_artifact_refs": (
+                _candidate_exact_replay_ledger_artifact_refs(item)
             ),
         }
         for item in ranked_items
         if str(_mapping(item.get("staged_search")).get("stage") or "") == "full_replay"
         and _candidate_runtime_ledger_count(
             item,
-            "runtime_ledger_artifact_row_count",
             "exact_replay_ledger_artifact_row_count",
         )
         > 0
