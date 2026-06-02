@@ -2078,6 +2078,315 @@ class TestOrderFeed(TestCase):
         self.assertEqual(result["events_without_execution"], 1)
         self.assertEqual(result["events_without_decision"], 1)
 
+    def test_linkage_payload_helpers_cover_fallback_shapes(self) -> None:
+        wrapped = order_feed_module._raw_event_with_linkage_blockers(
+            ["raw-list"],
+            ["missing_execution_link", "missing_execution_link", " "],
+        )
+        self.assertEqual(wrapped["payload"], ["raw-list"])
+        self.assertEqual(
+            wrapped["_torghut_linkage"]["blockers"], ["missing_execution_link"]
+        )
+
+        merged = order_feed_module._raw_event_with_linkage_blockers(
+            {"_torghut_linkage": {"existing": "kept"}},
+            ["missing_trade_decision_link"],
+        )
+        self.assertEqual(merged["_torghut_linkage"]["existing"], "kept")
+        self.assertEqual(
+            merged["_torghut_linkage"]["classification"],
+            "missing_trade_decision_link",
+        )
+
+        cleared = order_feed_module._raw_event_with_linkage_blockers(
+            {"_torghut_linkage": {"blockers": ["old"]}},
+            [],
+        )
+        self.assertNotIn("_torghut_linkage", cleared)
+
+        self.assertEqual(
+            order_feed_module._order_event_linkage_blockers(
+                ExecutionOrderEvent(raw_event=["not-a-mapping"])
+            ),
+            [],
+        )
+        self.assertEqual(
+            order_feed_module._order_event_linkage_blockers(
+                ExecutionOrderEvent(
+                    raw_event={"_torghut_linkage": {"blockers": "single-blocker"}}
+                )
+            ),
+            ["single-blocker"],
+        )
+        self.assertEqual(
+            order_feed_module._order_event_linkage_blockers(
+                ExecutionOrderEvent(raw_event={"_torghut_linkage": {"blockers": 7}})
+            ),
+            [],
+        )
+        self.assertIsNone(
+            order_feed_module._order_event_client_identity(
+                ExecutionOrderEvent(raw_event=["not-a-mapping"])
+            )
+        )
+        self.assertEqual(
+            order_feed_module._order_event_client_identity(
+                ExecutionOrderEvent(
+                    raw_event={"order": {"idempotencyKey": "idem-client"}}
+                )
+            ),
+            "idem-client",
+        )
+        self.assertEqual(
+            order_feed_module._dedupe(["a", "", "a", " b ", "b"]),
+            ["a", "b"],
+        )
+
+    def test_persist_order_event_links_trade_decision_without_execution(self) -> None:
+        with Session(self.engine) as session:
+            strategy = Strategy(
+                name="decision-only-persist",
+                description="decision-only-persist",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="symbols_list",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.flush()
+            decision = TradeDecision(
+                strategy_id=strategy.id,
+                alpaca_account_label="paper",
+                symbol="AAPL",
+                timeframe="1Min",
+                decision_json={"side": "buy"},
+                decision_hash="decision-only-persist-client",
+                status="submitted",
+            )
+            session.add(decision)
+            session.flush()
+            decision_id = decision.id
+
+            persisted, duplicate = persist_order_event(
+                session,
+                NormalizedOrderEvent(
+                    event_fingerprint="decision-only-persist-event",
+                    source_topic="torghut.trade-updates.v1",
+                    source_partition=0,
+                    source_offset=410,
+                    alpaca_account_label="paper",
+                    feed_seq=410,
+                    event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+                    symbol="AAPL",
+                    alpaca_order_id="missing-execution-order",
+                    client_order_id="decision-only-persist-client",
+                    event_type="fill",
+                    status="filled",
+                    qty=Decimal("1"),
+                    filled_qty=Decimal("1"),
+                    filled_qty_delta=None,
+                    avg_fill_price=Decimal("190"),
+                    filled_notional_delta=None,
+                    fill_quantity_basis=None,
+                    raw_event={"event": "fill"},
+                ),
+            )
+
+        self.assertFalse(duplicate)
+        self.assertIsNone(persisted.execution_id)
+        self.assertEqual(persisted.trade_decision_id, decision_id)
+
+    def test_latest_order_event_for_execution_uses_idempotency_key_identity(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            execution = self._seed_execution(
+                session,
+                execution_idempotency_key="exec-idem-1",
+            )
+            event = ExecutionOrderEvent(
+                event_fingerprint="latest-idempotency-event",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=411,
+                alpaca_account_label="paper",
+                event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+                symbol="AAPL",
+                alpaca_order_id="different-order",
+                client_order_id="exec-idem-1",
+                event_type="fill",
+                status="filled",
+                raw_event={"event": "fill"},
+            )
+            session.add(event)
+            session.commit()
+
+            latest = latest_order_event_for_execution(session, execution)
+
+        self.assertIsNotNone(latest)
+        assert latest is not None
+        self.assertEqual(latest.event_fingerprint, "latest-idempotency-event")
+
+    def test_link_order_events_to_execution_records_blockers_and_skips_mismatches(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            execution = self._seed_execution(
+                session,
+                order_id="link-target-order",
+                client_order_id="link-target-client",
+            )
+            other_execution = self._seed_execution(
+                session,
+                order_id="link-other-order",
+                client_order_id="link-other-client",
+            )
+            ambiguous_event = ExecutionOrderEvent(
+                event_fingerprint="link-ambiguous-event",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=412,
+                alpaca_account_label="paper",
+                event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+                symbol="AAPL",
+                alpaca_order_id=execution.alpaca_order_id,
+                client_order_id=other_execution.client_order_id,
+                event_type="fill",
+                status="filled",
+                raw_event={"event": "fill"},
+            )
+            skip_event = ExecutionOrderEvent(
+                event_fingerprint="link-skip-event",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=413,
+                alpaca_account_label="paper",
+                event_ts=datetime(2026, 2, 1, 10, 1, tzinfo=timezone.utc),
+                symbol="AAPL",
+                alpaca_order_id=execution.alpaca_order_id,
+                client_order_id=execution.client_order_id,
+                event_type="fill",
+                status="filled",
+                raw_event={"event": "fill"},
+            )
+            session.add_all([ambiguous_event, skip_event])
+            session.commit()
+
+            ambiguous_count = link_order_events_to_execution(
+                session, execution, limit=1
+            )
+            session.commit()
+            session.refresh(ambiguous_event)
+            with patch.object(
+                order_feed_module,
+                "_resolve_execution_linkage_for_identity",
+                return_value=order_feed_module._ExecutionLinkageResolution(
+                    execution=other_execution,
+                ),
+            ):
+                skipped_count = link_order_events_to_execution(
+                    session, execution, limit=1
+                )
+
+        self.assertEqual(ambiguous_count, 0)
+        self.assertEqual(skipped_count, 0)
+        self.assertEqual(
+            order_feed_module._order_event_linkage_blockers(ambiguous_event),
+            ["ambiguous_execution_identity"],
+        )
+
+    def test_link_order_events_to_execution_records_missing_decision_blockers(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            execution = self._seed_execution(
+                session,
+                order_id="missing-decision-order",
+                client_order_id="missing-decision-client",
+            )
+            execution.trade_decision_id = None
+            event = ExecutionOrderEvent(
+                event_fingerprint="missing-decision-link-event",
+                source_topic="torghut.trade-updates.v1",
+                source_partition=0,
+                source_offset=414,
+                alpaca_account_label="paper",
+                event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
+                symbol="AAPL",
+                alpaca_order_id=execution.alpaca_order_id,
+                client_order_id=None,
+                event_type="fill",
+                status="filled",
+                raw_event={"event": "fill"},
+            )
+            session.add(event)
+            session.commit()
+
+            linked_count = link_order_events_to_execution(session, execution)
+            session.commit()
+            session.refresh(event)
+
+        self.assertEqual(linked_count, 1)
+        self.assertEqual(
+            order_feed_module._order_event_linkage_blockers(event),
+            ["order_feed_trade_decision_identity_missing"],
+        )
+
+    def test_identity_resolution_reports_missing_and_account_mismatch_refs(
+        self,
+    ) -> None:
+        with Session(self.engine) as session:
+            missing_execution = (
+                order_feed_module._resolve_execution_linkage_for_identity(
+                    session,
+                    account_label="paper",
+                    alpaca_order_id=None,
+                    client_order_id=None,
+                )
+            )
+
+            strategy = Strategy(
+                name="ambiguous-decision",
+                description="ambiguous-decision",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="symbols_list",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.flush()
+            session.add_all(
+                [
+                    TradeDecision(
+                        strategy_id=strategy.id,
+                        alpaca_account_label="other-paper",
+                        symbol="AAPL",
+                        timeframe="1Min",
+                        decision_json={"side": "buy"},
+                        decision_hash="account-mismatch-decision-client",
+                        status="submitted",
+                    ),
+                ]
+            )
+            session.commit()
+
+            account_mismatch_decision = (
+                order_feed_module._resolve_trade_decision_linkage_for_identity(
+                    session,
+                    account_label="paper",
+                    client_order_id="account-mismatch-decision-client",
+                )
+            )
+
+        self.assertEqual(
+            missing_execution.blockers,
+            ("order_feed_execution_identity_missing",),
+        )
+        self.assertEqual(
+            account_mismatch_decision.blockers,
+            ("account_mismatch_trade_decision_identity",),
+        )
+
     def test_repair_order_feed_execution_links_limits_matching_execution_fanout(
         self,
     ) -> None:
