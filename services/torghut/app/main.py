@@ -236,12 +236,44 @@ _OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK = Lock()
 _OPTIONS_CATALOG_FRESHNESS_CACHE: dict[
     tuple[str, ...], tuple[datetime, dict[str, object]]
 ] = {}
+_TRADING_STATUS_READ_BUDGET_SECONDS = 12.0
 _ALPACA_HEALTH_CACHE_LOCK = Lock()
 _ALPACA_HEALTH_STATE: dict[str, object] = {}
 _PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS = 600
 _PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK = Lock()
 _PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL = "TORGHUT_SIM"
 _paper_route_target_plan_success_cache: tuple[dict[str, Any], float] | None = None
+
+
+class _TradingStatusReadBudget:
+    def __init__(self, *, max_seconds: float | None = None):
+        configured_seconds = (
+            _TRADING_STATUS_READ_BUDGET_SECONDS
+            if max_seconds is None
+            else max_seconds
+        )
+        self.max_seconds = max(0.0, float(configured_seconds))
+        self._started_at = time.monotonic()
+        self.skipped_reads: list[str] = []
+
+    def elapsed_seconds(self) -> float:
+        return max(0.0, time.monotonic() - self._started_at)
+
+    def exhausted(self) -> bool:
+        return self.elapsed_seconds() >= self.max_seconds
+
+    def skip_reason(self, read_name: str) -> str:
+        if read_name not in self.skipped_reads:
+            self.skipped_reads.append(read_name)
+        return f"{read_name}_status_read_budget_exhausted"
+
+    def as_payload(self) -> dict[str, object]:
+        return {
+            "max_seconds": self.max_seconds,
+            "elapsed_seconds": round(self.elapsed_seconds(), 3),
+            "exhausted": self.exhausted(),
+            "skipped_reads": list(self.skipped_reads),
+        }
 
 
 def _extract_bearer_token(authorization_header: str | None) -> str | None:
@@ -3025,6 +3057,7 @@ def search_whitepapers(
 def trading_status() -> dict[str, object]:
     """Return trading loop status and metrics."""
 
+    status_read_budget = _TradingStatusReadBudget()
     scheduler: TradingScheduler | None = getattr(app.state, "trading_scheduler", None)
     if scheduler is None:
         scheduler = TradingScheduler()
@@ -3037,6 +3070,7 @@ def trading_status() -> dict[str, object]:
     )
     forecast_service_status = _forecast_service_status(empirical_jobs)
     lean_authority_status = _lean_authority_status()
+    clickhouse_ta_status = _load_clickhouse_ta_status(scheduler)
     with SessionLocal() as session:
         llm_evaluation = _load_llm_evaluation(session)
         tca_summary = _load_tca_summary(session, scheduler=scheduler)
@@ -3053,6 +3087,7 @@ def trading_status() -> dict[str, object]:
             scheduler,
             tca_summary=tca_summary,
             market_context_status=market_context_status,
+            feature_readiness=clickhouse_ta_status,
         )
     )
     shadow_first_runtime = _build_shadow_first_runtime_payload(
@@ -3066,24 +3101,40 @@ def trading_status() -> dict[str, object]:
     )
     shorting_metadata_status = scheduler.shorting_metadata_status()
     rejection_alert_status = scheduler.rejection_alert_status()
-    with SessionLocal() as session:
-        last_decision_at = _load_last_decision_at(session)
-    with SessionLocal() as session:
-        persisted_rejected_signal_outcome_learning = (
-            _load_rejected_signal_outcome_learning_summary(session)
-        )
-    with SessionLocal() as session:
-        live_submission_gate = _build_live_submission_gate_payload(
-            state,
-            session=session,
-            hypothesis_summary=hypothesis_payload,
+    last_decision_at = None
+    if not status_read_budget.exhausted():
+        with SessionLocal() as session:
+            last_decision_at = _load_last_decision_at(session)
+    else:
+        status_read_budget.skip_reason("last_decision")
+    persisted_rejected_signal_outcome_learning = None
+    if not status_read_budget.exhausted():
+        with SessionLocal() as session:
+            persisted_rejected_signal_outcome_learning = (
+                _load_rejected_signal_outcome_learning_summary(session)
+            )
+    else:
+        status_read_budget.skip_reason("rejected_signal_outcome_learning")
+    if status_read_budget.exhausted():
+        live_submission_gate = _budget_exhausted_live_submission_gate_payload(
+            reason=status_read_budget.skip_reason("live_submission_gate"),
             empirical_jobs_status=empirical_jobs,
-            dspy_runtime_status=cast(
-                dict[str, object],
-                scheduler.llm_status().get("dspy_runtime", {}),
-            ),
             quant_health_status=quant_evidence,
         )
+    else:
+        with SessionLocal() as session:
+            live_submission_gate = _build_live_submission_gate_payload(
+                state,
+                session=session,
+                hypothesis_summary=hypothesis_payload,
+                empirical_jobs_status=empirical_jobs,
+                dspy_runtime_status=cast(
+                    dict[str, object],
+                    scheduler.llm_status().get("dspy_runtime", {}),
+                ),
+                quant_health_status=quant_evidence,
+                clickhouse_ta_status=clickhouse_ta_status,
+            )
     simple_lane_reject_reason_totals = _simple_lane_reject_reason_totals(state)
     simple_lane_status = _build_simple_lane_status_payload()
     proof_floor = _build_profitability_proof_floor_payload(
@@ -3123,11 +3174,18 @@ def trading_status() -> dict[str, object]:
         route_reacquisition_board=route_reacquisition_board,
         live_submission_gate=live_submission_gate,
     )
-    with SessionLocal() as session:
-        options_catalog_freshness = _load_options_catalog_freshness_summary(
-            session,
-            route_symbols=_route_claim_symbols(profit_signal_quorum),
+    route_claim_symbols = _route_claim_symbols(profit_signal_quorum)
+    if status_read_budget.exhausted():
+        options_catalog_freshness = _budget_exhausted_options_catalog_freshness_payload(
+            reason=status_read_budget.skip_reason("options_catalog_freshness"),
+            route_symbols=route_claim_symbols,
         )
+    else:
+        with SessionLocal() as session:
+            options_catalog_freshness = _load_options_catalog_freshness_summary(
+                session,
+                route_symbols=route_claim_symbols,
+            )
     capital_replay_projection = _build_capital_replay_projection_payload(
         torghut_revision=str(shadow_first_runtime["active_revision"]),
         dependency_quorum=hypothesis_dependency_quorum.as_payload(),
@@ -3196,7 +3254,6 @@ def trading_status() -> dict[str, object]:
         "image_digest": BUILD_IMAGE_DIGEST,
         "active_revision": shadow_first_runtime["active_revision"],
     }
-    clickhouse_ta_status = _load_clickhouse_ta_status(scheduler)
     profit_freshness_frontier = _build_profit_freshness_frontier_payload(
         torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
         dependency_quorum=hypothesis_dependency_quorum.as_payload(),
@@ -3330,6 +3387,7 @@ def trading_status() -> dict[str, object]:
         "execution_lane": settings.trading_pipeline_mode,
         "kill_switch_enabled": settings.trading_kill_switch_enabled,
         "build": build_payload,
+        "status_read_budget": status_read_budget.as_payload(),
         "shadow_first": shadow_first_runtime,
         "execution_advisor": {
             "enabled": settings.trading_execution_advisor_enabled,
@@ -6688,6 +6746,114 @@ def _load_clickhouse_ta_status(
     return ClickHouseSignalIngestor(
         account_label=settings.trading_account_label
     ).latest_signal_status()
+
+
+def _budget_exhausted_live_submission_gate_payload(
+    *,
+    reason: str,
+    empirical_jobs_status: Mapping[str, Any],
+    quant_health_status: Mapping[str, Any],
+) -> dict[str, object]:
+    simple_lane_blockers = [reason]
+    if settings.trading_pipeline_mode == "simple":
+        if not settings.trading_simple_submit_enabled:
+            simple_lane_blockers.append("simple_submit_disabled")
+    return {
+        "allowed": False,
+        "reason": reason,
+        "blocked_reasons": list(dict.fromkeys(simple_lane_blockers)),
+        "reason_codes": [reason],
+        "read_model_unavailable": True,
+        "read_model_status": "timeout",
+        "capital_stage": "shadow",
+        "active_capital_stage": "shadow",
+        "capital_state": "observe",
+        "configured_live_promotion": bool(
+            settings.trading_autonomy_allow_live_promotion
+        ),
+        "autonomy_promotion_eligible": False,
+        "autonomy_promotion_action": None,
+        "drift_live_promotion_eligible": False,
+        "promotion_eligible_total": 0,
+        "paper_probation_eligible_total": 0,
+        "dependency_quorum_decision": "unknown",
+        "continuity_ok": False,
+        "continuity_reason": reason,
+        "drift_ok": False,
+        "drift_reason": reason,
+        "empirical_jobs_ready": empirical_jobs_status.get("ready"),
+        "dspy_live_ready": None,
+        "critical_toggle_parity": _build_shadow_first_toggle_parity(),
+        "critical_toggle_parity_blocking_mismatches": [],
+        "quant_evidence": dict(quant_health_status),
+        "quant_health_ref": {
+            "account": quant_health_status.get("account"),
+            "window": quant_health_status.get("window"),
+            "status": quant_health_status.get("status"),
+            "source_url": quant_health_status.get("source_url"),
+        },
+        "segment_summary": {
+            "state": "blocked",
+            "reason_codes": [reason],
+            "read_model_unavailable": True,
+        },
+        "lineage_ref": {
+            "source": "trading_status",
+            "status": "unavailable",
+            "reason_codes": [reason],
+            "read_model_unavailable": True,
+        },
+        "evaluated_tuples": [],
+        "runtime_ledger_repair_candidates": [],
+        "runtime_ledger_paper_probation_candidates": [],
+        "runtime_ledger_source_collection_candidates": [],
+        "runtime_ledger_source_collection_candidate_total": 0,
+        "runtime_ledger_paper_probation_eligible_total": 0,
+        "runtime_ledger_paper_probation_import_plan": {
+            "state": "unavailable",
+            "reason_codes": [reason],
+            "read_model_unavailable": True,
+        },
+        "profit_window_contract": {
+            "state": "blocked",
+            "reason_codes": [reason],
+            "read_model_unavailable": True,
+        },
+        "profit_lease_projection": {
+            "state": "blocked",
+            "blocking_reason_codes": [reason],
+            "read_model_unavailable": True,
+        },
+        "pipeline_mode": settings.trading_pipeline_mode,
+        "simple_lane": {
+            "submit_enabled": settings.trading_simple_submit_enabled,
+            "shared_gate_enforced": True,
+            "blocked_reasons": simple_lane_blockers,
+        },
+    }
+
+
+def _budget_exhausted_options_catalog_freshness_payload(
+    *,
+    reason: str,
+    route_symbols: Sequence[str],
+) -> dict[str, object]:
+    scoped_symbols = tuple(
+        sorted(
+            {
+                str(symbol).strip().upper()
+                for symbol in route_symbols
+                if str(symbol).strip()
+            }
+        )
+    )
+    return {
+        "status": "unavailable",
+        "scope": "route_symbols" if scoped_symbols else "global",
+        "route_symbols": list(scoped_symbols),
+        "reason_codes": [reason],
+        "read_model_unavailable": True,
+    }
 
 
 def _route_claim_symbols(profit_signal_quorum: Mapping[str, Any]) -> tuple[str, ...]:
