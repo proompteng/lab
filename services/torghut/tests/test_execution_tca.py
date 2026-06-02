@@ -96,6 +96,65 @@ class TestExecutionTcaCostLineage(TestCase):
         self.assertEqual(lineage["filled_notional"], "1000")
         self.assertIsNone(lineage["explicit_cost_amount"])
 
+    def test_upsert_derives_alpaca_equity_fee_schedule_cost_lineage(self) -> None:
+        with self.session_local() as session:
+            strategy = self._insert_strategy(session)
+            decision = self._insert_decision(
+                session,
+                strategy,
+                decision_hash="alpaca-fee-schedule-decision",
+                execution_policy=None,
+                decision_json={
+                    "strategy_id": None,
+                    "symbol": "AAPL",
+                    "action": "sell",
+                    "qty": "10",
+                    "order_type": "market",
+                    "time_in_force": "day",
+                    "submission_stage": "paper_direct",
+                    "params": {"price": "100"},
+                },
+            )
+            execution = self._insert_execution(
+                session,
+                decision,
+                order_id="alpaca-fee-schedule-order",
+                side="sell",
+                raw_order={
+                    "asset_class": "us_equity",
+                    "symbol": "AAPL",
+                    "side": "sell",
+                    "filled_qty": "10",
+                    "filled_avg_price": "100",
+                },
+                execution_audit_json={
+                    "submit_path": "direct_alpaca",
+                    "execution_lane": "simple",
+                },
+            )
+
+            upsert_execution_tca_metric(session, execution)
+            session.flush()
+            lineage = self._lineage(execution)
+
+        self.assertEqual(lineage["status"], "source_backed")
+        self.assertEqual(lineage["blockers"], [])
+        self.assertEqual(lineage["filled_notional"], "1000")
+        self.assertEqual(lineage["explicit_cost_amount"], "0.04")
+        self.assertEqual(
+            lineage["cost_basis"], "alpaca_2026_equity_sec_taf_cat_fee_schedule"
+        )
+        self.assertIsInstance(lineage["execution_policy_hash"], str)
+        self.assertIsInstance(lineage["cost_model_hash"], str)
+        self.assertEqual(
+            lineage["source_fields"]["explicit_cost"],
+            "alpaca_2026_equity_fee_schedule",
+        )
+        self.assertEqual(
+            lineage["source_fields"]["execution_policy_hash"],
+            "trade_decisions.decision_json+executions.order_fields",
+        )
+
     def test_upsert_blocks_ambiguous_policy_and_cost_model_hashes(self) -> None:
         with self.session_local() as session:
             strategy = self._insert_strategy(session)
@@ -187,22 +246,26 @@ class TestExecutionTcaCostLineage(TestCase):
         *,
         decision_hash: str,
         execution_policy: dict[str, object] | None,
+        decision_json: dict[str, object] | None = None,
     ) -> TradeDecision:
         params: dict[str, object] = {"price": "100"}
         if execution_policy is not None:
             params["execution_policy"] = execution_policy
+        payload = decision_json or {
+            "strategy_id": str(strategy.id),
+            "symbol": "AAPL",
+            "action": "buy",
+            "qty": "10",
+            "params": params,
+        }
+        if payload.get("strategy_id") is None:
+            payload = {**payload, "strategy_id": str(strategy.id)}
         decision = TradeDecision(
             strategy_id=strategy.id,
             alpaca_account_label="paper",
             symbol="AAPL",
             timeframe="1Min",
-            decision_json={
-                "strategy_id": str(strategy.id),
-                "symbol": "AAPL",
-                "action": "buy",
-                "qty": "10",
-                "params": params,
-            },
+            decision_json=payload,
             rationale="test",
             status="submitted",
             decision_hash=decision_hash,
@@ -218,6 +281,7 @@ class TestExecutionTcaCostLineage(TestCase):
         *,
         order_id: str,
         raw_order: dict[str, object],
+        side: str = "buy",
         execution_audit_json: dict[str, object] | None = None,
     ) -> Execution:
         execution = Execution(
@@ -225,7 +289,7 @@ class TestExecutionTcaCostLineage(TestCase):
             alpaca_order_id=order_id,
             client_order_id=f"client-{order_id}",
             symbol="AAPL",
-            side="buy",
+            side=side,
             order_type="market",
             time_in_force="day",
             submitted_qty=Decimal("10"),
