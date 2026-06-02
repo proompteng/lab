@@ -3824,15 +3824,6 @@ def trading_status() -> dict[str, object]:
         status_read_budget,
         scheduler=scheduler,
     )
-    tigerbeetle_ledger = _load_trading_status_tigerbeetle_ledger(status_read_budget)
-    runtime_ledger_portfolio_summary = (
-        _load_trading_status_runtime_ledger_portfolio_summary(
-            status_read_budget,
-            account_label=settings.trading_account_label,
-            stage_scope=status_stage_scope,
-            observed_at=status_observed_at,
-        )
-    )
     market_context_status = scheduler.market_context_status()
     hypothesis_payload, hypothesis_summary, hypothesis_dependency_quorum = (
         _load_trading_status_hypothesis_runtime(
@@ -3854,26 +3845,6 @@ def trading_status() -> dict[str, object]:
     )
     shorting_metadata_status = scheduler.shorting_metadata_status()
     rejection_alert_status = scheduler.rejection_alert_status()
-    last_decision_at = None
-    last_decision_skip_reason = status_read_budget.skip_reason_if_unavailable(
-        "last_decision",
-        min_remaining_seconds=0.25,
-    )
-    if last_decision_skip_reason is None:
-        with SessionLocal() as session:
-            last_decision_at = _load_last_decision_at(session)
-    persisted_rejected_signal_outcome_learning = None
-    rejected_signal_outcome_learning_skip_reason = (
-        status_read_budget.skip_reason_if_unavailable(
-            "rejected_signal_outcome_learning",
-            min_remaining_seconds=0.5,
-        )
-    )
-    if rejected_signal_outcome_learning_skip_reason is None:
-        with SessionLocal() as session:
-            persisted_rejected_signal_outcome_learning = (
-                _load_rejected_signal_outcome_learning_summary(session)
-            )
     live_submission_gate_skip_reason = status_read_budget.skip_reason_if_unavailable(
         "live_submission_gate",
         min_remaining_seconds=4.0,
@@ -3897,6 +3868,35 @@ def trading_status() -> dict[str, object]:
                 ),
                 quant_health_status=quant_evidence,
                 clickhouse_ta_status=clickhouse_ta_status,
+            )
+    tigerbeetle_ledger = _load_trading_status_tigerbeetle_ledger(status_read_budget)
+    runtime_ledger_portfolio_summary = (
+        _load_trading_status_runtime_ledger_portfolio_summary(
+            status_read_budget,
+            account_label=settings.trading_account_label,
+            stage_scope=status_stage_scope,
+            observed_at=status_observed_at,
+        )
+    )
+    last_decision_at = None
+    last_decision_skip_reason = status_read_budget.skip_reason_if_unavailable(
+        "last_decision",
+        min_remaining_seconds=0.25,
+    )
+    if last_decision_skip_reason is None:
+        with SessionLocal() as session:
+            last_decision_at = _load_last_decision_at(session)
+    persisted_rejected_signal_outcome_learning = None
+    rejected_signal_outcome_learning_skip_reason = (
+        status_read_budget.skip_reason_if_unavailable(
+            "rejected_signal_outcome_learning",
+            min_remaining_seconds=0.5,
+        )
+    )
+    if rejected_signal_outcome_learning_skip_reason is None:
+        with SessionLocal() as session:
+            persisted_rejected_signal_outcome_learning = (
+                _load_rejected_signal_outcome_learning_summary(session)
             )
     simple_lane_reject_reason_totals = _simple_lane_reject_reason_totals(state)
     simple_lane_status = _build_simple_lane_status_payload()
