@@ -1590,6 +1590,9 @@ def build_doc29_completion_status(
         for gate in gates
         if str(gate['status']) != TRACE_STATUS_SATISFIED
     ]
+    final_promotion_blockers = list(blocked_gate_ids)
+    if all_satisfied:
+        final_promotion_blockers.append('completion_trace_not_runtime_ledger_authority')
     promotion_authority = {
         'evidence_collection_ok': (
             str(gate_status_map.get(DOC29_LIVE_CANARY_GATE, {}).get('status'))
@@ -1605,13 +1608,12 @@ def build_doc29_completion_status(
         ),
         'capital_promotion_allowed': False,
         'promotion_allowed': False,
-        'final_authority_ok': all_satisfied,
-        'final_promotion_allowed': all_satisfied,
-        'final_promotion_blockers': blocked_gate_ids,
+        'final_authority_ok': False,
+        'final_promotion_allowed': False,
+        'final_promotion_blockers': final_promotion_blockers,
+        'completion_trace_all_satisfied': all_satisfied,
+        'authority_source': 'completion_trace_status_only',
     }
-    if all_satisfied:
-        promotion_authority['capital_promotion_allowed'] = True
-        promotion_authority['promotion_allowed'] = True
     return {
         'doc_id': matrix['doc_id'],
         'design_doc_path': matrix['design_doc_path'],
