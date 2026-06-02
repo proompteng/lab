@@ -7848,7 +7848,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
                 enabled=True,
                 base_timeframe="1Min",
                 universe_type="static",
-                universe_symbols=["AAPL"],
+                universe_symbols=["AAPL", "AMZN"],
                 created_at=window_start,
                 updated_at=window_start,
             )
@@ -7996,7 +7996,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
                                 "paper_route_probe_scope_authority": (
                                     "external_target_plan"
                                 ),
-                                "paper_route_probe_symbols": ["AAPL"],
+                                "paper_route_probe_symbols": ["AAPL", "AMZN"],
                                 "window_start": window_start.isoformat(),
                                 "window_end": window_end.isoformat(),
                                 "paper_probation_authorized": True,
@@ -8017,7 +8017,7 @@ class TestPaperRouteEvidenceAudit(TestCase):
                                 "paper_route_probe_scope_authority": (
                                     "external_target_plan"
                                 ),
-                                "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                                "paper_route_probe_symbols": ["AAPL"],
                                 "window_start": window_start.isoformat(),
                                 "window_end": window_end.isoformat(),
                                 "paper_probation_authorized": True,
@@ -8045,23 +8045,24 @@ class TestPaperRouteEvidenceAudit(TestCase):
             )
 
         plan = payload["next_paper_route_runtime_window_targets"]
-        self.assertEqual(plan["target_count"], 2)
-        first_target, second_target = plan["targets"]
+        self.assertEqual(plan["target_count"], 1)
+        self.assertEqual(plan["skipped_target_count"], 1)
+        first_target = plan["targets"][0]
         self.assertEqual(
             first_target["paper_route_account_contamination_state"]["reason"],
-            "unlinked_account_order_events_present",
+            "unlinked_and_foreign_account_order_events_present",
         )
         self.assertEqual(
-            second_target["paper_route_account_contamination_state"]["reason"],
-            "unlinked_and_foreign_account_order_events_present",
+            plan["skipped_targets"][0]["reason"],
+            "paper_route_account_window_already_assigned",
         )
         contamination_readiness = plan["account_contamination_readiness"]
         self.assertEqual(
             contamination_readiness["state"], "contaminated_window_discarded"
         )
-        self.assertEqual(contamination_readiness["target_count"], 2)
-        self.assertEqual(contamination_readiness["contaminated_target_count"], 2)
-        self.assertEqual(contamination_readiness["unlinked_order_event_count"], 15)
+        self.assertEqual(contamination_readiness["target_count"], 1)
+        self.assertEqual(contamination_readiness["contaminated_target_count"], 1)
+        self.assertEqual(contamination_readiness["unlinked_order_event_count"], 10)
         self.assertEqual(contamination_readiness["foreign_linked_order_event_count"], 1)
         sample_refs = contamination_readiness["sample_order_event_refs"]
         self.assertEqual(len(sample_refs), 10)
@@ -8763,6 +8764,124 @@ class TestPaperRouteEvidenceAudit(TestCase):
             "candidate-pairs-a",
         )
         import_audit = payload["runtime_window_import_audit"]
+        self.assertEqual(import_audit["counts"]["selected_target_count"], 1)
+        self.assertEqual(import_audit["counts"]["next_runtime_window_target_count"], 1)
+
+    def test_next_paper_route_runtime_window_reserves_account_window_once(
+        self,
+    ) -> None:
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, tzinfo=timezone.utc)
+        now = datetime(2026, 5, 26, 12, tzinfo=timezone.utc)
+        with Session(self.engine) as session:
+            session.add_all(
+                [
+                    Strategy(
+                        name="paper-route-alpha",
+                        description="first paper route target",
+                        enabled=True,
+                        base_timeframe="1Min",
+                        universe_type="static",
+                        universe_symbols=["AAPL"],
+                        created_at=window_start,
+                        updated_at=window_start,
+                    ),
+                    Strategy(
+                        name="paper-route-beta",
+                        description="second paper route target",
+                        enabled=True,
+                        base_timeframe="1Min",
+                        universe_type="static",
+                        universe_symbols=["MSFT"],
+                        created_at=window_start,
+                        updated_at=window_start,
+                    ),
+                ]
+            )
+            self._add_flat_account_start_snapshot(
+                session,
+                account_label="TORGHUT_SIM",
+                window_start=window_start,
+            )
+            session.commit()
+
+            payload = build_paper_route_evidence_audit(
+                session,
+                live_submission_gate={
+                    "allowed": False,
+                    "reason": "paper_route_probe_only",
+                    "blocked_reasons": [],
+                    "runtime_ledger_paper_probation_import_plan": {
+                        "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
+                        "target_count": "2",
+                        "targets": [
+                            {
+                                "hypothesis_id": "H-PAPER-ALPHA",
+                                "candidate_id": "candidate-paper-alpha",
+                                "observed_stage": "paper",
+                                "strategy_family": "paper_route_alpha",
+                                "strategy_name": "paper-route-alpha",
+                                "account_label": "TORGHUT_SIM",
+                                "source_manifest_ref": "config/trading/hypotheses/h-paper-alpha.json",
+                                "paper_route_probe_symbols": ["AAPL"],
+                                "window_start": window_start.isoformat(),
+                                "window_end": window_end.isoformat(),
+                                "paper_probation_authorized": True,
+                                "paper_probation_satisfied_for_bounded_live_paper_collection": True,
+                            },
+                            {
+                                "hypothesis_id": "H-PAPER-BETA",
+                                "candidate_id": "candidate-paper-beta",
+                                "observed_stage": "paper",
+                                "strategy_family": "paper_route_beta",
+                                "strategy_name": "paper-route-beta",
+                                "account_label": "TORGHUT_SIM",
+                                "source_manifest_ref": "config/trading/hypotheses/h-paper-beta.json",
+                                "paper_route_probe_symbols": ["MSFT"],
+                                "window_start": window_start.isoformat(),
+                                "window_end": window_end.isoformat(),
+                                "paper_probation_authorized": True,
+                                "paper_probation_satisfied_for_bounded_live_paper_collection": True,
+                            },
+                        ],
+                    },
+                },
+                route_reacquisition_book={
+                    "schema_version": "torghut.route-reacquisition-book.v1",
+                    "state": "repair_only",
+                    "summary": {
+                        "paper_route_probe_eligible_symbols": ["AAPL", "MSFT"],
+                        "paper_route_probe_active_symbols": ["AAPL", "MSFT"],
+                    },
+                    "paper_route_probe": {
+                        "configured_enabled": True,
+                        "active": True,
+                        "effective_max_notional": 25,
+                        "next_session_max_notional": 25,
+                    },
+                },
+                generated_at=now,
+            )
+
+        next_targets = payload["next_paper_route_runtime_window_targets"]
+        self.assertEqual(next_targets["target_count"], 1)
+        self.assertEqual(next_targets["skipped_target_count"], 1)
+        self.assertEqual(
+            next_targets["targets"][0]["candidate_id"], "candidate-paper-alpha"
+        )
+        self.assertEqual(
+            next_targets["skipped_targets"][0]["reason"],
+            "paper_route_account_window_already_assigned",
+        )
+        self.assertEqual(
+            next_targets["skipped_targets"][0]["duplicate_of_candidate_id"],
+            "candidate-paper-alpha",
+        )
+        self.assertEqual(
+            next_targets["skipped_targets"][0]["account_label"], "TORGHUT_SIM"
+        )
+        import_audit = payload["runtime_window_import_audit"]
+        self.assertEqual(import_audit["counts"]["source_plan_target_count"], 2)
         self.assertEqual(import_audit["counts"]["selected_target_count"], 1)
         self.assertEqual(import_audit["counts"]["next_runtime_window_target_count"], 1)
 

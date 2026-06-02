@@ -2003,6 +2003,7 @@ def _next_paper_route_runtime_window_targets(
     skipped_targets: list[dict[str, object]] = []
     planned_keys: set[tuple[object, ...]] = set()
     planned_execution_source_keys: dict[tuple[object, ...], dict[str, object]] = {}
+    planned_account_window_keys: dict[tuple[str, str, str], dict[str, object]] = {}
     for target in targets:
         hypothesis_id = _safe_text(target.get("hypothesis_id"))
         candidate_id = _safe_text(target.get("candidate_id"))
@@ -2292,6 +2293,35 @@ def _next_paper_route_runtime_window_targets(
                     ),
                     "missing_or_blocking_fields": [
                         "duplicate_next_paper_route_runtime_window_execution_source"
+                    ],
+                }
+            )
+            continue
+        account_window_start = _isoformat(window_start) or ""
+        account_window_end = _isoformat(window_end) or ""
+        account_window_key = (
+            PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
+            account_window_start,
+            account_window_end,
+        )
+        existing_account_window = planned_account_window_keys.get(account_window_key)
+        if existing_account_window is not None:
+            skipped_targets.append(
+                {
+                    "hypothesis_id": hypothesis_id,
+                    "candidate_id": candidate_id,
+                    "reason": "paper_route_account_window_already_assigned",
+                    "duplicate_of_hypothesis_id": existing_account_window.get(
+                        "hypothesis_id"
+                    ),
+                    "duplicate_of_candidate_id": existing_account_window.get(
+                        "candidate_id"
+                    ),
+                    "account_label": PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
+                    "window_start": account_window_start,
+                    "window_end": account_window_end,
+                    "missing_or_blocking_fields": [
+                        "paper_route_account_window_already_assigned"
                     ],
                 }
             )
@@ -2592,6 +2622,7 @@ def _next_paper_route_runtime_window_targets(
         }
         planned_keys.add(planned_key)
         planned_execution_source_keys[execution_source_key] = planned_target
+        planned_account_window_keys[account_window_key] = planned_target
         planned_targets.append(planned_target)
     health_gate_summary = _runtime_window_import_health_gate_summary(planned_targets)
     source_decision_readiness_items = [
