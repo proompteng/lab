@@ -82,8 +82,6 @@ spec:
     ANALYSIS_REPO_DIR: /workspace/analysis
     ANALYSIS_REPO_URL: https://github.com/gregkonush/analysis.git
     ANALYSIS_REQUIRED_COMMIT: 56be940b69bf1a56578040eda9bf2e3699c5220e
-    ANALYSIS_CONTEXT_PATH: /tmp/autonomous-trader-work/analysis-context.json
-    AUTONOMOUS_TRADER_ARTIFACT_DIR: /workspace/.agentrun/autonomous-trader
     AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED: "{{parameters.brokerMutationEnabled}}"
     AUTONOMOUS_TRADER_MODE: "{{parameters.mode}}"
     AUTONOMOUS_TRADER_SYNTHESIS_SESSION_MODE: "{{parameters.synthesisSessionMode}}"
@@ -152,25 +150,23 @@ spec:
         #!/usr/bin/env bash
         set -euo pipefail
 
-        artifact_dir="${AUTONOMOUS_TRADER_ARTIFACT_DIR:-/workspace/.agentrun/autonomous-trader}"
+        report_path="/workspace/.agentrun/autonomous-trader/report.md"
         work_dir="${AUTONOMOUS_TRADER_WORK_DIR:-/tmp/autonomous-trader-work}"
         analysis_dir="${ANALYSIS_REPO_DIR:-/workspace/analysis}"
         analysis_repo_url="${ANALYSIS_REPO_URL:-https://github.com/gregkonush/analysis.git}"
         required_commit="${ANALYSIS_REQUIRED_COMMIT:-56be940b69bf1a56578040eda9bf2e3699c5220e}"
-        analysis_context_path="${ANALYSIS_CONTEXT_PATH:-${work_dir}/analysis-context.json}"
-        analysis_bootstrap_status_path="${ANALYSIS_BOOTSTRAP_STATUS_PATH:-${work_dir}/analysis-bootstrap.json}"
+        analysis_context_path="${work_dir}/analysis-context.json"
         analysis_fetch_depth="${ANALYSIS_FETCH_DEPTH:-256}"
         analysis_fetch_deepen="${ANALYSIS_FETCH_DEEPEN:-2048}"
         analysis_fetch_deepen_attempts="${ANALYSIS_FETCH_DEEPEN_ATTEMPTS:-3}"
         analysis_fetch_timeout_seconds="${ANALYSIS_FETCH_TIMEOUT_SECONDS:-180}"
         python_bin="${PYTHON_BIN:-python3}"
 
-        mkdir -p "${artifact_dir}"
         mkdir -p "${work_dir}"
-        bootstrap_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        mkdir -p "$(dirname "${report_path}")"
 
-        if [ ! -e "${artifact_dir}/report.md" ]; then
-          printf '# Autonomous Trader Report\n\nstatus: bootstrapping\n' > "${artifact_dir}/report.md"
+        if [ ! -e "${report_path}" ]; then
+          printf '# Autonomous Trader Report\n\nstatus: bootstrapping\n' > "${report_path}"
         fi
 
         git_auth=()
@@ -234,8 +230,8 @@ spec:
         while ! git -C "${analysis_dir}" merge-base --is-ancestor "${required_commit}" HEAD; do
           if [ "$(git -C "${analysis_dir}" rev-parse --is-shallow-repository)" != "true" ] || \
             [ "${deepen_attempt}" -ge "${analysis_fetch_deepen_attempts}" ]; then
-            printf '{"ok":false,"reason":"analysis_repo_stale","analysis_head":"%s","required_commit":"%s","fetch_depth":"%s","deepen_attempts":"%s"}\n' \
-              "${analysis_head}" "${required_commit}" "${analysis_fetch_depth}" "${deepen_attempt}" > "${analysis_bootstrap_status_path}"
+            printf 'analysis repo stale: head=%s required_commit=%s fetch_depth=%s deepen_attempts=%s\n' \
+              "${analysis_head}" "${required_commit}" "${analysis_fetch_depth}" "${deepen_attempt}" >&2
             exit 42
           fi
           deepen_attempt=$((deepen_attempt + 1))
@@ -275,7 +271,7 @@ spec:
           fi
         fi
 
-        analysis_cli="${artifact_dir}/stock_analysis"
+        analysis_cli="${work_dir}/stock_analysis"
         {
           printf '#!/usr/bin/env bash\n'
           printf 'set -euo pipefail\n'
@@ -293,10 +289,6 @@ spec:
           --output "${analysis_context_path}"
         "${analysis_cli}" daytrading-validate-context \
           "${analysis_context_path}"
-
-        printf '{"ok":true,"analysis_head":"%s","required_commit":"%s","context_path":"%s","analysis_cli":"%s","install_method":"%s","started_at":"%s","finished_at":"%s"}\n' \
-          "${analysis_head}" "${required_commit}" "${analysis_context_path}" "${analysis_cli}" "${install_method}" "${bootstrap_started_at}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-          > "${analysis_bootstrap_status_path}"
     - path: /root/alpaca-mcp-stdio-bridge.py
       content: |-
         import json

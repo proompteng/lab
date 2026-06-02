@@ -795,7 +795,8 @@ describe('autonomous trader provider', () => {
 
     expect(objectAt(envTemplate, 'ANALYSIS_REPO_URL')).toBe('https://github.com/gregkonush/analysis.git')
     expect(objectAt(envTemplate, 'ANALYSIS_REQUIRED_COMMIT')).toBe('56be940b69bf1a56578040eda9bf2e3699c5220e')
-    expect(objectAt(envTemplate, 'ANALYSIS_CONTEXT_PATH')).toBe('/tmp/autonomous-trader-work/analysis-context.json')
+    expect(objectAt(envTemplate, 'ANALYSIS_CONTEXT_PATH')).toBeUndefined()
+    expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_ARTIFACT_DIR')).toBeUndefined()
     expect(objectAt(envTemplate, 'AUTONOMOUS_TRADER_WORK_DIR')).toBe('/tmp/autonomous-trader-work')
     expect(objectAt(envTemplate, 'ANALYSIS_FETCH_DEPTH')).toBeUndefined()
     expect(objectAt(codex, 'model')).toBe('gpt-5.5')
@@ -813,10 +814,9 @@ describe('autonomous trader provider', () => {
     expect([...artifactNames, ...artifactPaths, ...artifactKeys].join('\n')).not.toMatch(
       /jsonl|analysis-(bootstrap|context)/,
     )
+    expect(bootstrapContent).toContain('report_path="/workspace/.agentrun/autonomous-trader/report.md"')
     expect(bootstrapContent).toContain('work_dir="${AUTONOMOUS_TRADER_WORK_DIR:-/tmp/autonomous-trader-work}"')
-    expect(bootstrapContent).toContain(
-      'analysis_context_path="${ANALYSIS_CONTEXT_PATH:-${work_dir}/analysis-context.json}"',
-    )
+    expect(bootstrapContent).toContain('analysis_context_path="${work_dir}/analysis-context.json"')
     expect(bootstrapContent).toContain('analysis_fetch_timeout_seconds="${ANALYSIS_FETCH_TIMEOUT_SECONDS:-180}"')
     expect(bootstrapContent).toContain('fetch --prune --filter=blob:none --depth="${analysis_fetch_depth}"')
     expect(bootstrapContent).toContain('fetch --filter=blob:none --deepen="${analysis_fetch_deepen}"')
@@ -828,6 +828,11 @@ describe('autonomous trader provider', () => {
     expect(bootstrapContent).not.toContain('checkout --force --detach origin/main')
     expect(bootstrapContent).not.toContain('reset --hard origin/main')
     expect(bootstrapContent).toContain('--output "${analysis_context_path}"')
+    expect(bootstrapContent).toContain('analysis_cli="${work_dir}/stock_analysis"')
+    expect(bootstrapContent).not.toContain('ANALYSIS_CONTEXT_PATH')
+    expect(bootstrapContent).not.toContain('ANALYSIS_BOOTSTRAP_STATUS_PATH')
+    expect(bootstrapContent).not.toContain('analysis_bootstrap_status_path')
+    expect(bootstrapContent).not.toContain('artifact_dir=')
     expect(bootstrapContent).not.toContain('"${artifact_dir}/analysis-context.json"')
     expect(bootstrapContent).not.toContain('"${artifact_dir}/analysis-bootstrap.json"')
     expect(bootstrapContent).not.toContain('"${artifact_dir}/analysis-venv"')

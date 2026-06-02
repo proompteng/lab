@@ -32,6 +32,5 @@ spec:
     - account type: read `AUTONOMOUS_TRADER_ACCOUNT_TYPE`; it must be paper
     - analysis repo: bootstrap `/workspace/analysis` and require commit `56be940b69bf1a56578040eda9bf2e3699c5220e` or newer
     - operator report: `/workspace/.agentrun/autonomous-trader/report.md`
-    - temporary scanner work dir: `AUTONOMOUS_TRADER_WORK_DIR`
 
     Start with bootstrap/preflight, then run the mode-specific loop. Keep all live decisions, risk checks, broker actions, reconciliation results, and scorecard observations in Synthesis autotrader tables.

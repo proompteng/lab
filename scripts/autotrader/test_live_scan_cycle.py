@@ -84,6 +84,10 @@ class LiveScanCycleTest(unittest.TestCase):
             "2026-01-05T14:30:00Z",
         )
 
+    def test_stock_analysis_cli_defaults_to_work_dir(self) -> None:
+        with patch.dict("os.environ", {"AUTONOMOUS_TRADER_WORK_DIR": "/tmp/trader-work"}, clear=False):
+            self.assertEqual(live_scan_cycle.stock_analysis_cli_path(None), "/tmp/trader-work/stock_analysis")
+
     def test_formats_intraday_entry_gate_for_zero_dtbp(self) -> None:
         self.assertEqual(
             live_scan_cycle.format_account(
