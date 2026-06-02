@@ -63,7 +63,7 @@ class RunTigerBeetleJournalCronTest(TestCase):
             if item.source == SOURCE_TYPE_EXECUTION
         ]
 
-        self.assertEqual(runner.LIVE_EXECUTION_BATCH_SIZE, 25)
+        self.assertEqual(runner.LIVE_EXECUTION_BATCH_SIZE, 5)
         self.assertEqual(command.batch_size, runner.LIVE_EXECUTION_BATCH_SIZE)
         self.assertEqual(command.max_batches, 1)
         self.assertTrue(command.skip_reconcile)
