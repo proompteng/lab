@@ -84,6 +84,43 @@ class LiveScanCycleTest(unittest.TestCase):
             "2026-01-05T14:30:00Z",
         )
 
+    def test_formats_intraday_entry_gate_for_zero_dtbp(self) -> None:
+        self.assertEqual(
+            live_scan_cycle.format_account(
+                {
+                    "id": "paper-account",
+                    "equity": "29989.14",
+                    "cash": "29989.14",
+                    "buying_power": "59978.28",
+                    "daytrading_buying_power": "0",
+                    "daytrade_count": 5,
+                    "pattern_day_trader": "true",
+                    "trading_blocked": "false",
+                    "account_blocked": False,
+                }
+            ),
+            {
+                "account": {
+                    "id": "paper-account",
+                    "equity": "29989.14",
+                    "cash": "29989.14",
+                    "buying_power": "59978.28",
+                    "daytrading_buying_power": "0",
+                    "daytrade_count": 5,
+                    "pattern_day_trader": True,
+                    "trading_blocked": False,
+                    "account_blocked": False,
+                    "intraday_equity_entry": {
+                        "status": "blocked",
+                        "reasons": [
+                            "daytrading_buying_power_not_positive",
+                            "pdt_daytrade_count_at_or_above_four_without_dtbp",
+                        ],
+                    },
+                }
+            },
+        )
+
     def test_summarizes_scan_without_runtime_ledger(self) -> None:
         summary = live_scan_cycle.summarize_scan(
             2,
