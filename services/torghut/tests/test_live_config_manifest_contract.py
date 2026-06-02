@@ -11,6 +11,8 @@ from yaml import safe_load, safe_load_all
 
 from app.config import Settings
 from app.trading.llm.dspy_programs.runtime import DSPyReviewRuntime
+from app.trading.tigerbeetle_journal import SOURCE_TYPE_EXECUTION_ORDER_EVENT
+from scripts import run_tigerbeetle_journal_cron as tigerbeetle_journal_runner
 
 
 _RESEARCHED_CHIP_TECH_UNIVERSE = (
@@ -1530,11 +1532,40 @@ class TestLiveConfigManifestContract(TestCase):
         live_args = "\n".join(str(item) for item in live_container.get("args", []))
         self.assertIn("--preset live", live_args)
         self.assertIn("--execution-batch-size 5", live_args)
+        self.assertIn("--supervise-timeout-seconds 45", live_args)
         self.assertNotIn("--dsn-env DB_DSN", live_args)
         self.assertNotIn("--dsn-env SIM_DB_DSN", live_args)
         self.assertNotIn("--account-label TORGHUT_SIM", live_args)
         self.assertNotIn("--batch-size", live_args)
         self.assertNotIn("--max-batches", live_args)
+        live_order_event_commands = [
+            command
+            for command in tigerbeetle_journal_runner._live_commands(
+                execution_batch_size=5
+            )
+            if command.source == SOURCE_TYPE_EXECUTION_ORDER_EVENT
+        ]
+        self.assertEqual(len(live_order_event_commands), 1)
+        live_order_event_command = live_order_event_commands[0]
+        self.assertEqual(
+            live_order_event_command.batch_size,
+            tigerbeetle_journal_runner.LIVE_ORDER_EVENT_BATCH_SIZE,
+        )
+        self.assertEqual(
+            live_order_event_command.event_scan_limit,
+            tigerbeetle_journal_runner.LIVE_ORDER_EVENT_SCAN_LIMIT,
+        )
+        self.assertEqual(
+            live_order_event_command.max_batches,
+            tigerbeetle_journal_runner.LIVE_ORDER_EVENT_MAX_BATCHES,
+        )
+        self.assertLessEqual(
+            live_order_event_command.max_batches,
+            2,
+            "live order-event slices must not run PR #9799's unsafe 3-batch shape under the 45s watchdog",
+        )
+        self.assertTrue(live_order_event_command.skip_reconcile)
+        self.assertTrue(live_order_event_command.allow_data_quality_degraded)
 
         sim_env = {
             item.get("name"): item
