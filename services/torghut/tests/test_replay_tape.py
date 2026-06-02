@@ -18,6 +18,7 @@ from app.trading.discovery.replay_tape import (
     ReplayTapeCoverageError,
     ReplayTapeManifest,
     build_hpairs_replay_tape_feature_schema_hash,
+    hpairs_replay_tape_feature_versions,
     build_replay_tape_cache_identity_diagnostics,
     build_replay_tape_cache_key,
     build_source_query_digest,
@@ -546,6 +547,15 @@ class TestReplayTape(TestCase):
             strategy_family="hpairs-v2",
             source_table_versions={"signals": "v1"},
         )
+        changed_feature_versions_key = build_replay_tape_cache_key(
+            dataset_snapshot_ref="snapshot-a",
+            symbols=("AAPL", "NVDA"),
+            start_date=date(2026, 3, 27),
+            end_date=date(2026, 3, 27),
+            source_query_digest=first_digest,
+            feature_versions={"hpairs": "torghut.hpairs-replay-tape-features.v2"},
+            source_table_versions={"signals": "v1"},
+        )
 
         self.assertEqual(first_key, reordered_key)
         self.assertNotEqual(first_key, changed_key)
@@ -554,6 +564,7 @@ class TestReplayTape(TestCase):
         self.assertNotEqual(first_key, changed_feature_schema_key)
         self.assertNotEqual(first_key, changed_cost_model_key)
         self.assertNotEqual(first_key, changed_family_key)
+        self.assertNotEqual(first_key, changed_feature_versions_key)
 
         with TemporaryDirectory() as tmpdir:
             manifest = materialize_signal_tape(
@@ -567,6 +578,7 @@ class TestReplayTape(TestCase):
                 feature_schema_hash="feature-schema-v1",
                 cost_model_hash="cost-model-v1",
                 strategy_family="hpairs-v1",
+                feature_versions=hpairs_replay_tape_feature_versions(),
                 source_table_versions={"signals": "v1"},
             )
 
@@ -579,6 +591,7 @@ class TestReplayTape(TestCase):
             feature_schema_hash="feature-schema-v1",
             cost_model_hash="cost-model-v1",
             strategy_family="hpairs-v1",
+            feature_versions=hpairs_replay_tape_feature_versions(),
             source_table_versions={"signals": "v1"},
         )
         self.assertEqual(manifest.replay_cache_key, expected_materialized_key)
@@ -590,6 +603,10 @@ class TestReplayTape(TestCase):
         )
         self.assertEqual(manifest.to_payload()["cost_model_hash"], "cost-model-v1")
         self.assertEqual(manifest.to_payload()["strategy_family"], "hpairs-v1")
+        self.assertEqual(
+            manifest.to_payload()["feature_versions"],
+            hpairs_replay_tape_feature_versions(),
+        )
 
         validation = validate_tape_freshness(
             manifest,
@@ -603,6 +620,9 @@ class TestReplayTape(TestCase):
         self.assertEqual(validation["feature_schema_hash"], "feature-schema-v1")
         self.assertEqual(validation["cost_model_hash"], "cost-model-v1")
         self.assertEqual(validation["strategy_family"], "hpairs-v1")
+        self.assertEqual(
+            validation["feature_versions"], hpairs_replay_tape_feature_versions()
+        )
         self.assertEqual(validation["cache_identity"]["status"], "complete")
         self.assertEqual(
             validation["cache_identity"]["components"]["date_range"],
@@ -642,10 +662,15 @@ class TestReplayTape(TestCase):
             feature_schema_hash="feature-schema-v1",
             cost_model_hash="cost-model-v1",
             strategy_family="hpairs-v1",
+            feature_versions=hpairs_replay_tape_feature_versions(),
         )
         self.assertEqual(complete["status"], "complete")
         self.assertEqual(complete["missing_components"], [])
         self.assertEqual(complete["components"]["symbol_universe"], ["AAPL", "NVDA"])
+        self.assertEqual(
+            complete["components"]["feature_versions"],
+            hpairs_replay_tape_feature_versions(),
+        )
 
     def test_materialize_manifest_session_window_follows_new_york_dst(self) -> None:
         with TemporaryDirectory() as tmpdir:

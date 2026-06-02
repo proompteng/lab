@@ -205,6 +205,29 @@ class TestFastReplayPreview(TestCase):
             payload["replay_tape"]["cache_identity"]["blockers"],
         )
         self.assertFalse(payload["proof_authority"])
+        self.assertEqual(
+            row_payload["candidate_lineage"]["hypothesis_id"], "hyp-spec-good"
+        )
+        self.assertEqual(
+            row_payload["candidate_lineage"]["family_template_id"],
+            "microbar_cross_sectional_pairs_v1",
+        )
+        self.assertTrue(row_payload["candidate_lineage"]["lineage_preserved"])
+        self.assertFalse(row_payload["candidate_lineage"]["final_authority_ok"])
+        self.assertEqual(
+            row_payload["frontier_selection"]["reason_code"],
+            "fast_replay_frontier_exploitation_selected",
+        )
+        self.assertFalse(row_payload["frontier_selection"]["promotion_allowed"])
+        sim_queue = payload["bounded_sim_target_queue"]
+        self.assertEqual(sim_queue["status"], "metadata_only_not_dispatched")
+        self.assertEqual(
+            sim_queue["selected_candidate_spec_ids"], ["spec-good", "spec-stress"]
+        )
+        self.assertFalse(sim_queue["kubernetes_fanout_allowed"])
+        self.assertFalse(sim_queue["db_writes_allowed"])
+        self.assertFalse(sim_queue["proof_packet_upload_allowed"])
+        self.assertFalse(sim_queue["final_authority_ok"])
 
     def test_loaded_hpairs_replay_tape_features_feed_offline_ranking_only(
         self,
@@ -528,6 +551,167 @@ class TestFastReplayPreview(TestCase):
                 "exploration",
                 "exploration",
             ],
+        )
+
+    def test_frontier_selector_defaults_to_four_exploitation_two_diverse_exploration(
+        self,
+    ) -> None:
+        def row(
+            candidate_spec_id: str,
+            *,
+            preview_score: str,
+            exploration_score: str,
+            symbols: list[str],
+        ) -> fast_replay.FastReplayPreviewRow:
+            return fast_replay.FastReplayPreviewRow(
+                candidate_spec_id=candidate_spec_id,
+                rank=0,
+                preview_score=Decimal(preview_score),
+                selected=False,
+                selection_reason="fast_replay_preview_ranked",
+                matched_row_count=10,
+                matched_symbol_count=1,
+                requested_symbol_count=1,
+                trading_day_count=1,
+                signed_return_bps=Decimal("1"),
+                avg_abs_return_bps=Decimal("1"),
+                median_spread_bps=Decimal("1"),
+                activity_score=Decimal("1"),
+                coverage_score=Decimal("1"),
+                ofi_pressure_score=Decimal("1"),
+                microprice_bias_bps=Decimal("0"),
+                spread_tail_bps=Decimal("1"),
+                return_tail_abs_bps=Decimal("1"),
+                impact_liquidity_penalty_bps=Decimal("0"),
+                cluster_lob_activity_score=Decimal("1"),
+                ofi_decay_alignment_score=Decimal("1"),
+                liquidity_regime_score=Decimal("1"),
+                macro_stress_veto_score=Decimal("0"),
+                conformal_tail_risk_penalty_bps=Decimal("0"),
+                square_root_impact_capacity_penalty_bps=Decimal("1"),
+                exploration_score=Decimal(exploration_score),
+                frontier_bucket="not_selected",
+                microstructure_prefilter={
+                    "is_hpairs_candidate": True,
+                    "proof_source": "prefilter_only",
+                    "proof_authority": False,
+                    "promotion_allowed": False,
+                    "final_promotion_allowed": False,
+                },
+                candidate_lineage={
+                    "family_template_id": "microbar_cross_sectional_pairs_v1",
+                    "runtime_strategy_name": "microbar-cross-sectional-pairs-v1",
+                    "symbol_universe": symbols,
+                    "lineage_preserved": True,
+                },
+            )
+
+        ranked = sorted(
+            (
+                row(
+                    "exploit-1",
+                    preview_score="100",
+                    exploration_score="1",
+                    symbols=["AAA"],
+                ),
+                row(
+                    "exploit-2",
+                    preview_score="99",
+                    exploration_score="1",
+                    symbols=["BBB"],
+                ),
+                row(
+                    "exploit-3",
+                    preview_score="98",
+                    exploration_score="1",
+                    symbols=["CCC"],
+                ),
+                row(
+                    "exploit-4",
+                    preview_score="97",
+                    exploration_score="1",
+                    symbols=["DDD"],
+                ),
+                row(
+                    "explore-same-high",
+                    preview_score="10",
+                    exploration_score="100",
+                    symbols=["AAA"],
+                ),
+                row(
+                    "explore-same-deferred",
+                    preview_score="9",
+                    exploration_score="99",
+                    symbols=["AAA"],
+                ),
+                row(
+                    "explore-diverse",
+                    preview_score="8",
+                    exploration_score="98",
+                    symbols=["EEE"],
+                ),
+                row(
+                    "budget-exhausted",
+                    preview_score="7",
+                    exploration_score="97",
+                    symbols=["FFF"],
+                ),
+            ),
+            key=fast_replay._preview_rank_key,
+        )
+
+        selected = fast_replay._select_frontier_buckets(
+            ranked_rows=ranked,
+            exploitation_count=fast_replay.FAST_REPLAY_DEFAULT_EXPLOITATION_COUNT,
+            exploration_count=fast_replay.FAST_REPLAY_DEFAULT_EXPLORATION_COUNT,
+            exact_replay_candidate_cap=fast_replay.FAST_REPLAY_EXACT_REPLAY_CANDIDATE_CAP,
+        )
+        final_rows = [
+            fast_replay._row_with_rank_and_selection(
+                row=item,
+                rank=index,
+                frontier_bucket=selected.get(item.candidate_spec_id, "not_selected"),
+            )
+            for index, item in enumerate(ranked, start=1)
+        ]
+        payloads = {item.candidate_spec_id: item.to_payload() for item in final_rows}
+
+        self.assertEqual(
+            [
+                candidate_id
+                for candidate_id, bucket in selected.items()
+                if bucket == "exploitation"
+            ],
+            ["exploit-1", "exploit-2", "exploit-3", "exploit-4"],
+        )
+        self.assertEqual(
+            [
+                candidate_id
+                for candidate_id, bucket in selected.items()
+                if bucket == "exploration"
+            ],
+            ["explore-same-high", "explore-diverse"],
+        )
+        self.assertNotIn("explore-same-deferred", selected)
+        self.assertEqual(len(selected), 6)
+        self.assertEqual(
+            payloads["explore-same-high"]["selection_reason"],
+            "fast_replay_frontier_exploration_selected",
+        )
+        self.assertEqual(
+            payloads["explore-diverse"]["selection_reason"],
+            "fast_replay_frontier_exploration_selected",
+        )
+        self.assertEqual(
+            payloads["explore-same-deferred"]["selection_reason"],
+            "fast_replay_frontier_budget_exhausted_skipped",
+        )
+        self.assertEqual(
+            payloads["budget-exhausted"]["frontier_selection"]["reason_code"],
+            "fast_replay_frontier_budget_exhausted_skipped",
+        )
+        self.assertFalse(
+            payloads["budget-exhausted"]["frontier_selection"]["final_authority_ok"]
         )
 
     def test_missing_cost_capacity_lineage_blocks_exact_replay_selection(
