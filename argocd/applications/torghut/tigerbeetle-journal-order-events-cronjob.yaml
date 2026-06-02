@@ -59,7 +59,7 @@ spec:
                   /opt/venv/bin/python scripts/journal_tigerbeetle_order_events.py \
                     --dsn-env DB_DSN \
                     --sources execution \
-                    --batch-size 20 \
+                    --batch-size 10 \
                     --max-batches 1 \
                     --reconcile-limit 1000 \
                     --skip-reconcile \
