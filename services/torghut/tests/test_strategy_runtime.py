@@ -16,6 +16,7 @@ from app.trading.features import (
     FeatureVectorV3,
     normalize_feature_vector_v3,
 )
+from app.trading.evaluation_trace import GateTrace, StrategyTrace
 from app.trading.models import SignalEnvelope
 from app.trading.research_sleeves import (
     _rank_thresholds,
@@ -37,6 +38,7 @@ from app.trading.strategy_runtime import (
     _microbar_minutes_elapsed,
     _microbar_rank_thresholds,
     _microbar_universe_size,
+    _trace_suppression_reason,
 )
 
 
@@ -5456,6 +5458,86 @@ class TestStrategyRuntime(TestCase):
             "features/intraday-momentum-v1",
         )
 
+    def test_definition_from_strategy_materializes_hpairs_spec_v2_targets(
+        self,
+    ) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="microbar-cross-sectional-pairs-v1",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="microbar-cross-sectional-pairs-v1",
+                    strategy_id="microbar_cross_sectional_pairs_v1@research",
+                    strategy_type="microbar_cross_sectional_pairs_v1",
+                    version="1.0.0",
+                    base_timeframe="1Sec",
+                    universe_type="microbar_cross_sectional_pairs_v1",
+                    universe_symbols=["AAPL", "AMZN"],
+                    max_position_pct_equity=Decimal("6.0"),
+                    max_notional_per_trade=Decimal("75000"),
+                    params={
+                        "entry_minute_after_open": "60",
+                        "exit_minute_after_open": "120",
+                        "rank_feature": "cross_section_vwap_w5m_rank",
+                        "selection_mode": "continuation",
+                        "max_pair_legs": "2",
+                    },
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="microbar_cross_sectional_pairs_v1",
+            universe_symbols=["AAPL", "AMZN"],
+            max_position_pct_equity=Decimal("6.0"),
+            max_notional_per_trade=Decimal("75000"),
+        )
+
+        definition = StrategyRuntime.definition_from_strategy(strategy)
+
+        self.assertEqual(definition.compiler_source, "spec_v2")
+        self.assertEqual(
+            definition.declared_strategy_id,
+            "microbar_cross_sectional_pairs_v1@research",
+        )
+        self.assertEqual(
+            definition.strategy_spec["feature_view_spec_ref"],
+            "features/microbar-cross-sectional-pairs-v1",
+        )
+        self.assertEqual(
+            definition.strategy_spec["universe"],
+            {
+                "base_timeframe": "1Sec",
+                "symbols": ["AAPL", "AMZN"],
+                "strategy_type": "microbar_cross_sectional_pairs_v1",
+            },
+        )
+        self.assertEqual(
+            definition.compiled_targets["live_runtime_config"]["strategy_type"],
+            "microbar_cross_sectional_pairs_v1",
+        )
+
+    def test_trace_suppression_reason_falls_back_to_gate_or_default(self) -> None:
+        trace = StrategyTrace(
+            strategy_id="microbar_cross_sectional_pairs_v1@research",
+            strategy_type="microbar_cross_sectional_pairs_v1",
+            symbol="AAPL",
+            event_ts="2026-03-24T14:30:00+00:00",
+            timeframe="1Sec",
+            passed=False,
+            action=None,
+            gates=(
+                GateTrace(
+                    gate="pair_rank_selection",
+                    category="confirmation",
+                    passed=False,
+                ),
+            ),
+        )
+        empty_trace = trace.with_updates(gates=())
+
+        self.assertEqual(_trace_suppression_reason(trace), "pair_rank_selection")
+        self.assertEqual(_trace_suppression_reason(empty_trace), "no_runtime_intent")
+
 
 class TestStrategyRuntimeMicrobarCoverage(TestCase):
     def _context(
@@ -6073,6 +6155,146 @@ class TestStrategyRuntimeMicrobarCoverage(TestCase):
             high_rank_exit.intent.rationale,
         )
         self.assertIn("exit_basis:runtime_position", high_rank_exit.intent.rationale)
+
+    def test_microbar_pairs_honors_configured_pair_universe_with_broader_feature_universe(
+        self,
+    ) -> None:
+        plugin = MicrobarCrossSectionalPairsPlugin()
+        params = {
+            "entry_minute_after_open": "60",
+            "signal_motif": "vwap_close_continuation",
+            "rank_feature": "cross_section_vwap_w5m_rank",
+            "selection_mode": "continuation",
+            "top_n": "1",
+            "max_pair_legs": "2",
+        }
+
+        high_rank_entry = plugin.evaluate(
+            self._context(
+                params=params,
+                strategy_type="microbar_cross_sectional_pairs_v1",
+                symbol="AAPL",
+                strategy_spec={"universe_symbols": ["AAPL", "AMZN"]},
+            ),
+            _test_feature_vector(
+                {
+                    "session_minutes_elapsed": 60,
+                    "cross_section_vwap_w5m_rank": Decimal("0.6667"),
+                    "cross_section_vwap_w5m_rank_universe_size": Decimal("4"),
+                },
+                symbol="AAPL",
+            ),
+        )
+        low_rank_entry = plugin.evaluate(
+            self._context(
+                params=params,
+                strategy_type="microbar_cross_sectional_pairs_v1",
+                symbol="AMZN",
+                strategy_spec={"universe_symbols": ["AAPL", "AMZN"]},
+            ),
+            _test_feature_vector(
+                {
+                    "session_minutes_elapsed": 60,
+                    "cross_section_vwap_w5m_rank": Decimal("0.3333"),
+                    "cross_section_vwap_w5m_rank_universe_size": Decimal("4"),
+                },
+                symbol="AMZN",
+            ),
+        )
+        ambiguous_midpoint = plugin.evaluate(
+            self._context(
+                params=params,
+                strategy_type="microbar_cross_sectional_pairs_v1",
+                symbol="AAPL",
+                strategy_spec={"universe_symbols": ["AAPL", "AMZN"]},
+            ),
+            _test_feature_vector(
+                {
+                    "session_minutes_elapsed": 60,
+                    "cross_section_vwap_w5m_rank": Decimal("0.5"),
+                    "cross_section_vwap_w5m_rank_universe_size": Decimal("4"),
+                },
+                symbol="AAPL",
+            ),
+        )
+
+        self.assertIsNotNone(high_rank_entry.intent)
+        self.assertIsNotNone(low_rank_entry.intent)
+        assert high_rank_entry.intent is not None
+        assert low_rank_entry.intent is not None
+        self.assertEqual(high_rank_entry.intent.action, "buy")
+        self.assertEqual(low_rank_entry.intent.action, "sell")
+        assert high_rank_entry.trace is not None
+        self.assertEqual(
+            high_rank_entry.trace.gates[0].context["rank_threshold_basis"],
+            "configured_pair_midpoint",
+        )
+        self.assertEqual(
+            high_rank_entry.trace.gates[0].context["configured_universe_size"],
+            2,
+        )
+        self.assertEqual(
+            high_rank_entry.trace.gates[0].context["observed_rank_universe_size"],
+            4,
+        )
+        self.assertIsNone(ambiguous_midpoint.intent)
+        assert ambiguous_midpoint.trace is not None
+        self.assertEqual(
+            ambiguous_midpoint.trace.gates[0].context["reason"],
+            "ambiguous_pair_rank_midpoint",
+        )
+
+    def test_microbar_pairs_missing_rank_records_actionable_suppression(
+        self,
+    ) -> None:
+        strategy = Strategy(
+            id=uuid.uuid4(),
+            name="microbar-cross-sectional-pairs-v1",
+            description=_compose_strategy_description(
+                StrategyConfig(
+                    name="microbar-cross-sectional-pairs-v1",
+                    strategy_id="microbar_cross_sectional_pairs_v1@research",
+                    strategy_type="microbar_cross_sectional_pairs_v1",
+                    version="1.0.0",
+                    base_timeframe="1Sec",
+                    universe_type="microbar_cross_sectional_pairs_v1",
+                    universe_symbols=["AAPL", "AMZN"],
+                    max_position_pct_equity=Decimal("6.0"),
+                    max_notional_per_trade=Decimal("75000"),
+                    params={
+                        "entry_minute_after_open": "60",
+                        "rank_feature": "cross_section_vwap_w5m_rank",
+                        "selection_mode": "continuation",
+                        "max_pair_legs": "2",
+                    },
+                )
+            ),
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="microbar_cross_sectional_pairs_v1",
+            universe_symbols=["AAPL", "AMZN"],
+            max_position_pct_equity=Decimal("6.0"),
+            max_notional_per_trade=Decimal("75000"),
+        )
+        runtime = StrategyRuntime(trace_enabled=True)
+
+        evaluation = runtime.evaluate_all(
+            [strategy],
+            _test_feature_vector(
+                {
+                    "session_minutes_elapsed": 60,
+                    "price": Decimal("200"),
+                },
+                symbol="AAPL",
+            ),
+            timeframe="1Sec",
+        )
+
+        self.assertEqual(evaluation.raw_intents, [])
+        self.assertIn(
+            f"{strategy.id}|rank_selection:missing_rank_feature",
+            evaluation.observation.strategy_intent_suppression_total,
+        )
 
     def test_microbar_cross_sectional_pairs_plugin_exits_by_position_after_rank_drift(
         self,
