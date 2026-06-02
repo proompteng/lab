@@ -4929,11 +4929,12 @@ def _retarget_source_rows_for_materialization(
     retargeted: list[dict[str, object]] = []
     for row in rows:
         payload = dict(row)
-        payload.setdefault(
-            "source_account_label",
+        source_row_account_label = (
             _first_text(payload, "account_label", "alpaca_account_label")
-            or source_account_label,
+            or source_account_label
         )
+        payload.setdefault("source_row_account_label", source_row_account_label)
+        payload["source_account_label"] = source_account_label
         payload["account_label"] = target_account_label
         retargeted.append(payload)
     return retargeted
@@ -4950,17 +4951,19 @@ def _retarget_runtime_ledger_tca_rows(
     retargeted: list[dict[str, object]] = []
     for row in rows:
         payload = dict(row)
-        payload.setdefault(
-            "source_account_label",
+        source_row_account_label = (
             _first_text(payload, "account_label", "alpaca_account_label")
-            or source_account_label,
+            or source_account_label
         )
+        payload.setdefault("source_row_account_label", source_row_account_label)
+        payload["source_account_label"] = source_account_label
         if "account_label" in payload:
             payload["account_label"] = target_account_label
         bucket = _as_mapping(payload.get("runtime_ledger_bucket"))
         if bucket:
             source_bucket_label = (
-                _text_or_none(bucket.get("account_label")) or source_account_label
+                _text_or_none(bucket.get("source_account_label"))
+                or source_account_label
             )
             payload["runtime_ledger_bucket"] = {
                 **bucket,
@@ -4992,6 +4995,7 @@ def _query_timestamps(
     materialized_account_label = (
         str(target_account_label or "").strip() or source_account_label
     )
+    canonical_account_label = materialized_account_label
     decisions: list[datetime] = []
     executions: list[datetime] = []
     tca_rows: list[dict[str, object]] = []
@@ -5074,7 +5078,7 @@ def _query_timestamps(
                 """,
                 (
                     strategy_names,
-                    account_label,
+                    canonical_account_label,
                     list(EXECUTION_ELIGIBLE_DECISION_STATUSES),
                     window_start,
                     window_end,
@@ -5171,8 +5175,8 @@ def _query_timestamps(
                 """,
                 (
                     strategy_names,
-                    account_label,
-                    account_label,
+                    canonical_account_label,
+                    canonical_account_label,
                     window_start,
                     window_end,
                     *execution_symbol_params,
@@ -5272,8 +5276,7 @@ def _query_timestamps(
                             array_agg(e_match.id order by e_match.created_at, e_match.id) as ids,
                             count(*) as match_count
                         from executions e_match
-                        where coalesce(e_match.alpaca_account_label, oe.alpaca_account_label)
-                              = oe.alpaca_account_label
+                        where e_match.alpaca_account_label = %s
                           and (
                                 (
                                     oe.execution_id is not null
@@ -5299,7 +5302,7 @@ def _query_timestamps(
                             array_agg(d_match.id order by d_match.created_at, d_match.id) as ids,
                             count(*) as match_count
                         from trade_decisions d_match
-                        where d_match.alpaca_account_label = oe.alpaca_account_label
+                        where d_match.alpaca_account_label = %s
                           and nullif(oe.client_order_id, '') is not null
                           and d_match.decision_hash = oe.client_order_id
                     ) exact_decision_match
@@ -5318,9 +5321,11 @@ def _query_timestamps(
                 order by coalesce(oe.event_ts, oe.created_at), oe.created_at
                 """,
                 (
+                    canonical_account_label,
+                    canonical_account_label,
                     strategy_names,
-                    account_label,
-                    account_label,
+                    canonical_account_label,
+                    source_account_label,
                     window_start,
                     window_end,
                     *order_event_symbol_params,
@@ -5391,7 +5396,7 @@ def _query_timestamps(
                     """,
                     (
                         strategy_names,
-                        account_label,
+                        canonical_account_label,
                         list(EXECUTION_ELIGIBLE_DECISION_STATUSES),
                         carry_in_window_start,
                         window_start,
@@ -5483,8 +5488,8 @@ def _query_timestamps(
                     """,
                     (
                         strategy_names,
-                        account_label,
-                        account_label,
+                        canonical_account_label,
+                        canonical_account_label,
                         carry_in_window_start,
                         window_start,
                         *execution_symbol_params,
@@ -5587,8 +5592,7 @@ def _query_timestamps(
                                 array_agg(e_match.id order by e_match.created_at, e_match.id) as ids,
                                 count(*) as match_count
                             from executions e_match
-                            where coalesce(e_match.alpaca_account_label, oe.alpaca_account_label)
-                                  = oe.alpaca_account_label
+                            where e_match.alpaca_account_label = %s
                               and (
                                     (
                                         oe.execution_id is not null
@@ -5614,7 +5618,7 @@ def _query_timestamps(
                                 array_agg(d_match.id order by d_match.created_at, d_match.id) as ids,
                                 count(*) as match_count
                             from trade_decisions d_match
-                            where d_match.alpaca_account_label = oe.alpaca_account_label
+                            where d_match.alpaca_account_label = %s
                               and nullif(oe.client_order_id, '') is not null
                               and d_match.decision_hash = oe.client_order_id
                         ) exact_decision_match
@@ -5633,9 +5637,11 @@ def _query_timestamps(
                     order by coalesce(oe.event_ts, oe.created_at), oe.created_at
                     """,
                     (
+                        canonical_account_label,
+                        canonical_account_label,
                         strategy_names,
-                        account_label,
-                        account_label,
+                        canonical_account_label,
+                        source_account_label,
                         carry_in_window_start,
                         window_start,
                         *order_event_symbol_params,
@@ -5741,8 +5747,7 @@ def _query_timestamps(
                                 array_agg(e_match.id order by e_match.created_at, e_match.id) as ids,
                                 count(*) as match_count
                             from executions e_match
-                            where coalesce(e_match.alpaca_account_label, oe.alpaca_account_label)
-                                  = oe.alpaca_account_label
+                            where e_match.alpaca_account_label = %s
                               and (
                                     (
                                         oe.execution_id is not null
@@ -5768,7 +5773,7 @@ def _query_timestamps(
                                 array_agg(d_match.id order by d_match.created_at, d_match.id) as ids,
                                 count(*) as match_count
                             from trade_decisions d_match
-                            where d_match.alpaca_account_label = oe.alpaca_account_label
+                            where d_match.alpaca_account_label = %s
                               and nullif(oe.client_order_id, '') is not null
                               and d_match.decision_hash = oe.client_order_id
                         ) exact_decision_match
@@ -5792,7 +5797,9 @@ def _query_timestamps(
                     order by coalesce(oe.event_ts, oe.created_at), oe.created_at
                     """,
                     (
-                        account_label,
+                        canonical_account_label,
+                        canonical_account_label,
+                        source_account_label,
                         window_start,
                         window_end,
                         *([symbol_filter] if symbol_filter else []),
@@ -5908,8 +5915,8 @@ def _query_timestamps(
                 """,
                 (
                     strategy_names,
-                    account_label,
-                    account_label,
+                    canonical_account_label,
+                    canonical_account_label,
                     window_start,
                     window_end,
                     *execution_symbol_params,
