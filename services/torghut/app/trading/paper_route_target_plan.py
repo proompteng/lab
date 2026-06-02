@@ -34,6 +34,7 @@ PAPER_ROUTE_MATERIALIZATION_FINAL_PROMOTION_BLOCKERS = (
     "runtime_ledger_live_or_live_paper_required",
     "paper_route_runtime_ledger_import_pending",
 )
+PAPER_ROUTE_MATERIALIZATION_HPAIRS_HYPOTHESIS_ID = "H-PAIRS-01"
 
 
 def _to_str_map(value: object) -> dict[str, Any]:
@@ -230,6 +231,14 @@ def _text_items(value: object) -> list[str]:
     ]
 
 
+def _truthy(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int | float | Decimal):
+        return bool(value)
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _target_symbol_actions(target: Mapping[str, Any]) -> dict[str, str]:
     raw_actions = _to_str_map(target.get("paper_route_probe_symbol_actions"))
     actions: dict[str, str] = {}
@@ -399,6 +408,28 @@ def _target_identity_blockers(identity: Mapping[str, Any]) -> list[str]:
     return blockers
 
 
+def _hpairs_materialization_blockers(identity: Mapping[str, Any]) -> list[str]:
+    blockers: list[str] = []
+    if (
+        _safe_text(identity.get("hypothesis_id"))
+        != PAPER_ROUTE_MATERIALIZATION_HPAIRS_HYPOTHESIS_ID
+    ):
+        blockers.append("paper_route_target_hpairs_hypothesis_required")
+    return blockers
+
+
+def _source_decision_readiness_blockers(target: Mapping[str, Any]) -> list[str]:
+    readiness = target.get("source_decision_readiness")
+    if not isinstance(readiness, Mapping):
+        return ["paper_route_source_decision_readiness_missing"]
+
+    typed_readiness = cast(Mapping[str, Any], readiness)
+    blockers = _text_items(typed_readiness.get("blockers"))
+    if not _truthy(typed_readiness.get("ready")):
+        blockers.insert(0, "paper_route_source_decision_not_ready")
+    return sorted(dict.fromkeys(blockers))
+
+
 def _target_materialization_blockers(
     target: Mapping[str, Any],
     *,
@@ -406,7 +437,9 @@ def _target_materialization_blockers(
     bounded_notional_limit: Decimal,
 ) -> list[str]:
     blockers = _target_identity_blockers(identity)
+    blockers.extend(_hpairs_materialization_blockers(identity))
     blockers.extend(_clean_window_baseline_blockers(target))
+    blockers.extend(_source_decision_readiness_blockers(target))
     if not bool(target.get("evidence_collection_ok")):
         blockers.append("paper_route_evidence_collection_gate_not_passed")
     if not bool(target.get("bounded_evidence_collection_authorized")):
@@ -473,6 +506,67 @@ def _paper_route_decision_payload(
     generated_at: datetime,
 ) -> dict[str, Any]:
     source_decision_mode = BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE
+    source_decision_metadata: dict[str, Any] = {
+        "mode": "paper_route_target_plan_source_decision",
+        "source": PAPER_ROUTE_MATERIALIZATION_SOURCE,
+        "source_decision_mode": source_decision_mode,
+        "profit_proof_eligible": source_decision_mode_is_profit_proof_eligible(
+            source_decision_mode
+        ),
+        "profit_proof_eligible_scope": "bounded_paper_collection_only",
+        "hypothesis_id": identity.get("hypothesis_id"),
+        "candidate_id": identity.get("candidate_id"),
+        "runtime_strategy_name": identity.get("runtime_strategy_name"),
+        "strategy_name": identity.get("strategy_name"),
+        "strategy_id": identity.get("strategy_id"),
+        "account_label": identity.get("account_label"),
+        "source_plan_ref": identity.get("source_plan_ref"),
+        "source_manifest_ref": identity.get("source_manifest_ref"),
+        "symbol": symbol,
+        "action": action,
+        "paper_route_probe_leg_action": action,
+        "qty": _decimal_text(quantity),
+        "target_quantity": _decimal_text(quantity),
+        "target_notional": _decimal_text(target_notional),
+        "paper_route_probe_next_session_max_notional": _decimal_text(target_notional),
+        "paper_route_probe_effective_max_notional": _decimal_text(target_notional),
+        "paper_route_probe_symbols": sorted(_target_symbol_actions(target)),
+        "paper_route_probe_symbol_actions": _target_symbol_actions(target),
+        "paper_route_probe_symbol_quantities": {
+            item_symbol: _decimal_text(item_quantity)
+            for item_symbol, item_quantity in sorted(
+                _target_symbol_quantities(target).items()
+            )
+        },
+        "bounded_collection_stage": PAPER_ROUTE_MATERIALIZATION_STAGE,
+        "bounded_evidence_collection_authorized": True,
+        "bounded_live_paper_collection_authorized": True,
+        "canary_collection_authorized": True,
+        "evidence_collection_ok": True,
+        "bounded_evidence_collection_scope": "paper_route_probe_next_session_only",
+        "capital_promotion_allowed": False,
+        "promotion_allowed": False,
+        "final_authority_ok": False,
+        "final_promotion_authorized": False,
+        "final_promotion_allowed": False,
+        "live_capital_routing_enabled": False,
+    }
+    for key in (
+        "source_decision_readiness",
+        "paper_route_target_account_audit_state",
+        "paper_route_target_account_audit_blockers",
+        "paper_route_account_pre_session_blockers",
+        "paper_route_account_contamination_blockers",
+        "paper_route_clean_window_baseline_state",
+        "paper_route_clean_window_baseline_blockers",
+        "paper_route_clean_window_state",
+        "paper_route_probe_pair_balance_state",
+        "runtime_window_import_health_gate_blockers",
+        "bounded_evidence_collection_blockers",
+    ):
+        if key in target:
+            source_decision_metadata[key] = target[key]
+
     return {
         "schema_version": PAPER_ROUTE_MATERIALIZATION_SCHEMA_VERSION,
         "source": PAPER_ROUTE_MATERIALIZATION_SOURCE,
@@ -525,6 +619,7 @@ def _paper_route_decision_payload(
         },
         "capital_promotion_allowed": False,
         "promotion_allowed": False,
+        "final_authority_ok": False,
         "final_promotion_authorized": False,
         "final_promotion_allowed": False,
         "final_promotion_blockers": list(
@@ -534,7 +629,13 @@ def _paper_route_decision_payload(
         "route_submission_enabled": True,
         "params": {
             "paper_route_target_plan_materialized": True,
+            "paper_route_target_plan": source_decision_metadata,
+            "paper_route_target_plan_source_decision": source_decision_metadata,
+            "paper_route_probe": source_decision_metadata,
             "source_decision_mode": source_decision_mode,
+            "profit_proof_eligible": source_decision_mode_is_profit_proof_eligible(
+                source_decision_mode
+            ),
             "candidate_id": identity.get("candidate_id"),
             "hypothesis_id": identity.get("hypothesis_id"),
             "runtime_strategy_name": identity.get("runtime_strategy_name"),
@@ -542,6 +643,10 @@ def _paper_route_decision_payload(
             "target_notional": _decimal_text(target_notional),
             "target_quantity": _decimal_text(quantity),
             "bounded_collection_stage": PAPER_ROUTE_MATERIALIZATION_STAGE,
+            "promotion_allowed": False,
+            "final_authority_ok": False,
+            "final_promotion_authorized": False,
+            "final_promotion_allowed": False,
             "live_capital_routing_enabled": False,
             "route_submission_enabled": True,
         },
@@ -676,6 +781,7 @@ def materialize_bounded_paper_route_target_plan(
                     ),
                     "target_identity": identity,
                     "promotion_allowed": False,
+                    "final_authority_ok": False,
                     "final_promotion_authorized": False,
                     "live_capital_routing_enabled": False,
                 }
@@ -710,6 +816,7 @@ def materialize_bounded_paper_route_target_plan(
         "route_submissions": route_submissions,
         "capital_promotion_allowed": False,
         "promotion_allowed": False,
+        "final_authority_ok": False,
         "final_promotion_authorized": False,
         "final_promotion_allowed": False,
         "live_capital_routing_enabled": False,
