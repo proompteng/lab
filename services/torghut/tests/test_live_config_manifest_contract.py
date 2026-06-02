@@ -1445,7 +1445,7 @@ class TestLiveConfigManifestContract(TestCase):
             "torghut-tigerbeetle-journal-order-events-sim"
         )
 
-        self.assertEqual(live_spec.get("schedule"), "*/2 * * * *")
+        self.assertEqual(live_spec.get("schedule"), "*/3 * * * *")
         self.assertEqual(sim_spec.get("schedule"), "21,51 * * * *")
         for spec, job_spec, container in (
             (live_spec, live_job_spec, live_container),

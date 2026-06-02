@@ -28,6 +28,8 @@ LIVE_ORDER_EVENT_BATCH_SIZE = 1
 LIVE_ORDER_EVENT_MAX_BATCHES = 1
 LIVE_ORDER_EVENT_SCAN_LIMIT = 250
 LIVE_EXECUTION_BATCH_SIZE = 25
+LIVE_EXECUTION_TIMEOUT_SECONDS = 120.0
+LIVE_RUNTIME_LEDGER_TIMEOUT_SECONDS = 180.0
 LIVE_TCA_METRIC_BATCH_SIZE = 5
 LIVE_TCA_METRIC_MAX_BATCHES = 1
 
@@ -44,6 +46,7 @@ class JournalCronCommand:
     skip_reconcile: bool = False
     reconcile_empty_selection: bool = False
     allow_data_quality_degraded: bool = False
+    supervise_timeout_seconds: float | None = None
 
 
 def _parse_args() -> argparse.Namespace:
@@ -72,6 +75,7 @@ def _live_commands(*, execution_batch_size: int) -> list[JournalCronCommand]:
             reconcile_limit=1000,
             skip_reconcile=True,
             allow_data_quality_degraded=True,
+            supervise_timeout_seconds=LIVE_EXECUTION_TIMEOUT_SECONDS,
         ),
         JournalCronCommand(
             source=SOURCE_TYPE_EXECUTION_TCA_METRIC,
@@ -98,6 +102,7 @@ def _live_commands(*, execution_batch_size: int) -> list[JournalCronCommand]:
             max_batches=1,
             reconcile_limit=1000,
             allow_data_quality_degraded=True,
+            supervise_timeout_seconds=LIVE_RUNTIME_LEDGER_TIMEOUT_SECONDS,
         ),
     ]
 
@@ -183,7 +188,10 @@ def _argv_for_command(
     argv.append("--fail-on-degraded")
     if command.allow_data_quality_degraded:
         argv.append("--allow-data-quality-degraded")
-    argv.extend(["--supervise-timeout-seconds", str(supervise_timeout_seconds)])
+    command_timeout_seconds = command.supervise_timeout_seconds
+    if command_timeout_seconds is None:
+        command_timeout_seconds = supervise_timeout_seconds
+    argv.extend(["--supervise-timeout-seconds", str(command_timeout_seconds)])
     if json_output:
         argv.append("--json")
     return argv

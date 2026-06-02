@@ -70,6 +70,7 @@ class RunTigerBeetleJournalCronTest(TestCase):
         self.assertEqual(command.max_batches, 1)
         self.assertTrue(command.skip_reconcile)
         self.assertTrue(command.allow_data_quality_degraded)
+        self.assertEqual(command.supervise_timeout_seconds, 120.0)
 
     def test_live_preset_raises_only_execution_batch_size(self) -> None:
         commands = runner._live_commands(execution_batch_size=10)
@@ -79,6 +80,7 @@ class RunTigerBeetleJournalCronTest(TestCase):
         self.assertEqual(commands[0].max_batches, 1)
         self.assertTrue(commands[0].skip_reconcile)
         self.assertTrue(commands[0].allow_data_quality_degraded)
+        self.assertEqual(commands[0].supervise_timeout_seconds, 120.0)
         self.assertEqual(commands[1].source, SOURCE_TYPE_EXECUTION_TCA_METRIC)
         self.assertEqual(commands[1].batch_size, runner.LIVE_TCA_METRIC_BATCH_SIZE)
         self.assertEqual(commands[1].batch_size, 5)
@@ -98,6 +100,44 @@ class RunTigerBeetleJournalCronTest(TestCase):
         self.assertEqual(commands[3].source, SOURCE_TYPE_RUNTIME_LEDGER_BUCKET)
         self.assertFalse(commands[3].skip_reconcile)
         self.assertFalse(commands[3].reconcile_empty_selection)
+        self.assertEqual(commands[3].supervise_timeout_seconds, 180.0)
+
+    def test_live_execution_and_runtime_ledger_extend_timeout_under_watchdog(
+        self,
+    ) -> None:
+        commands = runner._live_commands(execution_batch_size=25)
+        execution = commands[0]
+        runtime_ledger = commands[3]
+
+        execution_argv = runner._argv_for_command(
+            execution,
+            json_output=True,
+            supervise_timeout_seconds=45.0,
+        )
+        runtime_ledger_argv = runner._argv_for_command(
+            runtime_ledger,
+            json_output=True,
+            supervise_timeout_seconds=45.0,
+        )
+
+        self.assertEqual(
+            execution_argv[execution_argv.index("--sources") + 1],
+            "execution",
+        )
+        self.assertEqual(
+            execution_argv[execution_argv.index("--supervise-timeout-seconds") + 1],
+            str(runner.LIVE_EXECUTION_TIMEOUT_SECONDS),
+        )
+        self.assertEqual(
+            runtime_ledger_argv[runtime_ledger_argv.index("--sources") + 1],
+            "strategy_runtime_ledger_bucket",
+        )
+        self.assertEqual(
+            runtime_ledger_argv[
+                runtime_ledger_argv.index("--supervise-timeout-seconds") + 1
+            ],
+            str(runner.LIVE_RUNTIME_LEDGER_TIMEOUT_SECONDS),
+        )
 
     def test_live_runtime_ledger_command_skips_empty_selection_reconcile(self) -> None:
         command = runner._live_commands(execution_batch_size=5)[-1]
@@ -360,9 +400,21 @@ class RunTigerBeetleJournalCronTest(TestCase):
         self.assertEqual(exit_code, 1)
         self.assertEqual(len(observed), 4)
         first_argv = observed[0][0]
+        second_argv = observed[1][0]
+        runtime_ledger_argv = observed[3][0]
         self.assertEqual(first_argv[first_argv.index("--batch-size") + 1], "5000")
         self.assertEqual(
             first_argv[first_argv.index("--supervise-timeout-seconds") + 1],
+            str(runner.LIVE_EXECUTION_TIMEOUT_SECONDS),
+        )
+        self.assertEqual(
+            second_argv[second_argv.index("--supervise-timeout-seconds") + 1],
             "0.001",
+        )
+        self.assertEqual(
+            runtime_ledger_argv[
+                runtime_ledger_argv.index("--supervise-timeout-seconds") + 1
+            ],
+            str(runner.LIVE_RUNTIME_LEDGER_TIMEOUT_SECONDS),
         )
         self.assertTrue(all(json_output for _, _, json_output in observed))
