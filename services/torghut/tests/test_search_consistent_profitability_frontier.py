@@ -722,6 +722,12 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                 "content_sha256": "tape-sha",
                 "dataset_snapshot_ref": "snapshot-lineage",
                 "source_query_digest": "query-sha",
+                "source_table_versions": {"signals": "v1"},
+                "feature_schema_hash": "feature-sha",
+                "cost_model_hash": "cost-sha",
+                "strategy_family": "hpairs",
+                "feature_versions": {"hpairs": "v1"},
+                "replay_cache_key": "cache-key",
                 "selected_symbols": ["NVDA"],
                 "selected_row_count": 10,
                 "status": "valid",
@@ -749,6 +755,12 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                 "content_sha256": "different-tape-sha",
                 "dataset_snapshot_ref": "snapshot-lineage",
                 "source_query_digest": "query-sha",
+                "source_table_versions": {"signals": "v1"},
+                "feature_schema_hash": "feature-sha",
+                "cost_model_hash": "cost-sha",
+                "strategy_family": "hpairs",
+                "feature_versions": {"hpairs": "v1"},
+                "replay_cache_key": "cache-key",
                 "selected_symbols": ["NVDA"],
                 "selected_row_count": 10,
                 "status": "valid",
@@ -776,6 +788,12 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                 "content_sha256": "tape-sha",
                 "dataset_snapshot_ref": "snapshot-lineage",
                 "source_query_digest": "query-sha",
+                "source_table_versions": {"signals": "v1"},
+                "feature_schema_hash": "feature-sha",
+                "cost_model_hash": "cost-sha",
+                "strategy_family": "hpairs",
+                "feature_versions": {"hpairs": "v1"},
+                "replay_cache_key": "cache-key",
                 "selected_symbols": ["NVDA"],
                 "selected_row_count": 10,
                 "status": "valid",
@@ -791,9 +809,45 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                 "implementation_uncertainty_model": "interval-v1",
             },
         )
+        changed_feature_schema = frontier._candidate_evaluation_key_payload(
+            candidate_search_key="candidate-key",
+            params_candidate={"long_stop_loss_bps": "12"},
+            strategy_overrides={
+                "normalization_regime": "price_scaled",
+                "universe_symbols": ["NVDA"],
+            },
+            replay_lineage=lineage,
+            replay_tape_validation={
+                "content_sha256": "tape-sha",
+                "dataset_snapshot_ref": "snapshot-lineage",
+                "source_query_digest": "query-sha",
+                "source_table_versions": {"signals": "v1"},
+                "feature_schema_hash": "feature-sha-v2",
+                "cost_model_hash": "cost-sha",
+                "strategy_family": "hpairs",
+                "feature_versions": {"hpairs": "v2"},
+                "replay_cache_key": "cache-key-v2",
+                "selected_symbols": ["NVDA"],
+                "selected_row_count": 10,
+                "status": "valid",
+            },
+            window=window,
+            full_window_start=date(2026, 3, 18),
+            full_window_end=date(2026, 3, 19),
+            full_window_summary={
+                "market_impact_stress_model": "impact-v1",
+                "market_impact_stress_cost_bps": "8",
+                "delay_adjusted_depth_stress_model": "latency_depth_haircut",
+                "delay_adjusted_depth_stress_ms": "50",
+                "implementation_uncertainty_model": "interval-v1",
+            },
+        )
 
         self.assertEqual(base["schema_version"], "torghut.candidate-evaluation-key.v1")
         self.assertEqual(base["replay_tape"]["source_query_digest"], "query-sha")
+        self.assertEqual(base["replay_tape"]["feature_schema_hash"], "feature-sha")
+        self.assertEqual(base["replay_tape"]["cost_model_hash"], "cost-sha")
+        self.assertEqual(base["replay_tape"]["strategy_family"], "hpairs")
         self.assertEqual(
             base["effective_strategy_config_sha256"],
             lineage["candidate_configmap_sha256"],
@@ -805,6 +859,10 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertNotEqual(
             base["candidate_evaluation_key"],
             changed_cost["candidate_evaluation_key"],
+        )
+        self.assertNotEqual(
+            base["candidate_evaluation_key"],
+            changed_feature_schema["candidate_evaluation_key"],
         )
 
     def test_rank_scored_candidates_uses_deployable_lower_bound_for_ordering(
@@ -2636,6 +2694,9 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                 ),
                 "runtime_ledger_artifact_row_count": 12,
                 "runtime_ledger_artifact_fill_count": 4,
+                "runtime_ledger_cost_basis_count": 4,
+                "runtime_ledger_post_cost_expectancy_bps": "25",
+                "runtime_ledger_pnl_basis": "realized_strategy_pnl_after_explicit_costs",
                 "runtime_ledger_open_position_count": 0,
                 "replay_artifact_refs": ["/tmp/microbar-exact-replay-ledger.json"],
                 "dataset_snapshot_id": "snapshot-microbar",
@@ -2724,6 +2785,122 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
                 diagnostic["category"]
                 for diagnostic in shortlist[0]["handoff_diagnostics"]
             },
+        )
+
+    def test_paper_probation_shortlist_blocks_missing_post_cost_basis(self) -> None:
+        shortlist = frontier._build_paper_probation_shortlist(
+            [
+                {
+                    "candidate_id": "missing-post-cost-proof",
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "125",
+                        "net_pnl": "250",
+                        "max_gross_exposure_pct_equity": "0.5",
+                        "min_cash": "100",
+                    },
+                    "full_window": {"net_per_day": "125", "net_pnl": "250"},
+                    "runtime_ledger_artifact_ref": "/tmp/exact-replay-ledger.json",
+                    "exact_replay_ledger_artifact_ref": "/tmp/exact-replay-ledger.json",
+                    "runtime_ledger_artifact_row_count": 6,
+                    "runtime_ledger_artifact_fill_count": 2,
+                    "runtime_ledger_open_position_count": 0,
+                    "dataset_snapshot_id": "snapshot-post-cost",
+                    "replay_lineage": {"lineage_hash": "lineage-post-cost"},
+                    "candidate_evaluation_key": "eval-post-cost",
+                    "candidate_evaluation_key_payload": {
+                        "candidate_evaluation_key": "eval-post-cost",
+                        "replay_tape": {
+                            "content_sha256": "tape-sha",
+                            "dataset_snapshot_ref": "snapshot-post-cost",
+                            "source_query_digest": "query-sha",
+                            "feature_schema_hash": "feature-sha",
+                            "cost_model_hash": "cost-sha",
+                            "strategy_family": "hpairs",
+                            "replay_cache_key": "cache-key",
+                            "selected_symbols": ["NVDA"],
+                            "selected_row_count": 10,
+                            "validation_status": "valid",
+                        },
+                    },
+                    "hard_vetoes": [],
+                }
+            ],
+            top_n=1,
+            objective_veto_policy=frontier.ObjectiveVetoPolicy(
+                required_max_gross_exposure_pct_equity=Decimal("1"),
+                required_min_cash=Decimal("0"),
+            ),
+        )
+
+        item = shortlist[0]
+        self.assertFalse(item["paper_probation_allowed"])
+        self.assertIn("missing_post_cost_pnl_basis", item["probation_blockers"])
+        self.assertIn("missing_cost_basis", item["probation_blockers"])
+        self.assertIn("missing_post_cost_expectancy_bps", item["probation_blockers"])
+        self.assertFalse(item["bounded_sim_handoff"]["promotion_allowed"])
+        self.assertFalse(item["bounded_sim_handoff"]["final_promotion_allowed"])
+        self.assertIn(
+            "missing_post_cost_basis",
+            {diagnostic["category"] for diagnostic in item["handoff_diagnostics"]},
+        )
+
+    def test_paper_probation_shortlist_blocks_missing_replay_tape_metadata(
+        self,
+    ) -> None:
+        shortlist = frontier._build_paper_probation_shortlist(
+            [
+                {
+                    "candidate_id": "missing-tape-metadata",
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "125",
+                        "net_pnl": "250",
+                        "max_gross_exposure_pct_equity": "0.5",
+                        "min_cash": "100",
+                    },
+                    "full_window": {"net_per_day": "125", "net_pnl": "250"},
+                    "runtime_ledger_artifact_ref": "/tmp/exact-replay-ledger.json",
+                    "exact_replay_ledger_artifact_ref": "/tmp/exact-replay-ledger.json",
+                    "runtime_ledger_artifact_row_count": 6,
+                    "runtime_ledger_artifact_fill_count": 2,
+                    "runtime_ledger_cost_basis_count": 2,
+                    "runtime_ledger_post_cost_expectancy_bps": "25",
+                    "runtime_ledger_pnl_basis": "realized_strategy_pnl_after_explicit_costs",
+                    "runtime_ledger_open_position_count": 0,
+                    "dataset_snapshot_id": "snapshot-tape-missing",
+                    "replay_lineage": {"lineage_hash": "lineage-tape-missing"},
+                    "candidate_evaluation_key": "eval-tape-missing",
+                    "candidate_evaluation_key_payload": {
+                        "candidate_evaluation_key": "eval-tape-missing",
+                        "replay_tape": {
+                            "content_sha256": "tape-sha",
+                            "dataset_snapshot_ref": "snapshot-tape-missing",
+                            "source_query_digest": "query-sha",
+                            "selected_symbols": ["NVDA"],
+                            "selected_row_count": 10,
+                            "validation_status": "valid",
+                        },
+                    },
+                    "hard_vetoes": [],
+                }
+            ],
+            top_n=1,
+            objective_veto_policy=frontier.ObjectiveVetoPolicy(
+                required_max_gross_exposure_pct_equity=Decimal("1"),
+                required_min_cash=Decimal("0"),
+            ),
+        )
+
+        item = shortlist[0]
+        self.assertFalse(item["paper_probation_allowed"])
+        self.assertIn(
+            "missing_replay_tape_feature_schema_hash", item["probation_blockers"]
+        )
+        self.assertIn("missing_replay_tape_cost_model_hash", item["probation_blockers"])
+        self.assertIn("missing_replay_tape_strategy_family", item["probation_blockers"])
+        self.assertFalse(item["bounded_sim_handoff"]["evidence_collection_ok"])
+        self.assertIn(
+            "missing_replay_tape_metadata",
+            {diagnostic["category"] for diagnostic in item["handoff_diagnostics"]},
         )
 
     def test_paper_probation_shortlist_blocks_generic_replay_artifact(self) -> None:
@@ -2844,6 +3021,58 @@ class TestSearchConsistentProfitabilityFrontier(TestCase):
         self.assertEqual(
             frontier._safe_exact_replay_candidate_budget(12),
             6,
+        )
+
+    def test_exact_replay_shortlist_exploration_falls_back_when_diversity_exhausted(
+        self,
+    ) -> None:
+        survivors: list[frontier._WorklistItem] = []
+        for index, net_per_day in enumerate(
+            ["120", "110", "100", "90", "80", "70"],
+            start=1,
+        ):
+            survivors.append(
+                frontier._WorklistItem(
+                    params_candidate={"long_stop_loss_bps": "12"},
+                    strategy_overrides={
+                        "universe_symbols": ["NVDA"],
+                        "normalization_regime": "matched_filter",
+                        "max_notional_per_trade": str(1000 + index),
+                    },
+                    deferred_candidate_index=index,
+                    deferred_candidate_key=f"candidate-{index}",
+                    deferred_train_payload=self._payload(
+                        start_date="2026-03-18",
+                        end_date="2026-03-20",
+                        daily_net={
+                            "2026-03-18": net_per_day,
+                            "2026-03-19": net_per_day,
+                            "2026-03-20": net_per_day,
+                        },
+                        decision_count=3,
+                        filled_count=3,
+                        wins=3,
+                        losses=0,
+                    ),
+                )
+            )
+
+        worklist: deque[frontier._WorklistItem] = deque()
+        frontier._enqueue_ranked_train_screen_survivors(
+            worklist=worklist,
+            survivors=survivors,
+            full_replay_candidate_budget=6,
+        )
+
+        selected = [item for item in worklist if item.deferred_full_replay_selected]
+        self.assertEqual(len(selected), 6)
+        self.assertEqual(
+            [item.deferred_full_replay_selection_reason for item in selected[:4]],
+            ["exploitation_top_economic_rank"] * 4,
+        )
+        self.assertEqual(
+            [item.deferred_full_replay_selection_reason for item in selected[4:]],
+            ["exploration_diversity_pick"] * 2,
         )
 
     def test_frontier_workflow_states_separate_preview_exact_handoff_and_authority(
