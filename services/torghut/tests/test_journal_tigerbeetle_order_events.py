@@ -27,6 +27,8 @@ from app.models import (
 )
 from app.trading.tigerbeetle_ledger_model import (
     LEDGER_USD_MICRO,
+    TRANSFER_KIND_EXECUTION_COST,
+    TRANSFER_KIND_EXECUTION_FILL,
     TRANSFER_CODE_FILL_POST,
     TRANSFER_KIND_FILL_POST,
     TRANSFER_KIND_RUNTIME_NET_PNL,
@@ -550,6 +552,141 @@ class TestJournalTigerBeetleOrderEventsScript(TestCase):
 
         self.assertEqual([event.id for event in events.rows], [selected.id])
         self.assertEqual(events.scan_failed, 0)
+
+    def test_select_unlinked_executions_uses_direct_ref_fk(self) -> None:
+        settings_obj = Settings(TORGHUT_TIGERBEETLE_ENABLED=True)
+        with Session(self.engine) as session:
+            linked = Execution(
+                alpaca_account_label="paper",
+                alpaca_order_id="order-linked",
+                client_order_id="client-linked",
+                symbol="AAPL",
+                side="buy",
+                order_type="market",
+                time_in_force="day",
+                submitted_qty=Decimal("1"),
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("190.25"),
+                status="filled",
+                raw_order={"id": "order-linked"},
+            )
+            selected = Execution(
+                alpaca_account_label="paper",
+                alpaca_order_id="order-selected",
+                client_order_id="client-selected",
+                symbol="MSFT",
+                side="buy",
+                order_type="market",
+                time_in_force="day",
+                submitted_qty=Decimal("1"),
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("410.50"),
+                status="filled",
+                raw_order={"id": "order-selected"},
+            )
+            session.add_all([linked, selected])
+            session.flush()
+            session.add(
+                TigerBeetleTransferRef(
+                    cluster_id=settings_obj.tigerbeetle_cluster_id,
+                    transfer_id="12001",
+                    transfer_kind=TRANSFER_KIND_EXECUTION_FILL,
+                    ledger=LEDGER_USD_MICRO,
+                    code=TRANSFER_CODE_FILL_POST,
+                    amount=Decimal("190250000"),
+                    status="created",
+                    execution_id=linked.id,
+                )
+            )
+            session.flush()
+
+            executions = script._select_unlinked_executions(
+                session,
+                settings_obj=settings_obj,
+                account_label="paper",
+                limit=10,
+            )
+
+        self.assertEqual([row.id for row in executions], [selected.id])
+
+    def test_select_unlinked_tca_metrics_uses_direct_ref_fk(self) -> None:
+        settings_obj = Settings(TORGHUT_TIGERBEETLE_ENABLED=True)
+        with Session(self.engine) as session:
+            linked_execution = Execution(
+                alpaca_account_label="paper",
+                alpaca_order_id="order-tca-linked",
+                client_order_id="client-tca-linked",
+                symbol="AAPL",
+                side="buy",
+                order_type="market",
+                time_in_force="day",
+                submitted_qty=Decimal("1"),
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("190.25"),
+                status="filled",
+                raw_order={"id": "order-tca-linked"},
+            )
+            selected_execution = Execution(
+                alpaca_account_label="paper",
+                alpaca_order_id="order-tca-selected",
+                client_order_id="client-tca-selected",
+                symbol="MSFT",
+                side="buy",
+                order_type="market",
+                time_in_force="day",
+                submitted_qty=Decimal("1"),
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("410.50"),
+                status="filled",
+                raw_order={"id": "order-tca-selected"},
+            )
+            session.add_all([linked_execution, selected_execution])
+            session.flush()
+            linked = ExecutionTCAMetric(
+                execution_id=linked_execution.id,
+                alpaca_account_label="paper",
+                symbol="AAPL",
+                side="buy",
+                filled_qty=Decimal("1"),
+                signed_qty=Decimal("1"),
+                shortfall_notional=Decimal("0.25"),
+                computed_at=datetime.now(timezone.utc),
+            )
+            selected = ExecutionTCAMetric(
+                execution_id=selected_execution.id,
+                alpaca_account_label="paper",
+                symbol="MSFT",
+                side="buy",
+                filled_qty=Decimal("1"),
+                signed_qty=Decimal("1"),
+                shortfall_notional=Decimal("0.35"),
+                computed_at=datetime.now(timezone.utc),
+            )
+            session.add_all([linked, selected])
+            session.flush()
+            session.add(
+                TigerBeetleTransferRef(
+                    cluster_id=settings_obj.tigerbeetle_cluster_id,
+                    transfer_id="12002",
+                    transfer_kind=TRANSFER_KIND_EXECUTION_COST,
+                    ledger=LEDGER_USD_MICRO,
+                    code=TRANSFER_CODE_FILL_POST,
+                    amount=Decimal("250000"),
+                    status="created",
+                    execution_id=linked_execution.id,
+                    execution_tca_metric_id=linked.id,
+                )
+            )
+            session.flush()
+
+            metrics = script._select_unlinked_tca_metrics(
+                session,
+                settings_obj=settings_obj,
+                account_label="paper",
+                limit=10,
+            )
+
+        self.assertEqual([row.id for row in metrics], [selected.id])
 
     def test_select_runtime_buckets_repairs_legacy_ref_missing_bucket_fk(
         self,

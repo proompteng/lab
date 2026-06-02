@@ -58,17 +58,17 @@ spec:
                   /opt/venv/bin/python scripts/journal_tigerbeetle_order_events.py \
                     --dsn-env DB_DSN \
                     --sources execution,execution_tca_metric \
-                    --batch-size 500 \
-                    --max-batches 2 \
+                    --batch-size 50 \
+                    --max-batches 1 \
                     --reconcile-limit 1000 \
                     --skip-reconcile \
                     --json
                   /opt/venv/bin/python scripts/journal_tigerbeetle_order_events.py \
                     --dsn-env DB_DSN \
                     --sources execution_order_event,strategy_runtime_ledger_bucket \
-                    --batch-size 125 \
-                    --max-batches 2 \
-                    --event-scan-limit 1000 \
+                    --batch-size 50 \
+                    --max-batches 1 \
+                    --event-scan-limit 250 \
                     --reconcile-limit 1000 \
                     --json
               env:
