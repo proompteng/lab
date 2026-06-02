@@ -5,7 +5,7 @@ import sys
 from datetime import datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -85,10 +85,10 @@ class NumericExistsFakeTigerBeetleClient(FakeTigerBeetleClient):
 
 
 class _ScalarResult:
-    def __init__(self, value: TigerBeetleAccountRef | None) -> None:
+    def __init__(self, value: object | None) -> None:
         self._value = value
 
-    def scalar_one_or_none(self) -> TigerBeetleAccountRef | None:
+    def scalar_one_or_none(self) -> Any:
         return self._value
 
 
@@ -125,6 +125,36 @@ class _RacingAccountRefSession:
         raise IntegrityError(
             "insert tigerbeetle account ref", {}, RuntimeError("duplicate")
         )
+
+
+class _RacingTransferRefSession:
+    def __init__(
+        self, existing_after_integrity_error: TigerBeetleTransferRef | None
+    ) -> None:
+        self._existing_after_integrity_error = existing_after_integrity_error
+        self.execute_count = 0
+        self.flush_count = 0
+        self.added_refs: list[TigerBeetleTransferRef] = []
+
+    def execute(self, statement: object) -> _ScalarResult:
+        del statement
+        self.execute_count += 1
+        if self.execute_count < 3:
+            return _ScalarResult(None)
+        return _ScalarResult(self._existing_after_integrity_error)
+
+    def begin_nested(self) -> _NestedTransaction:
+        return _NestedTransaction()
+
+    def add(self, value: TigerBeetleTransferRef) -> None:
+        self.added_refs.append(value)
+
+    def flush(self) -> None:
+        self.flush_count += 1
+        if self.flush_count == 1:
+            raise IntegrityError(
+                "insert tigerbeetle transfer ref", {}, RuntimeError("duplicate")
+            )
 
 
 def _settings(*, enabled: bool = True, journal_enabled: bool = True) -> Settings:
@@ -1616,6 +1646,53 @@ class TestTigerBeetleLedgerJournal(TestCase):
                 cluster_id=2001,
                 account_specs=(spec,),
             )
+
+    def test_persist_transfer_accepts_matching_concurrent_insert(self) -> None:
+        transfer_spec = TigerBeetleTransferSpec(
+            transfer_id=12345,
+            transfer_kind=TRANSFER_KIND_EXECUTION_FILL,
+            debit_account_id=101,
+            credit_account_id=202,
+            amount=1000,
+            ledger=LEDGER_USD_MICRO,
+            code=2010,
+        )
+        existing = TigerBeetleTransferRef(
+            cluster_id=2001,
+            transfer_id=u128_decimal(transfer_spec.transfer_id),
+            transfer_kind=transfer_spec.transfer_kind,
+            ledger=transfer_spec.ledger,
+            code=transfer_spec.code,
+            amount=Decimal(transfer_spec.amount),
+            status="created",
+            result_code="created",
+            source_type="execution",
+            source_id="execution-race-row",
+            payload_json={
+                "debit_account_id": u128_decimal(transfer_spec.debit_account_id),
+                "credit_account_id": u128_decimal(transfer_spec.credit_account_id),
+            },
+        )
+        session = _RacingTransferRefSession(existing)
+
+        ref = TigerBeetleLedgerJournal(
+            settings_obj=_settings(),
+            client=FakeTigerBeetleClient(),
+        )._persist_transfer(
+            cast(Session, session),
+            account_specs=(),
+            transfer_spec=transfer_spec,
+            source_type="execution",
+            source_id="execution-race-row",
+            payload_json={"source": "execution"},
+        )
+
+        self.assertIs(ref, existing)
+        self.assertEqual(session.execute_count, 3)
+        self.assertEqual(session.flush_count, 2)
+        self.assertEqual(len(session.added_refs), 2)
+        self.assertEqual(existing.source_type, "execution")
+        self.assertEqual(existing.source_id, "execution-race-row")
 
     def test_journal_ignores_non_transfer_and_missing_amount_events(self) -> None:
         with Session(self.engine) as session:
