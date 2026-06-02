@@ -494,6 +494,79 @@ class TestFastReplayPreview(TestCase):
             ],
         )
 
+    def test_missing_cost_capacity_lineage_blocks_exact_replay_selection(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            rows = [
+                SignalEnvelope(
+                    event_ts=datetime(2026, 2, 23, 14, 30, tzinfo=timezone.utc)
+                    + timedelta(minutes=index),
+                    symbol="AAA",
+                    timeframe="1Min",
+                    seq=index,
+                    source="test",
+                    payload={"price": Decimal(str(100 + index))},
+                    ingest_ts=datetime(2026, 2, 23, 14, 31, tzinfo=timezone.utc),
+                )
+                for index in range(1, 4)
+            ]
+            manifest = materialize_signal_tape(
+                rows=rows,
+                tape_path=Path(tmpdir) / "tape.jsonl",
+                dataset_snapshot_ref="snapshot-lineage-blocked",
+                symbols=("AAA",),
+                start_date=date(2026, 2, 23),
+                end_date=date(2026, 2, 23),
+                source_query_digest=build_source_query_digest(
+                    {"window": "lineage-blocked"}
+                ),
+            )
+
+        preview = build_fast_replay_preview(
+            specs=(
+                self._spec(
+                    "spec-lineage-blocked",
+                    symbols=["AAA"],
+                    max_notional_per_trade="0",
+                ),
+            ),
+            rows=rows,
+            replay_tape_manifest=manifest,
+            top_k=1,
+            min_rows_per_candidate=2,
+            exploitation_count=1,
+            exploration_count=0,
+            exact_replay_candidate_cap=1,
+        )
+
+        self.assertEqual(preview.selected_candidate_spec_ids, ())
+        self.assertEqual(preview.exploitation_candidate_count, 0)
+        row = preview.rows[0]
+        payload = row.to_payload()
+        self.assertFalse(payload["selected"])
+        self.assertEqual(
+            payload["selection_reason"], "fast_replay_frontier_lineage_blocked"
+        )
+        self.assertTrue(payload["exact_replay_selection_blocked"])
+        self.assertIn(
+            "cost_lineage_spread_missing",
+            payload["exact_replay_selection_blockers"],
+        )
+        self.assertIn(
+            "adv_capacity_lineage_volume_missing",
+            payload["exact_replay_selection_blockers"],
+        )
+        self.assertIn(
+            "candidate_notional_lineage_missing",
+            payload["exact_replay_selection_blockers"],
+        )
+        self.assertIn("source_backed_adv_missing", payload["lineage_blockers"])
+        self.assertFalse(payload["promotion_proof"])
+        self.assertFalse(payload["promotion_authority"])
+        self.assertFalse(payload["promotion_allowed"])
+        self.assertFalse(payload["final_promotion_allowed"])
+
     def test_frontier_selection_dedupes_equivalent_exact_replay_targets(
         self,
     ) -> None:

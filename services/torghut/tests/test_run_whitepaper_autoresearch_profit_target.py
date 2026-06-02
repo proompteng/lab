@@ -4568,6 +4568,9 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
                         payload={
                             "price": Decimal(price),
                             "spread_bps": Decimal("2"),
+                            "ofi": Decimal("0.25"),
+                            "microbar_volume": Decimal("100000"),
+                            "event_type": "trade",
                         },
                     )
                     for seq, (day, symbol, price) in enumerate(
@@ -4894,6 +4897,93 @@ class TestRunWhitepaperAutoresearchProfitTarget(TestCase):
         self.assertIn(
             "impact_capacity_lineage",
             first_entry["hpairs_microstructure_prefilter"],
+        )
+
+    def test_fast_replay_preview_does_not_backfill_lineage_blocked_candidates(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "epoch"
+            output_dir.mkdir()
+            tape_path = Path(tmpdir) / "blocked-tape.jsonl"
+            rows = [
+                SignalEnvelope(
+                    event_ts=datetime(2026, 2, 23, 14, 30 + index, tzinfo=timezone.utc),
+                    symbol="NVDA",
+                    timeframe="1Min",
+                    seq=index,
+                    source="ta",
+                    payload={"price": Decimal(str(100 + index))},
+                )
+                for index in range(3)
+            ]
+            materialize_signal_tape(
+                rows=rows,
+                tape_path=tape_path,
+                dataset_snapshot_ref="blocked-preview",
+                symbols=("NVDA",),
+                start_date=date(2026, 2, 23),
+                end_date=date(2026, 2, 23),
+                source_query_digest=build_source_query_digest({"window": "blocked"}),
+            )
+            base_spec = self._candidate_spec("spec-lineage-blocked")
+            spec = replace(
+                base_spec,
+                strategy_overrides={
+                    **base_spec.strategy_overrides,
+                    "max_notional_per_trade": "0",
+                    "universe_symbols": ["NVDA"],
+                },
+            )
+            args = self._args(output_dir)
+            args.replay_mode = "real"
+            args.full_window_start_date = "2026-02-23"
+            args.full_window_end_date = "2026-02-23"
+            args.symbols = "NVDA"
+            args.replay_tape_path = tape_path
+            args.replay_tape_preview_top_k = 1
+            candidate_selection = {
+                "schema_version": "torghut.whitepaper-autoresearch-selection.v1",
+                "budget": {"selected_count": 1},
+                "selected_candidate_spec_ids": [spec.candidate_spec_id],
+                "rows": [
+                    {
+                        "candidate_spec_id": spec.candidate_spec_id,
+                        "selected_for_replay": True,
+                        "selection_reason": "test",
+                    }
+                ],
+            }
+
+            narrowed_specs, updated_selection = (
+                runner._apply_fast_replay_preview_narrowing(
+                    args=args,
+                    output_dir=output_dir,
+                    specs=[spec],
+                    candidate_selection=candidate_selection,
+                )
+            )
+
+        self.assertEqual(narrowed_specs, [])
+        self.assertEqual(updated_selection["selected_candidate_spec_ids"], [])
+        self.assertEqual(
+            updated_selection["budget"]["fast_replay_preview_selected_count"], 0
+        )
+        self.assertEqual(
+            updated_selection["bounded_sim_target_queue"][
+                "exact_replay_candidate_count"
+            ],
+            0,
+        )
+        updated_row = updated_selection["rows"][0]
+        self.assertFalse(updated_row["selected_for_replay"])
+        self.assertTrue(updated_row["fast_replay_exact_replay_selection_blocked"])
+        self.assertIn(
+            "cost_lineage_spread_missing",
+            updated_row["fast_replay_exact_replay_selection_blockers"],
+        )
+        self.assertEqual(
+            updated_row["selection_reason"], "fast_replay_preview_filtered"
         )
 
     def test_bounded_sim_target_queue_dedupes_duplicate_frontier_keys(self) -> None:
