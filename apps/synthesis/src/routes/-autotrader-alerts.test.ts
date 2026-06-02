@@ -247,6 +247,51 @@ describe('getAutotraderRuntimeAlerts', () => {
     )
   })
 
+  test('does not flag broker-attached protective OCO orders as unreconciled', () => {
+    const detail = detailFor({
+      orders: [
+        {
+          sessionId: 'session-1',
+          ticketId: null,
+          clientOrderId: 'atr-20260529-test-1-AVGO-oco-repair-01',
+          brokerOrderId: 'alpaca-oco-1',
+          symbol: 'AVGO',
+          instrument: 'stock',
+          side: 'sell',
+          quantity: '5',
+          orderType: 'limit',
+          orderClass: 'oco',
+          limitPrice: '488.40',
+          stopPrice: null,
+          takeProfitLimitPrice: null,
+          stopLossStopPrice: '481.40',
+          stopLossLimitPrice: '481.10',
+          status: 'accepted',
+          rejectReason: null,
+          brokerPayload: {},
+          updatedAt: '2026-05-29T13:59:20Z',
+        },
+      ],
+      positionSnapshots: [
+        {
+          id: 'pos-avgo',
+          sessionId: 'session-1',
+          symbol: 'AVGO',
+          quantity: '5',
+          marketValue: '2417.25',
+          averageEntryPrice: '483.194',
+          unrealizedPnl: '1.28',
+          capturedAt: '2026-05-29T13:59:30Z',
+          brokerPayload: {},
+        },
+      ],
+    })
+
+    expect(getAutotraderRuntimeAlerts(detail, now).map((alert) => alert.key)).not.toContain(
+      'unreconciled-order:atr-20260529-test-1-AVGO-oco-repair-01',
+    )
+  })
+
   test('flags positions with no confirmed protection or managed-loop fallback', () => {
     const detail = detailFor({
       positionSnapshots: [
