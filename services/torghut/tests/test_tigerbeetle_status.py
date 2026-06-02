@@ -66,6 +66,7 @@ class TestTigerBeetleStatus(TestCase):
         self.assertTrue(payload["ok"])
         self.assertFalse(payload["enabled"])
         self.assertTrue(payload["protocol_ok"])
+        self.assertFalse(payload["protocol_probe_skipped"])
         self.assertEqual(payload["blockers"], [])
         self.assertEqual(payload["ref_counts"]["transfer_ref_count"], 0)
 
@@ -131,6 +132,7 @@ class TestTigerBeetleStatus(TestCase):
 
         self.assertFalse(payload["ok"])
         self.assertFalse(payload["protocol_ok"])
+        self.assertFalse(payload["protocol_probe_skipped"])
         self.assertIn("tigerbeetle_protocol_unhealthy", payload["blockers"])
 
     def test_missing_reconciliation_blocks_only_when_required(self) -> None:
@@ -156,10 +158,15 @@ class TestTigerBeetleStatus(TestCase):
         )
 
         with Session(self.engine) as session:
-            with patch("app.main.check_tigerbeetle_health", return_value=health):
+            with patch(
+                "app.main.check_tigerbeetle_health", return_value=health
+            ) as health_mock:
                 payload = _build_tigerbeetle_ledger_status(session)
 
         self.assertTrue(payload["ok"])
+        health_mock.assert_not_called()
+        self.assertTrue(payload["protocol_probe_skipped"])
+        self.assertFalse(payload["protocol_ok"])
         self.assertFalse(payload["reconciliation_required"])
         self.assertNotIn("tigerbeetle_reconciliation_missing", payload["blockers"])
 
@@ -252,16 +259,30 @@ class TestTigerBeetleStatus(TestCase):
             payload["blockers"],
         )
 
-    def test_protocol_timeout_is_nonblocking_until_required(self) -> None:
+    def test_optional_protocol_probe_is_skipped_until_required(self) -> None:
         settings.tigerbeetle_enabled = True
         settings.tigerbeetle_required = False
+        settings.tigerbeetle_health_timeout_seconds = 0.01
+
+        with patch("app.main.check_tigerbeetle_health") as health_mock:
+            payload = _check_tigerbeetle_protocol_health()
+
+        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["protocol_ok"])
+        self.assertTrue(payload["protocol_probe_skipped"])
+        self.assertIsNone(payload["last_error"])
+        health_mock.assert_not_called()
+
+    def test_required_protocol_timeout_blocks_readiness_dependency(self) -> None:
+        settings.tigerbeetle_enabled = True
+        settings.tigerbeetle_required = True
         settings.tigerbeetle_health_timeout_seconds = 0.01
 
         def slow_health(_settings: object) -> TigerBeetleHealth:
             time.sleep(0.2)
             return TigerBeetleHealth(
                 enabled=True,
-                required=False,
+                required=True,
                 ok=True,
                 cluster_id=2001,
                 replica_addresses=["tb:3000"],
@@ -271,8 +292,9 @@ class TestTigerBeetleStatus(TestCase):
         with patch("app.main.check_tigerbeetle_health", side_effect=slow_health):
             payload = _check_tigerbeetle_protocol_health()
 
-        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["ok"])
         self.assertFalse(payload["protocol_ok"])
+        self.assertFalse(payload["protocol_probe_skipped"])
         self.assertIn("TimeoutError", str(payload["last_error"]))
 
     def test_latest_reconciliation_blockers_are_reported(self) -> None:
