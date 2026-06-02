@@ -42,6 +42,19 @@ _ACCEPTED_DELAY_ADJUSTED_DEPTH_STRESS_MODELS = frozenset(
         "portfolio_latency_depth_haircut",
     }
 )
+_POST_COST_EXPECTANCY_BPS_KEYS = (
+    "observed_post_cost_expectancy_bps",
+    "post_cost_expectancy_bps",
+    "portfolio_post_cost_expectancy_bps",
+    "realized_post_cost_expectancy_bps",
+)
+_AVG_FILLED_NOTIONAL_PER_DAY_KEYS = (
+    "avg_filled_notional_per_day",
+    "average_filled_notional_per_day",
+    "avg_daily_filled_notional",
+    "filled_notional_per_day",
+    "avg_filled_notional_per_window_weekday",
+)
 
 
 @dataclass(frozen=True)
@@ -304,6 +317,120 @@ def _numeric_check(
         "operator": operator,
         "threshold": str(threshold),
         "passed": passed,
+    }
+
+
+def _decimal_payload(value: Decimal | None) -> str | None:
+    if value is None:
+        return None
+    return format(value, "f")
+
+
+def _first_positive_decimal(
+    scorecard: Mapping[str, Any], keys: tuple[str, ...]
+) -> tuple[Decimal, str]:
+    for key in keys:
+        value = _decimal(scorecard.get(key))
+        if value > 0:
+            return value, key
+    return Decimal("0"), ""
+
+
+def _first_decimal_or_none(
+    scorecard: Mapping[str, Any], keys: tuple[str, ...]
+) -> tuple[Decimal | None, str]:
+    for key in keys:
+        raw_value = scorecard.get(key)
+        if raw_value is None or (isinstance(raw_value, str) and not raw_value.strip()):
+            continue
+        return _decimal(raw_value), key
+    return None, ""
+
+
+def _target_implied_notional_gate_payload(
+    *,
+    scorecard: Mapping[str, Any],
+    target_net_pnl_per_day: Decimal,
+    baseline_min_avg_filled_notional_per_day: Decimal,
+    post_cost_net_pnl_per_day: Decimal,
+    post_cost_pnl_basis: str,
+    post_cost_pnl_source: str,
+) -> dict[str, Any]:
+    avg_filled_notional_per_day, avg_filled_notional_source = _first_positive_decimal(
+        scorecard, _AVG_FILLED_NOTIONAL_PER_DAY_KEYS
+    )
+    explicit_expectancy_bps, explicit_expectancy_source = _first_decimal_or_none(
+        scorecard, _POST_COST_EXPECTANCY_BPS_KEYS
+    )
+    blockers: list[str] = []
+    post_cost_basis_ok = post_cost_pnl_basis in _ACCEPTED_LEDGER_PNL_BASES
+    post_cost_source_ok = post_cost_pnl_source in _ACCEPTED_LEDGER_PNL_SOURCES
+    if not post_cost_basis_ok:
+        blockers.append("target_implied_post_cost_pnl_basis_missing_or_unsupported")
+    if not post_cost_source_ok:
+        blockers.append("target_implied_post_cost_pnl_source_missing_or_unsupported")
+    if avg_filled_notional_per_day <= 0:
+        blockers.append(
+            "target_implied_avg_filled_notional_per_day_missing_or_non_positive"
+        )
+
+    observed_expectancy_bps: Decimal | None = None
+    observed_expectancy_source = ""
+    if post_cost_basis_ok and post_cost_source_ok and avg_filled_notional_per_day > 0:
+        if explicit_expectancy_bps is not None:
+            observed_expectancy_bps = explicit_expectancy_bps
+            observed_expectancy_source = explicit_expectancy_source
+        elif post_cost_net_pnl_per_day > 0:
+            observed_expectancy_bps = (
+                post_cost_net_pnl_per_day
+                / avg_filled_notional_per_day
+                * Decimal("10000")
+            )
+            observed_expectancy_source = (
+                "derived_from_post_cost_net_pnl_per_day_and_avg_filled_notional_per_day"
+            )
+
+    if observed_expectancy_bps is None or observed_expectancy_bps <= 0:
+        blockers.append(
+            "target_implied_post_cost_expectancy_bps_missing_or_non_positive"
+        )
+
+    target_implied_min_avg_filled_notional_per_day: Decimal | None = None
+    if observed_expectancy_bps is not None and observed_expectancy_bps > 0:
+        target_implied_min_avg_filled_notional_per_day = (
+            target_net_pnl_per_day * Decimal("10000") / observed_expectancy_bps
+        )
+    effective_min_avg_filled_notional_per_day = baseline_min_avg_filled_notional_per_day
+    if target_implied_min_avg_filled_notional_per_day is not None:
+        effective_min_avg_filled_notional_per_day = max(
+            baseline_min_avg_filled_notional_per_day,
+            target_implied_min_avg_filled_notional_per_day,
+        )
+
+    return {
+        "target_daily_net_pnl": _decimal_payload(target_net_pnl_per_day),
+        "post_cost_net_pnl_per_day": _decimal_payload(post_cost_net_pnl_per_day),
+        "post_cost_pnl_basis": post_cost_pnl_basis,
+        "post_cost_pnl_source": post_cost_pnl_source,
+        "post_cost_basis_accepted": post_cost_basis_ok,
+        "post_cost_source_accepted": post_cost_source_ok,
+        "avg_filled_notional_per_day": _decimal_payload(avg_filled_notional_per_day),
+        "avg_filled_notional_per_day_source": avg_filled_notional_source,
+        "observed_post_cost_expectancy_bps": _decimal_payload(observed_expectancy_bps),
+        "observed_post_cost_expectancy_bps_source": observed_expectancy_source,
+        "baseline_min_avg_filled_notional_per_day": _decimal_payload(
+            baseline_min_avg_filled_notional_per_day
+        ),
+        "target_implied_min_avg_filled_notional_per_day": _decimal_payload(
+            target_implied_min_avg_filled_notional_per_day
+        ),
+        "effective_min_avg_filled_notional_per_day": _decimal_payload(
+            effective_min_avg_filled_notional_per_day
+        ),
+        "target_implied_min_notional_formula": (
+            "target_daily_net_pnl / (observed_post_cost_expectancy_bps / 10000)"
+        ),
+        "blockers": blockers,
     }
 
 
@@ -624,6 +751,43 @@ def evaluate_profit_target_oracle(
         total_net_pnl=total_net_pnl,
         worst_day_loss=worst_day_loss,
     )
+    portfolio_post_cost_net_pnl_basis = _first_normalized_scorecard_text(
+        scorecard,
+        "portfolio_post_cost_net_pnl_basis",
+        "portfolio_post_cost_net_pnl_per_day_basis",
+        "post_cost_net_pnl_basis",
+        "net_pnl_basis",
+        "runtime_ledger_pnl_basis",
+        "exact_replay_ledger_pnl_basis",
+        "post_cost_expectancy_basis",
+        "pnl_basis",
+    )
+    portfolio_post_cost_net_pnl_source = _first_normalized_scorecard_text(
+        scorecard,
+        "portfolio_post_cost_net_pnl_source",
+        "portfolio_post_cost_net_pnl_per_day_source",
+        "post_cost_net_pnl_source",
+        "net_pnl_source",
+        "runtime_ledger_pnl_source",
+        "exact_replay_ledger_pnl_source",
+        "post_cost_expectancy_source",
+        "pnl_source",
+    )
+    target_implied_notional_gate = _target_implied_notional_gate_payload(
+        scorecard=scorecard,
+        target_net_pnl_per_day=target_net_pnl_per_day,
+        baseline_min_avg_filled_notional_per_day=policy.min_avg_filled_notional_per_day,
+        post_cost_net_pnl_per_day=net_pnl,
+        post_cost_pnl_basis=portfolio_post_cost_net_pnl_basis,
+        post_cost_pnl_source=portfolio_post_cost_net_pnl_source,
+    )
+    effective_min_avg_filled_notional_per_day = _decimal(
+        target_implied_notional_gate.get("effective_min_avg_filled_notional_per_day"),
+        default=str(policy.min_avg_filled_notional_per_day),
+    )
+    observed_post_cost_expectancy_bps = _decimal(
+        target_implied_notional_gate.get("observed_post_cost_expectancy_bps")
+    )
     checks = [
         _numeric_check(
             metric="portfolio_post_cost_net_pnl_per_day",
@@ -782,7 +946,37 @@ def evaluate_profit_target_oracle(
             metric="avg_filled_notional_per_day",
             observed=_decimal(scorecard.get("avg_filled_notional_per_day")),
             operator="gte",
-            threshold=policy.min_avg_filled_notional_per_day,
+            threshold=effective_min_avg_filled_notional_per_day,
+        ),
+        {
+            "metric": "target_implied_post_cost_pnl_basis",
+            "observed": target_implied_notional_gate["post_cost_pnl_basis"],
+            "operator": "in",
+            "threshold": sorted(_ACCEPTED_LEDGER_PNL_BASES),
+            "source_marker": "target_implied_discovery_notional_gate",
+            "passed": bool(target_implied_notional_gate["post_cost_basis_accepted"]),
+        },
+        {
+            "metric": "target_implied_post_cost_pnl_source",
+            "observed": target_implied_notional_gate["post_cost_pnl_source"],
+            "operator": "in",
+            "threshold": sorted(_ACCEPTED_LEDGER_PNL_SOURCES),
+            "source_marker": "target_implied_discovery_notional_gate",
+            "passed": bool(target_implied_notional_gate["post_cost_source_accepted"]),
+        },
+        _numeric_check(
+            metric="target_implied_avg_filled_notional_per_day",
+            observed=_decimal(
+                target_implied_notional_gate.get("avg_filled_notional_per_day")
+            ),
+            operator="gt",
+            threshold=Decimal("0"),
+        ),
+        _numeric_check(
+            metric="target_implied_post_cost_expectancy_bps",
+            observed=observed_post_cost_expectancy_bps,
+            operator="gt",
+            threshold=Decimal("0"),
         ),
         _numeric_check(
             metric="regime_slice_pass_rate",
@@ -906,28 +1100,6 @@ def evaluate_profit_target_oracle(
     exact_replay_ledger_fill_count = _nonnegative_int(
         scorecard.get("exact_replay_ledger_artifact_fill_count")
         or scorecard.get("runtime_ledger_artifact_fill_count")
-    )
-    portfolio_post_cost_net_pnl_basis = _first_normalized_scorecard_text(
-        scorecard,
-        "portfolio_post_cost_net_pnl_basis",
-        "portfolio_post_cost_net_pnl_per_day_basis",
-        "post_cost_net_pnl_basis",
-        "net_pnl_basis",
-        "runtime_ledger_pnl_basis",
-        "exact_replay_ledger_pnl_basis",
-        "post_cost_expectancy_basis",
-        "pnl_basis",
-    )
-    portfolio_post_cost_net_pnl_source = _first_normalized_scorecard_text(
-        scorecard,
-        "portfolio_post_cost_net_pnl_source",
-        "portfolio_post_cost_net_pnl_per_day_source",
-        "post_cost_net_pnl_source",
-        "net_pnl_source",
-        "runtime_ledger_pnl_source",
-        "exact_replay_ledger_pnl_source",
-        "post_cost_expectancy_source",
-        "pnl_source",
     )
     checks.extend(
         (
@@ -2211,6 +2383,16 @@ def evaluate_profit_target_oracle(
     return {
         "schema_version": PROFIT_TARGET_ORACLE_SCHEMA_VERSION,
         "policy": policy.to_payload(),
+        "target_implied_notional_gate": target_implied_notional_gate,
+        "target_implied_min_avg_filled_notional_per_day": target_implied_notional_gate[
+            "target_implied_min_avg_filled_notional_per_day"
+        ],
+        "effective_min_avg_filled_notional_per_day": target_implied_notional_gate[
+            "effective_min_avg_filled_notional_per_day"
+        ],
+        "observed_post_cost_expectancy_bps": target_implied_notional_gate[
+            "observed_post_cost_expectancy_bps"
+        ],
         "passed": not blockers,
         "checks": checks,
         "blockers": blockers,

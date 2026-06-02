@@ -94,6 +94,16 @@ def _passing_scorecard() -> dict[str, object]:
     }
 
 
+def _check_by_metric(result: dict[str, object], metric: str) -> dict[str, object]:
+    checks = result["checks"]
+    assert isinstance(checks, list)
+    for check in checks:
+        assert isinstance(check, dict)
+        if check.get("metric") == metric:
+            return check
+    raise AssertionError(f"missing check: {metric}")
+
+
 class TestProfitTargetOracle(TestCase):
     def test_profit_target_oracle_accepts_full_doc71_contract(self) -> None:
         result = evaluate_profit_target_oracle(
@@ -103,6 +113,147 @@ class TestProfitTargetOracle(TestCase):
 
         self.assertTrue(result["passed"])
         self.assertEqual(result["blockers"], [])
+
+    def test_profit_target_oracle_uses_target_implied_floor_for_8_bps_edge(
+        self,
+    ) -> None:
+        scorecard = {
+            **_passing_scorecard(),
+            "avg_filled_notional_per_day": "625000",
+            "observed_post_cost_expectancy_bps": "8",
+        }
+
+        result = evaluate_profit_target_oracle(
+            scorecard,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertTrue(result["passed"])
+        self.assertEqual(
+            Decimal(str(result["target_implied_min_avg_filled_notional_per_day"])),
+            Decimal("625000"),
+        )
+        self.assertEqual(
+            Decimal(str(result["effective_min_avg_filled_notional_per_day"])),
+            Decimal("625000"),
+        )
+        scale_check = _check_by_metric(result, "avg_filled_notional_per_day")
+        self.assertEqual(Decimal(str(scale_check["threshold"])), Decimal("625000"))
+        self.assertEqual(result["observed_post_cost_expectancy_bps"], "8")
+        gate = result["target_implied_notional_gate"]
+        self.assertIsInstance(gate, dict)
+        self.assertEqual(
+            gate["observed_post_cost_expectancy_bps_source"],
+            "observed_post_cost_expectancy_bps",
+        )
+        for key in (
+            "promotion_allowed",
+            "final_promotion_allowed",
+            "final_authority_ok",
+            "runtime_ledger_authority",
+        ):
+            self.assertIsNot(result.get(key), True)
+            self.assertIsNot(gate.get(key), True)
+
+    def test_profit_target_oracle_uses_target_implied_floor_for_5_bps_edge(
+        self,
+    ) -> None:
+        scorecard = {
+            **_passing_scorecard(),
+            "avg_filled_notional_per_day": "1000000",
+            "observed_post_cost_expectancy_bps": "5",
+        }
+
+        result = evaluate_profit_target_oracle(
+            scorecard,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertTrue(result["passed"])
+        self.assertEqual(
+            Decimal(str(result["target_implied_min_avg_filled_notional_per_day"])),
+            Decimal("1000000"),
+        )
+        self.assertEqual(
+            Decimal(str(result["effective_min_avg_filled_notional_per_day"])),
+            Decimal("1000000"),
+        )
+
+    def test_profit_target_oracle_rejects_missing_or_non_positive_expectancy(
+        self,
+    ) -> None:
+        for expectancy_bps in ("0", "-1"):
+            with self.subTest(expectancy_bps=expectancy_bps):
+                scorecard = {
+                    **_passing_scorecard(),
+                    "observed_post_cost_expectancy_bps": expectancy_bps,
+                }
+
+                result = evaluate_profit_target_oracle(
+                    scorecard,
+                    target_net_pnl_per_day=Decimal("500"),
+                )
+
+                self.assertFalse(result["passed"])
+                self.assertIn(
+                    "target_implied_post_cost_expectancy_bps_failed",
+                    result["blockers"],
+                )
+                gate = result["target_implied_notional_gate"]
+                self.assertIsInstance(gate, dict)
+                self.assertIn(
+                    "target_implied_post_cost_expectancy_bps_missing_or_non_positive",
+                    gate["blockers"],
+                )
+
+        scorecard_without_notional = {
+            key: value
+            for key, value in _passing_scorecard().items()
+            if key != "avg_filled_notional_per_day"
+        }
+        result = evaluate_profit_target_oracle(
+            scorecard_without_notional,
+            target_net_pnl_per_day=Decimal("500"),
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertIn(
+            "target_implied_avg_filled_notional_per_day_failed",
+            result["blockers"],
+        )
+        self.assertIn(
+            "target_implied_post_cost_expectancy_bps_failed",
+            result["blockers"],
+        )
+
+    def test_profit_target_oracle_keeps_strong_fixed_floor_as_lower_bound(
+        self,
+    ) -> None:
+        scorecard = {
+            **_passing_scorecard(),
+            "avg_filled_notional_per_day": "700000",
+            "observed_post_cost_expectancy_bps": "8",
+        }
+        result = evaluate_profit_target_oracle(
+            scorecard,
+            target_net_pnl_per_day=Decimal("500"),
+            policy=ProfitTargetOraclePolicy(
+                min_avg_filled_notional_per_day=Decimal("750000")
+            ),
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertIn("avg_filled_notional_per_day_failed", result["blockers"])
+        self.assertEqual(
+            Decimal(str(result["target_implied_min_avg_filled_notional_per_day"])),
+            Decimal("625000"),
+        )
+        self.assertEqual(
+            Decimal(str(result["effective_min_avg_filled_notional_per_day"])),
+            Decimal("750000"),
+        )
+        scale_check = _check_by_metric(result, "avg_filled_notional_per_day")
+        self.assertEqual(Decimal(str(scale_check["threshold"])), Decimal("750000"))
 
     def test_profit_target_oracle_rejects_missing_fill_survival(self) -> None:
         scorecard = {
