@@ -120,12 +120,15 @@ class TestFastReplayPreview(TestCase):
                 end_date=date(2026, 2, 23),
                 source_query_digest=source_query_digest,
                 source_table_versions={"signals": "v1"},
+                feature_schema_hash="feature-fast",
+                cost_model_hash="cost-fast",
+                strategy_family="hpairs-fast",
             )
 
         preview = build_fast_replay_preview(
             specs=(
                 self._spec("spec-good", symbols=["AAA"]),
-                self._spec("spec-stress", symbols=["BBB"]),
+                self._spec("spec-stress", symbols=["BBB"], selection_mode="reversal"),
             ),
             rows=rows,
             replay_tape_manifest=manifest,
@@ -216,13 +219,10 @@ class TestFastReplayPreview(TestCase):
         self.assertIn("feature_schema_hash", payload["replay_tape"])
         self.assertIn("cost_model_hash", payload["replay_tape"])
         self.assertIn("strategy_family", payload["replay_tape"])
-        self.assertEqual(
-            payload["replay_tape"]["cache_identity"]["status"], "incomplete"
-        )
-        self.assertIn(
-            "replay_tape_cache_identity_missing_feature_schema_hash",
-            payload["replay_tape"]["cache_identity"]["blockers"],
-        )
+        self.assertEqual(payload["replay_tape"]["cache_identity"]["status"], "complete")
+        self.assertEqual(payload["replay_tape"]["feature_schema_hash"], "feature-fast")
+        self.assertEqual(payload["replay_tape"]["cost_model_hash"], "cost-fast")
+        self.assertEqual(payload["replay_tape"]["strategy_family"], "hpairs-fast")
         self.assertFalse(payload["proof_authority"])
         self.assertEqual(
             row_payload["candidate_lineage"]["hypothesis_id"], "hyp-spec-good"
@@ -324,6 +324,9 @@ class TestFastReplayPreview(TestCase):
                 source_query_digest=build_source_query_digest(
                     {"window": "hpairs-features"}
                 ),
+                feature_schema_hash="feature-hpairs",
+                cost_model_hash="cost-hpairs",
+                strategy_family="hpairs-feature-ranking",
             )
             tape = load_replay_tape(tape_path)
 
@@ -423,6 +426,9 @@ class TestFastReplayPreview(TestCase):
                 start_date=date(2026, 2, 23),
                 end_date=date(2026, 2, 23),
                 source_query_digest=build_source_query_digest({"window": "notional"}),
+                feature_schema_hash="feature-notional",
+                cost_model_hash="cost-notional",
+                strategy_family="hpairs-notional",
             )
 
         preview = build_fast_replay_preview(
@@ -475,6 +481,10 @@ class TestFastReplayPreview(TestCase):
             "target_implied_notional_blocked_non_positive_expectancy",
             negative["lineage_blockers"],
         )
+        self.assertIn(
+            "positive_post_cost_expectancy_missing",
+            negative["lineage_blockers"],
+        )
 
     def test_fast_preview_ranking_uses_combined_preview_score_before_raw_prefilter(
         self,
@@ -497,7 +507,7 @@ class TestFastReplayPreview(TestCase):
                 matched_symbol_count=1,
                 requested_symbol_count=1,
                 trading_day_count=1,
-                signed_return_bps=Decimal("0"),
+                signed_return_bps=Decimal("1"),
                 avg_abs_return_bps=Decimal("0"),
                 median_spread_bps=Decimal("0"),
                 activity_score=Decimal("0"),
@@ -565,6 +575,9 @@ class TestFastReplayPreview(TestCase):
                 start_date=date(2026, 2, 23),
                 end_date=date(2026, 2, 23),
                 source_query_digest=build_source_query_digest({"window": "cap"}),
+                feature_schema_hash="feature-cap",
+                cost_model_hash="cost-cap",
+                strategy_family="hpairs-cap",
             )
         specs = tuple(
             self._spec(
@@ -622,7 +635,7 @@ class TestFastReplayPreview(TestCase):
                 matched_symbol_count=1,
                 requested_symbol_count=1,
                 trading_day_count=1,
-                signed_return_bps=Decimal("1"),
+                signed_return_bps=Decimal("3"),
                 avg_abs_return_bps=Decimal("1"),
                 median_spread_bps=Decimal("1"),
                 activity_score=Decimal("1"),
@@ -790,6 +803,9 @@ class TestFastReplayPreview(TestCase):
                 source_query_digest=build_source_query_digest(
                     {"window": "lineage-blocked"}
                 ),
+                feature_schema_hash="feature-lineage-blocked",
+                cost_model_hash="cost-lineage-blocked",
+                strategy_family="hpairs-lineage-blocked",
             )
 
         preview = build_fast_replay_preview(
@@ -835,6 +851,62 @@ class TestFastReplayPreview(TestCase):
         self.assertFalse(payload["promotion_authority"])
         self.assertFalse(payload["promotion_allowed"])
         self.assertFalse(payload["final_promotion_allowed"])
+        self.assertFalse(payload["final_authority_ok"])
+
+    def test_missing_replay_tape_identity_reports_lineage_blockers(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            rows = [
+                self._signal(
+                    symbol="AAA", offset=index, price=str(100 + index), ofi="0.50"
+                )
+                for index in range(1, 4)
+            ]
+            manifest = materialize_signal_tape(
+                rows=rows,
+                tape_path=Path(tmpdir) / "tape.jsonl",
+                dataset_snapshot_ref="snapshot-missing-identity",
+                symbols=("AAA",),
+                start_date=date(2026, 2, 23),
+                end_date=date(2026, 2, 23),
+                source_query_digest=build_source_query_digest(
+                    {"window": "missing-identity"}
+                ),
+            )
+
+        preview = build_fast_replay_preview(
+            specs=(self._spec("spec-missing-identity", symbols=["AAA"]),),
+            rows=rows,
+            replay_tape_manifest=manifest,
+            top_k=1,
+            min_rows_per_candidate=2,
+            exploitation_count=1,
+            exploration_count=0,
+            exact_replay_candidate_cap=1,
+        )
+
+        self.assertEqual(
+            preview.selected_candidate_spec_ids, ("spec-missing-identity",)
+        )
+        payload = preview.rows[0].to_payload()
+        self.assertEqual(
+            payload["selection_reason"], "fast_replay_frontier_exploitation_selected"
+        )
+        self.assertIn(
+            "replay_tape_cache_identity_missing_feature_schema_hash",
+            payload["lineage_blockers"],
+        )
+        self.assertIn(
+            "replay_tape_cache_identity_missing_cost_model_hash",
+            payload["lineage_blockers"],
+        )
+        self.assertIn(
+            "replay_tape_cache_identity_missing_strategy_family",
+            payload["lineage_blockers"],
+        )
+        self.assertTrue(payload["frontier_selection"]["exact_replay_enqueue_allowed"])
+        self.assertFalse(payload["promotion_allowed"])
         self.assertFalse(payload["final_authority_ok"])
 
     def test_frontier_selection_dedupes_equivalent_exact_replay_targets(

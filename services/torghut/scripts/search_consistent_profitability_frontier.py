@@ -433,8 +433,9 @@ def _staged_search_budget_payload(
             "exploitation_slots": exploitation_slots,
             "exploration_slots": exploration_slots,
             "ranking_basis": (
-                "top economic train-screen survivors first, then deterministic "
-                "diversity/exploration picks within the same capped shortlist"
+                "top four economic train-screen survivors by post-cost consistency "
+                "score first, then up to two deterministic exploration picks with "
+                "distinct parameter/symbol/regime keys when available"
             ),
         },
         "train_screen_candidates_started": max(0, int(train_screen_candidates_started)),
@@ -1373,16 +1374,7 @@ def _candidate_evaluation_key_payload(
         ),
         "dataset_snapshot_id": str(replay_lineage.get("dataset_snapshot_id") or ""),
         "replay_lineage_hash": str(replay_lineage.get("lineage_hash") or ""),
-        "replay_tape": {
-            "content_sha256": str(validation.get("content_sha256") or ""),
-            "dataset_snapshot_ref": str(validation.get("dataset_snapshot_ref") or ""),
-            "source_query_digest": str(validation.get("source_query_digest") or ""),
-            "selected_symbols": list(
-                cast(Sequence[Any], validation.get("selected_symbols") or ())
-            ),
-            "selected_row_count": int(validation.get("selected_row_count") or 0),
-            "validation_status": str(validation.get("status") or ""),
-        },
+        "replay_tape": _replay_tape_selection_metadata(validation),
         "replay_window_spec": {
             "train_start": window.train_start.isoformat(),
             "train_end": window.train_end.isoformat(),
@@ -1422,6 +1414,37 @@ def _candidate_evaluation_key_payload(
     }
     payload["candidate_evaluation_key"] = _stable_payload_hash(payload)
     return payload
+
+
+def _replay_tape_selection_metadata(
+    validation: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    payload = dict(validation or {})
+    return {
+        "content_sha256": str(payload.get("content_sha256") or ""),
+        "dataset_snapshot_ref": str(payload.get("dataset_snapshot_ref") or ""),
+        "source_query_digest": str(payload.get("source_query_digest") or ""),
+        "source_table_versions": dict(
+            cast(Mapping[str, Any], payload.get("source_table_versions") or {})
+        ),
+        "feature_schema_hash": str(payload.get("feature_schema_hash") or ""),
+        "cost_model_hash": str(payload.get("cost_model_hash") or ""),
+        "strategy_family": str(payload.get("strategy_family") or ""),
+        "feature_versions": dict(
+            cast(Mapping[str, Any], payload.get("feature_versions") or {})
+        ),
+        "replay_cache_key": str(payload.get("replay_cache_key") or ""),
+        "cache_identity": dict(
+            cast(Mapping[str, Any], payload.get("cache_identity") or {})
+        ),
+        "selected_symbols": list(
+            cast(Sequence[Any], payload.get("selected_symbols") or ())
+        ),
+        "selected_row_count": int(payload.get("selected_row_count") or 0),
+        "validation_status": str(payload.get("status") or ""),
+        "manifest_start_date": str(payload.get("manifest_start_date") or ""),
+        "manifest_end_date": str(payload.get("manifest_end_date") or ""),
+    }
 
 
 def _resolve_prefetch_symbols(
@@ -2258,26 +2281,10 @@ def _exact_replay_ledger_artifact_update(
         )
     if replay_tape_validation:
         artifact_payload["replay_tape"] = {
+            **_replay_tape_selection_metadata(replay_tape_validation),
             "status": str(replay_tape_validation.get("status") or ""),
             "tape_path": str(replay_tape_validation.get("tape_path") or ""),
             "manifest_path": str(replay_tape_validation.get("manifest_path") or ""),
-            "selected_row_count": int(
-                replay_tape_validation.get("selected_row_count") or 0
-            ),
-            "selected_symbols": list(
-                cast(
-                    Sequence[Any], replay_tape_validation.get("selected_symbols") or ()
-                )
-            ),
-            "source_query_digest": str(
-                replay_tape_validation.get("source_query_digest") or ""
-            ),
-            "source_table_versions": dict(
-                cast(
-                    Mapping[str, Any],
-                    replay_tape_validation.get("source_table_versions") or {},
-                )
-            ),
             "artifact_refs": dict(
                 cast(
                     Mapping[str, Any], replay_tape_validation.get("artifact_refs") or {}
@@ -2312,6 +2319,10 @@ def _exact_replay_ledger_artifact_update(
         ),
         "runtime_ledger_post_cost_expectancy_bps": str(
             runtime_bucket.post_cost_expectancy_bps
+        ),
+        "runtime_ledger_cost_basis_counts": dict(runtime_bucket.cost_basis_counts),
+        "runtime_ledger_cost_basis_count": sum(
+            runtime_bucket.cost_basis_counts.values()
         ),
         "runtime_ledger_pnl_basis": POST_COST_PNL_BASIS,
         "runtime_ledger_pnl_source": "exact_replay_runtime_ledger",
@@ -3409,6 +3420,60 @@ def _exploration_distance(
     return min(distances, default=0)
 
 
+def _exploration_diversity_key(item: _WorklistItem) -> tuple[str, str, str]:
+    symbols = item.strategy_overrides.get("universe_symbols")
+    if isinstance(symbols, Sequence) and not isinstance(
+        symbols, (str, bytes, bytearray)
+    ):
+        symbol_key = ",".join(
+            sorted(str(symbol).upper() for symbol in symbols if str(symbol).strip())
+        )
+    else:
+        symbol_key = str(symbols or "")
+    params_payload = {
+        key: value
+        for key, value in item.params_candidate.items()
+        if key
+        in {
+            "entry_threshold_bps",
+            "exit_threshold_bps",
+            "long_stop_loss_bps",
+            "max_entries_per_session",
+            "min_cross_section_continuation_rank",
+            "min_cross_section_reversal_rank",
+            "selection_mode",
+            "short_stop_loss_bps",
+            "signal_motif",
+            "top_n",
+        }
+    }
+    if not params_payload:
+        params_payload = dict(item.params_candidate)
+    params_key = _stable_payload_hash(params_payload)
+    regime_payload = {
+        key: item.strategy_overrides.get(key)
+        for key in (
+            "normalization_regime",
+            "market_regime",
+            "regime",
+            "runtime_family",
+            "strategy_family",
+        )
+        if key in item.strategy_overrides
+    }
+    nested_params = item.strategy_overrides.get("params")
+    if isinstance(nested_params, Mapping):
+        regime_payload.update(
+            {
+                key: nested_params.get(key)
+                for key in ("selection_mode", "signal_motif", "rank_feature")
+                if key in nested_params
+            }
+        )
+    regime_key = _stable_payload_hash(regime_payload)
+    return (params_key, symbol_key, regime_key)
+
+
 def _select_exact_replay_train_survivors(
     ranked_survivors: Sequence[_WorklistItem],
     *,
@@ -3432,11 +3497,23 @@ def _select_exact_replay_train_survivors(
         for survivor in ranked_survivors[exploitation_slots:]
         if _exploration_payload_signature(survivor) not in reasons
     ]
+    explored_diversity_keys: set[tuple[str, str, str]] = {
+        _exploration_diversity_key(item) for item in selected
+    }
+    deferred_exploration: list[_WorklistItem] = []
     for _ in range(exploration_slots):
         if not remaining:
             break
+        distinct_remaining = [
+            (index, survivor)
+            for index, survivor in enumerate(remaining)
+            if _exploration_diversity_key(survivor) not in explored_diversity_keys
+        ]
+        if not distinct_remaining:
+            deferred_exploration.extend(remaining)
+            break
         best_index, best_survivor = max(
-            enumerate(remaining),
+            distinct_remaining,
             key=lambda indexed: (
                 _exploration_distance(indexed[1], selected),
                 -indexed[0],
@@ -3446,7 +3523,18 @@ def _select_exact_replay_train_survivors(
         reasons[_exploration_payload_signature(best_survivor)] = (
             "exploration_diversity_pick"
         )
+        explored_diversity_keys.add(_exploration_diversity_key(best_survivor))
         del remaining[best_index]
+    for survivor in deferred_exploration + remaining:
+        exploration_selected_count = sum(
+            1 for reason in reasons.values() if reason == "exploration_diversity_pick"
+        )
+        if exploration_selected_count >= exploration_slots:
+            break
+        if _exploration_payload_signature(survivor) in reasons:
+            continue
+        selected.append(survivor)
+        reasons[_exploration_payload_signature(survivor)] = "exploration_diversity_pick"
     return reasons
 
 
@@ -4624,6 +4712,75 @@ def _candidate_source_lineage_ok(item: Mapping[str, Any]) -> bool:
     )
 
 
+def _candidate_replay_tape_metadata_blockers(item: Mapping[str, Any]) -> list[str]:
+    candidate_key = _mapping(item.get("candidate_evaluation_key_payload"))
+    replay_tape = _mapping(candidate_key.get("replay_tape"))
+    if not replay_tape:
+        replay_tape = _mapping(item.get("replay_tape"))
+    if not replay_tape:
+        return []
+
+    required_fields = (
+        "content_sha256",
+        "dataset_snapshot_ref",
+        "source_query_digest",
+        "feature_schema_hash",
+        "cost_model_hash",
+        "strategy_family",
+        "replay_cache_key",
+    )
+    blockers = [
+        f"missing_replay_tape_{field}"
+        for field in required_fields
+        if not str(replay_tape.get(field) or "").strip()
+    ]
+    if int(replay_tape.get("selected_row_count") or 0) <= 0:
+        blockers.append("missing_replay_tape_selected_rows")
+    cache_identity = _mapping(replay_tape.get("cache_identity"))
+    blockers.extend(
+        str(blocker)
+        for blocker in cast(Sequence[Any], cache_identity.get("blockers") or ())
+        if str(blocker).strip()
+    )
+    return list(dict.fromkeys(blockers))
+
+
+def _candidate_post_cost_proof_blockers(item: Mapping[str, Any]) -> list[str]:
+    blockers: list[str] = []
+    pnl_basis = str(item.get("runtime_ledger_pnl_basis") or "").strip()
+    if pnl_basis != POST_COST_PNL_BASIS:
+        blockers.append("missing_post_cost_pnl_basis")
+
+    cost_basis_counts = item.get("runtime_ledger_cost_basis_counts")
+    cost_basis_count = _candidate_runtime_ledger_count(
+        item,
+        "runtime_ledger_cost_basis_count",
+        "exact_replay_ledger_cost_basis_count",
+    )
+    if isinstance(cost_basis_counts, Mapping):
+        parsed_cost_basis_count = 0
+        for value in cost_basis_counts.values():
+            try:
+                parsed_cost_basis_count += int(value or 0)
+            except (TypeError, ValueError):
+                continue
+        cost_basis_count = max(
+            cost_basis_count,
+            parsed_cost_basis_count,
+        )
+    if cost_basis_count <= 0 and not str(item.get("cost_basis") or "").strip():
+        blockers.append("missing_cost_basis")
+
+    expectancy_value = item.get("runtime_ledger_post_cost_expectancy_bps")
+    if expectancy_value in (None, ""):
+        blockers.append("missing_post_cost_expectancy_bps")
+    else:
+        expectancy = _safe_decimal(expectancy_value)
+        if expectancy <= Decimal("0"):
+            blockers.append("non_positive_post_cost_expectancy_bps")
+    return blockers
+
+
 def _candidate_exact_replay_parity_ok(
     item: Mapping[str, Any],
     *,
@@ -4783,6 +4940,25 @@ def _candidate_handoff_diagnostics(
             }
         )
 
+    if artifact_refs and runtime_ledger_row_count > 0 and runtime_ledger_fill_count > 0:
+        replay_tape_blockers = _candidate_replay_tape_metadata_blockers(item)
+        if replay_tape_blockers:
+            diagnostics.append(
+                {
+                    "category": "missing_replay_tape_metadata",
+                    "blockers": replay_tape_blockers,
+                }
+            )
+
+        post_cost_blockers = _candidate_post_cost_proof_blockers(item)
+        if post_cost_blockers:
+            diagnostics.append(
+                {
+                    "category": "missing_post_cost_basis",
+                    "blockers": post_cost_blockers,
+                }
+            )
+
     return diagnostics
 
 
@@ -4909,6 +5085,13 @@ def _build_paper_probation_shortlist(
             blockers.append("missing_source_lineage")
         if not exact_replay_parity_ok:
             blockers.append("failed_exact_replay_parity")
+        if (
+            artifact_refs
+            and runtime_ledger_row_count > 0
+            and runtime_ledger_fill_count > 0
+        ):
+            blockers.extend(_candidate_replay_tape_metadata_blockers(item))
+            blockers.extend(_candidate_post_cost_proof_blockers(item))
         open_position_count = _candidate_runtime_ledger_count(
             item,
             "runtime_ledger_open_position_count",

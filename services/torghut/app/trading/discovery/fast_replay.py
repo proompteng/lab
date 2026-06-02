@@ -111,6 +111,9 @@ class FastReplayPreviewRow:
     candidate_lineage: Mapping[str, Any] = field(
         default_factory=lambda: cast(dict[str, Any], {})
     )
+    replay_tape_cache_identity: Mapping[str, Any] = field(
+        default_factory=lambda: cast(dict[str, Any], {})
+    )
 
     def to_payload(self) -> dict[str, Any]:
         observed_post_cost_expectancy_bps = _observed_post_cost_expectancy_bps(self)
@@ -178,6 +181,7 @@ class FastReplayPreviewRow:
             "duplicate_of_candidate_spec_id": self.duplicate_of_candidate_spec_id,
             "duplicate_candidate_spec_ids": list(self.duplicate_candidate_spec_ids),
             "candidate_lineage": dict(self.candidate_lineage),
+            "replay_tape_cache_identity": dict(self.replay_tape_cache_identity),
             "frontier_selection": {
                 "schema_version": "torghut.fast-replay-frontier-selection.v1",
                 "selected": self.selected,
@@ -322,7 +326,10 @@ class FastReplayPreviewResult:
                 "exploitation_slots": FAST_REPLAY_DEFAULT_EXPLOITATION_COUNT,
                 "exploration_slots": FAST_REPLAY_DEFAULT_EXPLORATION_COUNT,
                 "broad_cluster_fanout_allowed": False,
-                "lineage_filter": "block_exact_replay_selection_when_local_cost_or_capacity_inputs_are_missing",
+                "lineage_filter": (
+                    "block_exact_replay_selection_when_local_cost_capacity_or_"
+                    "replay_tape_identity_inputs_are_missing"
+                ),
                 "lineage_filter_blockers": sorted(
                     FAST_REPLAY_EXACT_SELECTION_SOURCE_INPUT_BLOCKERS
                     | FAST_REPLAY_EXACT_SELECTION_IMPACT_CAPACITY_BLOCKERS
@@ -920,6 +927,7 @@ def _score_candidate_spec(
             candidate_frontier_hash=candidate_frontier_hash,
             exact_replay_frontier_key=exact_replay_frontier_key,
             candidate_lineage=_candidate_lineage(spec),
+            replay_tape_cache_identity=replay_tape_manifest.cache_identity_diagnostics(),
         )
 
     return_vectors = [stat.returns_bps for stat in matched if stat.returns_bps.size]
@@ -1055,6 +1063,7 @@ def _score_candidate_spec(
         candidate_frontier_hash=candidate_frontier_hash,
         exact_replay_frontier_key=exact_replay_frontier_key,
         candidate_lineage=_candidate_lineage(spec),
+        replay_tape_cache_identity=replay_tape_manifest.cache_identity_diagnostics(),
     )
 
 
@@ -1264,6 +1273,7 @@ def _row_with_rank_and_selection(
         duplicate_of_candidate_spec_id=row.duplicate_of_candidate_spec_id,
         duplicate_candidate_spec_ids=row.duplicate_candidate_spec_ids,
         candidate_lineage=dict(row.candidate_lineage),
+        replay_tape_cache_identity=dict(row.replay_tape_cache_identity),
     )
 
 
@@ -1314,6 +1324,7 @@ def _row_with_frontier_dedupe(
         duplicate_of_candidate_spec_id=duplicate_of_candidate_spec_id,
         duplicate_candidate_spec_ids=duplicate_candidate_spec_ids,
         candidate_lineage=dict(row.candidate_lineage),
+        replay_tape_cache_identity=dict(row.replay_tape_cache_identity),
     )
 
 
@@ -1990,6 +2001,13 @@ def _lineage_blockers_for_row(row: FastReplayPreviewRow) -> tuple[str, ...]:
         "live_paper_runtime_ledger_required",
     ]
     blockers.extend(_exact_replay_selection_blockers_for_row(row))
+    cache_identity = _mapping(row.replay_tape_cache_identity)
+    if cache_identity:
+        blockers.extend(
+            str(blocker)
+            for blocker in _string_tuple(cache_identity.get("blockers"))
+            if str(blocker).strip()
+        )
     if _observed_post_cost_expectancy_bps(row) <= 0:
         blockers.append("positive_post_cost_expectancy_missing")
         blockers.append("target_implied_notional_blocked_non_positive_expectancy")
