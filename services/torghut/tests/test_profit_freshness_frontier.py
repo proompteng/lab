@@ -158,9 +158,7 @@ def test_profit_freshness_frontier_ranks_stale_proof_as_zero_notional_repairs() 
 
     assert frontier["schema_version"] == PROFIT_FRESHNESS_FRONTIER_SCHEMA_VERSION
     assert frontier["frontier_state"] == "held"
-    assert (
-        frontier["next_zero_notional_action"] == "refresh_stale_market_context_domains"
-    )
+    assert frontier["next_zero_notional_action"] == "rebuild_required_feature_rows"
     assert frontier["capital_posture"]["capital_state"] == "zero_notional"
     assert frontier["capital_posture"]["paper_notional_limit"] == "0"
     assert frontier["capital_posture"]["live_notional_limit"] == "0"
@@ -170,9 +168,14 @@ def test_profit_freshness_frontier_ranks_stale_proof_as_zero_notional_repairs() 
 
     selected = cast(list[Mapping[str, Any]], frontier["selected_zero_notional_repairs"])
     assert len(selected) == 1
+    assert selected[0]["blocked_dimension"] == "feature_coverage"
     assert selected[0]["state"] == "selected_zero_notional_repair"
     assert selected[0]["paper_notional_limit"] == "0"
     assert selected[0]["live_notional_limit"] == "0"
+    assert "market_context" not in {
+        repair["blocked_dimension"]
+        for repair in cast(list[Mapping[str, Any]], frontier["repair_lots"])
+    }
 
 
 def test_daily_net_pnl_unlock_outranks_bps_proxy_when_profit_packets_are_available() -> (
@@ -183,7 +186,7 @@ def test_daily_net_pnl_unlock_outranks_bps_proxy_when_profit_packets_are_availab
             "frontier_id": "quality-frontier:pnl-unlock",
             "packets": [
                 {
-                    "packet_id": "qapf:market-context-small-unlock",
+                    "packet_id": "qapf:retired-market-context-small-unlock",
                     "repair_class": "market_context",
                     "hypothesis_ref": "H-NVDA",
                     "expected_daily_net_pnl_unlock": "1.25",
@@ -205,7 +208,7 @@ def test_daily_net_pnl_unlock_outranks_bps_proxy_when_profit_packets_are_availab
     assert selected[0]["repair_priority_basis"] == "expected_daily_net_pnl_unlock"
     assert selected[0]["profit_unlock_refs"] == ["qapf:empirical-large-unlock"]
     assert frontier["next_zero_notional_action"] == "renew_empirical_proof_jobs"
-    assert frontier["summary"]["ranked_daily_net_pnl_repair_count"] == 2
+    assert frontier["summary"]["ranked_daily_net_pnl_repair_count"] == 1
     assert frontier["summary"]["selected_expected_daily_net_pnl_unlock"] == "250.5"
     assert frontier["capital_posture"]["capital_state"] == "zero_notional"
 
@@ -436,6 +439,10 @@ def test_stale_market_context_and_empirical_jobs_are_explicit_dimensions() -> No
     assert "market_context_technicals_stale" in market["reason_codes"]
     assert "market_context:regime" in market["evidence_refs"]
     assert "market_context:news" not in market["evidence_refs"]
+    assert "market_context" not in {
+        repair["blocked_dimension"]
+        for repair in cast(list[Mapping[str, Any]], frontier["repair_lots"])
+    }
     assert empirical["state"] == "stale"
     assert "empirical_job_stale:benchmark_parity" in empirical["reason_codes"]
     assert "dataset-nvda" in empirical["evidence_refs"]

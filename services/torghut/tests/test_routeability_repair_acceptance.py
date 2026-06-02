@@ -156,8 +156,8 @@ def test_routeability_acceptance_ledger_projects_all_doc185_lots_at_zero_notiona
     assert (
         ledger["profit_repair_settlement_ref"] == "profit-repair-settlement-ledger:test"
     )
-    assert ledger["summary"]["lot_count"] == 8
-    assert ledger["summary"]["zero_notional_lot_count"] == 8
+    assert ledger["summary"]["lot_count"] == 7
+    assert ledger["summary"]["zero_notional_lot_count"] == 7
 
     lots = cast(list[Mapping[str, Any]], ledger["lots"])
     assert {lot["paper_notional_limit"] for lot in lots} == {"0"}
@@ -166,7 +166,6 @@ def test_routeability_acceptance_ledger_projects_all_doc185_lots_at_zero_notiona
     assert ledger["promotion_authority"] is False
     assert {lot["lot_type"] for lot in lots} == {
         "quant_scoped_stage_repair",
-        "market_context_domain_repair",
         "alpha_readiness_repair",
         "route_universe_tca_repair",
         "forecast_and_promotion_repair",
@@ -209,18 +208,15 @@ def test_optional_unconfigured_quant_health_does_not_create_routeability_lot() -
     )
 
 
-def test_stale_market_context_domains_keep_acceptance_unsettled() -> None:
+def test_stale_market_context_domains_do_not_create_repair_lot() -> None:
     ledger = _ledger()
-    market_lot = _lot(ledger, "market_context_domain_repair")
 
-    assert market_lot["current_state"] == "stale"
-    assert (
-        market_lot["acceptance_condition"]
-        == "technicals, regime domains are fresh or not required"
-    )
-    assert "market_context_technicals_stale" in market_lot["blocking_reason_codes"]
-    assert "market_context_news_stale" not in market_lot["blocking_reason_codes"]
-    assert "market_context_regime_stale" in market_lot["blocking_reason_codes"]
+    assert "market_context_domain_repair" not in {
+        lot["lot_type"] for lot in cast(list[Mapping[str, Any]], ledger["lots"])
+    }
+    assert "refresh_stale_market_context_domains" not in ledger[
+        "next_safe_repair_actions"
+    ]
 
 
 def test_repair_only_route_tca_and_submit_gate_keep_candidate_count_zero() -> None:
@@ -393,7 +389,7 @@ def test_all_receipts_must_settle_before_accepting_routeable_candidates() -> Non
 
     assert ledger["aggregate_state"] == "accepted"
     assert ledger["accepted_routeable_candidate_count"] == 1
-    assert ledger["summary"]["accepted_lot_count"] == 8
+    assert ledger["summary"]["accepted_lot_count"] == 7
 
 
 def test_blocked_autoresearch_portfolios_keep_promotion_repair_unsettled() -> None:

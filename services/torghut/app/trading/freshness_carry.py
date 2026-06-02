@@ -25,7 +25,6 @@ _MIN_EXPECTED_SHORTFALL_COVERAGE = Decimal("0.50")
 
 _VALUE_GATE_BY_DIMENSION = {
     "ta_signals": "zero_notional_or_stale_evidence_rate",
-    "market_context": "zero_notional_or_stale_evidence_rate",
     "tca": "fill_tca_or_slippage_quality",
     "empirical": "post_cost_daily_net_pnl",
     "quant_evidence": "routeable_candidate_count",
@@ -34,7 +33,6 @@ _VALUE_GATE_BY_DIMENSION = {
 
 _OUTPUT_RECEIPT_BY_DIMENSION = {
     "ta_signals": "torghut.ta-freshness-repair-receipt.v1",
-    "market_context": "torghut.market-context-freshness-receipt.v1",
     "tca": "torghut.execution-tca-refresh-receipt.v1",
     "empirical": "torghut.empirical-proof-refresh-receipt.v1",
     "quant_evidence": "torghut.quant-evidence-refresh-receipt.v1",
@@ -164,7 +162,7 @@ def _dimension(
         "lag_seconds": lag_seconds,
         "low_memory_fallback_count": low_memory_fallback_count,
         "stale_reason_codes": reasons,
-        "required_repair_receipt": _OUTPUT_RECEIPT_BY_DIMENSION[dimension_id],
+        "required_repair_receipt": _OUTPUT_RECEIPT_BY_DIMENSION.get(dimension_id),
         "source_ref": _text(source_ref) or None,
         "max_notional": _ZERO_NOTIONAL,
     }
@@ -389,7 +387,10 @@ def _repair_slos(
         state = _text(dimension.get("state"))
         if not dimension_id or state == "current":
             continue
-        output_receipt = _OUTPUT_RECEIPT_BY_DIMENSION[dimension_id]
+        output_receipt = _OUTPUT_RECEIPT_BY_DIMENSION.get(dimension_id)
+        target_value_gate = _VALUE_GATE_BY_DIMENSION.get(dimension_id)
+        if output_receipt is None or target_value_gate is None:
+            continue
         dispatchable = source_serving_current or dimension_id == "source_serving"
         slos.append(
             {
@@ -403,7 +404,7 @@ def _repair_slos(
                     },
                 ),
                 "target_dimension_id": dimension_id,
-                "target_value_gate": _VALUE_GATE_BY_DIMENSION[dimension_id],
+                "target_value_gate": target_value_gate,
                 "expected_delta": "0.25",
                 "max_runtime_seconds": 900,
                 "max_retries": 1,
@@ -449,10 +450,12 @@ def _capital_posture(
         _text(dimension.get("dimension_id"))
         for dimension in dimensions
         if _text(dimension.get("state")) != "current"
+        and _text(dimension.get("dimension_id")) in _VALUE_GATE_BY_DIMENSION
     ]
     reason_codes = [
         reason
         for dimension in dimensions
+        if _text(dimension.get("dimension_id")) in _VALUE_GATE_BY_DIMENSION
         for reason in _strings(dimension.get("stale_reason_codes"))
     ]
     route_reason = _route_warrant_reason(route_warrant_exchange)
@@ -503,9 +506,20 @@ def _value_gate_impacts(
         state = _text(dimension.get("state"))
         if not dimension_id:
             continue
+        value_gate = _VALUE_GATE_BY_DIMENSION.get(dimension_id)
+        if value_gate is None:
+            impacts.append(
+                {
+                    "value_gate": "diagnostic",
+                    "dimension_id": dimension_id,
+                    "state": state,
+                    "capital_effect": "no_capital_change",
+                }
+            )
+            continue
         impacts.append(
             {
-                "value_gate": _VALUE_GATE_BY_DIMENSION[dimension_id],
+                "value_gate": value_gate,
                 "dimension_id": dimension_id,
                 "state": state,
                 "capital_effect": "max_notional_held_at_zero"

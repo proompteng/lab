@@ -24,7 +24,6 @@ _BAD_STATES = {"blocked", "degraded", "fail", "missing", "repair", "stale", "unk
 _DIMENSION_EXPECTED_BPS: Mapping[str, Decimal] = {
     "empirical_proof": Decimal("24"),
     "tca_fill_quality": Decimal("22"),
-    "market_context": Decimal("20"),
     "signal_ingestion": Decimal("18"),
     "route_readiness": Decimal("17"),
     "feature_coverage": Decimal("16"),
@@ -35,7 +34,6 @@ _DIMENSION_EXPECTED_BPS: Mapping[str, Decimal] = {
 _DIMENSION_REPAIR_COST: Mapping[str, str] = {
     "empirical_proof": "medium",
     "tca_fill_quality": "medium",
-    "market_context": "low",
     "signal_ingestion": "medium",
     "route_readiness": "medium",
     "feature_coverage": "medium",
@@ -50,7 +48,6 @@ _REPAIR_COST_PENALTY: Mapping[str, Decimal] = {
 }
 _DIMENSION_ACTION: Mapping[str, str] = {
     "signal_ingestion": "refresh_scoped_quant_pipeline_stage_receipts",
-    "market_context": "refresh_stale_market_context_domains",
     "empirical_proof": "renew_empirical_proof_jobs",
     "feature_coverage": "rebuild_required_feature_rows",
     "drift_checks": "rerun_drift_checks_for_blocked_hypotheses",
@@ -61,7 +58,6 @@ _DIMENSION_ACTION: Mapping[str, str] = {
 }
 _DIMENSION_REPAIR_CLASSES: Mapping[str, tuple[str, ...]] = {
     "signal_ingestion": ("quant", "scoped_quant", "signal", "signal_ingestion"),
-    "market_context": ("market_context",),
     "empirical_proof": ("empirical", "empirical_proof", "replay", "simulation"),
     "feature_coverage": ("feature", "feature_coverage"),
     "drift_checks": ("drift", "drift_checks"),
@@ -83,7 +79,6 @@ _DAILY_NET_PNL_UNLOCK_KEYS = (
 )
 _DIMENSION_SUCCESS: Mapping[str, str] = {
     "signal_ingestion": "scoped quant metrics and stage receipts are current",
-    "market_context": "required market-context domains are fresh for the active symbol set",
     "empirical_proof": "all required empirical jobs are fresh, truthful, and promotion eligible",
     "feature_coverage": "required feature rows are present for blocked hypotheses",
     "drift_checks": "drift checks are present for blocked hypotheses",
@@ -92,6 +87,7 @@ _DIMENSION_SUCCESS: Mapping[str, str] = {
     "schema_migration_state": "schema and migration lineage blockers are absent",
     "jangar_settlement": "Jangar reliability settlement allows paper canary consideration",
 }
+_REPAIRABLE_DIMENSIONS = frozenset(_DIMENSION_ACTION)
 _ROUTEABILITY_ONLY_TCA_REASON_CODES = {
     "execution_tca_route_universe_exclusions_applied",
     "execution_tca_symbol_missing",
@@ -1237,6 +1233,7 @@ def build_profit_freshness_frontier(
         )
         for dimension in dimensions
         if _text(dimension.get("state")) != "current"
+        and _text(dimension.get("dimension")) in _REPAIRABLE_DIMENSIONS
     ]
     active_lots.sort(
         key=lambda lot: (

@@ -44,7 +44,6 @@ _LOT_CLASS_MAP = {
 }
 _DIMENSION_LOT_CLASS = {
     "signal_ingestion": "signal_ingestion",
-    "market_context": "market_context",
     "empirical_proof": "empirical_proof",
     "feature_coverage": "feature_rows",
     "drift_checks": "feature_rows",
@@ -55,7 +54,6 @@ _DIMENSION_LOT_CLASS = {
 }
 _DIMENSION_VALUE_GATE = {
     "signal_ingestion": "zero_notional_or_stale_evidence_rate",
-    "market_context": "zero_notional_or_stale_evidence_rate",
     "empirical_proof": "post_cost_daily_net_pnl",
     "feature_coverage": "zero_notional_or_stale_evidence_rate",
     "drift_checks": "zero_notional_or_stale_evidence_rate",
@@ -67,7 +65,6 @@ _DIMENSION_VALUE_GATE = {
 _LOT_COST_CLASS = {
     "source_serving": "low",
     "signal_ingestion": "medium",
-    "market_context": "low",
     "empirical_proof": "medium",
     "feature_rows": "medium",
     "execution_tca": "medium",
@@ -300,9 +297,11 @@ def _frontier_lot_from_profit_repair(
     repair: Mapping[str, Any],
     source_serving_ledger: Mapping[str, Any],
     source_current: bool,
-) -> dict[str, object]:
+) -> dict[str, object] | None:
     dimension = _text(repair.get("blocked_dimension"), "unknown")
-    lot_class = _DIMENSION_LOT_CLASS.get(dimension, "feature_rows")
+    lot_class = _DIMENSION_LOT_CLASS.get(dimension)
+    if lot_class is None:
+        return None
     hold_reasons: list[str] = []
     dispatchable, hold_reasons = _lot_dispatchable(
         lot_class=lot_class,
@@ -677,17 +676,20 @@ def build_repair_receipt_frontier(
         for raw_lot in _sequence(repair_bid_settlement_ledger.get("compacted_lots"))
         if _mapping(raw_lot)
     ]
-    profit_lots = [
-        _frontier_lot_from_profit_repair(
-            repair=_mapping(raw_repair),
+    profit_lots: list[dict[str, object]] = []
+    for raw_repair in _sequence(
+        profit_freshness_frontier.get("selected_zero_notional_repairs")
+    ):
+        repair = _mapping(raw_repair)
+        if not repair:
+            continue
+        lot = _frontier_lot_from_profit_repair(
+            repair=repair,
             source_serving_ledger=source_ledger,
             source_current=source_current,
         )
-        for raw_repair in _sequence(
-            profit_freshness_frontier.get("selected_zero_notional_repairs")
-        )
-        if _mapping(raw_repair)
-    ]
+        if lot is not None:
+            profit_lots.append(lot)
     source_lot = _source_serving_lot(source_ledger)
     lots = _dedupe_lots(
         [*([source_lot] if source_lot else []), *compacted_lots, *profit_lots]

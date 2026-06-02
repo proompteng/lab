@@ -124,12 +124,10 @@ def _paper_route_pre_session_snapshot_as_of(generated_at: datetime) -> datetime:
 def _freshness_carry_ledger_for_test(dimension_id: str) -> dict[str, object]:
     output_receipt_by_dimension = {
         "empirical": "torghut.empirical-proof-refresh-receipt.v1",
-        "market_context": "torghut.market-context-freshness-receipt.v1",
         "tca": "torghut.execution-tca-refresh-receipt.v1",
     }
     value_gate_by_dimension = {
         "empirical": "post_cost_daily_net_pnl",
-        "market_context": "zero_notional_or_stale_evidence_rate",
         "tca": "fill_tca_or_slippage_quality",
     }
     return {
@@ -2506,7 +2504,7 @@ class TestTradingApi(TestCase):
             routeability["schema_version"],
             "torghut.routeability-repair-acceptance-ledger.v1",
         )
-        self.assertEqual(routeability["summary"]["zero_notional_lot_count"], 8)
+        self.assertEqual(routeability["summary"]["zero_notional_lot_count"], 7)
         self.assertEqual(routeability["accepted_routeable_candidate_count"], 0)
         clearinghouse = payload["route_evidence_clearinghouse_packet"]
         self.assertEqual(
@@ -3734,7 +3732,7 @@ class TestTradingApi(TestCase):
             "torghut.routeability-repair-acceptance-ledger.v1",
         )
         self.assertEqual(status_routeability["accepted_routeable_candidate_count"], 0)
-        self.assertEqual(status_routeability["summary"]["zero_notional_lot_count"], 8)
+        self.assertEqual(status_routeability["summary"]["zero_notional_lot_count"], 7)
         self.assertEqual(
             health_routeability["schema_version"],
             status_routeability["schema_version"],
@@ -6909,7 +6907,7 @@ class TestTradingApi(TestCase):
         status_payload = {
             "active_revision": "torghut-00320",
             "freshness_carry_ledger": _freshness_carry_ledger_for_test(
-                "market_context"
+                "empirical"
             ),
             "profit_freshness_frontier": {
                 "frontier_id": "profit-freshness-frontier:test",
@@ -6924,9 +6922,9 @@ class TestTradingApi(TestCase):
                         "lot_id": "profit-freshness-repair-lot:test",
                         "candidate_id": "candidate-a",
                         "hypothesis_id": "H-AAPL",
-                        "blocked_dimension": "market_context",
-                        "zero_notional_action": "refresh_stale_market_context_domains",
-                        "before_refs": ["market_context:AAPL"],
+                        "blocked_dimension": "empirical_proof",
+                        "zero_notional_action": "renew_empirical_proof_jobs",
+                        "before_refs": ["empirical:H-AAPL"],
                         "paper_notional_limit": "0",
                         "live_notional_limit": "0",
                         "state": "selected_zero_notional_repair",
@@ -6950,23 +6948,23 @@ class TestTradingApi(TestCase):
         self.assertFalse(payload["order_submission_enabled"])
         self.assertEqual(payload["paper_notional_limit"], "0")
         self.assertEqual(payload["live_notional_limit"], "0")
-        self.assertEqual(payload["before_refs"], ["market_context:AAPL"])
+        self.assertEqual(payload["before_refs"], ["empirical:H-AAPL"])
         self.assertEqual(
             payload["freshness_carry_ledger_ref"],
             "freshness-carry-ledger:test",
         )
         self.assertEqual(payload["freshness_citation_state"], "cited")
-        self.assertEqual(payload["freshness_dimension_id"], "market_context")
+        self.assertEqual(payload["freshness_dimension_id"], "empirical")
         self.assertEqual(
             payload["freshness_repair_proof_slo_ref"],
-            "freshness-repair-slo:market_context",
+            "freshness-repair-slo:empirical",
         )
 
     def test_zero_notional_repair_endpoint_accepts_dispatch_ticket_body(self) -> None:
         status_payload = {
             "active_revision": "torghut-00320",
             "freshness_carry_ledger": _freshness_carry_ledger_for_test(
-                "market_context"
+                "empirical"
             ),
             "profit_freshness_frontier": {
                 "frontier_id": "profit-freshness-frontier:test",
@@ -6981,9 +6979,9 @@ class TestTradingApi(TestCase):
                         "lot_id": "profit-freshness-repair-lot:test",
                         "candidate_id": "candidate-a",
                         "hypothesis_id": "H-AAPL",
-                        "blocked_dimension": "market_context",
-                        "zero_notional_action": "refresh_stale_market_context_domains",
-                        "before_refs": ["market_context:AAPL"],
+                        "blocked_dimension": "empirical_proof",
+                        "zero_notional_action": "renew_empirical_proof_jobs",
+                        "before_refs": ["empirical:H-AAPL"],
                         "paper_notional_limit": "0",
                         "live_notional_limit": "0",
                         "state": "selected_zero_notional_repair",
@@ -6996,10 +6994,10 @@ class TestTradingApi(TestCase):
             "ticket_id": "repair-lot-dispatch-ticket:test",
             "admission_receipt_id": "repair-bid-admission-receipt:test",
             "torghut_lot_id": "profit-freshness-repair-lot:test",
-            "lot_class": "market_context_refresh",
+            "lot_class": "empirical_replay",
             "target_value_gate": "zero_notional_or_stale_evidence_rate",
             "dedupe_key": "torghut-repair:test",
-            "required_output_receipt": "torghut.market-context-current-receipt.v1",
+            "required_output_receipt": "torghut.empirical-proof-refresh-receipt.v1",
             "launch_allowed": True,
             "launch_reason": "current_zero_notional_compacted_lot",
             "stop_conditions": ["fresh_until_expired", "dedupe_key_became_active"],
@@ -7027,7 +7025,7 @@ class TestTradingApi(TestCase):
             "repair-lot-dispatch-ticket:test",
         )
         self.assertEqual(payload["freshness_citation_state"], "cited")
-        self.assertEqual(payload["freshness_dimension_id"], "market_context")
+        self.assertEqual(payload["freshness_dimension_id"], "empirical")
         self.assertTrue(payload["repair_lot_dispatch_ticket_launch_allowed"])
         self.assertFalse(payload["order_submission_enabled"])
 

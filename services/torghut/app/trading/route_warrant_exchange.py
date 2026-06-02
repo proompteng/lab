@@ -62,13 +62,6 @@ _WARRANT_DEPENDENCIES = {
         "output_receipt": "torghut.empirical-replay-current-receipt.v1",
         "source_ref": "vnext_empirical_job_runs",
     },
-    "market_context": {
-        "target_dependency": "market_context",
-        "target_value_gate": "zero_notional_or_stale_evidence_rate",
-        "repair_class": "market_context_domain_refresh",
-        "output_receipt": "torghut.market-context-current-receipt.v1",
-        "source_ref": "market_context",
-    },
     "hypothesis_lineage": {
         "target_dependency": "forecast_registry",
         "target_value_gate": "routeable_candidate_count",
@@ -110,7 +103,6 @@ _WITNESS_GROUP_BY_DEPENDENCY = {
     "ingestion_materialization": "ingestion_materialization_witnesses",
     "active_tca": "active_tca_witnesses",
     "empirical": "empirical_replay_witnesses",
-    "market_context": "market_context_witnesses",
     "submission": "capital_submission_witnesses",
     "routeability": "routeability_witnesses",
     "profit_signal": "profit_signal_witnesses",
@@ -283,7 +275,6 @@ def _source_for_clock(
     quant_evidence: Mapping[str, Any],
     tca_summary: Mapping[str, Any],
     empirical_jobs_status: Mapping[str, Any],
-    market_context_status: Mapping[str, Any],
     routeability_repair_acceptance_ledger: Mapping[str, Any],
     live_submission_gate: Mapping[str, Any],
     build: Mapping[str, Any],
@@ -293,7 +284,6 @@ def _source_for_clock(
         "torghut_quant": quant_evidence,
         "postgres_tca": tca_summary,
         "empirical_replay": empirical_jobs_status,
-        "market_context": market_context_status,
         "routeability_acceptance": routeability_repair_acceptance_ledger,
         "capital_gate": live_submission_gate,
         "rollout": build,
@@ -316,12 +306,6 @@ def _source_observed_at(
         ),
         "postgres_tca": ("last_computed_at", "computed_at"),
         "empirical_replay": ("updated_at", "newest_updated_at", "last_completed_at"),
-        "market_context": (
-            "updated_at",
-            "last_updated_at",
-            "last_snapshot_at",
-            "last_checked_at",
-        ),
     }
     return _first_timestamp(
         source,
@@ -626,13 +610,13 @@ def build_route_warrant_exchange(
     """Build a shadow-first route warrant without widening paper or live notional."""
 
     observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    _ = market_context_status
     clocks = _clock_by_name(evidence_clock_arbiter)
     required_clock_names = [
         "clickhouse_ta",
         "torghut_quant",
         "postgres_tca",
         "empirical_replay",
-        "market_context",
         "hypothesis_lineage",
         "rollout",
         "routeability_acceptance",
@@ -648,7 +632,6 @@ def build_route_warrant_exchange(
                     quant_evidence=quant_evidence,
                     tca_summary=tca_summary,
                     empirical_jobs_status=empirical_jobs_status,
-                    market_context_status=market_context_status,
                     routeability_repair_acceptance_ledger=routeability_repair_acceptance_ledger,
                     live_submission_gate=live_submission_gate,
                     build=build,

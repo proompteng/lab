@@ -194,6 +194,31 @@ def test_converged_source_allows_compacted_lot_dispatch_without_notional() -> No
     assert frontier["selected_lot_id"] in frontier["dispatchable_lot_ids"]
 
 
+def test_retired_market_context_profit_repair_is_not_frontier_lot() -> None:
+    frontier = _build(
+        source_ledger=_source_ledger(state="converged", reasons=[]),
+        repair_bid_ledger=_repair_bid_ledger(compacted_lots=[]),
+        profit_frontier=_profit_frontier(
+            selected_repairs=[
+                {
+                    "lot_id": "profit-freshness-repair-lot:market-context",
+                    "blocked_dimension": "market_context",
+                    "zero_notional_action": "refresh_stale_market_context_domains",
+                    "expected_profit_unlock_bps": 20,
+                    "repair_cost_class": "low",
+                    "before_refs": ["market_context:diagnostic"],
+                    "state": "selected_zero_notional_repair",
+                }
+            ]
+        ),
+    )
+
+    assert {
+        lot["source_lot_ref"]
+        for lot in cast(list[Mapping[str, Any]], frontier["lots"])
+    }.isdisjoint({"profit-freshness-repair-lot:market-context"})
+
+
 def test_paper_cutover_blocking_lots_rank_ahead_of_generic_stale_evidence() -> None:
     frontier = _build(
         source_ledger=_source_ledger(state="converged", reasons=[]),
