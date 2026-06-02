@@ -175,6 +175,24 @@ def _json_paths_containing(value: object, needle: str, path: str = "") -> list[s
     return paths
 
 
+def _json_truthy_paths_for_keys(
+    value: object,
+    keys: set[str],
+    path: str = "",
+) -> list[str]:
+    paths: list[str] = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            key_path = f"{path}.{key}" if path else str(key)
+            if key in keys and child is True:
+                paths.append(key_path)
+            paths.extend(_json_truthy_paths_for_keys(child, keys, key_path))
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            paths.extend(_json_truthy_paths_for_keys(child, keys, f"{path}[{index}]"))
+    return paths
+
+
 class _MappingRows:
     def __init__(self, rows: list[dict[str, object]]) -> None:
         self._rows = rows
@@ -407,6 +425,41 @@ class _FallbackOptionsFreshnessBlankSymbolSession:
             row = rows.get(str(symbol or "").upper())
             return _ExecuteResult([row] if row is not None else [])
         return _ExecuteResult([])
+
+
+class _TimedOutBoundedOptionsFreshnessSession:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, object | None]] = []
+
+    def execute(
+        self, statement: object, params: object | None = None
+    ) -> _ExecuteResult:
+        statement_text = str(statement)
+        self.calls.append((statement_text, params))
+        if statement_text.startswith("SET LOCAL"):
+            return _ExecuteResult([])
+        if "LIMIT 1" in statement_text:
+            raise SQLAlchemyError(
+                "QueryCanceled: canceling statement due to statement timeout"
+            )
+        return _ExecuteResult([])
+
+
+class _PostgresReadinessSession:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+        self.rollback_count = 0
+
+    def get_bind(self) -> object:
+        return SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+
+    def execute(self, statement: object, params: object | None = None) -> object:
+        _ = params
+        self.calls.append(str(statement))
+        return _ExecuteResult([])
+
+    def rollback(self) -> None:
+        self.rollback_count += 1
 
 
 class TestTradingApi(TestCase):
@@ -823,6 +876,36 @@ class TestTradingApi(TestCase):
             2,
         )
 
+    def test_options_catalog_freshness_summary_reports_bounded_timeout(
+        self,
+    ) -> None:
+        fake_session = _TimedOutBoundedOptionsFreshnessSession()
+
+        payload = _load_options_catalog_freshness_summary(
+            fake_session,  # type: ignore[arg-type]
+            route_symbols=["AAPL", "MSFT"],
+        )
+
+        self.assertEqual(payload["status"], "unavailable")
+        self.assertEqual(payload["scope"], "route_symbols")
+        self.assertEqual(payload["route_symbols"], ["AAPL", "MSFT"])
+        self.assertIn(
+            "options_catalog_freshness_exact_route_scope_disabled",
+            payload["reason_codes"],
+        )
+        self.assertIn(
+            "options_catalog_freshness_bounded_route_scope_timeout",
+            payload["reason_codes"],
+        )
+        self.assertIn(
+            "options_catalog_freshness_bounded_route_scope_unavailable",
+            payload["reason_codes"],
+        )
+        self.assertEqual(
+            sum("LIMIT 1" in sql for sql, _params in fake_session.calls),
+            1,
+        )
+
     def test_options_catalog_freshness_summary_expires_cached_route_scope(
         self,
     ) -> None:
@@ -947,6 +1030,117 @@ class TestTradingApi(TestCase):
         self.assertEqual(set(route_scope), {"MSFT"})
         self.assertEqual(route_scope["MSFT"]["missing_close_price_count"], 1)
         self.assertEqual(route_scope["MSFT"]["zero_open_interest_count"], 1)
+
+    def test_tigerbeetle_ledger_status_fails_closed_on_ref_count_timeout(
+        self,
+    ) -> None:
+        original_required = settings.tigerbeetle_required
+        original_reconcile_required = settings.tigerbeetle_reconcile_required
+        settings.tigerbeetle_required = True
+        settings.tigerbeetle_reconcile_required = True
+        fake_session = _PostgresReadinessSession()
+        try:
+            with (
+                patch(
+                    "app.main._check_tigerbeetle_protocol_health",
+                    return_value={"ok": True, "protocol_ok": True},
+                ),
+                patch(
+                    "app.main.latest_tigerbeetle_reconciliation_payload",
+                    return_value={
+                        "ok": True,
+                        "age_seconds": 1,
+                        "blockers": [],
+                    },
+                ),
+                patch(
+                    "app.main.tigerbeetle_ref_counts",
+                    side_effect=SQLAlchemyError(
+                        "QueryCanceled: canceling statement due to statement timeout"
+                    ),
+                ),
+            ):
+                payload = main_module._build_tigerbeetle_ledger_status(
+                    fake_session,  # type: ignore[arg-type]
+                )
+        finally:
+            settings.tigerbeetle_required = original_required
+            settings.tigerbeetle_reconcile_required = original_reconcile_required
+
+        self.assertFalse(payload["ok"])
+        self.assertFalse(payload["reconciliation_ok"])
+        self.assertIn("tigerbeetle_ref_counts_unavailable", payload["blockers"])
+        self.assertIn("tigerbeetle_ref_counts_query_timeout", payload["blockers"])
+        ref_counts = payload["ref_counts"]
+        self.assertIsInstance(ref_counts, dict)
+        assert isinstance(ref_counts, dict)
+        self.assertTrue(ref_counts["ref_counts_unavailable"])
+        self.assertIn(
+            "tigerbeetle_ref_counts_query_timeout",
+            ref_counts["reason_codes"],
+        )
+        self.assertGreaterEqual(fake_session.rollback_count, 1)
+
+    def test_tigerbeetle_ledger_status_fails_closed_on_reconciliation_timeout(
+        self,
+    ) -> None:
+        original_required = settings.tigerbeetle_required
+        original_reconcile_required = settings.tigerbeetle_reconcile_required
+        settings.tigerbeetle_required = True
+        settings.tigerbeetle_reconcile_required = True
+        fake_session = _PostgresReadinessSession()
+        try:
+            with (
+                patch(
+                    "app.main._check_tigerbeetle_protocol_health",
+                    return_value={"ok": True, "protocol_ok": True},
+                ),
+                patch(
+                    "app.main.latest_tigerbeetle_reconciliation_payload",
+                    side_effect=SQLAlchemyError(
+                        "QueryCanceled: canceling statement due to statement timeout"
+                    ),
+                ),
+                patch(
+                    "app.main.tigerbeetle_ref_counts",
+                    return_value={
+                        "account_ref_count": 1,
+                        "transfer_ref_count": 1,
+                        "runtime_ledger_ref_count": 1,
+                        "runtime_ledger_signed_ref_count": 1,
+                        "runtime_ledger_missing_signed_ref_count": 0,
+                        "runtime_ledger_missing_account_ref_count": 0,
+                        "source_materialization": {},
+                    },
+                ),
+            ):
+                payload = main_module._build_tigerbeetle_ledger_status(
+                    fake_session,  # type: ignore[arg-type]
+                )
+        finally:
+            settings.tigerbeetle_required = original_required
+            settings.tigerbeetle_reconcile_required = original_reconcile_required
+
+        self.assertFalse(payload["ok"])
+        self.assertFalse(payload["reconciliation_ok"])
+        self.assertIn(
+            "tigerbeetle_reconciliation_status_unavailable",
+            payload["blockers"],
+        )
+        self.assertIn(
+            "tigerbeetle_reconciliation_status_query_timeout",
+            payload["blockers"],
+        )
+        latest_reconciliation = payload["latest_reconciliation"]
+        self.assertIsInstance(latest_reconciliation, dict)
+        assert isinstance(latest_reconciliation, dict)
+        self.assertFalse(latest_reconciliation["ok"])
+        self.assertEqual(latest_reconciliation["status"], "unavailable")
+        self.assertIn(
+            "tigerbeetle_reconciliation_status_query_timeout",
+            latest_reconciliation["reason_codes"],
+        )
+        self.assertGreaterEqual(fake_session.rollback_count, 1)
 
     def test_decimal_or_none_handles_missing_and_unparseable_values(self) -> None:
         self.assertIsNone(_decimal_or_none(None))
@@ -4230,6 +4424,135 @@ class TestTradingApi(TestCase):
                 original_stale_tolerance
             )
             _TRADING_DEPENDENCY_HEALTH_CACHE.clear()
+
+    def test_readyz_stale_dependency_cache_keeps_authority_fail_closed(
+        self,
+    ) -> None:
+        original_mode = settings.trading_mode
+        original_enabled = settings.trading_enabled
+        original_cache_enabled = settings.trading_readiness_dependency_cache_enabled
+        original_cache_ttl = settings.trading_readiness_dependency_cache_ttl_seconds
+        original_stale_tolerance = (
+            settings.trading_readiness_dependency_cache_stale_tolerance_seconds
+        )
+        settings.trading_enabled = True
+        settings.trading_mode = "live"
+        settings.trading_readiness_dependency_cache_enabled = True
+        settings.trading_readiness_dependency_cache_ttl_seconds = 8
+        settings.trading_readiness_dependency_cache_stale_tolerance_seconds = 20
+        checked_at = datetime.now(timezone.utc) - timedelta(seconds=12)
+        cache_key = _readiness_dependency_cache_key(include_database_contract=True)
+        _TRADING_DEPENDENCY_HEALTH_CACHE[cache_key] = {
+            "checked_at": checked_at,
+            "dependencies": {
+                "postgres": {"ok": False, "detail": "statement timeout"},
+                "clickhouse": {"ok": True, "detail": "ok"},
+                "alpaca": {"ok": True, "detail": "ok"},
+                "tigerbeetle": {
+                    "ok": False,
+                    "blockers": ["tigerbeetle_ref_counts_query_timeout"],
+                },
+                "database": {"ok": True, "detail": "ok"},
+            },
+        }
+        authoritative_gate = {
+            "allowed": True,
+            "reason": "promotion_authority_ok",
+            "promotion_authority": True,
+            "promotion_authority_ok": True,
+            "final_authority_ok": True,
+            "final_promotion_allowed": True,
+            "final_promotion_authorized": True,
+            "blocked_reasons": [],
+            "reason_codes": [],
+            "runtime_ledger_paper_probation_import_plan": {
+                "promotion_allowed": True,
+                "final_promotion_allowed": True,
+                "final_promotion_authorized": True,
+                "targets": [
+                    {
+                        "promotion_allowed": True,
+                        "final_promotion_allowed": True,
+                        "final_promotion_authorized": True,
+                    }
+                ],
+            },
+        }
+        try:
+            scheduler = TradingScheduler()
+            scheduler.state.running = True
+            scheduler.state.last_run_at = datetime.now(timezone.utc)
+            _mark_static_universe_loaded(scheduler)
+            app.state.trading_scheduler = scheduler
+            with (
+                patch(
+                    "app.main._build_live_submission_gate_payload",
+                    return_value=authoritative_gate,
+                ),
+                patch(
+                    "app.main._empirical_jobs_status",
+                    return_value={"ready": True, "status": "healthy"},
+                ),
+                patch(
+                    "app.main.load_quant_evidence_status",
+                    return_value={
+                        "required": True,
+                        "ok": True,
+                        "status": "healthy",
+                        "reason": "ready",
+                    },
+                ),
+            ):
+                response = self.client.get("/readyz")
+        finally:
+            settings.trading_mode = original_mode
+            settings.trading_enabled = original_enabled
+            settings.trading_readiness_dependency_cache_enabled = original_cache_enabled
+            settings.trading_readiness_dependency_cache_ttl_seconds = original_cache_ttl
+            settings.trading_readiness_dependency_cache_stale_tolerance_seconds = (
+                original_stale_tolerance
+            )
+            _TRADING_DEPENDENCY_HEALTH_CACHE.clear()
+
+        self.assertEqual(response.status_code, 503)
+        payload = response.json()
+        self.assertEqual(payload["status"], "degraded")
+        self.assertFalse(payload["dependencies"]["postgres"]["ok"])
+        self.assertEqual(
+            payload["dependencies"]["tigerbeetle"]["blockers"],
+            ["tigerbeetle_ref_counts_query_timeout"],
+        )
+        cache = payload["dependencies"]["readiness_cache"]
+        self.assertTrue(cache["cache_used"])
+        self.assertTrue(cache["cache_stale"])
+        live_submission_gate = payload["live_submission_gate"]
+        self.assertFalse(live_submission_gate["allowed"])
+        self.assertFalse(live_submission_gate["promotion_authority"])
+        self.assertFalse(live_submission_gate["final_authority_ok"])
+        self.assertFalse(live_submission_gate["final_promotion_allowed"])
+        self.assertTrue(live_submission_gate["readiness_dependency_guard_active"])
+        self.assertIn(
+            "postgres_degraded",
+            live_submission_gate["readiness_dependency_guard_reasons"],
+        )
+        guarded_plan = live_submission_gate[
+            "runtime_ledger_paper_probation_import_plan"
+        ]
+        self.assertFalse(guarded_plan["final_promotion_allowed"])
+        self.assertFalse(guarded_plan["targets"][0]["final_promotion_allowed"])
+        self.assertEqual(
+            _json_truthy_paths_for_keys(
+                payload,
+                {
+                    "promotion_authority",
+                    "promotion_authority_ok",
+                    "final_authority_ok",
+                    "final_promotion_allowed",
+                    "final_promotion_authorized",
+                },
+            ),
+            [],
+        )
 
     @patch(
         "app.main._evaluate_database_contract",
