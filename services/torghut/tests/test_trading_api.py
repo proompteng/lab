@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import json
 import inspect
+import os
 import time
 from collections.abc import Iterator
+from concurrent.futures import Future
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from threading import Event
 from types import SimpleNamespace
 from typing import Any
+from urllib.parse import urlsplit
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -5397,6 +5401,116 @@ class TestTradingApi(TestCase):
         self.assertFalse(payload["live_submission_gate"]["promotion_authority"])
         self.assertFalse(payload["live_submission_gate"]["final_authority_ok"])
         self.assertFalse(payload["live_submission_gate"]["final_promotion_allowed"])
+
+    def test_readyz_serves_completed_health_cache_while_refreshing(self) -> None:
+        cache_key = main_module._trading_health_surface_cache_key(
+            include_database_contract=True,
+            allow_stale_dependency_cache=True,
+        )
+        cached_payload: dict[str, object] = {
+            "status": "degraded",
+            "reason": "cached_health_payload",
+            "reason_codes": ["cached_health_payload"],
+            "dependencies": {"postgres": {"ok": True, "detail": "ok"}},
+            "live_submission_gate": {
+                "allowed": False,
+                "promotion_authority": False,
+                "final_authority_ok": False,
+                "final_promotion_allowed": False,
+            },
+        }
+        completed_future: Future[tuple[dict[str, object], int]] = Future()
+        completed_future.set_result((cached_payload, 503))
+        refresh_called = Event()
+        refresh_calls: list[object] = []
+
+        def _refresh_health_payload(
+            **_kwargs: object,
+        ) -> tuple[dict[str, object], int]:
+            refresh_calls.append(_kwargs)
+            refresh_called.set()
+            return (
+                {
+                    **cached_payload,
+                    "reason": "refreshed_health_payload",
+                    "reason_codes": ["refreshed_health_payload"],
+                },
+                503,
+            )
+
+        with main_module._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+            main_module._TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
+            main_module._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
+            main_module._TRADING_HEALTH_SURFACE_EVALUATIONS[cache_key] = (
+                completed_future
+            )
+            main_module._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE[cache_key] = {
+                "payload": cached_payload,
+                "status_code": 503,
+                "checked_at": datetime.now(timezone.utc),
+            }
+
+        try:
+            with patch(
+                "app.main._evaluate_trading_health_payload",
+                side_effect=_refresh_health_payload,
+            ):
+                response = self.client.get("/readyz")
+                self.assertTrue(refresh_called.wait(1.0))
+                self.assertEqual(len(refresh_calls), 1)
+        finally:
+            with main_module._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+                main_module._TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
+                main_module._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
+
+        self.assertEqual(response.status_code, 503)
+        payload = response.json()
+        self.assertEqual(payload["reason"], "cached_health_payload")
+        self.assertNotEqual(payload["reason"], "readyz_evaluation_timeout")
+
+    def test_readyz_starts_fresh_eval_when_completed_future_has_no_cache(self) -> None:
+        cache_key = main_module._trading_health_surface_cache_key(
+            include_database_contract=True,
+            allow_stale_dependency_cache=True,
+        )
+        completed_future: Future[tuple[dict[str, object], int]] = Future()
+        completed_future.set_result(({"reason": "orphaned_health_payload"}, 503))
+        refresh_calls: list[object] = []
+
+        def _refresh_health_payload(
+            **_kwargs: object,
+        ) -> tuple[dict[str, object], int]:
+            refresh_calls.append(_kwargs)
+            return (
+                {
+                    "status": "degraded",
+                    "reason": "fresh_health_payload",
+                    "reason_codes": ["fresh_health_payload"],
+                },
+                503,
+            )
+
+        with main_module._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+            main_module._TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
+            main_module._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
+            main_module._TRADING_HEALTH_SURFACE_EVALUATIONS[cache_key] = (
+                completed_future
+            )
+
+        try:
+            with patch(
+                "app.main._evaluate_trading_health_payload",
+                side_effect=_refresh_health_payload,
+            ):
+                response = self.client.get("/readyz")
+        finally:
+            with main_module._TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+                main_module._TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
+                main_module._TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["reason"], "fresh_health_payload")
+        self.assertEqual(len(refresh_calls), 1)
 
     def test_timeout_live_gate_records_live_mode_blockers(self) -> None:
         original = {
@@ -11059,6 +11173,46 @@ class TestTradingApi(TestCase):
         finally:
             settings.trading_paper_route_target_plan_url = original_target_plan_url
             settings.trading_paper_route_target_plan_timeout_seconds = original_timeout
+
+    def test_load_external_paper_route_target_plan_rejects_self_reference(self) -> None:
+        original_target_plan_url = settings.trading_paper_route_target_plan_url
+        original_cache = main_module._paper_route_target_plan_success_cache
+        main_module._paper_route_target_plan_success_cache = None
+        try:
+            settings.trading_paper_route_target_plan_url = "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan"
+            with patch("app.main.HTTPConnection") as connection:
+                plan = _load_external_paper_route_target_plan()
+            connection.assert_not_called()
+        finally:
+            settings.trading_paper_route_target_plan_url = original_target_plan_url
+            main_module._paper_route_target_plan_success_cache = original_cache
+
+        self.assertEqual(plan["load_error"], "paper_route_target_plan_self_reference")
+
+    def test_paper_route_target_plan_self_reference_requires_host(self) -> None:
+        parsed = urlsplit("/trading/paper-route-target-plan")
+
+        self.assertFalse(
+            main_module._paper_route_target_plan_url_points_to_self(parsed)
+        )
+
+    def test_paper_route_target_plan_self_reference_matches_current_service(
+        self,
+    ) -> None:
+        parsed = urlsplit(
+            "http://route-sim.proof-ns.svc.cluster.local/trading/paper-route-target-plan"
+        )
+
+        with patch.dict(
+            os.environ,
+            {
+                "K_SERVICE": "route-sim",
+                "POD_NAMESPACE": "proof-ns",
+            },
+        ):
+            self.assertTrue(
+                main_module._paper_route_target_plan_url_points_to_self(parsed)
+            )
 
     def test_load_external_paper_route_target_plan_uses_recent_success_after_timeout(
         self,
