@@ -1538,18 +1538,37 @@ def _runtime_window_target_metadata(payload: Mapping[str, Any]) -> dict[str, Any
 
 def _runtime_window_target_identity(
     target: RuntimeWindowImportTarget,
-) -> tuple[str, str, str, str, str, str, str, str, str, str, str, str, str]:
+) -> tuple[str, str, str, str, str, str, str, str, str, str, str, str, str, str]:
+    return (
+        target.hypothesis_id,
+        target.candidate_id,
+        target.observed_stage,
+        target.strategy_family,
+        target.strategy_name,
+        target.source_dsn_env,
+        target.target_dsn_env,
+        target.account_label,
+        target.source_account_label,
+        target.dataset_snapshot_ref,
+        target.source_manifest_ref,
+        target.source_kind,
+        target.window_start,
+        target.window_end,
+    )
+
+
+def _runtime_window_target_scope_identity(
+    target: RuntimeWindowImportTarget,
+) -> tuple[str, str, str, str, str, str, str, str, str, str, str]:
     return (
         target.hypothesis_id,
         target.observed_stage,
         target.strategy_family,
-        target.source_dsn_env,
         target.strategy_name,
-        target.account_label,
+        target.source_dsn_env,
         target.target_dsn_env,
+        target.account_label,
         target.source_account_label,
-        target.dataset_snapshot_ref,
-        target.source_manifest_ref,
         target.source_kind,
         target.window_start,
         target.window_end,
@@ -1698,15 +1717,23 @@ def _runtime_window_targets(
                 ),
             )
         )
-    seen_hypothesis_ids = {target.hypothesis_id for target in targets}
-    explicit_target_keys = {
-        _runtime_window_target_identity(target) for target in targets
+    explicit_target_scope_keys = {
+        _runtime_window_target_scope_identity(target) for target in targets
     }
+    seen_hypothesis_ids = {target.hypothesis_id for target in targets}
+    seen_target_keys = {_runtime_window_target_identity(target) for target in targets}
     for target in (*plan_targets, *autoresearch_targets):
         target_key = _runtime_window_target_identity(target)
-        if target_key in explicit_target_keys:
+        if target_key in seen_target_keys:
+            continue
+        if (
+            explicit_target_scope_keys
+            and _runtime_window_target_scope_identity(target)
+            in explicit_target_scope_keys
+        ):
             continue
         targets.append(target)
+        seen_target_keys.add(target_key)
         seen_hypothesis_ids.add(target.hypothesis_id)
     for target in registry_targets:
         if target.hypothesis_id in seen_hypothesis_ids:
