@@ -7,7 +7,7 @@ metadata:
     app.kubernetes.io/name: torghut
     app.kubernetes.io/component: tigerbeetle-journal-order-events
 spec:
-  schedule: "1,6,11,16,21,26,31,36,41,46,51,56 * * * *"
+  schedule: "6,36 * * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 2
   failedJobsHistoryLimit: 3
@@ -15,7 +15,7 @@ spec:
   jobTemplate:
     spec:
       backoffLimit: 0
-      activeDeadlineSeconds: 1200
+      activeDeadlineSeconds: 900
       template:
         spec:
           restartPolicy: Never
