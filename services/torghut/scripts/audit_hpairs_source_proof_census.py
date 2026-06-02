@@ -78,6 +78,7 @@ ECONOMICS_MISSING = "economics_missing"
 SOURCE_REFS_MISSING = "source_refs_missing"
 OPEN_POSITIONS = "open_positions"
 AUTHORITY_DISTRIBUTION_MISSING = "authority_distribution_missing"
+CANDIDATE_CONFIG_MISMATCH_BLOCKER = "candidate_config_mismatch"
 LADDER_PASS = "pass"
 LADDER_MISSING = "missing"
 LADDER_BLOCKED = "blocked"
@@ -202,7 +203,13 @@ def build_source_proof_census(
         evidence_read_error=read_error,
     )
     daily = _daily_census(rows, ledger_report)
-    totals = _totals(rows, daily, ledger_report)
+    candidate_config_match = _candidate_config_match(rows, identity, ledger_report)
+    totals = _totals(
+        rows,
+        daily,
+        ledger_report,
+        candidate_config_match=candidate_config_match,
+    )
     blockers = _census_blockers(rows, totals, ledger_report, read_error=read_error)
     missing_source_ref_categories = _missing_source_ref_categories(blockers)
     missing_requirement_categories = _missing_requirement_categories(blockers)
@@ -238,6 +245,7 @@ def build_source_proof_census(
             "synthetic_proof_created": False,
         },
         "totals": totals,
+        "candidate_config_match": candidate_config_match,
         "daily": daily,
         "runtime_authority": {
             "final_authority_ok": ledger_report["final_authority_ok"],
@@ -566,14 +574,21 @@ def _totals(
     rows: CensusSourceRows,
     daily: Sequence[Mapping[str, object]],
     ledger_report: Mapping[str, object],
+    *,
+    candidate_config_match: Mapping[str, object],
 ) -> dict[str, object]:
     aggregate = _mapping(ledger_report.get("aggregate"))
     daily_ledger = [
         _mapping(item) for item in _sequence(ledger_report.get("trading_days"))
     ]
     source_authority_bucket_count = _int(aggregate.get("source_authority_bucket_count"))
+    runtime_ledger_bucket_count = len(rows.runtime_ledger_buckets)
+    explicit_cost_runtime_ledger_bucket_count = _int(
+        aggregate.get("explicit_cost_bucket_count")
+    )
     return {
         "trade_decision_count": len(rows.trade_decisions),
+        "matched_trade_decision_count": len(rows.trade_decisions),
         "execution_count": len(rows.executions),
         "filled_execution_count": sum(
             1 for row in rows.executions if _filled_execution(row)
@@ -630,8 +645,21 @@ def _totals(
             for row in rows.execution_order_events
             if _event_source_offset_present(row)
         ),
-        "runtime_ledger_bucket_count": len(rows.runtime_ledger_buckets),
+        "execution_order_events_with_source_window_and_offset_count": sum(
+            1
+            for row in rows.execution_order_events
+            if _text(row.get("source_window_id")) is not None
+            and _event_source_offset_present(row)
+        ),
+        "execution_tca_metric_count": len(rows.execution_tca_metrics),
+        "runtime_ledger_bucket_count": runtime_ledger_bucket_count,
         "blocker_free_runtime_ledger_bucket_count": source_authority_bucket_count,
+        "runtime_ledger_evidence_grade_bucket_count": _int(
+            aggregate.get("clean_authority_bucket_count")
+        ),
+        "runtime_ledger_aggregate_only_bucket_count": max(
+            0, runtime_ledger_bucket_count - source_authority_bucket_count
+        ),
         "runtime_submitted_order_count": _sum_daily_int(
             daily_ledger, "submitted_order_count"
         ),
@@ -641,9 +669,10 @@ def _totals(
         "runtime_ledger_clean_authority_trading_day_count": _int(
             aggregate.get("clean_authority_trading_day_count")
         ),
-        "explicit_cost_runtime_ledger_bucket_count": _int(
-            aggregate.get("explicit_cost_bucket_count")
-        ),
+        "explicit_cost_runtime_ledger_bucket_count": explicit_cost_runtime_ledger_bucket_count,
+        "explicit_cost_required_bucket_count": runtime_ledger_bucket_count,
+        "explicit_cost_coverage_complete": runtime_ledger_bucket_count == 0
+        or explicit_cost_runtime_ledger_bucket_count >= runtime_ledger_bucket_count,
         "runtime_ledger_buckets_with_filled_notional_count": sum(
             1
             for row in rows.runtime_ledger_buckets
@@ -659,6 +688,92 @@ def _totals(
             aggregate.get("total_net_strategy_pnl_after_costs"), default="0"
         ),
         "trading_day_count": len(daily),
+        "candidate_config_match": bool(candidate_config_match.get("matches")),
+        "candidate_config_mismatch_count": _int(
+            candidate_config_match.get("mismatch_count")
+        ),
+        "candidate_matched_runtime_ledger_bucket_count": _int(
+            candidate_config_match.get("matched_runtime_ledger_bucket_count")
+        ),
+        "candidate_mismatched_runtime_ledger_bucket_count": _int(
+            candidate_config_match.get("mismatched_runtime_ledger_bucket_count")
+        ),
+    }
+
+
+def _candidate_config_match(
+    rows: CensusSourceRows,
+    identity: CensusIdentity,
+    ledger_report: Mapping[str, object],
+) -> dict[str, object]:
+    """Summarize whether read rows match the requested H-PAIRS candidate/config."""
+
+    trade_decision_mismatches = sum(
+        1
+        for row in rows.trade_decisions
+        if _text(row.get("strategy_name")) not in (None, identity.runtime_strategy_name)
+        or _text(row.get("alpaca_account_label")) not in (None, identity.account_label)
+    )
+    execution_mismatches = sum(
+        1
+        for row in rows.executions
+        if _text(row.get("alpaca_account_label")) not in (None, identity.account_label)
+    )
+    order_event_mismatches = sum(
+        1
+        for row in rows.execution_order_events
+        if _text(row.get("alpaca_account_label")) not in (None, identity.account_label)
+    )
+    tca_metric_mismatches = sum(
+        1
+        for row in rows.execution_tca_metrics
+        if _text(row.get("alpaca_account_label")) not in (None, identity.account_label)
+    )
+    source_window_mismatches = sum(
+        1
+        for row in rows.order_feed_source_windows
+        if _text(row.get("alpaca_account_label")) not in (None, identity.account_label)
+    )
+    ledger_mismatches = [
+        row
+        for row in rows.runtime_ledger_buckets
+        if _text(row.get("candidate_id")) not in (None, identity.candidate_id)
+        or _text(row.get("hypothesis_id")) not in (None, identity.hypothesis_id)
+        or _text(row.get("runtime_strategy_name"))
+        not in (None, identity.runtime_strategy_name)
+        or _text(row.get("account_label")) not in (None, identity.account_label)
+        or _text(row.get("observed_stage")) not in (None, identity.observed_stage)
+    ]
+    aggregate = _mapping(ledger_report.get("aggregate"))
+    runtime_ledger_bucket_count = len(rows.runtime_ledger_buckets)
+    mismatch_count = (
+        trade_decision_mismatches
+        + execution_mismatches
+        + order_event_mismatches
+        + tca_metric_mismatches
+        + source_window_mismatches
+        + len(ledger_mismatches)
+    )
+    return {
+        "matches": mismatch_count == 0,
+        "mismatch_count": mismatch_count,
+        "requested": {
+            "hypothesis_id": identity.hypothesis_id,
+            "candidate_id": identity.candidate_id,
+            "runtime_strategy_name": identity.runtime_strategy_name,
+            "account_label": identity.account_label,
+            "observed_stage": identity.observed_stage,
+        },
+        "trade_decision_mismatch_count": trade_decision_mismatches,
+        "execution_mismatch_count": execution_mismatches,
+        "execution_order_event_mismatch_count": order_event_mismatches,
+        "execution_tca_metric_mismatch_count": tca_metric_mismatches,
+        "order_feed_source_window_mismatch_count": source_window_mismatches,
+        "matched_runtime_ledger_bucket_count": max(
+            0, runtime_ledger_bucket_count - len(ledger_mismatches)
+        ),
+        "mismatched_runtime_ledger_bucket_count": len(ledger_mismatches),
+        "runtime_authority_aggregate_bucket_count": _int(aggregate.get("bucket_count")),
     }
 
 
@@ -672,6 +787,8 @@ def _census_blockers(
     blockers: list[str] = []
     if read_error is not None:
         blockers.append("source_proof_census_read_error")
+    if _int(totals.get("candidate_config_mismatch_count")) > 0:
+        blockers.append(CANDIDATE_CONFIG_MISMATCH_BLOCKER)
     if _int(totals.get("trade_decision_count")) <= 0:
         blockers.extend(
             [
@@ -789,6 +906,26 @@ def _blocker_ladder(
     }
     return [
         _ladder_step(
+            "candidate_config_match",
+            blockers=blockers,
+            step_blockers={CANDIDATE_CONFIG_MISMATCH_BLOCKER},
+            present=bool(totals.get("candidate_config_match")),
+            observed={
+                "candidate_config_match": bool(totals.get("candidate_config_match")),
+                "candidate_config_mismatch_count": _int(
+                    totals.get("candidate_config_mismatch_count")
+                ),
+                "matched_runtime_ledger_bucket_count": _int(
+                    totals.get("candidate_matched_runtime_ledger_bucket_count")
+                ),
+                "mismatched_runtime_ledger_bucket_count": _int(
+                    totals.get("candidate_mismatched_runtime_ledger_bucket_count")
+                ),
+                "observed_stage": observed_stage,
+            },
+            next_action="rerun the read-only census with the intended H-PAIRS candidate/config and paper account",
+        ),
+        _ladder_step(
             "decisions_present",
             blockers=blockers,
             step_blockers={
@@ -890,6 +1027,11 @@ def _blocker_ladder(
                 "events_with_source_offset_count": _int(
                     totals.get("execution_order_events_with_source_offset_count")
                 ),
+                "events_with_source_window_and_offset_count": _int(
+                    totals.get(
+                        "execution_order_events_with_source_window_and_offset_count"
+                    )
+                ),
                 "runtime_source_authority_bucket_count": _int(
                     totals.get("blocker_free_runtime_ledger_bucket_count")
                 ),
@@ -912,6 +1054,12 @@ def _blocker_ladder(
             observed={
                 "runtime_ledger_bucket_count": _int(
                     totals.get("runtime_ledger_bucket_count")
+                ),
+                "runtime_ledger_evidence_grade_bucket_count": _int(
+                    totals.get("runtime_ledger_evidence_grade_bucket_count")
+                ),
+                "runtime_ledger_aggregate_only_bucket_count": _int(
+                    totals.get("runtime_ledger_aggregate_only_bucket_count")
                 ),
                 "runtime_ledger_source_materialization_count": _int(
                     totals.get("runtime_ledger_source_materialization_count")
@@ -952,8 +1100,17 @@ def _blocker_ladder(
             and _int(totals.get("explicit_cost_runtime_ledger_bucket_count")) > 0,
             observed={
                 "tca_cost_row_count": _int(totals.get("tca_cost_row_count")),
+                "execution_tca_metric_count": _int(
+                    totals.get("execution_tca_metric_count")
+                ),
                 "explicit_cost_runtime_ledger_bucket_count": _int(
                     totals.get("explicit_cost_runtime_ledger_bucket_count")
+                ),
+                "explicit_cost_required_bucket_count": _int(
+                    totals.get("explicit_cost_required_bucket_count")
+                ),
+                "explicit_cost_coverage_complete": bool(
+                    totals.get("explicit_cost_coverage_complete")
                 ),
                 "total_explicit_costs": _text(
                     aggregate.get("total_explicit_costs"), default="0"

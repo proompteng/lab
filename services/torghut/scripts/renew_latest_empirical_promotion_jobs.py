@@ -617,6 +617,8 @@ def _hpairs_source_proof_census_status(
             "authority_source": False,
             "promotion_allowed": False,
             "final_authority_ok": False,
+            "runtime_authority_final_ok": False,
+            "census_ready": False,
             "blockers": [],
             "attachment_blockers": ["hpairs_source_proof_census_missing"],
             "blocker_ladder": [],
@@ -638,6 +640,8 @@ def _hpairs_source_proof_census_status(
     attachment_blockers = _hpairs_source_proof_census_attachment_blockers(payload)
     blockers = _extend_unique_text_items(blockers, attachment_blockers)
     next_blocker = _as_dict(verdict.get("next_blocker"))
+    runtime_authority_final_ok = bool(runtime_authority.get("final_authority_ok"))
+    census_ready = bool(verdict.get("authority_candidate_ready")) and not blockers
     return {
         "schema_version": HPAIRS_SOURCE_PROOF_CENSUS_STATUS_SCHEMA_VERSION,
         "present": True,
@@ -649,8 +653,9 @@ def _hpairs_source_proof_census_status(
         "classification": verdict.get("classification"),
         "authority_candidate_ready": bool(verdict.get("authority_candidate_ready")),
         "promotion_allowed": False,
-        "final_authority_ok": bool(runtime_authority.get("final_authority_ok"))
-        and not blockers,
+        "final_authority_ok": False,
+        "runtime_authority_final_ok": runtime_authority_final_ok,
+        "census_ready": census_ready,
         "blockers": blockers,
         "attachment_blockers": attachment_blockers,
         "missing_requirement_categories": _as_dict(
@@ -2721,9 +2726,6 @@ def main() -> int:
     hpairs_source_proof_census_status = _hpairs_source_proof_census_status(
         hpairs_source_proof_census
     )
-    hpairs_source_proof_census_blockers = _as_text_list(
-        hpairs_source_proof_census_status.get("blockers")
-    )
 
     with SessionLocal() as session:
         rows = (
@@ -2768,9 +2770,10 @@ def main() -> int:
         "manifest_path": str(manifest_path),
         "output_dir": str(output_dir),
         "promotion_allowed": False,
-        "final_authority_ok": False
-        if hpairs_source_proof_census_blockers
-        else bool(hpairs_source_proof_census_status.get("final_authority_ok")),
+        "final_authority_ok": False,
+        "hpairs_source_proof_census_runtime_authority_final_ok": bool(
+            hpairs_source_proof_census_status.get("runtime_authority_final_ok")
+        ),
         "hpairs_source_proof_census": hpairs_source_proof_census_status,
         "empirical_promotion": json.loads(result.stdout),
         "runtime_window_import": runtime_window_import,

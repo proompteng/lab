@@ -215,6 +215,7 @@ def test_full_source_backed_census_is_authority_candidate_ready() -> None:
     assert report["verdict"]["classification"] == census.AUTHORITY_CANDIDATE_READY
     assert report["blockers"] == []
     assert report["totals"]["trade_decision_count"] == 20
+    assert report["totals"]["matched_trade_decision_count"] == 20
     assert report["totals"]["execution_count"] == 20
     assert report["totals"]["filled_execution_count"] == 20
     assert report["totals"]["execution_order_event_count"] == 20
@@ -225,18 +226,30 @@ def test_full_source_backed_census_is_authority_candidate_ready() -> None:
         report["totals"]["execution_order_events_with_filled_notional_delta_count"]
         == 20
     )
+    assert (
+        report["totals"]["execution_order_events_with_source_window_and_offset_count"]
+        == 20
+    )
     assert report["totals"]["tca_cost_row_count"] == 20
+    assert report["totals"]["execution_tca_metric_count"] == 20
     assert report["totals"]["source_window_count"] == 20
     assert report["totals"]["runtime_ledger_bucket_count"] == 20
     assert report["totals"]["blocker_free_runtime_ledger_bucket_count"] == 20
+    assert report["totals"]["runtime_ledger_evidence_grade_bucket_count"] == 20
+    assert report["totals"]["runtime_ledger_aggregate_only_bucket_count"] == 0
     assert report["totals"]["runtime_submitted_order_count"] == 400
     assert report["totals"]["runtime_ledger_source_materialization_count"] == 20
     assert report["totals"]["runtime_ledger_clean_authority_trading_day_count"] == 20
     assert report["totals"]["closed_trade_count"] == 400
+    assert report["totals"]["open_position_count"] == 0
     assert report["totals"]["filled_notional"] == "12000000"
+    assert report["totals"]["explicit_cost_required_bucket_count"] == 20
+    assert report["totals"]["explicit_cost_coverage_complete"] is True
     assert report["totals"]["target_implied_notional_gap"] == "0"
     assert report["totals"]["post_cost_pnl"] == "12000"
     assert report["source"]["runtime_stage"] == "paper"
+    assert report["candidate_config_match"]["matches"] is True
+    assert report["candidate_config_match"]["mismatch_count"] == 0
     assert report["source"]["replay_outputs_count_as_runtime_proof"] is False
     assert report["source"]["synthetic_proof_created"] is False
     assert report["verdict"]["next_blocker"] is None
@@ -255,6 +268,7 @@ def test_full_source_backed_census_is_authority_candidate_ready() -> None:
         == census.LADDER_PASS
     )
     assert [item["step"] for item in report["blocker_ladder"]] == [
+        "candidate_config_match",
         "decisions_present",
         "submitted_orders_present",
         "fill_lifecycle_present",
@@ -403,6 +417,7 @@ def test_runtime_bucket_aggregate_only_is_source_refs_missing() -> None:
 
     assert report["verdict"]["classification"] == census.SOURCE_REFS_MISSING
     assert report["totals"]["blocker_free_runtime_ledger_bucket_count"] == 0
+    assert report["totals"]["runtime_ledger_aggregate_only_bucket_count"] == 20
     assert report["totals"]["runtime_ledger_source_materialization_count"] == 0
     assert census.RUNTIME_LEDGER_SOURCE_REFS_MISSING_BLOCKER in report["blockers"]
     assert (
@@ -447,6 +462,21 @@ def test_empty_fixture_has_no_source_activity_verdict() -> None:
         ],
         "next_action": "run the strategy through paper/live routing until durable TradeDecision rows exist",
     }
+
+
+def test_candidate_config_mismatch_is_first_ladder_blocker() -> None:
+    payload = _fixture()
+    payload["runtime_ledger_buckets"][0]["candidate_id"] = "other-candidate"
+    payload["trade_decisions"][0]["strategy_name"] = "other-strategy"
+
+    report = _report(payload)
+
+    assert report["candidate_config_match"]["matches"] is False
+    assert report["totals"]["candidate_config_mismatch_count"] == 2
+    assert census.CANDIDATE_CONFIG_MISMATCH_BLOCKER in report["blockers"]
+    next_blocker = report["verdict"]["next_blocker"]
+    assert isinstance(next_blocker, dict)
+    assert next_blocker["step"] == "candidate_config_match"
 
 
 def test_partial_evidence_ladder_points_at_order_feed_lifecycle() -> None:
