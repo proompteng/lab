@@ -26,6 +26,7 @@ spec:
     - Bootstrap the analysis repo, read scorecards before grading, and use the live scan-cycle helper for candidate ranking.
     - Submit strategy broker mutations only after Synthesis risk/order records, runner strategy guard approval, and deterministic client order ids.
     - Keep market-open runs cycling until market close, 500000 USD equity, or hard unrecoverable broker/order/visibility state.
+    - Complete each market-open AgentRun after market-close session finalization; do not keep post-close heartbeats waiting for the next scheduled open.
     - Finalize sessions with realized scorecard observations and write `report.md` as the only operator-facing artifact.
   text: |-
     Run the Synthesis autonomous paper-trader using the Agent default system prompt as the durable operating policy.
