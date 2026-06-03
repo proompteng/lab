@@ -23,6 +23,10 @@ const createFixture = () => {
   const executionTcaRefreshManifestPath = join(dir, 'execution-tca-refresh-cronjob.yaml')
   const orderFeedSourceWindowRepairManifestPath = join(dir, 'order-feed-source-window-repair-cronjob.yaml')
   const paperAccountFlattenManifestPath = join(dir, 'paper-account-flatten-cronjob.yaml')
+  const boundedPaperRouteTargetMaterializationManifestPath = join(
+    dir,
+    'bounded-paper-route-target-materialization-cronjob.yaml',
+  )
   const whitepaperSemanticBackfillManifestPath = join(dir, 'whitepaper-semantic-backfill-job.yaml')
   const tigerBeetleSmokeManifestPath = join(dir, 'tigerbeetle-smoke-job.yaml')
   const tigerBeetleJournalOrderEventsManifestPath = join(dir, 'tigerbeetle-journal-order-events-cronjob.yaml')
@@ -103,6 +107,7 @@ spec:
     executionTcaRefreshManifestPath,
     orderFeedSourceWindowRepairManifestPath,
     paperAccountFlattenManifestPath,
+    boundedPaperRouteTargetMaterializationManifestPath,
     whitepaperSemanticBackfillManifestPath,
     tigerBeetleSmokeManifestPath,
     tigerBeetleJournalOrderEventsManifestPath,
@@ -203,6 +208,7 @@ spec:
     executionTcaRefreshManifestPath,
     orderFeedSourceWindowRepairManifestPath,
     paperAccountFlattenManifestPath,
+    boundedPaperRouteTargetMaterializationManifestPath,
     whitepaperSemanticBackfillManifestPath,
     tigerBeetleSmokeManifestPath,
     tigerBeetleJournalOrderEventsManifestPath,
@@ -277,6 +283,10 @@ describe('update-manifests', () => {
       executionTcaRefreshManifestPath: relative(repoRoot, fixture.executionTcaRefreshManifestPath),
       orderFeedSourceWindowRepairManifestPath: relative(repoRoot, fixture.orderFeedSourceWindowRepairManifestPath),
       paperAccountFlattenManifestPath: relative(repoRoot, fixture.paperAccountFlattenManifestPath),
+      boundedPaperRouteTargetMaterializationManifestPath: relative(
+        repoRoot,
+        fixture.boundedPaperRouteTargetMaterializationManifestPath,
+      ),
       whitepaperSemanticBackfillManifestPath: relative(repoRoot, fixture.whitepaperSemanticBackfillManifestPath),
       tigerBeetleSmokeManifestPath: relative(repoRoot, fixture.tigerBeetleSmokeManifestPath),
       tigerBeetleJournalOrderEventsManifestPath: relative(repoRoot, fixture.tigerBeetleJournalOrderEventsManifestPath),
@@ -302,6 +312,10 @@ describe('update-manifests', () => {
     const executionTcaRefreshManifest = readFileSync(fixture.executionTcaRefreshManifestPath, 'utf8')
     const orderFeedSourceWindowRepairManifest = readFileSync(fixture.orderFeedSourceWindowRepairManifestPath, 'utf8')
     const paperAccountFlattenManifest = readFileSync(fixture.paperAccountFlattenManifestPath, 'utf8')
+    const boundedPaperRouteTargetMaterializationManifest = readFileSync(
+      fixture.boundedPaperRouteTargetMaterializationManifestPath,
+      'utf8',
+    )
     const whitepaperSemanticBackfillManifest = readFileSync(fixture.whitepaperSemanticBackfillManifestPath, 'utf8')
     const tigerBeetleSmokeManifest = readFileSync(fixture.tigerBeetleSmokeManifestPath, 'utf8')
     const tigerBeetleJournalOrderEventsManifest = readFileSync(
@@ -343,6 +357,7 @@ describe('update-manifests', () => {
       executionTcaRefreshManifest,
       orderFeedSourceWindowRepairManifest,
       paperAccountFlattenManifest,
+      boundedPaperRouteTargetMaterializationManifest,
       whitepaperSemanticBackfillManifest,
       tigerBeetleSmokeManifest,
       tigerBeetleJournalOrderEventsManifest,
@@ -374,7 +389,7 @@ describe('update-manifests', () => {
     expect(result.imageRef).toBe(
       'registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
     )
-    expect(result.changedPaths.length).toBe(20)
+    expect(result.changedPaths.length).toBe(21)
 
     rmSync(fixture.dir, { recursive: true, force: true })
   })
@@ -405,6 +420,10 @@ describe('update-manifests', () => {
       executionTcaRefreshManifestPath: relative(repoRoot, fixture.executionTcaRefreshManifestPath),
       orderFeedSourceWindowRepairManifestPath: relative(repoRoot, fixture.orderFeedSourceWindowRepairManifestPath),
       paperAccountFlattenManifestPath: relative(repoRoot, fixture.paperAccountFlattenManifestPath),
+      boundedPaperRouteTargetMaterializationManifestPath: relative(
+        repoRoot,
+        fixture.boundedPaperRouteTargetMaterializationManifestPath,
+      ),
       whitepaperSemanticBackfillManifestPath: relative(repoRoot, fixture.whitepaperSemanticBackfillManifestPath),
       tigerBeetleSmokeManifestPath: relative(repoRoot, fixture.tigerBeetleSmokeManifestPath),
       tigerBeetleJournalOrderEventsManifestPath: relative(repoRoot, fixture.tigerBeetleJournalOrderEventsManifestPath),
