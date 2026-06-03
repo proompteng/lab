@@ -150,17 +150,6 @@ def cycle_action(summary: dict[str, Any]) -> str:
             f"symbol={candidate.get('symbol')}; "
             f"reason={guard.get('reason')}"
         )
-    if isinstance(decision, dict) and decision.get("action") == "run_strategy_order_guard":
-        candidate = decision.get("bestCandidate")
-        if isinstance(candidate, dict):
-            return (
-                "market_open_cycle_candidate; "
-                f"ticketId={candidate.get('ticketId')}; "
-                f"symbol={candidate.get('symbol')} "
-                f"{candidate.get('setupGrade')} "
-                f"{candidate.get('setupType')}; "
-                f"expectedR={candidate.get('expectedR')}"
-            )
     if isinstance(decision, dict) and decision.get("action") == "no_actionable_candidate":
         return "market_open_cycle_complete; no_actionable_candidate"
     if isinstance(top_results, list) and top_results:
