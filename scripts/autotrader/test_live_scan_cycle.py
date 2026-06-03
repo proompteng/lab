@@ -545,6 +545,55 @@ class LiveScanCycleTest(unittest.TestCase):
         self.assertEqual(summary["blockedResultCount"], 1)
         self.assertIsNone(summary["bestCandidate"])
 
+    def test_decision_summary_blocks_negative_scorecard_history(self) -> None:
+        rejected = {
+            "symbol": "TSLA",
+            "setup_type": "vwap_reclaim",
+            "setup_grade": "A",
+            "expected_r": "4.5",
+            "scorecard_sample_size": 1,
+            "scorecard_avg_realized_r": "-1.009091",
+            "scorecard_confidence": "0.0909",
+        }
+        accepted = {
+            "symbol": "AMD",
+            "setup_type": "vwap_reclaim",
+            "setup_grade": "A",
+            "expected_r": "3.0",
+            "scorecard_sample_size": 1,
+            "scorecard_avg_realized_r": "3.042857",
+            "scorecard_confidence": "0.0909",
+        }
+        rejected_payload = live_scan_cycle.ticket_payload_for_scan_result(
+            session_id="session-1",
+            cycle=9,
+            index=1,
+            result=rejected,
+        )
+        summary = live_scan_cycle.decision_summary_for_scan(
+            cycle=9,
+            scan={"results": [rejected, accepted]},
+            recorded_tickets=[
+                {
+                    "idempotencyKey": "scan-cycle-9-1-TSLA-vwap_reclaim-A",
+                    "ticketId": "ticket-tsla",
+                },
+                {
+                    "idempotencyKey": "scan-cycle-9-2-AMD-vwap_reclaim-A",
+                    "ticketId": "ticket-amd",
+                },
+            ],
+        )
+
+        assert rejected_payload is not None
+        self.assertEqual(rejected_payload["status"], "blocked")
+        self.assertEqual(rejected_payload["noTradeReason"], "scorecard_avg_realized_r_negative")
+        self.assertEqual(summary["action"], "run_strategy_order_guard")
+        self.assertEqual(summary["actionableCandidateCount"], 1)
+        self.assertEqual(summary["blockedResultCount"], 1)
+        self.assertEqual(summary["bestCandidate"]["symbol"], "AMD")
+        self.assertEqual(summary["candidateSymbols"], ["AMD"])
+
     def test_decision_summary_reports_no_actionable_candidate(self) -> None:
         summary = live_scan_cycle.decision_summary_for_scan(
             cycle=5,
