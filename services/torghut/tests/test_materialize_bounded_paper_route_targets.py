@@ -804,6 +804,80 @@ def test_commit_dynamic_plan_skips_before_active_target_window_without_writes(
     assert _count_decisions(sqlite_dsn) == 0
 
 
+def test_commit_dynamic_plan_filters_to_active_target_window_subset(
+    monkeypatch: pytest.MonkeyPatch,
+    sqlite_dsn: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    future_target = _hpairs_target(
+        candidate_id="future-window-candidate",
+        source_plan_ref="paper-route-plan:future-window-candidate",
+        window_start="2026-06-01T15:00:00+00:00",
+        window_end="2026-06-01T16:00:00+00:00",
+    )
+    payload = {
+        "live_submission_gate": {
+            "runtime_ledger_paper_probation_import_plan": _plan(
+                _hpairs_target(),
+                future_target,
+            )
+        },
+    }
+    monkeypatch.setattr(cli, "_fetch_plan_url_payload", lambda *_, **__: payload)
+
+    exit_code, report = _run_cli(
+        [
+            "--plan-url",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "--database-dsn-env",
+            "DB_DSN",
+            "--max-notional",
+            "25",
+            "--commit",
+            "--allow-dynamic-target-plan",
+            "--skip-unless-active-target-window",
+            "--now-utc",
+            "2026-06-01T14:00:00+00:00",
+            "--confirm-account-label",
+            "TORGHUT_SIM",
+            "--confirm-dsn-env",
+            "DB_DSN",
+            "--confirm-hypothesis-id",
+            "H-PAIRS-01",
+            "--confirm-runtime-strategy-name",
+            "microbar-cross-sectional-pairs-v1",
+            "--confirm-selected-plan-source",
+            cli.DEFAULT_DYNAMIC_SELECTED_PLAN_SOURCE,
+            "--confirm-target-count-min",
+            "1",
+            "--confirm-max-notional",
+            "25",
+            "--operator-confirmation",
+            cli.OPERATOR_CONFIRMATION,
+        ],
+        capsys,
+    )
+
+    assert exit_code == 0
+    assert report["materialized"] is True
+    assert report["skipped"] is False
+    assert report["source_target_count"] == 2
+    assert report["target_count"] == 1
+    assert report["active_target_window_filter_applied"] is True
+    assert report["target_window_check"]["active"] is False
+    assert report["target_window_check"]["active_count"] == 1
+    assert report["target_window_check"]["inactive_count"] == 1
+    assert report["candidate_ids"] == ["c88421d619759b2cfaa6f4d0"]
+    assert report["source_targets"][1]["candidate_id"] == "future-window-candidate"
+    assert report["materialized_decision_count"] == 2
+    assert report["route_submission_count"] == 2
+    assert report["promotion_allowed"] is False
+    assert report["final_promotion_allowed"] is False
+    assert report["capital_promotion_allowed"] is False
+    assert report["blockers"] == []
+    assert _count_decisions(sqlite_dsn) == 2
+
+
 def test_commit_dynamic_plan_requires_active_target_window_without_skip(
     monkeypatch: pytest.MonkeyPatch,
     sqlite_dsn: str,

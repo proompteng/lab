@@ -523,6 +523,37 @@ def _active_target_window_check(
     }
 
 
+def _target_window_check_active_indexes(
+    target_window_check: Mapping[str, Any] | None,
+) -> list[int]:
+    if not isinstance(target_window_check, Mapping):
+        return []
+    indexes: list[int] = []
+    for target in cast(Sequence[object], target_window_check.get("targets", [])):
+        if not isinstance(target, Mapping):
+            continue
+        target_mapping = cast(Mapping[str, Any], target)
+        if _safe_text(target_mapping.get("state")) != "open":
+            continue
+        indexes.append(int(target_mapping.get("target_index", 0)))
+    return indexes
+
+
+def _plan_with_target_indexes(
+    plan: Mapping[str, Any],
+    target_indexes: Sequence[int],
+) -> dict[str, Any]:
+    selected_indexes = set(target_indexes)
+    return {
+        **dict(plan),
+        "targets": [
+            target
+            for index, target in enumerate(paper_route_target_plan_targets(plan))
+            if index in selected_indexes
+        ],
+    }
+
+
 def _unique_texts(values: Sequence[object]) -> list[str]:
     return sorted({text for value in values if (text := _safe_text(value))})
 
@@ -847,29 +878,45 @@ def build_report(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
         plan_source = {"kind": "unavailable"}
         load_blockers = [f"paper_route_materialization_plan_load_failed:{exc}"]
 
-    summaries = _target_summaries(plan)
-    blockers = load_blockers + _safety_blockers(
-        args=args,
-        plan=plan,
-        plan_source=plan_source,
-        summaries=summaries,
-        dsn=dsn,
-        dsn_env=dsn_env,
-    )
+    source_plan = plan
+    source_summaries = _target_summaries(source_plan)
+    materialization_plan = source_plan
+    summaries = source_summaries
+    active_target_window_filter_applied = False
     target_window_check: dict[str, Any] | None = None
     skip_reason: str | None = None
     if bool(args.skip_unless_active_target_window) or bool(
         args.require_active_target_window
     ):
         target_window_check = _active_target_window_check(
-            summaries,
+            source_summaries,
             now=_resolve_now_utc(args),
         )
-        if not bool(target_window_check["active"]):
-            if bool(args.skip_unless_active_target_window) and not blockers:
-                skip_reason = ACTIVE_TARGET_WINDOW_SKIP_REASON
-            else:
-                blockers.append(ACTIVE_TARGET_WINDOW_REQUIRED_BLOCKER)
+        active_target_indexes = _target_window_check_active_indexes(target_window_check)
+        if active_target_indexes and len(active_target_indexes) < len(source_summaries):
+            materialization_plan = _plan_with_target_indexes(
+                source_plan,
+                active_target_indexes,
+            )
+            summaries = _target_summaries(materialization_plan)
+            active_target_window_filter_applied = True
+
+    blockers = load_blockers + _safety_blockers(
+        args=args,
+        plan=materialization_plan,
+        plan_source=plan_source,
+        summaries=summaries,
+        dsn=dsn,
+        dsn_env=dsn_env,
+    )
+    if (
+        target_window_check is not None
+        and not _target_window_check_active_indexes(target_window_check)
+    ):
+        if bool(args.skip_unless_active_target_window) and not blockers:
+            skip_reason = ACTIVE_TARGET_WINDOW_SKIP_REASON
+        else:
+            blockers.append(ACTIVE_TARGET_WINDOW_REQUIRED_BLOCKER)
 
     materialization: dict[str, Any] = {}
     if not blockers and skip_reason is None and dsn is not None:
@@ -879,14 +926,14 @@ def build_report(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
                 if commit:
                     materialization = _run_materialization(
                         session=session,
-                        plan=plan,
+                        plan=materialization_plan,
                         max_notional=max_notional,
                         commit=True,
                     )
                 else:
                     materialization = _run_dry_run_materialization(
                         source_session=session,
-                        plan=plan,
+                        plan=materialization_plan,
                         max_notional=max_notional,
                         summaries=summaries,
                     )
@@ -919,6 +966,8 @@ def build_report(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
         "dynamic_target_plan_confirmation": bool(args.allow_dynamic_target_plan),
         "default_dynamic_selected_plan_source": DEFAULT_DYNAMIC_SELECTED_PLAN_SOURCE,
         "target_window_check": target_window_check,
+        "active_target_window_filter_applied": active_target_window_filter_applied,
+        "source_target_count": len(source_summaries),
         "target_count": len(summaries),
         "hypothesis_ids": _unique_texts(
             [item.get("hypothesis_id") for item in summaries]
@@ -933,6 +982,9 @@ def build_report(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
             [item.get("target_plan_ref") for item in summaries]
         ),
         "targets": summaries,
+        "source_targets": source_summaries
+        if active_target_window_filter_applied
+        else None,
         "materialization": materialization,
         "materialized_decision_count": int(
             materialization.get("materialized_decision_count", 0)
