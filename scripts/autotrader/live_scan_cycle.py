@@ -14,7 +14,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import UTC, datetime
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_FLOOR
 from pathlib import Path
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
@@ -42,6 +42,9 @@ MIN_ACTIONABLE_EXPECTED_R = Decimal("2.0")
 MIN_ACTIONABLE_BRACKET_R = Decimal("2.0")
 MIN_SCORECARD_RISK_SCALE_SAMPLE_SIZE = 2
 MAX_SCORECARD_RISK_MULTIPLIER = Decimal("2.0")
+BASE_RISK_EQUITY_PCT = Decimal("0.0025")
+MAX_RISK_EQUITY_PCT = Decimal("0.005")
+MAX_POSITION_NOTIONAL_EQUITY_PCT = Decimal("0.50")
 MAX_INTRADAY_EQUITY_DRAWDOWN_PCT = Decimal("0.015")
 ACCOUNT_MONEY_QUANT = Decimal("0.01")
 ACCOUNT_RATIO_QUANT = Decimal("0.000001")
@@ -199,6 +202,13 @@ def quantized_decimal_text(value: Decimal, quantum: Decimal) -> str:
 
 def normalized_quantized_decimal_text(value: Decimal, quantum: Decimal) -> str:
     return format(value.quantize(quantum).normalize(), "f")
+
+
+def floored_decimal_int_text(value: Decimal) -> str | None:
+    if value <= 0:
+        return None
+    quantity = value.to_integral_value(rounding=ROUND_FLOOR)
+    return str(quantity) if quantity > 0 else None
 
 
 def intraday_equity_entry_eligibility(account: dict[str, Any]) -> dict[str, Any]:
@@ -1301,7 +1311,84 @@ def executable_bracket_no_trade_reason(result: dict[str, Any]) -> str | None:
     return None
 
 
-def result_no_trade_reason(result: dict[str, Any], grade: str, type_: str) -> str | None:
+def account_from_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    account = payload.get("account")
+    return account if isinstance(account, dict) else payload
+
+
+def risk_budget_for_account(payload: dict[str, Any] | None) -> dict[str, str] | None:
+    account = account_from_payload(payload)
+    equity = parse_account_decimal(account.get("equity"))
+    if equity is None or equity <= 0:
+        return None
+    daytrading_buying_power = parse_account_decimal(
+        account.get("daytrading_buying_power") or account.get("daytrade_buying_power")
+    )
+    buying_power = parse_account_decimal(account.get("buying_power"))
+    positive_buying_power = [
+        value for value in (daytrading_buying_power, buying_power) if value is not None and value > 0
+    ]
+    max_position_notional = equity * MAX_POSITION_NOTIONAL_EQUITY_PCT
+    if positive_buying_power:
+        max_position_notional = min(max_position_notional, min(positive_buying_power))
+    return {
+        "source": "account_equity_stop_distance",
+        "equity": quantized_decimal_text(equity, ACCOUNT_MONEY_QUANT),
+        "baseRiskPct": normalized_quantized_decimal_text(BASE_RISK_EQUITY_PCT, ACCOUNT_RATIO_QUANT),
+        "maxRiskPct": normalized_quantized_decimal_text(MAX_RISK_EQUITY_PCT, ACCOUNT_RATIO_QUANT),
+        "maxPositionNotionalPct": normalized_quantized_decimal_text(
+            MAX_POSITION_NOTIONAL_EQUITY_PCT, ACCOUNT_RATIO_QUANT
+        ),
+        "baseRiskDollars": quantized_decimal_text(equity * BASE_RISK_EQUITY_PCT, ACCOUNT_MONEY_QUANT),
+        "maxRiskDollars": quantized_decimal_text(equity * MAX_RISK_EQUITY_PCT, ACCOUNT_MONEY_QUANT),
+        "maxPositionNotionalDollars": quantized_decimal_text(max_position_notional, ACCOUNT_MONEY_QUANT),
+    }
+
+
+def position_size_for_bracket(
+    *,
+    bracket: dict[str, Any],
+    recommended_risk_dollars: Decimal,
+    max_position_notional_dollars: Decimal | None,
+) -> dict[str, str | None]:
+    entry = decimal_value(bracket.get("entryLimitPrice"))
+    stop = decimal_value(bracket.get("stopPrice"))
+    if entry is None or stop is None or entry <= 0:
+        return {"plannedQuantity": None, "reason": "missing_entry_or_stop_for_position_size"}
+    per_share_risk = abs(entry - stop)
+    if per_share_risk <= 0:
+        return {"plannedQuantity": None, "reason": "non_positive_per_share_risk"}
+    quantity_from_risk = recommended_risk_dollars / per_share_risk
+    quantity_from_notional = (
+        max_position_notional_dollars / entry
+        if max_position_notional_dollars is not None and max_position_notional_dollars > 0
+        else quantity_from_risk
+    )
+    quantity_text = floored_decimal_int_text(min(quantity_from_risk, quantity_from_notional))
+    if quantity_text is None:
+        return {
+            "plannedQuantity": None,
+            "reason": "deterministic_position_size_not_positive",
+            "perShareRiskDollars": quantized_decimal_text(per_share_risk, ACCOUNT_MONEY_QUANT),
+        }
+    quantity = Decimal(quantity_text)
+    return {
+        "plannedQuantity": quantity_text,
+        "reason": "account_risk_budget_stop_distance",
+        "perShareRiskDollars": quantized_decimal_text(per_share_risk, ACCOUNT_MONEY_QUANT),
+        "plannedMaxLossDollars": quantized_decimal_text(quantity * per_share_risk, ACCOUNT_MONEY_QUANT),
+        "plannedNotionalDollars": quantized_decimal_text(quantity * entry, ACCOUNT_MONEY_QUANT),
+    }
+
+
+def result_no_trade_reason(
+    result: dict[str, Any],
+    grade: str,
+    type_: str,
+    account: dict[str, Any] | None = None,
+) -> str | None:
     reason = optional_text(result.get("no_trade_reason") or result.get("noTradeReason"), max_length=1000)
     if reason:
         return reason
@@ -1323,6 +1410,9 @@ def result_no_trade_reason(result: dict[str, Any], grade: str, type_: str) -> st
         return bracket_reason
     if scorecard_sample_size <= 0 or scorecard_avg_r is None or scorecard_avg_r <= 0:
         return "positive_scorecard_edge_required"
+    risk_directive = scorecard_risk_directive(result, account=account)
+    if account is not None and risk_directive is not None and not risk_directive.get("plannedQuantity"):
+        return optional_text(risk_directive.get("positionSizeReason"), max_length=120) or "deterministic_size_missing"
     return None
 
 
@@ -1336,6 +1426,7 @@ def ticket_payload_for_scan_result(
     cycle: int,
     index: int,
     result: dict[str, Any],
+    account: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     symbol = optional_text(result.get("symbol"), max_length=32)
     if not symbol:
@@ -1344,7 +1435,7 @@ def ticket_payload_for_scan_result(
     type_ = setup_type(result.get("setup_type") or result.get("setupType"))
     side = result_side(result)
     bracket = derived_bracket_for_scan_result(result)
-    no_trade_reason = result_no_trade_reason(result, grade, type_)
+    no_trade_reason = result_no_trade_reason(result, grade, type_, account=account)
     expected_r = numeric_text(result.get("expected_r") or result.get("expectedR"))
     blocked = no_trade_reason is not None
     idempotency_key = f"scan-cycle-{cycle}-{index}-{symbol.upper()}-{type_}-{grade}".replace(" ", "-")
@@ -1355,7 +1446,15 @@ def ticket_payload_for_scan_result(
     )
     entry_trigger = optional_text(result.get("entry_trigger") or result.get("entryTrigger"), max_length=1200)
     invalidation = optional_text(result.get("invalidation"), max_length=1200)
-    risk_directive = scorecard_risk_directive(result)
+    risk_directive = scorecard_risk_directive(result, account=account)
+    risk_dollars = (
+        optional_text(risk_directive.get("recommendedRiskDollars"), max_length=80)
+        if isinstance(risk_directive, dict)
+        else None
+    ) or numeric_text(result.get("risk_dollars") or result.get("riskDollars"))
+    planned_quantity = (
+        optional_text(risk_directive.get("plannedQuantity"), max_length=80) if isinstance(risk_directive, dict) else None
+    ) or numeric_text(result.get("planned_quantity") or result.get("plannedQuantity"))
 
     return {
         "sessionId": session_id,
@@ -1377,8 +1476,8 @@ def ticket_payload_for_scan_result(
         "targetPrice": bracket["targetPrice"],
         "expectedR": expected_r,
         "actualBracketR": bracket["actualBracketR"],
-        "riskDollars": numeric_text(result.get("risk_dollars") or result.get("riskDollars")),
-        "plannedQuantity": numeric_text(result.get("planned_quantity") or result.get("plannedQuantity")),
+        "riskDollars": risk_dollars,
+        "plannedQuantity": planned_quantity,
         "protectionType": optional_text(result.get("protection_type") or result.get("protectionType"), max_length=80)
         or ("none_no_order" if blocked else "bracket_required"),
         "brokerOrderPlan": {
@@ -1401,6 +1500,7 @@ def record_scan_tickets(
     cycle: int,
     scan: dict[str, Any],
     limit: int,
+    account: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     if not session_id.strip():
         raise ValueError("session id is required when recording scan tickets")
@@ -1411,7 +1511,13 @@ def record_scan_tickets(
     for index, result in enumerate(results[: max(0, limit)], start=1):
         if not isinstance(result, dict):
             continue
-        payload = ticket_payload_for_scan_result(session_id=session_id, cycle=cycle, index=index, result=result)
+        payload = ticket_payload_for_scan_result(
+            session_id=session_id,
+            cycle=cycle,
+            index=index,
+            result=result,
+            account=account,
+        )
         if payload is None:
             continue
         response = synthesis.post("/api/autotrader/trade-tickets", payload)
@@ -1425,6 +1531,9 @@ def record_scan_tickets(
                 "noTradeReason": payload["noTradeReason"],
                 "ticketId": ticket.get("id") if isinstance(ticket, dict) else None,
                 "idempotencyKey": payload["idempotencyKey"],
+                "actualBracketR": payload["actualBracketR"],
+                "riskDollars": payload["riskDollars"],
+                "plannedQuantity": payload["plannedQuantity"],
                 "scorecardSampleSize": int_text_value(
                     result.get("scorecard_sample_size") or result.get("scorecardSampleSize")
                 ),
@@ -1452,7 +1561,7 @@ def scorecard_edge_weight(sample_size: int) -> Decimal:
     return min(Decimal("1"), Decimal(sample_size) / Decimal(MIN_SCORECARD_RISK_SCALE_SAMPLE_SIZE))
 
 
-def scorecard_risk_directive(result: dict[str, Any]) -> dict[str, Any] | None:
+def scorecard_risk_directive(result: dict[str, Any], account: dict[str, Any] | None = None) -> dict[str, Any] | None:
     sample_size, avg_realized_r, confidence = scorecard_edge_values(result)
     if sample_size <= 0 or avg_realized_r is None or avg_realized_r <= 0:
         return None
@@ -1477,9 +1586,37 @@ def scorecard_risk_directive(result: dict[str, Any]) -> dict[str, Any] | None:
         ),
     }
     risk_dollars = decimal_value(result.get("risk_dollars") or result.get("riskDollars"))
+    risk_budget = risk_budget_for_account(account)
     if risk_dollars is not None and risk_dollars > 0:
         directive["baseRiskDollars"] = str(risk_dollars)
-        directive["recommendedRiskDollars"] = str(risk_dollars * risk_multiplier)
+        recommended_risk_dollars = risk_dollars * risk_multiplier
+    elif risk_budget is not None:
+        directive["accountRiskBudget"] = risk_budget
+        base_risk = decimal_value(risk_budget.get("baseRiskDollars"))
+        recommended_risk_dollars = base_risk * risk_multiplier if base_risk is not None else None
+        if base_risk is not None:
+            directive["baseRiskDollars"] = risk_budget["baseRiskDollars"]
+    else:
+        recommended_risk_dollars = None
+    if recommended_risk_dollars is not None and recommended_risk_dollars > 0:
+        max_risk = decimal_value(risk_budget.get("maxRiskDollars")) if risk_budget is not None else None
+        if max_risk is not None and max_risk > 0 and recommended_risk_dollars > max_risk:
+            recommended_risk_dollars = max_risk
+            directive["cappedByAccountRiskBudget"] = True
+        if risk_budget is None:
+            directive["recommendedRiskDollars"] = str(recommended_risk_dollars)
+        else:
+            directive["recommendedRiskDollars"] = quantized_decimal_text(
+                recommended_risk_dollars, ACCOUNT_MONEY_QUANT
+            )
+            max_notional = decimal_value(risk_budget.get("maxPositionNotionalDollars"))
+            position_size = position_size_for_bracket(
+                bracket=derived_bracket_for_scan_result(result),
+                recommended_risk_dollars=recommended_risk_dollars,
+                max_position_notional_dollars=max_notional,
+            )
+            directive.update({key: value for key, value in position_size.items() if value is not None})
+            directive["positionSizeReason"] = str(position_size.get("reason"))
     return directive
 
 
@@ -1504,8 +1641,15 @@ def actionable_candidate_for_result(
     index: int,
     result: dict[str, Any],
     tickets_by_idempotency_key: dict[str, dict[str, Any]],
+    account: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    payload = ticket_payload_for_scan_result(session_id="decision-summary", cycle=cycle, index=index, result=result)
+    payload = ticket_payload_for_scan_result(
+        session_id="decision-summary",
+        cycle=cycle,
+        index=index,
+        result=result,
+        account=account,
+    )
     if payload is None:
         return None
     grade = str(payload["setupGrade"])
@@ -1528,7 +1672,7 @@ def actionable_candidate_for_result(
         "riskDollars": payload.get("riskDollars"),
         "plannedQuantity": payload.get("plannedQuantity"),
         "actualBracketR": payload.get("actualBracketR"),
-        "riskDirective": scorecard_risk_directive(result),
+        "riskDirective": scorecard_risk_directive(result, account=account),
         "scorecardSampleSize": int_text_value(result.get("scorecard_sample_size") or result.get("scorecardSampleSize")),
         "scorecardAvgRealizedR": numeric_text(
             result.get("scorecard_avg_realized_r") or result.get("scorecardAvgRealizedR")
@@ -1547,6 +1691,7 @@ def decision_summary_for_scan(
     cycle: int,
     scan: dict[str, Any],
     recorded_tickets: list[dict[str, Any]],
+    account: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     results = scan.get("results")
     if not isinstance(results, list):
@@ -1567,6 +1712,7 @@ def decision_summary_for_scan(
             index=index,
             result=result,
             tickets_by_idempotency_key=tickets_by_idempotency_key,
+            account=account,
         )
         if candidate is not None:
             candidates.append((candidate_score(result), candidate))
@@ -1575,6 +1721,7 @@ def decision_summary_for_scan(
             result,
             setup_grade(result.get("setup_grade") or result.get("setupGrade")),
             setup_type(result.get("setup_type") or result.get("setupType")),
+            account=account,
         )
         if is_scanner_no_trade_result(result):
             no_trade_count += 1
@@ -1707,6 +1854,7 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
     )
     summary["scorecardReadback"] = scorecard_readback
     summary["recordedScorecardReadback"] = recorded_scorecard_readback
+    account_payload = inputs.get("account.json") if isinstance(inputs.get("account.json"), dict) else None
     recorded_tickets: list[dict[str, Any]] = []
     if args.record_tickets:
         record_tickets_started_at = time.monotonic()
@@ -1716,6 +1864,7 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
             cycle=cycle,
             scan=scan,
             limit=args.max_recorded_tickets,
+            account=account_payload,
         )
         summary["recordedTickets"] = recorded_tickets
         stage_timings["recordTicketsMs"] = elapsed_ms(record_tickets_started_at)
@@ -1725,6 +1874,7 @@ def run_cycle(args: argparse.Namespace) -> dict[str, Any]:
         cycle=cycle,
         scan=scan,
         recorded_tickets=recorded_tickets,
+        account=account_payload,
     )
     if gate is not None:
         summary["accountGate"] = gate
