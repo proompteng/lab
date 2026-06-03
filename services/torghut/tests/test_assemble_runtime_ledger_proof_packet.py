@@ -829,6 +829,55 @@ class TestRuntimeLedgerProofPacket(TestCase):
             ],
         )
 
+    def test_packet_lineage_preserves_runtime_window_readback_refs(self) -> None:
+        result = packet.build_runtime_ledger_proof_packet(
+            _status(),
+            proof_mode="authority",
+            paper_route_evidence=_paper_route_evidence(),
+            runtime_window_import=_runtime_import(),
+            completion_status=_completion(ledger_refs=[]),
+            min_runtime_ledger_net_pnl=Decimal("500"),
+            min_runtime_ledger_daily_net_pnl=Decimal("500"),
+            min_runtime_ledger_trading_days=1,
+            generated_at="2026-05-26T21:05:00+00:00",
+        )
+
+        lineage = result["lineage"]
+        self.assertEqual(
+            lineage["strategy_runtime_ledger_bucket_refs"],
+            ["strategy_runtime_ledger_buckets:runtime-ledger-bucket-1"],
+        )
+        self.assertEqual(
+            lineage["counts"]["strategy_runtime_ledger_bucket_ref_count"], 1
+        )
+        for source_row_id in (
+            "source-window-1",
+            "event-1",
+            "execution-1",
+            "tca-1",
+            "decision-1",
+        ):
+            self.assertIn(source_row_id, lineage["source_row_ids"])
+        self.assertEqual(lineage["counts"]["source_row_id_count"], 5)
+        self.assertCountEqual(
+            lineage["metric_window_ids"],
+            ["metric-window-1", "strategy_hypothesis_metric_windows:metric-window-1"],
+        )
+        self.assertCountEqual(
+            lineage["promotion_decision_ids"],
+            [
+                "promotion-decision-1",
+                "strategy_promotion_decisions:promotion-decision-1",
+            ],
+        )
+        for source_ref in (
+            "postgres:trade_decisions",
+            "postgres:executions",
+            "postgres:execution_order_events",
+            "postgres:order_feed_source_windows",
+        ):
+            self.assertIn(source_ref, lineage["source_refs"])
+
     def test_hpairs_source_proof_census_blockers_are_non_authority_packet_blockers(
         self,
     ) -> None:
@@ -1704,7 +1753,14 @@ class TestRuntimeLedgerProofPacket(TestCase):
             self.assertEqual(immutable_lineage["stage"], "paper")
             self.assertEqual(
                 immutable_lineage["strategy_runtime_ledger_bucket_refs"],
-                ["strategy-runtime-ledger-buckets:H-PAIRS-01:2026-05-26"],
+                [
+                    "strategy-runtime-ledger-buckets:H-PAIRS-01:2026-05-26",
+                    "strategy_runtime_ledger_buckets:runtime-ledger-bucket-1",
+                ],
+            )
+            self.assertEqual(
+                immutable_lineage["counts"]["strategy_runtime_ledger_bucket_ref_count"],
+                2,
             )
             self.assertEqual(
                 immutable_lineage["runtime_ledger_bucket_ids"],
