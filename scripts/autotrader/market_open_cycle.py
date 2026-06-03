@@ -11,10 +11,12 @@ from pathlib import Path
 from typing import Any
 
 import live_scan_cycle
+import protective_preflight
 import strategy_order_guard
 from synthesis_autotrader_client import SynthesisClient
 
 MAX_CLIENT_ORDER_ID_LENGTH = 128
+BROKER_MUTATION_ENABLED_VALUES = {"1", "true", "yes", "enabled", "allow", "allowed"}
 
 
 def parse_datetime(value: str | None) -> datetime:
@@ -44,6 +46,10 @@ def session_id_from_file(path: Path) -> str:
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f"{json.dumps(payload, separators=(',', ':'), sort_keys=True)}\n", encoding="utf-8")
+
+
+def env_bool(value: str | None) -> bool:
+    return str(value or "").strip().lower() in BROKER_MUTATION_ENABLED_VALUES
 
 
 def market_window(now: datetime) -> dict[str, Any]:
@@ -153,6 +159,23 @@ def cycle_action(summary: dict[str, Any]) -> str:
             candidate = {}
         intent = summary.get("brokerOrderIntent")
         if guard.get("allowed") is True and isinstance(intent, dict):
+            execution = summary.get("brokerOrderExecution")
+            if isinstance(execution, dict) and execution.get("submitted"):
+                return (
+                    "market_open_cycle_order_submitted; "
+                    f"ticketId={intent.get('ticketId')}; "
+                    f"symbol={intent.get('symbol')}; "
+                    f"clientOrderId={intent.get('clientOrderId')}; "
+                    f"status={execution.get('orderStatus')}"
+                )
+            if isinstance(execution, dict) and execution.get("existingOrder"):
+                return (
+                    "market_open_cycle_order_reconciled_existing; "
+                    f"ticketId={intent.get('ticketId')}; "
+                    f"symbol={intent.get('symbol')}; "
+                    f"clientOrderId={intent.get('clientOrderId')}; "
+                    f"status={execution.get('orderStatus')}"
+                )
             if intent.get("state") == "ready":
                 return (
                     "market_open_cycle_order_intent_ready; "
@@ -191,6 +214,11 @@ def cycle_blocker(summary: dict[str, Any]) -> str | None:
     intent = summary.get("brokerOrderIntent")
     if isinstance(intent, dict) and intent.get("state") == "blocked":
         reason = live_scan_cycle.optional_text(intent.get("reason"), max_length=240)
+        if reason:
+            return reason
+    execution = summary.get("brokerOrderExecution")
+    if isinstance(execution, dict) and execution.get("ok") is False and execution.get("submitted") is not True:
+        reason = live_scan_cycle.optional_text(execution.get("reason") or execution.get("error"), max_length=240)
         if reason:
             return reason
     guard = summary.get("strategyGuard")
@@ -436,6 +464,254 @@ def broker_order_intent_for_summary(
     }
 
 
+def broker_mutations_enabled(args: argparse.Namespace) -> bool:
+    if args.execute_broker_intent is True:
+        return True
+    if args.execute_broker_intent is False:
+        return False
+    return env_bool(os.environ.get("AUTONOMOUS_TRADER_BROKER_MUTATION_ENABLED"))
+
+
+def order_input_with_broker_state(
+    order_input: dict[str, Any],
+    *,
+    status: str,
+    broker_order: dict[str, Any] | None = None,
+    reject_reason: str | None = None,
+) -> dict[str, Any]:
+    return {
+        **order_input,
+        "brokerOrderId": broker_order.get("id") if broker_order else order_input.get("brokerOrderId"),
+        "status": status,
+        "rejectReason": reject_reason,
+        "brokerPayload": broker_order or order_input.get("brokerPayload", {}),
+    }
+
+
+def record_intent_order(
+    synthesis: SynthesisClient,
+    order_input: dict[str, Any],
+    *,
+    status: str,
+    broker_order: dict[str, Any] | None = None,
+    reject_reason: str | None = None,
+) -> dict[str, Any] | None:
+    recorded = synthesis.post(
+        "/api/autotrader/orders",
+        order_input_with_broker_state(
+            order_input,
+            status=status,
+            broker_order=broker_order,
+            reject_reason=reject_reason,
+        ),
+    )
+    return recorded if isinstance(recorded, dict) else None
+
+
+def append_broker_order_event(
+    synthesis: SynthesisClient,
+    *,
+    session_id: str,
+    cycle: int,
+    offset: int,
+    event_type: str,
+    payload: dict[str, Any],
+    severity: str = "info",
+) -> None:
+    synthesis.post(
+        "/api/autotrader/events",
+        {
+            "sessionId": session_id,
+            "seq": 1_000_000 + cycle * 10 + offset,
+            "eventType": event_type,
+            "severity": severity,
+            "payload": payload,
+        },
+    )
+
+
+def execute_broker_order_intent(
+    *,
+    args: argparse.Namespace,
+    synthesis: SynthesisClient,
+    session_id: str,
+    intent: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not isinstance(intent, dict) or intent.get("state") != "ready":
+        return None
+    cycle = live_scan_cycle.int_text_value(intent.get("cycle"))
+    client_order_id = live_scan_cycle.optional_text(intent.get("clientOrderId"), max_length=128)
+    symbol = live_scan_cycle.optional_text(intent.get("symbol"), max_length=32)
+    if not broker_mutations_enabled(args):
+        return {
+            "ok": True,
+            "submitted": False,
+            "reason": "broker_mutation_gate_disabled",
+            "clientOrderId": client_order_id,
+            "symbol": symbol,
+        }
+    payload = intent.get("alpacaBracketPayload")
+    order_input = intent.get("synthesisRecordOrderInput")
+    if not isinstance(payload, dict) or not isinstance(order_input, dict):
+        return {
+            "ok": False,
+            "submitted": False,
+            "reason": "broker_order_intent_missing_payload",
+            "clientOrderId": client_order_id,
+            "symbol": symbol,
+        }
+    broker_order: dict[str, Any] | None = None
+    alpaca: protective_preflight.AlpacaClient | None = None
+    try:
+        protective_preflight.validate_bracket_payload(payload)
+        base_url = protective_preflight.normalize_alpaca_base_url(
+            args.alpaca_base_url or os.environ.get("APCA_API_BASE_URL") or protective_preflight.DEFAULT_ALPACA_BASE_URL
+        )
+        protective_preflight.assert_paper_base_url(base_url)
+        alpaca = protective_preflight.AlpacaClient(base_url=args.alpaca_base_url, timeout_seconds=args.timeout_seconds)
+        append_broker_order_event(
+            synthesis,
+            session_id=session_id,
+            cycle=cycle,
+            offset=1,
+            event_type="broker_order_intent_started",
+            payload={"clientOrderId": client_order_id, "symbol": symbol, "paperRoutingVerified": True},
+        )
+        existing = alpaca.get_order_by_client_order_id(str(payload["client_order_id"]))
+        if existing:
+            status = protective_preflight.synthesis_order_status(existing)
+            record_intent_order(synthesis, order_input, status=status, broker_order=existing)
+            append_broker_order_event(
+                synthesis,
+                session_id=session_id,
+                cycle=cycle,
+                offset=2,
+                event_type="broker_order_intent_existing_order",
+                payload={
+                    "clientOrderId": client_order_id,
+                    "symbol": symbol,
+                    "orderStatus": protective_preflight.alpaca_order_status(existing),
+                    "brokerOrderId": existing.get("id"),
+                },
+            )
+            return {
+                "ok": True,
+                "submitted": False,
+                "existingOrder": True,
+                "clientOrderId": client_order_id,
+                "symbol": symbol,
+                "brokerOrderId": existing.get("id"),
+                "orderStatus": protective_preflight.alpaca_order_status(existing),
+                "synthesisStatus": status,
+                "protectiveLegCount": protective_preflight.protective_leg_count(existing),
+            }
+        record_intent_order(synthesis, order_input, status="planned")
+        broker_order = alpaca.post("/v2/orders", payload)
+        record_intent_order(synthesis, order_input, status="submitted", broker_order=broker_order)
+        reconciled = protective_preflight.reconcile_order(alpaca, payload, broker_order)
+        final_order = reconciled or broker_order
+        final_status = protective_preflight.synthesis_order_status(final_order)
+        record_intent_order(synthesis, order_input, status=final_status, broker_order=final_order)
+        protective_leg_count = protective_preflight.protective_leg_count(final_order)
+        report = {
+            "ok": True,
+            "submitted": True,
+            "existingOrder": False,
+            "clientOrderId": client_order_id,
+            "symbol": symbol,
+            "brokerOrderId": final_order.get("id") if isinstance(final_order, dict) else None,
+            "orderStatus": protective_preflight.alpaca_order_status(final_order),
+            "synthesisStatus": final_status,
+            "protectiveLegCount": protective_leg_count,
+            "paperRoutingVerified": True,
+        }
+        append_broker_order_event(
+            synthesis,
+            session_id=session_id,
+            cycle=cycle,
+            offset=2,
+            event_type="broker_order_intent_submitted",
+            payload=report,
+        )
+        return report
+    except Exception as error:
+        reject_reason = str(error)
+        if broker_order is not None and alpaca is not None:
+            try:
+                reconciled_after_error = protective_preflight.reconcile_order(alpaca, payload, broker_order)
+                final_order = reconciled_after_error or broker_order
+                final_status = protective_preflight.synthesis_order_status(final_order)
+                record_intent_order(synthesis, order_input, status=final_status, broker_order=final_order)
+                report = {
+                    "ok": False,
+                    "submitted": True,
+                    "reason": "broker_order_intent_reconcile_failed",
+                    "clientOrderId": client_order_id,
+                    "symbol": symbol,
+                    "brokerOrderId": final_order.get("id") if isinstance(final_order, dict) else None,
+                    "orderStatus": protective_preflight.alpaca_order_status(final_order),
+                    "synthesisStatus": final_status,
+                    "error": reject_reason,
+                }
+                append_broker_order_event(
+                    synthesis,
+                    session_id=session_id,
+                    cycle=cycle,
+                    offset=2,
+                    event_type="broker_order_intent_reconcile_failed",
+                    severity="error",
+                    payload=report,
+                )
+                return report
+            except Exception as reconcile_error:
+                append_broker_order_event(
+                    synthesis,
+                    session_id=session_id,
+                    cycle=cycle,
+                    offset=2,
+                    event_type="broker_order_intent_reconcile_failed",
+                    severity="error",
+                    payload={
+                        "clientOrderId": client_order_id,
+                        "symbol": symbol,
+                        "brokerOrderId": broker_order.get("id"),
+                        "error": reject_reason,
+                        "reconcileError": str(reconcile_error),
+                    },
+                )
+                return {
+                    "ok": False,
+                    "submitted": True,
+                    "reason": "broker_order_intent_reconcile_failed",
+                    "clientOrderId": client_order_id,
+                    "symbol": symbol,
+                    "brokerOrderId": broker_order.get("id"),
+                    "error": reject_reason,
+                    "reconcileError": str(reconcile_error),
+                }
+        try:
+            record_intent_order(synthesis, order_input, status="rejected", reject_reason=reject_reason)
+        except Exception:
+            pass
+        append_broker_order_event(
+            synthesis,
+            session_id=session_id,
+            cycle=cycle,
+            offset=2,
+            event_type="broker_order_intent_failed",
+            severity="error",
+            payload={"clientOrderId": client_order_id, "symbol": symbol, "error": reject_reason},
+        )
+        return {
+            "ok": False,
+            "submitted": False,
+            "reason": "broker_order_intent_execution_failed",
+            "clientOrderId": client_order_id,
+            "symbol": symbol,
+            "error": reject_reason,
+        }
+
+
 def record_cycle_complete(
     *,
     synthesis: SynthesisClient,
@@ -458,6 +734,7 @@ def record_cycle_complete(
         "decisionSummary": summary.get("decisionSummary"),
         "strategyGuard": summary.get("strategyGuard"),
         "brokerOrderIntent": summary.get("brokerOrderIntent"),
+        "brokerOrderExecution": summary.get("brokerOrderExecution"),
         "accountGate": summary.get("accountGate"),
         "marketWindow": summary.get("marketWindow"),
         "windowGate": summary.get("windowGate"),
@@ -509,6 +786,17 @@ def broker_order_intent_report_value(summary: dict[str, Any]) -> str:
     if intent.get("state") == "ready":
         return f"ready:{intent.get('clientOrderId')}"
     return f"blocked:{intent.get('reason')}"
+
+
+def broker_order_execution_report_value(summary: dict[str, Any]) -> str:
+    execution = summary.get("brokerOrderExecution")
+    if not isinstance(execution, dict):
+        return "not_run"
+    if execution.get("submitted"):
+        return f"submitted:{execution.get('clientOrderId')}:{execution.get('orderStatus')}"
+    if execution.get("existingOrder"):
+        return f"existing:{execution.get('clientOrderId')}:{execution.get('orderStatus')}"
+    return f"skipped:{execution.get('reason')}"
 
 
 def scan_args_for(args: argparse.Namespace, *, session_id: str, work_dir: Path) -> argparse.Namespace:
@@ -573,6 +861,7 @@ def write_report(path: Path, result: dict[str, Any]) -> None:
         f"scorecard_count: {scorecard_count(summary)}",
         f"strategy_guard: {strategy_guard_report_value(summary)}",
         f"broker_order_intent: {broker_order_intent_report_value(summary)}",
+        f"broker_order_execution: {broker_order_execution_report_value(summary)}",
     ]
     if isinstance(management, dict) and management.get("primaryAction"):
         lines.extend(
@@ -621,6 +910,14 @@ def run_market_open_cycle(
             broker_order_intent = broker_order_intent_for_summary(args=args, session_id=session_id, summary=summary)
             if broker_order_intent is not None:
                 summary["brokerOrderIntent"] = broker_order_intent
+                broker_order_execution = execute_broker_order_intent(
+                    args=args,
+                    synthesis=synthesis,
+                    session_id=session_id,
+                    intent=broker_order_intent,
+                )
+                if broker_order_execution is not None:
+                    summary["brokerOrderExecution"] = broker_order_execution
     else:
         summary = market_window_skip_summary(args=args, work_dir=work_dir, window=window)
     output = {
@@ -654,6 +951,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-recorded-tickets", type=int, default=10)
     parser.add_argument("--report-path", default="/workspace/.agentrun/autonomous-trader/report.md")
     parser.add_argument("--agent-run-name", default=os.environ.get("AGENT_RUN_NAME", "autonomous-trader-market-open"))
+    parser.add_argument("--alpaca-base-url")
+    intent_execution = parser.add_mutually_exclusive_group()
+    intent_execution.add_argument("--execute-broker-intent", dest="execute_broker_intent", action="store_true")
+    intent_execution.add_argument("--no-execute-broker-intent", dest="execute_broker_intent", action="store_false")
+    parser.set_defaults(execute_broker_intent=None)
     parser.add_argument("--now")
     parser.add_argument("--self-test", action="store_true")
     return parser
