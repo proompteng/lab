@@ -38,6 +38,7 @@ SYNTHESIS_SIDES = {
     "sell_to_close",
 }
 ACTIONABLE_SETUP_GRADES = {"A+", "A", "B"}
+DEFAULT_SCORECARD_LIMIT = 100
 MIN_ACTIONABLE_EXPECTED_R = Decimal("2.0")
 MIN_ACTIONABLE_BRACKET_R = Decimal("2.0")
 MIN_SCORECARD_RISK_SCALE_SAMPLE_SIZE = 2
@@ -2317,7 +2318,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--start")
     parser.add_argument("--end")
     parser.add_argument("--feed", default="iex")
-    parser.add_argument("--scorecard-limit", type=int, default=20)
+    parser.add_argument("--scorecard-limit", type=int, default=DEFAULT_SCORECARD_LIMIT)
     parser.add_argument("--timeout-seconds", type=float, default=10.0)
     parser.add_argument("--synthesis-base-url")
     parser.add_argument("--analysis-context")

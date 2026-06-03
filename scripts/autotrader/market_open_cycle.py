@@ -942,7 +942,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--start")
     parser.add_argument("--end")
     parser.add_argument("--feed", default="iex")
-    parser.add_argument("--scorecard-limit", type=int, default=20)
+    parser.add_argument("--scorecard-limit", type=int, default=live_scan_cycle.DEFAULT_SCORECARD_LIMIT)
     parser.add_argument("--timeout-seconds", type=float, default=10.0)
     parser.add_argument("--synthesis-base-url")
     parser.add_argument("--analysis-context")

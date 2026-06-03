@@ -15,6 +15,11 @@ class LiveScanCycleTest(unittest.TestCase):
     def test_normalizes_watchlist(self) -> None:
         self.assertEqual(live_scan_cycle.normalize_watchlist([" spy ", "SPY", "nvda"]), ["SPY", "NVDA"])
 
+    def test_parser_defaults_to_full_scorecard_api_window(self) -> None:
+        args = live_scan_cycle.build_parser().parse_args([])
+
+        self.assertEqual(args.scorecard_limit, 100)
+
     def test_picks_next_cycle_number(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -2076,7 +2081,7 @@ class LiveScanCycleTest(unittest.TestCase):
                     case.assertIsNone(query)
                     return {"session": {"id": "session-1"}, "orders": [], "tradeTickets": []}
                 case.assertEqual(path, "/api/autotrader/scorecards")
-                case.assertEqual(query, {"limit": "20"})
+                case.assertEqual(query, {"limit": "100"})
                 return {
                     "scorecards": [
                         {
