@@ -57,7 +57,10 @@ from app.trading.llm.schema import (
 from app.trading.models import SignalEnvelope, StrategyDecision
 from app.trading.prices import MarketSnapshot, PriceFetcher
 from app.trading.ingest import SignalBatch
-from app.trading.paper_route_target_plan import paper_route_target_plan_from_payload
+from app.trading.paper_route_target_plan import (
+    materialize_bounded_paper_route_target_plan,
+    paper_route_target_plan_from_payload,
+)
 from app.trading.reconcile import Reconciler
 from app.trading.runtime_decision_authority import (
     BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
@@ -7128,6 +7131,233 @@ class TestTradingPipeline(TestCase):
                 paper_route_probe["bounded_paper_route_execution_policy"]["authority"],
                 "bounded_paper_route_collection_only",
             )
+
+    def test_simple_pipeline_submits_materialized_target_plan_source_decisions(
+        self,
+    ) -> None:
+        from app import config
+
+        now = datetime(2026, 5, 26, 14, 0, tzinfo=timezone.utc)
+        window_start = datetime(2026, 5, 26, 13, 30, tzinfo=timezone.utc)
+        window_end = datetime(2026, 5, 26, 20, 0, tzinfo=timezone.utc)
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_live_enabled = False
+        config.settings.trading_pipeline_mode = "simple"
+        config.settings.trading_simple_submit_enabled = True
+        config.settings.trading_fractional_equities_enabled = True
+        config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_simple_paper_route_probe_max_notional = 500.0
+        config.settings.trading_paper_route_target_plan_url = ""
+        config.settings.trading_universe_source = "static"
+        config.settings.trading_static_symbols_raw = "AAPL,AMZN"
+        config.settings.trading_universe_static_fallback_enabled = True
+        config.settings.trading_universe_static_fallback_symbols_raw = "AAPL,AMZN"
+        config.settings.trading_allow_shorts = True
+
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="microbar-cross-sectional-pairs-v1",
+                description="bounded H-PAIRS materialized target",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL", "AMZN"],
+                max_notional_per_trade=Decimal("1000"),
+            )
+            session.add(strategy)
+            session.commit()
+
+            materialized = materialize_bounded_paper_route_target_plan(
+                session,
+                {
+                    "targets": [
+                        {
+                            "hypothesis_id": "H-PAIRS-01",
+                            "candidate_id": "c88421d619759b2cfaa6f4d0",
+                            "runtime_strategy_name": (
+                                "microbar-cross-sectional-pairs-v1"
+                            ),
+                            "strategy_name": "microbar-cross-sectional-pairs-v1",
+                            "account_label": "TORGHUT_SIM",
+                            "source_account_label": "TORGHUT_REPLAY",
+                            "source_kind": "paper_route_probe_runtime_observed",
+                            "source_plan_ref": (
+                                "s3://torghut-proof/hpairs/current-window.json"
+                            ),
+                            "source_manifest_ref": (
+                                "config/trading/hypotheses/h-pairs.json"
+                            ),
+                            "observed_stage": "paper",
+                            "bounded_collection_stage": ("bounded_paper_collection"),
+                            "target_notional": "200",
+                            "target_quantity": "2",
+                            "paper_route_probe_next_session_max_notional": "200",
+                            "paper_route_probe_window_start": (
+                                window_start.isoformat()
+                            ),
+                            "paper_route_probe_window_end": window_end.isoformat(),
+                            "paper_route_probe_symbols": ["AAPL", "AMZN"],
+                            "paper_route_probe_symbol_actions": {
+                                "AAPL": "buy",
+                                "AMZN": "sell",
+                            },
+                            "paper_route_probe_symbol_quantities": {
+                                "AAPL": "1",
+                                "AMZN": "1",
+                            },
+                            "paper_route_probe_pair_balance_state": "balanced",
+                            "paper_route_clean_window_baseline_state": {
+                                "state": "clean",
+                                "blockers": [],
+                            },
+                            "paper_route_clean_window_state": "clean",
+                            "source_decision_readiness": {
+                                "ready": True,
+                                "blockers": [],
+                            },
+                            "bounded_evidence_collection_authorized": True,
+                            "bounded_live_paper_collection_authorized": True,
+                            "canary_collection_authorized": True,
+                            "evidence_collection_ok": True,
+                            "bounded_evidence_collection_blockers": [],
+                            "runtime_window_import_health_gate_blockers": [],
+                            "paper_route_target_account_audit_state": {
+                                "state": "available",
+                                "audit_available": True,
+                                "blockers": [],
+                            },
+                            "paper_route_target_account_audit_blockers": [],
+                            "paper_route_account_pre_session_blockers": [],
+                            "paper_route_hpairs_symbol_blockers": [],
+                            "promotion_allowed": False,
+                            "final_promotion_authorized": False,
+                            "final_promotion_allowed": False,
+                        },
+                    ]
+                },
+                generated_at=now,
+                bounded_notional_limit=Decimal("500"),
+            )
+            self.assertEqual(len(materialized["decisions"]), 2)
+            materialized_ids = {
+                str(item["trade_decision_id"])
+                for item in cast(
+                    Sequence[Mapping[str, object]],
+                    materialized["decisions"],
+                )
+            }
+            materialized_hashes = {
+                str(item["decision_hash"])
+                for item in cast(
+                    Sequence[Mapping[str, object]],
+                    materialized["decisions"],
+                )
+            }
+            session.commit()
+
+        alpaca_client = FakeAlpacaClient()
+        pipeline = SimpleTradingPipeline(
+            alpaca_client=alpaca_client,
+            order_firewall=OrderFirewall(alpaca_client),
+            ingestor=FakeIngestor([]),
+            decision_engine=DecisionEngine(),
+            risk_engine=RiskEngine(),
+            executor=OrderExecutor(),
+            execution_adapter=alpaca_client,
+            reconciler=Reconciler(),
+            universe_resolver=UniverseResolver(),
+            state=TradingState(),
+            account_label="TORGHUT_SIM",
+            session_factory=self.session_local,
+            price_fetcher=FakePriceFetcher(
+                Decimal("100"),
+                spread=Decimal("0.02"),
+                bid=Decimal("99.99"),
+                ask=Decimal("100.01"),
+            ),
+        )
+        pipeline._is_market_session_open = lambda _now=None: True  # type: ignore[method-assign]
+
+        with (
+            patch.object(
+                SimpleTradingPipeline,
+                "_profitability_proof_floor",
+                return_value={
+                    "route_state": "repair_only",
+                    "capital_state": "zero_notional",
+                    "max_notional": "0",
+                    "market_window": {"session_open": True},
+                    "blocking_reasons": ["alpha_readiness_not_promotion_eligible"],
+                },
+            ),
+            patch(
+                "app.trading.scheduler.simple_pipeline.trading_now",
+                return_value=now,
+            ),
+            patch("app.trading.scheduler.pipeline.trading_now", return_value=now),
+            patch("app.trading.simulation.trading_now", return_value=now),
+        ):
+            pipeline.run_once()
+
+        self.assertEqual(len(alpaca_client.submitted), 2)
+        self.assertEqual(
+            {order["symbol"]: order["side"] for order in alpaca_client.submitted},
+            {"AAPL": "buy", "AMZN": "sell"},
+        )
+        with self.session_local() as session:
+            decisions = list(
+                session.execute(select(TradeDecision).order_by(TradeDecision.symbol))
+                .scalars()
+                .all()
+            )
+            executions = list(
+                session.execute(select(Execution).order_by(Execution.symbol))
+                .scalars()
+                .all()
+            )
+            self.assertEqual(
+                {str(decision.id) for decision in decisions}, materialized_ids
+            )
+            self.assertEqual(
+                {str(decision.decision_hash) for decision in decisions},
+                materialized_hashes,
+            )
+            self.assertEqual(
+                [decision.status for decision in decisions], ["submitted", "submitted"]
+            )
+            self.assertEqual(len(executions), 2)
+            for decision in decisions:
+                decision_json = cast(dict[str, Any], decision.decision_json)
+                params = cast(dict[str, Any], decision_json["params"])
+                source_decision = cast(
+                    dict[str, Any],
+                    params["paper_route_target_plan_source_decision"],
+                )
+                self.assertEqual(
+                    params["source_decision_mode"],
+                    BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
+                )
+                self.assertTrue(params["profit_proof_eligible"])
+                self.assertTrue(params["paper_route_target_plan_materialized"])
+                self.assertEqual(
+                    params["paper_route_materialized_trade_decision_id"],
+                    str(decision.id),
+                )
+                self.assertEqual(
+                    params["bounded_paper_route_submit_path"],
+                    "bounded_paper_route_collection",
+                )
+                self.assertEqual(
+                    source_decision["source"],
+                    "paper_route_target_plan_materializer",
+                )
+                self.assertEqual(
+                    source_decision["source_account_label"],
+                    "TORGHUT_REPLAY",
+                )
+                self.assertFalse(params["promotion_allowed"])
+                self.assertFalse(params["final_promotion_authorized"])
 
     def test_simple_pipeline_signal_cycle_still_generates_target_plan_source_decision(
         self,
